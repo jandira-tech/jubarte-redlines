@@ -1300,6 +1300,8 @@ struct EditJob<'a> {
     dpi: f32,
     revisions: jubarte::convert::RevisionStyle,
     quiet: bool,
+    /// `-a`/`--author` was given, or a plan names the author (#1891).
+    author_given: bool,
 }
 
 /// Exit 3: the plan was refused (stale source, ambiguous anchor, ...); the
@@ -2369,14 +2371,26 @@ fn write_edited(
         },
     )?;
     let failed = failed.map(|f| (f.path.as_path(), f.notes.as_slice()));
+    let markup = jubarte::cli::wrote_markup_detail(
+        result.report.revisions.total,
+        result.report.comments_added,
+        &result.report.author,
+        job.author_given,
+    );
     if job.quiet {
         skipped_status(result, failed);
         return Ok(());
     }
     edit_status(format_args!(
         "{}",
-        wrote_line(path, Format::Docx, document.len(), None)
+        wrote_line_with(path, Format::Docx, document.len(), None, markup.as_deref(),)
     ));
+    if markup.is_some() && !job.author_given {
+        edit_status(format_args!(
+            "warning: no -a given; the new markup is signed \"{}\"",
+            result.report.author
+        ));
+    }
     if let Some(pages) = pdf_pages {
         let pdf = path.with_extension("pdf");
         let bytes = outputs
@@ -2666,6 +2680,7 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         dpi: flags.dpi,
         revisions: flags.revisions,
         quiet: flags.quiet,
+        author_given: flags.options.author_given || flags.plan.is_some(),
     };
     let skipped = run_edit(&job, &plan, &source, &notes, &plan_notes)?;
     if let Some((path, _)) = consumed.as_ref().filter(|_| skipped > 0) {

@@ -1382,3 +1382,247 @@ fn staging_names_preserve_non_utf8_destination_bytes() {
         assert!(written(dir).is_empty(), "{:?}", written(dir));
     }
 }
+
+/// clap's one-shot `--author` default (`EditOptions`), not a guessed name.
+fn default_author() -> String {
+    let json = jubarte::cli::parse_json(
+        &[
+            "edit".into(),
+            "a.docx".into(),
+            "-p".into(),
+            "p0".into(),
+            "--content".into(),
+            "x".into(),
+        ],
+        "jubarte",
+        &["edit".into()],
+    );
+    serde_json::from_str::<serde_json::Value>(&json).unwrap()["args"]["author"]
+        .as_str()
+        .expect("author default")
+        .to_owned()
+}
+
+fn wrote_docx(err: &str) -> &str {
+    err.lines()
+        .find(|line| line.starts_with("wrote ") && line.contains(" (docx, "))
+        .unwrap_or(err)
+}
+
+fn assert_wrote_markup(err: &str, file: &str, detail: &str) {
+    let line = wrote_docx(err);
+    let prefix = format!("wrote {file} (docx, ");
+    let suffix = format!(" bytes; {detail})");
+    assert!(
+        line.starts_with(&prefix) && line.ends_with(&suffix),
+        "expected `{prefix}N{suffix}`\n{err}"
+    );
+}
+
+/// #1891: a one-shot edit with `-a` names that author and the change count.
+#[test]
+fn edit_wrote_line_names_the_given_author_and_change_count() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "a.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty",
+            "-a",
+            "GiantCo",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert_wrote_markup(&err, "out.docx", r#"1 change by "GiantCo""#);
+    assert!(
+        !err.contains("warning: no -a given"),
+        "explicit -a is not a warning: {err}"
+    );
+}
+
+/// #1891: without `-a`, the wrote line names the default and says so; stderr
+/// warns that the new markup is signed with that default.
+#[test]
+fn edit_wrote_line_without_author_warns_and_names_the_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let author = default_author();
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "a.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert_wrote_markup(
+        &err,
+        "out.docx",
+        &format!(r#"1 change by "{author}": no -a given"#),
+    );
+    assert!(
+        err.contains(&format!(
+            r#"warning: no -a given; the new markup is signed "{author}""#
+        )),
+        "{err}"
+    );
+}
+
+/// #1891: `add --comment` counts comments, not changes.
+#[test]
+fn add_comment_wrote_line_counts_the_comment() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let (code, _, err) = run(
+        dir,
+        &[
+            "add",
+            "a.docx",
+            "-p",
+            "p1",
+            "--comment",
+            "--content",
+            "Cap the fee?",
+            "-a",
+            "GiantCo",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert_wrote_markup(&err, "out.docx", r#"1 comment by "GiantCo""#);
+    assert!(!err.contains("warning: no -a given"), "{err}");
+}
+
+/// #1891: a write that adds both a change and a comment names both.
+#[test]
+fn mixed_write_counts_changes_and_comments() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let (code, _, err) = run(
+        dir,
+        &[
+            "add",
+            "a.docx",
+            "-p",
+            "p2",
+            "--content",
+            "New line.",
+            "-p",
+            "p1",
+            "--comment",
+            "--content",
+            "Cap the fee?",
+            "-a",
+            "GiantCo",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert_wrote_markup(&err, "out.docx", r#"1 change, 1 comment by "GiantCo""#);
+    assert!(!err.contains("warning: no -a given"), "{err}");
+}
+
+/// #1891: `--accept` / `--reject` add no markup: today's wrote line, no warning.
+#[test]
+fn accept_or_reject_only_keeps_todays_wrote_line() {
+    const TRACKED: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/agent-view/received.docx"
+    );
+    for verb in ["--accept", "--reject"] {
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dir.path();
+        std::fs::copy(TRACKED, dir.join("in.docx")).unwrap();
+        let (code, _, err) = run(
+            dir,
+            &["edit", "in.docx", "-p", "r0", verb, "-o", "out.docx"],
+        );
+        assert_eq!(code, 0, "{verb}: {err}");
+        let line = wrote_docx(&err);
+        assert!(
+            line.starts_with("wrote out.docx (docx, ") && line.ends_with(" bytes)"),
+            "{verb}: {err}"
+        );
+        assert!(!line.contains(';'), "{verb}: {err}");
+        assert!(!err.contains("warning: no -a given"), "{verb}: {err}");
+    }
+}
+
+/// #1891: `-a` with the default name still counts as explicit: no warning.
+#[test]
+fn explicit_default_author_is_not_a_missing_author_warning() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let author = default_author();
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "a.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty",
+            "-a",
+            &author,
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert_wrote_markup(&err, "out.docx", &format!(r#"1 change by "{author}""#));
+    assert!(!err.contains("no -a given"), "{err}");
+}
+
+/// #1891: a dry-run JSONL envelope still carries `author`.
+#[test]
+fn dry_run_jsonl_keeps_the_author_field() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let author = default_author();
+    let (code, out, err) = run(
+        dir,
+        &[
+            "edit",
+            "a.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty",
+            "--dry-run",
+        ],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let load: serde_json::Value = serde_json::from_str(out.lines().next().expect("jsonl")).unwrap();
+    assert_eq!(load["ev"], "load", "{out}");
+    assert_eq!(load["author"], author, "{out}");
+}

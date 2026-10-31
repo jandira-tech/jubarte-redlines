@@ -2137,7 +2137,7 @@ fn edit_and_add_take_dash_a_for_the_author() {
 
 #[test]
 fn writer_status_lines_preserve_paths_and_pluralize_page_counts() {
-    use jubarte::cli::{wrote_line, wrote_png_line};
+    use jubarte::cli::{wrote_line, wrote_line_with, wrote_png_line};
 
     for (format, name) in [
         (Format::Docx, "docx"),
@@ -2159,6 +2159,38 @@ fn writer_status_lines_preserve_paths_and_pluralize_page_counts() {
             format!("wrote out/r-page-NN.png (png, {label}, 72.5 dpi)")
         );
     }
+    assert_eq!(
+        wrote_line_with(
+            Path::new("r.docx"),
+            Format::Docx,
+            10,
+            None,
+            Some(r#"1 change by "GiantCo""#)
+        ),
+        r#"wrote r.docx (docx, 10 bytes; 1 change by "GiantCo")"#
+    );
+}
+
+#[test]
+fn wrote_markup_detail_names_author_counts_and_missing_flag() {
+    use jubarte::cli::wrote_markup_detail;
+    assert_eq!(wrote_markup_detail(0, 0, "Jubarte", false), None);
+    assert_eq!(
+        wrote_markup_detail(1, 0, "GiantCo", true).as_deref(),
+        Some(r#"1 change by "GiantCo""#)
+    );
+    assert_eq!(
+        wrote_markup_detail(1, 0, "Jubarte", false).as_deref(),
+        Some(r#"1 change by "Jubarte": no -a given"#)
+    );
+    assert_eq!(
+        wrote_markup_detail(0, 1, "GiantCo", true).as_deref(),
+        Some(r#"1 comment by "GiantCo""#)
+    );
+    assert_eq!(
+        wrote_markup_detail(2, 1, "GiantCo", true).as_deref(),
+        Some(r#"2 changes, 1 comment by "GiantCo""#)
+    );
 }
 
 #[test]

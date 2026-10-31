@@ -23,6 +23,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Changed
 
+- **One-shot `edit` and `add` `wrote` lines name who signed the new markup** (#1891). A write that adds tracked changes or comments says so: `wrote out.docx (docx, N bytes; 1 change by "GiantCo")`, or `1 comment by …`, or both (`2 changes, 1 comment by "GiantCo"`). Without `-a`, the line adds `: no -a given` and stderr warns `warning: no -a given; the new markup is signed "Jubarte"`. A write that adds no markup (`--accept`/`--reject` only) keeps the previous line and prints no warning.
+
 - **Breaking: deleting, resolving, reopening or rewording another author's comment is allowed unless `--keep-others` is set** (#1892, #1890). This undoes the #1853 default `COMMENT_NOT_YOURS` refusal. The report still notes each such change (`c0 is by "Bob"; their words were changed under their name`). Accepting or rejecting another author's tracked change stays allowed too. `--rewrite-others-comments` and `"rewrite_others_comments": true` stay accepted and are ignored; they do not turn the guard off. With the guard off, a refusal that names their change keeps the four routes and says what accepting or rejecting erases (`let it go (erases "Trainer 1 - AgentCo"'s deletion):`); `next_actions` lists restore or strike first and marks accept and reject `"destructive": true`. `EXISTING_REVISIONS`, in either guard state, and `--existing-revisions` beside `--plan`, say to add `"existing_revisions": "keep"` to the plan. Top-level `accept` and `reject` are unchanged. The comment default is breaking, so it ships after 0.16.0 with a minor bump.
 
 ### Fixed

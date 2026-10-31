@@ -361,6 +361,12 @@ pub struct EditOptions {
     /// its own).
     #[arg(short = 'a', long, value_name = "NAME", default_value = "Jubarte")]
     pub author: String,
+    /// Whether `-a`/`--author` was spelled on the command line (set after
+    /// parsing). One-shot writes use this to say when the default signed
+    /// the new markup (#1891).
+    #[arg(skip)]
+    #[serde(skip)]
+    pub author_given: bool,
     /// Revision timestamp (ISO 8601) [default: now, UTC]; pin it for
     /// reproducible output.
     #[arg(short = 'd', long = "datetime", value_name = "ISO8601", value_parser = parse_datetime)]
@@ -829,9 +835,17 @@ fn fill_flag_operations(
     matches: &clap::ArgMatches,
     model: &mut clap::Command,
 ) -> Result<(), clap::Error> {
-    let (name, operations) = match task {
-        Command::Edit { operations, .. } => ("edit", operations),
-        Command::Add { operations, .. } => ("add", operations),
+    let (name, operations, options) = match task {
+        Command::Edit {
+            operations,
+            options,
+            ..
+        } => ("edit", operations, options),
+        Command::Add {
+            operations,
+            options,
+            ..
+        } => ("add", operations, options),
         _ => return Ok(()),
     };
     let Some(sub) = matches.subcommand_matches(name) else {
@@ -839,6 +853,8 @@ fn fill_flag_operations(
     };
     *operations = flag_operations(sub)
         .map_err(|m| model.error(clap::error::ErrorKind::ArgumentConflict, m))?;
+    options.author_given =
+        sub.value_source("author") == Some(clap::parser::ValueSource::CommandLine);
     Ok(())
 }
 
@@ -2224,12 +2240,53 @@ pub fn refused_package(path: &Path, bytes: &[u8]) -> Option<String> {
 /// The line a writing task prints on stderr for the file it wrote:
 /// `wrote r.pdf (pdf, 48213 bytes, 3 pages)`; `pages` is a PDF's.
 pub fn wrote_line(path: &Path, format: Format, bytes: usize, pages: Option<usize>) -> String {
+    wrote_line_with(path, format, bytes, pages, None)
+}
+
+/// [`wrote_line`] with an optional `; 1 change by "GiantCo"` suffix (#1891).
+pub fn wrote_line_with(
+    path: &Path,
+    format: Format,
+    bytes: usize,
+    pages: Option<usize>,
+    detail: Option<&str>,
+) -> String {
     let pages = pages.map_or_else(String::new, |n| format!(", {}", count(n, "page")));
+    let extra = detail.map_or_else(String::new, |s| format!("; {s}"));
     format!(
-        "wrote {} ({}, {bytes} bytes{pages})",
+        "wrote {} ({}, {bytes} bytes{pages}{extra})",
         path.display(),
         format.name()
     )
+}
+
+/// The `; 1 change by "GiantCo"` fragment of a one-shot edit/add `wrote`
+/// line (#1891). `None` when the write added no markup.
+#[must_use]
+pub fn wrote_markup_detail(
+    changes: usize,
+    comments: usize,
+    author: &str,
+    author_given: bool,
+) -> Option<String> {
+    if changes == 0 && comments == 0 {
+        return None;
+    }
+    let mut detail = String::new();
+    if changes > 0 {
+        detail.push_str(&count(changes, "change"));
+    }
+    if comments > 0 {
+        if !detail.is_empty() {
+            detail.push_str(", ");
+        }
+        detail.push_str(&count(comments, "comment"));
+    }
+    detail.push_str(&format!(" by \"{author}\""));
+    if !author_given {
+        detail.push_str(": no -a given");
+    }
+    Some(detail)
 }
 
 /// Confirmation of the published document, comparing the two agent views.
