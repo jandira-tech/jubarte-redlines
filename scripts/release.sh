@@ -54,8 +54,9 @@
 #
 # What it does, in order:
 #   0. preflight — tools, registry credentials, main branch, clean tree;
-#      the bump kind docs/VERSIONING.md asks for (a patch has no ### Added
-#      and passes cargo-semver-checks against the previous release); the
+#      the bump kind docs/VERSIONING.md asks for (a patch has no ### Added,
+#      passes cargo-semver-checks against the previous release, and adds no
+#      public item path); the
 #      release.yml review (scripts/test_release_workflow.py) and the
 #      GitHub settings it relies on (the release environment, the signing
 #      secret)
@@ -176,7 +177,7 @@ before|you|API snapshot: docs/api holds the previous release's rustdoc snapshot,
 before|you|hand-run Python proofs pin the interpreter to --python 3.12: uv's default on the release machine may be a free-threaded build (0.14.0: 3.15t) that no abi3 wheel serves, and an unpinned pip proof then builds the sdist and passes on nothing PyPI serves (0.13.0's PyPI PASS)|uv python find; uv run -q --isolated --no-project --python 3.12 --no-build-package jubarte-redlines --with jubarte-redlines==@V@ python -c 'import jubarte_redlines as j; print(j.capabilities()["engine_version"])'
 before|you|the app's scripts are bash (release-engine.sh, build-release-app.sh, notarize-direct.sh, publish-mac-app-store.sh): run each by its path or with bash, never sh or zsh — the release machine's shell is zsh, which does not word-split a variable and indexes arrays from 1|for f in release-engine.sh build-release-app.sh notarize-direct.sh publish-mac-app-store.sh; do bash -n jubarte-app/scripts/$f; done
 7|auto|keywords: the crate's keywords and categories are inside crates.io's limits (at most 5 each, keywords ASCII, a letter first, at most 20 characters) — one more fails the publish after the point of no return|scripts/release.sh step 7 (crate_keywords_ok)
-0|auto|The bump kind docs/VERSIONING.md asks for, proven before step 1 writes anything: pre-1.0 a patch carries no new feature (a ### Added heading) and no public API change cargo-semver-checks finds against the previous release's tag (0.10.1 shipped four breaking fields as a patch); a minor or major may|cargo semver-checks check-release -p jubarte-redlines --baseline-rev <previous tag> --release-type patch --default-features
+0|auto|The bump kind docs/VERSIONING.md asks for, proven before step 1 writes anything: pre-1.0 a patch carries no new feature (a ### Added heading), no public API change cargo-semver-checks finds against the previous release's tag (0.10.1 shipped four breaking fields as a patch), and no public item path the previous release's listing does not have (cargo-semver-checks 0.51.0 has no lint for a new free function, trait, module, macro or type alias; the baseline is docs/api/jubarte-<previous tag>.api.txt when that listing is the current shape, otherwise a worktree of the tag); a minor or major may|cargo semver-checks check-release -p jubarte-redlines --baseline-rev <previous tag> --release-type patch --default-features; scripts/api_snapshot.py --added docs/api/jubarte-<previous tag>.api.txt <HEAD listing>
 2|auto|The engine CHANGELOG section is complete: release.yml cuts it verbatim into the GitHub release notes, so it cites every fix/feat/perf/security PR merged since the previous release (by its number, an issue it closes, or a <!-- changelog-skip: #N --> line) and holds no TODO, TBD, FIXME or XXX|scripts/release.sh step 2 (unlisted_prs, changelog_placeholders)
 before|you|The six one-line notes are drafted before the run — the changelog, crates, npm, pypi and github summaries and the docs statement are mandatory flags; the github note leads the release notes from the tag body, the other four are grepped back out of their registries at verify|scripts/release.sh --help (the five --*-summary flags and --how-readme-and-other-docs-were-updated)
 before|you|CHANGELOG: engine section dated with the ASCII heading, link footer present; the app repository's own CHANGELOG carries its ## [@V@] section naming jubarte-redlines @V@ on its main (step 0 checks it)|grep -n '^## \[@V@\]' CHANGELOG.md jubarte-app/CHANGELOG.md (both sections are written by hand; step 3 holds their measured sentence to the results)
@@ -489,11 +490,66 @@ changelog_section() {
 # cargo-semver-checks fails only on lints at deny, and ships some at allow or
 # warn (#1744); Cargo.toml's lint table must raise every one of them.
 semver_lints_ok() { python3 scripts/semver_lints.py; }
+# Public item paths HEAD adds over the previous release ($1, no v).
+# cargo-semver-checks 0.51.0 has no lint for a new free function, trait,
+# module, macro or type alias (#1758); the listing scripts/api_snapshot.py
+# already computes is the source. A committed
+# docs/api/jubarte-v$prev.api.txt in the current shape (surface, kind, vis,
+# path) is that baseline. The three-column listings from before 0.11.3 are
+# not: every current path would read as added. Otherwise the tag is built
+# the way the checklist's backfill builds it, with this checkout's script,
+# in a worktree under target/ when this tree has one. $2 is the minor to
+# name when a path was added. The worktree is removed on the way out,
+# including when the comparison refuses the patch (die exits through the trap).
+patch_public_additions() {
+  local prev=$1 minor=$2 old listing dir parent added rc current
+  old="docs/api/jubarte-v${prev}.api.txt"
+  listing=""
+  dir=""
+  trap '[ -z "$listing" ] || rm -f "$listing"; if [ -n "$dir" ]; then git worktree remove --force "$dir" 2>/dev/null || true; rm -rf "$dir"; fi' EXIT
+  listing=$(mktemp "${TMPDIR:-/tmp}/jubarte-api-head.XXXXXX")
+  current=0
+  if [ -f "$old" ]; then
+    case $(head -n 1 "$old") in
+      api$'\t'*|internal$'\t'*) current=1 ;;
+    esac
+  fi
+  if [ "$current" -ne 1 ]; then
+    # One rustdoc build of the previous tag, only when no current listing
+    # is committed. HEAD below is the other build; step 6 writes the snapshot.
+    if [ -d target ]; then parent=target; else parent="${TMPDIR:-/tmp}"; fi
+    dir=$(mktemp -d "$parent/jubarte-api-prev.XXXXXX")
+    git worktree add "$dir" "v$prev"
+    mkdir -p "$dir/scripts"
+    cp scripts/api_snapshot.py "$dir/scripts/api_snapshot.py"
+    (cd "$dir" && python3 scripts/api_snapshot.py "$prev")
+    old="$dir/docs/api/jubarte-v${prev}.api.txt"
+  fi
+  python3 scripts/api_snapshot.py --emit "$listing"
+  rc=0
+  added=$(python3 scripts/api_snapshot.py --added "$old" "$listing") || rc=$?
+  if [ "$rc" -eq 1 ] && [ -n "$added" ]; then
+    die "$VER is a patch, but it adds public API paths a patch cannot carry:
+$(printf '%s\n' "$added" | sed 's/^/  /')
+new public items take a minor bump (docs/VERSIONING.md) — release $minor instead"
+  fi
+  [ "$rc" -eq 0 ] || die "the public API listing comparison failed (scripts/api_snapshot.py --added, exit $rc) — release $minor instead, or fix the listings above"
+  rm -f "$listing"
+  listing=""
+  if [ -n "$dir" ]; then
+    git worktree remove --force "$dir" 2>/dev/null || true
+    rm -rf "$dir"
+    dir=""
+  fi
+  trap - EXIT
+}
 # Pre-1.0 (docs/VERSIONING.md) a patch carries no new feature and no public
 # API change; a minor or a major may. Proven before step 1 writes anything
 # (#1742): a patch whose section has `### Added` ships features, and
 # cargo-semver-checks compares the public API with the previous release's
-# tag. $1 is that tag.
+# tag. #1758: that tool cannot see a new free function, trait, module, macro
+# or type alias, so the listing's added public paths are checked too. $1 is
+# that tag.
 bump_gate() {
   local prev=${1#v} kind minor
   kind=$(bump_kind "$prev" "$VER") || die "$VER is not above the previous release $prev"
@@ -510,7 +566,8 @@ bump_gate() {
   cargo semver-checks check-release -p jubarte-redlines --baseline-rev "v$prev" \
       --release-type patch --default-features \
     || die "cargo-semver-checks finds public API changes a patch cannot carry (above; docs/VERSIONING.md) — release $minor instead, or take the changes out"
-  step "$prev -> $VER is a patch: no ### Added, and cargo-semver-checks finds no API change"
+  patch_public_additions "$prev" "$minor"
+  step "$prev -> $VER is a patch: no ### Added, cargo-semver-checks finds no API change, and no public item path was added"
 }
 # The placeholder words left in the CHANGELOG section, with their line
 # numbers (whole words: TODOS is no placeholder).
@@ -1411,7 +1468,7 @@ cat <<EOF
     PyPI       jubarte-redlines $VER
     GitHub     release $TAG (release.yml builds binaries + wheels)
   Summaries ride along on every channel — verify greps them afterwards.
-  The bump kind was proven in step 0 (cargo-semver-checks); the API drift is in the log above.
+  The bump kind was proven in step 0 (cargo-semver-checks, and for a patch the added public paths); the API drift is in the log above.
 EOF
 if [ "$YES" = 0 ]; then
   read -r -p "  type 'v$VER' to confirm: " a

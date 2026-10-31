@@ -8,6 +8,8 @@
 
     scripts/api_snapshot.py [label]        label defaults to the Cargo version
     scripts/api_snapshot.py --drift PREV NEW [--private]
+    scripts/api_snapshot.py --added OLD NEW
+    scripts/api_snapshot.py --emit OUT
 
 The first form writes two artifacts, regenerated on every release:
 
@@ -29,6 +31,13 @@ two releases. The public surface comes in full, what was removed or changed
 before what was added; the crate-private rest is counted by module
 (`--private` lists it). Both sides are rebuilt from their `.json.gz`, so a
 change to the listing's format never reads as drift.
+
+`--added` prints the public item paths (surface `api`) that NEW has and OLD
+does not, one a line, and exits 1 when there is any. OLD and NEW are
+`.api.txt` listings or rustdoc JSON (plain or gzipped). A method body is
+not in the listing. `--emit` writes this tree's listing to OUT and leaves
+`docs/api/` alone, so a release gate can compare a patch without dirtying
+the tree; the labelled form still writes the snapshot.
 
 rustdoc JSON is still unstable: with a nightly toolchain present it runs
 `cargo +nightly doc`; without one it falls back to RUSTC_BOOTSTRAP=1 on the
@@ -553,6 +562,82 @@ def load_snapshot(label: str) -> list[Entry]:
         return entries(json.load(gz))
 
 
+# Kinds whose listing detail starts at a fixed separator. Anything else
+# (a module, a struct, an impl — `(impl Trait)` included) is the path.
+_COLON_DETAIL = frozenset({"struct_field", "constant", "static", "assoc_const"})
+_EQ_DETAIL = frozenset({"type_alias", "assoc_type", "use"})
+
+
+def listing_path(kind: str, rest: str) -> str:
+    """The item path in a listing line's last column.
+
+    A function's signature follows the first space (`code const (self: ...)`).
+    A field or const is `path: type`, a type alias or re-export `path = …`.
+    An impl path contains spaces (`Type::(impl Trait)`) and has no detail.
+    """
+    if kind == "function":
+        return rest.split(None, 1)[0] if rest else rest
+    if kind in _COLON_DETAIL and ": " in rest:
+        return rest.split(": ", 1)[0]
+    if kind in _EQ_DETAIL and " = " in rest:
+        return rest.split(" = ", 1)[0]
+    return rest
+
+
+def _refuse_listing(msg: str) -> None:
+    print(msg, file=sys.stderr)
+    raise SystemExit(2)
+
+
+def public_paths_of_listing(text: str, name: str) -> set[str]:
+    """Public item paths in a flattened `.api.txt` listing."""
+    paths: set[str] = set()
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        if len(parts) != 4 or parts[0] not in ("api", "internal"):
+            _refuse_listing(
+                f"{name}:{lineno}: not a listing line (surface, kind, vis, path)"
+            )
+        surface, kind, _vis, rest = parts
+        if surface == "api":
+            paths.add(listing_path(kind, rest))
+    return paths
+
+
+def public_paths_of_doc(doc: dict, name: str) -> set[str]:
+    if not isinstance(doc, dict) or "index" not in doc or "root" not in doc:
+        _refuse_listing(f"{name}: rustdoc JSON has no index and root")
+    return {e.path for e in entries(doc) if e.surface == "api"}
+
+
+def load_public_paths(path: str) -> set[str]:
+    """Public item paths from an `.api.txt` listing or rustdoc JSON."""
+    file = Path(path)
+    if not file.is_file():
+        _refuse_listing(f"no API listing {file}")
+    raw = file.read_bytes()
+    if raw.startswith(b"\x1f\x8b") or file.name.endswith(".gz"):
+        try:
+            raw = gzip.decompress(raw)
+        except gzip.BadGzipFile as exc:
+            _refuse_listing(f"{file} is not readable gzip: {exc}")
+    stripped = raw.lstrip()
+    if file.suffix == ".json" or file.name.endswith(".json.gz") or stripped.startswith(b"{"):
+        try:
+            doc = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            _refuse_listing(f"{file} is not rustdoc JSON: {exc}")
+        return public_paths_of_doc(doc, str(file))
+    return public_paths_of_listing(raw.decode(), str(file))
+
+
+def added_public_paths(old: set[str], new: set[str]) -> list[str]:
+    """Public item paths in `new` that `old` does not have, in path order."""
+    return sorted(new - old)
+
+
 def write_gz(path: Path, data: bytes) -> None:
     """Compress `data` to `path` with no timestamp in the gzip header."""
     with open(path, "wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz:
@@ -561,14 +646,23 @@ def write_gz(path: Path, data: bytes) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Write the API snapshot of a release, or show the drift between two."
+        description="Write the API snapshot of a release, show drift, or list added public paths."
     )
     parser.add_argument("label", nargs="?", help="defaults to the Cargo version")
     parser.add_argument("--drift", nargs=2, metavar=("PREV", "NEW"),
                         help="report the drift between two snapshots under docs/api/")
     parser.add_argument("--private", action="store_true",
                         help="with --drift: list the crate-private drift line by line")
+    parser.add_argument("--added", nargs=2, metavar=("OLD", "NEW"),
+                        help="print public item paths in NEW missing from OLD "
+                             "(a listing or rustdoc JSON); exit 1 if any")
+    parser.add_argument("--emit", metavar="OUT",
+                        help="write this tree's flattened listing to OUT, not docs/api")
     args = parser.parse_args(argv)
+    modes = [name for name, on in (("--drift", args.drift), ("--added", args.added),
+                                    ("--emit", args.emit)) if on]
+    if len(modes) > 1:
+        parser.error(f"choose one of {', '.join(modes)}")
 
     if args.drift:
         prev, new = args.drift
@@ -577,13 +671,26 @@ def main(argv: list[str] | None = None) -> None:
         )
         return
 
-    label = args.label or crate_version()
+    if args.added:
+        old, new = args.added
+        added = added_public_paths(load_public_paths(old), load_public_paths(new))
+        sys.stdout.write("".join(f"{path}\n" for path in added))
+        if added:
+            raise SystemExit(1)
+        return
+
     build_doc_json()
     doc = json.loads(DOC_JSON.read_text())
+    text = "\n".join(flatten(doc)) + "\n"
+    if args.emit:
+        Path(args.emit).write_text(text)
+        print(f"{args.emit} written")
+        return
 
+    label = args.label or crate_version()
     API_DIR.mkdir(parents=True, exist_ok=True)
     write_gz(API_DIR / f"jubarte-v{label}.json.gz", DOC_JSON.read_bytes())
-    (API_DIR / f"jubarte-v{label}.api.txt").write_text("\n".join(flatten(doc)) + "\n")
+    (API_DIR / f"jubarte-v{label}.api.txt").write_text(text)
     print(f"docs/api/jubarte-v{label}.json.gz + .api.txt written")
 
 

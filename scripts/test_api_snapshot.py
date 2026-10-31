@@ -400,5 +400,113 @@ class CommittedSnapshots(unittest.TestCase):
         self.assertIn("jubarte-v0.0.0.json.gz", str(raised.exception))
 
 
+def _run_added(old: Path, new: Path) -> tuple[int, str, str]:
+    out, err = io.StringIO(), io.StringIO()
+    code = 0
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            api.main(["--added", str(old), str(new)])
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 1
+    return code, out.getvalue(), err.getvalue()
+
+
+class AddedPaths(unittest.TestCase):
+    """#1758: public item paths present in NEW and absent in OLD. A method
+    body is not a path, and neither is a crate-private item."""
+
+    KEEP = "api\tfunction\tpub\tjubarte::keep ()\n"
+    ADDED = KEEP + "api\tfunction\tpub\tjubarte::something ()\n"
+
+    def test_a_new_public_free_function_is_named_and_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            old, new = Path(tmp) / "old.api.txt", Path(tmp) / "new.api.txt"
+            old.write_text(self.KEEP)
+            new.write_text(self.ADDED + "internal\tfunction\tpub(crate)\tjubarte::secret ()\n")
+            code, out, err = _run_added(old, new)
+        self.assertEqual((code, err), (1, ""), (out, err))
+        self.assertEqual(out, "jubarte::something\n")
+
+    def test_equal_listings_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "same.api.txt"
+            path.write_text(self.KEEP)
+            code, out, err = _run_added(path, path)
+        self.assertEqual((code, out, err), (0, "", ""))
+
+    def test_a_changed_signature_is_the_same_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            old, new = Path(tmp) / "old.api.txt", Path(tmp) / "new.api.txt"
+            old.write_text(self.KEEP)
+            new.write_text("api\tfunction\tpub\tjubarte::keep (x: u8)\n")
+            code, out, _err = _run_added(old, new)
+        self.assertEqual((code, out), (0, ""))
+
+    def test_listing_paths_match_the_rustdoc_public_surface(self) -> None:
+        # `(impl Clone)` contains a space. A parser that stops at the first
+        # space reports that path as added when the other side is rustdoc JSON.
+        with tempfile.TemporaryDirectory() as tmp:
+            listing, doc = Path(tmp) / "demo.api.txt", Path(tmp) / "demo.json"
+            listing.write_text("\n".join(api.flatten(demo_doc())) + "\n")
+            doc.write_text(json.dumps(demo_doc()))
+            self.assertEqual(_run_added(listing, doc)[:2], (0, ""))
+            self.assertEqual(_run_added(doc, listing)[:2], (0, ""))
+
+    def test_rustdoc_json_names_an_added_free_function(self) -> None:
+        old_doc = demo_doc()
+        new_doc = demo_doc()
+        new_doc["index"]["1"]["inner"]["module"]["items"].append(21)
+        new_doc["index"]["21"] = item(21, "something", "function", fn())
+        new_doc["paths"]["21"] = {
+            "crate_id": 0, "path": ["demo", "api", "something"], "kind": "function",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            old, new = Path(tmp) / "old.json", Path(tmp) / "new.json.gz"
+            old.write_text(json.dumps(old_doc))
+            with gzip.open(new, "wt") as gz:
+                json.dump(new_doc, gz)
+            code, out, err = _run_added(old, new)
+        self.assertEqual((code, err), (1, ""), out)
+        self.assertEqual(out, "demo::api::something\n")
+
+    def test_the_shapes_a_listing_line_can_take(self) -> None:
+        lines = [
+            "api\tfunction\tpub\tjubarte::admission::AdmissionError::code const (self: &Self) -> &'static str",
+            "api\timpl\t\tjubarte::admission::AdmissionError::(impl Clone)",
+            "api\ttype_alias\tpub\tjubarte::audit::LayoutPass = &'a mut dyn FnMut(&[u8])",
+            "api\tassoc_type\tpub\tjubarte::cli::Cli::(impl Deref)::Target = CompareArgs",
+            "api\tstruct_field\tpub\tjubarte::append::AppendError::Admission::document: &'static str",
+            "api\tuse\tpub\tjubarte::WmlDocument = wml_document::WmlDocument",
+            "internal\tfunction\tpub(crate)\tjubarte::secret ()",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            old, new = Path(tmp) / "old.api.txt", Path(tmp) / "new.api.txt"
+            old.write_text(lines[0] + "\n")
+            new.write_text("\n".join(lines) + "\n")
+            code, out, err = _run_added(old, new)
+        self.assertEqual(err, "")
+        self.assertEqual(code, 1)
+        self.assertEqual(out.splitlines(), [
+            "jubarte::WmlDocument",
+            "jubarte::admission::AdmissionError::(impl Clone)",
+            "jubarte::append::AppendError::Admission::document",
+            "jubarte::audit::LayoutPass",
+            "jubarte::cli::Cli::(impl Deref)::Target",
+        ])
+
+    def test_emit_writes_a_listing_outside_docs_api(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            built = Path(tmp) / "jubarte.json"
+            built.write_text(json.dumps(demo_doc()))
+            out = Path(tmp) / "head.api.txt"
+            with mock.patch.object(api, "build_doc_json"):
+                with mock.patch.object(api, "DOC_JSON", built):
+                    with mock.patch.object(api, "API_DIR", Path(tmp) / "api"):
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            api.main(["--emit", str(out)])
+            self.assertEqual(out.read_text().splitlines(), api.flatten(demo_doc()))
+            self.assertFalse((Path(tmp) / "api").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

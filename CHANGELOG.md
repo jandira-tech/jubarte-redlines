@@ -42,6 +42,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **A patch cannot add a public item cargo-semver-checks does not see** (#1758). `scripts/api_snapshot.py --added OLD NEW` prints each public item path in NEW that OLD does not have (an `.api.txt` listing or rustdoc JSON) and exits 1 when there is one. For a patch, `bump_gate` runs that after cargo-semver-checks. The previous release's `docs/api/jubarte-v<prev>.api.txt` is the baseline when it is the current four-column listing; otherwise the gate builds the listing at tag `v<prev>` in a throwaway worktree with this checkout's script (removed on the way out, including when the patch is refused) and compares it with a listing of HEAD. Each added path is named, and the gate says to release the next minor. A minor or a major skips the check. Equal listings pass: a method body does not change one.
+
 - **The release matrix test rejects an x86-64 build in the ARM64 binary row** (#1748). `scripts/test_release_workflow.py` checks each binaries-matrix label (`linux-x86_64`, `linux-aarch64`, `macos-x86_64`, `macos-aarch64`, `windows-x86_64`) against its Rust target triple, GitHub runner and wheel platforms. A copy of `.github/workflows/release.yml` whose `linux-aarch64` target is `x86_64-unknown-linux-gnu` fails that check.
 
 - Inline DrawingML pictures in table cells, headers, footers and horizontal text-box paragraphs now occupy atomic boxes in the text line, so adjacent text wraps around their width and height. Header/footer splices preserve breaks, field state and unbound picture height; cell alignment uses picture widths. Text boxes size to pictures, clip overflowing picture lines and restore the host paragraph's first line and picture row (#1975).
