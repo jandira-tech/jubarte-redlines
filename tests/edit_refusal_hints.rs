@@ -32,6 +32,139 @@ fn replace(find: &str, text: &str) -> Value {
     json!([{"kind":"replace","paragraph":"p0","find":find,"replacement":text}])
 }
 
+/// One logical insertion, split into two marks by formatting.
+fn incomplete_change_source() -> Vec<u8> {
+    docx(&format!(
+        r#"<w:p><w:ins w:id="10" w:author="Bob" w:date="{OLD}"><w:r><w:t xml:space="preserve">new </w:t></w:r></w:ins><w:ins w:id="11" w:author="Bob" w:date="{OLD}"><w:r><w:rPr><w:i/></w:rPr><w:t>words</w:t></w:r></w:ins></w:p>"#
+    ))
+}
+
+fn incomplete_change_flags(verb: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), incomplete_change_source()).unwrap();
+    let run = |id: &str| {
+        Command::new(env!("CARGO_BIN_EXE_jubarte"))
+            .current_dir(dir.path())
+            .args([
+                "edit",
+                "in.docx",
+                "-a",
+                "A",
+                "--datetime",
+                DATE,
+                "-p",
+                id,
+                verb,
+                "-o",
+                "out.docx",
+            ])
+            .output()
+            .unwrap()
+    };
+    let out = run("r10");
+    assert_eq!(out.status.code(), Some(3));
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    let message = stderr
+        .lines()
+        .find(|line| line.contains("INCOMPLETE_CHANGE:"))
+        .unwrap();
+    assert_eq!(
+        message,
+        format!(
+            "error: plan refused: INCOMPLETE_CHANGE: r10 is part of r10+11; name the whole change: -p r10+11 {verb}"
+        )
+    );
+    assert!(!stderr.contains("resolve_revisions:"), "{stderr}");
+    assert!(!dir.path().join("out.docx").exists());
+    let retry = run("r10+11");
+    assert!(
+        retry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&retry.stderr)
+    );
+    let output = std::fs::read(dir.path().join("out.docx")).unwrap();
+    assert!(jubarte::changes::list_changes(&output).unwrap().is_empty());
+    assert_eq!(
+        jubarte::inspect::paragraphs(&output).unwrap()[0].text,
+        if verb == "--accept" { "new words" } else { "" }
+    );
+}
+
+#[test]
+fn incomplete_change_flags_reject_names_runnable_command() {
+    incomplete_change_flags("--reject");
+}
+
+#[test]
+fn incomplete_change_flags_accept_names_runnable_command() {
+    incomplete_change_flags("--accept");
+}
+
+#[test]
+fn incomplete_change_json_plan_keeps_released_wording() {
+    for verb in ["accept", "reject"] {
+        let request = json!({"schema_version":1,"author":"A","date":DATE,
+            "existing_revisions":"keep","operations":[],
+            "resolve_revisions":{verb:{"ids":["r10"]}}});
+        let plan = EditPlan::from_json(&request.to_string()).unwrap();
+        let error = apply_plan(&incomplete_change_source(), &plan).unwrap_err();
+        assert_eq!(error.code, "INCOMPLETE_CHANGE");
+        assert_eq!(
+            error.message,
+            "resolve_revisions: r10 is part of r10+11; name the whole change (r10+11)"
+        );
+    }
+}
+
+#[test]
+fn incomplete_change_flags_strike_still_targets_one_mark() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), incomplete_change_source()).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .current_dir(dir.path())
+        .args([
+            "edit",
+            "in.docx",
+            "-a",
+            "A",
+            "--datetime",
+            DATE,
+            "-p",
+            "r10",
+            "--strike",
+            "-o",
+            "out.docx",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let output = std::fs::read(dir.path().join("out.docx")).unwrap();
+    let changes = jubarte::changes::list_changes(&output).unwrap();
+    for id in ["r10", "r11"] {
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.id == id && c.author.as_deref() == Some("Bob"))
+        );
+    }
+    let struck: Vec<_> = changes
+        .iter()
+        .filter(|c| c.kind == jubarte::changes::ChangeKind::Deletion)
+        .collect();
+    assert_eq!(struck.len(), 1);
+    assert_eq!(struck[0].text, "new ");
+    assert_eq!(struck[0].author.as_deref(), Some("A"));
+    let accepted = jubarte::changes::accept_changes(&output, &Default::default()).unwrap();
+    assert_eq!(
+        jubarte::inspect::paragraphs(&accepted).unwrap()[0].text,
+        "words"
+    );
+}
+
 #[test]
 fn deletion_hint_offers_restore_first_then_both_settles_then_comment() {
     let e = apply_plan(STEP2, &plan(replace("bankers", "brokers"))).unwrap_err();

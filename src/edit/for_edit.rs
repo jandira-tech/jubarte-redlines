@@ -1615,7 +1615,7 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
         resolved_revisions,
         changed,
         ..
-    } = settle(source, &plan, probe)?;
+    } = settle(source, &plan, probe, super::PlanSyntax::V1)?;
     let Loaded {
         stories,
         paragraph_nodes,

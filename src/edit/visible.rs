@@ -105,9 +105,11 @@ pub(super) fn lower(source: &[u8], plan: &EditPlan) -> Result<Option<EditPlan>, 
         ));
     }
     if let Some(reject) = &selection.reject {
-        crate::changes::check_whole_changes(source, reject).map_err(super::selection_error)?;
+        crate::changes::check_whole_changes(source, reject)
+            .map_err(|e| super::selection_error(e, super::PlanSyntax::V1, "reject"))?;
     }
-    let listed = crate::changes::list_changes(source).map_err(super::selection_error)?;
+    let listed = crate::changes::list_changes(source)
+        .map_err(|e| super::selection_error(e, super::PlanSyntax::V1, "reject"))?;
     let ids = super::selected_ids(&listed, selection.reject.as_ref())?;
     let mut lowered = plan.clone();
     lowered.resolve_revisions = selection

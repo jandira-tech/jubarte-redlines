@@ -29,6 +29,25 @@ impl PlanSyntax {
     /// Every syntax, for the tests that check each one's fragments.
     pub const ALL: [Self; 4] = [Self::V1, Self::Flags, Self::V2, Self::Typed];
 
+    /// A partial change selection, with the whole-change retry in the
+    /// caller's flags. Plans retain their released wording (#1895).
+    pub(super) fn incomplete_change(
+        self,
+        error: &crate::changes::ChangeError,
+        verb: &str,
+    ) -> String {
+        if let (Self::Flags, crate::changes::ChangeError::PartOfChange { named, whole, .. }) =
+            (self, error)
+        {
+            format!(
+                "{named} is part of {whole}; name the whole change: -p {} --{verb}",
+                shell_word(whole)
+            )
+        } else {
+            format!("resolve_revisions: {error}")
+        }
+    }
+
     /// Quote the occurrence selector in the caller's grammar. Plans retain
     /// #1013's released wording; one-shot flags also show every candidate.
     pub(super) fn ambiguous_anchor(
