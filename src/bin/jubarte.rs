@@ -2864,6 +2864,12 @@ fn refused(e: &jubarte::edit::EditError, file: &Path, source: &[u8]) -> (u8, Str
             if let Some(near) = &o.near {
                 m.insert("near".into(), serde_json::to_value(near).expect("near serializes"));
             }
+            if !o.candidates.is_empty() {
+                m.insert(
+                    "candidates".into(),
+                    serde_json::to_value(&o.candidates).expect("candidates serialize"),
+                );
+            }
             if let Some(c) = &o.code {
                 m.insert("code".into(), c.clone().into());
             }

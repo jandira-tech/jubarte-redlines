@@ -411,6 +411,7 @@ impl Transaction<'_> {
             anchor_given: None,
             anchor_read_as: None,
             near: None,
+            candidates: Vec::new(),
         };
         let fail =
             |code: &str, message: String| Box::new((err(code, Some(id), message), outcome.clone()));

@@ -1116,6 +1116,18 @@ impl RunSpec {
     }
 }
 
+/// A paragraph an anchor does occur in, named by the `ANCHOR_NOT_FOUND`
+/// that refused it elsewhere (#1889): the id the views print and a
+/// bounded excerpt of the paragraph's text. A suggestion to read and
+/// re-address, never a retarget (#957).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnchorCandidate {
+    /// Paragraph id as the views print it (`p53`, `header1.p1`).
+    pub at: String,
+    /// The paragraph's first words, cut with an ellipsis when longer.
+    pub ctx: String,
+}
+
 /// Outcome of one operation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditOutcome {
@@ -1149,6 +1161,10 @@ pub struct EditOutcome {
     /// Report-only whitespace occurrences when the literal anchor was refused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub near: Option<NearMatches>,
+    /// Paragraphs the anchor does occur in when the named paragraph does
+    /// not hold it (#1889); empty on every other outcome.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidates: Vec<AnchorCandidate>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Error code when failed.
     pub code: Option<String>,
@@ -1336,6 +1352,12 @@ impl EditReport {
                 map.insert(
                     "near".into(),
                     serde_json::to_value(near).expect("near serializes"),
+                );
+            }
+            if !op.candidates.is_empty() {
+                map.insert(
+                    "candidates".into(),
+                    serde_json::to_value(&op.candidates).expect("candidates serialize"),
                 );
             }
             if let Some(c) = &op.code {
@@ -3849,6 +3871,7 @@ impl<'p> Transaction<'p> {
                         anchor_given: None,
                         anchor_read_as: None,
                         near: None,
+                        candidates: Vec::new(),
                     };
                     match self.resolve_page_setup(
                         *section,
@@ -4028,6 +4051,9 @@ impl<'p> Transaction<'p> {
                     anchor_given: None,
                     anchor_read_as: None,
                     near: None,
+                    // #1889's candidates name paragraphs by the text they
+                    // hold: for a redaction that says where to find it.
+                    candidates: Vec::new(),
                     code: None,
                     message: None,
                 };
@@ -4089,6 +4115,7 @@ impl<'p> Transaction<'p> {
             anchor_given: None,
             anchor_read_as: None,
             near: None,
+            candidates: Vec::new(),
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -4166,7 +4193,19 @@ impl<'p> Transaction<'p> {
             Ok(p) => p,
             Err((code, msg, matches)) => {
                 outcome.matches = matches;
-                return Err(fail(&code, msg, outcome));
+                // #1889: a positional miss (the paragraph does not exist)
+                // names the paragraphs the operation's anchor does occur
+                // in. A text selector's miss is about the selector's own
+                // text, so it gains nothing.
+                let note = match (code.as_str(), selector, anchor_of(kind)) {
+                    (
+                        "ANCHOR_NOT_FOUND",
+                        Selector::Name(_) | Selector::Id { .. } | Selector::Index { .. },
+                        Some(anchor),
+                    ) => self.candidates_note(anchor, &mut outcome),
+                    _ => String::new(),
+                };
+                return Err(fail(&code, format!("{msg}{note}"), outcome));
             }
         };
         outcome.paragraph = Some(self.paragraph_id(para));
@@ -4462,15 +4501,30 @@ impl<'p> Transaction<'p> {
                 // A comment edits nothing: its range may cross a tab, a
                 // symbol, a hyperlink, a field or a revision.
                 let (start, end) = match find {
-                    Some(find) => locate(
-                        projection,
-                        find,
-                        *occurrence,
-                        &mut outcome,
-                        self.anchor_window.get(),
-                        self.syntax,
-                    )
-                    .map_err(|(c, m)| fail(&c, m, outcome.clone()))?,
+                    Some(find) => {
+                        let found = locate(
+                            projection,
+                            find,
+                            *occurrence,
+                            &mut outcome,
+                            self.anchor_window.get(),
+                            self.syntax,
+                        );
+                        match found {
+                            // #1889: the anchor names text the paragraph
+                            // does not hold; say where it does. Under a
+                            // comment's window the paragraph is right and
+                            // the window is wrong.
+                            Err((code, message))
+                                if code == "ANCHOR_NOT_FOUND"
+                                    && self.anchor_window.get().is_none() =>
+                            {
+                                let note = self.candidates_note(find, &mut outcome);
+                                return Err(fail(&code, format!("{message}{note}"), outcome));
+                            }
+                            other => other.map_err(|(c, m)| fail(&c, m, outcome.clone()))?,
+                        }
+                    }
                     None => {
                         outcome.matches = 1;
                         self.anchor_window
@@ -4909,6 +4963,7 @@ impl<'p> Transaction<'p> {
             anchor_given: None,
             anchor_read_as: None,
             near: None,
+            candidates: Vec::new(),
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -5157,6 +5212,7 @@ impl<'p> Transaction<'p> {
             anchor_given: None,
             anchor_read_as: None,
             near: None,
+            candidates: Vec::new(),
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -5305,6 +5361,7 @@ impl<'p> Transaction<'p> {
             anchor_given: None,
             anchor_read_as: None,
             near: None,
+            candidates: Vec::new(),
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -5681,6 +5738,56 @@ impl<'p> Transaction<'p> {
         (self.opened.body, "the body")
     }
 
+    /// Paragraphs whose text `anchor` would match ([`anchor_readings`]'s
+    /// ladder, the one `locate` uses), as [`AnchorCandidate`]s in document
+    /// order: what an `ANCHOR_NOT_FOUND` names so its reader sees where
+    /// the anchor lives (#1889). At most [`NAMED_ANCHOR_CANDIDATES`] come
+    /// back; the second return counts the rest.
+    fn anchor_candidates(&self, anchor: &str) -> (Vec<AnchorCandidate>, usize) {
+        let mut found: Vec<AnchorCandidate> = Vec::new();
+        let mut more = 0;
+        for g in 0..self.paragraph_nodes.len() {
+            let text = &self.projections[g].text;
+            if !anchor_readings(text, anchor)
+                .into_iter()
+                .any(|tries| !tries.is_empty())
+            {
+                continue;
+            }
+            if found.len() == NAMED_ANCHOR_CANDIDATES {
+                more += 1;
+            } else {
+                found.push(AnchorCandidate {
+                    at: self.paragraph_id(g),
+                    ctx: excerpt(text, ANCHOR_CANDIDATE_CHARS),
+                });
+            }
+        }
+        (found, more)
+    }
+
+    /// The `; it occurs in …` half of an anchor refusal (#1889): empty
+    /// when the anchor occurs nowhere, so #1013's released message stands
+    /// alone. Fills `outcome.candidates` for the JSON `op` event. A
+    /// suggestion only — the edit stays refused, nothing is retargeted
+    /// (#957).
+    fn candidates_note(&self, anchor: &str, outcome: &mut EditOutcome) -> String {
+        let (candidates, more) = self.anchor_candidates(anchor);
+        if candidates.is_empty() {
+            return String::new();
+        }
+        let named: Vec<String> = candidates
+            .iter()
+            .map(|c| format!("{} (\"{}\")", c.at, c.ctx))
+            .collect();
+        let mut note = format!("; it occurs in {}", named.join(", "));
+        if more > 0 {
+            note.push_str(&format!(", and {more} more"));
+        }
+        outcome.candidates = candidates;
+        note
+    }
+
     /// The unique occurrence of `find`, or its `occurrence`-th hit (1-based)
     /// when given (overlapping occurrences count), checked to lie within
     /// editable direct text.
@@ -5702,7 +5809,14 @@ impl<'p> Transaction<'p> {
             Err((code, message)) if code == "ANCHOR_NOT_FOUND" => {
                 return Err(match self.removed_anchor(projection, find) {
                     Some(hint) => ("UNSUPPORTED_STRUCTURE".into(), hint),
-                    None => (code, message),
+                    // #1889: under a comment's window the paragraph is the
+                    // right one and the window is wrong, so there is no
+                    // elsewhere to name.
+                    None if self.anchor_window.get().is_some() => (code, message),
+                    None => {
+                        let note = self.candidates_note(find, outcome);
+                        (code, format!("{message}{note}"))
+                    }
                 });
             }
             found => found?,
@@ -6501,6 +6615,7 @@ impl<'p> Transaction<'p> {
             anchor_given: None,
             anchor_read_as: None,
             near: None,
+            candidates: Vec::new(),
         };
         let fail = |code: &str, msg: &str, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -7859,6 +7974,21 @@ fn finds_text(kind: &OperationKind) -> bool {
     }
 }
 
+/// The text anchor an operation carries — `find`, or an insertion's
+/// `after`/`before` — when it has one (#1889).
+fn anchor_of(kind: &OperationKind) -> Option<&str> {
+    match kind {
+        OperationKind::Replace { find, .. }
+        | OperationKind::Delete { find, .. }
+        | OperationKind::FormatRun { find, .. }
+        | OperationKind::Redact { find, .. }
+        | OperationKind::InsertFootnote { after: find, .. } => Some(find),
+        OperationKind::Insert { after, before, .. } => after.as_deref().or(before.as_deref()),
+        OperationKind::Comment { find, .. } => find.as_deref(),
+        _ => None,
+    }
+}
+
 /// Plain text only: no control characters (tabs and breaks are not run text).
 fn check_text(text: &str) -> Result<(), String> {
     if text
@@ -8012,6 +8142,32 @@ fn new_position(edits: &[ScheduledEdit], pos: usize, inclusive: bool, own: Optio
     (pos as i64 + delta).max(0) as usize
 }
 
+/// Every way `find` reads in `text`, in the order an edit tries them
+/// (#1894): the literal first, then the anchor without its Markdown
+/// marks, then each as the text reads (a space for a non-breaking one,
+/// straight quotes for curly ones). A paragraph the same anchor would
+/// match is exactly one with a hit on some rung of this ladder (#1889).
+fn anchor_readings(text: &str, find: &str) -> Vec<Vec<(usize, usize)>> {
+    let exact = |needle: &str| -> Vec<(usize, usize)> {
+        text.char_indices()
+            .map(|(i, _)| i)
+            .filter(|&i| text[i..].starts_with(needle))
+            .map(|i| (i, i + needle.len()))
+            .collect()
+    };
+    let plain = crate::markdown::plain_anchor(find);
+    let plain = (!plain.is_empty() && plain != find).then_some(plain);
+    let mut tries = vec![exact(find)];
+    if let Some(plain) = &plain {
+        tries.push(exact(plain));
+    }
+    tries.push(anchor::reading_hits(text, find));
+    if let Some(plain) = &plain {
+        tries.push(anchor::reading_hits(text, plain));
+    }
+    tries
+}
+
 /// The unique occurrence of `find` in the paragraph, or its
 /// `occurrence`-th hit (1-based) when given (overlapping occurrences
 /// count), whatever structure it crosses.
@@ -8027,12 +8183,6 @@ fn locate(
         return Err(("INVALID_EDIT".into(), "find must be nonempty".into()));
     }
     let text = &projection.text;
-    let hits_of = |needle: &str| -> Vec<usize> {
-        text.char_indices()
-            .map(|(i, _)| i)
-            .filter(|&i| text[i..].starts_with(needle))
-            .collect()
-    };
     // Under `cN.text`, only hits inside the text the comment covers count.
     let outside = std::cell::Cell::new(false);
     let inside = |hits: Vec<(usize, usize)>| -> Vec<(usize, usize)> {
@@ -8049,39 +8199,23 @@ fn locate(
         }
         kept
     };
-    let exact = |needle: &str| -> Vec<(usize, usize)> {
-        inside(
-            hits_of(needle)
-                .into_iter()
-                .map(|i| (i, i + needle.len()))
-                .collect(),
-        )
-    };
-    let mut hits = exact(find);
     // An anchor copied out of the agent view can carry Markdown marks
     // (`# `, `**`, CriticMarkup notes) that are not document text, and
     // one typed by hand a space where the paragraph has a non-breaking
     // one, or a straight quote for a curly one: the literal is tried
-    // first, then the text without marks, then each as it reads.
-    if hits.is_empty() {
-        let plain = crate::markdown::plain_anchor(find);
-        let plain = (!plain.is_empty() && plain != find).then_some(plain);
-        let mut tries = Vec::new();
-        if let Some(plain) = &plain {
-            tries.push(exact(plain));
+    // first, then the text without marks, then each as it reads
+    // ([`anchor_readings`]).
+    let mut readings = anchor_readings(text, find).into_iter();
+    let mut hits = inside(readings.next().expect("the literal is the first try"));
+    if hits.is_empty()
+        && let Some(found) = readings.map(inside).find(|t| !t.is_empty())
+    {
+        let read_as: String = text[found[0].0..found[0].1].to_string();
+        if read_as != find {
+            outcome.anchor_given = Some(find.to_string());
+            outcome.anchor_read_as = Some(read_as);
         }
-        tries.push(inside(anchor::reading_hits(text, find)));
-        if let Some(plain) = &plain {
-            tries.push(inside(anchor::reading_hits(text, plain)));
-        }
-        if let Some(found) = tries.into_iter().find(|t| !t.is_empty()) {
-            let read_as: String = text[found[0].0..found[0].1].to_string();
-            if read_as != find {
-                outcome.anchor_given = Some(find.to_string());
-                outcome.anchor_read_as = Some(read_as);
-            }
-            hits = found;
-        }
+        hits = found;
     }
     outcome.matches = hits.len();
     let shown = anchor::shown(find);
@@ -8182,6 +8316,15 @@ fn attach_segment(
 /// How many characters of a paragraph's text a suggested `contains`
 /// selector quotes at most.
 const SELECTOR_CHARS: usize = 60;
+
+/// How many paragraphs an `ANCHOR_NOT_FOUND` names before "and N more"
+/// (#1889).
+const NAMED_ANCHOR_CANDIDATES: usize = 3;
+
+/// How many characters of a candidate paragraph's text an
+/// `ANCHOR_NOT_FOUND` quotes (#1889): the issue's own example,
+/// `p53 ("10.2. Liability Cap. To the maximum extent…")`, is 42.
+const ANCHOR_CANDIDATE_CHARS: usize = 42;
 
 /// The byte span of the words of `text` that `[start, end)` touches: out
 /// to the nearest whitespace or comparer word separator on each side, so
@@ -10126,6 +10269,7 @@ mod deeper_boundary_tests {
             anchor_given: None,
             anchor_read_as: None,
             near: None,
+            candidates: Vec::new(),
         }
     }
 
