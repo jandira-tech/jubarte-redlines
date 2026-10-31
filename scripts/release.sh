@@ -1286,7 +1286,7 @@ else
     rm -rf jubarte-wasm/cli/node_modules/jubarte-wasm
     ln -sfn ../../npm jubarte-wasm/cli/node_modules/jubarte-wasm
     python3 scripts/gen_cli_docs.py \
-      --runner node "$PWD/jubarte-wasm/cli/bin/jubarte-redlines.mjs" \
+      --runner=node "--runner=$PWD/jubarte-wasm/cli/bin/jubarte-redlines.mjs" \
       --display jubarte-redlines --file docs/javascript.md --marker cli-npm
     # The build re-resolves jubarte-wasm/Cargo.lock too; it ships in this commit.
     if [ -n "$(git status --porcelain -- jubarte-wasm/npm jubarte-wasm/Cargo.lock docs/api docs/javascript.md)" ]; then

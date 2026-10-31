@@ -216,9 +216,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--runner",
-        nargs="+",
+        action="append",
         required=True,
-        help="argv prefix that launches the CLI (e.g. `target/debug/jubarte`)",
+        metavar="WORD",
+        help="one argv word that launches the CLI; repeat once per word "
+        "(e.g. `--runner=target/debug/jubarte` or "
+        "`--runner=py --runner=-m --runner=jubarte_redlines`). "
+        "Use the `=` form for a word that starts with a dash; "
+        "`--runner PATH` stays accepted for a one-word runner",
     )
     parser.add_argument("--display", required=True, help="command name to show")
     parser.add_argument("--file", required=True, help="markdown file to update")
@@ -235,11 +240,14 @@ def main() -> None:
         help="write a one-row-per-command table instead of every --help",
     )
     args = parser.parse_args()
+    runner = [word for word in args.runner if word]
+    if not runner:
+        parser.error("--runner must name a command")
 
     if args.summary:
-        block = build_summary(args.runner, args.display)
+        block = build_summary(runner, args.display)
     else:
-        block = build_block(args.runner, args.display, args.max_depth)
+        block = build_block(runner, args.display, args.max_depth)
     with open(args.file, encoding="utf-8") as f:
         text = f.read()
     updated = replace_block(text, args.marker, block)
