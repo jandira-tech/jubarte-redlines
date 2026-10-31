@@ -576,3 +576,330 @@ fn split_grid_1913_keeps_leading_omission_widths() {
         &[(2, 0), (1, 0)],
     );
 }
+
+/// Word 16.115 round-2 matrix: identical sections, zero margins, style-only
+/// split trigger. All packages are constructed in memory, like the probes.
+fn preferred_grid_document(
+    grid: &[u32],
+    preferences: &[u32],
+    layout: &str,
+    width_type: &str,
+    width: u32,
+    original: bool,
+) -> Vec<u8> {
+    let styles = format!(
+        r#"<w:styles xmlns:w="{}"><w:style w:type="table" w:styleId="ProbeOriginal"><w:name w:val="ProbeOriginal"/></w:style><w:style w:type="table" w:styleId="ProbeRevised"><w:name w:val="ProbeRevised"/></w:style></w:styles>"#,
+        W::URI
+    );
+    let row = |text: &str| {
+        let cells: String = preferences.iter().enumerate().map(|(i, width)| {
+            format!(r#"<w:tc><w:tcPr><w:tcW w:w="{width}" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>{text} {i}</w:t></w:r></w:p></w:tc>"#)
+        }).collect();
+        format!("<w:tr>{cells}</w:tr>")
+    };
+    let style = if original {
+        "ProbeOriginal"
+    } else {
+        "ProbeRevised"
+    };
+    let rows = format!(
+        "{}{}{}",
+        row("Anchor north"),
+        if original {
+            row("DELETE amber violet")
+        } else {
+            String::new()
+        },
+        row("Anchor south")
+    );
+    let columns: String = grid
+        .iter()
+        .map(|w| format!(r#"<w:gridCol w:w="{w}"/>"#))
+        .collect();
+    common::docx::docx_with_sect_pr(
+        &format!(
+            r#"<w:p/><w:tbl><w:tblPr><w:tblStyle w:val="{style}"/><w:tblW w:w="{width}" w:type="{width_type}"/><w:tblLayout w:type="{layout}"/><w:tblCellMar><w:left w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>{columns}</w:tblGrid>{rows}</w:tbl><w:p/>"#
+        ),
+        &[common::docx::Part {
+            name: "word/styles.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+            xml: &styles,
+        }],
+        r#"<w:sectPr><w:pgSz w:w="11880" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#,
+    )
+}
+
+fn assert_preferred_grid(
+    grid: &[u32],
+    preferences: &[u32],
+    layout: &str,
+    kind: &str,
+    width: u32,
+    expected: &[u32],
+) {
+    let a = preferred_grid_document(grid, preferences, layout, kind, width, true);
+    let b = preferred_grid_document(grid, preferences, layout, kind, width, false);
+    assert_preferred_packages(&a, &b, grid, preferences, expected);
+}
+
+fn assert_preferred_packages(
+    a: &[u8],
+    b: &[u8],
+    grid: &[u32],
+    preferences: &[u32],
+    expected: &[u32],
+) {
+    let output = compare(a, b);
+    let all = tables(&output);
+    assert_eq!(row_marks(&all), ["=", "D", "="], "split prerequisites");
+    assert!(holds(&all[1].0, "DELETE amber violet"));
+    let (_, grids) = body_shape(&output);
+    let actual: Vec<u32> = grids[1].iter().map(|w| w.parse().unwrap()).collect();
+    assert_eq!(actual, expected, "#1913 layout-resolved deleted grid");
+    // Live grids and cell preferences remain authored values. Resolution is
+    // only the split deleted table's untracked geometry, not an extra edit.
+    assert_eq!(
+        grids[0],
+        grid.iter().map(u32::to_string).collect::<Vec<_>>()
+    );
+    assert_eq!(grids[2], grids[0]);
+    let pkg = PartFs::open(&output).unwrap();
+    assert!(jubarte::validate::ring1(&pkg).is_empty());
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&pkg.part_string("word/document.xml").unwrap());
+    let body = dom.element(dom.root(doc).unwrap(), &W::body()).unwrap();
+    let table = dom.elements(body, Some(&W::tbl()))[1];
+    let g = dom.element(table, &W::tbl_grid()).unwrap();
+    assert!(dom.element(g, &W::name("tblGridChange")).is_none());
+    let row = dom.elements(table, Some(&W::tr()))[0];
+    let actual: Vec<u32> = dom
+        .elements(row, Some(&W::tc()))
+        .iter()
+        .map(|&c| {
+            let pr = dom.element(c, &W::tc_pr()).unwrap();
+            let w = dom.element(pr, &W::name("tcW")).unwrap();
+            dom.attribute(w, &W::w()).unwrap().parse().unwrap()
+        })
+        .collect();
+    assert_eq!(actual, preferences, "preserve authored cell preferences");
+}
+
+macro_rules! preferred_grid_probe {
+    ($name:ident, $layout:literal, $stored:literal, $kind:literal, $width:literal, $expected:expr) => {
+        #[test]
+        fn $name() {
+            assert_preferred_grid(
+                &[$stored, $stored],
+                &[2000, 4000],
+                $layout,
+                $kind,
+                $width,
+                &$expected,
+            );
+        }
+    };
+}
+preferred_grid_probe!(
+    preferred_grid_1913_r201,
+    "autofit",
+    3000,
+    "pct",
+    5000,
+    [3000, 6000]
+);
+preferred_grid_probe!(
+    preferred_grid_1913_r202,
+    "autofit",
+    3000,
+    "dxa",
+    9000,
+    [3000, 6000]
+);
+preferred_grid_probe!(
+    preferred_grid_1913_r203,
+    "autofit",
+    3000,
+    "auto",
+    0,
+    [2000, 4000]
+);
+preferred_grid_probe!(
+    preferred_grid_1913_r204,
+    "autofit",
+    6000,
+    "pct",
+    5000,
+    [3000, 6000]
+);
+preferred_grid_probe!(
+    preferred_grid_1913_r205,
+    "autofit",
+    6000,
+    "dxa",
+    9000,
+    [3000, 6000]
+);
+preferred_grid_probe!(
+    preferred_grid_1913_r206,
+    "autofit",
+    6000,
+    "auto",
+    0,
+    [2000, 4000]
+);
+preferred_grid_probe!(
+    preferred_grid_1913_r207,
+    "fixed",
+    3000,
+    "pct",
+    5000,
+    [3000, 6000]
+);
+preferred_grid_probe!(
+    preferred_grid_1913_r208,
+    "fixed",
+    3000,
+    "dxa",
+    9000,
+    [3000, 6000]
+);
+preferred_grid_probe!(
+    preferred_grid_1913_r209,
+    "fixed",
+    3000,
+    "auto",
+    0,
+    [2000, 4000]
+);
+preferred_grid_probe!(
+    preferred_grid_1913_r210,
+    "fixed",
+    6000,
+    "pct",
+    5000,
+    [3000, 6000]
+);
+preferred_grid_probe!(
+    preferred_grid_1913_r211,
+    "fixed",
+    6000,
+    "dxa",
+    9000,
+    [3000, 6000]
+);
+preferred_grid_probe!(
+    preferred_grid_1913_r212,
+    "fixed",
+    6000,
+    "auto",
+    0,
+    [2000, 4000]
+);
+
+#[test]
+fn preferred_grid_1913_reconciles_cell_widths_at_the_same_total() {
+    let preferred = [1968, 749, 611, 613, 613, 1170, 3847];
+    assert_preferred_grid(
+        &[1966, 749, 619, 613, 613, 1170, 3841],
+        &preferred,
+        "autofit",
+        "dxa",
+        9571,
+        &preferred,
+    );
+}
+
+#[test]
+fn preferred_grid_1913_auto_can_expand_even_when_the_stored_grid_overflows() {
+    let preferred = [1424, 2835, 1353, 3608];
+    assert_preferred_grid(
+        &[1373, 2638, 1313, 3294],
+        &preferred,
+        "autofit",
+        "auto",
+        0,
+        &preferred,
+    );
+}
+
+#[test]
+fn preferred_grid_1913_explicit_cell_margins_resolve_without_table_margins() {
+    let edit = |original| {
+        let bytes = preferred_grid_document(
+            &[1373, 2638, 1313, 3294],
+            &[1424, 2835, 1353, 3608],
+            "autofit",
+            "auto",
+            0,
+            original,
+        );
+        let xml = common::docx::part_string(&bytes, "word/document.xml").unwrap()
+            .replace(r#"<w:tblCellMar><w:left w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar>"#, "")
+            .replace("</w:tcPr>", r#"<w:tcMar><w:left w:w="80" w:type="dxa"/><w:right w:w="250" w:type="dxa"/></w:tcMar></w:tcPr>"#);
+        common::docx::replace_entry(&bytes, "word/document.xml", xml.as_bytes())
+    };
+    assert_preferred_packages(
+        &edit(true),
+        &edit(false),
+        &[1373, 2638, 1313, 3294],
+        &[1424, 2835, 1353, 3608],
+        &[1424, 2835, 1353, 3608],
+    );
+}
+
+#[test]
+fn preferred_grid_1913_preserves_spacing_and_unspecified_margins() {
+    // Both shapes occur among the 55 matching grids. A tcW-only rewrite
+    // would regress 435d2c2474 and ec0b7a80fd.
+    for (from, to) in [
+        (
+            r#"<w:tblCellMar><w:left w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar>"#,
+            "",
+        ),
+        (
+            "</w:tblPr>",
+            r#"<w:tblCellSpacing w:w="14" w:type="dxa"/></w:tblPr>"#,
+        ),
+        (
+            "<w:tr>",
+            r#"<w:tr><w:trPr><w:tblCellSpacing w:w="14" w:type="dxa"/></w:trPr>"#,
+        ),
+    ] {
+        let edit = |original| {
+            let bytes = preferred_grid_document(
+                &[3000, 3000],
+                &[2000, 4000],
+                "autofit",
+                "auto",
+                0,
+                original,
+            );
+            let xml = common::docx::part_string(&bytes, "word/document.xml")
+                .unwrap()
+                .replace(from, to);
+            common::docx::replace_entry(&bytes, "word/document.xml", xml.as_bytes())
+        };
+        assert_preferred_packages(
+            &edit(true),
+            &edit(false),
+            &[3000, 3000],
+            &[2000, 4000],
+            &[3000, 3000],
+        );
+    }
+}
+
+#[test]
+fn preferred_grid_1913_does_not_guess_shrink_or_fractional_allocation() {
+    for width in [5000, 9001] {
+        assert_preferred_grid(
+            &[3000, 3000],
+            &[2000, 4000],
+            "autofit",
+            "dxa",
+            width,
+            &[3000, 3000],
+        );
+    }
+}

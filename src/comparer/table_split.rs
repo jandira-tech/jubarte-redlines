@@ -245,6 +245,9 @@ pub fn split_rows_by_table_identity(
                 rebuild_deleted_grid(dom, table, layout);
             }
             dom.add_before_self(tbl, table);
+            if deleted {
+                resolve_deleted_preferences(dom, table, layout);
+            }
         }
         dom.remove(tbl);
     }
@@ -266,9 +269,8 @@ fn grid_count(dom: &Dom, pr: Option<NodeId>, name: &str, default: usize) -> Opti
 }
 
 /// Coalesce columns at edges no cell in this deleted run uses (#1913).
-/// Widths come only from the original grid, never the revision's section or
-/// preferred tcW (which may be a percentage). Layout-resolved widths are a
-/// separate, still open part of #1913.
+/// Coalescing starts from the original grid. The separate preference pass
+/// resolves supported layouts after the split is attached to its section.
 ///
 /// Word's saved redlines have no tblGridChange on any of the 108 adjacent
 /// all-deleted tables in fix23/r47. This is the split table's own grid, not
@@ -383,6 +385,186 @@ fn rebuild_deleted_grid(dom: &mut Dom, table: NodeId, grid: NodeId) {
     }
 }
 
+/// Resolve the part of Word's layout normalization established by #1913's
+/// twelve controlled probes: agreeing positive dxa cell preferences, with
+/// an auto total or a larger declared total. This also applies to fixed
+/// tables. Keep content-dependent or underspecified layouts unchanged;
+/// notably, tcW is not a universal substitute for the stored grid.
+fn resolve_deleted_preferences(dom: &mut Dom, table: NodeId, grid: NodeId) {
+    let Some(widths) = deleted_preferred_widths(dom, table, grid) else {
+        return;
+    };
+    for (col, width) in dom
+        .elements(grid, Some(&W::grid_col()))
+        .into_iter()
+        .zip(widths)
+    {
+        dom.set_attribute_value(col, &W::w(), Some(&width.to_string()));
+    }
+}
+
+/// Explicit horizontal margins avoid guessing at style/default resolution.
+/// Spacing is a separate addition to cell widths (435d2c2474), not a margin.
+fn explicit_margins(dom: &Dom, pr: NodeId, name: &str) -> Option<(u32, u32)> {
+    let mar = dom.element(pr, &W::name(name))?;
+    let width = |side: &str| {
+        let el = dom.element(mar, &W::name(side))?;
+        (dom.attribute(el, &W::type_()) == Some("dxa"))
+            .then(|| dom.attribute(el, &W::w())?.parse().ok())?
+    };
+    Some((width("left")?, width("right")?))
+}
+
+fn deleted_preferred_widths(dom: &Dom, table: NodeId, grid: NodeId) -> Option<Vec<u32>> {
+    let columns = dom.elements(grid, Some(&W::grid_col()));
+    if columns.is_empty()
+        || columns.iter().any(|&c| {
+            dom.attribute(c, &W::w())
+                .and_then(|v| v.parse::<u32>().ok())
+                .is_none_or(|w| w == 0)
+        })
+    {
+        return None;
+    }
+    let pr = dom.element(table, &W::tbl_pr())?;
+    if dom.element(pr, &W::name("tblCellSpacing")).is_some() {
+        return None;
+    }
+    let margins = explicit_margins(dom, pr, "tblCellMar");
+    let mut preferred = None;
+    let rows = dom.elements(table, Some(&W::tr()));
+    // Wrapped or nested rows and competing preferences require a fuller
+    // layout solver. Do not silently size only a subset of the run.
+    if rows.len() != dom.descendants(table, Some(&W::tr())).len() {
+        return None;
+    }
+    for row in rows {
+        let row_pr = dom.element(row, &W::tr_pr());
+        if grid_count(dom, row_pr, "gridBefore", 0)? != 0
+            || grid_count(dom, row_pr, "gridAfter", 0)? != 0
+            || dom.element(row, &W::name("tblPrEx")).is_some_and(|ex| {
+                dom.element(ex, &W::name("tblCellSpacing")).is_some()
+                    || dom.element(ex, &W::name("tblCellMar")).is_some_and(|mar| {
+                        ["left", "right", "start", "end"]
+                            .iter()
+                            .any(|side| dom.element(mar, &W::name(side)).is_some())
+                    })
+            })
+            || row_pr.is_some_and(|rp| dom.element(rp, &W::name("tblCellSpacing")).is_some())
+        {
+            return None;
+        }
+        let cells = dom.elements(row, Some(&W::tc()));
+        if cells.len() != columns.len() {
+            return None;
+        }
+        let mut widths = Vec::new();
+        for cell in cells {
+            let cp = dom.element(cell, &W::tc_pr())?;
+            if grid_count(dom, Some(cp), "gridSpan", 1)? != 1 {
+                return None;
+            }
+            if dom.element(cp, &W::name("tcMar")).is_some() {
+                explicit_margins(dom, cp, "tcMar")?;
+            } else {
+                margins?;
+            }
+            let width = dom.element(cp, &W::name("tcW"))?;
+            if dom.attribute(width, &W::type_()) != Some("dxa") {
+                return None;
+            }
+            let width: u32 = dom.attribute(width, &W::w())?.parse().ok()?;
+            if width == 0 || width > 31_680 {
+                return None;
+            }
+            widths.push(width);
+        }
+        if preferred.as_ref().is_some_and(|p| p != &widths) {
+            return None;
+        }
+        preferred = Some(widths);
+    }
+    let preferred = preferred?;
+    let sum: u64 = preferred.iter().map(|&w| u64::from(w)).sum();
+    let tw = dom.element(pr, &W::tbl_w())?;
+    let total = match dom.attribute(tw, &W::type_())? {
+        "auto" => sum,
+        "dxa" => dom.attribute(tw, &W::w())?.parse().ok()?,
+        "pct" => {
+            // The controlled percent probes have zero margins and indent;
+            // inherited edge allowances and multi-column sections are not
+            // established by them. Nor is a nested table's available width.
+            if margins != Some((0, 0)) || dom.element(pr, &W::name("tblInd")).is_some() {
+                return None;
+            }
+            let area = split_section_width(dom, table)?;
+            let percent: u64 = dom.attribute(tw, &W::w())?.parse().ok()?;
+            let product = area.checked_mul(percent)?;
+            if product % 5000 != 0 {
+                return None;
+            }
+            product / 5000
+        }
+        _ => return None,
+    };
+    // Shrinking below preferred widths and fractional allocation depend on
+    // content/rounding not isolated by these probes. Preserve the old grid.
+    if total < sum || total > 31_680 {
+        return None;
+    }
+    preferred
+        .into_iter()
+        .map(|w| {
+            let product = u64::from(w) * total;
+            (product % sum == 0).then(|| (product / sum) as u32)
+        })
+        .collect()
+}
+
+/// The section ending after this body table, excluding revision histories
+/// and section properties inside cells. No fallback to the document's first
+/// section: the existing corpus includes changes of section width.
+fn split_section_width(dom: &Dom, table: NodeId) -> Option<u64> {
+    if !dom
+        .parent(table)
+        .is_some_and(|p| dom.name_is(p, &W::body()))
+    {
+        return None;
+    }
+    let section = dom.nodes_after_self(table).into_iter().find_map(|node| {
+        if dom.name_is(node, &W::sect_pr()) {
+            Some(node)
+        } else if dom.name_is(node, &W::p()) {
+            dom.element(node, &W::p_pr())
+                .and_then(|p| dom.element(p, &W::sect_pr()))
+        } else {
+            None
+        }
+    })?;
+    if dom.element(section, &W::name("cols")).is_some_and(|c| {
+        dom.attribute(c, &W::name("num")).is_some_and(|n| n != "1")
+            || !dom.elements(c, Some(&W::name("col"))).is_empty()
+    }) {
+        return None;
+    }
+    let size = dom.element(section, &W::name("pgSz"))?;
+    let margins = dom.element(section, &W::name("pgMar"))?;
+    let page: u64 = dom.attribute(size, &W::w())?.parse().ok()?;
+    let left: u64 = dom.attribute(margins, &W::name("left"))?.parse().ok()?;
+    let right: u64 = dom.attribute(margins, &W::name("right"))?.parse().ok()?;
+    let gutter: u64 = dom
+        .attribute(margins, &W::name("gutter"))
+        .unwrap_or("0")
+        .parse()
+        .ok()?;
+    if gutter != 0 {
+        return None;
+    }
+    page.checked_sub(left)?
+        .checked_sub(right)
+        .filter(|&w| w > 0)
+}
+
 /// Coalescing only reduces counts, so a non-default result already has a
 /// property. Update it in place to retain schema order and revision records.
 fn set_grid_count(
@@ -410,6 +592,164 @@ fn set_grid_count(
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
+
+    fn preferred_xml() -> String {
+        format!(
+            r#"<w:document xmlns:w="{}"><w:body><w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/><w:tblCellMar><w:left w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p/></w:tc><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p/></w:tc></w:tr></w:tbl><w:p/><w:sectPr><w:pgSz w:w="11880"/><w:pgMar w:left="1440" w:right="1440"/></w:sectPr></w:body></w:document>"#,
+            W::URI
+        )
+    }
+
+    fn preferred_from_xml(xml: &str) -> Option<Vec<u32>> {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let table = dom.descendants(dom.root(doc).unwrap(), Some(&W::tbl()))[0];
+        let grid = dom.element(table, &W::tbl_grid()).unwrap();
+        deleted_preferred_widths(&dom, table, grid)
+    }
+
+    #[test]
+    fn split_preferences_keep_ambiguous_or_invalid_geometry() {
+        let xml = preferred_xml();
+        assert_eq!(preferred_from_xml(&xml), Some(vec![3000, 6000]));
+        for (from, to) in [
+            (r#"<w:gridCol w:w="3000"/>"#, ""),
+            (r#"w:w="3000""#, r#"w:w="0""#),
+            (r#"w:w="3000""#, r#"w:w="bad""#),
+            (
+                "<w:tblPr>",
+                r#"<w:tblPr><w:tblCellSpacing w:w="14" w:type="dxa"/>"#,
+            ),
+            (
+                "<w:tr>",
+                r#"<w:tr><w:trPr><w:gridBefore w:val="1"/></w:trPr>"#,
+            ),
+            (
+                "<w:tr>",
+                r#"<w:tr><w:trPr><w:gridAfter w:val="1"/></w:trPr>"#,
+            ),
+            (
+                "<w:tr>",
+                r#"<w:tr><w:tblPrEx><w:tblCellSpacing w:w="14" w:type="dxa"/></w:tblPrEx>"#,
+            ),
+            (
+                "<w:tr>",
+                r#"<w:tr><w:trPr><w:tblCellSpacing w:w="14" w:type="dxa"/></w:trPr>"#,
+            ),
+            ("<w:tr>", "<w:sdt><w:sdtContent><w:tr>"),
+            ("<w:tcPr>", r#"<w:tcPr><w:gridSpan w:val="2"/>"#),
+            (r#"<w:tcW w:w="2000" w:type="dxa"/>"#, ""),
+            (
+                r#"<w:tcW w:w="2000" w:type="dxa"/>"#,
+                r#"<w:tcW w:w="0" w:type="auto"/>"#,
+            ),
+            (r#"w:w="2000""#, r#"w:w="0""#),
+            (r#"w:w="2000""#, r#"w:w="40000""#),
+            (r#"w:w="2000""#, r#"w:w="bad""#),
+            (r#"<w:tblW w:w="9000" w:type="dxa"/>"#, ""),
+            (
+                r#"<w:tblW w:w="9000" w:type="dxa"/>"#,
+                r#"<w:tblW w:w="0" w:type="nil"/>"#,
+            ),
+            (r#"w:w="9000""#, r#"w:w="5000""#),
+            (r#"w:w="9000""#, r#"w:w="40000""#),
+            (r#"w:w="9000""#, r#"w:w="9001""#),
+        ] {
+            // Close the one intentionally wrapped row before parsing.
+            let changed = xml.replace(from, to).replace(
+                "</w:tr></w:tbl>",
+                if to.contains("<w:sdt>") {
+                    "</w:tr></w:sdtContent></w:sdt></w:tbl>"
+                } else {
+                    "</w:tr></w:tbl>"
+                },
+            );
+            assert_eq!(preferred_from_xml(&changed), None, "{from} -> {to}");
+        }
+        let row = xml
+            .split("<w:tr>")
+            .nth(1)
+            .unwrap()
+            .split("</w:tr>")
+            .next()
+            .unwrap();
+        let conflicting = xml.replace(
+            "</w:tr>",
+            &format!("</w:tr><w:tr>{}</w:tr>", row.replace("2000", "2100")),
+        );
+        assert_eq!(preferred_from_xml(&conflicting), None, "conflicting rows");
+        let incomplete = xml.replace(
+            r#"<w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p/></w:tc>"#,
+            "",
+        );
+        assert_eq!(preferred_from_xml(&incomplete), None, "incomplete row");
+    }
+
+    #[test]
+    fn split_preferences_do_not_ignore_cell_or_row_margin_overrides() {
+        let xml = preferred_xml();
+        for changed in [
+            xml.replace("</w:tcPr>", r#"<w:tcMar><w:left w:w="100" w:type="dxa"/></w:tcMar></w:tcPr>"#),
+            xml.replace("<w:tr>", r#"<w:tr><w:tblPrEx><w:tblCellMar><w:left w:w="100" w:type="dxa"/></w:tblCellMar></w:tblPrEx>"#),
+        ] {
+            assert_eq!(preferred_from_xml(&changed), None, "unresolved margin overrides");
+        }
+    }
+
+    #[test]
+    fn split_preferences_percent_requires_unambiguous_section_geometry() {
+        let xml = preferred_xml().replace(
+            r#"<w:tblW w:w="9000" w:type="dxa"/>"#,
+            r#"<w:tblW w:w="5000" w:type="pct"/>"#,
+        );
+        assert_eq!(preferred_from_xml(&xml), Some(vec![3000, 6000]));
+        for (from, to) in [
+            (r#"w:w="0""#, r#"w:w="108""#),
+            (
+                "</w:tblPr>",
+                r#"<w:tblInd w:w="10" w:type="dxa"/></w:tblPr>"#,
+            ),
+            ("<w:sectPr>", r#"<w:sectPr><w:cols w:num="2"/>"#),
+            (
+                "<w:sectPr>",
+                r#"<w:sectPr><w:cols><w:col w:w="4500"/></w:cols>"#,
+            ),
+            (r#"w:left="1440""#, r#"w:gutter="100" w:left="1440""#),
+            (r#"w:w="11880""#, r#"w:w="1000""#),
+            (r#"w:w="11880""#, r#"w:w="2880""#),
+            (r#"w:w="5000""#, r#"w:w="5001""#),
+            ("<w:pgSz w:w=", "<w:unavailable w:w="),
+            ("<w:pgMar w:left=", "<w:unavailable w:left="),
+        ] {
+            assert_eq!(
+                preferred_from_xml(&xml.replace(from, to)),
+                None,
+                "{from} -> {to}"
+            );
+        }
+        let preceding = xml.replace("<w:body>", r#"<w:body><w:p><w:pPr><w:sectPr><w:pgSz w:w="20000"/><w:pgMar w:left="1000" w:right="1000"/></w:sectPr></w:pPr></w:p>"#);
+        assert_eq!(
+            preferred_from_xml(&preceding),
+            Some(vec![3000, 6000]),
+            "ignore preceding section"
+        );
+        let in_paragraph = xml
+            .replace("<w:sectPr>", "<w:p><w:pPr><w:sectPr>")
+            .replace("</w:sectPr>", "</w:sectPr></w:pPr></w:p>");
+        assert_eq!(
+            preferred_from_xml(&in_paragraph),
+            Some(vec![3000, 6000]),
+            "section-ending paragraph"
+        );
+        let detached = xml
+            .replace("<w:body>", "<w:body><w:sdt><w:sdtContent>")
+            .replace("</w:body>", "</w:sdtContent></w:sdt></w:body>");
+        assert_eq!(
+            preferred_from_xml(&detached),
+            None,
+            "unknown container width"
+        );
+    }
 
     #[test]
     fn split_grid_wrapped_cells_and_rows_do_not_absorb_nested_table_edges() {

@@ -42,6 +42,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **Split deleted tables resolve supported preferred cell widths** (#1913). Reconcile agreeing positive `dxa` cell widths in both autofit and fixed tables, including fitting stored grids; honor exact `dxa` expansion and percentage widths with explicit zero margins. Preserve live grids and cell preferences. Keep grids requiring content measurement, unknown margins, spacing, conflicting preferences or fractional allocation unchanged; full Word layout resolution remains open. Twelve constructed Word 16.115 probes establish the supported cases.
+
 - The Ring-2 release proof stages legacy source names from the bench pool, verifies renamed aliases against the rename ledger, and reports missing originals without re-blessing. Sweeps refuse baselined stems that were not run and never report their findings as fixed (#1791).
 
 - The release formatting gate checks all four Rust workspaces, including WASM, Python and in-process bindings; existing WASM formatting drift is corrected (#1760).
