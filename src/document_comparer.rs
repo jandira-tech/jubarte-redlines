@@ -8582,7 +8582,9 @@ fn repair_part_validity(dom: &mut Dom, root: NodeId, comparison: bool) {
     // CT_RunTrackChange excludes hyperlink and fldSimple wrappers. Hoist
     // only those illegal immediate children, preserving revision ownership.
     crate::comparer::finalize::hoist_hyperlinks_out_of_revisions(dom, root);
-    crate::comparer::finalize::enforce_deleted_text_kinds(dom, root);
+    if comparison {
+        crate::comparer::finalize::enforce_deleted_text_kinds(dom, root);
+    }
 }
 
 /// Formatting/default removal belongs to a comparison, never an identical exit.

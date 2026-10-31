@@ -10733,23 +10733,36 @@ fn order_property_elements(dom: &mut Dom, root: NodeId, comparison: bool) {
                     dom.remove(n);
                 }
             }
-            let mut kids: Vec<(i32, usize, NodeId)> = dom
-                .elements(el, None)
+            let children = dom.elements(el, None);
+            if !comparison {
+                // Decide whether repair is needed without canonicalizing a
+                // valid choice or an ignorable extension's position. Rank 999
+                // is NOT an extension test: tblPrChange, tcPrChange and cell
+                // revision markers have that rank too and close the sequence.
+                let valid_order = if local == "rPr" {
+                    // EG_RPrBase is a choice; only rPrChange must be last.
+                    children
+                        .iter()
+                        .map(|&c| dom.name_is(c, &W::r_pr_change()))
+                        .is_sorted()
+                } else {
+                    children
+                        .iter()
+                        .filter(|&&c| dom.name(c).is_some_and(|n| n.namespace_name() == W::URI))
+                        .map(|&c| rank(dom, &local, c))
+                        .is_sorted()
+                };
+                if valid_order {
+                    continue;
+                }
+            }
+            // Once repair is required, use the original ordering for EVERY
+            // element, including rank-999 children. Filtering any out here
+            // strands them before the sorted children appended below.
+            let mut kids: Vec<(i32, usize, NodeId)> = children
                 .into_iter()
-                // Ignorable extensions do not participate in the schema's
-                // sequence. Their position cannot invalidate that sequence.
-                .filter(|&c| comparison || rank(dom, &local, c) != 999)
                 .enumerate()
-                .map(|(i, c)| {
-                    // EG_RPrBase is a choice: b/i/font order is not a
-                    // schema error. Only its following rPrChange must be last.
-                    let order = if !comparison && local == "rPr" {
-                        i32::from(dom.name_is(c, &W::r_pr_change()))
-                    } else {
-                        rank(dom, &local, c)
-                    };
-                    (order, i, c)
-                })
+                .map(|(i, c)| (rank(dom, &local, c), i, c))
                 .collect();
             if kids.is_sorted_by_key(|(r, i, _)| (*r, *i)) {
                 continue;
@@ -10773,11 +10786,7 @@ fn order_property_elements(dom: &mut Dom, root: NodeId, comparison: bool) {
                 .iter()
                 .position(|&c| dom.name_is(c, &props.clone()))
                 .is_some_and(|first_props| {
-                    kids[..first_props].iter().any(|&c| {
-                        !dom.name_is(c, &props)
-                            && (comparison
-                                || dom.name(c).is_some_and(|n| n.namespace_name() == W::URI))
-                    })
+                    kids[..first_props].iter().any(|&c| !dom.name_is(c, &props))
                 });
             if needs_move {
                 let (front, back): (Vec<NodeId>, Vec<NodeId>) = kids
@@ -11595,9 +11604,9 @@ pub fn normalize_unit_measures(dom: &mut Dom, root: NodeId) {
 }
 
 /// Repair fractional integer measures without canonicalizing valid unit-bearing
-/// forms. Both Strict and Transitional twips types admit universal measures;
-/// CT_TblWidth additionally admits plain decimals (ST_MeasurementOrPercent).
-/// Inputs reach this pass after Strict-to-Transitional translation.
+/// forms. Inputs reach this pass after Strict-to-Transitional translation:
+/// ST_TwipsMeasure admits nonnegative decimals here, as does CT_TblWidth's
+/// ST_MeasurementOrPercent. Only ST_SignedTwipsMeasure needs plain integers.
 pub(crate) fn repair_invalid_measures(dom: &mut Dom, root: NodeId) {
     normalize_measures(dom, root, true, true);
 }
@@ -11674,32 +11683,28 @@ fn normalize_measures(
         if name.namespace_name() != W::URI {
             continue;
         }
-        let Some(attrs) = TWIPS_ATTRS
-            .iter()
-            .find(|(ln, _)| name.local_name() == *ln)
-            .map(|(_, a)| *a)
+        let Some((local, attrs)) = TWIPS_ATTRS.iter().find(|(ln, _)| name.local_name() == *ln)
         else {
             continue;
         };
-        // CT_TblWidth permits both unit-bearing and decimal spellings.
-        if validity_only
-            && matches!(
-                name.local_name(),
-                "tblW"
-                    | "tcW"
-                    | "tblInd"
-                    | "tblCellSpacing"
-                    | "top"
-                    | "bottom"
-                    | "left"
-                    | "right"
-                    | "start"
-                    | "end"
-            )
-        {
-            continue;
-        }
-        for a in attrs {
+        for a in *attrs {
+            // Transitional wml.xsd: the signed type is integer | universal
+            // measure. Unsigned twips and table widths admit decimals. Do
+            // not infer the type from a dotted spelling or the element alone
+            // (e.g. spacing/@after is decimal, spacing/@line is integer).
+            if validity_only
+                && !matches!(
+                    (*local, *a),
+                    ("pgMar", "top" | "bottom")
+                        | ("ind", "left" | "right" | "start" | "end")
+                        | ("spacing", "line" | "val")
+                        | ("tab", "pos")
+                        | ("tblpPr", "tblpX" | "tblpY")
+                        | ("framePr", "x" | "y")
+                )
+            {
+                continue;
+            }
             let an = W::name(a);
             // and_then keeps this allocation-free for the common untouched
             // case — the i64 releases the dom borrow before the mutation
@@ -15043,32 +15048,18 @@ pub fn repair_inherited_invalidity(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// Enforce the deleted-text invariant everywhere, not just on runs that happened
-/// to go through `convert_run_text_to_del_text`.
+/// Normalize deleted text throughout a produced comparison, including runs
+/// that did not go through `convert_run_text_to_del_text`.
 ///
-/// Inside `w:del`, `w:t` must be `w:delText` and `w:instrText` must be
-/// `w:delInstrText`. Word enforces this at load and offers to repair the file when
-/// it is violated; the OpenXmlValidator does **not** flag it, because `w:instrText`
-/// is schema-valid in a run no matter what the run's parent is. That blind spot is
-/// why this survived a clean Ring 2 sweep and still failed Ring 3: all five
-/// corpus documents Word refused to open carried `w:instrText` under a `w:del`,
-/// and only seven documents in the 207-pair corpus carry it at all.
+/// Word's redlines emit `delText` / `delInstrText`. This comparison cleanup
+/// was introduced after five corpus documents Word refused carried
+/// `instrText` under `del`, commonly in deleted PAGE/NUMPAGES fields. That
+/// observation does not make every live text kind under `del` schema-invalid:
+/// Transitional EG_RunInnerContent permits both live and deleted text kinds.
+/// Identical-input exits therefore preserve the source spelling.
 ///
-/// The shape comes from deleting content that contains a field — a wholly deleted
-/// header or footer with a `PAGE`/`NUMPAGES` field is the usual way — on a path
-/// that wraps existing runs in `w:del` rather than rebuilding them.
-///
-/// `w:moveFrom` is deliberately excluded: Word Compare keeps plain `w:t` inside it
-/// (see `convert_run_text_to_del_text`'s callers), so "renaming" there would
-/// introduce the very mismatch this pass exists to remove.
-/// Rename `w:t` / `w:instrText` under `w:del` to `w:delText` /
-/// `w:delInstrText`.
-///
-/// Validity, not parity: OOXML schema forbids `w:t` and
-/// `w:instrText` (field instructions) inside `w:del`; the schema
-/// validator cannot see this so it has to be enforced structurally
-/// rather than caught by Ring 2. Word's redlines always emit
-/// `delText` / `delInstrText` themselves.
+/// `w:moveFrom` is deliberately excluded: Word Compare keeps plain `w:t`
+/// inside it (see `convert_run_text_to_del_text`'s callers).
 pub fn enforce_deleted_text_kinds(dom: &mut Dom, root: NodeId) {
     fn walk(dom: &mut Dom, node: NodeId) {
         for c in dom.nodes(node) {
