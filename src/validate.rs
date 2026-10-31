@@ -56,6 +56,7 @@
 //! | `CELL_FINAL_MARK_REVISION` | no: Word opens it, but Accept All or Reject All never returns (#1669, Word 16, 2026-10-23); error diagnostic | no |
 //! | `DELETED_SECTION_PAGE_FIELD` | no: Word 16.115 crashed opening 9 of 11 such redlines (#1833, 2026-10-25); warning | no |
 //! | `INSERTED_TEXT_BEFORE_DELETED_TABLE` | no: Word 16.115 crashed opening 6 of the 16 release-sample redlines with the paragraph right before the table (#1851, 2026-10-25); warning | no |
+//! | `NON_FINITE_MEASURE` | no: `word_fatal` is the Word A/B on isolated `gridCol`, `tcW` and `tblW` probes (#1737). Word 16.115 refused the combined token and has not named the attribute, so the flag is false | no |
 //! | `UNTRACKED_EDIT`, `FOREIGN_AUTHOR`, `FOREIGN_COMMENT` | n/a | no |
 //!
 //! Revision ids are unique per OOXML record type within a part, as
@@ -209,6 +210,11 @@ pub fn traits(code: &str) -> (bool, bool) {
         | "INSTR_TEXT_INSIDE_DELETION"
         | "PARA_ID_OUT_OF_RANGE"
         | "COMMENT_RANGE_ORPHAN" => (false, true),
+        // `NON_FINITE_MEASURE` is absent here on purpose. Its
+        // `word_fatal` flag is the Word A/B on the isolated `gridCol`,
+        // `tcW` and `tblW` probes (#1737). Word 16.115 refused the
+        // combined token and has not named the attribute, so the flag
+        // stays the default false.
         _ => (false, false),
     }
 }
@@ -251,6 +257,7 @@ const RING1_CODES: [&str; 35] = [
     "CELL_FINAL_MARK_REVISION",
     "DELETED_SECTION_PAGE_FIELD",
     "INSERTED_TEXT_BEFORE_DELETED_TABLE",
+    "NON_FINITE_MEASURE",
 ];
 
 /// Why a package could not be validated at all (a finding is never an
@@ -1523,6 +1530,7 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_cell_final_marks(pkg, &mut out);
     check_deleted_section_page_fields(pkg, &mut out);
     check_inserted_text_before_deleted_tables(pkg, &mut out);
+    check_non_finite_measures(pkg, &mut out);
     out
 }
 
@@ -2322,6 +2330,54 @@ fn wordml_parts(pkg: &PartFs) -> Vec<String> {
         .into_iter()
         .filter(|name| !data.iter().any(|item| item.eq_ignore_ascii_case(name)))
         .collect()
+}
+
+/// `w:w` on `w:gridCol`, `w:tcW` and `w:tblW` when `f32`'s parser accepts
+/// the value and the value is not finite. That is `NaN`, `inf`,
+/// `infinity` (any sign and case) and a magnitude that overflows `f32`
+/// (`1e40` is `Ok(inf)`). A token the parser rejects is not this
+/// finding: `12pt` is a legal universal measure on `tblW` and `tcW`,
+/// and plain garbage such as `abc` is not already a Ring-1 code, but
+/// folding it in would report that legal measure too.
+///
+/// `word_fatal` is the Word A/B on the isolated probes (#1737). Word
+/// 16.115 refused a table that put the same token on both `gridCol` and
+/// `tcW` (`XMLParseError`, recover?). Which of `gridCol`, `tcW` and
+/// `tblW` it refuses has not been named, so the flag stays false.
+fn check_non_finite_measures(pkg: &PartFs, out: &mut Vec<Finding>) {
+    for part in wordml_parts(pkg) {
+        let Some((dom, root)) = parse_part(pkg, &part) else {
+            continue;
+        };
+        dom.for_each_descendant_element(root, None, |node| {
+            let local = if dom.name_is(node, &W::grid_col()) {
+                "gridCol"
+            } else if dom.name_is(node, &W::tc_w()) {
+                "tcW"
+            } else if dom.name_is(node, &W::tbl_w()) {
+                "tblW"
+            } else {
+                return;
+            };
+            let Some(value) = dom.attribute(node, &W::w()) else {
+                return;
+            };
+            if !f32_parses_non_finite(value) {
+                return;
+            }
+            out.push(Finding::new(
+                "NON_FINITE_MEASURE",
+                &part,
+                element_path(&dom, node),
+                format!("w:{local}/@w:w value '{value}' parses as f32 and is not finite"),
+            ));
+        });
+    }
+}
+
+/// A measure token `str::parse::<f32>` accepts that is not finite.
+fn f32_parses_non_finite(value: &str) -> bool {
+    matches!(value.parse::<f32>(), Ok(number) if !number.is_finite())
 }
 
 // ── Ring-1 checks ─────────────────────────────────────────────────────────
