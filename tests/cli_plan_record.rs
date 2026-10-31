@@ -46,14 +46,17 @@ fn plan(dir: &Path) -> serde_json::Value {
 
 #[test]
 fn occurrence_1894_replace_names_paragraphs_with_one_match_each() {
-    replace_ambiguity_1894(false, "found 4: p6, p7, p40, p120; pick one with --at pN");
+    replace_ambiguity_1894(
+        false,
+        "found 4: p6, p7, p40, p120; pick one with --at pN or --occurrence 1..=4",
+    );
 }
 
 #[test]
 fn occurrence_1894_replace_names_paragraphs_and_repeated_match_counts() {
     replace_ambiguity_1894(
         true,
-        "found 5: p6 (2), p7, p40, p120; pick one with --at pN",
+        "found 5: p6 (2), p7, p40, p120; pick one with --at pN or --occurrence 1..=5",
     );
 }
 
