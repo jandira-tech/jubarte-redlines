@@ -1419,6 +1419,42 @@ struct EditJob<'a> {
 /// per-operation report is on stdout and nothing was written.
 const EXIT_PLAN_REFUSED: u8 = 3;
 
+/// `sign the new markup with -a NAME` (#1997), naming the authors the
+/// document's markup already carries when there are any. The callers add
+/// the `AUTHOR_REQUIRED` code where their error shape prints it.
+fn author_required_message(source: &[u8]) -> String {
+    let mut message = "sign the new markup with -a NAME".to_string();
+    let authors = markup_authors(source);
+    if !authors.is_empty() {
+        let quoted = authors
+            .iter()
+            .map(|name| format!("\"{name}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        message.push_str(&format!(" (this document has markup by {quoted})"));
+    }
+    message
+}
+
+/// The distinct authors the document's tracked changes and comments name,
+/// sorted; an unsigned mark reads `<no author>`.
+fn markup_authors(source: &[u8]) -> Vec<String> {
+    let mut authors: Vec<String> = jubarte::changes::list_logical_changes(source)
+        .map(|changes| {
+            changes
+                .into_iter()
+                .map(|change| change.author.unwrap_or_else(|| "<no author>".to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Ok(comments) = jubarte::comments::list_comments(source) {
+        authors.extend(comments.iter().map(|comment| comment.author.clone()));
+    }
+    authors.sort();
+    authors.dedup();
+    authors
+}
+
 /// Exit 2: the operation flags do not describe an operation.
 const EXIT_USAGE: u8 = 2;
 
@@ -1578,6 +1614,15 @@ fn publish_edit(
         Mode::Editing => &result.clean,
     };
     let digest = jubarte::inspect::source_sha256(primary);
+    // #1997: a write that signs markup needs a spelled -a (or
+    // JUBARTE_AUTHOR). It refuses before anything is written, so the
+    // input and every output stay as they were.
+    if published_markup(job, &result, primary).is_some() && !job.author_given {
+        return Err((
+            EXIT_USAGE,
+            format!("AUTHOR_REQUIRED: {}", author_required_message(source)),
+        ));
+    }
     result.report.output_sha256 = Some(digest.clone());
     // The failed operations, as a plan bound to the document written:
     // under suggesting mode that is a redline, whose tracked changes are
@@ -1806,12 +1851,6 @@ fn publish_edit(
             listed
         )),
     }
-    if markup.is_some() && !job.author_given {
-        edit_status(format_args!(
-            "warning: no -a given; the new markup is signed \"{}\"",
-            result.report.author
-        ));
-    }
     written_status(&result, failed);
     for note in edit_notes(notes, &result, primary, source) {
         edit_status(format_args!("{note}"));
@@ -1840,7 +1879,7 @@ fn edit_envelope_exit(receipt: &jubarte::result::Envelope) -> u8 {
     if receipt
         .error
         .as_ref()
-        .is_some_and(|error| error.code == "OUTPUT_EXISTS")
+        .is_some_and(|error| matches!(error.code.as_str(), "OUTPUT_EXISTS" | "AUTHOR_REQUIRED"))
     {
         EXIT_USAGE
     } else {
@@ -2575,12 +2614,6 @@ fn write_edited(
         line.push_str(&note);
     }
     edit_status(format_args!("{line}"));
-    if markup.is_some() && !job.author_given {
-        edit_status(format_args!(
-            "warning: no -a given; the new markup is signed \"{}\"",
-            result.report.author
-        ));
-    }
     if let Some(pages) = pdf_pages {
         let pdf = path.with_extension("pdf");
         let bytes = outputs
@@ -2994,7 +3027,7 @@ fn published_markup(
         Mode::Suggesting => (result.report.revisions.total, result.report.comments_added),
         Mode::Editing => (0, comments_in_published(published, result)),
     };
-    jubarte::cli::wrote_markup_detail(changes, comments, &result.report.author, job.author_given)
+    jubarte::cli::wrote_markup_detail(changes, comments, &result.report.author)
 }
 
 /// Comments this edit wrote that `published` still holds. A deletion's

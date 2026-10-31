@@ -479,12 +479,12 @@ test("convert --to md writes the paged Markdown, as the binary does (#454)", () 
 
 test("edit --pdf writes the PDF beside the document, as the binary does (#454)", () => {
   const out = path.join(tmp, "edit-pdf.docx");
-  const r = run("edit", untracked, "-p", "p0", "--content", "Z", "-o", out, "--pdf", "--revisions", "word", "--dpi", "50");
+  const r = run("edit", untracked, "-p", "p0", "--content", "Z", "-a", "Jubarte", "-o", out, "--pdf", "--revisions", "word", "--dpi", "50");
   assert.equal(r.code, 0, r.err);
   assert.match(r.err, /wrote .*edit-pdf\.pdf \(pdf, \d+ bytes, \d+ pages?\)\n/);
   assert.ok(fs.readFileSync(path.join(tmp, "edit-pdf.pdf")).subarray(0, 4).equals(Buffer.from("%PDF")));
   const dir = path.join(tmp, "edit-pdf-bundle");
-  assert.equal(run("edit", untracked, "-p", "p0", "--content", "Z", "--out-dir", dir, "--pdf").code, 0);
+  assert.equal(run("edit", untracked, "-p", "p0", "--content", "Z", "-a", "Jubarte", "--out-dir", dir, "--pdf").code, 0);
   for (const name of ["redline.pdf", "clean.pdf"]) assert.ok(fs.existsSync(path.join(dir, name)), name);
 });
 
@@ -663,7 +663,7 @@ test("edit and add write FILE_modified.docx, as the binary does (D15)", () => {
   const word = para.text.split(" ")[0];
   const file = copy(untracked, "single.docx");
   const written = path.join(tmp, "single_modified.docx");
-  const edit = ["edit", file, "-p", `p${para.index}`, "--anchor", word, "--content", "Changed"];
+  const edit = ["edit", file, "-p", `p${para.index}`, "--anchor", word, "--content", "Changed", "-a", "Jubarte"];
   const r = run(...edit);
   assert.equal(r.code, 0, r.err);
   assert.ok(fs.existsSync(written) && !fs.existsSync(path.join(tmp, "single.edit")));
@@ -700,7 +700,7 @@ test("edit and add write FILE_modified.docx, as the binary does (D15)", () => {
   assert.ok(bundle.err.startsWith(`wrote ${path.join(tmp, "single.edit")} (`), bundle.err);
   assert.doesNotMatch(bundle.out, /\nwrote /);
   // A _modified FILE keeps its name: add edits it in place, with --force.
-  const add = ["add", written, "-p", `p${para.index}`, "--content", "New."];
+  const add = ["add", written, "-p", `p${para.index}`, "--content", "New.", "-a", "Jubarte"];
   assert.equal(run(...add).code, 2);
   const forced = run(...add, "--force");
   assert.equal(forced.code, 0, forced.err);
@@ -727,9 +727,9 @@ test("edit takes the text a comment covers (c0.text), and read names note paragr
   const file = copy(untracked, "covered.docx");
   const commented = path.join(tmp, "covered-c.docx");
   const out = path.join(tmp, "covered-out.docx");
-  const add = run("add", file, "-p", "p8", "--anchor", "Last", "--content", "Check", "-o", commented);
+  const add = run("add", file, "-p", "p8", "--anchor", "Last", "--content", "Check", "-a", "Jubarte", "-o", commented);
   assert.equal(add.code, 0, add.err);
-  const edit = run("edit", commented, "-p", "c0.text", "--content", "Final", "-o", out);
+  const edit = run("edit", commented, "-p", "c0.text", "--content", "Final", "-a", "Jubarte", "-o", out);
   assert.equal(edit.code, 0, edit.err);
   const view = run("read", out);
   assert.equal(view.code, 0, view.err);
@@ -1764,12 +1764,13 @@ test("read --for-edit usage errors as the binary", () => {
   for (const args of [
     ["read", "received-for-edit-usage.docx", "--accept-change", "r0"],
     ["read", "received-for-edit-usage.docx", "--for-edit", "-o", "fe.md"],
-    ["read", "received-for-edit-usage.docx", "--for-edit", "--json"],
   ]) {
     const r = run(...args);
     assert.equal(r.code, 2, `${args}: ${r.out} ${r.err}`);
     assert.match(r.err, /error:/);
   }
+  // --json no longer conflicts with --for-edit (#1889).
+  assert.equal(run("read", "received-for-edit-usage.docx", "--for-edit", "--json").code, 0);
 });
 
 test("changes --author keeps those authors' changes, as the binary (#1690)", { skip: !authorFilter && "the checked-in binding predates #1690" }, () => {
@@ -1989,7 +1990,7 @@ test("edit --in-place does not clobber a pdf, and a failed companion leaves the 
   const pdf = path.join(tmp, "pdf-in.pdf");
   fs.writeFileSync(pdf, "keep-pdf");
   const before = fs.readFileSync(file);
-  const refused = runInPlace({}, "edit", file, "-p", `p${index}`, "--anchor", word, "--content", "Changed", "--in-place", "--pdf");
+  const refused = runInPlace({ JUBARTE_AUTHOR: "Jubarte" }, "edit", file, "-p", `p${index}`, "--anchor", word, "--content", "Changed", "--in-place", "--pdf");
   assert.equal(refused.code, 2, refused.err);
   assert.match(refused.err, /OUTPUT_EXISTS/);
   assert.match(refused.err, /pdf-in\.pdf/);
@@ -2001,7 +2002,7 @@ test("edit --in-place does not clobber a pdf, and a failed companion leaves the 
   fs.mkdirSync(blocked);
   fs.writeFileSync(path.join(blocked, "keep"), "keep");
   const held = fs.readFileSync(companion);
-  const failed = runInPlace({}, "edit", companion, "-p", `p${index}`, "--anchor", word, "--content", "Changed", "--in-place", "--pdf", "--force");
+  const failed = runInPlace({ JUBARTE_AUTHOR: "Jubarte" }, "edit", companion, "-p", `p${index}`, "--anchor", word, "--content", "Changed", "--in-place", "--pdf", "--force");
   assert.notEqual(failed.code, 0, failed.err);
   assert.deepEqual(fs.readFileSync(companion), held, failed.err);
   assert.equal(fs.readFileSync(path.join(blocked, "keep"), "utf8"), "keep");

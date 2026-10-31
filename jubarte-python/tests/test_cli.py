@@ -772,6 +772,8 @@ def test_edit_and_add_by_flags_match_the_binary(
             "-p",
             "p0",
             "--delete",
+            "-a",
+            "Jubarte",
             "--datetime",
             "2026-10-01T09:00:00Z",
             "--out-dir",
@@ -807,6 +809,8 @@ def test_edit_and_add_by_flags_match_the_binary(
                 "# Heading",
                 "--content",
                 "**Title**",
+                "-a",
+                "Jubarte",
                 "--out-dir",
                 str(tmp_path / "n"),
             ]
@@ -867,6 +871,8 @@ def test_edit_and_add_by_flags_match_the_binary(
                 "p0",
                 "--content",
                 "Recitals",
+                "-a",
+                "Jubarte",
                 "--editing-mode",
                 "--out-dir",
                 str(tmp_path / "e"),
@@ -931,7 +937,18 @@ def test_edit_allows_another_authors_comment_unless_keep_others(
 def test_edit_and_add_write_one_document_as_the_binary(
     letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    edit = ["edit", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "an"]
+    edit = [
+        "edit",
+        str(letter),
+        "-p",
+        "p1",
+        "--anchor",
+        "his or her",
+        "--content",
+        "an",
+        "-a",
+        "Jubarte",
+    ]
     written = tmp_path / "letter_modified.docx"
     assert main(edit) == 0
     captured = capsys.readouterr()
@@ -968,7 +985,7 @@ def test_edit_and_add_write_one_document_as_the_binary(
     assert main(["edit", str(letter), "-p", "p1", "--anchor", "absent words", "--content", "x"]) == 3
     assert "absent words" in capsys.readouterr().out
     # A _modified FILE keeps its name: add edits it in place, with --force.
-    add = ["add", str(written), "-p", "p2", "--content", "New."]
+    add = ["add", str(written), "-p", "p2", "--content", "New.", "-a", "Jubarte"]
     with pytest.raises(SystemExit) as exit_info:
         main(add)
     assert exit_info.value.code == 2 and "--force" in capsys.readouterr().err
@@ -1035,17 +1052,35 @@ def test_in_place_edit_and_add_replace_the_input(
     assert not (tmp_path / "commented_modified.docx").exists()
 
 
-def test_in_place_edit_without_author_keeps_the_warning(
-    letter: Path, capsys: pytest.CaptureFixture[str]
+def test_in_place_edit_without_an_author_is_author_required(
+    letter: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    before = letter.read_bytes()
     code, _out, err = _cli(
         ["edit", str(letter), "-p", "p2", "--anchor", "3", "--content", "4", "--in-place"],
         capsys,
     )
+    assert code == 2, err
+    assert "AUTHOR_REQUIRED: sign the new markup with -a NAME" in err
+    assert letter.read_bytes() == before
+    # JUBARTE_AUTHOR counts as -a.
+    monkeypatch.setenv("JUBARTE_AUTHOR", "Trainer 1 - AgentCo")
+    code, _out, err = _cli(
+        [
+            "edit",
+            str(letter),
+            "-p",
+            "p2",
+            "--anchor",
+            "3",
+            "--content",
+            "4",
+            "--in-place",
+        ],
+        capsys,
+    )
     assert code == 0, err
-    line = err.splitlines()[0]
-    assert ': no -a given' in line and 'by "Jubarte"' in line, line
-    assert 'warning: no -a given; the new markup is signed "Jubarte"' in err
+    assert 'by "Trainer 1 - AgentCo"' in err.splitlines()[0], err
 
 
 def test_in_place_accept_and_reject_replace_the_input(
@@ -1124,6 +1159,8 @@ def test_in_place_does_not_clobber_a_pdf_without_force(
             "his or her",
             "--content",
             "their",
+            "-a",
+            "Jubarte",
             "--in-place",
             "--pdf",
         ],
@@ -1159,6 +1196,8 @@ def test_in_place_companion_failure_leaves_the_input(
             "his or her",
             "--content",
             "their",
+            "-a",
+            "Jubarte",
             "--in-place",
             "--pdf",
             "-q",
@@ -1545,7 +1584,23 @@ def tracked(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) ->
     """The letter with a tracked substitution in it."""
     path = tmp_path / "tracked.docx"
     assert (
-        main(["edit", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "their", "-o", str(path)]) == 0
+        main(
+            [
+                "edit",
+                str(letter),
+                "-p",
+                "p1",
+                "--anchor",
+                "his or her",
+                "--content",
+                "their",
+                "-a",
+                "Jubarte",
+                "-o",
+                str(path),
+            ]
+        )
+        == 0
     )
     capsys.readouterr()
     return path
@@ -1612,7 +1667,20 @@ def test_editing_mode_refuses_a_reply_on_a_paragraph_it_deletes(
     commented = tmp_path / "commented.docx"
     assert (
         main(
-            ["add", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "Gendered?", "-o", str(commented)]
+            [
+                "add",
+                str(letter),
+                "-p",
+                "p1",
+                "--anchor",
+                "his or her",
+                "--content",
+                "Gendered?",
+                "-a",
+                "Jubarte",
+                "-o",
+                str(commented),
+            ]
         )
         == 0
     )
@@ -1647,13 +1715,42 @@ def test_edit_takes_the_text_a_comment_covers(
     commented = tmp_path / "commented.docx"
     assert (
         main(
-            ["add", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "Gendered?", "-o", str(commented)]
+            [
+                "add",
+                str(letter),
+                "-p",
+                "p1",
+                "--anchor",
+                "his or her",
+                "--content",
+                "Gendered?",
+                "-a",
+                "Jubarte",
+                "-o",
+                str(commented),
+            ]
         )
         == 0
     )
     out = tmp_path / "their.docx"
     capsys.readouterr()
-    assert main(["edit", str(commented), "-p", "c0.text", "--content", "their", "-o", str(out)]) == 0
+    assert (
+        main(
+            [
+                "edit",
+                str(commented),
+                "-p",
+                "c0.text",
+                "--content",
+                "their",
+                "-a",
+                "Jubarte",
+                "-o",
+                str(out),
+            ]
+        )
+        == 0
+    )
     capsys.readouterr()
     assert main(["read", str(out)]) == 0
     # edit writes the deletion before the insertion, as typing over a
@@ -1792,16 +1889,19 @@ def test_read_for_edit_usage_errors_as_the_binary(tmp_path: Path, capsys: pytest
     shutil.copy(received, src)
 
     # The companions require --for-edit; a non-.json -o is refused, both
-    # by the shared parser before any file is read.
+    # by the shared parser before any file is read. --for-edit --json is
+    # accepted: --json no longer conflicts with --for-edit (#1889).
     for argv in (
         ["read", str(src), "--accept-change", "r0"],
         ["read", str(src), "--for-edit", "-o", str(tmp_path / "e.md")],
-        ["read", str(src), "--for-edit", "--json"],
     ):
         with pytest.raises(SystemExit) as error:
             main(argv)
         assert error.value.code == 2, argv
         assert "error:" in capsys.readouterr().err
+
+    assert main(["read", str(src), "--for-edit", "--json"]) == 0
+    capsys.readouterr()
 
 
 def test_replace_never_writes_through_a_link_at_the_staging_name(tmp_path: Path) -> None:

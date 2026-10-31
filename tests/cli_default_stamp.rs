@@ -175,7 +175,18 @@ fn edit_and_add_sign_redline_now_whatever_the_files_metadata() {
         let before = jubarte::convert::utc_now_iso8601();
         jubarte(
             d,
-            &[verb, "e.docx", "-p", "p0", "--content", content, "-o", out],
+            &[
+                verb,
+                "e.docx",
+                "-p",
+                "p0",
+                "--content",
+                content,
+                "-a",
+                "Jubarte",
+                "-o",
+                out,
+            ],
         );
         let after = jubarte::convert::utc_now_iso8601();
         let (author, date) = first_insertion(&d.join(out));

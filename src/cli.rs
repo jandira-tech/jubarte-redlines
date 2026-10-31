@@ -356,7 +356,8 @@ impl TrackArg {
 #[derive(clap::Args, Debug, Serialize)]
 pub struct EditOptions {
     /// Author of the changes and comments (operation flags; a plan names
-    /// its own).
+    /// its own). A write that adds markup needs it spelled here or in
+    /// JUBARTE_AUTHOR.
     #[arg(short = 'a', long, value_name = "NAME", default_value = "Jubarte")]
     pub author: String,
     /// Whether `-a`/`--author` was spelled on the command line (set after
@@ -864,6 +865,25 @@ fn fill_flag_operations(
         .map_err(|m| model.error(clap::error::ErrorKind::ArgumentConflict, m))?;
     options.author_given =
         sub.value_source("author") == Some(clap::parser::ValueSource::CommandLine);
+    env_author_fill(&mut options.author, &mut options.author_given)
+        .map_err(|m| model.error(clap::error::ErrorKind::ValueValidation, m))?;
+    Ok(())
+}
+
+/// `JUBARTE_AUTHOR`, set and non-empty, signs the way a spelled `-a` does
+/// (#1997). An invalid one is a usage error naming the variable.
+fn env_author_fill(author: &mut String, given: &mut bool) -> Result<(), String> {
+    if *given {
+        return Ok(());
+    }
+    let Some(name) = std::env::var("JUBARTE_AUTHOR")
+        .ok()
+        .filter(|name| !name.is_empty())
+    else {
+        return Ok(());
+    };
+    *author = parse_author(&name).map_err(|m| format!("JUBARTE_AUTHOR: {m}"))?;
+    *given = true;
     Ok(())
 }
 
@@ -1289,16 +1309,16 @@ pub enum Command {
     /// (--in-place replaces FILE; --out-dir: the bundle), then prints SUCCESS
     /// and a fenced before/after diff of the full agent views (refusal: exit 3).
     #[command(after_help = "Examples:\n  \
-        jubarte edit a.docx -p p12 --anchor \"thirty days\" --content \"forty-five days\"\n  \
-        jubarte edit a.docx -p p12 --anchor thirty --content \"thirty (30)\"   an insertion\n  \
-        jubarte edit a.docx -p p7 --anchor \"at its sole discretion\" --delete -p p9 --delete\n  \
-        jubarte edit a.docx -p p3 --content \"The parties agree as follows.\"    rewrite\n  \
-        jubarte edit a.docx -p p4 --anchor Fees --style bold -p p5 --style Heading2\n  \
-        jubarte edit a.docx -p c5 --content \"Agreed.\" -p c7 --resolve\n  \
-        jubarte edit a.docx -p c5 --reply \"Agreed, will fix.\"\n  \
-        jubarte edit a.docx -p c5.text --content \"net 30\"   the text c5 covers\n  \
+        jubarte edit a.docx -p p12 --anchor \"thirty days\" --content \"forty-five days\" -a NAME\n  \
+        jubarte edit a.docx -p p12 --anchor thirty --content \"thirty (30)\" -a NAME   an insertion\n  \
+        jubarte edit a.docx -p p7 --anchor \"at its sole discretion\" --delete -p p9 --delete -a NAME\n  \
+        jubarte edit a.docx -p p3 --content \"The parties agree as follows.\" -a NAME    rewrite\n  \
+        jubarte edit a.docx -p p4 --anchor Fees --style bold -p p5 --style Heading2 -a NAME\n  \
+        jubarte edit a.docx -p c5 --content \"Agreed.\" -p c7 --resolve -a NAME\n  \
+        jubarte edit a.docx -p c5 --reply \"Agreed, will fix.\" -a NAME\n  \
+        jubarte edit a.docx -p c5.text --content \"net 30\" -a NAME   the text c5 covers\n  \
         jubarte edit a.docx -p r3 --accept -p header1.r1 --reject\n  \
-        jubarte edit a.docx -p p3 --delete -o b.docx --pdf   b.docx and b.pdf\n  \
+        jubarte edit a.docx -p p3 --delete -o b.docx --pdf -a NAME   b.docx and b.pdf\n  \
         jubarte edit a.docx --plan plan.json --out-dir review   the bundle in review/\n  \
         jubarte edit a.docx --plan plan.json -p p3 --content \"New.\"   record into plan.json\n  \
         jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it\n\n\
@@ -1448,12 +1468,12 @@ pub enum Command {
     /// (--in-place replaces FILE), and prints SUCCESS and a fenced
     /// before/after diff of the full agent views.
     #[command(after_help = "Examples:\n  \
-        jubarte add a.docx -p p12 --content \"Time is of the essence.\"   new paragraph after p12\n  \
-        jubarte add a.docx -p p12 --content Recitals --before --style Heading2\n  \
-        jubarte add a.docx -p p5 --anchor \"monthly fee\" --content \"Net of taxes?\"   a comment\n  \
-        jubarte add a.docx -p p5 --comment --content \"Whole clause needs a cap.\"\n  \
-        jubarte add a.docx -p c5 --content \"Agreed, will fix.\"           a reply\n  \
-        jubarte add a.docx -p c5 --reply \"Agreed, will fix.\"             the same reply\n  \
+        jubarte add a.docx -p p12 --content \"Time is of the essence.\" -a NAME   new paragraph after p12\n  \
+        jubarte add a.docx -p p12 --content Recitals --before --style Heading2 -a NAME\n  \
+        jubarte add a.docx -p p5 --anchor \"monthly fee\" --content \"Net of taxes?\" -a NAME   a comment\n  \
+        jubarte add a.docx -p p5 --comment --content \"Whole clause needs a cap.\" -a NAME\n  \
+        jubarte add a.docx -p c5 --content \"Agreed, will fix.\" -a NAME           a reply\n  \
+        jubarte add a.docx -p c5 --reply \"Agreed, will fix.\" -a NAME             the same reply\n  \
         jubarte add a.docx --plan plan.json -p p5 --comment --content \"Cap?\"   record into plan.json")]
     Add {
         /// The source document (.docx). Left unchanged unless --in-place.
@@ -2300,14 +2320,11 @@ pub fn wrote_line_with(
 }
 
 /// The `; 1 change by "GiantCo"` fragment of a one-shot edit/add `wrote`
-/// line (#1891). `None` when the write added no markup.
+/// line (#1891). `None` when the write added no markup. A markup write
+/// without a spelled author refuses (#1997), so the name is always the
+/// one the caller gave.
 #[must_use]
-pub fn wrote_markup_detail(
-    changes: usize,
-    comments: usize,
-    author: &str,
-    author_given: bool,
-) -> Option<String> {
+pub fn wrote_markup_detail(changes: usize, comments: usize, author: &str) -> Option<String> {
     if changes == 0 && comments == 0 {
         return None;
     }
@@ -2322,9 +2339,6 @@ pub fn wrote_markup_detail(
         detail.push_str(&count(comments, "comment"));
     }
     detail.push_str(&format!(" by \"{author}\""));
-    if !author_given {
-        detail.push_str(": no -a given");
-    }
     Some(detail)
 }
 
@@ -3879,7 +3893,7 @@ impl Cli {
                 compare.view_given = view_given(args);
             }
             (Some(Command::TypedEdit(typed)), Some((_, args))) => {
-                mark_typed_author(typed, args);
+                mark_typed_author(typed, args, &mut command)?;
             }
             (None, _) => cli.compare.view_given = view_given(&matches),
             _ => {}
@@ -3888,17 +3902,26 @@ impl Cli {
     }
 }
 
-/// `-a` on a typed edit is explicit only when the command line spelled it.
-/// The default `"Jubarte"` is not. `edit apply` has no author flag.
-fn mark_typed_author(typed: &mut edit_actions::TypedEdit, args: &clap::ArgMatches) {
+/// `-a` on a typed edit is explicit only when the command line spelled it;
+/// `JUBARTE_AUTHOR` counts the same (#1997). The default `"Jubarte"` is
+/// not. `edit apply` has no author flag.
+fn mark_typed_author(
+    typed: &mut edit_actions::TypedEdit,
+    args: &clap::ArgMatches,
+    command: &mut clap::Command,
+) -> Result<(), clap::Error> {
     let Some((_, action)) = args.subcommand() else {
-        return;
+        return Ok(());
     };
     let given = action.try_contains_id("author").unwrap_or(false)
         && action.value_source("author") == Some(clap::parser::ValueSource::CommandLine);
-    if let Some(inline) = typed.action.inline_mut() {
-        inline.author_given = given;
-    }
+    let Some(inline) = typed.action.inline_mut() else {
+        return Ok(());
+    };
+    inline.author_given = given;
+    env_author_fill(&mut inline.author, &mut inline.author_given)
+        .map_err(|m| command.error(clap::error::ErrorKind::ValueValidation, m))?;
+    Ok(())
 }
 
 /// Whether `matches` spells out any of `read`'s options.
@@ -4240,7 +4263,7 @@ fn parse_subcommand_json(
         value["args"]["output"] = slashed(output.as_ref());
         value["args"]["out_dir"] = slashed(out_dir.as_ref());
         // `author_given` is skipped by serde. The Python executor needs it
-        // for the same `#1891` "no -a given" detail the binary prints.
+        // for the same `#1997` AUTHOR_REQUIRED refusal the binary makes.
         value["args"]["author_given"] = serde_json::Value::Bool(options.author_given);
     }
     let written = match &task {

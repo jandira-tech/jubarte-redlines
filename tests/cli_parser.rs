@@ -2172,23 +2172,19 @@ fn writer_status_lines_preserve_paths_and_pluralize_page_counts() {
 }
 
 #[test]
-fn wrote_markup_detail_names_author_counts_and_missing_flag() {
+fn wrote_markup_detail_names_author_and_counts() {
     use jubarte::cli::wrote_markup_detail;
-    assert_eq!(wrote_markup_detail(0, 0, "Jubarte", false), None);
+    assert_eq!(wrote_markup_detail(0, 0, "Jubarte"), None);
     assert_eq!(
-        wrote_markup_detail(1, 0, "GiantCo", true).as_deref(),
+        wrote_markup_detail(1, 0, "GiantCo").as_deref(),
         Some(r#"1 change by "GiantCo""#)
     );
     assert_eq!(
-        wrote_markup_detail(1, 0, "Jubarte", false).as_deref(),
-        Some(r#"1 change by "Jubarte": no -a given"#)
-    );
-    assert_eq!(
-        wrote_markup_detail(0, 1, "GiantCo", true).as_deref(),
+        wrote_markup_detail(0, 1, "GiantCo").as_deref(),
         Some(r#"1 comment by "GiantCo""#)
     );
     assert_eq!(
-        wrote_markup_detail(2, 1, "GiantCo", true).as_deref(),
+        wrote_markup_detail(2, 1, "GiantCo").as_deref(),
         Some(r#"2 changes, 1 comment by "GiantCo""#)
     );
 }

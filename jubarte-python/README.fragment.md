@@ -43,7 +43,7 @@ uvx jubarte-redlines reject redline.docx -o original-again.docx --id r12
 uvx jubarte-redlines convert redline.docx --revisions word
 uvx jubarte-redlines read contract.docx
 uvx jubarte-redlines read contract.docx --json
-uvx jubarte-redlines edit contract.docx -p p12 --anchor "thirty" --content "sixty"
+uvx jubarte-redlines edit contract.docx -p p12 --anchor "thirty" --content "sixty" -a NAME
 uvx jubarte-redlines edit contract.docx --plan plan.json --out-dir review --pdf
 uvx jubarte-redlines capabilities
 uvx jubarte-redlines --help

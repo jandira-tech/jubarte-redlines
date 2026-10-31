@@ -256,6 +256,8 @@ fn strict_text_boxes_leave_the_paragraph_ids_alone() {
             "Video provides",
             "--content",
             "Film provides",
+            "-a",
+            "Jubarte",
             "--out-dir",
             "out",
         ],
@@ -1676,6 +1678,8 @@ fn skill_distinguishes_legacy_and_typed_edit_outputs() {
         "his or her",
         "--content",
         "their",
+        "-a",
+        "Jubarte",
     ]);
     assert_eq!(code, 0, "{stderr}");
     assert!(dir.path().join("letter_modified.docx").exists());

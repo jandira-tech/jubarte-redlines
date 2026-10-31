@@ -171,7 +171,8 @@ pub struct TextPayload {
 pub struct InlineOptions {
     /// Immutable source document.
     pub file: PathBuf,
-    /// New revision and comment author.
+    /// New revision and comment author. A write that adds markup needs it
+    /// spelled here or in JUBARTE_AUTHOR.
     #[arg(short = 'a', long, default_value = "Jubarte", value_parser = super::parse_author)]
     pub author: String,
     /// Whether `-a`/`--author` was spelled on the command line (set after

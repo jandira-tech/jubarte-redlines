@@ -1117,12 +1117,13 @@ Tasks:
                 comments with ids
   edit          Edit a document: -p WHERE with --anchor, --content, --delete, --resolve,
                 --reply, --accept, --reject, --strike, --restore or --style (several -p
-                per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the
-                bundle), then prints SUCCESS and a fenced before/after diff of the full
-                agent views (refusal: exit 3)
+                per command), or a JSON plan. Writes FILE_modified.docx (--in-place
+                replaces FILE; --out-dir: the bundle), then prints SUCCESS and a fenced
+                before/after diff of the full agent views (refusal: exit 3)
   add           Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several
-                -p per command). Writes FILE_modified.docx, as edit does, and prints
-                SUCCESS and a fenced before/after diff of the full agent views
+                -p per command). Writes FILE_modified.docx, as edit does (--in-place
+                replaces FILE), and prints SUCCESS and a fenced before/after diff of the
+                full agent views
   capabilities  What this binary can do, for agents choosing an operation
   help          Print this message or the help of the given subcommand(s)
 
@@ -1380,15 +1381,18 @@ Read options:
           - off: The new edits land directly
 
       --find <TEXT>
-          --for-edit: literal search of the original final text. Combined filters
-          narrow: a paragraph must match every filter given, and an empty result names
-          the filters applied
+          Print matching body paragraphs only, with the same Markdown and id lines as
+          -p. Searches original final logical text, as --for-edit does; combined filters
+          narrow. Like -p, the view cannot select paragraphs in headers, footers,
+          footnotes, endnotes and comments. Use --for-edit for header/footer/note
+          paragraphs. No match prints nothing and reports it on stderr
 
       --regex <PATTERN>
-          --for-edit: regex search of the original final text; conflicts with --find
+          Search with a regular expression instead of literal text (view or --for-edit).
+          Give PATTERN here and omit --find
 
       --ignore-case
-          --for-edit: case-insensitive --find/--regex
+          Case-insensitive --find/--regex (view or --for-edit)
 
       --context <N>
           --for-edit: this many read-only original-source neighbours around each row
@@ -1461,13 +1465,17 @@ Every part counts: the body, headers, footers, notes and comment bodies. An auth
 kind selection reaches comment bodies too, but no ID names a comment-body change, so an
 ID selection leaves those tracked.
 
-Usage: jubarte-redlines accept [OPTIONS] --output <FILE> <FILE>
+Usage: jubarte-redlines accept [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
           The document (.docx) whose revisions to accept
 
 Options:
+      --in-place
+          Replace FILE through the same atomic write as -o. A refused resolution leaves
+          FILE unchanged. Not with -o
+
   -o, --output <FILE>
           Output path; its extension picks the format: .docx (also any other), .md (the
           agent view), .pdf, .png (one file per page) or .json (the snapshot)
@@ -1556,13 +1564,17 @@ Every part counts: the body, headers, footers, notes and comment bodies. An auth
 kind selection reaches comment bodies too, but no ID names a comment-body change, so an
 ID selection leaves those tracked.
 
-Usage: jubarte-redlines reject [OPTIONS] --output <FILE> <FILE>
+Usage: jubarte-redlines reject [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
           The document (.docx) whose revisions to reject
 
 Options:
+      --in-place
+          Replace FILE through the same atomic write as -o. A refused resolution leaves
+          FILE unchanged. Not with -o
+
   -o, --output <FILE>
           Output path; its extension picks the format: .docx (also any other), .md (the
           agent view), .pdf, .png (one file per page) or .json (the snapshot)
@@ -2105,15 +2117,18 @@ Read options:
           - off: The new edits land directly
 
       --find <TEXT>
-          --for-edit: literal search of the original final text. Combined filters
-          narrow: a paragraph must match every filter given, and an empty result names
-          the filters applied
+          Print matching body paragraphs only, with the same Markdown and id lines as
+          -p. Searches original final logical text, as --for-edit does; combined filters
+          narrow. Like -p, the view cannot select paragraphs in headers, footers,
+          footnotes, endnotes and comments. Use --for-edit for header/footer/note
+          paragraphs. No match prints nothing and reports it on stderr
 
       --regex <PATTERN>
-          --for-edit: regex search of the original final text; conflicts with --find
+          Search with a regular expression instead of literal text (view or --for-edit).
+          Give PATTERN here and omit --find
 
       --ignore-case
-          --for-edit: case-insensitive --find/--regex
+          Case-insensitive --find/--regex (view or --for-edit)
 
       --context <N>
           --for-edit: this many read-only original-source neighbours around each row
@@ -2139,14 +2154,14 @@ Read options:
 $ jubarte-redlines edit --help
 Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply,
 --accept, --reject, --strike, --restore or --style (several -p per command), or a JSON
-plan. Writes FILE_modified.docx (--out-dir: the bundle), then prints SUCCESS and a
-fenced before/after diff of the full agent views (refusal: exit 3)
+plan. Writes FILE_modified.docx (--in-place replaces FILE; --out-dir: the bundle), then
+prints SUCCESS and a fenced before/after diff of the full agent views (refusal: exit 3)
 
 Usage: jubarte-redlines edit [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
-          The source document (.docx). Never modified
+          The source document (.docx). Left unchanged unless --in-place
 
 Options:
       --plan [<PLAN.json>]
@@ -2165,7 +2180,11 @@ Options:
           --restore). Each -p starts an operation; the flags after it belong to it
 
       --anchor <TEXT>
-          Text inside WHERE the operation applies to (must occur once)
+          Text inside WHERE the operation applies to (must occur once, unless
+          --occurrence picks a match)
+
+      --occurrence <N>
+          Pick the Nth anchor match (1-based), after --anchor in this -p group
 
       --content <TEXT>
           New text: replaces the anchor; rewrites the paragraph without one; on c5, the
@@ -2180,11 +2199,11 @@ Options:
       --reply <TEXT>
           Reply to comment c5 (with -p c5), as `add -p c5 --content`
 
-      --rewrite-others-comments
-          Let `-p c5 --content`, `--delete` and `--resolve` change a comment another
-          author wrote (a reworded one keeps their name), and `--delete` take their
-          reply with your thread. Without it that is refused (COMMENT_NOT_YOURS): one
-          author answers another with --reply
+      --keep-others
+          Refuse to accept or reject another author's tracked change, and to delete,
+          resolve, reopen or reword their comment. Restore, strike, a comment and a
+          reply stay allowed. JUBARTE_KEEP_OTHERS=1 sets the same guard. Another author
+          is anyone other than --author (Jubarte when --author is left out)
 
       --accept
           Accept revision r12 (with -p r12; r1+2 for several); prints the resolved
@@ -2215,7 +2234,8 @@ Options:
           paragraph style (Heading2)
 
   -a, --author <NAME>
-          Author of the changes and comments (operation flags; a plan names its own)
+          Author of the changes and comments (operation flags; a plan names its own). A
+          write that adds markup needs it spelled here or in JUBARTE_AUTHOR
 
           [default: Jubarte]
 
@@ -2231,6 +2251,14 @@ Options:
           The edits land directly: the file written is the result, and the view shows it
           with rev tags on the id lines
 
+  -q, --quiet
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print. `read`, `changes` and `comments` drop their stderr validity
+          status (JSON under `changes --json` and `comments --json`). `read --json` and
+          `read --for-edit` keep validity counts in their output, -q or not
+
       --existing-revisions <MODE>
           What to do when FILE already holds tracked changes: auto keeps them and tracks
           the new edits beside them; a clean file goes through the comparer
@@ -2244,18 +2272,14 @@ Options:
 
           [default: auto]
 
+      --in-place
+          Replace FILE through the same atomic write as -o. A refused edit or a failed
+          check leaves FILE unchanged. Not with -o or --out-dir
+
   -o, --output <FILE.docx>
           The edited document, a .docx (default: `<FILE's
           directory>/<stem>_modified.docx`). Any other extension is written as a .docx
           too; .md, .json, .pdf and .png name the task that writes them
-
-  -q, --quiet
-          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
-          are still written; a reading task (`read`, `changes`, `compare` without -o,
-          `diff`, `capabilities`) still prints what it read, and warnings and errors
-          still print. `read`, `changes` and `comments` drop their stderr validity
-          status (JSON under `changes --json` and `comments --json`). `read --json` and
-          `read --for-edit` keep validity counts in their output, -q or not
 
       --out-dir [<DIR>]
           Write the bundle instead: clean.docx, redline.docx, patch.diff and
@@ -2310,16 +2334,18 @@ Revision marks:
           Marks for --revisions custom (see `convert --help`)
 
 Examples:
-  jubarte edit a.docx -p p12 --anchor "thirty days" --content "forty-five days"
-  jubarte edit a.docx -p p12 --anchor thirty --content "thirty (30)"   an insertion
-  jubarte edit a.docx -p p7 --anchor "at its sole discretion" --delete -p p9 --delete
-  jubarte edit a.docx -p p3 --content "The parties agree as follows."    rewrite
-  jubarte edit a.docx -p p4 --anchor Fees --style bold -p p5 --style Heading2
-  jubarte edit a.docx -p c5 --content "Agreed." -p c7 --resolve
-  jubarte edit a.docx -p c5 --reply "Agreed, will fix."
-  jubarte edit a.docx -p c5.text --content "net 30"   the text c5 covers
+  jubarte edit a.docx -p p12 --anchor "thirty days" --content "forty-five days" -a NAME
+  jubarte edit a.docx -p p12 --anchor thirty --content "thirty (30)" -a NAME   an
+  insertion
+  jubarte edit a.docx -p p7 --anchor "at its sole discretion" --delete -p p9 --delete -a
+  NAME
+  jubarte edit a.docx -p p3 --content "The parties agree as follows." -a NAME    rewrite
+  jubarte edit a.docx -p p4 --anchor Fees --style bold -p p5 --style Heading2 -a NAME
+  jubarte edit a.docx -p c5 --content "Agreed." -p c7 --resolve -a NAME
+  jubarte edit a.docx -p c5 --reply "Agreed, will fix." -a NAME
+  jubarte edit a.docx -p c5.text --content "net 30" -a NAME   the text c5 covers
   jubarte edit a.docx -p r3 --accept -p header1.r1 --reject
-  jubarte edit a.docx -p p3 --delete -o b.docx --pdf   b.docx and b.pdf
+  jubarte edit a.docx -p p3 --delete -o b.docx --pdf -a NAME   b.docx and b.pdf
   jubarte edit a.docx --plan plan.json --out-dir review   the bundle in review/
   jubarte edit a.docx --plan plan.json -p p3 --content "New."   record into plan.json
   jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it
@@ -2357,14 +2383,14 @@ Routing: valid legacy calls, including `edit replace -p p0 --content TEXT`,
 ```text
 $ jubarte-redlines add --help
 Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command).
-Writes FILE_modified.docx, as edit does, and prints SUCCESS and a fenced before/after
-diff of the full agent views
+Writes FILE_modified.docx, as edit does (--in-place replaces FILE), and prints SUCCESS
+and a fenced before/after diff of the full agent views
 
 Usage: jubarte-redlines add [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
-          The source document (.docx). Never modified
+          The source document (.docx). Left unchanged unless --in-place
 
 Options:
       --plan [<PLAN.json>]
@@ -2381,13 +2407,24 @@ Options:
           starts an operation; the flags after it belong to it
 
       --anchor <TEXT>
-          Text inside WHERE to comment on (must occur once)
+          Text inside WHERE to comment on (must occur once, unless --occurrence picks a
+          match)
+
+      --occurrence <N>
+          Pick the Nth anchor match (1-based), after --anchor in this -p group
 
       --content <TEXT>
           The paragraph, comment or reply text
 
       --reply <TEXT>
           Reply to comment c5 (with -p c5); the same as --content there
+
+      --keep-others
+          Refuse to accept or reject another author's tracked change, and to delete,
+          resolve, reopen or reword their comment, when this command applies or records
+          a plan. Restore, strike, a comment and a reply stay allowed.
+          JUBARTE_KEEP_OTHERS=1 sets the same guard. Another author is anyone other than
+          --author (Jubarte when --author is left out)
 
       --before
           A new paragraph before WHERE instead of after it
@@ -2401,7 +2438,8 @@ Options:
           highlight=yellow) or its paragraph style (Heading2)
 
   -a, --author <NAME>
-          Author of the changes and comments (operation flags; a plan names its own)
+          Author of the changes and comments (operation flags; a plan names its own). A
+          write that adds markup needs it spelled here or in JUBARTE_AUTHOR
 
           [default: Jubarte]
 
@@ -2430,6 +2468,10 @@ Options:
 
           [default: auto]
 
+      --in-place
+          Replace FILE through the same atomic write as -o. A refused edit or a failed
+          check leaves FILE unchanged. Not with -o or --out-dir
+
   -o, --output <FILE.docx>
           The edited document, a .docx (default: `<FILE's
           directory>/<stem>_modified.docx`). Any other extension is written as a .docx
@@ -2455,13 +2497,15 @@ Options:
           Print help (see a summary with '-h')
 
 Examples:
-  jubarte add a.docx -p p12 --content "Time is of the essence."   new paragraph after
-  p12
-  jubarte add a.docx -p p12 --content Recitals --before --style Heading2
-  jubarte add a.docx -p p5 --anchor "monthly fee" --content "Net of taxes?"   a comment
-  jubarte add a.docx -p p5 --comment --content "Whole clause needs a cap."
-  jubarte add a.docx -p c5 --content "Agreed, will fix."           a reply
-  jubarte add a.docx -p c5 --reply "Agreed, will fix."             the same reply
+  jubarte add a.docx -p p12 --content "Time is of the essence." -a NAME   new paragraph
+  after p12
+  jubarte add a.docx -p p12 --content Recitals --before --style Heading2 -a NAME
+  jubarte add a.docx -p p5 --anchor "monthly fee" --content "Net of taxes?" -a NAME   a
+  comment
+  jubarte add a.docx -p p5 --comment --content "Whole clause needs a cap." -a NAME
+  jubarte add a.docx -p c5 --content "Agreed, will fix." -a NAME           a reply
+  jubarte add a.docx -p c5 --reply "Agreed, will fix." -a NAME             the same
+  reply
   jubarte add a.docx --plan plan.json -p p5 --comment --content "Cap?"   record into
   plan.json
 ```

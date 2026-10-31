@@ -616,16 +616,38 @@ def _wrote(args: argparse.Namespace, path: Path, format: str, size: int, pages: 
 
 
 def _author_was_given(args: argparse.Namespace) -> bool:
-    """Whether ``-a`` was spelled. Applying a plan treats its author as explicit."""
+    """Whether ``-a`` was spelled (JUBARTE_AUTHOR counts, the parser says
+    so). Applying a plan treats its author as explicit."""
     return bool(getattr(args, "author_given", False)) or getattr(args, "plan", None) is not None
+
+
+def _markup_authors(docx: bytes) -> list[str]:
+    """The distinct authors the document's tracked changes and comments
+    name, sorted; an unsigned mark reads ``<no author>``."""
+    from . import _native
+
+    authors: set[str] = set()
+    try:
+        for change in json.loads(_native.list_changes_json(docx)):
+            authors.add(change.get("author") or "<no author>")
+    except (json.JSONDecodeError, _native.JubarteError, TypeError, AttributeError):
+        pass
+    try:
+        for comment in json.loads(_native.list_comments_json(docx)):
+            authors.add(comment.get("author") or "<no author>")
+    except (json.JSONDecodeError, _native.JubarteError, TypeError, AttributeError):
+        pass
+    return sorted(authors)
 
 
 def _count_words(n: int, word: str) -> str:
     return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
 
-def _markup_detail(changes: int, comments: int, author: str, author_given: bool) -> str | None:
-    """The ``; 1 change by "GiantCo"`` fragment (#1891). ``None`` when nothing was signed."""
+def _markup_detail(changes: int, comments: int, author: str) -> str | None:
+    """The ``; 1 change by "GiantCo"`` fragment (#1891). ``None`` when nothing was
+    signed. A markup write without a spelled author refuses (#1997), so the
+    name is always the one the caller gave."""
     if changes == 0 and comments == 0:
         return None
     parts: list[str] = []
@@ -633,10 +655,7 @@ def _markup_detail(changes: int, comments: int, author: str, author_given: bool)
         parts.append(_count_words(changes, "change"))
     if comments > 0:
         parts.append(_count_words(comments, "comment"))
-    detail = ", ".join(parts) + f' by "{author}"'
-    if not author_given:
-        detail += ": no -a given"
-    return detail
+    return ", ".join(parts) + f' by "{author}"'
 
 
 def _comments_still_published(published: bytes, result: EditResult) -> int:
@@ -659,7 +678,7 @@ def _published_markup(args: argparse.Namespace, result: EditResult, published: b
         changes, comments = 0, _comments_still_published(published, result)
     else:
         changes, comments = result.report.revisions.total, result.report.comments_added
-    return _markup_detail(changes, comments, result.report.author, _author_was_given(args))
+    return _markup_detail(changes, comments, result.report.author)
 
 
 def _in_place_line(path: str, original: bytes, detail: str | None) -> str:
@@ -808,6 +827,14 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
     # document (FILE_modified.docx by default), ``out_dir`` for the bundle.
     out_dir: Path | None = args.out_dir
     source_bytes = doc.to_bytes()
+    # #1997: a write that signs markup needs a spelled -a (or
+    # JUBARTE_AUTHOR). It refuses before anything is written.
+    published = result.clean.to_bytes() if editing else result.redline.to_bytes()
+    if _published_markup(args, result, published) is not None and not _author_was_given(args):
+        authors = _markup_authors(source_bytes)
+        named = f' (this document has markup by {", ".join(json.dumps(a) for a in authors)})' if authors else ""
+        _error(f"AUTHOR_REQUIRED: sign the new markup with -a NAME{named}", EXIT_USAGE)
+        raise SystemExit(EXIT_USAGE)
     parsed = json.loads(plan_text)
     if out_dir is None:
         return _write_edited(args, args.output, result, notes, source_bytes, parsed)
@@ -1034,11 +1061,6 @@ def _write_edited(
         detail = _published_markup(args, result, document)
         sys.stdout.flush()
         print(_in_place_line(_spelled(args, "file"), original, detail), file=sys.stderr)
-        if detail is not None and not _author_was_given(args):
-            print(
-                f'warning: no -a given; the new markup is signed "{result.report.author}"',
-                file=sys.stderr,
-            )
     else:
         print(f"wrote {path} (docx, {len(document)} bytes)", file=sys.stderr)
     if pages is not None:
