@@ -453,6 +453,119 @@ class AppStep(unittest.TestCase):
         self.assertIn("/jubarte-app/", (HERE.parent / ".gitignore").read_text().splitlines())
 
 
+# stub cargo for the app gate: records the call, the directory it ran in
+# and what its `../..` (the engine beside the app) holds; $CARGO_RC is its
+# exit status.
+CARGO_APP_STUB = r"""#!/bin/bash
+echo "cargo $*" >> "$CALLS"
+pwd > "$CALLS.cwd"
+ls ../.. > "$CALLS.layout"
+exit "${CARGO_RC:-0}"
+"""
+
+
+class AppGate(unittest.TestCase):
+    """#1816: 0.14.0 was tagged and published before anything compiled the
+    app against the released engine — the checklist row was a [you] reminder
+    and the app's own CI was red. Before step 4 the release now runs the
+    app's own `cargo test --locked` in the layout the app consumes the engine
+    in — the engine at HEAD with the app at jubarte-app/ inside it, so
+    src-tauri's `path = "../.."` resolves to it — and a compile error or a
+    failing test stops the release before the tag."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="appgate-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        (self.tmp / "bin").mkdir()
+        (self.tmp / "bin" / "cargo").write_text(CARGO_APP_STUB)
+        (self.tmp / "bin" / "cargo").chmod(0o755)
+        self.calls = self.tmp / "calls"
+        self.engine = self.repo("engine", {
+            "Cargo.toml": '[package]\nname = "jubarte-redlines"\nversion = "0.14.0"\n',
+        })
+        # the bump is uncommitted from step 1 to step 8: not in HEAD
+        (self.engine / "uncommitted").write_text("the bump is not in HEAD\n")
+        self.app = self.repo("app", {
+            "src-tauri/Cargo.toml":
+                '[dependencies]\njubarte = { package = "jubarte-redlines", path = "../.." }\n',
+            "src-tauri/Cargo.lock": "# the app's lock\n",
+        })
+
+    def repo(self, name: str, files: dict[str, str]) -> Path:
+        repo = self.tmp / name
+        repo.mkdir()
+        git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*git, "init", "-q", "-b", "main"], check=True)
+        for rel, text in files.items():
+            path = repo / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        subprocess.run([*git, "add", "."], check=True)
+        subprocess.run([*git, "commit", "-q", "-m", name], check=True)
+        return repo
+
+    def gate(self, **env: str) -> subprocess.CompletedProcess[str]:
+        script = (
+            "set -euo pipefail\n"
+            'step() { echo "  - $*"; }\ndie() { echo "ERROR: $*" >&2; exit 1; }\n'
+            f"APP_REPO={self.app}\n"
+            f'{shell_functions("app_test_gate")}\napp_test_gate\n'
+        )
+        full = dict(os.environ, PATH=f"{self.tmp / 'bin'}:{os.environ['PATH']}",
+                    CALLS=str(self.calls), **env)
+        return subprocess.run(["bash", "-c", script], cwd=self.engine, env=full,
+                              capture_output=True, text=True, timeout=60)
+
+    def test_a_failing_cargo_test_stops_the_release_before_step_4(self) -> None:
+        r = self.gate(CARGO_RC="1")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("cargo test --locked", r.stderr)
+        # and its call site sits between steps 3 and 4, before the tag (8)
+        text = RELEASE_SH.read_text()
+        call = re.search(r"^\s+app_test_gate$", text, re.M)
+        self.assertIsNotNone(call, "release.sh never calls app_test_gate")
+        self.assertLess(text.index('say "3. '), call.start())
+        self.assertLess(call.start(), text.index('say "4. '))
+
+    def test_a_passing_cargo_test_continues_the_release(self) -> None:
+        r = self.gate()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("cargo test --locked", self.calls.read_text())
+        cwd = Path(str(self.calls) + ".cwd").read_text().strip()
+        self.assertTrue(cwd.endswith("jubarte-app/src-tauri"), cwd)
+        # `../..` is the fresh engine at HEAD — its manifest, and the app
+        # inside it — never the release worktree's uncommitted bump
+        layout = Path(str(self.calls) + ".layout").read_text().split()
+        self.assertIn("Cargo.toml", layout)
+        self.assertIn("jubarte-app", layout)
+        self.assertNotIn("uncommitted", layout)
+
+    def test_the_gate_is_skipped_only_like_the_other_gates(self) -> None:
+        text = RELEASE_SH.read_text()
+        call = re.search(r"^\s+app_test_gate$", text, re.M).start()
+        gate = text[call - 400:call]
+        self.assertIn('[ "$SKIP_GATES" = 0 ]', gate)
+        self.assertNotIn("--skip-app", text)
+        self.assertNotIn("SKIP_APP", text)
+
+    def test_a_tagged_release_is_not_gated_again(self) -> None:
+        # a resumed run keeps its tag; the app's lock on main names the
+        # previous engine, so --locked would refuse the bumped manifest
+        text = RELEASE_SH.read_text()
+        call = re.search(r"^\s+app_test_gate$", text, re.M).start()
+        gate = text[call - 400:call]
+        self.assertIn('refs/tags/$TAG', gate)
+
+    def test_the_checklist_row_is_a_gate_not_a_reminder(self) -> None:
+        rows = [line.split("|") for line in checklist_block().splitlines()
+                if line.count("|") == 3 and "cargo test --locked" in line]
+        self.assertEqual(len(rows), 1, rows)
+        phase, mark, item, _proof = rows[0]
+        self.assertEqual(mark, "auto")
+        self.assertIn("app-at-main", item)
+        self.assertIn("src-tauri", item)
+
+
 class PushMain(unittest.TestCase):
     """scripts/push_main.sh against a real origin: one that takes a direct
     push, and one whose main takes changes only through a pull request (a

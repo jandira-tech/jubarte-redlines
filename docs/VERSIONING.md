@@ -217,6 +217,23 @@ without one the columns are format-checked only, and the script says so.
 The files ship in the release commit. The app repository's
 `scripts/release-engine.sh` prints these commands in its Benchmark section.
 
+### The app gate (between steps 3 and 4)
+
+0.14.0 shipped before anything compiled the app against the released
+engine — the checklist row was a reminder, not a gate, and the app's own
+CI was red (#1816). The release now proves the app's own tests before the
+tag: `app_test_gate` lays out a fresh `engine/jubarte-app` pair in a
+`mktemp -d` — `git archive HEAD` of this checkout, then of the app's — so
+`src-tauri`'s `path = "../.."` dependency resolves to the engine at HEAD,
+and runs `cargo test --locked` there. A compile error or a failing test
+stops the release before the summaries, the tag and every publish; a
+failed gate keeps the layout and the error names its path. `--skip-gates`
+skips it with the other gates, and a resumed run whose tag already exists
+skips it outright (the app's `Cargo.lock` on main still names the previous
+engine, which `--locked` would refuse beside the bumped manifest). The
+store and Developer ID builds stay after-phase checklist items
+(`build-release-app.sh`).
+
 ### Before you run it
 
 `scripts/release.sh --checklist x.y.z` prints the whole release checklist —
