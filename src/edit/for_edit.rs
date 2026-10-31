@@ -1579,6 +1579,15 @@ fn context_of(
 /// `REVISION_CONFLICT` for bad decisions, `CURSOR_BASIS_CHANGED` when a
 /// cursor's bound basis no longer matches.
 pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, EditError> {
+    for_edit_quoting(source, request, super::PlanSyntax::V1)
+}
+
+/// Build the working view with refusals in the caller's syntax.
+pub(super) fn for_edit_quoting(
+    source: &[u8],
+    request: &ForEditRequest,
+    syntax: super::PlanSyntax,
+) -> Result<ForEdit, EditError> {
     if request.find.is_some() && request.regex.is_some() {
         return Err(super::err("USAGE", None, "--find and --regex conflict"));
     }
@@ -1615,7 +1624,7 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
         resolved_revisions,
         changed,
         ..
-    } = settle(source, &plan, probe, super::PlanSyntax::V1)?;
+    } = settle(source, &plan, probe, syntax)?;
     let Loaded {
         stories,
         paragraph_nodes,

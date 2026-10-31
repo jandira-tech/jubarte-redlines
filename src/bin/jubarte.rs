@@ -476,9 +476,16 @@ fn run_resolution(
         check_output(out).map_err(|f| (ExitCode::from(f.code), f.message))?;
         let bytes = read_word(file).map_err(failed)?;
         let resolved = apply(&bytes, &filter).map_err(|e| match e {
-            ChangeError::Ambiguous { .. }
-            | ChangeError::InvalidId(_)
-            | ChangeError::PartOfChange { .. } => (ExitCode::from(2), e.to_string()),
+            ChangeError::PartOfChange { named, whole, .. } => (
+                ExitCode::from(2),
+                format!(
+                    "{named} is part of {whole}; name the whole change: --id {}",
+                    jubarte::cli::shell_word(&whole)
+                ),
+            ),
+            ChangeError::Ambiguous { .. } | ChangeError::InvalidId(_) => {
+                (ExitCode::from(2), e.to_string())
+            }
             e => failed(format!("{what} failed: {e}")),
         })?;
         write_output(out, Produced::Docx(&resolved.document))

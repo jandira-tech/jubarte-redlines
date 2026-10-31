@@ -565,35 +565,30 @@ fn the_changes_command_lists_the_logical_change() {
 
 #[test]
 fn the_cli_refuses_a_member_and_names_the_whole_change() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("in.docx"), split_insertion([DATE; 4])).unwrap();
-    let out = jubarte(
-        dir.path(),
-        &["reject", "in.docx", "--id", "r7", "-o", "out.docx"],
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(2), "{stderr}");
-    assert!(
-        stderr.contains("error: r7 is part of r7+8+9+10; name the whole change (r7+8+9+10)"),
-        "{stderr}"
-    );
-    assert!(!dir.path().join("out.docx").exists());
-    let out = jubarte(
-        dir.path(),
-        &[
-            "reject",
-            "in.docx",
-            "--id",
-            "r7+r8+r9+r10",
-            "-o",
-            "out.docx",
-        ],
-    );
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    for verb in ["accept", "reject"] {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("in.docx"), split_insertion([DATE; 4])).unwrap();
+        let out = jubarte(
+            dir.path(),
+            &[verb, "in.docx", "--id", "r7", "-o", "out.docx"],
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{stderr}");
+        assert!(
+            stderr
+                .contains("error: r7 is part of r7+8+9+10; name the whole change: --id r7+8+9+10"),
+            "{stderr}"
+        );
+        assert!(!dir.path().join("out.docx").exists());
+        for (id, output) in [("r7+8+9+10", "out.docx"), ("r7+r8+r9+r10", "alias.docx")] {
+            let out = jubarte(dir.path(), &[verb, "in.docx", "--id", id, "-o", output]);
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
 }
 
 /// `read --json` lists changes as `jubarte changes` does.

@@ -1463,13 +1463,13 @@ fn selection_error(e: ChangeError, syntax: PlanSyntax, verb: &str) -> EditError 
         ChangeError::UnknownChange(id) => err(
             "UNKNOWN_CHANGE",
             None,
-            format!("resolve_revisions: no tracked change {id}"),
+            syntax.selection_message(format_args!("no tracked change {id}")),
         ),
         ChangeError::InvalidId(m) => err("INVALID_PLAN", None, format!("resolve_revisions: {m}")),
         ambiguous @ ChangeError::Ambiguous { .. } => err(
             "AMBIGUOUS_CHANGE",
             None,
-            format!("resolve_revisions: {ambiguous}"),
+            syntax.selection_message(ambiguous),
         ),
         part @ ChangeError::PartOfChange { .. } => err(
             "INCOMPLETE_CHANGE",
@@ -1485,11 +1485,12 @@ fn selection_error(e: ChangeError, syntax: PlanSyntax, verb: &str) -> EditError 
 fn selected_ids(
     listed: &[Change],
     filter: Option<&ChangeFilter>,
+    syntax: PlanSyntax,
 ) -> Result<Vec<String>, EditError> {
     let Some(filter) = filter else {
         return Ok(Vec::new());
     };
-    let selection_error = |e| selection_error(e, PlanSyntax::V1, "");
+    let selection_error = |e| selection_error(e, syntax, "");
     let filter = &filter.normalized().map_err(selection_error)?;
     filter.check(listed).map_err(selection_error)?;
     let hit: Vec<&Change> = listed.iter().filter(|c| filter.matches(c)).collect();
@@ -1542,12 +1543,12 @@ fn resolve_selected(
         }
     }
     let listed = crate::changes::list_changes(source).map_err(change_err)?;
-    let accept = selected_ids(&listed, selection.accept.as_ref())?;
+    let accept = selected_ids(&listed, selection.accept.as_ref(), syntax)?;
     // A visible reject settles nothing: it is lowered to operations.
     let reject = if selection.reject_visible {
         Vec::new()
     } else {
-        selected_ids(&listed, selection.reject.as_ref())?
+        selected_ids(&listed, selection.reject.as_ref(), syntax)?
     };
     if let Some(both) = accept.iter().find(|id| reject.contains(id)) {
         return Err(err(
@@ -1638,7 +1639,7 @@ pub(crate) fn revisions_left(source: &[u8], plan: &EditPlan) -> bool {
 /// edit, the paragraph and the thread are gone and the reply lands nowhere.
 /// A plan that does not resolve names none here: running it reports why.
 pub fn replies_on_deleted_paragraphs(source: &[u8], plan: &EditPlan) -> Vec<(u32, Option<String>)> {
-    let Ok(lowered) = visible::lower(source, plan) else {
+    let Ok(lowered) = visible::lower(source, plan, PlanSyntax::V1) else {
         return Vec::new();
     };
     let plan = lowered.as_ref().unwrap_or(plan);
@@ -1873,18 +1874,19 @@ pub(crate) fn guard_keep_others(
     selection: Option<&ResolveRevisions>,
     wholesale: Option<&str>,
     settle_comment_bodies: bool,
+    syntax: PlanSyntax,
 ) -> Result<(), EditError> {
     if selection.is_none() && wholesale.is_none() {
         return Ok(());
     }
     let listed =
-        crate::changes::list_changes(source).map_err(|e| selection_error(e, PlanSyntax::V1, ""))?;
+        crate::changes::list_changes(source).map_err(|e| selection_error(e, syntax, ""))?;
     if let Some(selection) = selection {
-        let accept = selected_ids(&listed, selection.accept.as_ref())?;
+        let accept = selected_ids(&listed, selection.accept.as_ref(), syntax)?;
         let reject = if selection.reject_visible {
             Vec::new()
         } else {
-            selected_ids(&listed, selection.reject.as_ref())?
+            selected_ids(&listed, selection.reject.as_ref(), syntax)?
         };
         let mut removals = Vec::new();
         for (id, accepting) in accept
@@ -1967,6 +1969,7 @@ fn settle(
             plan.resolve_revisions.as_ref(),
             wholesale,
             false,
+            syntax,
         )?;
     }
     let (resolved_source, resolved_revisions, mut comment_changes) = resolve_selected(
@@ -2707,7 +2710,7 @@ pub fn check_plan_quoting(
     plan: &EditPlan,
     syntax: PlanSyntax,
 ) -> Result<(), EditError> {
-    let lowered = visible::lower(source, plan)?;
+    let lowered = visible::lower(source, plan, syntax)?;
     resolved(source, lowered.as_ref().unwrap_or(plan), syntax).map(|_| ())
 }
 

@@ -168,6 +168,7 @@ fn apply_bound(
             settlement.resolve_revisions.as_ref(),
             wholesale,
             settle_comments,
+            syntax,
         )?;
     }
     // Reuse the original-source selection resolver before applying global policy.

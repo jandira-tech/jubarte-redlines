@@ -36,15 +36,25 @@ impl PlanSyntax {
         error: &crate::changes::ChangeError,
         verb: &str,
     ) -> String {
-        if let (Self::Flags, crate::changes::ChangeError::PartOfChange { named, whole, .. }) =
-            (self, error)
+        if let (
+            Self::Flags | Self::Typed,
+            crate::changes::ChangeError::PartOfChange { named, whole, .. },
+        ) = (self, error)
         {
             format!(
-                "{named} is part of {whole}; name the whole change: -p {} --{verb}",
-                shell_word(whole)
+                "{named} is part of {whole}; name the whole change: {}",
+                settle_revision(self, verb, whole, "")
             )
         } else {
             format!("resolve_revisions: {error}")
+        }
+    }
+
+    /// Selection errors quote plan fields only for a plan caller.
+    pub(super) fn selection_message(self, message: impl std::fmt::Display) -> String {
+        match self {
+            Self::V1 | Self::V2 => format!("resolve_revisions: {message}"),
+            Self::Flags | Self::Typed => message.to_string(),
         }
     }
 
@@ -462,7 +472,10 @@ fn shell_word(id: &str) -> std::borrow::Cow<'_, str> {
 
 /// `verb` (`accept` or `reject`) of the revision, as `syntax` spells it.
 fn settle(syntax: PlanSyntax, verb: &str, holder: &Holder<'_>) -> String {
-    let id = holder.id;
+    settle_revision(syntax, verb, holder.id, holder.long_id)
+}
+
+fn settle_revision(syntax: PlanSyntax, verb: &str, id: &str, long_id: &str) -> String {
     match syntax {
         PlanSyntax::V1 => format!(
             r#""resolve_revisions":{{"{verb}":{{"ids":[{}]}}}}"#,
@@ -476,7 +489,7 @@ fn settle(syntax: PlanSyntax, verb: &str, holder: &Holder<'_>) -> String {
             let target = format!(
                 r#"[{{"short_id":{},"long_id":{}}}]"#,
                 json(id),
-                json(holder.long_id)
+                json(long_id)
             );
             let (accept, reject) = if verb == "accept" {
                 (target.as_str(), "[]")
