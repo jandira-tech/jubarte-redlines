@@ -4344,9 +4344,9 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
         )
         .map_err(|e| e.to_string())?;
         if job.json {
-            write_stdout(baselined_json(&split).map_err(|e| e.to_string())?)?;
+            write_stdout(baselined_json(&split, job.strict).map_err(|e| e.to_string())?)?;
         } else {
-            write_stdout(baselined_text(&split))?;
+            write_stdout(baselined_text(&split, job.strict))?;
         }
         return Ok(fails(&split.new, job.strict));
     }

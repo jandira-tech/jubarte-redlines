@@ -373,14 +373,28 @@ def test_validate_baseline_and_the_input_notice(tmp_path, capsys):
     clean = tmp_path / "clean.docx"
     clean.write_bytes(docx(para("x")))
     assert _main(["validate", str(broken), "--baseline", str(broken)]) == 0
-    assert capsys.readouterr().out == "new: none\nalready in the input: 1 (not yours)\n"
+    assert capsys.readouterr().out == (
+        "new: none\nalready in the input: 1 (not yours)\n"
+        "PASS: every difference from the baseline is yours and tracked\n"
+    )
     assert _main(["validate", str(broken), "--baseline", str(clean)]) == 2
     out = capsys.readouterr().out
     assert out.startswith("new: 1\n* TEXT_INSIDE_DELETION\terror\t"), out
-    assert out.endswith("already in the input: none\n"), out
+    assert out.endswith(
+        "FAIL: 1 finding (1 change, 0 comments); not ready to deliver\n"
+    ), out
     assert _main(["validate", str(clean), "--baseline", str(broken), "--json"]) == 0
-    (resolved,) = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    resolved, summary = [
+        json.loads(line) for line in capsys.readouterr().out.splitlines()
+    ]
     assert resolved["resolved"][0]["code"] == "TEXT_INSIDE_DELETION"
+    assert summary["authors"] == []
+    assert summary["verdict"] == {
+        "pass": True,
+        "findings": 0,
+        "changes": 0,
+        "comments": 0,
+    }
     assert _main(["validate", str(broken), "--baseline", str(broken), "--repair", str(tmp_path / "f.docx")]) == 2
     assert "cannot be used with" in capsys.readouterr().err
     # One stderr line on each reading task; -q drops it; a clean input has none.

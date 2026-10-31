@@ -701,13 +701,13 @@ fn foreign_history_changed_deletion_text_is_one_foreign_revision() {
 fn foreign_history_is_compared_per_paragraph() {
     let original = docx(&(FOREIGN_HISTORY.to_string() + &para("tail")));
     let edited = docx(&(para("tail") + FOREIGN_HISTORY));
+    // One finding per logical change: `changes` lists Alice's two marks as
+    // the change `r1+2` (#1893).
     assert_eq!(
         foreign_messages(&original, &edited),
         [
-            "r1 by Alice is new",
-            "r2 by Alice is new",
-            "Alice's r1 in the original is gone",
-            "Alice's r2 in the original is gone"
+            "r1+2 by Alice is new",
+            "Alice's r1+2 in the original is gone"
         ]
     );
 }
@@ -1228,10 +1228,9 @@ fn foreign_retained_empty_move_markers_keep_boundaries() {
     assert_eq!(foreign_messages(&original, &original), Vec::<String>::new());
     assert_eq!(
         foreign_messages(&original, &foreign_sandwich(markers, "AB", "C")),
-        [
-            "r1 by Alice differs from the original",
-            "r3 by Alice differs from the original"
-        ]
+        // One finding per logical change: the two carriers are the change
+        // `r1+3` (#1893).
+        ["r1+3 by Alice differs from the original"]
     );
 }
 
@@ -1259,7 +1258,7 @@ fn foreign_settled_separator_names_the_changed_carrier() {
 }
 
 #[test]
-fn foreign_settled_adjacent_carol_carriers_are_each_gone() {
+fn foreign_settled_adjacent_carol_carriers_are_one_gone_change() {
     let original = docx(&format!(
         "<w:p>{}{}{}{}</w:p>",
         foreign_carrier("del", 1, "Alice", "left"),
@@ -1272,12 +1271,11 @@ fn foreign_settled_adjacent_carol_carriers_are_each_gone() {
         &jubarte::changes::ChangeFilter::ids(["r2", "r3"]),
     )
     .unwrap();
+    // One finding per logical change: the two marks are the change
+    // `r2+3` (#1893).
     assert_eq!(
         foreign_messages(&original, &edited),
-        [
-            "Carol Diaz's r2 in the original is gone",
-            "Carol Diaz's r3 in the original is gone"
-        ]
+        ["Carol Diaz's r2+3 in the original is gone"]
     );
 }
 
