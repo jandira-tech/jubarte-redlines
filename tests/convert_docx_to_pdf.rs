@@ -7340,8 +7340,7 @@ fn a_merged_cells_content_grows_the_last_row_it_spans() {
     );
 }
 
-/// The issue #1993 probes (jubarte-loop orphan-vmerge): a 1-column,
-/// 2-row table, `rows` giving each cell's `w:tcPr` extras and text.
+/// The issue #1993 probes (jubarte-loop orphan-vmerge): a 1-column table, `rows` giving each cell's `w:tcPr` extras and text.
 /// `nested` wraps the probe inside an outer table cell, as the
 /// span-absent probe of #1729 held it.
 fn orphan_vmerge_docx(rows: &[(&str, &str)], nested: bool) -> Vec<u8> {
@@ -7372,6 +7371,48 @@ fn orphan_vmerge_docx(rows: &[(&str, &str)], nested: bool) -> Vec<u8> {
         tbl
     };
     minimal_docx_body(&format!("{body}<w:p/>"))
+}
+
+#[test]
+fn an_orphan_vmerge_continuation_opens_a_merge_the_next_continuation_joins() {
+    // Word 16 (2026-10-31, probes orphan_then_cont, plain_orphan_cont): an
+    // orphan continuation paints like a restart, and a continuation below it
+    // joins that merge, so its own text stays hidden.
+    for nested in [false, true] {
+        for (rows, shown, hidden) in [
+            (
+                &[
+                    ("<w:vMerge/>", "ORPHAN"),
+                    ("<w:vMerge/>", "FOLLOWCONT"),
+                    ("", "PLAIN"),
+                ][..],
+                &["ORPHAN", "PLAIN"][..],
+                "FOLLOWCONT",
+            ),
+            (
+                &[
+                    ("", "TOP"),
+                    ("<w:vMerge/>", "ORPHANTWO"),
+                    ("<w:vMerge/>", "FOLLOWTWO"),
+                ][..],
+                &["TOP", "ORPHANTWO"][..],
+                "FOLLOWTWO",
+            ),
+        ] {
+            let pdf = docx_to_pdf(&orphan_vmerge_docx(rows, nested)).expect("convert");
+            let painted = pdf_winansi_text(&pdf);
+            for word in shown {
+                assert!(
+                    painted.contains(word),
+                    "{word} (nested={nested}); painted={painted}"
+                );
+            }
+            assert!(
+                !painted.contains(hidden),
+                "{hidden} (nested={nested}); painted={painted}"
+            );
+        }
+    }
 }
 
 #[test]
