@@ -8,18 +8,28 @@
 
 `python3 scripts/lane_validity.py SAMPLE_CSV --root BENCH_ROOT --redlines DIR`
 validates every redline of a release_info redline sample (DIR/<key>.docx,
-as scripts/redline-sweep.sh writes them) and both of its sources (the
-sample's base and next, relative to the bench root) with
-tools/validate-docx, the OpenXmlValidator CLI. A kind is an (error id,
-part) pair. The redline's kinds minus those either source already has are
-its own: jubarte wrote them. It prints the redlines with a kind of their
-own and a table of those kinds (checklist before#24, #1757; it replaces the
-0.11.2 tool that lived outside any repository).
+as scripts/redline-sweep.sh writes them), both of its sources (the
+sample's base and next, relative to the bench root) and the sample's own
+Word redline (its docx column) with tools/validate-docx, the
+OpenXmlValidator CLI. An error signature is (error id, part family,
+description with w:ins/w:del folded to w:rev, element at the xpath's end);
+the part family strips a leading `redline[AB]_` and the digits before the
+extension, so a renamed part still meets its source (jubarte writes
+redlineB_header3.xml where a source had header3.xml).
 
-Exit 0 when no redline has a kind of its own; 1 when one has, or a redline
+The redline's signatures minus those either source already has are its
+candidates. A candidate the sample's Word redline shares is WORD: Word's
+own writing produced the same shape. What remains is OWN: jubarte wrote
+it. The tool prints the redlines with a WORD or OWN signature and a table
+of the OWN ones; a redline whose source or Word redline the validator
+cannot open is listed as UNREADABLE SOURCE and is never counted clean or
+OWN (checklist before#24, #1757, #1798; it replaces the 0.11.2 tool that
+lived outside any repository).
+
+Exit 0 when no redline has an OWN signature; 1 when one has, or a redline
 is missing (a sweep pointed at the wrong folder validates nothing); 2 when
-the CSV is no redline sample, a source is missing, or the validator is not
-built (`dotnet build -c Release tools/validate-docx`). Plain Python 3,
+the CSV is no redline sample, a named file is missing, or the validator is
+not built (`dotnet build -c Release tools/validate-docx`). Plain Python 3,
 stdlib only.
 """
 
@@ -28,6 +38,7 @@ from __future__ import annotations
 import argparse
 import collections
 import csv
+import re
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -36,23 +47,44 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 VALIDATOR = ROOT / "tools/validate-docx/bin/Release/net8.0/validate-docx"
 Kinds = collections.Counter
+Signature = tuple[str, str, str, str]  # error id, part family, description, xpath tail
+
+# a word/ header or footer a compare wrote can be renamed redline[AB]_N, and
+# part numbers differ between a source and its redline: the family drops both
+FAMILY = re.compile(r"(?:^|(?<=/))redline[AB]_|\d+(?=[.])")
+# w:ins and w:del are the same revision shape to the validator message and path
+FOLD = re.compile(r"(?<=[w:}'/> ])(?:ins|del)\b")
+# pseudo-signatures kinds() gives a file it could not validate
+PSEUDO = {"ABSENT", "OPEN_FAILED", "EXIT"}
+
+
+def signature(err: str, msg: str, part: str, xpath: str) -> Signature:
+    """The comparison key one validator line stands for (#1798)."""
+    family = FAMILY.sub("", part)
+    tail = xpath.rsplit("/", 1)[-1] if xpath else ""
+    tail = FOLD.sub("rev", re.sub(r"\[\d+\]", "", tail))
+    return err, family, FOLD.sub("rev", msg), tail
 
 
 def kinds(validator: Path, path: Path) -> Kinds:
-    """The validator's (error id, part) kinds in PATH, counted."""
+    """The validator's error signatures in PATH, counted."""
     if not path.is_file():
-        return Kinds({("ABSENT", ""): 1})
+        return Kinds({signature("ABSENT", "", "", ""): 1})
     out = subprocess.run([str(validator), str(path)], capture_output=True, text=True)
     got = Kinds()
     for line in out.stdout.splitlines():
         cells = line.split("\t")
-        if len(cells) > 3:
-            got[cells[1], cells[3]] += 1
-        elif len(cells) > 1:
-            got[cells[1], ""] += 1
+        if len(cells) > 1:
+            cells += [""] * (5 - len(cells))
+            got[signature(*cells[1:5])] += 1
     if out.returncode not in (0, 1) and not got:
-        got["EXIT", str(out.returncode)] += 1
+        got[signature("EXIT", str(out.returncode), "", "")] += 1
     return got
+
+
+def unreadable(k: Kinds) -> bool:
+    """A file the validator could not open (OPEN_FAILED, EXIT)."""
+    return any(s[0] in PSEUDO - {"ABSENT"} for s in k)
 
 
 def main() -> int:
@@ -73,31 +105,52 @@ def main() -> int:
     if not rows or not {"key", "base", "next"} <= set(rows[0]):
         print(f"lane_validity: {args.sample} is no release_info redline sample (key, base, next)", file=sys.stderr)
         return 2
-    absent = [r[c] for r in rows for c in ("base", "next") if not (args.root / r[c]).is_file()]
+    absent = [r[c] for r in rows for c in ("base", "next", "docx")
+              if r.get(c) and not (args.root / r[c]).is_file()]
     if absent:
-        print(f"lane_validity: {len(absent)} source(s) missing under {args.root}: " + ", ".join(absent[:5]),
+        print(f"lane_validity: {len(absent)} named file(s) missing under {args.root}: " + ", ".join(absent[:5]),
               file=sys.stderr)
         return 2
 
-    def one(r: dict) -> tuple[str, Kinds, Kinds]:
+    def one(r: dict) -> tuple[str, Kinds, Kinds, Kinds, list[str]]:
         mine = kinds(args.validator, args.redlines / f"{r['key']}.docx")
         if not mine:
-            return r["key"], mine, mine
-        sources = set(kinds(args.validator, args.root / r["base"])) | set(kinds(args.validator, args.root / r["next"]))
-        return r["key"], mine, Kinds({k: n for k, n in mine.items() if k not in sources})
+            return r["key"], mine, mine, mine, []
+        inputs: dict[str, Kinds] = {c: kinds(args.validator, args.root / r[c]) for c in ("base", "next")}
+        if r.get("docx"):
+            inputs["docx"] = kinds(args.validator, args.root / r["docx"])
+        word = inputs.pop("docx", Kinds())
+        dead = [r[c] for c, k in inputs.items() if unreadable(k)]
+        if r.get("docx") and unreadable(word):
+            dead.append(r["docx"])
+        sources = set().union(*inputs.values()) if inputs else set()
+        # a redline-side pseudo signature (ABSENT, OPEN_FAILED, EXIT) is always flagged
+        left = Kinds({s: n for s, n in mine.items() if s[0] in PSEUDO or s not in sources})
+        shared = Kinds({s: n for s, n in left.items() if s in word})
+        # an unreadable input proves nothing: list the redline, report no OWN
+        own = Kinds() if dead else Kinds({s: n for s, n in left.items() if s not in shared})
+        return r["key"], mine, own, shared, dead
 
     with ThreadPoolExecutor(max(1, args.jobs)) as pool:
         done = list(pool.map(one, rows))
     flagged = [d for d in done if d[1]]
     own = [d for d in done if d[2]]
-    print(f"{len(rows)} redlines; {len(flagged)} with validator errors; {len(own)} with a kind neither source has")
+    unread = [d for d in done if d[4]]
+    print(f"{len(rows)} redlines; {len(flagged)} with validator errors; "
+          f"{len(own)} with a signature neither source nor Word's redline has; "
+          f"{len(unread)} with an unreadable source")
     table = Kinds()
-    for _, _, new in own:
+    for _, _, new, _, _ in own:
         table.update(new.keys())
-    for (err, part), n in table.most_common():
-        print(f"  {n:4} redlines  {err}  {part}")
-    for key, _, new in own:
-        print("OWN", key, dict(new))
+    for (err, family, msg, tail), n in table.most_common():
+        print(f"  {n:4} redlines  {err}  {family}  {tail}  {msg[:80]}")
+    for key, _, new, shared, dead in done:
+        if shared:
+            print("WORD", key, dict(shared))
+        if new:
+            print("OWN", key, dict(new))
+        for name in dead:
+            print("UNREADABLE SOURCE", key, name)
     return 1 if own else 0
 
 
