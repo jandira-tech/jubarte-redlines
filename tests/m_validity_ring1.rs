@@ -427,6 +427,150 @@ fn relationship_probe_missing_target_keeps_existing_code() {
     assert!(findings[0].message.contains(&target));
 }
 
+fn assert_missing_target_probe(bytes: &[u8], owner: &str, target: &str, used: bool) {
+    let report = check_word_valid_package(bytes);
+    assert!(
+        report
+            .findings
+            .iter()
+            .all(|f| f.code != "OVERRIDE_WITHOUT_PART"),
+        "{:?}",
+        report.findings
+    );
+    // The public validator must not add the triage copy of this Ring-1 finding.
+    for findings in [report.findings, jubarte::validate::validate(bytes).unwrap()] {
+        let missing: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == "MISSING_REL_TARGET")
+            .collect();
+        assert_eq!(
+            missing.len(),
+            1,
+            "expected one missing target: {findings:?}"
+        );
+        let finding = missing[0];
+        assert_eq!(finding.part, owner);
+        assert!(finding.message.contains(target), "{finding:?}");
+        assert_eq!(finding.word_fatal, used, "{finding:?}");
+        assert_eq!(finding.repairable, !used, "{finding:?}");
+        assert_eq!(finding.severity, if used { "error" } else { "warning" });
+    }
+}
+
+#[test]
+fn relationship_probe_missing_target_unused_styles() {
+    let mut pkg = PartFs::open(NAMELESS_MOVE_BASE).unwrap();
+    assert!(jubarte::validate::ring1(&pkg).is_empty());
+    pkg.remove_part("word/styles.xml");
+    pkg.remove_content_type_override("/word/styles.xml");
+    assert_missing_target_probe(
+        &pkg.to_zip().unwrap(),
+        "word/_rels/document.xml.rels",
+        "styles.xml",
+        false,
+    );
+}
+
+#[test]
+fn relationship_probe_missing_target_package_app_properties() {
+    let mut pkg = PartFs::open(NAMELESS_MOVE_BASE).unwrap();
+    pkg.remove_part("docProps/app.xml");
+    pkg.remove_content_type_override("/docProps/app.xml");
+    assert_missing_target_probe(
+        &pkg.to_zip().unwrap(),
+        "_rels/.rels",
+        "docProps/app.xml",
+        false,
+    );
+}
+
+#[test]
+fn relationship_probe_missing_target_used_once_and_word_fatal() {
+    // Two uses of the same relationship still describe just one missing target.
+    let bytes = splice_first_paragraph_end(
+        r#"<w:hyperlink r:id="rId1"><w:r><w:t>x</w:t></w:r></w:hyperlink><w:r><w:pict xmlns:rel="http://schemas.openxmlformats.org/officeDocument/2006/relationships" rel:embed='rId1'/></w:r>"#,
+    );
+    let mut pkg = PartFs::open(&bytes).unwrap();
+    pkg.remove_part("word/styles.xml");
+    pkg.remove_content_type_override("/word/styles.xml");
+    assert_missing_target_probe(
+        &pkg.to_zip().unwrap(),
+        "word/document.xml",
+        "styles.xml",
+        true,
+    );
+}
+
+#[test]
+fn relationship_probe_missing_target_in_non_xml_and_absent_owners() {
+    for (owner, rels) in [
+        ("word/payload.bin", "word/_rels/payload.bin.rels"),
+        ("word/absent.xml", "word/_rels/absent.xml.rels"),
+    ] {
+        let mut pkg = PartFs::open(NAMELESS_MOVE_BASE).unwrap();
+        if owner.ends_with(".bin") {
+            pkg.set_part(owner, vec![1, 2, 3]);
+            pkg.add_content_type_override(owner, "application/octet-stream");
+        }
+        pkg.add_document_relationship(owner, "urn:test:missing", "../missing.xml");
+        assert_missing_target_probe(&pkg.to_zip().unwrap(), rels, "../missing.xml", false);
+    }
+}
+
+#[test]
+fn relationship_probe_missing_target_uses_resolved_path() {
+    let mut pkg = PartFs::open(NAMELESS_MOVE_BASE).unwrap();
+    pkg.remove_part("word/styles.xml");
+    pkg.remove_content_type_override("/word/styles.xml");
+    // A different part at the package root cannot satisfy word/styles.xml.
+    pkg.set_part("styles.xml", b"<root/>".to_vec());
+    assert_missing_target_probe(
+        &pkg.to_zip().unwrap(),
+        "word/_rels/document.xml.rels",
+        "styles.xml",
+        false,
+    );
+}
+
+#[test]
+fn relationship_probe_unused_targets_resolve_and_skip_external() {
+    for owner in ["word/document.xml", ""] {
+        let mut pkg = PartFs::open(NAMELESS_MOVE_BASE).unwrap();
+        let target = if owner.is_empty() {
+            "word/../word/styles.xml"
+        } else {
+            "../word/styles.xml"
+        };
+        let xml = format!(
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="relative" Type="urn:test" Target="{target}"/>
+<Relationship Id="absolute" Type="urn:test" Target="/word/styles.xml"/>
+<Relationship Id="external" Type="urn:test" Target="missing.xml" TargetMode="External"/>
+<Relationship Id="http" Type="urn:test" Target="http://example.invalid/missing"/>
+<Relationship Id="https" Type="urn:test" Target="https://example.invalid/missing"/>
+<Relationship Id="mailto" Type="urn:test" Target="mailto:owner@example.invalid"/>
+</Relationships>"#
+        );
+        pkg.set_part(
+            if owner.is_empty() {
+                "_rels/.rels"
+            } else {
+                "word/_rels/document.xml.rels"
+            },
+            xml.into_bytes(),
+        );
+        let report = check_word_valid_package(&pkg.to_zip().unwrap());
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|f| f.code != "MISSING_REL_TARGET"),
+            "owner {owner}: {:?}",
+            report.findings
+        );
+    }
+}
+
 /// Word refuses a package that repeats a relationship Id (docxide case8's
 /// fontTable rels: "unreadable content" in Word 16). Opening keeps one copy
 /// of an identical repeat, but the finding stays, so `validate` still says
@@ -1406,10 +1550,13 @@ fn probe_comments_relationships_tried_in_order() {
     let report = check_word_valid_package(&pkg.to_zip().expect("serialize package"));
     // The comment defined in `notes.xml` anchors cleanly: no orphan or
     // unanchored findings, and nothing Word-fatal — only the stale
-    // relationship's metadata lead remains.
+    // relationship's metadata and missing-target leads remain.
     assert_eq!(
         codes(&report),
-        [("COMMENT_METADATA_MISMATCH", false)],
+        [
+            ("MISSING_REL_TARGET", false),
+            ("COMMENT_METADATA_MISMATCH", false)
+        ],
         "{:?}",
         report.findings
     );
