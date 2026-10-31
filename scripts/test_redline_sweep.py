@@ -4,7 +4,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Unit tests for redline-sweep.sh's validation baseline key extraction.
+"""Integration tests for the sweep and source staging, with fake external tools.
 
 Execute the production filter alone: no Rust binary, Word or .NET required.
 """
@@ -26,7 +26,7 @@ class BaselineKeys(unittest.TestCase):
         # a regression without running the expensive document generation stage.
         lines = (HERE / "redline-sweep.sh").read_text().splitlines()
         commands = [line.strip() for line in lines
-                    if line.lstrip().startswith("awk ") and '"$OUT/.baseline_keys"' in line]
+                    if line.lstrip().startswith("awk ") and line.endswith('>"$OUT/.baseline_keys"')]
         self.assertEqual(len(commands), 1, "locate the production baseline filter")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -282,6 +282,236 @@ class Probe(unittest.TestCase):
         self.assertNotIn("word-open-probe", text)
         self.assertFalse((HERE / "word-open-probe.sh").exists())
         self.assertFalse((HERE / "word-probe-sweep.sh").exists())
+
+
+@unittest.skipUnless(shutil.which("zsh"), "redline-sweep.sh is a zsh script")
+class ValidationSweep(unittest.TestCase):
+    """Run the real shell pipeline with fake jubarte and dotnet executables."""
+
+    setUp = Sweep.setUp
+
+    def validate(self, rows, baseline="ran\tOldError\nmissing\tKnownError\n"):
+        scripts = self.tmp / "scripts"
+        scripts.mkdir(exist_ok=True)
+        script = scripts / "redline-sweep.sh"
+        shutil.copy(HERE / "redline-sweep.sh", script)
+        (self.tmp / "tools/validate-docx").mkdir(parents=True, exist_ok=True)
+        dotnet = self.tmp / "dotnet"
+        dotnet.write_text("#!/bin/sh\nexit 0\n")
+        dotnet.chmod(0o755)
+        baseline_path = self.tmp / "baseline.tsv"
+        baseline_path.write_text(baseline)
+        csv_path = self.tmp / "mapping.csv"
+        csv_path.write_text("pair_stem,base,next,origin,src_base,src_next\n" + rows)
+        return subprocess.run(
+            ["zsh", str(script), str(csv_path), str(self.src), str(self.out), "--validate"],
+            env=dict(os.environ, PATH=f"{self.tmp}:{os.environ['PATH']}",
+                     VALIDITY_BASELINE=str(baseline_path), JUBARTE_BIN=str(self.bin),
+                     ARGV_LOG=str(self.argv)), capture_output=True, text=True, timeout=10,
+        )
+
+    def test_skipped_baselined_stem_refuses_the_sweep(self):
+        r = self.validate("ran,x,y,o,corpus/a.docx,corpus/b.docx\n"
+                          "missing,x,y,o,corpus/a.docx,corpus/gone.docx\n")
+        self.assertEqual(r.returncode, 1, "a skipped baseline stem must fail: " + r.stdout)
+        self.assertIn("VALIDATOR NOT RUN", r.stdout)
+        self.assertIn("missing\tKnownError", r.stdout)
+
+    def test_skipped_keys_are_never_reported_fixed_even_with_stale_output(self):
+        self.out.mkdir()
+        (self.out / "missing.docx").write_text("left over from a previous sweep")
+        r = self.validate("ran,x,y,o,corpus/a.docx,corpus/b.docx\n"
+                          "missing,x,y,o,corpus/a.docx,corpus/gone.docx\n")
+        fixed = r.stdout.split("VALIDATOR FIXED (re-bless baseline?):", 1)[1]
+        self.assertIn("ran\tOldError", fixed)
+        self.assertNotIn("missing\tKnownError", fixed)
+
+    def test_baselined_stem_absent_from_mapping_is_not_run(self):
+        r = self.validate("ran,x,y,o,corpus/a.docx,corpus/b.docx\n")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("VALIDATOR NOT RUN", r.stdout)
+
+    def test_failed_generation_is_not_fixed(self):
+        self.bin.write_text(STUB.replace('base=$1', 'case "$1" in *c.docx) exit 1;; esac\nbase=$1'))
+        r = self.validate("ran,x,y,o,corpus/a.docx,corpus/b.docx\n"
+                          "missing,x,y,o,corpus/c.docx,corpus/b.docx\n")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("VALIDATOR NOT RUN", r.stdout)
+        self.assertNotIn("missing\tKnownError", r.stdout.split("VALIDATOR FIXED", 1)[1])
+
+    def test_missing_generated_output_is_not_fixed(self):
+        self.bin.write_text(STUB.replace('base=$1', 'case "$1" in *c.docx) exit 0;; esac\nbase=$1'))
+        r = self.validate("ran,x,y,o,corpus/a.docx,corpus/b.docx\n"
+                          "missing,x,y,o,corpus/c.docx,corpus/b.docx\n")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("VALIDATOR NOT RUN", r.stdout)
+
+    def test_no_validated_outputs_means_no_fixed_keys(self):
+        self.bin.write_text(STUB.replace('base=$1', 'exit 0\nbase=$1'))
+        r = self.validate("ran,x,y,o,corpus/a.docx,corpus/b.docx\n")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("VALIDATOR NOT RUN", r.stdout)
+        self.assertNotIn("VALIDATOR FIXED", r.stdout)
+
+    def test_completed_baseline_can_be_fixed_with_unbaselined_skips(self):
+        r = self.validate("ran,x,y,o,corpus/a.docx,corpus/b.docx\n"
+                          "other,x,y,o,corpus/a.docx,corpus/gone.docx\n", "ran\tOldError\n")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("ran\tOldError", r.stdout)
+        self.assertNotIn("VALIDATOR NOT RUN", r.stdout)
+
+
+class StageSources(unittest.TestCase):
+    """Filesystem integration: preserve bytes, resolve pool aliases, fail closed."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="stage-sources-"))
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.bench = self.tmp / "bench"
+        self.word = self.bench / "corpus/word"
+        (self.word / "pools").mkdir(parents=True)
+        (self.word / "clean/docx").mkdir(parents=True)
+        self.pool = self.word / "pools/word_based_pairs.csv"
+        self.pool.write_text("key,base,next,base_name,next_name,docx,pdf,state\r\n"
+                             "key,clean/docx/123_a,clean/docx/456_b,a,b,,,\r\n")
+        (self.word / "clean/docx/123_a.docx").write_bytes(b"original a")
+        (self.word / "clean/docx/456_b.docx").write_bytes(b"original b")
+        self.local = self.tmp / "docx_source"
+        self.local.mkdir()
+        self.mapping = self.tmp / "mapping.csv"
+        self.mapping.write_text("pair_stem,base,next,origin,docx_source_base,docx_source_next\n"
+                                "old_pair,a,b,both,a.docx,b.docx\n")
+        self.out = self.tmp / "staged"
+
+    def stage(self):
+        return subprocess.run(
+            [os.sys.executable, str(HERE / "stage_ring2_sources.py"), str(self.out),
+             "--mapping", str(self.mapping)],
+            env=dict(os.environ, NEUROTIC_DOCX_BENCH=str(self.bench)),
+            capture_output=True, text=True, timeout=10,
+        )
+
+    def test_stages_pool_bytes_under_legacy_names_and_repairs_dangling_output(self):
+        self.out.mkdir()
+        (self.out / "a.docx").symlink_to(self.tmp / "gone.docx")
+        r = self.stage()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((self.out / "a.docx").read_bytes(), b"original a")
+        self.assertEqual((self.out / "b.docx").read_bytes(), b"original b")
+        self.assertFalse((self.out / "a.docx").is_symlink())
+        self.assertEqual(self.stage().returncode, 0)
+
+    def test_local_original_survives_a_missing_pool_file(self):
+        (self.word / "clean/docx/123_a.docx").unlink()
+        (self.local / "a.docx").write_bytes(b"local original")
+        r = self.stage()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((self.out / "a.docx").read_bytes(), b"local original")
+
+    def test_dangling_local_source_falls_back_to_pool(self):
+        (self.local / "a.docx").symlink_to(self.tmp / "gone.docx")
+        r = self.stage()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((self.out / "a.docx").read_bytes(), b"original a")
+
+    def test_missing_sources_fail_and_name_documents_and_pairs(self):
+        (self.word / "clean/docx/456_b.docx").unlink()
+        (self.word / "clean/docx/456_b.docx").symlink_to(self.tmp / "missing-blob")
+        r = self.stage()
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("b.docx", r.stderr)
+        self.assertIn("old_pair", r.stderr)
+        self.assertIn("uv run bench fixtures download", r.stderr)
+        self.assertIn("maintainer", r.stderr)
+
+    def test_ambiguous_pool_alias_is_refused(self):
+        with self.pool.open("a") as f:
+            f.write("other,clean/docx/different_a,clean/docx/456_b,a,b,,,\n")
+        r = self.stage()
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("ambiguous", r.stderr)
+        self.assertIn("a.docx", r.stderr)
+
+    def test_local_and_pool_byte_mismatch_is_refused(self):
+        (self.local / "a.docx").write_bytes(b"different a")
+        r = self.stage()
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("different bytes", r.stderr)
+
+    def test_existing_regular_output_is_never_overwritten_with_different_bytes(self):
+        self.out.mkdir()
+        (self.out / "a.docx").write_bytes(b"keep me")
+        r = self.stage()
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertEqual((self.out / "a.docx").read_bytes(), b"keep me")
+
+    def test_invalid_pool_columns_and_empty_values_are_refused(self):
+        for contents in ("wrong,columns\n", "base,next,base_name,next_name\n",
+                         "base,next,base_name,next_name\nclean/a,clean/b,,b\n"):
+            with self.subTest(contents=contents):
+                self.pool.write_text(contents)
+                r = self.stage()
+                self.assertEqual(r.returncode, 1, r.stderr)
+                self.assertIn("word_based_pairs.csv", r.stderr)
+
+    def test_pool_paths_and_mapping_names_cannot_escape_their_folders(self):
+        self.pool.write_text(self.pool.read_text().replace("clean/docx/123_a", "../outside"))
+        r = self.stage()
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("escapes corpus/word", r.stderr)
+        self.pool.write_text(self.pool.read_text().replace("../outside", "clean/docx/123_a"))
+        self.mapping.write_text(self.mapping.read_text().replace("a.docx", "../a.docx"))
+        r = self.stage()
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("must be a .docx filename", r.stderr)
+
+    def rename_ledger(self, digest=None, corpus_set="word_based", pool_path="clean/docx/123_a.docx"):
+        notices = self.word / "notices"
+        notices.mkdir(exist_ok=True)
+        digest = digest or hashlib.sha256(b"original a").hexdigest()
+        (notices / "RENAMED.csv").write_text(
+            "original,new,id,sha256,set\n"
+            f"grok_run/word_based/docx_source/legacy_a.docx,{pool_path},123,{digest},{corpus_set}\n"
+        )
+        self.mapping.write_text("pair_stem,base,next,origin,docx_source_base,docx_source_next\n"
+                                "old_pair,a,b,both,legacy_a.docx,b.docx\n")
+
+    def test_rename_ledger_recovers_legacy_alias_with_verified_pool_bytes(self):
+        self.rename_ledger()
+        r = self.stage()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((self.out / "legacy_a.docx").read_bytes(), b"original a")
+
+    def test_rename_ledger_hash_mismatch_is_refused(self):
+        self.rename_ledger(digest="0" * 64)
+        r = self.stage()
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("sha256 mismatch", r.stderr)
+        self.assertFalse((self.out / "legacy_a.docx").exists())
+
+    def test_conflicting_rename_hashes_are_refused(self):
+        self.rename_ledger()
+        with (self.word / "notices/RENAMED.csv").open("a") as stream:
+            stream.write("grok_run/word_based/docx_source/legacy_a.docx,"
+                         f"clean/docx/123_a.docx,123,{'0' * 64},word_based\n")
+        r = self.stage()
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("conflicting rename hashes", r.stderr)
+
+    def test_rename_from_another_set_or_outside_the_pool_is_not_used(self):
+        for kwargs in ({"corpus_set": "nocomments"}, {"pool_path": "other.docx"}):
+            with self.subTest(kwargs=kwargs):
+                self.rename_ledger(**kwargs)
+                r = self.stage()
+                self.assertEqual(r.returncode, 1, r.stderr)
+                self.assertIn("MISSING", r.stderr)
+                self.assertFalse((self.out / "legacy_a.docx").exists())
+
+    def test_missing_pool_is_reported(self):
+        self.pool.unlink()
+        r = self.stage()
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("word_based_pairs.csv", r.stderr)
 
 
 if __name__ == "__main__":

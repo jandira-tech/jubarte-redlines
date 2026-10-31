@@ -42,6 +42,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- The Ring-2 release proof stages legacy source names from the bench pool, verifies renamed aliases against the rename ledger, and reports missing originals without re-blessing. Sweeps refuse baselined stems that were not run and never report their findings as fixed (#1791).
+
 - The release formatting gate checks all four Rust workspaces, including WASM, Python and in-process bindings; existing WASM formatting drift is corrected (#1760).
 
 - PowerTools-faithful comparisons, `compare --no-paragraph-merge`, and custom settings with `merge_replaced_paragraphs=false` no longer keep A-only headers and footers live on the final section (#1837). A-only detection uses both kind and default/first/even slot; stories referenced solely by the final section are deleted too. Accept removes their text and Reject restores it. The existing PAGE-field workaround moves an eligible footer off deleted breaks to avoid the Word crash; Reject restores that footer on the last section only. Stripping a final reference cannot be undone on Reject: a different story on an earlier live section can be inherited instead. Docxodus e605d62 accepts s548 to one section with no header/footer text; our accepted empty footer reference deliberately differs. Shared slots and stories on live earlier sections retain faithful behavior.

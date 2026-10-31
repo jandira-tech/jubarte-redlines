@@ -2917,6 +2917,16 @@ class Lessons0140(unittest.TestCase):
         self.assertEqual(len(rows), 1, f"one checklist row names {needle!r}")
         return "|".join(rows[0])
 
+    def test_ring2_stages_sources_from_the_bench_pool_before_sweeping(self) -> None:
+        row = self.one_row("Ring-2 validity ratchet")
+        for needle in ("scripts/stage_ring2_sources.py", "NEUROTIC_DOCX_BENCH",
+                       "../neurotic_docx_bench", "word_based_pairs.csv", "RENAMED.csv",
+                       "_scratch/ring2_sources", "not run", "maintainer"):
+            self.assertIn(needle, row)
+        self.assertLess(row.index("scripts/stage_ring2_sources.py"),
+                        row.index("scripts/redline-sweep.sh"))
+        self.assertNotIn("<its sources>", row)
+
     def test_ring3_opens_word_through_the_bench_and_reads_word_own_failures(self) -> None:
         # #1794: --probe drove Word through an osascript of its own. 0.14.0's
         # 23 failures crash Word 16.115 on Word's own redlines of most of
