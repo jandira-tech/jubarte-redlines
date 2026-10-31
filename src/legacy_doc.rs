@@ -310,21 +310,21 @@ fn docx_error(what: &str) -> LegacyDocError {
 /// the Markdown writer: letters and digits only (nothing to escape, and the
 /// writer drops private-use characters), and in none of the document's text.
 fn empty_placeholder(document: &LegacyDocument) -> String {
-    // Optimization: lazily search the document using .any() instead of
-    // eagerly allocating a Vec<String> with .flatten().cloned().collect()
-    // which caused O(N) memory overhead for large documents.
+    // Optimization: avoid eagerly cloning vectors of strings for tables.
+    // paragraph.text() reconstructs the text by copying spans, so we still compute texts once
+    // and cache them instead of inside the `.find` loop, but we optimize Table row flattening
+    // by using string join directly without first cloning everything into a Vec<String>.
+    let texts: Vec<String> = document
+        .blocks
+        .iter()
+        .map(|block| match block {
+            Block::Paragraph(paragraph) => paragraph.text(),
+            Block::Table(table) => table.rows.iter().flatten().map(|s| s.as_str()).collect::<Vec<&str>>().join(" "),
+        })
+        .collect();
     (0u32..)
         .map(|n| format!("jubarteemptyparagraph{n}"))
-        .find(|candidate| {
-            !document.blocks.iter().any(|block| match block {
-                Block::Paragraph(paragraph) => paragraph.text().contains(candidate.as_str()),
-                Block::Table(table) => table
-                    .rows
-                    .iter()
-                    .flatten()
-                    .any(|cell| cell.contains(candidate.as_str())),
-            })
-        })
+        .find(|candidate| texts.iter().all(|text| !text.contains(candidate.as_str())))
         .unwrap_or_default()
 }
 

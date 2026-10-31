@@ -1,0 +1,19 @@
+--- src/legacy_doc.rs
++++ src/legacy_doc.rs
+@@ -311,15 +311,18 @@
+ /// writer drops private-use characters), and in none of the document's text.
+ fn empty_placeholder(document: &LegacyDocument) -> String {
+     let texts: Vec<String> = document
+         .blocks
+         .iter()
+         .map(|block| match block {
+             Block::Paragraph(paragraph) => paragraph.text(),
+-            Block::Table(table) => table.rows.iter().flatten().cloned().collect(),
++            Block::Table(table) => table.rows.iter().flatten().map(|s| s.as_str()).collect::<Vec<&str>>().join(" "),
+         })
+         .collect();
+     (0u32..)
+         .map(|n| format!("jubarteemptyparagraph{n}"))
+         .find(|candidate| texts.iter().all(|text| !text.contains(candidate.as_str())))
+         .unwrap_or_default()
+ }
