@@ -44,6 +44,23 @@ fn plan(dir: &Path) -> serde_json::Value {
     serde_json::from_str(&std::fs::read_to_string(dir.join("plan.json")).unwrap()).unwrap()
 }
 
+/// clap's typed `--author` default (`InlineOptions`), not a guessed name.
+fn typed_default_author() -> String {
+    let cli = jubarte::cli::Cli::try_parse_from([
+        "jubarte", "edit", "replace", "a.docx", "--find", "a", "--text", "b", "-o", "out.docx",
+    ])
+    .unwrap_or_else(|error| panic!("{error}"));
+    let Some(jubarte::cli::Command::TypedEdit(typed)) = cli.command else {
+        panic!("not a typed edit");
+    };
+    typed
+        .action
+        .inline()
+        .expect("replace has inline options")
+        .author
+        .clone()
+}
+
 #[test]
 fn occurrence_1894_replace_names_paragraphs_with_one_match_each() {
     replace_ambiguity_1894(
@@ -1981,6 +1998,496 @@ fn review_typed_v1_apply_receipt_describes_the_redline_bytes() {
     );
 }
 
+/// The first stdout line of a typed edit, the human receipt.
+fn receipt_line(out: &str) -> &str {
+    out.lines().next().unwrap_or(out)
+}
+
+/// #1891: typed edits name who signed on the human receipt.
+#[test]
+fn typed_replace_receipt_names_the_given_author() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "cost",
+            "-a",
+            "GiantCo",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    let line = receipt_line(&out);
+    assert!(
+        line.contains(r#"; 1 change by "GiantCo""#) && !line.contains("no -a given"),
+        "{line}"
+    );
+    assert!(!err.contains("warning: no -a given"), "{err}");
+}
+
+/// #1891: without `-a`, the receipt names the default and stderr warns.
+#[test]
+fn typed_replace_receipt_without_author_warns() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    let author = typed_default_author();
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "cost",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    let line = receipt_line(&out);
+    assert!(
+        line.contains(&format!(r#"; 1 change by "{author}": no -a given"#)),
+        "{line}"
+    );
+    assert!(
+        err.contains(&format!(
+            r#"warning: no -a given; the new markup is signed "{author}""#
+        )),
+        "{err}"
+    );
+}
+
+/// #1891: `-a` with the default name is explicit.
+#[test]
+fn typed_explicit_default_author_is_not_a_missing_author_warning() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    let author = typed_default_author();
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "cost",
+            "--author",
+            &author,
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    let line = receipt_line(&out);
+    assert!(
+        line.contains(&format!(r#"; 1 change by "{author}""#)) && !line.contains("no -a given"),
+        "{line}"
+    );
+    assert!(!err.contains("warning: no -a given"), "{err}");
+}
+
+/// #1891: a comment on the replacement counts beside the change.
+#[test]
+fn typed_replace_receipt_counts_a_change_and_a_comment() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "cost",
+            "--comment",
+            "Cap it",
+            "-a",
+            "GiantCo",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    assert!(
+        receipt_line(&out).contains(r#"; 1 change, 1 comment by "GiantCo""#),
+        "{out}"
+    );
+    assert!(!err.contains("warning: no -a given"), "{err}");
+}
+
+/// #1891: insert and delete use the same receipt detail.
+#[test]
+fn typed_insert_and_delete_receipts_name_the_author() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "insert",
+            "letter.docx",
+            "--kind",
+            "text",
+            "--at",
+            "p2",
+            "--edge",
+            "end",
+            "--text",
+            " more",
+            "-a",
+            "GiantCo",
+            "-o",
+            "inserted.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    assert!(
+        receipt_line(&out).contains(r#"; 1 change by "GiantCo""#),
+        "{out}"
+    );
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "delete",
+            "letter.docx",
+            "--at",
+            "p2",
+            "--find",
+            "fee",
+            "-a",
+            "GiantCo",
+            "-o",
+            "deleted.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    assert!(
+        receipt_line(&out).contains(r#"; 1 change by "GiantCo""#),
+        "{out}"
+    );
+    assert!(!err.contains("warning: no -a given"), "{err}");
+}
+
+/// #1891: `--track off` publishes the clean copy, so the receipt names no
+/// tracked change.
+#[test]
+fn typed_track_off_receipt_names_no_tracked_change() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "cost",
+            "--track",
+            "off",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    let line = receipt_line(&out);
+    // "changed" is the outcome word. The markup clause is what must be absent.
+    assert!(!line.contains("change by"), "{line}");
+    assert!(!line.contains("no -a given"), "{line}");
+    assert!(!err.contains("warning: no -a given"), "{err}");
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(
+        std::fs::read(dir.path().join("out.docx")).unwrap(),
+    ))
+    .unwrap();
+    let mut document = String::new();
+    std::io::Read::read_to_string(
+        &mut archive.by_name("word/document.xml").unwrap(),
+        &mut document,
+    )
+    .unwrap();
+    assert!(!document.contains("<w:ins "), "{document}");
+    assert!(document.contains("cost"), "{document}");
+}
+
+/// #1891: `--json` / `--jsonl` keep the receipt shape. Stdout is the machine
+/// stream (proposal §12: structured output on stdout, diagnostics on stderr),
+/// so the default-author warning stays on stderr and out of the JSON.
+#[test]
+fn typed_json_receipt_keeps_its_shape_and_warns_on_stderr() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    let author = typed_default_author();
+    let warning = format!(r#"warning: no -a given; the new markup is signed "{author}""#);
+    for mode in ["--json", "--jsonl"] {
+        let (code, out, err) = run(
+            dir.path(),
+            &[
+                "edit",
+                "replace",
+                "letter.docx",
+                "--find",
+                "fee",
+                "--text",
+                "cost",
+                "-o",
+                &format!("out{mode}.docx"),
+                mode,
+            ],
+        );
+        assert_eq!(code, 0, "{mode}: {out} {err}");
+        assert!(!out.contains("warning:"), "{mode}: {out}");
+        assert!(!out.contains("no -a given"), "{mode}: {out}");
+        assert!(err.contains(&warning), "{mode}: {err}");
+        let value = if mode == "--json" {
+            serde_json::from_str::<serde_json::Value>(&out).unwrap()
+        } else {
+            let parsed = jubarte::result::read_jsonl_stream(&out).unwrap();
+            serde_json::to_value(parsed.terminal).unwrap()
+        };
+        assert_eq!(
+            value["effective_options"]["author"], author,
+            "{mode}: {out}"
+        );
+        let keys: Vec<&str> = value["effective_options"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        for key in [
+            "author",
+            "datetime",
+            "dry_run",
+            "emit",
+            "existing_revisions",
+            "force",
+            "report",
+            "request_sha256",
+            "source_binding",
+            "track",
+        ] {
+            assert!(keys.contains(&key), "{mode} missing {key}: {keys:?}");
+        }
+        assert!(
+            !keys.contains(&"author_given"),
+            "{mode} grew a receipt field: {keys:?}"
+        );
+    }
+}
+
+/// #1891: `-q` drops the status warning, as it drops the human receipt.
+/// `--json` still prints the envelope.
+#[test]
+fn typed_quiet_json_does_not_warn() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "-q",
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "cost",
+            "-o",
+            "out.docx",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&out).is_ok(),
+        "{out}"
+    );
+    assert!(!err.contains("warning: no -a given"), "{err}");
+    assert!(!out.contains("warning:"), "{out}");
+}
+
+/// #1891: recording a plan without `-a` says the default is what it signs.
+#[test]
+fn record_without_author_warns_that_the_plan_signs_the_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir, "letter.docx", "Last.");
+    let author = typed_default_author();
+    let (code, out, err) = run(
+        dir,
+        &[
+            "edit",
+            "letter.docx",
+            "--plan",
+            "plan.json",
+            "-p",
+            "p1",
+            "--anchor",
+            "his or her",
+            "--content",
+            "their",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    assert!(out.contains("recorded 1 operation"), "{out}");
+    assert_eq!(plan(dir)["author"], author);
+    assert!(
+        err.contains(&format!(
+            r#"warning: no -a given; the plan signs its markup "{author}""#
+        )),
+        "{err}"
+    );
+    // Applying the plan treats its author as explicit: the wrote line names
+    // them, with no missing-author warning.
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "letter.docx",
+            "--plan",
+            "plan.json",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let wrote = err
+        .lines()
+        .find(|line| line.starts_with("wrote "))
+        .unwrap_or(&err);
+    assert!(
+        wrote.contains(&format!(r#"; 1 change by "{author}""#)) && !wrote.contains("no -a given"),
+        "{err}"
+    );
+    assert!(!err.contains("warning: no -a given"), "{err}");
+}
+
+/// #1891: `-a` on a recording is the plan's author, and the warning stays off.
+/// `edit apply` then names that author without calling it a missing `-a`.
+#[test]
+fn record_with_author_does_not_warn_and_apply_names_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir, "letter.docx", "Last.");
+    let (code, out, err) = run(
+        dir,
+        &[
+            "edit",
+            "letter.docx",
+            "--plan",
+            "plan.json",
+            "-p",
+            "p1",
+            "--anchor",
+            "his or her",
+            "--content",
+            "their",
+            "-a",
+            "GiantCo",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    assert_eq!(plan(dir)["author"], "GiantCo");
+    assert!(!err.contains("warning: no -a given"), "{err}");
+    let (code, out, err) = run(
+        dir,
+        &[
+            "edit",
+            "apply",
+            "letter.docx",
+            "--plan",
+            "plan.json",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    assert!(
+        receipt_line(&out).contains(r#"; 1 change by "GiantCo""#)
+            && !receipt_line(&out).contains("no -a given"),
+        "{out}"
+    );
+    assert!(!err.contains("warning: no -a given"), "{err}");
+}
+
+/// #1891: a dry run still chooses the default author, so it warns too.
+#[test]
+fn record_dry_run_without_author_warns() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir, "letter.docx", "Last.");
+    let author = typed_default_author();
+    let (code, out, err) = run(
+        dir,
+        &[
+            "edit",
+            "letter.docx",
+            "--plan",
+            "plan.json",
+            "-p",
+            "p1",
+            "--anchor",
+            "his or her",
+            "--content",
+            "their",
+            "--dry-run",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    assert!(out.contains("would record"), "{out}");
+    assert!(!dir.join("plan.json").exists());
+    assert!(
+        err.contains(&format!(
+            r#"warning: no -a given; the plan signs its markup "{author}""#
+        )),
+        "{err}"
+    );
+}
+
+/// #1891: `-q` drops the recording warning with the summary.
+#[test]
+fn record_quiet_without_author_does_not_warn() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir, "letter.docx", "Last.");
+    let (code, out, err) = run(
+        dir,
+        &[
+            "-q",
+            "edit",
+            "letter.docx",
+            "--plan",
+            "plan.json",
+            "-p",
+            "p1",
+            "--anchor",
+            "his or her",
+            "--content",
+            "their",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    assert!(out.is_empty(), "{out}");
+    assert!(!err.contains("warning: no -a given"), "{err}");
+    assert_eq!(plan(dir)["author"], typed_default_author());
+}
+
 #[test]
 fn review_10_all_actions_help_and_human_success_and_usage_exit_two() {
     let dir = tempfile::tempdir().unwrap();
@@ -2022,13 +2529,20 @@ fn review_10_all_actions_help_and_human_success_and_usage_exit_two() {
         ],
     );
     assert_eq!(code, 0, "{out} {err}");
+    let author = typed_default_author();
     let summary = format!(
-        "edit replace: changed; wrote {}\n",
+        "edit replace: changed; wrote {}; 1 change by \"{author}\": no -a given\n",
         slash_path(&dir.path().join("out.docx").canonicalize().unwrap())
     );
     assert!(
         out.starts_with(&format!("{summary}SUCCESS:\n~~~~diff\n")),
         "{out}"
+    );
+    assert!(
+        err.contains(&format!(
+            r#"warning: no -a given; the new markup is signed "{author}""#
+        )),
+        "{err}"
     );
     assert!(
         out.contains("--- before letter.docx\n+++ after out.docx\n@@ "),
@@ -2042,7 +2556,6 @@ fn review_10_all_actions_help_and_human_success_and_usage_exit_two() {
         "{out}"
     );
     assert!(out.ends_with("~~~~\n"), "{out}");
-    assert!(err.is_empty(), "{err}");
 }
 
 /// #1244: the summary path comes from `absolute()`, which the CLI calls
@@ -2071,7 +2584,11 @@ fn review_11_wrote_summary_canonicalizes_a_relative_output() {
     );
     assert_eq!(code, 0, "{out} {err}");
     let canonical = dir.path().canonicalize().unwrap().join("out.docx");
-    let expected_summary = format!("edit replace: changed; wrote {}\n", slash_path(&canonical));
+    let author = typed_default_author();
+    let expected_summary = format!(
+        "edit replace: changed; wrote {}; 1 change by \"{author}\": no -a given\n",
+        slash_path(&canonical)
+    );
     assert!(out.starts_with(&expected_summary), "{out}");
     // The user-facing `./out.docx` echo in the diff header (`+++ after
     // ./out.docx`) stays verbatim, but the agent-facing summary line on

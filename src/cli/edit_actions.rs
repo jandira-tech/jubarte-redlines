@@ -174,6 +174,12 @@ pub struct InlineOptions {
     /// New revision and comment author.
     #[arg(short = 'a', long, default_value = "Jubarte", value_parser = super::parse_author)]
     pub author: String,
+    /// Whether `-a`/`--author` was spelled on the command line (set after
+    /// parsing). The typed receipt uses this to say when the default signed
+    /// the new markup (#1891).
+    #[arg(skip)]
+    #[serde(skip)]
+    pub author_given: bool,
     /// Frozen timestamp; timezone required. Default current UTC.
     #[arg(short = 'd', long = "datetime", value_parser = super::parse_datetime)]
     pub datetime: Option<String>,
@@ -353,6 +359,21 @@ impl EditAction {
             | Self::Delete { inline, .. } => Some(inline),
             Self::Apply { .. } => None,
         }
+    }
+    /// Inline policy, mutable, when this action compiles a new plan.
+    pub fn inline_mut(&mut self) -> Option<&mut InlineOptions> {
+        match self {
+            Self::Replace { inline, .. }
+            | Self::Rewrite { inline, .. }
+            | Self::Insert { inline, .. }
+            | Self::Delete { inline, .. } => Some(inline),
+            Self::Apply { .. } => None,
+        }
+    }
+    /// Whether `-a` was spelled for this action. `edit apply` has none:
+    /// the plan's author is the signature.
+    pub fn author_was_given(&self) -> bool {
+        self.inline().is_none_or(|inline| inline.author_given)
     }
     /// Exact payload or resource input for actions with text.
     pub fn payload(&self) -> Option<&TextPayload> {

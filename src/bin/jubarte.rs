@@ -1300,6 +1300,8 @@ struct EditJob<'a> {
     dpi: f32,
     revisions: jubarte::convert::RevisionStyle,
     quiet: bool,
+    /// `-a`/`--author` was given, or a plan names the author (#1891).
+    author_given: bool,
 }
 
 /// Exit 3: the plan was refused (stale source, ambiguous anchor, ...); the
@@ -1666,17 +1668,34 @@ fn publish_edit(
         write_stdout(format!("{summary}\n")).map_err(committed)?;
     }
     let names: Vec<&str> = outputs.iter().map(|(name, _)| name.as_str()).collect();
-    // The status lines on stderr (D6); the summary and the view are data.
-    edit_status(format_args!(
-        "wrote {} ({} files: {})",
-        out_dir.display(),
-        names.len(),
-        names.join(", ")
-    ));
     let primary = match job.mode {
         Mode::Suggesting => &result.redline,
         Mode::Editing => &result.clean,
     };
+    // The status lines on stderr (D6); the summary and the view are data.
+    // The author detail counts the bytes this bundle publishes (#1891).
+    let markup = published_markup(job, &result, primary);
+    let listed = names.join(", ");
+    match markup.as_deref() {
+        Some(detail) => edit_status(format_args!(
+            "wrote {} ({} files: {}; {detail})",
+            out_dir.display(),
+            names.len(),
+            listed
+        )),
+        None => edit_status(format_args!(
+            "wrote {} ({} files: {})",
+            out_dir.display(),
+            names.len(),
+            listed
+        )),
+    }
+    if markup.is_some() && !job.author_given {
+        edit_status(format_args!(
+            "warning: no -a given; the new markup is signed \"{}\"",
+            result.report.author
+        ));
+    }
     written_status(&result, failed);
     for note in edit_notes(notes, &result, primary, source) {
         edit_status(format_args!("{note}"));
@@ -2369,14 +2388,21 @@ fn write_edited(
         },
     )?;
     let failed = failed.map(|f| (f.path.as_path(), f.notes.as_slice()));
+    let markup = published_markup(job, result, document);
     if job.quiet {
         skipped_status(result, failed);
         return Ok(());
     }
     edit_status(format_args!(
         "{}",
-        wrote_line(path, Format::Docx, document.len(), None)
+        wrote_line_with(path, Format::Docx, document.len(), None, markup.as_deref(),)
     ));
+    if markup.is_some() && !job.author_given {
+        edit_status(format_args!(
+            "warning: no -a given; the new markup is signed \"{}\"",
+            result.report.author
+        ));
+    }
     if let Some(pages) = pdf_pages {
         let pdf = path.with_extension("pdf");
         let bytes = outputs
@@ -2666,6 +2692,7 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         dpi: flags.dpi,
         revisions: flags.revisions,
         quiet: flags.quiet,
+        author_given: flags.options.author_given || flags.plan.is_some(),
     };
     let skipped = run_edit(&job, &plan, &source, &notes, &plan_notes)?;
     if let Some((path, _)) = consumed.as_ref().filter(|_| skipped > 0) {
@@ -2763,8 +2790,50 @@ fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), 
                 flags.dry_run
             )
         );
+        // The default is baked into the plan, and a later apply treats that
+        // author as explicit (#1891). Say so when the command line did not.
+        if !options.author_given {
+            edit_status(format_args!(
+                "warning: no -a given; the plan signs its markup \"{}\"",
+                recorded.plan.author
+            ));
+        }
     }
     Ok(())
+}
+
+/// Markup the write actually publishes (#1891). Suggesting mode publishes
+/// the redline, so the report's counts are the line. Editing mode publishes
+/// the clean copy: no tracked change, and a comment only when that copy
+/// still holds it.
+fn published_markup(
+    job: &EditJob<'_>,
+    result: &jubarte::edit::EditResult,
+    published: &[u8],
+) -> Option<String> {
+    let (changes, comments) = match job.mode {
+        Mode::Suggesting => (result.report.revisions.total, result.report.comments_added),
+        Mode::Editing => (0, comments_in_published(published, result)),
+    };
+    jubarte::cli::wrote_markup_detail(changes, comments, &result.report.author, job.author_given)
+}
+
+/// Comments this edit wrote that `published` still holds. A deletion's
+/// comment is written only into the redline, so the clean copy does not
+/// count it.
+fn comments_in_published(published: &[u8], result: &jubarte::edit::EditResult) -> usize {
+    let wanted: std::collections::BTreeSet<u32> = result
+        .report
+        .operations
+        .iter()
+        .filter_map(|op| op.comment_id)
+        .collect();
+    if wanted.is_empty() {
+        return 0;
+    }
+    jubarte::comments::list_comments(published)
+        .map(|rows| rows.iter().filter(|row| wanted.contains(&row.id)).count())
+        .unwrap_or(0)
 }
 
 fn edit_exit(result: Result<(), (u8, String)>) -> ExitCode {
