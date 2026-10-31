@@ -157,14 +157,44 @@ mod tests {
     fn markers_between_the_blocks_do_not_count() {
         let (new, gone) = (inserted("New."), table(&[true]));
         let markers = r#"<w:bookmarkStart w:id="9" w:name="Fees"/><w:commentRangeStart w:id="0"/>"#;
+        let kept = "<w:r><w:t>Kept.</w:t></w:r>";
         let body = format!(
-            "<w:p>{}{new}</w:p>{markers}{gone}<w:bookmarkEnd w:id=\"9\"/><w:p/>",
+            "<w:p>{}{new}</w:p>{markers}{gone}<w:bookmarkEnd w:id=\"9\"/><w:p>{kept}</w:p>",
             mark()
         );
         let expected = format!(
-            "<w:p>{}</w:p>{markers}{gone}<w:bookmarkEnd w:id=\"9\"/><w:p>{new}</w:p>",
+            "<w:p>{}</w:p>{markers}{gone}<w:bookmarkEnd w:id=\"9\"/><w:p>{new}{kept}</w:p>",
             mark()
         );
+        assert_eq!(serialized(&body, true), serialized(&expected, false));
+    }
+
+    /// One deleted table and an empty paragraph after it. The words stay
+    /// ahead of the table (#1926). Between two deleted tables they still
+    /// move (#1851).
+    #[test]
+    fn words_before_one_deleted_table_stay_ahead_of_it() {
+        let gone = table(&[true]);
+        let words = inserted("Recommendation: Promote.");
+        let body = format!("<w:p>{}{words}</w:p>{gone}<w:p/>", mark());
+        assert_eq!(serialized(&body, true), serialized(&body, false));
+        let between = format!("{gone}<w:p>{}{words}</w:p>{gone}<w:p/>", mark());
+        let expected = format!("{gone}<w:p>{}</w:p>{gone}<w:p>{words}</w:p>", mark());
+        assert_eq!(serialized(&between, true), serialized(&expected, false));
+    }
+
+    /// Deleted words of the original beside the insertion still move past
+    /// one table onto the empty paragraph after it. That text against the
+    /// deleted row crashed Word 16.115 (diff_before16 × diff_before19).
+    #[test]
+    fn deleted_words_beside_the_insertion_still_move_past_one_table() {
+        let gone = table(&[true]);
+        let (old, words) = (
+            deleted("Diffing feature"),
+            inserted("An image will be added below:"),
+        );
+        let body = format!("<w:p>{}{old}{words}</w:p>{gone}<w:p/>", mark());
+        let expected = format!("<w:p>{}{old}</w:p>{gone}<w:p>{words}</w:p>", mark());
         assert_eq!(serialized(&body, true), serialized(&expected, false));
     }
 
