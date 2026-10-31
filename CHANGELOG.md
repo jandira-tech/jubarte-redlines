@@ -42,6 +42,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **Split deleted tables preserve stored grids for unprobed geometry** (#1913). Skip preferred-width resolution for row width or indent exceptions, tracked cell or row properties, horizontal or vertical merges, and any nonzero cell margins under percentage table widths. These are conservative guards, not new claims about Word behavior. Keep resolved totals wider than the section text area, as demonstrated by Word’s redline of `510bcf9432` (9,571 twips in a 9,358-twip text area).
+
 - **Split deleted tables resolve supported preferred cell widths** (#1913). Reconcile agreeing positive `dxa` cell widths in both autofit and fixed tables, including fitting stored grids; honor exact `dxa` expansion and percentage widths with explicit zero margins. Preserve live grids and cell preferences. Keep grids requiring content measurement, unknown margins, spacing, conflicting preferences or fractional allocation unchanged; full Word layout resolution remains open. Twelve constructed Word 16.115 probes establish the supported cases.
 
 - The Ring-2 release proof stages legacy source names from the bench pool, verifies renamed aliases against the rename ledger, and reports missing originals without re-blessing. Sweeps refuse baselined stems that were not run and never report their findings as fixed (#1791).

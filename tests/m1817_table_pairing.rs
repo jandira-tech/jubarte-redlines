@@ -797,30 +797,37 @@ preferred_grid_probe!(
     [2000, 4000]
 );
 
-#[test]
-fn preferred_grid_1913_reconciles_cell_widths_at_the_same_total() {
-    let preferred = [1968, 749, 611, 613, 613, 1170, 3847];
-    assert_preferred_grid(
-        &[1966, 749, 619, 613, 613, 1170, 3841],
-        &preferred,
-        "autofit",
-        "dxa",
-        9571,
-        &preferred,
-    );
+// The corpus cases resolve in a wider section than the 9000-twip probe
+// matrix. Keep their totals within a known 10000-twip text area.
+fn wider_preferred_section(bytes: &[u8]) -> Vec<u8> {
+    let xml = common::docx::part_string(bytes, "word/document.xml")
+        .unwrap()
+        .replace(r#"<w:pgSz w:w="11880""#, r#"<w:pgSz w:w="12880""#);
+    common::docx::replace_entry(bytes, "word/document.xml", xml.as_bytes())
 }
 
 #[test]
-fn preferred_grid_1913_auto_can_expand_even_when_the_stored_grid_overflows() {
+fn preferred_grid_1913_reconciles_cell_widths_at_the_same_total() {
+    let grid = [1966, 749, 619, 613, 613, 1170, 3841];
+    let preferred = [1968, 749, 611, 613, 613, 1170, 3847];
+    let edit = |original| {
+        wider_preferred_section(&preferred_grid_document(
+            &grid, &preferred, "autofit", "dxa", 9571, original,
+        ))
+    };
+    assert_preferred_packages(&edit(true), &edit(false), &grid, &preferred, &preferred);
+}
+
+#[test]
+fn preferred_grid_1913_auto_can_expand_a_fitting_stored_grid() {
+    let grid = [1373, 2638, 1313, 3294];
     let preferred = [1424, 2835, 1353, 3608];
-    assert_preferred_grid(
-        &[1373, 2638, 1313, 3294],
-        &preferred,
-        "autofit",
-        "auto",
-        0,
-        &preferred,
-    );
+    let edit = |original| {
+        wider_preferred_section(&preferred_grid_document(
+            &grid, &preferred, "autofit", "auto", 0, original,
+        ))
+    };
+    assert_preferred_packages(&edit(true), &edit(false), &grid, &preferred, &preferred);
 }
 
 #[test]
@@ -834,6 +841,7 @@ fn preferred_grid_1913_explicit_cell_margins_resolve_without_table_margins() {
             0,
             original,
         );
+        let bytes = wider_preferred_section(&bytes);
         let xml = common::docx::part_string(&bytes, "word/document.xml").unwrap()
             .replace(r#"<w:tblCellMar><w:left w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar>"#, "")
             .replace("</w:tcPr>", r#"<w:tcMar><w:left w:w="80" w:type="dxa"/><w:right w:w="250" w:type="dxa"/></w:tcMar></w:tcPr>"#);

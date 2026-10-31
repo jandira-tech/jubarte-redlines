@@ -430,6 +430,32 @@ fn deleted_preferred_widths(dom: &Dom, table: NodeId, grid: NodeId) -> Option<Ve
     if dom.element(pr, &W::name("tblCellSpacing")).is_some() {
         return None;
     }
+    // Tracked properties and merges have not been isolated by the Word
+    // probes. Do not choose between competing geometry in a deleted run.
+    if ["tcPrChange", "trPrChange", "hMerge", "vMerge"]
+        .iter()
+        .any(|name| !dom.descendants(table, Some(&W::name(name))).is_empty())
+    {
+        return None;
+    }
+    let tw = dom.element(pr, &W::tbl_w())?;
+    if dom.attribute(tw, &W::type_()) == Some("pct")
+        && ["tcMar", "tblCellMar"].iter().any(|name| {
+            dom.descendants(table, Some(&W::name(name)))
+                .into_iter()
+                .any(|mar| {
+                    dom.elements(mar, None).into_iter().any(|side| {
+                        dom.attribute(side, &W::type_()) != Some("dxa")
+                            || dom
+                                .attribute(side, &W::w())
+                                .and_then(|w| w.parse::<u32>().ok())
+                                != Some(0)
+                    })
+                })
+        })
+    {
+        return None;
+    }
     let margins = explicit_margins(dom, pr, "tblCellMar");
     let mut preferred = None;
     let rows = dom.elements(table, Some(&W::tr()));
@@ -443,7 +469,9 @@ fn deleted_preferred_widths(dom: &Dom, table: NodeId, grid: NodeId) -> Option<Ve
         if grid_count(dom, row_pr, "gridBefore", 0)? != 0
             || grid_count(dom, row_pr, "gridAfter", 0)? != 0
             || dom.element(row, &W::name("tblPrEx")).is_some_and(|ex| {
-                dom.element(ex, &W::name("tblCellSpacing")).is_some()
+                dom.element(ex, &W::name("tblInd")).is_some()
+                    || dom.element(ex, &W::tbl_w()).is_some()
+                    || dom.element(ex, &W::name("tblCellSpacing")).is_some()
                     || dom.element(ex, &W::name("tblCellMar")).is_some_and(|mar| {
                         ["left", "right", "start", "end"]
                             .iter()
@@ -486,7 +514,6 @@ fn deleted_preferred_widths(dom: &Dom, table: NodeId, grid: NodeId) -> Option<Ve
     }
     let preferred = preferred?;
     let sum: u64 = preferred.iter().map(|&w| u64::from(w)).sum();
-    let tw = dom.element(pr, &W::tbl_w())?;
     let total = match dom.attribute(tw, &W::type_())? {
         "auto" => sum,
         "dxa" => dom.attribute(tw, &W::w())?.parse().ok()?,
@@ -606,6 +633,116 @@ mod tests {
         let table = dom.descendants(dom.root(doc).unwrap(), Some(&W::tbl()))[0];
         let grid = dom.element(table, &W::tbl_grid()).unwrap();
         deleted_preferred_widths(&dom, table, grid)
+    }
+
+    fn assert_unprobed_grid_survives(xml: &str) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let table = dom.descendants(dom.root(doc).unwrap(), Some(&W::tbl()))[0];
+        let grid = dom.element(table, &W::tbl_grid()).unwrap();
+        let stored = dom.serialize_element(grid);
+        resolve_deleted_preferences(&mut dom, table, grid);
+        assert_eq!(
+            dom.serialize_element(grid),
+            stored,
+            "#1913 unprobed geometry must preserve the stored grid"
+        );
+    }
+
+    #[test]
+    fn split_preferences_bail_on_row_width_or_indent() {
+        for property in ["tblInd", "tblW"] {
+            let xml = preferred_xml().replace(
+                "<w:tr>",
+                &format!(r#"<w:tr><w:tblPrEx><w:{property} w:w="480" w:type="dxa"/></w:tblPrEx>"#),
+            );
+            assert_unprobed_grid_survives(&xml);
+        }
+    }
+
+    #[test]
+    fn split_preferences_bail_on_tracked_cell_or_row_properties() {
+        for (from, to) in [
+            (
+                "</w:tcPr>",
+                r#"<w:tcPrChange w:id="10" w:author="Prior"><w:tcPr><w:tcW w:w="1500" w:type="dxa"/></w:tcPr></w:tcPrChange></w:tcPr>"#,
+            ),
+            (
+                "<w:tr>",
+                r#"<w:tr><w:trPr><w:trPrChange w:id="11" w:author="Prior"><w:trPr/></w:trPrChange></w:trPr>"#,
+            ),
+        ] {
+            assert_unprobed_grid_survives(&preferred_xml().replacen(from, to, 1));
+        }
+    }
+
+    #[test]
+    fn split_preferences_bail_on_nonzero_percent_margins() {
+        let xml = preferred_xml().replace(
+            r#"<w:tblW w:w="9000" w:type="dxa"/>"#,
+            r#"<w:tblW w:w="5000" w:type="pct"/>"#,
+        );
+        for side in ["left", "right", "top", "bottom", "start", "end"] {
+            let margins = format!(
+                r#"<w:left w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/><w:{side} w:w="200" w:type="dxa"/>"#
+            );
+            // Replace the zero side instead of constructing duplicate elements.
+            let margins = margins.replace(&format!(r#"<w:{side} w:w="0" w:type="dxa"/>"#), "");
+            let cell = xml.replace(
+                "</w:tcPr>",
+                &format!("<w:tcMar>{margins}</w:tcMar></w:tcPr>"),
+            );
+            assert_unprobed_grid_survives(&cell);
+            let table = xml.replace(
+                r#"<w:tblCellMar><w:left w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar>"#,
+                &format!("<w:tblCellMar>{margins}</w:tblCellMar>"),
+            );
+            assert_unprobed_grid_survives(&table);
+        }
+    }
+
+    #[test]
+    fn split_preferences_bail_on_horizontal_or_vertical_merges() {
+        for merge in ["hMerge", "vMerge"] {
+            for value in [r#" w:val="restart""#, r#" w:val="continue""#, ""] {
+                let xml =
+                    preferred_xml().replace("</w:tcPr>", &format!("<w:{merge}{value}/></w:tcPr>"));
+                assert_unprobed_grid_survives(&xml);
+            }
+        }
+    }
+
+    #[test]
+    fn split_preferences_keep_resolved_total_wider_than_section() {
+        // Word's redline of 510bcf9432 resolves 9571 twips in a 9358-twip
+        // text area: a resolved total is not clamped to the section width.
+        for (width, expected) in [
+            (r#"w:w="12000" w:type="dxa""#, vec![4000, 8000]),
+            (r#"w:w="7500" w:type="pct""#, vec![4500, 9000]),
+            (r#"w:w="0" w:type="auto""#, vec![2000, 4000]),
+        ] {
+            let xml = preferred_xml().replace(r#"w:w="9000" w:type="dxa""#, width);
+            let xml = if width.contains("auto") {
+                xml.replace(r#"w:w="11880""#, r#"w:w="7880""#)
+            } else {
+                xml
+            };
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&xml);
+            let table = dom.descendants(dom.root(doc).unwrap(), Some(&W::tbl()))[0];
+            let grid = dom.element(table, &W::tbl_grid()).unwrap();
+            assert!(expected.iter().sum::<u64>() > split_section_width(&dom, table).unwrap());
+            resolve_deleted_preferences(&mut dom, table, grid);
+            let actual: Vec<u64> = dom
+                .elements(grid, Some(&W::grid_col()))
+                .into_iter()
+                .map(|col| dom.attribute(col, &W::w()).unwrap().parse().unwrap())
+                .collect();
+            assert_eq!(
+                actual, expected,
+                "#1913 resolved widths may exceed the text area"
+            );
+        }
     }
 
     #[test]
