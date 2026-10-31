@@ -57,7 +57,7 @@ fn generate(
             ));
         }
     }
-    let generated = template::generate(
+    let mut generated = template::generate(
         source,
         &TemplateRequest {
             view: ForEditRequest {
@@ -90,6 +90,9 @@ fn generate(
         },
     )
     .map_err(|e| failure(&e.code, e.message))?;
+    if options.keep_others || super::env_keep_others() {
+        generated.plan.others = Some(jubarte::edit::Others::Keep);
+    }
     let mut data = ResultData::new(Phase::Generated, Effect::NotApplied);
     data.generation =
         Some(serde_json::to_value(&generated.summary).expect("generation serializes"));

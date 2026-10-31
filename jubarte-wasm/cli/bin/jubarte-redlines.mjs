@@ -503,11 +503,20 @@ function readPlanText(plan, missing = false) {
   }
 }
 
+/** The guard is on: `--keep-others`, or exactly `JUBARTE_KEEP_OTHERS=1`.
+ * Read here, in the CLI, and nowhere in the library. */
+function keepOthers(o) {
+  return Boolean(o.keep_others) || process.env.JUBARTE_KEEP_OTHERS === "1";
+}
+
 /** `--plan`'s text, or the plan the operation flags describe, and its
- * notes; `--rewrite-others-comments` sets the plan's field. */
+ * notes. `--rewrite-others-comments` still sets its field (a no-op).
+ * `--keep-others` and `JUBARTE_KEEP_OTHERS=1` set `"others": "keep"`. */
 function editPlan(verb, docx, o) {
   const given = editPlanAsGiven(verb, docx, o);
-  if (!o.rewrite_others_comments) return given;
+  const rewrite = Boolean(o.rewrite_others_comments);
+  const keep = keepOthers(o);
+  if (!rewrite && !keep) return given;
   let parsed;
   try {
     parsed = JSON.parse(given.plan);
@@ -515,7 +524,8 @@ function editPlan(verb, docx, o) {
     return given; // reported as INVALID_PLAN when applied
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return given;
-  parsed.rewrite_others_comments = true;
+  if (rewrite) parsed.rewrite_others_comments = true;
+  if (keep) parsed.others = "keep";
   return { plan: JSON.stringify(parsed), notes: given.notes };
 }
 
@@ -556,6 +566,8 @@ function recordPlan(verb, file, docx, o) {
     file, plan: o.plan, defaultPlan: Boolean(o.plan_default), dryRun: Boolean(o.dry_run),
     rewriteOthersComments: Boolean(o.rewrite_others_comments),
   };
+  // Only when set: an engine that predates the field rejects an unknown key.
+  if (keepOthers(o)) options.keepOthers = true;
   const answer = JSON.parse(wasm.recordPlan(verb, JSON.stringify(o.operations), docx, JSON.stringify(options), held));
   if (!answer.ok) {
     if (answer.usage) throw new UsageError(answer.message);

@@ -21,6 +21,11 @@
       "type": "boolean",
       "default": false
     },
+    "others": {
+      "type": "string",
+      "enum": ["allow", "keep"],
+      "default": "allow"
+    },
     "schema_version": {
       "const": 2
     },

@@ -25,9 +25,11 @@ def test_reply_and_resolve_round_trip() -> None:
     assert (root.text, root.done, root.parent) == ("Too low", False, None)
     assert (root.anchor_text, root.before, root.after, root.paragraph) == ("cap", "The ", " is 10.", "p0")
     assert root.last_paragraph is None
-    # Bob answers Ann's comment; resolving it is Ann's to do (#1846).
+    # Bob may resolve Ann's comment. The report notes it. others="keep" refuses (#1892).
+    resolved = first.clean.edit(jubarte.EditPlan(author="Bob").resolve_comment(root.id))
+    assert any('c0 is by "Ann"' in note for note in resolved.report.notes)
     with pytest.raises(jubarte.EditPlanError) as refused:
-        first.clean.edit(jubarte.EditPlan(author="Bob").resolve_comment(root.id))
+        first.clean.edit(jubarte.EditPlan(author="Bob", others="keep").resolve_comment(root.id))
     assert refused.value.code == "COMMENT_NOT_YOURS"
     replied = first.clean.edit(jubarte.EditPlan(author="Bob").reply_comment(root.id, text="Agreed"))
     second = replied.clean.edit(jubarte.EditPlan(author="Ann").resolve_comment(root.id))
@@ -50,10 +52,16 @@ def test_edit_delete_through_and_filters() -> None:
     assert [x.text for x in replied.clean.comments(latest=True)] == ["Yes"]
     reopened = replied.clean.edit(jubarte.EditPlan(author="Ann").resolve_comment(c.id, done=False))
     assert not any(x.done for x in reopened.clean.comments())
-    # Deleting her comment would delete Bob's reply with it (#1846).
+    # Deleting her comment deletes Bob's reply with it, and the report says so.
+    # others="keep" refuses that (#1892). The old rewrite flag does not bypass it.
+    deleted = replied.clean.edit(jubarte.EditPlan(author="Ann").delete_comment(c.id))
+    assert any("c1 is by" in note and "Bob" in note for note in deleted.report.notes)
     with pytest.raises(jubarte.EditPlanError) as refused:
-        replied.clean.edit(jubarte.EditPlan(author="Ann").delete_comment(c.id))
+        replied.clean.edit(
+            jubarte.EditPlan(author="Ann", others="keep", rewrite_others_comments=True).delete_comment(c.id)
+        )
     assert refused.value.code == "COMMENT_NOT_YOURS"
+    assert "rewrite_others_comments" not in refused.value.message
     deleted = replied.clean.edit(
         jubarte.EditPlan(author="Ann", rewrite_others_comments=True).delete_comment(c.id)
     )

@@ -215,7 +215,7 @@ stdout name the operation when applicable; plan-level refusals have no operation
 Refusal codes include `ANCHOR_NOT_FOUND`, `AMBIGUOUS_ANCHOR` with the
 match count, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, `UNSUPPORTED_IMAGE`, `STALE_SOURCE`,
 `EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE`, `AMBIGUOUS_CHANGE`,
-`PARAGRAPH_RESOLVED`, `UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `COMMENT_NOT_YOURS`, `REDACTION_LEAK`, `UNSUPPORTED`,
+`PARAGRAPH_RESOLVED`, `UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `COMMENT_NOT_YOURS`, `CHANGE_NOT_YOURS`, `REDACTION_LEAK`, `UNSUPPORTED`,
 `INVALID_PLAN`, `INVALID_EDIT`, `LOCKED_CONTROL`;
 fix the plan and rerun. Use `--dry-run`
 to see the report without writing.
@@ -261,10 +261,13 @@ booleans and `protection` `{"edit": "readOnly|comments|trackedChanges|forms|none
 "enforcement": true}`; no paragraph; one per plan; this `update_fields`
 asks Word to recompute fields on open, the plan's top-level one writes
 jubarte's results now). `edit_comment`, `resolve_comment` and
-`delete_comment` on another author's comment are refused
-(`COMMENT_NOT_YOURS`), and so is deleting your own comment whose thread
-holds their reply: answer them with `reply_comment`. Only
-`"rewrite_others_comments": true` lets such an operation through. `replace` and
+`delete_comment` on another author's comment are allowed and noted, and so
+is deleting your own comment whose thread holds their reply.
+`"others": "keep"` (`--keep-others`, `JUBARTE_KEEP_OTHERS=1`) refuses them
+(`COMMENT_NOT_YOURS`): reply instead. The same guard refuses accepting or
+rejecting their tracked changes (`CHANGE_NOT_YOURS`): restore a deletion,
+strike an insertion, or comment. `"rewrite_others_comments": true` is
+accepted and ignored. `replace` and
 `insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`,
 `font`, `size_pt`, `color` as `FF0000` or `auto`, `strike`, `caps`) that
 applies to the new text only. `replace` takes `"whole": true` to show

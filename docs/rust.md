@@ -1317,11 +1317,11 @@ Options:
       --reply <TEXT>
           Reply to comment c5 (with -p c5), as `add -p c5 --content`
 
-      --rewrite-others-comments
-          Let `-p c5 --content`, `--delete` and `--resolve` change a comment another
-          author wrote (a reworded one keeps their name), and `--delete` take their
-          reply with your thread. Without it that is refused (COMMENT_NOT_YOURS): one
-          author answers another with --reply
+      --keep-others
+          Refuse to accept or reject another author's tracked change, and to delete,
+          resolve, reopen or reword their comment. Restore, strike, a comment and a
+          reply stay allowed. JUBARTE_KEEP_OTHERS=1 sets the same guard. Another author
+          is anyone other than --author (Jubarte when --author is left out)
 
       --accept
           Accept revision r12 (with -p r12; r1+2 for several); prints the resolved
@@ -1368,6 +1368,14 @@ Options:
           The edits land directly: the file written is the result, and the view shows it
           with rev tags on the id lines
 
+  -q, --quiet
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print. `read`, `changes` and `comments` drop their stderr validity
+          status (JSON under `changes --json` and `comments --json`). `read --json` and
+          `read --for-edit` keep validity counts in their output, -q or not
+
       --existing-revisions <MODE>
           What to do when FILE already holds tracked changes: auto keeps them and tracks
           the new edits beside them; a clean file goes through the comparer
@@ -1380,14 +1388,6 @@ Options:
           - refuse: Refuse a file that has them
 
           [default: auto]
-
-  -q, --quiet
-          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
-          are still written; a reading task (`read`, `changes`, `compare` without -o,
-          `diff`, `capabilities`) still prints what it read, and warnings and errors
-          still print. `read`, `changes` and `comments` drop their stderr validity
-          status (JSON under `changes --json` and `comments --json`). `read --json` and
-          `read --for-edit` keep validity counts in their output, -q or not
 
   -o, --output <FILE.docx>
           The edited document, a .docx (default: `<FILE's
@@ -1529,6 +1529,13 @@ Options:
 
       --reply <TEXT>
           Reply to comment c5 (with -p c5); the same as --content there
+
+      --keep-others
+          Refuse to accept or reject another author's tracked change, and to delete,
+          resolve, reopen or reword their comment, when this command applies or records
+          a plan. Restore, strike, a comment and a reply stay allowed.
+          JUBARTE_KEEP_OTHERS=1 sets the same guard. Another author is anyone other than
+          --author (Jubarte when --author is left out)
 
       --before
           A new paragraph before WHERE instead of after it

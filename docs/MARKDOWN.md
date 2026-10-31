@@ -1033,7 +1033,7 @@ jubarte edit FILE -p WHERE --anchor FIND --content WITH        replace FIND (an 
 jubarte edit FILE -p WHERE --content TEXT                      rewrite the paragraph
 jubarte edit FILE -p WHERE [--anchor FIND] --delete            delete FIND, or the paragraph
 jubarte edit FILE -p WHERE [--anchor FIND] --style SPEC        format FIND, or set the paragraph style
-jubarte edit FILE -p c5 --content TEXT | --delete | --resolve  a comment (another author's: --rewrite-others-comments)
+jubarte edit FILE -p c5 --content TEXT | --delete | --resolve  a comment (another author's is allowed; --keep-others refuses it)
 jubarte edit FILE -p c5 --reply TEXT                           a reply
 jubarte edit FILE -p c5.text --content TEXT                    replace the text c5 covers
 jubarte edit FILE -p r12 --accept | --reject                   resolve one tracked change (prints SUCCESS and a fenced diff containing the resolved text)
@@ -1256,13 +1256,16 @@ command used:
 
 ```text
 error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text is inside r4, "bankers" deleted by "Bob".
-  put it back visibly:  -p r4 --restore (their deletion stays, your insertion shows)
-  let it go:            -p r4 --accept  (their words leave the document for good)
-  put it back silently: -p r4 --reject  (their deletion disappears, no trace)
-  or comment on it:     add -p p0 --anchor "…" --content "…"
+  put it back visibly:                            -p r4 --restore (their deletion stays, your insertion shows)
+  let it go (erases "Bob"'s deletion):            -p r4 --accept  (their words leave the document for good)
+  put it back silently (erases "Bob"'s deletion): -p r4 --reject  (their deletion disappears, no trace)
+  or comment on it:                               add -p p0 --anchor "…" --content "…"
 ```
 
-Accepting or rejecting goes in the same command, before the edit
+Accepting or rejecting another author's change names what that erases.
+`--keep-others` (`"others": "keep"`, or `JUBARTE_KEEP_OTHERS=1`) drops
+those two routes and leaves restore, strike or a comment. Accepting or
+rejecting goes in the same command, before the edit
 (`edit FILE -p r4 --reject -p p0 --anchor bankers --content brokers`). A
 restore goes in a command of its own (an edit of its words in the same
 command is refused, saying so): the next edit finds the restored words,

@@ -152,6 +152,24 @@ fn apply_bound(
         .collect::<Result<Vec<_>, _>>()?;
     let mut settlement = legacy(plan);
     settlement.resolve_revisions = Some(selection);
+    if settlement.others.keeps() {
+        let wholesale = match plan.policy.existing_revisions {
+            ExistingRevisions::Accept => Some("accept"),
+            ExistingRevisions::Reject => Some("reject"),
+            ExistingRevisions::Keep | ExistingRevisions::Refuse => None,
+        };
+        let settle_comments = matches!(
+            plan.policy.existing_revisions,
+            ExistingRevisions::Accept | ExistingRevisions::Reject
+        );
+        super::guard_keep_others(
+            source,
+            &plan.author,
+            settlement.resolve_revisions.as_ref(),
+            wholesale,
+            settle_comments,
+        )?;
+    }
     // Reuse the original-source selection resolver before applying global policy.
     let (selected, mut selected_report, mut comment_changes) = super::resolve_selected(
         source,
@@ -188,7 +206,10 @@ fn apply_bound(
                 return Err(err(
                     "EXISTING_REVISIONS",
                     None,
-                    "refuse requires no remaining revision anywhere, including unknown revision forms",
+                    format!(
+                        "refuse requires no remaining revision anywhere, including unknown revision forms; {}",
+                        super::KEEP_REVISIONS
+                    ),
                 ));
             }
             selected.to_vec()
@@ -639,6 +660,7 @@ fn legacy(plan: &PlanV2) -> EditPlan {
         operations: Vec::new(),
         update_fields: false,
         rewrite_others_comments: plan.rewrite_others_comments.unwrap_or(false),
+        others: plan.others.unwrap_or(super::Others::Allow),
     }
 }
 fn changes(bytes: &[u8]) -> Result<Vec<Change>, EditError> {

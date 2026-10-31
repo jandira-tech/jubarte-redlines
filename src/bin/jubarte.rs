@@ -2565,9 +2565,18 @@ struct EditFlags<'a> {
     dpi: f32,
     revisions: jubarte::convert::RevisionStyle,
     /// `--rewrite-others-comments` (`edit` only; `add` passes false).
+    /// Accepted and ignored: it does not turn the guard off.
     rewrite_others_comments: bool,
+    /// `--keep-others` (`edit` and `add`).
+    keep_others: bool,
     /// The global `-q`.
     quiet: bool,
+}
+
+/// `JUBARTE_KEEP_OTHERS=1` in the CLI only. Any other value, including an
+/// empty one, leaves the guard off. The library does not read it.
+fn env_keep_others() -> bool {
+    std::env::var("JUBARTE_KEEP_OTHERS").ok().as_deref() == Some("1")
 }
 
 fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
@@ -2620,6 +2629,9 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         &source,
     )?;
     plan.rewrite_others_comments |= flags.rewrite_others_comments;
+    if flags.keep_others || env_keep_others() {
+        plan.others = jubarte::edit::Others::Keep;
+    }
     if flags.options.editing_mode
         && let Some(message) = jubarte::edit::flags::editing_mode_conflict(&plan, &source)
     {
@@ -2706,6 +2718,9 @@ fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), 
         RecordError::Plan(m) => (EXIT_PLAN_REFUSED, format!("{}: {m}", path.display())),
     })?;
     recorded.plan.rewrite_others_comments |= flags.rewrite_others_comments;
+    if flags.keep_others || env_keep_others() {
+        recorded.plan.others = jubarte::edit::Others::Keep;
+    }
     jubarte::edit::check_plan_quoting(source, &recorded.plan, jubarte::edit::PlanSyntax::Flags)
         .map_err(|e| {
             refused(
@@ -4410,6 +4425,7 @@ fn cli_main() -> ExitCode {
             revisions,
             revision_palette,
             rewrite_others_comments,
+            keep_others,
             operations,
             ..
         }) => {
@@ -4433,6 +4449,7 @@ fn cli_main() -> ExitCode {
                 dpi,
                 revisions: style,
                 rewrite_others_comments,
+                keep_others,
                 quiet,
             };
             return edit_exit(run_flags(&flags));
@@ -4443,6 +4460,7 @@ fn cli_main() -> ExitCode {
             plan_default,
             consume,
             options,
+            keep_others,
             operations,
             ..
         }) => {
@@ -4462,6 +4480,7 @@ fn cli_main() -> ExitCode {
                 dpi: 96.0,
                 revisions: jubarte::convert::RevisionStyle::Conventional,
                 rewrite_others_comments: false,
+                keep_others,
                 quiet,
             };
             return edit_exit(run_flags(&flags));

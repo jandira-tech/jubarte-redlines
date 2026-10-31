@@ -1063,9 +1063,9 @@ fn v1_profiles_are_closed_and_unknown_keys_are_refused() {
 }
 
 /// Both dialects refuse `edit_comment`, `delete_comment` and
-/// `resolve_comment` on another author's comment, so every supported row
-/// of either version names the opt-in (#1264, #1846); a delete also names
-/// the thread that holds their reply.
+/// `resolve_comment` on another author's comment when `others` is `keep`
+/// (#1892). The default allows them. A delete also names the thread that
+/// holds their reply.
 #[test]
 fn comment_rows_name_the_ownership_opt_in_in_both_versions() {
     let matrix = jubarte::capabilities::discovery("cli", None, None);
@@ -1083,7 +1083,7 @@ fn comment_rows_name_the_ownership_opt_in_in_both_versions() {
                 let conditions = row["conditions"].as_str().unwrap();
                 assert!(
                     conditions
-                        .contains("; another author's comment requires rewrite_others_comments"),
+                        .contains("; another author's comment is refused when others is keep"),
                     "{operation} v{} {row}",
                     profile["plan_version"]
                 );

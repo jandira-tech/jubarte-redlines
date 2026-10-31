@@ -452,7 +452,15 @@ fn prepare_and_publish(
             ));
         }
     }
-    let (request, binding) = request(action, source, payload, plan_bytes.as_deref())?;
+    let (mut request, binding) = request(action, source, payload, plan_bytes.as_deref())?;
+    // The flag and JUBARTE_KEEP_OTHERS only turn the guard on. A plan that
+    // already says "others": "keep" stays guarded when neither is set.
+    if delivery.keep_others || super::env_keep_others() {
+        match &mut request {
+            Request::V2(plan) => plan.others = Some(jubarte::edit::Others::Keep),
+            Request::V1(plan, _) => plan.others = jubarte::edit::Others::Keep,
+        }
+    }
     if delivery.expect.is_some() && matches!(&request, Request::V1(..)) {
         // The v1 primary is a comparer redline with no tracked
         // source-to-output correspondence; guessing one could grade the

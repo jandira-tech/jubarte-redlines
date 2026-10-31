@@ -610,6 +610,7 @@ fn review_v2_01_schema_walk_pins_every_declared_property() {
     }
     mixed["removed_anchor_comments"] = json!("keep");
     mixed["rewrite_others_comments"] = json!(true);
+    mixed["others"] = json!("keep");
     corpus.push(mixed);
 
     let pairs: &[(&str, &str)] = &[
@@ -619,6 +620,7 @@ fn review_v2_01_schema_walk_pins_every_declared_property() {
         ("", "resolve_revisions"),
         ("", "removed_anchor_comments"),
         ("", "rewrite_others_comments"),
+        ("", "others"),
         ("", "author"),
         ("", "date"),
         ("", "scope"),

@@ -50,6 +50,12 @@ pub fn plan_flag_conflict(recording: bool, given: &[&str], plan: &str) -> Option
         ))
     } else {
         let flag = RECORD_ONLY.iter().find(|f| given.contains(f))?;
+        if *flag == "--existing-revisions" {
+            return Some(format!(
+                "{flag} belongs to recorded operations; {}",
+                super::KEEP_REVISIONS
+            ));
+        }
         Some(format!(
             "{flag} belongs to recorded operations; the plan names its own"
         ))
@@ -250,9 +256,10 @@ pub(crate) struct RecordOptions {
     pub default_plan: bool,
     /// `--dry-run`: the summary says "would record".
     pub dry_run: bool,
-    /// `--rewrite-others-comments`: the plan may edit another author's
-    /// comment.
+    /// `--rewrite-others-comments`: accepted and ignored.
     pub rewrite_others_comments: bool,
+    /// `--keep-others`: the recorded plan carries `"others": "keep"`.
+    pub keep_others: bool,
 }
 
 /// [`record`] over JSON, for the Python and npm CLIs: `verb` is `edit` or
@@ -306,6 +313,9 @@ pub fn record_json(
     let author = options.author.as_deref().unwrap_or("Jubarte");
     let mut recorded = record(verb, &ops, author, date.as_deref(), existing, source, held)?;
     recorded.plan.rewrite_others_comments |= options.rewrite_others_comments;
+    if options.keep_others {
+        recorded.plan.others = super::Others::Keep;
+    }
     Ok(serde_json::json!({
         "plan": serde_json::to_string(&recorded.plan).expect("a plan serializes"),
         "json": recorded.json(),

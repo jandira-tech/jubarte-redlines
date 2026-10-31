@@ -78,6 +78,14 @@ pub struct TemplateOptions {
     /// Remaining history after the explicitly selected decisions.
     #[arg(long, default_value = "keep", value_parser = ["keep", "accept", "reject", "refuse"])]
     pub existing_revisions: String,
+    /// Refuse to accept or reject another author's tracked change, and
+    /// to delete, resolve, reopen or reword their comment. Restore,
+    /// strike, a comment and a reply stay allowed. JUBARTE_KEEP_OTHERS=1
+    /// sets the same guard. Another author is anyone other than
+    /// --author (Jubarte when --author is left out). The generated plan
+    /// carries `"others": "keep"`.
+    #[arg(long)]
+    pub keep_others: bool,
     /// Require these exact source bytes.
     #[arg(long, value_name = "HASH", value_parser = super::edit_actions::digest)]
     pub expect_sha256: Option<String>,

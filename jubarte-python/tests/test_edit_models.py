@@ -421,10 +421,19 @@ def test_render_report_lists_substituted_fonts():
 
 
 def test_rewrite_others_comments_is_on_the_wire_only_when_set():
-    # #1264: edit_comment on another author's comment needs the plan to ask.
+    # The field is accepted and ignored. It stays off the wire until set.
     plan = EditPlan("Alice").edit_comment(0, text="Reworded.")
     assert "rewrite_others_comments" not in plan.to_dict()
     allowed = replace(plan, rewrite_others_comments=True)
     assert allowed.to_dict()["rewrite_others_comments"] is True
     with pytest.raises(TypeError, match="rewrite_others_comments must be a bool"):
         EditPlan("Alice", rewrite_others_comments="yes")  # type: ignore[arg-type]
+
+
+def test_others_keep_is_on_the_wire_only_when_set():
+    plan = EditPlan("Alice")
+    assert "others" not in plan.to_dict()
+    assert "others" not in replace(plan, others="allow").to_dict()
+    assert replace(plan, others="keep").to_dict()["others"] == "keep"
+    with pytest.raises(ValueError, match="others must be"):
+        EditPlan("Alice", others="yes")  # type: ignore[arg-type]

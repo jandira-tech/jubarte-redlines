@@ -861,10 +861,10 @@ def test_edit_and_add_by_flags_match_the_binary(
     assert "\nRecitals\n" in out and "{++" not in out, out
 
 
-def test_edit_refuses_another_authors_comment_unless_rewrite_others_comments(
-    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+def test_edit_allows_another_authors_comment_unless_keep_others(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # #1264: a comment speaks for its author; another author replies, or asks to rewrite it.
+    # #1892: another author's comment is allowed and noted. The guard refuses it.
     assert (
         main(
             [
@@ -897,15 +897,17 @@ def test_edit_refuses_another_authors_comment_unless_rewrite_others_comments(
         "-o",
         str(tmp_path / "e.docx"),
     ]
-    assert main(edit) == 3
-    assert 'COMMENT_NOT_YOURS (op-1): c0 is by "Ann Counsel"; reply instead' in capsys.readouterr().err
-    assert not (tmp_path / "e.docx").exists()
-    assert main([*edit, "--rewrite-others-comments"]) == 0
+    assert main(edit) == 0
     captured = capsys.readouterr()
     assert (
         'note: op-1 (edit_comment): c0 is by "Ann Counsel"; their words were changed under their name' in captured.err
     ), captured.err
     assert "{>>c0 @AC: All three?<<}" in captured.out, captured.out
+    monkeypatch.setenv("JUBARTE_KEEP_OTHERS", "1")
+    kept = tmp_path / "kept.docx"
+    assert main([*edit[:-2], "-o", str(kept)]) == 3
+    assert 'COMMENT_NOT_YOURS (op-1): c0 is by "Ann Counsel"; reply instead' in capsys.readouterr().err
+    assert not kept.exists()
 
 
 def test_edit_and_add_write_one_document_as_the_binary(

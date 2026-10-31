@@ -54,7 +54,15 @@ before(() => {
 });
 
 function run(...args) {
-  const r = spawnSync(process.execPath, [bin, ...args], { encoding: "utf8", cwd: tmp });
+  return runEnv({}, ...args);
+}
+
+function runEnv(env, ...args) {
+  const r = spawnSync(process.execPath, [bin, ...args], {
+    encoding: "utf8",
+    cwd: tmp,
+    env: { ...process.env, ...env },
+  });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
 
@@ -607,7 +615,7 @@ const ownershipShipped = binding.planError(JSON.stringify({
   schema_version: 1, author: "A", rewrite_others_comments: false,
   operations: [{ kind: "delete", paragraph: "p0", find: "x" }],
 })) === undefined;
-test("edit refuses another author's comment unless --rewrite-others-comments (#1264)", {
+test("edit allows another author's comment unless JUBARTE_KEEP_OTHERS=1 (#1892)", {
   skip: !ownershipShipped && "the checked-in engine predates #1264; it ships with the next release",
 }, () => {
   const para = JSON.parse(run("read", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
@@ -617,14 +625,15 @@ test("edit refuses another author's comment unless --rewrite-others-comments (#1
   assert.equal(added.code, 0, added.err);
   const out = path.join(tmp, "ownership-edited.docx");
   const edit = ["edit", commented, "-p", "c0", "--content", "Why not?", "--author", "Bob Lee", "-o", out];
-  const refused = run(...edit);
+  const allowed = run(...edit);
+  assert.equal(allowed.code, 0, allowed.err);
+  assert.ok(allowed.err.includes('note: op-1 (edit_comment): c0 is by "Ann Counsel"; their words were changed under their name'), allowed.err);
+  assert.ok(allowed.out.includes("{>>c0 @AC: Why not?<<}"), allowed.out);
+  const kept = path.join(tmp, "ownership-kept.docx");
+  const refused = runEnv({ JUBARTE_KEEP_OTHERS: "1" }, ...edit.slice(0, -2), "-o", kept);
   assert.equal(refused.code, 3, refused.err);
   assert.ok(refused.err.includes('COMMENT_NOT_YOURS (op-1): c0 is by "Ann Counsel"; reply instead'), refused.err);
-  assert.ok(!fs.existsSync(out));
-  const rewritten = run(...edit, "--rewrite-others-comments");
-  assert.equal(rewritten.code, 0, rewritten.err);
-  assert.ok(rewritten.err.includes('note: op-1 (edit_comment): c0 is by "Ann Counsel"; their words were changed under their name'), rewritten.err);
-  assert.ok(rewritten.out.includes("{>>c0 @AC: Why not?<<}"), rewritten.out);
+  assert.ok(!fs.existsSync(kept));
 });
 
 test("edit and add write FILE_modified.docx, as the binary does (D15)", () => {
