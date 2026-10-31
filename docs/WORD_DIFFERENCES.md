@@ -489,6 +489,50 @@ for `fill_control`, the clean edit output also retains the control.
   Nothing structural tells the crashers apart either: s115 and s118 share
   one block pattern, and only one of them crashes.
 
+### 17. Table column widths Word lays out again (PDF)
+
+- **What happens.** Word lays out a table's columns again on open, from its
+  cells, wherever the saved grid is not its own fit. Word 16.115 probes
+  (`jubarte-loop/fix23/r58/probe` and `r60/probe`, 2026-10-28) show the
+  cases below.
+- **What we do.** When a row's cells reach past the saved grid:
+  - an autofit table with a `tblW` shares it by its cells' content. A
+    cell's `tcW` holds its column first, in twips or as a share of the
+    `tblW` (q2, q3, q6-q8, q10, p1, p2);
+  - an autofit table without a `tblW` keeps each cell's `tcW` in twips and
+    gives a column without one its line (q4, t2, t3), with Word's marks on
+    its rows or not;
+  - a fixed table starts each column past the grid at 18pt, over one grid
+    column as over several, then fits all of them to its `tblW` (f2-f8, s1,
+    s2). Word's own redline of 6926d6b8fd (a 14-column grid under 18-cell
+    rows) goes from 16 pages to 14 on Word's 13;
+  - a cell's `tcW` holds its column over a grid Word did not save or over
+    grid columns without a width, as in an autofit table (r1, r2);
+  - a `tblW` too narrow for the cells' `tcW`s and their longest words gives
+    each column without a `tcW` its longest word, and the `tcW` columns share
+    the rest (r6). A `tblW` narrower than every longest word gives each
+    column its longest word, and the table outgrows its `tblW`; past the
+    page, words break (r5);
+  - in a table whose rows reach past its grid, a column that only rows'
+    `gridBefore` holds takes no width, whatever their `wBefore` says, autofit
+    or fixed (b1-b3, r3, r7), and so does a column only `gridAfter` holds
+    (r4).
+- **What still differs.**
+  - A fixed table narrower than its columns: Word takes from each column
+    what it has past its cell margins (q11 and f9: 132.75, 132.72, 17.22 and
+    17.28pt). We take in proportion to the whole width (133.9, 133.9, 16.1,
+    16.1pt), so narrow columns come out 1 to 2pt narrower and wide ones up
+    to 5pt wider (f2, f3, f4, f7, s1).
+  - An autofit table with a `tblW`, over a grid that holds its rows but that
+    Word did not save: Word fits it to its content (q1, q5, q9: the same
+    widths as over a two-column grid). We keep the saved grid, scaled to the
+    `tblW`.
+  - Word's own 6926d6b8fd table also holds `gridSpan 0` cells, and Word
+    sets each row on edges of its own. We set every row on one grid, still
+    a page longer.
+- **Which is better.** Word's, in each case. These are Word's layout rules,
+  not mistakes.
+
 ## Accept All / Reject All: where Word's result is worse (not copied yet)
 
 `jubarte accept` / `jubarte reject` (and per-change accept/reject) follow

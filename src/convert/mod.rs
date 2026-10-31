@@ -2080,6 +2080,10 @@ struct TableGeom {
     /// Rows needed more columns than tblGrid has (All Markup's Deleted
     /// Cells column): the padded grid is ours, so it scales to fit.
     grid_padded: bool,
+    /// A row's own cells reach past tblGrid's columns (the Deleted Cells
+    /// stamp aside). Word saves such grids (its redline of 6926d6b8fd) but
+    /// lays their tables out again on open.
+    rows_past_grid: bool,
     /// `w:tblLayout w:type=fixed`.
     fixed: bool,
     /// `w:tblpPr` floating table (xml 3.3 ckpt 5).
@@ -9898,6 +9902,10 @@ fn resolved_col_widths(
 const WORD_MAX_TABLE_RIGHT: f32 = 1584.0;
 /// What Word leaves each column past the 22in limit.
 const WORD_SQUEEZED_COL: f32 = 1.4;
+/// What a fixed table's column past its saved grid starts at, before the
+/// table fits its tblW: 360 twips, whatever the cell's margins (Word
+/// probes f6 and f8, 2026-10-28).
+const FIXED_COL_PAST_GRID: f32 = 18.0;
 
 /// Word ends a table 22in right of the margin, wherever its indent starts
 /// it. The column that crosses the limit keeps what is left before it, and
@@ -9946,6 +9954,18 @@ fn unclamped_col_widths(
             }
         }
         return content_autofit_widths(fonts, cols.len(), rows, &prefer, avail, true);
+    }
+    // An autofit table whose rows reach past its saved grid is laid out
+    // again: its columns share the width it declares by their content, as
+    // over a grid that held them (Word probes q2, q3 and q8, r58
+    // 2026-10-28; 6926d6b8fd's 18-cell rows over a 14-column grid, which
+    // the padded grid wrapped letter by letter onto two more pages).
+    // Without a tblW its columns keep their own widths: a tcW, or else
+    // their lines (probes q4, t2 and t3, r60), over a grid another tool
+    // wrote too (r1 and r2), so before the content fit.
+    if !geom.fixed && geom.rows_past_grid {
+        let target = declared_table_width(geom, avail);
+        return fill_table_width(fonts, cols.len(), rows, geom, target, avail);
     }
     if geom.content_autofit {
         return content_autofit_widths(fonts, cols.len(), rows, geom, avail, false);
@@ -10224,12 +10244,18 @@ fn content_autofit_widths(
     // margins, as its pct tables do (00046848's lines reach 525pt in a
     // 523pt measure).
     let room = (avail + geom.pct_margins - gap * (n as f32 + 1.0)).max(0.0);
+    share_room(&mins, &maxs, room, gap, !pref_caps)
+}
+
+/// Columns between their minimums and maximums in `room`, each given the
+/// room past the minimums by its max - min, then its `gap`. With
+/// `break_words`, longest words that overrun the room still leave the
+/// table on the page: Word gives probe long's unbroken 110-letter word the
+/// room and breaks it, the table ending at the margin. The columns share
+/// the room by their longest words.
+fn share_room(mins: &[f32], maxs: &[f32], room: f32, gap: f32, break_words: bool) -> Vec<f32> {
     let (lo, hi): (f32, f32) = (mins.iter().sum(), maxs.iter().sum());
-    // Longest words that overrun the room still leave the table on the
-    // page: Word gives probe long's unbroken 110-letter word the room and
-    // breaks it, the table ending at the margin. The columns share the
-    // room by their longest words.
-    if !pref_caps && lo > room && lo > 0.0 {
+    if break_words && lo > room && lo > 0.0 {
         let scale = room / lo;
         return mins.iter().map(|lo| lo * scale + gap).collect();
     }
@@ -10241,9 +10267,98 @@ fn content_autofit_widths(
         (room - lo) / (hi - lo)
     };
     mins.iter()
-        .zip(&maxs)
+        .zip(maxs)
         .map(|(lo, hi)| lo + (hi - lo) * k + gap)
         .collect()
+}
+
+/// Columns that share a table width by their content, as Word lays out
+/// an autofit table whose rows reach past its saved grid. A column whose
+/// cell prefers a width in twips keeps it (probes q7 and q10: 125pt of
+/// 300, 50pt of 400), and one that prefers a share of the declared width
+/// keeps that share (p1 and p2: 50% of 300 is 150pt, 25% of 400 100pt).
+/// The others widen in proportion to their lines when those leave room
+/// over (probe q6: lines of about 39, 39, 71 and 34pt take 85, 86, 155
+/// and 74pt of 400), or else go between their longest words and their
+/// lines (`share_room`). Without a declared width (`target` None) the
+/// table is as wide as those widths and lines, up to the room a content
+/// fit has.
+///
+/// A table too narrow for all that gives way in Word's order (probes r5
+/// and r6): the other columns keep their longest words and the preferred
+/// widths share what is left; narrower still, every column keeps its
+/// longest word and the table outgrows its width, up to the room a
+/// content fit has, past which the words break (probe long).
+fn fill_table_width(
+    fonts: &Fonts,
+    n: usize,
+    rows: &[Vec<TableCell>],
+    geom: &TableGeom,
+    target: Option<f32>,
+    avail: f32,
+) -> Vec<f32> {
+    let (words, mut maxs) = content_autofit_extents(fonts, n, rows, geom, false);
+    let mut mins = words.clone();
+    let mut held = vec![false; n];
+    for j in 0..n {
+        let pref = match geom.pref.get(j) {
+            Some(&PrefWidth::Dxa(w)) if w > 0.0 => Some(w),
+            Some(&PrefWidth::Pct(p)) if p > 0.0 => target.map(|t| t * p),
+            _ => None,
+        };
+        if let Some(w) = pref {
+            mins[j] = words[j].max(w);
+            maxs[j] = mins[j];
+            held[j] = true;
+        }
+    }
+    let gap = 2.0 * geom.cell_spacing;
+    let gaps = gap * (n as f32 + 1.0);
+    let cap = (avail + geom.pct_margins - gaps).max(0.0);
+    let room = match target {
+        Some(t) => (t - gaps).max(0.0),
+        None => maxs.iter().sum::<f32>().min(cap),
+    };
+    let sum_where = |widths: &[f32], want: bool| -> f32 {
+        widths
+            .iter()
+            .zip(&held)
+            .filter(|(_, h)| **h == want)
+            .map(|(w, _)| w)
+            .sum()
+    };
+    let (prefs, lines, free_words) = (
+        sum_where(&maxs, true),
+        sum_where(&maxs, false),
+        sum_where(&mins, false),
+    );
+    if lines > 0.0 && prefs + lines < room {
+        let scale = (room - prefs) / lines;
+        return (0..n)
+            .map(|j| {
+                let width = if held[j] { maxs[j] } else { maxs[j] * scale };
+                width + gap
+            })
+            .collect();
+    }
+    if prefs + free_words <= room {
+        return share_room(&mins, &maxs, room, gap, false);
+    }
+    let all_words: f32 = words.iter().sum();
+    if prefs > 0.0 && all_words < room {
+        let scale = (room - free_words) / prefs;
+        return (0..n)
+            .map(|j| {
+                let width = if held[j] {
+                    (mins[j] * scale).max(words[j])
+                } else {
+                    mins[j]
+                };
+                width + gap
+            })
+            .collect();
+    }
+    share_room(&words, &words, all_words.min(cap), gap, true)
 }
 
 /// Each column's (minimum, maximum) for [`content_autofit_widths`], its
@@ -10313,6 +10428,18 @@ fn content_autofit_extents(
     (mins, maxs)
 }
 
+/// The width `tblW` declares, never below 0; `None` when it leaves the
+/// width to the grid. Checked in Word on 00587c73: a legacy 100% table is
+/// the text width plus its cell margins (452.9pt on 441.9pt); mode 15 is
+/// the text width.
+fn declared_table_width(geom: &TableGeom, avail: f32) -> Option<f32> {
+    match geom.width {
+        TblWidth::Grid => None,
+        TblWidth::Dxa(w) => Some(w.max(0.0)),
+        TblWidth::Pct(p) => Some(((avail + geom.pct_margins) * p - geom.pct_rules).max(0.0)),
+    }
+}
+
 fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
     let n = cols.len();
     let grid_total: f32 = cols.iter().sum();
@@ -10335,15 +10462,9 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
     // An autofit table whose saved grid fills its tblW and sits within 10%
     // of each dxa tcW is Word's own resolved layout (0129b302: grid 1320 /
     // tcW 1260). A far-off grid is stale and the tcW still lead.
-    let target = match geom.width {
-        TblWidth::Grid => grid_total,
-        TblWidth::Dxa(w) => w,
-        // Checked in Word on 00587c73: a legacy 100% table is the text
-        // width plus its cell margins (452.9pt on 441.9pt); mode 15 is the
-        // text width.
-        TblWidth::Pct(p) => (avail + geom.pct_margins) * p - geom.pct_rules,
-    }
-    .max(0.0);
+    let target = declared_table_width(geom, avail)
+        .unwrap_or(grid_total)
+        .max(0.0);
     // The same holds for pct: 005e8d94's 98.98% table keeps its grid
     // (1546/1263/... twips, live Word) over tcW shares within 7% of it.
     let near_grid = cols.iter().enumerate().all(|(i, &g)| {
@@ -13354,6 +13475,9 @@ fn table_block(
     let mut widthless_cols = vec![false; cols.len()];
     let mut single_cols = vec![false; cols.len()];
     let mut span_widthless = vec![false; cols.len()];
+    // The most grid columns a row's own cells reach, before any "Deleted
+    // Cells" stamp (`rows_past_grid`).
+    let mut cells_reach = 0usize;
     for (ri, row) in all_rows.into_iter().enumerate() {
         let [tbl_pad_l, tbl_pad_r, tbl_pad_t, tbl_pad_b] =
             row_cell_mar(dom, row, [tbl_pad_l, tbl_pad_r, tbl_pad_t, tbl_pad_b]);
@@ -13743,6 +13867,7 @@ fn table_block(
             };
             cells.push(grid_skip_cell(span, pref, tbl_pad_l, tbl_pad_r));
         }
+        cells_reach = cells_reach.max(cells.iter().map(|c| c.colspan).sum());
         // Word All Markup appends a “Deleted Cells” column when the
         // row has live w:cellDel (addition_removal remnant). Do not
         // rewrite trPr/del rows — that was mini 59 (−5 ITT).
@@ -13787,7 +13912,16 @@ fn table_block(
     for row in &raw_rows {
         occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());
     }
+    let rows_past_grid = grid_len > 0 && grid_len < cells_reach;
+    let fixed = table_layout_fixed(dom, table);
     if cols.len() < occupancy {
+        // A fixed table gives each column its cells reach past the grid
+        // 18pt, then fits them all to its tblW, over one grid column as
+        // over two (Word probes f6 and s2: 150, 150, 18 and 18pt; 300, 18,
+        // 18 and 18pt without one; f5, q11 and s1 in one).
+        if fixed {
+            cols.resize(cells_reach.max(cols.len()), FIXED_COL_PAST_GRID);
+        }
         if cols.len() == 1 && occupancy > 1 {
             let each = cols[0] / occupancy as f32;
             cols = vec![each; occupancy];
@@ -13798,7 +13932,28 @@ fn table_block(
     if cols.is_empty() && occupancy > 0 {
         cols = vec![80.0; occupancy];
     }
-    let fixed = table_layout_fixed(dom, table);
+    // Laid out again, a fixed table gives a column that only rows'
+    // gridBefore or gridAfter holds no width, whatever their wBefore says
+    // (Word probes r3 and r7: 0, 100, 100 and 18pt). The autofit fit has
+    // no extents for one either.
+    if fixed && rows_past_grid {
+        let mut held = vec![false; cols.len()];
+        for row in &raw_rows {
+            let mut col = 0usize;
+            for cell in row {
+                let span = cell.colspan.max(1);
+                if !cell.grid_skip {
+                    held.iter_mut().skip(col).take(span).for_each(|h| *h = true);
+                }
+                col += span;
+            }
+        }
+        for (width, held) in cols.iter_mut().zip(held) {
+            if !held {
+                *width = 0.0;
+            }
+        }
+    }
     // Word writes a tcW on every cell it saves, and fits a table another
     // tool wrote to its content on open when every column holds a cell
     // without a width of its own (#1716 probes g2, q1, n1-n3, n7; #1720
@@ -13980,6 +14135,7 @@ fn table_block(
                         .is_none_or(|pr| first_named(dom, pr, "tblInd").is_none()),
                 rules,
                 grid_padded: grid_len > 0 && grid_len < occupancy,
+                rows_past_grid,
                 rtl,
                 // Only margins something defines: with no table style and
                 // no tblCellMar Word's are 0 (00f0e7f3's bare styles part;
@@ -46640,6 +46796,7 @@ mod regression_tests {
             pref,
             rules: [0.0; 3],
             grid_padded: false,
+            rows_past_grid: false,
             fixed: true,
             float: None,
             keep_at_margin: false,
@@ -63020,6 +63177,433 @@ mod complete_coordinate_layout_contract_tests {
                 owned_text
             );
         }
+    }
+
+    fn mono_em() -> f32 {
+        let raw = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0).unwrap();
+        f32::from(
+            raw.glyph_hor_advance(raw.glyph_index('A').unwrap())
+                .unwrap(),
+        ) * 12.0
+            / f32::from(raw.units_per_em())
+    }
+
+    /// One row of `(tcPr children, text)` cells over a grid of `grid`
+    /// twips, laid out by [`mono_table`].
+    fn mono_row_table(
+        tbl_pr: &str,
+        grid: &[u32],
+        cells: &[(&str, &str)],
+    ) -> (Vec<f32>, Vec<Vec<TableCell>>, TableGeom) {
+        mono_table(&format!(
+            "<w:tbl><w:tblPr>{tbl_pr}</w:tblPr><w:tblGrid>{}</w:tblGrid><w:tr>{}</w:tr></w:tbl>",
+            mono_grid(grid),
+            mono_cells(cells)
+        ))
+    }
+
+    fn mono_grid(grid: &[u32]) -> String {
+        grid.iter()
+            .map(|w| format!("<w:gridCol w:w='{w}'/>"))
+            .collect()
+    }
+
+    fn mono_cells(cells: &[(&str, &str)]) -> String {
+        cells
+            .iter()
+            .map(|(pr, text)| {
+                format!("<w:tc><w:tcPr>{pr}</w:tcPr><w:p><w:r><w:t xml:space='preserve'>{text}</w:t></w:r></w:p></w:tc>")
+            })
+            .collect()
+    }
+
+    /// `xml`'s table set in Memory Mono 12pt without cell margins, indents
+    /// or spacing, so that every column's extents are whole ems.
+    fn mono_table(xml: &str) -> (Vec<f32>, Vec<Vec<TableCell>>, TableGeom) {
+        let Block::Table {
+            cols,
+            mut rows,
+            mut geom,
+            ..
+        } = table(xml)
+        else {
+            panic!("authored table")
+        };
+        geom.cell_spacing = 0.0;
+        geom.pct_margins = 0.0;
+        geom.pct_rules = 0.0;
+        for cell in rows.iter_mut().flatten() {
+            cell.pad_l = 0.0;
+            cell.pad_r = 0.0;
+            for para in &mut cell.paras {
+                para.style.indent_left = 0.0;
+                para.style.indent_right = 0.0;
+                for r in &mut para.runs {
+                    r.style = run(&r.text).style;
+                }
+            }
+        }
+        (cols, rows, *geom)
+    }
+
+    fn assert_widths(actual: &[f32], wanted: &[f32]) {
+        assert_eq!(actual.len(), wanted.len(), "{actual:?} vs {wanted:?}");
+        for (a, w) in actual.iter().zip(wanted) {
+            assert!((a - w).abs() < 0.001, "{actual:?} vs {wanted:?}");
+        }
+    }
+
+    /// Four cells whose longest words are 3, 3, 3 and 2 ems and whose
+    /// lines are 3, 7, 15 and 2.
+    const PAST_GRID_TEXTS: [&str; 4] = ["AAA", "AAA AAA", "AAA AAA AAA AAA", "AA"];
+
+    fn dxa(pt: f32) -> (String, f32) {
+        let twips = (pt * 20.0).round();
+        (
+            format!("<w:tblW w:w='{twips}' w:type='dxa'/>"),
+            twips / 20.0,
+        )
+    }
+
+    #[test]
+    fn rows_past_the_grid_share_the_table_width_by_their_content() {
+        // Word probes q2, q3 and q8 (r58, 2026-10-28): four autofit cells
+        // over a two-column grid share the tblW as they would over a grid
+        // that held them, each column between its longest word and its
+        // line; a gridSpan of 0 holds a column of its own.
+        let (em, fonts) = (mono_em(), fonts());
+        let avail = 40.0 * em;
+        let plain = PAST_GRID_TEXTS.map(|t| ("", t));
+        let mut zero_span = plain;
+        zero_span[1].0 = "<w:gridSpan w:val='0'/>";
+        let (dxa_pr, dxa_target) = dxa(20.0 * em);
+        for (tbl_pr, grid, cells, target) in [
+            (dxa_pr.as_str(), &[3000, 3000][..], plain, dxa_target),
+            (
+                dxa_pr.as_str(),
+                &[2000, 2000, 2000][..],
+                zero_span,
+                dxa_target,
+            ),
+            (
+                "<w:tblW w:w='2500' w:type='pct'/>",
+                &[3000, 3000][..],
+                plain,
+                0.5 * avail,
+            ),
+        ] {
+            let (cols, rows, geom) = mono_row_table(tbl_pr, grid, &cells);
+            assert!(geom.rows_past_grid, "{tbl_pr} over {grid:?}");
+            let k = (target - 11.0 * em) / (16.0 * em);
+            assert_widths(
+                &resolved_col_widths(&fonts, &cols, &rows, &geom, avail),
+                &[
+                    3.0 * em,
+                    (3.0 + 4.0 * k) * em,
+                    (3.0 + 12.0 * k) * em,
+                    2.0 * em,
+                ],
+            );
+        }
+    }
+
+    #[test]
+    fn rows_past_the_grid_widen_by_their_lines_to_a_wider_table() {
+        // Word probe q6: lines of 39, 39, 71 and 34pt in a 400pt tblW take
+        // 85, 86, 155 and 74pt, each column widened by its line.
+        let (em, fonts) = (mono_em(), fonts());
+        let (tbl_pr, target) = dxa(54.0 * em);
+        let (cols, rows, geom) =
+            mono_row_table(&tbl_pr, &[3000, 3000], &PAST_GRID_TEXTS.map(|t| ("", t)));
+        let s = target / (27.0 * em);
+        assert_widths(
+            &resolved_col_widths(&fonts, &cols, &rows, &geom, 60.0 * em),
+            &[3.0 * em * s, 7.0 * em * s, 15.0 * em * s, 2.0 * em * s],
+        );
+    }
+
+    #[test]
+    fn a_column_past_the_grid_keeps_the_width_its_cell_prefers() {
+        // Word probes q7 and q10: the second cell's tcW (125pt in a 300pt
+        // tblW, 50pt in a 400pt one) is its column's width; the other
+        // columns share what is left by their content.
+        let (em, fonts) = (mono_em(), fonts());
+        let pref = (9.0 * em * 20.0).round() / 20.0;
+        let mut cells = PAST_GRID_TEXTS.map(|t| ("", t));
+        let tc_w = format!("<w:tcW w:w='{}' w:type='dxa'/>", pref * 20.0);
+        cells[1].0 = &tc_w;
+        let (narrow, narrow_target) = dxa(24.0 * em);
+        let (cols, rows, geom) = mono_row_table(&narrow, &[3000, 3000], &cells);
+        let k = (narrow_target - pref - 8.0 * em) / (12.0 * em);
+        assert_widths(
+            &resolved_col_widths(&fonts, &cols, &rows, &geom, 60.0 * em),
+            &[3.0 * em, pref, (3.0 + 12.0 * k) * em, 2.0 * em],
+        );
+        let (wide, wide_target) = dxa(40.0 * em);
+        let (cols, rows, geom) = mono_row_table(&wide, &[3000, 3000], &cells);
+        let s = (wide_target - pref) / (20.0 * em);
+        assert_widths(
+            &resolved_col_widths(&fonts, &cols, &rows, &geom, 60.0 * em),
+            &[3.0 * em * s, pref, 15.0 * em * s, 2.0 * em * s],
+        );
+    }
+
+    #[test]
+    fn a_column_past_the_grid_keeps_the_share_its_cell_prefers() {
+        // Word probes p1 and p2 (r60, 2026-10-28): a tcW of 50% in a 300pt
+        // tblW is 150pt of it, and one of 25% in a 400pt tblW 100pt; the
+        // other columns share what is left as beside a tcW in twips.
+        let (em, fonts) = (mono_em(), fonts());
+        let mut cells = PAST_GRID_TEXTS.map(|t| ("", t));
+        cells[1].0 = "<w:tcW w:w='2500' w:type='pct'/>";
+        let (narrow, narrow_target) = dxa(24.0 * em);
+        let (cols, rows, geom) = mono_row_table(&narrow, &[3000, 3000], &cells);
+        let held = 0.5 * narrow_target;
+        let k = (narrow_target - held - 8.0 * em) / (12.0 * em);
+        assert_widths(
+            &resolved_col_widths(&fonts, &cols, &rows, &geom, 60.0 * em),
+            &[3.0 * em, held, (3.0 + 12.0 * k) * em, 2.0 * em],
+        );
+        cells[1].0 = "<w:tcW w:w='1250' w:type='pct'/>";
+        let (wide, wide_target) = dxa(40.0 * em);
+        let (cols, rows, geom) = mono_row_table(&wide, &[3000, 3000], &cells);
+        let held = 0.25 * wide_target;
+        let s = (wide_target - held) / (20.0 * em);
+        assert_widths(
+            &resolved_col_widths(&fonts, &cols, &rows, &geom, 60.0 * em),
+            &[3.0 * em * s, held, 15.0 * em * s, 2.0 * em * s],
+        );
+    }
+
+    #[test]
+    fn a_cell_width_the_table_cannot_hold_takes_what_the_longest_words_leave() {
+        // Word probe r6 (r60): a tcW of 250pt in a 300pt tblW, beside
+        // columns whose longest words take 117pt, gets 183pt; those
+        // columns keep their longest words.
+        let (em, fonts) = (mono_em(), fonts());
+        let mut cells = PAST_GRID_TEXTS.map(|t| ("", t));
+        let tc_w = format!("<w:tcW w:w='{}' w:type='dxa'/>", 18.0 * em * 20.0);
+        cells[1].0 = &tc_w;
+        let (tbl_w, target) = dxa(20.0 * em);
+        let (cols, rows, geom) = mono_row_table(&tbl_w, &[3000, 3000], &cells);
+        assert_widths(
+            &resolved_col_widths(&fonts, &cols, &rows, &geom, 60.0 * em),
+            &[3.0 * em, target - 8.0 * em, 3.0 * em, 2.0 * em],
+        );
+    }
+
+    #[test]
+    fn a_table_width_too_narrow_for_its_longest_words_grows_to_them() {
+        // Word probe r5 (r60): a 100pt tblW over columns whose longest
+        // words take 161pt grows to them, and a 300pt tcW among them gives
+        // way: no word breaks.
+        let (em, fonts) = (mono_em(), fonts());
+        let mut cells = PAST_GRID_TEXTS.map(|t| ("", t));
+        let tc_w = format!("<w:tcW w:w='{}' w:type='dxa'/>", 40.0 * em * 20.0);
+        cells[1].0 = &tc_w;
+        let (tbl_w, _) = dxa(8.0 * em);
+        let (cols, rows, geom) = mono_row_table(&tbl_w, &[1000, 1000], &cells);
+        assert_widths(
+            &resolved_col_widths(&fonts, &cols, &rows, &geom, 60.0 * em),
+            &[3.0 * em, 3.0 * em, 3.0 * em, 2.0 * em],
+        );
+    }
+
+    #[test]
+    fn cells_past_a_grid_without_widths_keep_their_own() {
+        // Word probes r1 and r2 (r60): past a grid whose columns have no
+        // width, or whose cells have none, a cell's tcW is still its
+        // column's width (60pt each), and a cell without one takes its
+        // line.
+        let (em, fonts) = (mono_em(), fonts());
+        let tc_w = "<w:tcW w:w='1200' w:type='dxa'/>";
+        let long = ["AAA AAA AAA", "AAA AAA AAA AAA"];
+        let (cols, rows, geom) = mono_table(&format!(
+            "<w:tbl><w:tblGrid><w:gridCol/><w:gridCol/></w:tblGrid><w:tr>{}</w:tr></w:tbl>",
+            mono_cells(&[
+                (tc_w, long[0]),
+                (tc_w, long[0]),
+                (tc_w, long[1]),
+                (tc_w, long[1])
+            ])
+        ));
+        assert_widths(
+            &resolved_col_widths(&fonts, &cols, &rows, &geom, 60.0 * em),
+            &[60.0, 60.0, 60.0, 60.0],
+        );
+        let (cols, rows, geom) = mono_row_table(
+            "",
+            &[2400, 2400],
+            &[("", "AAA"), ("", "AAA"), (tc_w, long[1]), (tc_w, long[1])],
+        );
+        assert_widths(
+            &resolved_col_widths(&fonts, &cols, &rows, &geom, 60.0 * em),
+            &[3.0 * em, 3.0 * em, 60.0, 60.0],
+        );
+    }
+
+    #[test]
+    fn a_grid_before_column_past_the_grid_takes_no_width() {
+        // Word probes b1 and b2 (r60): rows that open one grid column in
+        // and reach past the grid leave that column no width, whatever
+        // their wBefore says; their cells share the tblW by content.
+        let (em, fonts) = (mono_em(), fonts());
+        let (tbl_w, target) = dxa(20.0 * em);
+        for tr_pr in [
+            "<w:gridBefore w:val='1'/>",
+            "<w:gridBefore w:val='1'/><w:wBefore w:w='1000' w:type='dxa'/>",
+        ] {
+            let (cols, rows, geom) = mono_table(&format!(
+                "<w:tbl><w:tblPr>{tbl_w}</w:tblPr><w:tblGrid>{}</w:tblGrid><w:tr><w:trPr>{tr_pr}</w:trPr>{}</w:tr></w:tbl>",
+                mono_grid(&[2000, 2000, 2000]),
+                mono_cells(
+                    &PAST_GRID_TEXTS[1..]
+                        .iter()
+                        .map(|t| ("", *t))
+                        .collect::<Vec<_>>()
+                )
+            ));
+            assert!(geom.rows_past_grid, "{tr_pr}");
+            let k = (target - 8.0 * em) / (16.0 * em);
+            assert_widths(
+                &resolved_col_widths(&fonts, &cols, &rows, &geom, 60.0 * em),
+                &[0.0, (3.0 + 4.0 * k) * em, (3.0 + 12.0 * k) * em, 2.0 * em],
+            );
+        }
+    }
+
+    #[test]
+    fn rows_past_the_grid_without_a_table_width_keep_their_lines() {
+        // Word probe q4: without a tblW the same cells take their lines.
+        // They did before `rows_past_grid` too, through the content fit of
+        // a grid another tool wrote; the rows-past-grid fill now comes
+        // first, and gives the same.
+        let (em, fonts) = (mono_em(), fonts());
+        let (cols, rows, geom) =
+            mono_row_table("", &[3000, 3000], &PAST_GRID_TEXTS.map(|t| ("", t)));
+        assert!(geom.rows_past_grid);
+        assert_widths(
+            &resolved_col_widths(&fonts, &cols, &rows, &geom, 60.0 * em),
+            &[3.0 * em, 7.0 * em, 15.0 * em, 2.0 * em],
+        );
+    }
+
+    #[test]
+    fn rows_past_the_grid_without_a_table_width_keep_their_cells_widths() {
+        // Word probes t2 and t3 (r60): two cells of tcW 60pt, or 100pt,
+        // over a one-column 120pt grid and without a tblW keep their tcW,
+        // whatever their lines (60, 60 and 100, 100pt): not a share of the
+        // grid, and not a content fit.
+        let (em, fonts) = (mono_em(), fonts());
+        for pt in [60.0_f32, 100.0] {
+            let tc_w = format!("<w:tcW w:w='{}' w:type='dxa'/>", pt * 20.0);
+            let (cols, rows, geom) = mono_row_table(
+                "",
+                &[2400],
+                &[(&tc_w, "AAA AAA AAA"), (&tc_w, "AAA AAA AAA AAA")],
+            );
+            assert!(geom.rows_past_grid && !geom.content_autofit, "{pt}");
+            assert_widths(
+                &resolved_col_widths(&fonts, &cols, &rows, &geom, 60.0 * em),
+                &[pt, pt],
+            );
+        }
+    }
+
+    #[test]
+    fn rows_past_a_saved_grid_without_a_table_width_keep_their_lines_too() {
+        // Word does not lay out by its marks (probe m3): its own row marks
+        // over a grid the cells outgrow still leave q4's content fit.
+        let (em, fonts) = (mono_em(), fonts());
+        let (cols, rows, geom) = mono_table(&format!(
+            "<w:tbl><w:tblGrid>{}</w:tblGrid><w:tr w:rsidR='00A1B2C3'>{}</w:tr></w:tbl>",
+            mono_grid(&[3000, 3000]),
+            mono_cells(&PAST_GRID_TEXTS.map(|t| ("", t)))
+        ));
+        assert!(geom.rows_past_grid);
+        assert_widths(
+            &resolved_col_widths(&fonts, &cols, &rows, &geom, 60.0 * em),
+            &[3.0 * em, 7.0 * em, 15.0 * em, 2.0 * em],
+        );
+    }
+
+    #[test]
+    fn a_fixed_table_gives_each_column_past_its_grid_18pt() {
+        // Word probes f6 and f5 (r58, 2026-10-28): four cells over a fixed
+        // grid of two 150pt columns take 150, 150, 18 and 18pt without a
+        // tblW, and that in proportion in a wider one (178.55, 178.56,
+        // 21.46 and 21.36pt in 400pt).
+        let fonts = fonts();
+        let cells = PAST_GRID_TEXTS.map(|t| ("", t));
+        let fixed = "<w:tblLayout w:type='fixed'/>";
+        let (cols, rows, geom) = mono_row_table(fixed, &[3000, 3000], &cells);
+        assert_widths(
+            &resolved_col_widths(&fonts, &cols, &rows, &geom, 468.0),
+            &[150.0, 150.0, 18.0, 18.0],
+        );
+        let wide = format!("<w:tblW w:w='8000' w:type='dxa'/>{fixed}");
+        let (cols, rows, geom) = mono_row_table(&wide, &[3000, 3000], &cells);
+        let s = 400.0 / 336.0;
+        assert_widths(
+            &resolved_col_widths(&fonts, &cols, &rows, &geom, 468.0),
+            &[150.0 * s, 150.0 * s, 18.0 * s, 18.0 * s],
+        );
+    }
+
+    #[test]
+    fn a_fixed_table_past_its_grid_gives_a_grid_before_column_no_width() {
+        // Word probes r3 and r7 (r60): fixed rows that open one 100pt grid
+        // column in and reach past the grid take 0, 100, 100 and 18pt,
+        // whatever their wBefore says.
+        let fonts = fonts();
+        for tr_pr in [
+            "<w:gridBefore w:val='1'/>",
+            "<w:gridBefore w:val='1'/><w:wBefore w:w='1000' w:type='dxa'/>",
+        ] {
+            let (cols, rows, geom) = mono_table(&format!(
+                "<w:tbl><w:tblPr><w:tblLayout w:type='fixed'/></w:tblPr><w:tblGrid>{}</w:tblGrid><w:tr><w:trPr>{tr_pr}</w:trPr>{}</w:tr></w:tbl>",
+                mono_grid(&[2000, 2000, 2000]),
+                mono_cells(
+                    &PAST_GRID_TEXTS[1..]
+                        .iter()
+                        .map(|t| ("", *t))
+                        .collect::<Vec<_>>()
+                )
+            ));
+            assert_widths(
+                &resolved_col_widths(&fonts, &cols, &rows, &geom, 468.0),
+                &[0.0, 100.0, 100.0, 18.0],
+            );
+        }
+    }
+
+    #[test]
+    fn a_fixed_table_over_one_grid_column_gives_each_column_past_it_18pt() {
+        // Word probe s2 (r60): four cells over a fixed one-column grid of
+        // 300pt take 300, 18, 18 and 18pt, not a quarter each.
+        let fonts = fonts();
+        let (cols, rows, geom) = mono_row_table(
+            "<w:tblLayout w:type='fixed'/>",
+            &[6000],
+            &PAST_GRID_TEXTS.map(|t| ("", t)),
+        );
+        assert_widths(
+            &resolved_col_widths(&fonts, &cols, &rows, &geom, 468.0),
+            &[300.0, 18.0, 18.0, 18.0],
+        );
+    }
+
+    #[test]
+    fn the_deleted_cells_stamp_is_no_row_past_the_grid() {
+        // All Markup's "Deleted Cells" column pads the grid, but the row's
+        // own cells fit it.
+        let (_, _, geom) = mono_row_table(
+            "<w:tblW w:w='4000' w:type='dxa'/>",
+            &[2000, 2000],
+            &[("<w:cellDel w:id='1' w:author='A'/>", "AAA"), ("", "AA")],
+        );
+        assert!(geom.grid_padded);
+        assert!(!geom.rows_past_grid);
     }
 }
 
