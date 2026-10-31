@@ -32,7 +32,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use crate::markup_simplifier::remove_rsid_transform;
-use crate::namespaces::{M, PT, W};
+use crate::namespaces::{M, PT, W, W14};
 use crate::xmllinq::{Dom, NodeId, XName};
 
 /// Local names of `RevisionProcessor.TrackedRevisionsElements` (W namespace).
@@ -646,6 +646,51 @@ fn rebuild_named(dom: &mut Dom, new_name: XName, src: NodeId, keep_attrs: bool) 
     ne
 }
 
+/// `ins` / `del` / `moveFrom` / `moveTo`, the paragraph-mark revisions
+/// `CT_ParaRPr` puts first.
+fn paragraph_mark_revision(name: &XName) -> bool {
+    name.namespace_name() == W::URI
+        && matches!(name.local_name(), "ins" | "del" | "moveFrom" | "moveTo")
+}
+
+/// A row-history mark `CT_TrPr` allows and the saved `CT_TrPrBase` does
+/// not: `w:ins`, `w:del`, then `w14:conflictIns`, `w14:conflictDel`.
+fn row_history_mark(name: &XName) -> bool {
+    if name.namespace_name() == W::URI {
+        return matches!(name.local_name(), "ins" | "del");
+    }
+    name.namespace_name() == W14::URI && matches!(name.local_name(), "conflictIns" | "conflictDel")
+}
+
+/// #1724: the cell was inserted, either on the live `w:tcPr` or on the
+/// `w:tcPr` a `w:tcPrChange` is about to put back. `CT_TcPrInner` can hold
+/// `w:cellIns`, so the restored mark is the cell's own insertion.
+fn inserted_cell(dom: &Dom, tc: NodeId) -> bool {
+    dom.elements(tc, Some(&W::tc_pr())).into_iter().any(|tcpr| {
+        dom.element(tcpr, &W::cell_ins()).is_some()
+            || dom
+                .element(tcpr, &W::tc_pr_change())
+                .and_then(|change| dom.element(change, &W::tc_pr()))
+                .is_some_and(|saved| dom.element(saved, &W::cell_ins()).is_some())
+    })
+}
+
+/// #1724 `c3`: a live `w:cellMerge` with `w:vMerge="rest"` and
+/// `w:vMergeOrig="cont"`. Word's Reject All of that one-row shape keeps
+/// the cell and removes its text. Read it here, before the transform
+/// drops the `w:cellMerge`.
+fn continued_merge_cell(dom: &Dom, tc: NodeId) -> bool {
+    let v_merge_orig = W::name("vMergeOrig");
+    dom.elements(tc, Some(&W::tc_pr())).into_iter().any(|tcpr| {
+        dom.elements(tcpr, Some(&W::cell_merge()))
+            .into_iter()
+            .any(|mark| {
+                dom.attribute(mark, &W::v_merge()) == Some("rest")
+                    && dom.attribute(mark, &v_merge_orig) == Some("cont")
+            })
+    })
+}
+
 /// Port of `RejectRevisionsForPartTransform` — revert the *non-invertible*
 /// revisions (property changes) and drop inserted structural markers. Returns
 /// `None` to drop the node.
@@ -708,17 +753,21 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
         // deletion. The live w:ins/w:del stay, so the reversal below still
         // finds the row's own revision and Reject All removes an inserted
         // row whose properties also changed.
+        // #1723: that base type also has no w14:conflictIns/conflictDel.
+        // They follow w:ins/w:del, which is where CT_TrPr puts them. A
+        // saved copy of either is dropped: two of one kind is invalid, and
+        // the live mark is the one Word keeps. Renaming them to w:ins/w:del
+        // waits until after accept (demote_row_conflict_marks): a w:ins in
+        // trPr would reverse into a w:del and Reject All would delete the
+        // row.
         if name == W::tr_pr() {
             for e in dom.elements(new_prop, None) {
-                if dom.name(e).is_some_and(|n| n == W::ins() || n == W::del()) {
+                if dom.name(e).is_some_and(|n| row_history_mark(&n)) {
                     dom.remove(e);
                 }
             }
             for mark in dom.elements(node, None) {
-                if dom
-                    .name(mark)
-                    .is_some_and(|n| n == W::ins() || n == W::del())
-                {
+                if dom.name(mark).is_some_and(|n| row_history_mark(&n)) {
                     let mark_clone = dom.clone_subtree(mark);
                     dom.add(new_prop, mark_clone);
                 }
@@ -748,11 +797,36 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
     if name == W::r_pr()
         && let Some(chg) = dom.element(node, &W::r_pr_change())
     {
+        // Identify a paragraph mark (`w:pPr/w:rPr`) while `node` is still
+        // parented. A run's `w:rPr` is not one.
+        let paragraph_mark = dom.parent(node).is_some_and(|p| dom.name_is(p, &W::p_pr()));
         let saved = dom.element(chg, &W::r_pr());
         let new_rpr = match saved {
             Some(sp) => dom.clone_subtree(sp),
             None => dom.new_element(W::r_pr()),
         };
+        // #1722: the reversal below joins on the live ins/del/moveFrom/moveTo.
+        // `CT_ParaRPrOriginal` can hold the same four, so a saved copy of one
+        // is removed and the live mark is put back, first, in that order. Two
+        // of one kind is invalid, and a saved insertion would join after a
+        // selective freeze had already kept the live mark. A run's `rPr` is
+        // left as the snapshot wrote it.
+        if paragraph_mark {
+            for e in dom.elements(new_rpr, None) {
+                if dom.name(e).is_some_and(|n| paragraph_mark_revision(&n)) {
+                    dom.remove(e);
+                }
+            }
+            let live: Vec<NodeId> = dom
+                .elements(node, None)
+                .into_iter()
+                .filter(|&e| dom.name(e).is_some_and(|n| paragraph_mark_revision(&n)))
+                .collect();
+            for mark in live.into_iter().rev() {
+                let cloned = dom.clone_subtree(mark);
+                dom.add_first(new_rpr, cloned);
+            }
+        }
         carry_kept_revisions(dom, node, new_rpr, true);
         return reject_revisions_for_part_transform(dom, new_rpr);
     }
@@ -760,26 +834,40 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
     if name == W::numbering_change() || name == W::cell_del() || name == W::cell_merge() {
         return None;
     }
-    // tc whose tcPr contains a cellIns → drop the inserted cell.
-    if name == W::tc() {
-        let has_cell_ins = dom
-            .elements(node, Some(&W::tc_pr()))
-            .into_iter()
-            .any(|tcpr| dom.element(tcpr, &W::cell_ins()).is_some());
-        if has_cell_ins {
-            return None;
-        }
+    // #1724: a cellIns on the live tcPr (c0, gb2) or on the tcPr the
+    // change restores (c1) drops the cell. A restored cellDel is not an
+    // insertion: the drop below removes the marker and the cell stays.
+    // Checking the rebuilt tcPr instead would keep gb2, whose saved copy
+    // has no cellIns.
+    if name == W::tc() && inserted_cell(dom, node) {
+        return None;
     }
+    // #1724 c3: decided on the live cellMerge, which the rebuild drops.
+    let clear_blocks = name == W::tc() && continued_merge_cell(dom, node);
 
     // Identity: rebuild with attributes + transformed children.
     let ne = dom.new_element(name);
     for (an, av) in dom.attributes(node) {
         dom.set_attribute_value(ne, &an, Some(&av));
     }
+    let mut kept_block = false;
     for c in dom.nodes(node) {
+        if clear_blocks && dom.name(c).is_some_and(|n| n == W::p() || n == W::tbl()) {
+            continue;
+        }
         if let Some(t) = reject_revisions_for_part_transform(dom, c) {
+            if clear_blocks && dom.name(t).is_some_and(|n| n == W::p() || n == W::tbl()) {
+                kept_block = true;
+            }
             dom.add(ne, t);
         }
+    }
+    // A cell has to hold a block. The continued merge's paragraphs and
+    // nested tables are gone, so the cell keeps an empty paragraph.
+    // Do not write w:vMerge: Word's c3 output has none.
+    if clear_blocks && !kept_block {
+        let empty = dom.new_element(W::p());
+        dom.add(ne, empty);
     }
     Some(ne)
 }
@@ -819,7 +907,37 @@ fn reject_content(
     let reverted = normalize_orphan_moves(dom, reverted, OrphanMovePass::RejectMoveToMarkers);
     let reversed = reverse_revisions_transform(dom, reverted);
     let derssid = remove_rsid_transform(dom, reversed).expect("reject: root not dropped by rsid");
-    accept_content(dom, derssid, keep_comments, kept)
+    let accepted = accept_content(dom, derssid, keep_comments, kept);
+    // #1723: only now. The short-circuit above (no w: revision at all)
+    // never reaches here, so a bare conflict mark is left as Word wrote it.
+    demote_row_conflict_marks(dom, accepted);
+    accepted
+}
+
+/// Word's Reject All of a row writes `w14:conflictIns` / `w14:conflictDel`
+/// back as a plain `w:ins` / `w:del` on that row. The mark keeps its own
+/// id, author and date. A conflict mark on a run or a paragraph mark is
+/// not this case.
+fn demote_row_conflict_marks(dom: &mut Dom, root: NodeId) {
+    let conflict_ins = W14::name("conflictIns");
+    let conflict_del = W14::name("conflictDel");
+    let marks: Vec<(NodeId, bool)> = dom
+        .descendants(root, None)
+        .into_iter()
+        .filter_map(|mark| {
+            let ins = dom.name_is(mark, &conflict_ins);
+            if !ins && !dom.name_is(mark, &conflict_del) {
+                return None;
+            }
+            let in_row = dom
+                .parent(mark)
+                .is_some_and(|parent| dom.name_is(parent, &W::tr_pr()));
+            in_row.then_some((mark, ins))
+        })
+        .collect();
+    for (mark, ins) in marks {
+        dom.set_name(mark, if ins { W::ins() } else { W::del() });
+    }
 }
 
 // ───────────────────────────── A.0 — part-pipeline walkers ──────────────────

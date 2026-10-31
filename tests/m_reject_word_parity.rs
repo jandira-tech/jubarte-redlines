@@ -2061,3 +2061,370 @@ fn reject_of_an_inserted_table_with_row_property_changes_drops_it() {
     let xml = part_string(&rejected, "word/document.xml").unwrap();
     assert!(!xml.contains("<w:tbl"), "{xml}");
 }
+
+// =========================================================================
+// #1722: a paragraph mark's ins/del/moveFrom/moveTo survives an rPrChange.
+// Word 16 (2026-10-24) joins on an inserted mark and keeps a deleted one.
+// =========================================================================
+
+/// Two paragraphs, `A` then `B`. Paragraph 1's `w:pPr` is `ppr`.
+fn ab_paragraphs(ppr: &str) -> String {
+    format!(
+        r#"<w:p><w:pPr>{ppr}</w:pPr><w:r><w:t>A</w:t></w:r></w:p><w:p><w:r><w:t>B</w:t></w:r></w:p>"#
+    )
+}
+
+fn ab_header(ppr: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{}</w:hdr>"#,
+        ab_paragraphs(ppr)
+    )
+}
+
+/// #1722 `ga0`, `h0`: the mark is only `w:ins`. Word's Reject All joins `A`
+/// and `B` in the body and in a header.
+#[test]
+fn reject_1722_ga0_h0_joins_a_paragraph_whose_mark_is_only_an_insertion() {
+    let ppr = format!(r#"<w:rPr><w:ins w:id="1" {REV}/></w:rPr>"#);
+    let rejected = reject_revisions(&docx_with_sect(
+        &ab_paragraphs(&ppr),
+        &[header_part(&ab_header(&ppr))],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    ))
+    .unwrap();
+    assert_word_valid_package(&rejected);
+    assert_eq!(paragraphs(&rejected), ["AB"]);
+    assert_eq!(part_paragraphs(&rejected, "word/header1.xml"), ["AB"]);
+}
+
+/// #1722 `ga1`, `h1`: `w:ins` plus bold plus an `rPrChange` whose saved
+/// `w:rPr` is empty. Word joins the paragraphs and drops the bold.
+#[test]
+fn reject_1722_ga1_h1_joins_an_inserted_mark_whose_formatting_changed() {
+    let ppr = format!(
+        r#"<w:rPr><w:ins w:id="1" {REV}/><w:b/><w:rPrChange w:id="2" {REV}><w:rPr/></w:rPrChange></w:rPr>"#
+    );
+    let rejected = reject_revisions(&docx_with_sect(
+        &ab_paragraphs(&ppr),
+        &[header_part(&ab_header(&ppr))],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    ))
+    .unwrap();
+    assert_word_valid_package(&rejected);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert_eq!(paragraphs(&rejected), ["AB"], "{xml}");
+    assert!(
+        !xml.contains("<w:b/>")
+            && !xml.contains("<w:b ")
+            && !xml.contains("rPrChange")
+            && !xml.contains("<w:ins"),
+        "{xml}"
+    );
+    let header = part_string(&rejected, "word/header1.xml").unwrap();
+    assert_eq!(
+        part_paragraphs(&rejected, "word/header1.xml"),
+        ["AB"],
+        "{header}"
+    );
+}
+
+/// #1722 `ga3`: the `ga1` mark, plus a `w:pPrChange`. Word still joins.
+#[test]
+fn reject_1722_ga3_joins_an_inserted_mark_with_a_paragraph_property_change() {
+    let ppr = format!(
+        r#"<w:jc w:val="center"/><w:rPr><w:ins w:id="1" {REV}/><w:b/><w:rPrChange w:id="2" {REV}><w:rPr/></w:rPrChange></w:rPr><w:pPrChange w:id="3" {REV}><w:pPr/></w:pPrChange>"#
+    );
+    let rejected = reject_revisions(&docx(&ab_paragraphs(&ppr))).unwrap();
+    assert_word_valid_package(&rejected);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert_eq!(paragraphs(&rejected), ["AB"], "{xml}");
+    assert!(
+        !xml.contains("pPrChange") && !xml.contains("<w:jc"),
+        "{xml}"
+    );
+}
+
+/// #1722 `n0`: an inserted mark with an `rPrChange`, and a section break
+/// with a `pPrChange`. Word's Reject All is one paragraph and one section.
+#[test]
+fn reject_1722_n0_joins_an_inserted_section_break_whose_properties_changed() {
+    let ppr = format!(
+        r#"<w:rPr><w:ins w:id="1" {REV}/><w:rPrChange w:id="2" {REV}><w:rPr/></w:rPrChange></w:rPr><w:sectPr><w:pgSz w:w="9000" w:h="14000"/></w:sectPr><w:pPrChange w:id="3" {REV}><w:pPr><w:jc w:val="right"/></w:pPr></w:pPrChange>"#
+    );
+    let rejected = reject_revisions(&docx(&ab_paragraphs(&ppr))).unwrap();
+    assert_word_valid_package(&rejected);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    let sections = xml.matches("<w:sectPr").count();
+    assert!(
+        paragraphs(&rejected) == ["AB"] && sections == 1,
+        "paragraphs {:?}, sections {sections}: {xml}",
+        paragraphs(&rejected)
+    );
+    assert!(!xml.contains(r#"w:w="9000""#), "{xml}");
+}
+
+/// #1722 `ga2`: `w:del` plus an `rPrChange` (saved `w:rPr` empty). Word
+/// keeps the two paragraphs and drops the bold the change added.
+#[test]
+fn reject_1722_ga2_keeps_paragraphs_whose_deleted_mark_also_changed() {
+    let ppr = format!(
+        r#"<w:rPr><w:del w:id="1" {REV}/><w:b/><w:rPrChange w:id="2" {REV}><w:rPr/></w:rPrChange></w:rPr>"#
+    );
+    let rejected = reject_revisions(&docx(&ab_paragraphs(&ppr))).unwrap();
+    assert_word_valid_package(&rejected);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert_eq!(paragraphs(&rejected), ["A", "B"], "{xml}");
+    assert!(
+        !xml.contains("<w:b/>")
+            && !xml.contains("<w:b ")
+            && !xml.contains("<w:del")
+            && !xml.contains("rPrChange"),
+        "{xml}"
+    );
+}
+
+// =========================================================================
+// #1723: a row's w14:conflictIns / w14:conflictDel survives a trPrChange
+// and comes out as a plain w:ins / w:del. Word 16 (2026-10-24) keeps the
+// row tracked; it does not reject the conflict mark.
+// =========================================================================
+
+const W14_NS: &str = "http://schemas.microsoft.com/office/word/2010/wordml";
+
+/// Ann's `trPrChange` (saved row height) beside Bob's conflict mark.
+fn conflict_row(mark: &str) -> String {
+    format!(
+        r#"<w:trPrChange w:id="2" w:author="Ann" w:date="2026-01-01T00:00:00Z"><w:trPr><w:trHeight w:val="300"/></w:trPr></w:trPrChange><w14:{mark} xmlns:w14="{W14_NS}" w:id="5" w:author="Bob" w:date="2026-01-02T00:00:00Z"/>"#
+    )
+}
+
+fn assert_conflict_row_kept(pkg: &[u8], plain: &str) {
+    assert_word_valid_package(pkg);
+    assert_eq!(row_texts(pkg), ["Kept row.", "Row 0."]);
+    let xml = part_string(pkg, "word/document.xml").unwrap();
+    assert!(xml.contains(r#"<w:trHeight w:val="300""#), "{xml}");
+    assert!(
+        xml.contains(&format!("<w:{plain}"))
+            && xml.contains(r#"w:id="5""#)
+            && xml.contains(r#"w:author="Bob""#)
+            && xml.contains("2026-01-02T00:00:00Z"),
+        "expected a plain w:{plain} keeping Bob's id, author and date: {xml}"
+    );
+    assert!(
+        !xml.contains("conflictIns") && !xml.contains("conflictDel") && !xml.contains("trPrChange"),
+        "{xml}"
+    );
+}
+
+/// #1723 `r0`: Ann's `trPrChange` plus Bob's `w14:conflictIns`. Word's
+/// Reject All keeps the row and writes a plain `w:ins`.
+#[test]
+fn reject_1723_r0_keeps_a_conflict_insertion_as_an_insertion() {
+    let rejected = reject_revisions(&docx(&rows_table(&[&conflict_row("conflictIns")]))).unwrap();
+    assert_conflict_row_kept(&rejected, "ins");
+}
+
+/// #1723 `r1`: the deletion twin. Word writes a plain `w:del`.
+#[test]
+fn reject_1723_r1_keeps_a_conflict_deletion_as_a_deletion() {
+    let rejected = reject_revisions(&docx(&rows_table(&[&conflict_row("conflictDel")]))).unwrap();
+    assert_conflict_row_kept(&rejected, "del");
+}
+
+// =========================================================================
+// #1724: a cellIns restored from the saved tcPr removes the cell, and a
+// continued cellMerge loses its text. Word 16 (2026-10-24).
+// =========================================================================
+
+const TCW: &str = r#"<w:tcW w:w="2000" w:type="dxa"/>"#;
+const SHADE_RED: &str = r#"<w:shd w:val="clear" w:color="auto" w:fill="FF0000"/>"#;
+const SHADE_GREEN: &str = r#"<w:shd w:val="clear" w:color="auto" w:fill="00FF00"/>"#;
+
+/// One row, KEEP then the `TARGET` cell whose interior is `target`.
+fn target_table(target: &str) -> String {
+    format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr>{TCW}</w:tcPr><w:p><w:r><w:t>KEEP</w:t></w:r></w:p></w:tc><w:tc>{target}</w:tc></w:tr></w:tbl><w:p/>"#
+    )
+}
+
+fn target_paragraph() -> &'static str {
+    "<w:p><w:r><w:t>TARGET</w:t></w:r></w:p>"
+}
+
+fn tc_change(saved: &str) -> String {
+    format!(r#"<w:tcPrChange w:id="2" {REV}><w:tcPr>{saved}</w:tcPr></w:tcPrChange>"#)
+}
+
+/// Visible text of each `w:tc`, in order.
+fn cell_texts(pkg: &[u8]) -> Vec<String> {
+    let xml = part_string(pkg, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    dom.descendants(root, Some(&W::tc()))
+        .into_iter()
+        .map(|tc| {
+            dom.descendants(tc, Some(&W::t()))
+                .into_iter()
+                .map(|t| dom.value(t))
+                .collect()
+        })
+        .collect()
+}
+
+fn reject_target(target: &str) -> Vec<u8> {
+    let rejected = reject_revisions(&docx(&target_table(target))).unwrap();
+    assert_word_valid_package(&rejected);
+    rejected
+}
+
+/// #1724 `c0`: a live `w:cellIns`. Word removes the cell.
+#[test]
+fn reject_1724_c0_drops_a_cell_with_a_live_cell_insertion() {
+    let target = format!(
+        r#"<w:tcPr>{TCW}<w:cellIns w:id="1" {REV}/></w:tcPr>{}"#,
+        target_paragraph()
+    );
+    let rejected = reject_target(&target);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert_eq!(cell_texts(&rejected), ["KEEP"], "{xml}");
+    assert!(!xml.contains("cellIns"), "{xml}");
+}
+
+/// #1724 `c1`: `w:cellIns` only inside the saved `w:tcPr`. Word removes
+/// the cell. The grid stays two columns; Word's autofit is not this defect.
+#[test]
+fn reject_1724_c1_drops_a_cell_whose_saved_properties_carry_the_cell_insertion() {
+    let saved = format!(r#"<w:cellIns w:id="1" {REV}/>"#);
+    let target = format!(
+        r#"<w:tcPr>{TCW}{}</w:tcPr>{}"#,
+        tc_change(&saved),
+        target_paragraph()
+    );
+    let rejected = reject_target(&target);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert_eq!(cell_texts(&rejected), ["KEEP"], "{xml}");
+    assert!(
+        !xml.contains("cellIns") && !xml.contains("tcPrChange"),
+        "{xml}"
+    );
+    assert_eq!(xml.matches("<w:gridCol").count(), 2, "{xml}");
+}
+
+/// #1724 `c2`, `gb1`: a live `w:cellDel` plus a `w:tcPrChange`. Word keeps
+/// the cell and the saved shading.
+#[test]
+fn reject_1724_c2_gb1_keeps_a_deleted_cell_whose_properties_changed() {
+    let target = format!(
+        r#"<w:tcPr>{TCW}{SHADE_RED}<w:cellDel w:id="1" {REV}/>{}</w:tcPr>{}"#,
+        tc_change(&format!("{TCW}{SHADE_GREEN}")),
+        target_paragraph()
+    );
+    let rejected = reject_target(&target);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert_eq!(cell_texts(&rejected), ["KEEP", "TARGET"], "{xml}");
+    assert!(xml.contains(r#"w:fill="00FF00""#), "{xml}");
+    assert!(
+        !xml.contains("FF0000") && !xml.contains("cellDel") && !xml.contains("tcPrChange"),
+        "{xml}"
+    );
+}
+
+/// #1724 `gb2`: a live `w:cellIns` plus a `w:tcPrChange` whose saved copy
+/// has no insertion. Word still removes the cell.
+#[test]
+fn reject_1724_gb2_drops_an_inserted_cell_whose_properties_also_changed() {
+    let target = format!(
+        r#"<w:tcPr>{TCW}{SHADE_RED}<w:cellIns w:id="1" {REV}/>{}</w:tcPr>{}"#,
+        tc_change(&format!("{TCW}{SHADE_GREEN}")),
+        target_paragraph()
+    );
+    let rejected = reject_target(&target);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert_eq!(cell_texts(&rejected), ["KEEP"], "{xml}");
+    assert!(!xml.contains("cellIns") && !xml.contains("TARGET"), "{xml}");
+}
+
+/// #1724 `gb3`: a `w:cellMerge` with no `w:vMerge`, plus a `w:tcPrChange`.
+/// Word keeps the cell, its text and the saved shading.
+#[test]
+fn reject_1724_gb3_keeps_a_merged_cell_and_its_text_when_the_merge_has_no_vmerge() {
+    let target = format!(
+        r#"<w:tcPr>{TCW}{SHADE_RED}<w:cellMerge w:id="3" {REV}/>{}</w:tcPr>{}"#,
+        tc_change(&format!("{TCW}{SHADE_GREEN}")),
+        target_paragraph()
+    );
+    let rejected = reject_target(&target);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert_eq!(cell_texts(&rejected), ["KEEP", "TARGET"], "{xml}");
+    assert!(xml.contains(r#"w:fill="00FF00""#), "{xml}");
+    assert!(
+        !xml.contains("FF0000") && !xml.contains("cellMerge") && !xml.contains("tcPrChange"),
+        "{xml}"
+    );
+}
+
+/// #1724 `c3`: `w:cellMerge w:vMerge="rest" w:vMergeOrig="cont"` in a
+/// one-row table, plus a `w:tcPrChange`. Word keeps the cell, restores the
+/// saved shading and removes the text. It does not write a `w:vMerge`.
+#[test]
+fn reject_1724_c3_keeps_a_continued_merge_cell_and_drops_its_text() {
+    let merge = format!(r#"<w:cellMerge w:id="3" {REV} w:vMerge="rest" w:vMergeOrig="cont"/>"#);
+    let target = format!(
+        r#"<w:tcPr>{TCW}{SHADE_RED}{merge}{}</w:tcPr>{}"#,
+        tc_change(&format!("{TCW}{SHADE_GREEN}")),
+        target_paragraph()
+    );
+    let rejected = reject_target(&target);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert_eq!(cell_texts(&rejected), ["KEEP", ""], "{xml}");
+    assert!(xml.contains(r#"w:fill="00FF00""#), "{xml}");
+    assert!(
+        !xml.contains("TARGET")
+            && !xml.contains("cellMerge")
+            && !xml.contains("tcPrChange")
+            && !xml.contains("vMerge")
+            && !xml.contains("FF0000"),
+        "{xml}"
+    );
+}
+
+/// #1724 `c3b`, `c3c`, `c3d`: the `c3` cell in the second row of a two-row
+/// table, under a plain cell, under a live `w:vMerge` restart, and with no
+/// `w:tcPrChange`. Word 16's Reject All empties the cell in all three
+/// (2026-10-31), so the `c3` rule is not an artifact of a one-row table.
+#[test]
+fn reject_1724_c3_two_rows_empties_the_continued_merge_cell() {
+    let merge = format!(r#"<w:cellMerge w:id="3" {REV} w:vMerge="rest" w:vMergeOrig="cont"/>"#);
+    let with_change = format!(
+        r#"<w:tcPr>{TCW}{SHADE_RED}{merge}{}</w:tcPr>{}"#,
+        tc_change(&format!("{TCW}{SHADE_GREEN}")),
+        target_paragraph()
+    );
+    let no_change = format!(
+        r#"<w:tcPr>{TCW}{SHADE_RED}{merge}</w:tcPr>{}"#,
+        target_paragraph()
+    );
+    for (above_props, target) in [
+        ("", &with_change),
+        (r#"<w:vMerge w:val="restart"/>"#, &with_change),
+        ("", &no_change),
+    ] {
+        let body = format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr>{TCW}</w:tcPr><w:p><w:r><w:t>KEEP1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr>{TCW}{above_props}</w:tcPr><w:p><w:r><w:t>ABOVE</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr>{TCW}</w:tcPr><w:p><w:r><w:t>KEEP</w:t></w:r></w:p></w:tc><w:tc>{target}</w:tc></w:tr></w:tbl><w:p/>"#
+        );
+        let rejected = reject_revisions(&docx(&body)).unwrap();
+        assert_word_valid_package(&rejected);
+        let xml = part_string(&rejected, "word/document.xml").unwrap();
+        assert_eq!(
+            cell_texts(&rejected),
+            ["KEEP1", "ABOVE", "KEEP", ""],
+            "{xml}"
+        );
+        assert!(
+            !xml.contains("cellMerge") && !xml.contains("tcPrChange"),
+            "{xml}"
+        );
+    }
+}
