@@ -1161,19 +1161,59 @@ fn agent_view(
     source: Option<String>,
     args: &ReadArgs,
 ) -> Result<jubarte::markdown::ReadView, String> {
-    let select = selection(args)?;
-    let view = jubarte::markdown::read(
-        bytes,
-        &jubarte::markdown::ReadOptions {
-            track_changes: args.track_changes.unwrap_or(TrackChanges::All).into(),
-            comments: args.comments == CommentsArg::Inline,
-            dates: args.dates,
-            page_markers: !args.no_page_markers,
-            select,
-            source,
-        },
-    )
-    .map_err(|e| e.to_string())?;
+    let mut options = jubarte::markdown::ReadOptions {
+        track_changes: args.track_changes.unwrap_or(TrackChanges::All).into(),
+        comments: args.comments == CommentsArg::Inline,
+        dates: args.dates,
+        page_markers: !args.no_page_markers,
+        select: selection(args)?,
+        source,
+    };
+    if args.find.is_some() || args.regex.is_some() {
+        let regex = args.regex.as_deref().map(|pattern| {
+            if pattern.is_empty() {
+                args.find.as_deref().unwrap_or(pattern)
+            } else {
+                pattern
+            }
+        });
+        let find = if regex.is_some() {
+            None
+        } else {
+            args.find.as_deref()
+        };
+        let mut matches =
+            jubarte::edit::for_edit::matching_body_paragraphs(bytes, find, regex, args.ignore_case)
+                .map_err(|e| e.to_string())?;
+        if options.select.is_some() {
+            // Preserve -p/head/tail/changed's view semantics, including tables.
+            let selected = jubarte::markdown::read(bytes, &options)
+                .map_err(|e| e.to_string())?
+                .selected
+                .unwrap_or_default();
+            matches.retain(|p| selected.contains(p));
+        }
+        if matches.is_empty() {
+            eprintln!(
+                "no paragraph matches {:?}",
+                find.or(regex).unwrap_or_default()
+            );
+            return Ok(jubarte::markdown::ReadView {
+                selected: Some(Vec::new()),
+                ..Default::default()
+            });
+        }
+        options.select = Some(jubarte::markdown::Select::Picks(
+            matches
+                .into_iter()
+                .map(|p| jubarte::markdown::Pick::Paragraphs {
+                    from: p,
+                    to: Some(p),
+                })
+                .collect(),
+        ));
+    }
+    let view = jubarte::markdown::read(bytes, &options).map_err(|e| e.to_string())?;
     for warning in &view.warnings {
         eprintln!("warning: {warning}");
     }
