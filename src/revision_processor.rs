@@ -1889,7 +1889,8 @@ fn accept_deleted_and_moved_from_content_controls_transform(
 // ─────────────── A.5a — deleted / moved-from paragraph marks ────────────────
 
 /// A.5a — `IsRunContent` (:2356): `Some(true)` = run-level content,
-/// `Some(false)` = marker/non-content, `None` = unknown (C# throws).
+/// `Some(false)` = marker/non-content, `None` = unknown. Unknown children
+/// conservatively keep the paragraph; they are not evidence of deletion.
 fn is_run_content(name: &XName) -> Option<bool> {
     // An authored compatibility wrapper carries its complete presentation
     // alternatives, like math or a field wrapper. Capability selection belongs
@@ -1935,36 +1936,52 @@ fn is_run_content(name: &XName) -> Option<bool> {
     }
 }
 
-/// A.5a — `CollapseTransform` (:2331): splice `w:dir`/`w:bdr`/`w:ins`/
-/// `w:moveTo`/`w:smartTag` to their element children and `w:sdt` to its
-/// `sdtContent` element children — ONE level, un-recursed, exactly like the
-/// C# (`return element.Elements()`); drop `w:pPr`; rebuild everything else
-/// recursively. (Yes, `w:bdr` — the C# comment says `bdo` but the code tests
-/// `W.bdr`; reproduced as written.)
+/// A.5a — `CollapseTransform` (:2331): recursively look through run wrappers
+/// and `sdtContent`, dropping properties in this disposable content probe.
+/// Like Docxodus #281, recurse when splicing: wrappers can nest around an
+/// insertion or move destination (#1704). Keep deletions opaque so their
+/// runs do not count as surviving content. The output tree retains its
+/// authored wrappers; only the paragraph-deletion probe is flattened here.
 fn collapse_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
     if !dom.is_element(node) {
         return vec![dom.clone_subtree(node)];
     }
     let name = dom.name(node).unwrap();
+    // An authored field can have no cached result yet; its instruction is
+    // still content. Only see through the field when resolving its revisions.
+    if name == W::fld_simple() && !element_has_tracked_revisions(dom, node) {
+        return vec![dom.clone_subtree(node)];
+    }
     if name.namespace_name() == W::URI
         && matches!(
             name.local_name(),
-            "dir" | "bdr" | "ins" | "moveTo" | "smartTag"
+            "dir"
+                | "bdo"
+                | "bdr"
+                | "ins"
+                | "moveTo"
+                | "smartTag"
+                | "customXml"
+                | "fldSimple"
+                | "hyperlink"
         )
     {
-        let kids = dom.elements(node, None);
-        return kids.into_iter().map(|e| dom.clone_subtree(e)).collect();
+        let mut out = Vec::new();
+        for child in dom.nodes(node) {
+            out.extend(collapse_transform(dom, child));
+        }
+        return out;
     }
     if name == W::sdt() {
         let mut out = Vec::new();
         for sc in dom.elements(node, Some(&W::sdt_content())) {
-            for e in dom.elements(sc, None) {
-                out.push(dom.clone_subtree(e));
+            for child in dom.nodes(sc) {
+                out.extend(collapse_transform(dom, child));
             }
         }
         return out;
     }
-    if name == W::p_pr() {
+    if name == W::p_pr() || name == W::name("smartTagPr") || name == W::name("customXmlPr") {
         return vec![];
     }
     let ne = dom.new_element(name);
@@ -1982,9 +1999,9 @@ fn collapse_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
 /// A.5a — `AllParaContentIsDeleted` (:2310): after collapsing wrappers, does
 /// the paragraph hold NO run-level content?
 ///
-/// # Panics
-/// Like the C# ("Internal error 20"), on a child element `IsRunContent`
-/// cannot classify.
+/// An unrecognized child (including malformed paragraph-level ruby, #1711)
+/// keeps its content rather than panicking or silently deleting it. This is
+/// not a schema repair: `validate` diagnoses known malformed shapes.
 fn all_para_content_is_deleted(dom: &mut Dom, p: NodeId) -> bool {
     let collapsed = collapse_transform(dom, p);
     debug_assert_eq!(collapsed.len(), 1, "w:p rebuilds to a single element");
@@ -2001,15 +2018,11 @@ fn all_para_content_is_deleted(dom: &mut Dom, p: NodeId) -> bool {
             return accept_all_other_revisions_transform(dom, ce)
                 .into_iter()
                 .any(|node| {
-                    dom.name(node).is_some_and(|name| {
-                        is_run_content(&name).unwrap_or_else(|| {
-                            panic!("Internal error 20, found element {}", name.clark())
-                        })
-                    })
+                    dom.name(node)
+                        .is_some_and(|name| is_run_content(&name).unwrap_or(true))
                 });
         }
-        is_run_content(&n)
-            .unwrap_or_else(|| panic!("Internal error 20, found element {}", n.clark()))
+        is_run_content(&n).unwrap_or(true)
     })
 }
 

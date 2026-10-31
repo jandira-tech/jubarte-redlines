@@ -2029,3 +2029,135 @@ fn public_paragraph_mark_transform_has_no_new_ownership_scratch_attributes() {
         );
     }
 }
+
+// #1704: nested run wrappers must be traversed when deciding whether the
+// deleted paragraph mark has any surviving content. These are DOM-only tests.
+fn a5a_wrapped_revision(wrapper: &str, reverse: bool, deleted: bool) {
+    let mut d = Dom::new();
+    // Mirroring a redline exercises Reject All's reverse-then-accept path.
+    let mark = if reverse { "ins" } else { "del" };
+    let deleted_on_input = deleted != reverse;
+    let revision = if deleted_on_input { "del" } else { "ins" };
+    let text = if deleted_on_input { "delText" } else { "t" };
+    let inner = format!(
+        "<w:{revision} w:id=\"2\" w:author=\"Probe\"><w:r><w:{text}>payload</w:{text}></w:r></w:{revision}>"
+    );
+    let wrapped = wrapper.replace("CONTENT", &inner);
+    let xml = format!(
+        "<w:p><w:r><w:t>anchor</w:t></w:r></w:p><w:p><w:pPr><w:rPr><w:{mark} w:id=\"1\" w:author=\"Probe\"/></w:rPr></w:pPr>{wrapped}</w:p>"
+    );
+    let body = body_from(&mut d, &xml);
+    let out = if reverse {
+        reject_revisions_document(&mut d, body)
+    } else {
+        accept_revisions_document(&mut d, body)
+    };
+    let texts: Vec<_> = d
+        .descendants(out, Some(&W::t()))
+        .into_iter()
+        .map(|t| d.value(t))
+        .collect();
+    assert_eq!(
+        texts,
+        if deleted {
+            vec!["anchor"]
+        } else {
+            vec!["anchor", "payload"]
+        }
+    );
+    assert_eq!(
+        d.elements(out, Some(&W::p())).len(),
+        if deleted { 1 } else { 2 }
+    );
+    for name in [W::ins(), W::del(), W::move_to(), W::move_from()] {
+        assert!(d.descendants(out, Some(&name)).is_empty());
+    }
+}
+
+macro_rules! wrapped_revision_probe {
+    ($name:ident, $wrapper:expr) => {
+        #[test]
+        fn $name() {
+            a5a_wrapped_revision($wrapper, false, false);
+            a5a_wrapped_revision($wrapper, true, false);
+            a5a_wrapped_revision($wrapper, false, true);
+            a5a_wrapped_revision($wrapper, true, true);
+        }
+    };
+}
+wrapped_revision_probe!(
+    a5a_smart_tag_revision,
+    "<w:smartTag w:uri=\"urn:probe\">CONTENT</w:smartTag>"
+);
+wrapped_revision_probe!(
+    a5a_custom_xml_revision,
+    "<w:customXml w:element=\"tag\"><w:customXmlPr/>CONTENT</w:customXml>"
+);
+wrapped_revision_probe!(
+    a5a_sdt_revision,
+    "<w:sdt><w:sdtPr/><w:sdtContent>CONTENT</w:sdtContent></w:sdt>"
+);
+wrapped_revision_probe!(
+    a5a_field_revision,
+    "<w:fldSimple w:instr=\"DATE\">CONTENT</w:fldSimple>"
+);
+wrapped_revision_probe!(
+    a5a_hyperlink_revision,
+    "<w:hyperlink w:anchor=\"target\"><w:smartTag>CONTENT</w:smartTag></w:hyperlink>"
+);
+wrapped_revision_probe!(a5a_bdo_revision, "<w:bdo w:val=\"rtl\">CONTENT</w:bdo>");
+wrapped_revision_probe!(a5a_dir_revision, "<w:dir w:val=\"rtl\">CONTENT</w:dir>");
+
+#[test]
+fn a5a_unexpected_children_preserve_content_without_panicking() {
+    for inner in [
+        "<w:ruby><w:rt><w:r><w:t>reading</w:t></w:r></w:rt><w:rubyBase><w:r><w:t>base</w:t></w:r></w:rubyBase></w:ruby>",
+        "<w:unexpected><w:r><w:t>future</w:t></w:r></w:unexpected>",
+        "<x:future xmlns:x=\"urn:future\"><w:r><w:t>extension</w:t></w:r></x:future>",
+    ] {
+        let mut d = Dom::new();
+        let body = body_from(
+            &mut d,
+            &format!(
+                "<w:p><w:pPr><w:rPr><w:del w:id=\"1\" w:author=\"Probe\"/></w:rPr></w:pPr>{inner}</w:p>"
+            ),
+        );
+        let before: Vec<_> = d
+            .descendants(body, Some(&W::t()))
+            .into_iter()
+            .map(|t| d.value(t))
+            .collect();
+        let out = accept_revisions_document(&mut d, body);
+        let after: Vec<_> = d
+            .descendants(out, Some(&W::t()))
+            .into_iter()
+            .map(|t| d.value(t))
+            .collect();
+        assert_eq!(after, before);
+        assert_eq!(d.elements(out, Some(&W::p())).len(), 1);
+        assert!(d.descendants(out, Some(&W::del())).is_empty());
+    }
+}
+
+#[test]
+fn a5a_wrapper_properties_do_not_count_as_surviving_runs() {
+    a5a_wrapped_revision(
+        "<w:smartTag><w:smartTagPr/>CONTENT</w:smartTag>",
+        false,
+        true,
+    );
+}
+
+#[test]
+fn a5a_authored_empty_field_keeps_its_instruction() {
+    let mut d = Dom::new();
+    let body = body_from(
+        &mut d,
+        "<w:p><w:pPr><w:rPr><w:del w:id=\"1\" w:author=\"Probe\"/></w:rPr></w:pPr><w:fldSimple w:instr=\"DATE\"/></w:p>",
+    );
+    let out = accept_revisions_document(&mut d, body);
+    assert_eq!(d.elements(out, Some(&W::p())).len(), 1);
+    let fields = d.descendants(out, Some(&W::fld_simple()));
+    assert_eq!(fields.len(), 1);
+    assert_eq!(d.attribute(fields[0], &W::name("instr")), Some("DATE"));
+}

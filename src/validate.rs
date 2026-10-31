@@ -40,6 +40,7 @@
 //! | `COMMENT_PARTS_INCONSISTENT` | yes | no |
 //! | `COMMENT_UNANCHORED`, `COMMENT_ID_REPEATED`, `COMMENT_METADATA_MISMATCH`, `COMMENT_PARENT_CYCLE` | no: Word opens it | no |
 //! | `RUN_OUTSIDE_PARAGRAPH` | yes | no |
+//! | `RUBY_OUTSIDE_RUN` | no: direct paragraph child rejected by OpenXmlValidator; Word unverified (#1711) | no |
 //! | `FIELD_UNBALANCED`, `FIELD_SPLIT_DELETION` | yes | no |
 //! | `FIELD_CODE_STATE` | no | no |
 //! | `EMPTY_FIELD_CODE`, `ROW_WITHOUT_CELL`, `SECTPR_NOT_LAST` | yes | no |
@@ -164,10 +165,14 @@ impl Finding {
     }
 }
 
-/// Codes that are errors though Word opens the file: OOXML-invalid
-/// duplicate revision ids, and a cell's final mark revision Word's Accept
-/// All or Reject All never returns from (#1669).
-const ERROR_LEADS: [&str; 2] = ["DUPLICATE_REVISION_ID", "CELL_FINAL_MARK_REVISION"];
+/// Errors without a Word-fatal claim: schema-invalid revision ids or ruby,
+/// and a cell's final mark revision Word's Accept All or Reject All never
+/// returns from (#1669). Word's response to paragraph-level ruby is unverified.
+const ERROR_LEADS: [&str; 3] = [
+    "DUPLICATE_REVISION_ID",
+    "CELL_FINAL_MARK_REVISION",
+    "RUBY_OUTSIDE_RUN",
+];
 
 /// `(word_fatal, repairable)` for a code; an unknown code is a lead with
 /// no repair.
@@ -210,7 +215,7 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 34] = [
+const RING1_CODES: [&str; 35] = [
     "DATA_BINDING_WITHOUT_STORE",
     "MOVE_RANGE_COUNT_MISMATCH",
     "MOVE_RANGE_NAME_MISSING",
@@ -238,6 +243,7 @@ const RING1_CODES: [&str; 34] = [
     "COMMENT_PARTS_INCONSISTENT",
     "COMMENT_PARENT_CYCLE",
     "RUN_OUTSIDE_PARAGRAPH",
+    "RUBY_OUTSIDE_RUN",
     "COMMENT_UNANCHORED",
     "COMMENT_ID_REPEATED",
     "COMMENT_METADATA_MISMATCH",
@@ -1508,6 +1514,7 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_comment_graph(pkg, &mut out);
     check_namespace_qname_contexts(pkg, &mut out);
     check_runs_inside_paragraphs(pkg, &mut out);
+    check_paragraph_ruby(pkg, &mut out);
     check_style_names(pkg, &mut out);
     check_nested_text_boxes(pkg, &mut out);
     check_nested_ppr(pkg, &mut out);
@@ -2219,6 +2226,30 @@ fn check_runs_inside_paragraphs(pkg: &PartFs, out: &mut Vec<Finding>) {
                     &name,
                     element_path(&dom, run),
                     format!("a run outside any paragraph in '{name}'"),
+                ));
+            }
+        }
+    }
+}
+
+/// OpenXmlValidator (Office 2019) rejects `w:p > w:ruby`, while the same
+/// ruby inside `w:r` passes. Word opening and repair behavior are unverified;
+/// report the schema error without claiming Word-fatal or choosing a repair.
+fn check_paragraph_ruby(pkg: &PartFs, out: &mut Vec<Finding>) {
+    for name in xml_parts(pkg) {
+        let Some((dom, root)) = parse_part(pkg, &name) else {
+            continue;
+        };
+        for ruby in dom.descendants(root, Some(&W::name("ruby"))) {
+            if dom
+                .parent(ruby)
+                .is_some_and(|parent| dom.name_is(parent, &W::p()))
+            {
+                out.push(Finding::new(
+                    "RUBY_OUTSIDE_RUN",
+                    &name,
+                    element_path(&dom, ruby),
+                    "w:ruby is a direct child of w:p; OOXML requires ruby inside w:r",
                 ));
             }
         }
