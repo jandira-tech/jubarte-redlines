@@ -59212,10 +59212,15 @@ mod rendering_uncovered_contract_tests {
                                     20.0
                                 })
                             );
-                            assert_eq!(tail.images.len(), usize::from(kind == "picture"));
+                            // Since #1980 an inline picture in a cell stands on
+                            // the line: a run carries it, not `images`.
+                            assert!(tail.images.is_empty());
+                            let pictures: Vec<&LaidImage> =
+                                tail.runs.iter().filter_map(|r| r.pic.as_deref()).collect();
+                            assert_eq!(pictures.len(), usize::from(kind == "picture"));
                             assert_eq!(tail.boxes.len(), usize::from(kind == "textbox"));
                             if kind == "picture" {
-                                let img = &tail.images[0];
+                                let img = pictures[0];
                                 assert_eq!((img.w, img.h), (40.0, 20.0));
                                 let ImageKind::Metafile { raster, texts } = &img.kind else {
                                     panic!("retained source picture")
