@@ -79,7 +79,7 @@
 #      binary by its commit + sha256; and the website/app change lists);
 #      the bench writes them before this script runs
 #      (release_info/README.md), and the release commit carries them; then
-#      the app gate — the app's own cargo test --locked in a fresh
+#      the app gate — the app's own cargo test in a fresh
 #      engine-at-HEAD + app-at-main layout (src-tauri takes the engine by
 #      path "../.."; #1816): a compile error or a failing test stops the
 #      release before the tag
@@ -183,7 +183,7 @@ before|you|CHANGELOG: engine section dated with the ASCII heading, link footer p
 before|you|NUMBERS: the measured sentence is copied from the evidence's own aggregates before the summaries and the app CHANGELOG are written — never guessed, never rounded by hand; step 3 refuses a sentence the results do not hold|python3 scripts/check_release_info.py @V@ --bench-root ../neurotic_docx_bench (prints n, failures, mean and median per tool)
 before|you|app repository: its data/facts.jsonl names the new engine (step 13) and its release/v@V@ pull request (the version files, step 13) is merged BEFORE the app is built — the app compiles facts.jsonl in|gh pr view release/v@V@ -R arthrod/jubarte-app; grep engine.version jubarte-app/data/facts.jsonl
 before|you|app lock: jubarte-app/src-tauri/Cargo.lock records jubarte-redlines @V@ before any app build|grep -A1 'name = "jubarte-redlines"' jubarte-app/src-tauri/Cargo.lock
-3|auto|the app compiles against the engine before the tag (#1816): a fresh engine-at-HEAD + app-at-main layout — the app checked out at jubarte-app/ inside a copy of this one, so src-tauri takes the engine by path "../..", never the release worktree mid-run — runs cargo test --locked in src-tauri; a compile error or a failing test stops the release before anything is published (--skip-gates, or a tag that already exists on a resumed run, skips it with the gates)|scripts/release.sh (app_test_gate, between steps 3 and 4: git archive HEAD of both checkouts into mktemp -d)
+3|auto|the app compiles against the engine before the tag (#1816): a fresh engine-at-HEAD + app-at-main layout — the app checked out at jubarte-app/ inside a copy of this one, so src-tauri takes the engine by path "../..", never the release worktree mid-run — runs cargo test in src-tauri; a compile error or a failing test stops the release before anything is published (--skip-gates skips it with the gates; a stale app lock is normal — no --locked — and an existing tag is no skip)|scripts/release.sh (app_test_gate, between steps 3 and 4: git archive HEAD of both checkouts into mktemp -d)
 before|you|the app's checkout is in place: a clone of arthrod/jubarte-app at jubarte-app/ (this repository does not track it) or named by JUBARTE_APP_DIR, on main, in sync with its origin, clean, able to build the site (node_modules, public/fixtures) — step 13 deploys jubarte.pro from it|jubarte-app/scripts/release-engine.sh @V@ --engine-dir "$PWD" --preflight
 before|you|the App Store path is ready for the after-builds: the asc credentials exist (~/.appstoreconnect), the app's provisioning profiles are present and out of every commit (gitignored; if one ever reached a repository's history, accept it knowingly or rotate it), and App Store Connect holds no @V@ version record already used — Apple refuses a re-used number|ls jubarte-app/src-tauri/*.provisionprofile; (cd jubarte-app && ./scripts/asc-build-status.sh)
 before|you|Trusted publishers (#1642): crates.io jubarte-redlines, PyPI jubarte-redlines, npm jubarte-wasm and npm jubarte-redlines each trust owner jandira-tech, repository jubarte-redlines, workflow release.yml, environment release — release.yml publishes with no token. npm: each configuration must allow npm publish (one made after 2026-09-03 allows only npm stage publish unless that box is ticked, and a plain publish then fails E404), and a new configuration expires unless its first publish lands within two days — 0.13.0 never reached npm for this|npm trust list jubarte-wasm; npm trust list jubarte-redlines (both after npm login); npm trust github <package> --file release.yml --repo jandira-tech/jubarte-redlines --env release --allow-publish -y
@@ -724,26 +724,42 @@ PY
 # The app gate (#1816): the app's own tests against this engine, in the
 # layout the app consumes it — the engine checkout with the app at
 # jubarte-app/ inside it, so src-tauri's `path = "../.."` dependency
-# resolves to it. Both sides are HEAD (git archive): the app stays on main —
-# its $VER lock lands with its own release pull request (step 13) — and the
-# engine's bump is still uncommitted, so the app's Cargo.lock matches the
-# copy. A fresh mktemp layout, never the release worktree mid-run: the
-# app's scripts re-record src-tauri/Cargo.lock when the engine is the app's
-# parent, and the real checkout stays untouched. A failed gate keeps the
-# layout; its path is in the error.
+# resolves to it. Both sides are HEAD (git archive). A fresh mktemp layout,
+# never the release worktree mid-run: the app's scripts re-record
+# src-tauri/Cargo.lock when the engine is the app's parent, and the real
+# checkout stays untouched.
+# No --locked or --frozen, ever: the app's lock on main records the previous
+# release's versions and the engine's version moves every release, so the
+# lock can never match the engine manifest at HEAD — a stale lock is the
+# normal case, not a gate failure. Without --locked cargo changes only what
+# the path dependency's new version requires, and only inside this throwaway
+# archive copy; nothing in the app repo is touched (its $VER lock lands
+# with its own release pull request, step 13). A failed gate removes its
+# layout unless JUBARTE_APP_GATE_KEEP asks to keep it.
 app_test_gate() {
   local gate
   gate=$(mktemp -d "${TMPDIR:-/tmp}/jubarte-app-gate.XXXXXX")
+  # remove the layout on interrupt, and on every exit that did not ask to
+  # keep it — the EXIT trap also catches die's `exit 1` below
+  trap '[ -n "${JUBARTE_APP_GATE_KEEP:-}" ] || rm -rf "$gate"' EXIT
   git archive HEAD | tar -x -C "$gate"
   mkdir "$gate/jubarte-app"
   git -C "$APP_REPO" archive HEAD | tar -x -C "$gate/jubarte-app"
   [ -d "$gate/jubarte-app/src-tauri" ] \
     || die "the app checkout at $APP_REPO has no src-tauri — step 0's preflight proved the wrong one?"
-  if ! (cd "$gate/jubarte-app/src-tauri" && cargo test --locked); then
-    die "the app's cargo test --locked fails against the engine at HEAD — fix the app on its main (or take the engine API break out), then rerun; the tag and every publish are still ahead. The fresh layout is kept at $gate"
+  if ! (cd "$gate/jubarte-app/src-tauri" && cargo test) >"$gate/cargo-test.log" 2>&1; then
+    if [ -n "${JUBARTE_APP_GATE_KEEP:-}" ]; then
+      die "the app's cargo test fails against the engine at HEAD — fix the app on its main (or take the engine API break out), then rerun; the tag and every publish are still ahead. The fresh layout is kept at $gate (JUBARTE_APP_GATE_KEEP; the cargo output is $gate/cargo-test.log)"
+    fi
+    echo "── the app's cargo test, tail of $gate/cargo-test.log ──" >&2
+    tail -n 40 "$gate/cargo-test.log" >&2
+    rm -rf "$gate"
+    trap - EXIT
+    die "the app's cargo test fails against the engine at HEAD (tail above) — fix the app on its main (or take the engine API break out), then rerun; the tag and every publish are still ahead. JUBARTE_APP_GATE_KEEP=1 keeps the throwaway layout"
   fi
   rm -rf "$gate"
-  step "the app's cargo test --locked passes against the engine at HEAD (fresh jubarte-app layout)"
+  trap - EXIT
+  step "the app's cargo test passes against the engine at HEAD (fresh jubarte-app layout)"
 }
 
 # =============================================================================
@@ -980,9 +996,10 @@ say "App gate — the app's tests on the engine at HEAD"
 # own CI was red (#1816). The app's own tests now run here, and a compile
 # error or a failing test stops the release before the summaries, the tag
 # and every publish — an app fix lands before the tag, not after it.
-if git rev-parse -q --verify "refs/tags/$TAG^{commit}" >/dev/null; then
-  step "tag $TAG exists — the app gate ran before it (resume)"
-elif [ "$SKIP_GATES" = 0 ]; then
+# No tag-based skip: a tag that already exists proves no app-gate pass (a
+# tag made before this gate, or a --skip-gates first run, would publish
+# untested); without --locked a resumed run runs the gate the same way.
+if [ "$SKIP_GATES" = 0 ]; then
   app_test_gate
 else
   step "app gate skipped (--skip-gates — proven on the first pass)"

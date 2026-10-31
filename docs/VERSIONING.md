@@ -225,13 +225,21 @@ CI was red (#1816). The release now proves the app's own tests before the
 tag: `app_test_gate` lays out a fresh `engine/jubarte-app` pair in a
 `mktemp -d` — `git archive HEAD` of this checkout, then of the app's — so
 `src-tauri`'s `path = "../.."` dependency resolves to the engine at HEAD,
-and runs `cargo test --locked` there. A compile error or a failing test
-stops the release before the summaries, the tag and every publish; a
-failed gate keeps the layout and the error names its path. `--skip-gates`
-skips it with the other gates, and a resumed run whose tag already exists
-skips it outright (the app's `Cargo.lock` on main still names the previous
-engine, which `--locked` would refuse beside the bumped manifest). The
-store and Developer ID builds stay after-phase checklist items
+and runs `cargo test` there. A compile error or a failing test stops the
+release before the summaries, the tag and every publish; a failed gate
+prints the tail of its cargo log and removes the layout —
+`JUBARTE_APP_GATE_KEEP=1` keeps it instead, and an interrupt always
+removes it. `--skip-gates` is the only skip: an existing tag is not one,
+because a tag proves no app-gate pass.
+
+No `--locked` or `--frozen`, ever: the app's `Cargo.lock` on main records
+the previous release's versions and the engine's version moves every
+release, so the lock can never match the engine manifest at HEAD — a stale
+lock is the normal case, not a gate failure. Without `--locked` cargo
+changes only what the path dependency's new version requires, and only
+inside the throwaway archive copy; the app's real checkout is untouched
+(its `@V@` lock lands with its own release pull request). The store and
+Developer ID builds stay after-phase checklist items
 (`build-release-app.sh`).
 
 ### Before you run it
