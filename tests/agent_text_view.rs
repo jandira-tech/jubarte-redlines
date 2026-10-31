@@ -6265,3 +6265,351 @@ fn undated_peer_keeps_a_dated_unplaced_change_timestamp() {
         "{changes:?}"
     );
 }
+
+// #1889 Alternative B: searches keep the existing, parseable paragraph view.
+fn search_fixture(dir: &Path) {
+    let bytes = docx(&format!(
+        "{}<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Liability Cap</w:t></w:r><w:r><w:t> is 10.</w:t></w:r></w:p>{}{}",
+        para("Unrelated introduction."),
+        para("Another Liability Cap is 20."),
+        para("liability cap is 30.")
+    ));
+    std::fs::write(dir.join("search.docx"), bytes).unwrap();
+}
+
+#[test]
+fn read_find_literal_keeps_exact_selected_view_and_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    search_fixture(dir.path());
+    let expected = ok(&["read", "search.docx", "-p", "p1,p2"], dir.path());
+    let found = ok(
+        &["read", "search.docx", "--find", "Liability Cap"],
+        dir.path(),
+    );
+    assert_eq!(found, expected);
+    assert!(
+        body(&found).contains("<!-- p1 center -->\n**Liability Cap** is 10."),
+        "{found}"
+    );
+    assert!(!body(&found).contains("Unrelated"));
+}
+
+#[test]
+fn read_find_regex_uses_existing_pattern_syntax() {
+    let dir = tempfile::tempdir().unwrap();
+    search_fixture(dir.path());
+    assert_eq!(
+        ok(
+            &["read", "search.docx", "--regex", r"Cap is (10|20)\."],
+            dir.path()
+        ),
+        ok(&["read", "search.docx", "-p", "p1,p2"], dir.path())
+    );
+}
+
+#[test]
+fn read_find_regex_pattern_and_ignore_case() {
+    let dir = tempfile::tempdir().unwrap();
+    search_fixture(dir.path());
+    assert_eq!(
+        ok(
+            &[
+                "read",
+                "search.docx",
+                "--regex",
+                r"cap is [23]0\.",
+                "--ignore-case"
+            ],
+            dir.path()
+        ),
+        ok(&["read", "search.docx", "-p", "p2,p3"], dir.path())
+    );
+}
+
+#[test]
+fn read_find_ignore_case_literal() {
+    let dir = tempfile::tempdir().unwrap();
+    search_fixture(dir.path());
+    assert_eq!(
+        ok(
+            &[
+                "read",
+                "search.docx",
+                "--find",
+                "LIABILITY",
+                "--ignore-case"
+            ],
+            dir.path()
+        ),
+        ok(&["read", "search.docx", "-p", "p1,p2,p3"], dir.path())
+    );
+}
+
+#[test]
+fn read_find_no_match_is_success_with_empty_stdout() {
+    let dir = tempfile::tempdir().unwrap();
+    search_fixture(dir.path());
+    let (out, err) = ok_both(&["read", "search.docx", "--find", "absent"], dir.path());
+    assert_eq!(out, "");
+    assert!(err.contains("no paragraph matches \"absent\""), "{err}");
+}
+
+#[test]
+fn read_find_output_round_trips_through_view_parser() {
+    let dir = tempfile::tempdir().unwrap();
+    search_fixture(dir.path());
+    let found = ok(
+        &["read", "search.docx", "--find", "Liability Cap"],
+        dir.path(),
+    );
+    let written = markdown_to_docx(&found, &DocxOptions::default()).unwrap();
+    let plain = docx_to_markdown(&written.docx, &MarkdownOptions::default())
+        .unwrap()
+        .markdown;
+    assert_eq!(
+        plain.trim(),
+        "**Liability Cap** is 10.\n\nAnother Liability Cap is 20."
+    );
+}
+
+#[test]
+fn read_find_uses_for_edit_final_logical_text() {
+    let dir = tempfile::tempdir().unwrap();
+    // Deleted text is not searchable; formatting and run boundaries are not text.
+    let bytes = docx(&format!(
+        "<w:p>{}{}{}</w:p>{}",
+        run("one "),
+        del(1, "Ann", "removed "),
+        ins(2, "Ann", "two"),
+        para("one removed two")
+    ));
+    std::fs::write(dir.path().join("search.docx"), &bytes).unwrap();
+    for needle in ["one two", "removed", "ONE TWO"] {
+        let request = jubarte::edit::for_edit::ForEditRequest {
+            find: Some(needle.into()),
+            ignore_case: true,
+            all: true,
+            ..Default::default()
+        };
+        let matched = jubarte::edit::for_edit::for_edit(&bytes, &request).unwrap();
+        let ids = matched
+            .paragraphs
+            .iter()
+            .map(|p| p.target.short_id.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        assert!(!ids.is_empty());
+        assert_eq!(
+            ok(
+                &["read", "search.docx", "--find", needle, "--ignore-case"],
+                dir.path()
+            ),
+            ok(&["read", "search.docx", "-p", &ids], dir.path())
+        );
+    }
+}
+
+#[test]
+fn read_find_documents_and_obeys_body_story_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let stories = [
+        ("header1", "hdr", "header", ""),
+        ("footer1", "ftr", "footer", ""),
+        ("footnotes", "footnotes", "footnotes", "footnote"),
+        ("comments", "comments", "comments", "comment"),
+    ];
+    for (stem, root, kind, child) in stories {
+        let paragraph = para("StoryOnly");
+        let content = if child.is_empty() {
+            paragraph
+        } else {
+            format!("<w:{child} w:id=\"1\">{paragraph}</w:{child}>")
+        };
+        let xml = format!("<w:{root} xmlns:w=\"{W_NS}\">{content}</w:{root}>");
+        let name = format!("word/{stem}.xml");
+        let content_type =
+            format!("application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}+xml");
+        let rel_type =
+            format!("http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}");
+        let bytes = common::docx::docx_with(
+            &para("Body"),
+            &[Part {
+                name: &name,
+                content_type: &content_type,
+                rel_type: &rel_type,
+                xml: &xml,
+            }],
+        );
+        std::fs::write(dir.path().join("search.docx"), bytes).unwrap();
+        let unsupported = jubarte(
+            &["read", "search.docx", "-p", &format!("{stem}.p0")],
+            dir.path(),
+        );
+        assert!(
+            !unsupported.status.success(),
+            "update the search when story selection becomes supported"
+        );
+        let (out, err) = ok_both(&["read", "search.docx", "--find", "StoryOnly"], dir.path());
+        assert!(out.is_empty(), "{stem}: {out}");
+        assert!(err.contains("no paragraph matches"), "{err}");
+    }
+    let help = ok(&["read", "--help"], dir.path())
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(help.contains("body paragraphs only"), "{help}");
+    assert!(
+        help.contains("headers, footers, footnotes, endnotes and comments"),
+        "{help}"
+    );
+}
+
+#[test]
+fn read_find_anchor_without_location_teaches_search() {
+    let out = jubarte(&["edit", "missing.docx", "--anchor", "X"], Path::new("."));
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        err.contains("--anchor needs -p WHERE (find it with: jubarte read FILE --find TEXT)"),
+        "{err}"
+    );
+    assert!(
+        !err.contains("required arguments were not provided: --plan"),
+        "{err}"
+    );
+}
+
+#[test]
+fn read_find_narrows_selection_and_writes_the_same_view() {
+    let dir = tempfile::tempdir().unwrap();
+    search_fixture(dir.path());
+    let expected = ok(&["read", "search.docx", "-p", "p2"], dir.path());
+    let (out, _) = ok_both(
+        &[
+            "read",
+            "search.docx",
+            "--find",
+            "Cap",
+            "-p",
+            "p2,p3",
+            "-o",
+            "found.md",
+        ],
+        dir.path(),
+    );
+    assert!(out.is_empty());
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("found.md")).unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn read_find_invalid_regex_is_diagnosed_by_shared_search() {
+    let dir = tempfile::tempdir().unwrap();
+    search_fixture(dir.path());
+    let out = jubarte(&["read", "search.docx", "--regex", "["], dir.path());
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(err.contains("--regex does not compile"), "{err}");
+}
+
+#[test]
+fn read_find_regex_word_boundary_in_view() {
+    let dir = tempfile::tempdir().unwrap();
+    search_fixture(dir.path());
+    assert_eq!(
+        ok(&["read", "search.docx", "--regex", r"Cap\b"], dir.path()),
+        ok(&["read", "search.docx", "-p", "p1,p2"], dir.path())
+    );
+}
+
+#[test]
+fn read_find_reports_matches_outside_each_selection() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut paragraphs = vec![para("Other"); 51];
+    paragraphs[1] = para("X");
+    std::fs::write(dir.path().join("search.docx"), docx(&paragraphs.concat())).unwrap();
+    for selection in [
+        vec!["-p", "p50"],
+        vec!["--head", "1"],
+        vec!["--tail", "1"],
+        vec!["--changed"],
+    ] {
+        let args = [vec!["read", "search.docx", "--find", "X"], selection].concat();
+        let (out, err) = ok_both(&args, dir.path());
+        assert!(out.is_empty(), "{args:?}: {out}");
+        assert!(
+            err.contains("\"X\" matches p1, none in the selection"),
+            "{args:?}: {err}"
+        );
+        assert!(!err.contains("no paragraph matches"), "{err}");
+    }
+}
+
+#[test]
+fn read_find_limits_outside_selection_candidates() {
+    let dir = tempfile::tempdir().unwrap();
+    let paragraphs = [
+        para("Other"),
+        para("X"),
+        para("X"),
+        para("X"),
+        para("X"),
+        para("X"),
+    ]
+    .concat();
+    std::fs::write(dir.path().join("search.docx"), docx(&paragraphs)).unwrap();
+    let (out, err) = ok_both(
+        &["read", "search.docx", "--find", "X", "-p", "p0"],
+        dir.path(),
+    );
+    assert!(out.is_empty());
+    assert!(
+        err.contains("\"X\" matches p1, p2, p3 and 2 more, none in the selection"),
+        "{err}"
+    );
+}
+
+#[test]
+fn read_find_reject_explains_accepted_text_search() {
+    let dir = tempfile::tempdir().unwrap();
+    let bytes = docx(&format!(
+        "<w:p>{}{}</w:p>",
+        del(1, "Ann", "Original"),
+        ins(2, "Ann", "Accepted")
+    ));
+    std::fs::write(dir.path().join("search.docx"), bytes).unwrap();
+    for search in ["--find", "--regex"] {
+        for mode in ["reject", "accept", "all"] {
+            let (out, err) = ok_both(
+                &[
+                    "read",
+                    "search.docx",
+                    search,
+                    "Accepted",
+                    "--track-changes",
+                    mode,
+                ],
+                dir.path(),
+            );
+            assert_eq!(err.contains(&format!("note: {search} searches the accepted text; --track-changes reject shows the original")), mode == "reject", "{err}");
+            if mode == "reject" {
+                assert!(body(&out).contains("Original"), "{out}");
+                assert!(!body(&out).contains("Accepted"), "{out}");
+            }
+        }
+    }
+}
+
+#[test]
+fn read_find_add_anchor_without_location_teaches_search() {
+    let out = jubarte(&["add", "missing.docx", "--anchor", "X"], Path::new("."));
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        err.contains("--anchor needs -p WHERE (find it with: jubarte read FILE --find TEXT)"),
+        "{err}"
+    );
+}

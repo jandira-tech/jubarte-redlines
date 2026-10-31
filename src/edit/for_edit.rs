@@ -659,6 +659,33 @@ fn id_selection(spec: &str, source: &[u8], closed_only: bool) -> Result<HashSet<
     super::v2_apply::SourceModel::new(source)?.selected_paragraphs(spec, !closed_only)
 }
 
+/// Body paragraph indexes matching the same original final logical text as
+/// `read --for-edit`, in document order. The Markdown view's `-p` selectors
+/// cannot address other stories yet.
+///
+/// # Errors
+///
+/// The package cannot be opened, or the regular expression does not compile.
+pub fn matching_body_paragraphs(
+    source: &[u8],
+    find: Option<&str>,
+    regex: Option<&str>,
+    ignore_case: bool,
+) -> Result<Vec<usize>, EditError> {
+    let opened = Opened::open(source).map_err(super::open_error)?;
+    let paragraphs = crate::inspect::body_paragraph_nodes(&opened.dom, opened.body);
+    let request = ForEditRequest {
+        find: find.map(str::to_owned),
+        regex: regex.map(str::to_owned),
+        ignore_case,
+        ..ForEditRequest::default()
+    };
+    let matches = text_selection(&request, &opened.dom, &paragraphs)?;
+    Ok((0..paragraphs.len())
+        .filter(|p| matches.contains(p))
+        .collect())
+}
+
 /// The paragraphs whose original final logical text the search matches.
 fn text_selection(
     request: &ForEditRequest,

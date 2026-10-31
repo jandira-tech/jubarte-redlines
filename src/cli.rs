@@ -173,11 +173,7 @@ pub struct ReadArgs {
     /// filters narrow together: a paragraph is selected only when every
     /// filter given matches it, and an empty result names the filters
     /// applied in `coverage.omissions`.
-    #[arg(
-        long,
-        conflicts_with_all = ["json", "tables", "track_changes"],
-        help_heading = "Read options"
-    )]
+    #[arg(long, conflicts_with = "track_changes", help_heading = "Read options")]
     pub for_edit: bool,
     /// --for-edit: the working view after accepting this revision
     /// (repeatable; it does not modify FILE).
@@ -217,28 +213,30 @@ pub struct ReadArgs {
         help_heading = "Read options"
     )]
     pub track: Option<TrackArg>,
-    /// --for-edit: literal search of the original final text. Combined
-    /// filters narrow: a paragraph must match every filter given, and an
-    /// empty result names the filters applied.
+    /// Print matching body paragraphs only, with the same Markdown and id
+    /// lines as -p. Searches original final logical text, as --for-edit does;
+    /// combined filters narrow. Like -p, the view cannot select paragraphs in
+    /// headers, footers, footnotes, endnotes and comments. Use --for-edit for
+    /// header/footer/note paragraphs. No match prints nothing and reports it
+    /// on stderr.
     #[arg(
         long,
         value_name = "TEXT",
-        requires = "for_edit",
         conflicts_with = "regex",
         help_heading = "Read options"
     )]
     pub find: Option<String>,
-    /// --for-edit: regex search of the original final text; conflicts
-    /// with --find.
+    /// Search with a regular expression instead of literal text (view or
+    /// --for-edit). Give PATTERN here and omit --find.
     #[arg(
         long,
         value_name = "PATTERN",
-        requires = "for_edit",
+        conflicts_with = "find",
         help_heading = "Read options"
     )]
     pub regex: Option<String>,
-    /// --for-edit: case-insensitive --find/--regex.
-    #[arg(long, requires = "for_edit", help_heading = "Read options")]
+    /// Case-insensitive --find/--regex (view or --for-edit).
+    #[arg(long, help_heading = "Read options")]
     pub ignore_case: bool,
     /// --for-edit: this many read-only original-source neighbours around
     /// each row.
@@ -485,6 +483,9 @@ impl ExistingArg {
 /// Groups the operation flags of an `edit` or `add` invocation by their
 /// `-p`, in command-line order. `matches` is the subcommand's.
 pub fn flag_operations(matches: &clap::ArgMatches) -> Result<Vec<FlagOp>, String> {
+    if matches.contains_id("anchor") && !matches.contains_id("location") {
+        return Err("--anchor needs -p WHERE (find it with: jubarte read FILE --find TEXT)".into());
+    }
     let mut tokens: Vec<(usize, &str, Option<String>)> = Vec::new();
     for name in ["location", "anchor", "content", "reply", "style"] {
         if let (Some(indices), Some(values)) =
@@ -1299,7 +1300,7 @@ pub enum Command {
         /// operation flags, they are recorded into it (created on first use)
         /// and FILE is left as it is. Without a value: FILE_plan.json beside
         /// FILE.
-        #[arg(long, value_name = "PLAN.json", num_args = 0..=1, default_missing_value = "", value_parser = plan_path(), required_unless_present = "location")]
+        #[arg(long, value_name = "PLAN.json", num_args = 0..=1, default_missing_value = "", value_parser = plan_path(), required_unless_present_any = ["location", "anchor"])]
         plan: Option<PathBuf>,
         /// `--plan` was given without a value (D16): the summary says so.
         #[arg(skip)]
@@ -1447,7 +1448,7 @@ pub enum Command {
         consume: bool,
         /// Where: p12, header1, footer2.p1, t0.row1.cell2, or c5 for a reply.
         /// Each -p starts an operation; the flags after it belong to it.
-        #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append, required_unless_present = "plan")]
+        #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append, required_unless_present_any = ["plan", "anchor"])]
         location: Vec<String>,
         /// Text inside WHERE to comment on (must occur once, unless
         /// --occurrence picks a match).
@@ -3149,7 +3150,7 @@ fn serialize_paragraph_spec<S: serde::Serializer>(
 }
 
 /// The ids of [`ReadArgs`], as the top-level shorthand declares them.
-const READ_OPTION_IDS: [&str; 11] = [
+const READ_OPTION_IDS: [&str; 14] = [
     "track_changes",
     "comments",
     "dates",
@@ -3161,6 +3162,9 @@ const READ_OPTION_IDS: [&str; 11] = [
     "by",
     "json",
     "tables",
+    "find",
+    "regex",
+    "ignore_case",
 ];
 
 /// `diff` writes no JSON snapshot: its `-o x.json` and `--to json` are
@@ -3242,6 +3246,12 @@ fn read_output(output: &Path, given: &dyn Fn(&str) -> bool) -> Result<Format, St
     if given("for_edit") && kind != Format::Json {
         return Err("--for-edit prints JSON: name the file FILE.json or drop -o".to_string());
     }
+    if kind == Format::Json && !given("for_edit") && (given("find") || given("regex")) {
+        return Err(
+            "--find/--regex select the Markdown view: name the file FILE.md or use --for-edit"
+                .into(),
+        );
+    }
     if given("json") && kind != Format::Json {
         return Err("--json writes the snapshot: name the file FILE.json".to_string());
     }
@@ -3266,6 +3276,35 @@ fn validate_matches(
     command: &mut clap::Command,
 ) -> Result<(), clap::Error> {
     use clap::{error::ErrorKind, parser::ValueSource};
+    let read_args = match matches.subcommand() {
+        Some(("read" | "compare", args)) => Some(args),
+        None => Some(matches),
+        _ => None,
+    };
+    if let Some(args) = read_args {
+        let find = args.get_one::<String>("find");
+        let regex = args.get_one::<String>("regex");
+        if !args.get_flag("for_edit")
+            && (find.is_some() || regex.is_some())
+            && (args.get_flag("json") || args.get_flag("tables"))
+        {
+            return Err(read_usage_error(
+                command,
+                "--find/--regex select the Markdown view; drop --json/--tables or use --for-edit"
+                    .into(),
+            ));
+        }
+        if find.is_none()
+            && regex.is_none()
+            && args.get_flag("ignore_case")
+            && !args.get_flag("for_edit")
+        {
+            return Err(read_usage_error(
+                command,
+                "--ignore-case needs --find TEXT or --regex PATTERN".into(),
+            ));
+        }
+    }
     let Some((name, args)) = matches.subcommand() else {
         let given = |id: &str| {
             matches.try_contains_id(id).unwrap_or(false)

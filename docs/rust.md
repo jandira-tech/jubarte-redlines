@@ -513,15 +513,18 @@ Read options:
           - off: The new edits land directly
 
       --find <TEXT>
-          --for-edit: literal search of the original final text. Combined filters
-          narrow: a paragraph must match every filter given, and an empty result names
-          the filters applied
+          Print matching body paragraphs only, with the same Markdown and id lines as
+          -p. Searches original final logical text, as --for-edit does; combined filters
+          narrow. Like -p, the view cannot select paragraphs in headers, footers,
+          footnotes, endnotes and comments. Use --for-edit for header/footer/note
+          paragraphs. No match prints nothing and reports it on stderr
 
       --regex <PATTERN>
-          --for-edit: regex search of the original final text; conflicts with --find
+          Search with a regular expression instead of literal text (view or --for-edit).
+          Give PATTERN here and omit --find
 
       --ignore-case
-          --for-edit: case-insensitive --find/--regex
+          Case-insensitive --find/--regex (view or --for-edit)
 
       --context <N>
           --for-edit: this many read-only original-source neighbours around each row
@@ -1238,15 +1241,18 @@ Read options:
           - off: The new edits land directly
 
       --find <TEXT>
-          --for-edit: literal search of the original final text. Combined filters
-          narrow: a paragraph must match every filter given, and an empty result names
-          the filters applied
+          Print matching body paragraphs only, with the same Markdown and id lines as
+          -p. Searches original final logical text, as --for-edit does; combined filters
+          narrow. Like -p, the view cannot select paragraphs in headers, footers,
+          footnotes, endnotes and comments. Use --for-edit for header/footer/note
+          paragraphs. No match prints nothing and reports it on stderr
 
       --regex <PATTERN>
-          --for-edit: regex search of the original final text; conflicts with --find
+          Search with a regular expression instead of literal text (view or --for-edit).
+          Give PATTERN here and omit --find
 
       --ignore-case
-          --for-edit: case-insensitive --find/--regex
+          Case-insensitive --find/--regex (view or --for-edit)
 
       --context <N>
           --for-edit: this many read-only original-source neighbours around each row

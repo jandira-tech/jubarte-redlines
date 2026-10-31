@@ -1161,19 +1161,67 @@ fn agent_view(
     source: Option<String>,
     args: &ReadArgs,
 ) -> Result<jubarte::markdown::ReadView, String> {
-    let select = selection(args)?;
-    let view = jubarte::markdown::read(
-        bytes,
-        &jubarte::markdown::ReadOptions {
-            track_changes: args.track_changes.unwrap_or(TrackChanges::All).into(),
-            comments: args.comments == CommentsArg::Inline,
-            dates: args.dates,
-            page_markers: !args.no_page_markers,
-            select,
-            source,
-        },
-    )
-    .map_err(|e| e.to_string())?;
+    let mut options = jubarte::markdown::ReadOptions {
+        track_changes: args.track_changes.unwrap_or(TrackChanges::All).into(),
+        comments: args.comments == CommentsArg::Inline,
+        dates: args.dates,
+        page_markers: !args.no_page_markers,
+        select: selection(args)?,
+        source,
+    };
+    if args.find.is_some() || args.regex.is_some() {
+        let regex = args.regex.as_deref();
+        let find = args.find.as_deref();
+        let mut matches =
+            jubarte::edit::for_edit::matching_body_paragraphs(bytes, find, regex, args.ignore_case)
+                .map_err(|e| e.to_string())?;
+        if args.track_changes == Some(TrackChanges::Reject) {
+            let flag = if find.is_some() { "--find" } else { "--regex" };
+            eprintln!(
+                "note: {flag} searches the accepted text; --track-changes reject shows the original"
+            );
+        }
+        let total = matches.len();
+        let mut candidates = matches
+            .iter()
+            .take(3)
+            .map(|p| format!("p{p}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if total > 3 {
+            candidates.push_str(&format!(" and {} more", total - 3));
+        }
+        if options.select.is_some() {
+            // Preserve -p/head/tail/changed's view semantics, including tables.
+            let selected = jubarte::markdown::read(bytes, &options)
+                .map_err(|e| e.to_string())?
+                .selected
+                .unwrap_or_default();
+            matches.retain(|p| selected.contains(p));
+        }
+        if matches.is_empty() {
+            let pattern = find.or(regex).unwrap_or_default();
+            if total == 0 {
+                eprintln!("no paragraph matches {pattern:?}");
+            } else {
+                eprintln!("{pattern:?} matches {candidates}, none in the selection");
+            }
+            return Ok(jubarte::markdown::ReadView {
+                selected: Some(Vec::new()),
+                ..Default::default()
+            });
+        }
+        options.select = Some(jubarte::markdown::Select::Picks(
+            matches
+                .into_iter()
+                .map(|p| jubarte::markdown::Pick::Paragraphs {
+                    from: p,
+                    to: Some(p),
+                })
+                .collect(),
+        ));
+    }
+    let view = jubarte::markdown::read(bytes, &options).map_err(|e| e.to_string())?;
     for warning in &view.warnings {
         eprintln!("warning: {warning}");
     }
