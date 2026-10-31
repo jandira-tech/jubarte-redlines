@@ -4152,7 +4152,7 @@ fn row_exception_cell_borders(
 type TcEdge = Option<Option<([f32; 3], f32)>>;
 
 fn parse_tc_border_spec(dom: &Dom, cell: NodeId) -> Option<[TcEdge; 4]> {
-    let pr = first_named(dom, cell, "tcPr")?;
+    let pr = cell_pr(dom, cell)?;
     let borders = direct_named(dom, pr, "tcBorders")?;
     let edge = |name: &str| border_el(dom, borders, name).map(|el| parse_border_edge(dom, el));
     Some([edge("top"), edge("bottom"), edge("left"), edge("right")])
@@ -13957,7 +13957,7 @@ fn table_block(
             // 5pt + its 4pt margin in from the table edge.
             let (pad_t, pad_b) = (pad_t + tbl_spacing, pad_b + tbl_spacing);
             let pad_l = pad_l + 2.0 * tbl_spacing;
-            let hide_mark = first_named(dom, cell, "tcPr")
+            let hide_mark = cell_pr(dom, cell)
                 .and_then(|pr| direct_named(dom, pr, "hideMark"))
                 .is_some_and(|n| !val_is_false(dom, Some(n)));
             // Below a table's first row, a hideMark cell whose text ends in
@@ -14000,7 +14000,7 @@ fn table_block(
                 colspan,
                 vmerge,
                 fill: cell_fill(dom, cell),
-                fill_explicit: first_named(dom, cell, "tcPr")
+                fill_explicit: cell_pr(dom, cell)
                     .and_then(|pr| first_named(dom, pr, "shd"))
                     .is_some(),
                 valign_center: cell_valign_is(dom, cell, "center"),
@@ -14387,6 +14387,17 @@ fn table_pr(dom: &Dom, table: NodeId) -> Option<NodeId> {
     direct_named(dom, table, "tblPr")
 }
 
+/// The cell's own `w:tcPr` (a direct child). A descendant search would
+/// return the first nested cell's properties when this cell has none of
+/// its own (#1729): a tcPr-less cell holding a nested table borrowed the
+/// nested first cell's span, merge, borders, fill, margins, noWrap,
+/// direction, alignment and hideMark. A `w:tcPrChange` sits inside the
+/// cell's own tcPr, so lookups within `pr` keep their prior-change
+/// filters.
+fn cell_pr(dom: &Dom, cell: NodeId) -> Option<NodeId> {
+    direct_named(dom, cell, "tcPr")
+}
+
 fn table_ind(dom: &Dom, table: NodeId) -> f32 {
     let Some(pr) = table_pr(dom, table) else {
         return 0.0;
@@ -14646,7 +14657,7 @@ fn row_cell_mar(dom: &Dom, row: NodeId, table: [f32; 4]) -> [f32; 4] {
 fn cell_pad_h(dom: &Dom, cell: NodeId, table_l: f32, table_r: f32) -> (f32, f32) {
     // Word: tcMar on the cell wins over tblCellMar (file_146 code
     // listing is left=200 / 10pt while the table pad is 10 twips).
-    let Some(pr) = first_named(dom, cell, "tcPr") else {
+    let Some(pr) = cell_pr(dom, cell) else {
         return (table_l, table_r);
     };
     let Some(mar) = direct_named(dom, pr, "tcMar") else {
@@ -14680,7 +14691,7 @@ fn table_pad_v(dom: &Dom, table: NodeId) -> f32 {
 fn cell_pad_tb(dom: &Dom, cell: NodeId, table_t: f32, table_b: f32) -> (f32, f32) {
     // Word: tcMar top/bottom wins over tblCellMar (file_146 npm is
     // 100+100 while the table has no tblCellMar).
-    let Some(pr) = first_named(dom, cell, "tcPr") else {
+    let Some(pr) = cell_pr(dom, cell) else {
         return (table_t, table_b);
     };
     let Some(mar) = direct_named(dom, pr, "tcMar") else {
@@ -14734,7 +14745,7 @@ fn stretch_stale_spans(rows: &mut [Vec<RawCell>], cols: &[f32]) {
 }
 
 fn cell_span(dom: &Dom, cell: NodeId) -> (usize, VMerge) {
-    let Some(pr) = first_named(dom, cell, "tcPr") else {
+    let Some(pr) = cell_pr(dom, cell) else {
         return (1, VMerge::None);
     };
     // Direct child only. first_named walks into tcPrChange (addition_removal
@@ -14759,7 +14770,7 @@ fn cell_pref_width(dom: &Dom, cell: NodeId) -> PrefWidth {
     // The cell's own tcPr: a cell without one is no wider for the first
     // cell of the table nested in it (#1716 probe m2's tcW-less cell took
     // its nested table's 2000-twip tcW).
-    let Some(pr) = direct_named(dom, cell, "tcPr") else {
+    let Some(pr) = cell_pr(dom, cell) else {
         return PrefWidth::Auto;
     };
     let Some(tw) = direct_named(dom, pr, "tcW") else {
@@ -14795,8 +14806,7 @@ fn cell_pref_width(dom: &Dom, cell: NodeId) -> PrefWidth {
 /// or a nil one (o2), and splits a table of zero pct ones evenly (o4,
 /// #1731); [`cell_pref_width`] reads all three as auto.
 fn cell_without_width(dom: &Dom, cell: NodeId) -> bool {
-    let Some(tw) = direct_named(dom, cell, "tcPr").and_then(|pr| direct_named(dom, pr, "tcW"))
-    else {
+    let Some(tw) = cell_pr(dom, cell).and_then(|pr| direct_named(dom, pr, "tcW")) else {
         return true;
     };
     match attr_any(dom, tw, "type") {
@@ -14883,7 +14893,7 @@ fn row_is_revised(dom: &Dom, row: NodeId) -> bool {
 }
 
 pub(crate) fn cell_is_deleted(dom: &Dom, cell: NodeId) -> bool {
-    let Some(pr) = first_named(dom, cell, "tcPr") else {
+    let Some(pr) = cell_pr(dom, cell) else {
         return false;
     };
     // Direct child only. tcPrChange also stores cellDel.
@@ -15011,7 +15021,7 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
 }
 
 fn cell_valign_is(dom: &Dom, cell: NodeId, want: &str) -> bool {
-    let Some(pr) = first_named(dom, cell, "tcPr") else {
+    let Some(pr) = cell_pr(dom, cell) else {
         return false;
     };
     first_named(dom, pr, "vAlign")
@@ -15021,17 +15031,17 @@ fn cell_valign_is(dom: &Dom, cell: NodeId, want: &str) -> bool {
 
 /// A cell whose text runs up or down it (`w:textDirection` btLr, tbRl).
 fn cell_vertical(dom: &Dom, cell: NodeId) -> bool {
-    first_named(dom, cell, "tcPr")
+    cell_pr(dom, cell)
         .and_then(|pr| direct_named(dom, pr, "textDirection"))
         .and_then(|n| attr_any(dom, n, "val"))
         .is_some_and(|v| matches!(v, "btLr" | "tbRl" | "tbRlV" | "tbLrV"))
 }
 
 fn cell_nowrap(dom: &Dom, cell: NodeId) -> bool {
-    let Some(pr) = first_named(dom, cell, "tcPr") else {
+    let Some(pr) = cell_pr(dom, cell) else {
         return false;
     };
-    // Direct child only — do not steal nested-table noWrap.
+    // Direct child only — do not steal a nested tcPrChange's noWrap.
     direct_named(dom, pr, "noWrap").is_some_and(|n| !val_is_false(dom, Some(n)))
 }
 
@@ -15087,7 +15097,7 @@ fn cell_wrap_width(cell: &TableCell, avail: f32) -> f32 {
 }
 
 fn cell_fill(dom: &Dom, cell: NodeId) -> Option<[f32; 3]> {
-    let pr = first_named(dom, cell, "tcPr")?;
+    let pr = cell_pr(dom, cell)?;
     shd_paint(dom, first_named(dom, pr, "shd")?)
 }
 
@@ -50562,6 +50572,132 @@ mod coverage_round_two_tests {
         );
         assert!(cell.vertical && cell.valign_bottom && cell.fill_explicit);
         assert_eq!(text(&cell.paras[0].runs), "Rotated");
+    }
+
+    #[test]
+    fn tcpr_less_outer_cell_ignores_nested_properties() {
+        // #1729: a cell reads its tcPr as a direct child. A cell without
+        // one that holds a nested table must not borrow the nested first
+        // cell's tcPr — span, merge, borders, fill, noWrap, margins,
+        // direction, alignment, hideMark — while the nested cell keeps
+        // every property of its own.
+        let nested_pr = "<w:gridSpan w:val=\"2\"/><w:vMerge w:val=\"restart\"/>\
+            <w:tcBorders><w:top w:val=\"single\" w:sz=\"12\" w:color=\"00B050\"/></w:tcBorders>\
+            <w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"FF0000\"/><w:noWrap/>\
+            <w:tcMar><w:top w:w=\"720\" w:type=\"dxa\"/><w:left w:w=\"720\" w:type=\"dxa\"/>\
+            <w:bottom w:w=\"720\" w:type=\"dxa\"/><w:right w:w=\"720\" w:type=\"dxa\"/></w:tcMar>\
+            <w:textDirection w:val=\"btLr\"/><w:vAlign w:val=\"center\"/><w:hideMark/>";
+        let cell = |tcpr: &str| {
+            format!(
+                "<w:tc>{tcpr}<w:p><w:r><w:t>OUTER</w:t></w:r></w:p>\
+                 <w:tbl><w:tblPr><w:tblW w:w=\"2000\" w:type=\"dxa\"/></w:tblPr>\
+                 <w:tblGrid><w:gridCol w:w=\"1000\"/><w:gridCol w:w=\"1000\"/></w:tblGrid>\
+                 <w:tr><w:tc><w:tcPr>{nested_pr}</w:tcPr>\
+                 <w:p><w:r><w:t>SPAN</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/></w:tc>"
+            )
+        };
+        let block = table(&format!(
+            "<w:tbl><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/>\
+             <w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr>\
+             <w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>ONE</w:t></w:r></w:p></w:tc>{}\
+             <w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>THREE</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+            cell("")
+        ));
+        let Block::Table { rows, .. } = block else {
+            panic!("table")
+        };
+        assert_eq!(rows.len(), 1, "no merge consumed the row");
+        assert_eq!(
+            rows[0].len(),
+            3,
+            "three cells, no span: {:?}",
+            rows[0].len()
+        );
+        let (one, outer) = (&rows[0][0], &rows[0][1]);
+        assert_eq!(outer.colspan, 1, "no borrowed gridSpan");
+        assert_eq!(outer.rowspan, 1, "no borrowed vMerge");
+        assert_eq!(
+            (outer.pad_l, outer.pad_r, outer.pad_t, outer.pad_b),
+            (one.pad_l, one.pad_r, one.pad_t, one.pad_b),
+            "no borrowed tcMar"
+        );
+        assert_eq!(outer.fill, None, "no borrowed shd");
+        assert!(
+            !outer.fill_explicit,
+            "no borrowed shd to suppress a style fill"
+        );
+        assert!(
+            !outer.valign_center && !outer.valign_bottom,
+            "no borrowed vAlign"
+        );
+        assert!(!outer.vertical, "no borrowed textDirection");
+        assert!(!outer.nowrap, "no borrowed noWrap");
+        assert!(!outer.hide_mark, "no borrowed hideMark");
+        assert!(outer.borders.is_none(), "no borrowed tcBorders");
+        // The nested cell keeps everything its own tcPr names.
+        let Block::Table { rows: nested, .. } = &*outer.nested[0] else {
+            panic!("nested table")
+        };
+        let nested_cell = &nested[0][0];
+        assert_eq!(nested_cell.colspan, 2);
+        assert_eq!(nested_cell.fill, Some([1.0, 0.0, 0.0]));
+        assert!(nested_cell.fill_explicit);
+        assert!(nested_cell.valign_center && nested_cell.vertical);
+        assert!(nested_cell.hide_mark);
+        assert!(nested_cell.borders.is_some());
+        assert_eq!(nested_cell.pad_l, twip(720.0));
+        assert_eq!(text(&nested_cell.paras[0].runs), "SPAN");
+        // An own tcPr still wins over anything nested: the same cell
+        // with a shd of its own reads that shd, not the nested red one.
+        let Block::Table { rows, .. } = table(&format!(
+            "<w:tbl><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/>\
+             <w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr>{}\
+             <w:tc><w:p><w:r><w:t>ONE</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+            cell("<w:tcPr><w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"0000FF\"/></w:tcPr>")
+        )) else {
+            panic!("own table")
+        };
+        let outer = &rows[0][0];
+        assert_eq!(outer.colspan, 1);
+        assert_eq!(outer.fill, Some([0.0, 0.0, 1.0]), "the own shd wins");
+        assert!(outer.fill_explicit);
+    }
+
+    #[test]
+    fn tcpr_less_outer_row_is_not_deleted_for_a_nested_cell_deletion() {
+        // #1729 (cellDel reader): the nested first cell is deleted; the
+        // outer row that merely holds the table is not. All Markup
+        // appends the Deleted Cells stamp to the nested row only.
+        let cell = |tcpr: &str| {
+            format!(
+                "<w:tc>{tcpr}<w:p><w:r><w:t>OUTER</w:t></w:r></w:p>\
+                 <w:tbl><w:tblGrid><w:gridCol w:w=\"1000\"/></w:tblGrid>\
+                 <w:tr><w:tc><w:tcPr><w:cellDel w:id=\"7\" w:author=\"Red\" \
+                 w:date=\"2026-01-01T00:00:00Z\"/></w:tcPr>\
+                 <w:p><w:r><w:t>SPAN</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/></w:tc>"
+            )
+        };
+        for tcpr in ["", "<w:tcPr/>"] {
+            let Block::Table { rows, .. } = table(&format!(
+                "<w:tbl><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+                 <w:tr>{}</w:tr></w:tbl>",
+                cell(tcpr)
+            )) else {
+                panic!("table")
+            };
+            assert_eq!(rows[0].len(), 1, "no Deleted Cells stamp on the outer row");
+            let Block::Table { rows: nested, .. } = &*rows[0][0].nested[0] else {
+                panic!("nested table")
+            };
+            assert_eq!(nested[0].len(), 2, "the nested deleted row keeps its stamp");
+            assert_eq!(
+                text(&nested[0][1].paras[0].runs),
+                "Deleted Cells",
+                "the stamp is the nested row's"
+            );
+        }
     }
 
     #[test]

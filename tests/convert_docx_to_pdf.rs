@@ -44428,6 +44428,351 @@ fn a_nested_table_beside_text_fits_its_column_and_the_text_the_next() {
     );
 }
 
+/// The #1729 probe's outer table `tblPr`: an autofit table, every edge a
+/// black single rule.
+fn own_tcpr_bordered_tblpr() -> String {
+    let edge = |name: &str| format!("<w:{name} w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>");
+    let borders = ["top", "left", "bottom", "right", "insideH", "insideV"]
+        .map(edge)
+        .concat();
+    format!(
+        "<w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/>\
+         <w:tblBorders>{borders}</w:tblBorders></w:tblPr>"
+    )
+}
+
+/// The #1729 probe body: a three-column outer table (`tbl_pr` as given,
+/// grid 2000/2000/2000) whose middle cell has `outer_tcpr` — nothing at
+/// all in every red case — and holds `middle`, a nested table on a
+/// 1000/1000 grid whose first cell carries `nested_pr` in its own tcPr,
+/// and a closing empty paragraph. `After` follows the table, so row-height
+/// changes show. `nested_w` widens that nested table (twips, split over
+/// its two grid columns).
+fn own_tcpr_probe_body(
+    outer_tcpr: &str,
+    tbl_pr: &str,
+    trpr: &str,
+    nested_pr: &str,
+    middle: &str,
+    nested_w: u32,
+) -> String {
+    let half = nested_w / 2;
+    let nested = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"{nested_w}\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"{half}\"/><w:gridCol w:w=\"{half}\"/></w:tblGrid>\
+         <w:tr><w:tc><w:tcPr>{nested_pr}</w:tcPr>\
+         <w:p><w:r><w:t>SPAN</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+    );
+    format!(
+        "<w:tbl>{tbl_pr}\
+         <w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/>\
+         <w:gridCol w:w=\"2000\"/></w:tblGrid>\
+         <w:tr>{trpr}\
+         <w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>\
+           <w:p><w:r><w:t>ONE</w:t></w:r></w:p></w:tc>\
+         <w:tc>{outer_tcpr}<w:p><w:r><w:t>{middle}</w:t></w:r></w:p>{nested}<w:p/></w:tc>\
+         <w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>\
+           <w:p><w:r><w:t>THREE</w:t></w:r></w:p></w:tc>\
+         </w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" \
+         w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+    )
+}
+
+/// The probe as a docx on the default bordered autofit table (nested
+/// table 2000 twips). `absent` gives the middle cell no tcPr; `empty` an
+/// empty `<w:tcPr/>`: a cell that reads only its own tcPr cannot tell the
+/// two apart (#1729).
+fn own_tcpr_probe_pair(nested_pr: &str) -> [(String, Vec<u8>); 2] {
+    let tbl_pr = own_tcpr_bordered_tblpr();
+    [
+        (
+            "absent".to_string(),
+            minimal_docx_body(&own_tcpr_probe_body(
+                "", &tbl_pr, "", nested_pr, "OUTER", 2000,
+            )),
+        ),
+        (
+            "empty".to_string(),
+            minimal_docx_body(&own_tcpr_probe_body(
+                "<w:tcPr/>",
+                &tbl_pr,
+                "",
+                nested_pr,
+                "OUTER",
+                2000,
+            )),
+        ),
+    ]
+}
+
+#[test]
+fn outer_cell_ignores_nested_gridspan() {
+    // #1729: the middle cell has no tcPr; the nested first cell spans its
+    // table's two 100pt columns. The outer cell keeps one column: a
+    // descendant tcPr read borrowed the span and pushed THREE into a
+    // fourth column (x 372.5) past the 2000/2000/2000 grid, where an
+    // empty tcPr of its own keeps it in the third (x 272.4).
+    let nested_pr = r#"<w:gridSpan w:val="2"/>"#;
+    let tbl_pr = own_tcpr_bordered_tblpr();
+    for (name, outer_tcpr) in [("absent", ""), ("empty", "<w:tcPr/>")] {
+        let body = own_tcpr_probe_body(outer_tcpr, &tbl_pr, "", nested_pr, "OUTER", 4000);
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("gridspan converts");
+        let (x, y) = pdf_glyph_text_xy(&pdf, "THREE").expect("THREE paints");
+        assert!(
+            x < 340.0 && y > 600.0,
+            "{name}: THREE keeps the third column: ({x:.2},{y:.2})"
+        );
+    }
+}
+
+#[test]
+fn outer_cell_ignores_nested_shading() {
+    // #1729: the nested first cell is red; the outer cell holding the
+    // table is not painted red for it. The middle column is fixed at
+    // three nested-tables wide, so a borrowed fill is an outer-sized
+    // rectangle, not the nested cell's 50pt one.
+    let nested_pr = r#"<w:shd w:val="clear" w:color="auto" w:fill="FF0000"/>"#;
+    let tbl_pr = "<w:tblPr><w:tblW w:w=\"10000\" w:type=\"dxa\"/>\
+        <w:tblLayout w:type=\"fixed\"/>\
+        <w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+        <w:left w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+        <w:bottom w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+        <w:right w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+        <w:insideH w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+        <w:insideV w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/></w:tblBorders></w:tblPr>";
+    for (name, outer_tcpr) in [("absent", ""), ("empty", "<w:tcPr/>")] {
+        let body = own_tcpr_probe_body(outer_tcpr, tbl_pr, "", nested_pr, "OUTER", 2000);
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("shading converts");
+        let reds = pdf_fill_rects(&pdf, 1.0, 0.0, 0.0);
+        assert!(!reds.is_empty(), "{name}: the nested cell stays red");
+        assert!(
+            reds.iter().all(|&(w, _)| w < 120.0),
+            "{name}: red stays on the nested cell, not the outer one: {reds:?}"
+        );
+    }
+}
+
+#[test]
+fn outer_cell_keeps_its_own_tcpr_over_a_nested_tables() {
+    // Control for the fix: a cell with its own tcPr keeps it — blue fill,
+    // one column — while the nested table's first cell carries red and a
+    // gridSpan 2 of its own.
+    let outer_tcpr = "<w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/>\
+        <w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"0000FF\"/></w:tcPr>";
+    let nested_pr = "<w:gridSpan w:val=\"2\"/>\
+        <w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"FF0000\"/>";
+    let tbl_pr = own_tcpr_bordered_tblpr();
+    let body = own_tcpr_probe_body(outer_tcpr, &tbl_pr, "", nested_pr, "OUTER", 2000);
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("own tcPr converts");
+    let blues = pdf_fill_rects(&pdf, 0.0, 0.0, 1.0);
+    let reds = pdf_fill_rects(&pdf, 1.0, 0.0, 0.0);
+    assert!(!blues.is_empty(), "the outer cell keeps its own blue fill");
+    assert!(!reds.is_empty(), "the nested cell keeps its own red fill");
+    assert!(
+        reds.iter().all(|&(w, _)| w < 150.0),
+        "the nested red stays nested-sized: {reds:?}"
+    );
+    let (x, _) = pdf_glyph_text_xy(&pdf, "THREE").expect("THREE paints");
+    assert!(
+        x < 340.0,
+        "the outer cell keeps one column: THREE at {x:.2}"
+    );
+}
+
+#[test]
+fn outer_cell_ignores_nested_borders() {
+    // #1729: the outer table is borderless; only the nested first cell
+    // names green tcBorders. Those edges belong to the nested cell, not
+    // to the outer cell that holds the table.
+    let edge = "w:val=\"single\" w:sz=\"12\" w:color=\"00B050\"";
+    let nested_pr = format!(
+        "<w:tcBorders><w:top {edge}/><w:left {edge}/><w:bottom {edge}/>\
+         <w:right {edge}/></w:tcBorders>"
+    );
+    // Borderless and fixed, so the nested cell's green edges are the only
+    // rules; the middle column is three nested-tables wide, so edges
+    // borrowed by the outer cell outsize the nested cell's own.
+    let tbl_pr = "<w:tblPr><w:tblW w:w=\"10000\" w:type=\"dxa\"/>\
+        <w:tblLayout w:type=\"fixed\"/></w:tblPr>"
+        .to_string();
+    for (name, outer_tcpr) in [("absent", ""), ("empty", "<w:tcPr/>")] {
+        let body = own_tcpr_probe_body(outer_tcpr, &tbl_pr, "", &nested_pr, "OUTER", 2000);
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("borders convert");
+        let greens = pdf_fill_rects(&pdf, 0.0, 176.0 / 255.0, 80.0 / 255.0);
+        assert!(
+            !greens.is_empty(),
+            "{name}: the nested cell keeps its green edges"
+        );
+        assert!(
+            greens.iter().all(|&(w, h)| w < 120.0 && h < 25.0),
+            "{name}: green stays on the nested cell, not the outer one: {greens:?}"
+        );
+    }
+}
+
+#[test]
+fn outer_cell_ignores_nested_horizontal_margins() {
+    // #1729: the nested first cell pads itself 72pt in from the left; the
+    // outer cell's own text keeps the default cell margin.
+    let nested_pr = "<w:tcMar><w:left w:w=\"1440\" w:type=\"dxa\"/>\
+        <w:right w:w=\"1440\" w:type=\"dxa\"/></w:tcMar>";
+    for (name, docx) in own_tcpr_probe_pair(nested_pr) {
+        let pdf = docx_to_pdf(&docx).expect("pad-h converts");
+        let (x_outer, _) = pdf_glyph_text_xy(&pdf, "OUTER").expect("OUTER paints");
+        let (x_one, _) = pdf_glyph_text_xy(&pdf, "ONE").expect("ONE paints");
+        assert!(
+            (x_outer - x_one - 100.0).abs() < 20.0,
+            "{name}: OUTER sits one column past ONE on the default margin: \
+             OUTER {x_outer:.2}, ONE {x_one:.2}"
+        );
+    }
+}
+
+#[test]
+fn outer_cell_ignores_nested_vertical_margins() {
+    // #1729: the nested first cell pads itself 72pt down; the row's own
+    // cells keep the default top margin. ONE shares the row, so a
+    // borrowed top margin moves it too (a row sets every cell at its
+    // largest top margin).
+    let nested_pr = "<w:tcMar><w:top w:w=\"1440\" w:type=\"dxa\"/>\
+        <w:bottom w:w=\"1440\" w:type=\"dxa\"/></w:tcMar>";
+    let mut ys = Vec::new();
+    for (name, docx) in own_tcpr_probe_pair(nested_pr) {
+        let pdf = docx_to_pdf(&docx).expect("pad-tb converts");
+        let (_, y_one) = pdf_glyph_text_xy(&pdf, "ONE").expect("ONE paints");
+        assert!(
+            y_one > 700.0,
+            "{name}: ONE sits at the top margin: y {y_one:.2}"
+        );
+        ys.push(y_one);
+    }
+    assert!(
+        (ys[0] - ys[1]).abs() < 1.0,
+        "an empty tcPr changes nothing: ONE y {} vs {}",
+        ys[0],
+        ys[1]
+    );
+}
+
+#[test]
+fn outer_cell_ignores_nested_valign() {
+    // #1729: the nested first cell centers itself; the outer cell's text
+    // stays at the top of the row the nested table made tall.
+    let nested_pr = r#"<w:vAlign w:val="center"/>"#;
+    let trpr = "<w:trPr><w:trHeight w:val=\"2880\" w:hRule=\"atLeast\"/></w:trPr>";
+    let tbl_pr = own_tcpr_bordered_tblpr();
+    for (name, outer_tcpr) in [("absent", ""), ("empty", "<w:tcPr/>")] {
+        let body = own_tcpr_probe_body(outer_tcpr, &tbl_pr, trpr, nested_pr, "OUTER", 2000);
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("valign converts");
+        let (_, y_outer) = pdf_glyph_text_xy(&pdf, "OUTER").expect("OUTER paints");
+        let (_, y_one) = pdf_glyph_text_xy(&pdf, "ONE").expect("ONE paints");
+        assert!(
+            (y_one - y_outer).abs() < 10.0,
+            "{name}: OUTER stays top-aligned with ONE: ONE {y_one:.2}, OUTER {y_outer:.2}"
+        );
+    }
+}
+
+#[test]
+fn outer_cell_ignores_nested_nowrap() {
+    // #1729: the nested first cell is noWrap; the outer cell's own long
+    // text keeps wrapping in its column.
+    let nested_pr = "<w:noWrap/>";
+    let middle = "wide wide wide wide wide wide wide wide words";
+    let tbl_pr = own_tcpr_bordered_tblpr();
+    for (name, outer_tcpr) in [("absent", ""), ("empty", "<w:tcPr/>")] {
+        let body = own_tcpr_probe_body(outer_tcpr, &tbl_pr, "", nested_pr, middle, 2000);
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("nowrap converts");
+        let mut ys: Vec<f32> = pdf_glyph_text_xys(&pdf, "wide")
+            .into_iter()
+            .map(|(_, y)| y)
+            .collect();
+        ys.sort_by(f32::total_cmp);
+        ys.dedup_by(|a, b| (*a - *b).abs() < 2.0);
+        assert!(
+            ys.len() > 1,
+            "{name}: the middle text wraps onto several lines: {} lines",
+            ys.len()
+        );
+    }
+}
+
+#[test]
+fn outer_cell_ignores_nested_cell_deletion() {
+    // #1729: the nested first cell is deleted, not the row that holds
+    // its table. All Markup stamps one Deleted Cells column, in the
+    // nested row only.
+    let nested_pr = "<w:cellDel w:id=\"7\" w:author=\"Red\" \
+        w:date=\"2026-01-01T00:00:00Z\"/>";
+    for (name, docx) in own_tcpr_probe_pair(nested_pr) {
+        let pdf = docx_to_pdf(&docx).expect("celldel converts");
+        let stamps = pdf_glyph_text_xys(&pdf, "Deleted");
+        assert_eq!(stamps.len(), 1, "{name}: one stamp, the nested row's");
+    }
+}
+
+#[test]
+fn outer_cell_ignores_nested_text_direction() {
+    // #1729: the nested first cell runs its text btLr; the outer cell's
+    // own text keeps wrapping by character in its narrow column (the one
+    // thing a borrowed textDirection changes in a cell painted across).
+    let nested_pr = r#"<w:textDirection w:val="btLr"/>"#;
+    let middle = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let tbl_pr = "<w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/>\
+        <w:tblLayout w:type=\"fixed\"/></w:tblPr>";
+    for (name, outer_tcpr) in [("absent", ""), ("empty", "<w:tcPr/>")] {
+        let body = own_tcpr_probe_body(outer_tcpr, tbl_pr, "", nested_pr, middle, 2000);
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("textdirection converts");
+        let mut ys: Vec<f32> = pdf_glyph_text_xys(&pdf, "AAAA")
+            .into_iter()
+            .map(|(_, y)| y)
+            .collect();
+        ys.sort_by(f32::total_cmp);
+        ys.dedup_by(|a, b| (*a - *b).abs() < 2.0);
+        assert!(
+            ys.len() > 1,
+            "{name}: the long word breaks by character in the 100pt column: {} lines",
+            ys.len()
+        );
+    }
+}
+
+#[test]
+fn nested_auto_shading_keeps_outer_style_fill() {
+    // #1729: an explicit shd — even fill=auto — suppresses a table-style
+    // fill only on the cell that carries it. The nested first cell's
+    // fill=auto must not un-paint the outer cell's first-row band.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"table\" w:styleId=\"Band\"><w:name w:val=\"Band\"/>\
+            <w:tblStylePr w:type=\"firstRow\"><w:tcPr>\
+              <w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"4F81BD\"/>\
+            </w:tcPr></w:tblStylePr></w:style></w:styles>";
+    let nested_pr = r#"<w:shd w:val="clear" w:color="auto" w:fill="auto"/>"#;
+    let tbl_pr = "<w:tblPr><w:tblStyle w:val=\"Band\"/>\
+        <w:tblLook w:val=\"1000\" w:firstRow=\"1\" w:noHBand=\"0\"/>\
+        <w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+        <w:left w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+        <w:bottom w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+        <w:right w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+        <w:insideV w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/></w:tblBorders></w:tblPr>";
+    let mut counts = Vec::new();
+    for (name, outer_tcpr) in [("absent", ""), ("empty", "<w:tcPr/>")] {
+        let body = own_tcpr_probe_body(outer_tcpr, tbl_pr, "", nested_pr, "OUTER", 2000);
+        let pdf = docx_to_pdf(&docx_with_styles(&body, styles)).expect("band converts");
+        let bands = pdf_fill_rects(&pdf, 79.0 / 255.0, 129.0 / 255.0, 189.0 / 255.0);
+        assert!(
+            bands.iter().any(|&(w, _)| w > 80.0),
+            "{name}: the middle cell keeps its band fill: {bands:?}"
+        );
+        counts.push(bands.len());
+    }
+    assert_eq!(
+        counts[0], counts[1],
+        "an empty tcPr changes nothing: {counts:?} band rects"
+    );
+}
 /// A bordered autofit table without tcW on a `grid`/`grid` grid, its two
 /// cells' paragraphs `left` and `right`, for nesting (#1732 probes p1, t1).
 fn widthless_nested_pair(grid: u32, left: &str, right: &str) -> String {
