@@ -255,8 +255,10 @@ fn a_tracked_mark_is_named_without_text() {
         lines[0],
         r#"under keep, a paragraph whose mark is already tracked cannot be merged: that mark is r7, inserted by "Bob"."#
     );
+    // The route that keeps Bob's insertion comes first (#1953).
+    assert!(lines[1].starts_with("  strike it:"), "{e}");
     assert!(
-        lines[1].starts_with(r#"  keep it (erases "Bob"'s insertion):"#),
+        lines[2].starts_with(r#"  keep it (erases "Bob"'s insertion):"#),
         "{e}"
     );
     assert!(!e.message.contains("first with resolve_revisions"), "{e}");
