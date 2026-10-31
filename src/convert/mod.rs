@@ -1928,6 +1928,13 @@ struct TextRun {
     /// A laid-out bar fraction, radical, or delimiter. Glyphs and rules
     /// are positioned from the run's baseline. `None` for every other run.
     math: Option<math_layout::MathBox>,
+    /// An inline picture standing on this run's baseline. Width and height
+    /// come from the image; the line breaker treats it as one unbreakable
+    /// box, the way it treats `math`. `None` for every other run.
+    pic: Option<Rc<LaidImage>>,
+    /// Blip [`NodeId`] of a picture placeholder not yet bound to its
+    /// `LaidImage`. Cleared by [`bind_flow_pictures`].
+    pic_src: Option<u32>,
 }
 
 impl TextRun {
@@ -1963,6 +1970,8 @@ impl TextRun {
             strut: false,
             math_ascii: false,
             math: None,
+            pic: None,
+            pic_src: None,
         }
     }
 
@@ -1970,9 +1979,11 @@ impl TextRun {
         let mut run = self.clone();
         run.text = text.into();
         // A split keeps the letters and drops the box. Painting the whole
-        // equation on a substring would draw it twice.
+        // equation, or the picture, on a substring would draw it twice.
         if run.text != self.text {
             run.math = None;
+            run.pic = None;
+            run.pic_src = None;
         }
         run
     }
@@ -2449,6 +2460,10 @@ struct LaidImage {
     /// gives it a line of its run's font, 13.8pt of Times 12 there, and
     /// strokes it on that line.
     chrome_flat_run: Option<RunStyle>,
+    /// Blip node id when this is a body inline picture spliced into the
+    /// run stream. 0 for floats, groups, VML, bullets, and anything the
+    /// line breaker does not own.
+    src: u32,
 }
 
 /// The last painted body line: its ops start at `ops_start` on page
@@ -3141,6 +3156,7 @@ fn text_box_image(b: LaidTextBox, effect: [f32; 4]) -> LaidImage {
         after_text: false,
         under: None,
         chrome_flat_run: None,
+        src: 0,
     }
 }
 
@@ -9837,6 +9853,15 @@ fn ink_face(fonts: &Fonts, style: &RunStyle, text: &str) -> FaceRef {
     }
 }
 
+/// How an inline picture changes the line it stands on. `only` is a line
+/// of pictures and spaces: it advances like `emit_inline_pictures`.
+struct PicLine {
+    only: bool,
+    h: f32,
+    under: f32,
+    extra: f32,
+}
+
 fn line_fit_need(natural: f32, ascent: f32, style: &ParaStyle, line_box: f32) -> f32 {
     // An exact line is its box: Word clips the glyph tops of a short one
     // rather than moving it (001a915a's 4pt closing paragraph).
@@ -11418,6 +11443,10 @@ fn keep_next_follow_pt(
                 .filter(|img| matches!(img.slot, ImageSlot::Flow))
                 .map(|img| img.h)
                 .chain(
+                    runs.iter()
+                        .filter_map(|r| r.pic.as_deref().map(|img| img.h)),
+                )
+                .chain(
                     boxes
                         .iter()
                         .filter(|b| matches!(b.slot, ImageSlot::Flow))
@@ -11854,6 +11883,39 @@ fn para_hrule(dom: &Dom, para: NodeId) -> Option<HRule> {
     })
 }
 
+/// Attach each spliced picture placeholder to its `LaidImage` and drop
+/// that image from the paragraph, so the line breaker paints it once.
+/// A placeholder whose blip was not collected (a group, a float, a text
+/// box) is dropped rather than painted as a missing glyph.
+fn bind_flow_pictures(runs: &mut Vec<TextRun>, images: &mut Vec<LaidImage>) {
+    if runs.iter().all(|r| r.pic_src.is_none()) {
+        return;
+    }
+    let mut by_src: HashMap<u32, Rc<LaidImage>> = HashMap::new();
+    for img in images.iter() {
+        if img.src != 0 {
+            by_src
+                .entry(img.src)
+                .or_insert_with(|| Rc::new(img.clone()));
+        }
+    }
+    let mut used = HashSet::new();
+    let mut kept = Vec::with_capacity(runs.len());
+    for mut run in runs.drain(..) {
+        if let Some(src) = run.pic_src.take() {
+            if let Some(img) = by_src.get(&src) {
+                run.pic = Some(Rc::clone(img));
+                used.insert(src);
+                kept.push(run);
+            }
+        } else {
+            kept.push(run);
+        }
+    }
+    *runs = kept;
+    images.retain(|img| img.src == 0 || !used.contains(&img.src));
+}
+
 fn paragraph_block(
     ctx: &WalkCtx<'_>,
     dom: &Dom,
@@ -11917,6 +11979,7 @@ fn paragraph_block(
             in_table,
             toc: is_toc_style(&pstyle),
             open: Some(&ctx.open_comments),
+            flow_pics: true,
         },
     );
     if marker.is_empty()
@@ -11985,9 +12048,11 @@ fn paragraph_block(
                 after_text: false,
                 under: None,
                 chrome_flat_run: None,
+                src: 0,
             },
         );
     }
+    bind_flow_pictures(&mut runs, &mut images);
     let boxes = collect_textboxes_styled(
         Some((ctx.pkg, ctx.main)),
         dom,
@@ -12018,9 +12083,12 @@ fn paragraph_block(
         });
     // A floating picture takes no line space: its paragraph is still a
     // line of its mark (0004c94c's emblem paragraph is Arial 9, 10.35pt).
-    let floats_only = images
-        .iter()
-        .all(|img| !matches!(img.slot, ImageSlot::Flow));
+    // A picture spliced into the runs is a line of its own too.
+    let run_flow = runs.iter().any(|r| r.pic.is_some());
+    let floats_only = !run_flow
+        && images
+            .iter()
+            .all(|img| !matches!(img.slot, ImageSlot::Flow));
     // Floating text boxes take no line space either (00bf6b4c's org chart
     // hangs its boxes off empty 20pt paragraphs).
     let boxes_float = boxes.iter().all(|b| !matches!(b.slot, ImageSlot::Flow));
@@ -12032,7 +12100,9 @@ fn paragraph_block(
         || boxes
             .iter()
             .any(|b| matches!(b.slot, ImageSlot::Flow) && !b.diag_shapes.is_empty()))
-        && runs.iter().all(|r| r.text.trim().is_empty())
+        && runs
+            .iter()
+            .all(|r| r.pic.is_some() || r.text.trim().is_empty())
     {
         // An inline picture's line takes its multiple's extra from the
         // paragraph's own run style even when the mark sets nothing
@@ -12331,6 +12401,10 @@ fn apply_field_results(
             }
             if run.field == FieldKind::NumWords {
                 out.text = words.to_string();
+            }
+            if out.text != run.text {
+                out.pic = None;
+                out.pic_src = None;
             }
             out
         })
@@ -13611,6 +13685,7 @@ fn table_block(
                         in_table: true,
                         toc: false,
                         open: None,
+                        flow_pics: false,
                     },
                 );
                 // An empty cell paragraph is a Word line like any other
@@ -13718,6 +13793,7 @@ fn table_block(
                         in_table: true,
                         toc: false,
                         open: None,
+                        flow_pics: false,
                     },
                 );
                 cell_paras.push(CellPara {
@@ -15067,6 +15143,7 @@ fn collect_runs(dom: &Dom, node: NodeId, base: &RunStyle, theme: &ThemeFonts) ->
             in_table: false,
             toc: false,
             open: None,
+            flow_pics: false,
         },
     );
     strip_page_marks(runs)
@@ -15143,6 +15220,9 @@ struct RunCollect<'a> {
     /// Body without pBdr stays collapsed (mini 401). Courier New body
     /// pads (file_69 code) stay collapsed too (mini 520 ITT-neg).
     keep_xml_space: bool,
+    /// Body paragraphs splice simple inline pictures into the run stream.
+    /// Cells, headers and footers leave them on `LaidImage`.
+    flow_pics: bool,
 }
 
 struct RunBag<'a> {
@@ -15153,6 +15233,8 @@ struct RunBag<'a> {
     /// The comment ranges open where this paragraph starts, written back
     /// with those still open at its end.
     open: Option<&'a RefCell<Vec<String>>>,
+    /// Splice simple body inline pictures into the runs (`flow_pics`).
+    flow_pics: bool,
 }
 
 fn collect_runs_in(
@@ -15189,6 +15271,7 @@ fn collect_runs_in(
         math_upright: Some(false),
         math_display: false,
         keep_xml_space: para_keeps_xml_space(dom, node),
+        flow_pics: bag.flow_pics,
     };
     collect_runs_rec(&mut ctx, node, RevMark::None, "", &mut runs);
     flush_pending_comments(&mut ctx, &mut runs);
@@ -15278,6 +15361,10 @@ fn split_hansi_runs(runs: Vec<TextRun>) -> Vec<TextRun> {
     }
     let mut out = Vec::with_capacity(runs.len());
     for run in runs {
+        if run.pic.is_some() || run.pic_src.is_some() {
+            out.push(run);
+            continue;
+        }
         let Some(hansi) = run.style.family_hansi.clone() else {
             out.push(run);
             continue;
@@ -15906,6 +15993,27 @@ fn collect_runs_rec(
             run.endnote_id = endnote_id;
             runs.push(run);
             return;
+        }
+        if ctx.flow_pics && !matches!(mark, RevMark::Del | RevMark::MoveFrom) {
+            let breaks = if ctx.in_table {
+                BreakText::Drop
+            } else {
+                BreakText::Mark
+            };
+            if emit_flow_pictures(
+                ctx,
+                node,
+                FlowRunEmit {
+                    mark,
+                    style: &mut style,
+                    unmarked: &unmarked,
+                    char_style: &char_style,
+                    breaks,
+                },
+                runs,
+            ) {
+                return;
+            }
         }
         let raw = {
             let mut out = String::new();
@@ -16536,6 +16644,11 @@ enum BreakText {
 /// carries it.
 const PAGE_BREAK_MARK: char = '\u{FDD0}';
 
+/// Placeholder text of an inline picture spliced into the run stream.
+/// One character, so the line breaker keeps it one unbreakable box, and
+/// not a glyph `paint_run` would draw.
+const INLINE_PIC: char = '\u{FFFC}';
+
 /// A body run's column break, split like `PAGE_BREAK_MARK`: the text after
 /// it opens the next column (live Word, 019d92d9's continuous columns).
 const COLUMN_BREAK_MARK: char = '\u{FDD1}';
@@ -16657,6 +16770,256 @@ fn collect_visible_marked(
     for idx in 0..dom.child_count(node) {
         collect_visible_marked(dom, dom.child_at(node, idx), out, in_del, breaks);
     }
+}
+
+enum FlowPiece {
+    Text(String),
+    Pic(u32),
+}
+
+/// Blip ids of a simple inline picture: no group, no anchor, no text-box
+/// picture. Empty when the drawing stays on the `LaidImage` path.
+fn flow_blip_ids(dom: &Dom, drawing: NodeId) -> Vec<u32> {
+    if drawing_group(dom, drawing).is_some()
+        || !matches!(drawing_slot(dom, drawing), ImageSlot::Flow)
+    {
+        return Vec::new();
+    }
+    dom.descendants(drawing, Some(&A::name("blip")))
+        .into_iter()
+        .filter(|b| !nested_in_text(dom, *b, drawing) && attr_any(dom, *b, "embed").is_some())
+        .map(|b| b.0)
+        .collect()
+}
+
+/// Text and picture pieces of `run` in document order. `None` when the run
+/// holds no simple inline picture, so the caller keeps the ordinary path.
+fn flow_run_pieces(dom: &Dom, run: NodeId, breaks: BreakText) -> Option<Vec<FlowPiece>> {
+    let mut pieces = Vec::new();
+    let mut buf = String::new();
+    let mut saw = false;
+    walk_flow_run(dom, run, false, breaks, &mut buf, &mut pieces, &mut saw);
+    if !buf.is_empty() {
+        pieces.push(FlowPiece::Text(buf));
+    }
+    saw.then_some(pieces)
+}
+
+fn walk_flow_run(
+    dom: &Dom,
+    node: NodeId,
+    in_del: bool,
+    breaks: BreakText,
+    buf: &mut String,
+    pieces: &mut Vec<FlowPiece>,
+    saw: &mut bool,
+) {
+    if dom.name_is(node, &W::drawing()) {
+        if !in_del {
+            let ids = flow_blip_ids(dom, node);
+            if !ids.is_empty() {
+                if !buf.is_empty() {
+                    pieces.push(FlowPiece::Text(std::mem::take(buf)));
+                }
+                for id in ids {
+                    pieces.push(FlowPiece::Pic(id));
+                }
+                *saw = true;
+            }
+        }
+        return;
+    }
+    if skip_non_text(dom, node) {
+        return;
+    }
+    if dom.name_is(node, &W::del()) || dom.name_is(node, &W::move_from()) {
+        for idx in 0..dom.child_count(node) {
+            walk_flow_run(dom, dom.child_at(node, idx), true, breaks, buf, pieces, saw);
+        }
+        return;
+    }
+    if let Some(text) = dom.text_value(node) {
+        if !in_del && is_run_text(dom, node, text) {
+            buf.extend(
+                text.chars()
+                    .map(|c| if matches!(c, '\n' | '\r') { ' ' } else { c }),
+            );
+        }
+        return;
+    }
+    if !in_del && dom.name_is(node, &W::name("cr")) {
+        buf.push('\n');
+        return;
+    }
+    if !in_del && dom.name_is(node, &W::name("noBreakHyphen")) {
+        buf.push(NO_BREAK_HYPHEN);
+        return;
+    }
+    if !in_del && dom.name_is(node, &W::name("ptab")) {
+        buf.push('\t');
+        return;
+    }
+    if !in_del && (dom.name_is(node, &W::name("tab")) || dom.name_is(node, &W::name("br"))) {
+        if dom.name_is(node, &W::name("br")) {
+            let kind = dom.attribute(node, &W::type_());
+            let page = kind.is_some_and(|k| k == "page" || k == "oddPage" || k == "evenPage");
+            let column = kind == Some("column");
+            match breaks {
+                BreakText::Mark if page => buf.push(PAGE_BREAK_MARK),
+                BreakText::Mark if column => buf.push(COLUMN_BREAK_MARK),
+                BreakText::Drop if page || column => {}
+                _ => buf.push('\n'),
+            }
+        } else {
+            buf.push('\t');
+        }
+        return;
+    }
+    for idx in 0..dom.child_count(node) {
+        walk_flow_run(
+            dom,
+            dom.child_at(node, idx),
+            in_del,
+            breaks,
+            buf,
+            pieces,
+            saw,
+        );
+    }
+}
+
+/// The run-local arguments of `emit_flow_pictures`. One value, so the
+/// function stays under clippy's argument limit.
+struct FlowRunEmit<'a> {
+    mark: RevMark,
+    style: &'a mut RunStyle,
+    unmarked: &'a RunStyle,
+    char_style: &'a Option<std::rc::Rc<str>>,
+    breaks: BreakText,
+}
+
+/// Splice `node`'s simple inline pictures into `runs`. False when it has
+/// none, and the ordinary text path must run instead.
+fn emit_flow_pictures(
+    ctx: &mut RunCollect<'_>,
+    node: NodeId,
+    emit: FlowRunEmit<'_>,
+    runs: &mut Vec<TextRun>,
+) -> bool {
+    let FlowRunEmit {
+        mark,
+        style,
+        unmarked,
+        char_style,
+        breaks,
+    } = emit;
+    let Some(pieces) = flow_run_pieces(ctx.dom, node, breaks) else {
+        return false;
+    };
+    let pending_ids = std::mem::take(&mut ctx.pending);
+    let mut pending = if pending_ids.is_empty() {
+        Vec::new()
+    } else {
+        notes_for(ctx, &pending_ids)
+    };
+    let preserve = ctx.in_table || ctx.keep_xml_space || run_preserves_space(ctx.dom, node);
+    for piece in pieces {
+        let (text, pic_src) = match piece {
+            FlowPiece::Pic(id) => (INLINE_PIC.to_string(), Some(id)),
+            FlowPiece::Text(raw) => {
+                let mut text = rev_text(&raw, mark, preserve);
+                if style.caps && !style.small_caps {
+                    text = text.to_uppercase();
+                }
+                if text.is_empty() {
+                    continue;
+                }
+                (text, None)
+            }
+        };
+        if let Some(cs) = style.size_cs
+            && (style.rtl || text.chars().any(is_rtl_char))
+        {
+            style.size = cs;
+        }
+        let is_pic = pic_src.is_some();
+        let pageref = if !is_pic && ctx.field_result {
+            ctx.pageref.clone()
+        } else {
+            None
+        };
+        let ref_name = if !is_pic && ctx.field_result {
+            ctx.ref_name.clone()
+        } else {
+            None
+        };
+        let ref_copy_text = ref_name.is_some() && ref_copies_bookmark_text(&ctx.field_instr);
+        let styleref = if !is_pic && ctx.field_result {
+            ctx.styleref.clone()
+        } else {
+            None
+        };
+        if ctx.field_result {
+            ctx.field_emitted = true;
+        }
+        let rev = mark != RevMark::None;
+        let numwords = !is_pic && is_numwords_field(&ctx.field_instr);
+        let page_field = !is_pic && ctx.field_result && is_page_field(&ctx.field_instr);
+        let recomputed = !is_pic
+            && mark == RevMark::Ins
+            && ctx.field_result
+            && word_recomputes_field(&ctx.field_instr);
+        if rev && (page_field || numwords || recomputed) {
+            unmark_field_number(style, unmarked, mark);
+        }
+        let notes = std::mem::take(&mut pending);
+        let tint = open_tint(ctx);
+        let tint_id = ctx.open.first().cloned();
+        if is_pic || !style.small_caps {
+            let mut run = TextRun::new(text, style.clone());
+            run.style.tint = tint;
+            run.style.tint_id = tint_id;
+            run.rev = rev;
+            run.pageref = pageref;
+            run.ref_name = ref_name;
+            run.styleref = styleref;
+            run.char_style.clone_from(char_style);
+            run.ref_copy_text = ref_copy_text;
+            run.pic_src = pic_src;
+            if numwords {
+                run.field = FieldKind::NumWords;
+            } else if page_field {
+                run.field = FieldKind::Page;
+            }
+            run.comments = notes;
+            runs.push(run);
+        } else {
+            let mut notes = notes;
+            let mut first = true;
+            for (piece, st) in small_caps_pieces(&text, style) {
+                let mut run = TextRun::new(piece, st);
+                run.rev = rev;
+                run.pageref.clone_from(&pageref);
+                run.ref_name.clone_from(&ref_name);
+                run.styleref.clone_from(&styleref);
+                run.char_style.clone_from(char_style);
+                run.ref_copy_text = ref_copy_text;
+                if numwords {
+                    run.field = FieldKind::NumWords;
+                } else if page_field {
+                    run.field = FieldKind::Page;
+                }
+                if first {
+                    run.comments = std::mem::take(&mut notes);
+                    first = false;
+                }
+                run.style.tint = tint;
+                run.style.tint_id.clone_from(&tint_id);
+                runs.push(run);
+            }
+        }
+    }
+    true
 }
 
 fn collapse_ws(text: &str) -> String {
@@ -18807,6 +19170,7 @@ fn collect_images(
                     after_text: false,
                     under: None,
                     chrome_flat_run: None,
+                    src: 0,
                 });
             }
             let child_slot = |slot: ImageSlot| match slot {
@@ -18868,6 +19232,7 @@ fn collect_images(
                     after_text: false,
                     under: None,
                     chrome_flat_run: None,
+                    src: 0,
                 });
             }
             continue;
@@ -18940,6 +19305,11 @@ fn collect_images(
                             None
                         },
                         chrome_flat_run: None,
+                        src: if matches!(slot, ImageSlot::Flow) {
+                            blip.0
+                        } else {
+                            0
+                        },
                     });
                 } else {
                     out.push(LaidImage {
@@ -18975,6 +19345,11 @@ fn collect_images(
                         after_text: false,
                         under: None,
                         chrome_flat_run: None,
+                        src: if matches!(slot, ImageSlot::Flow) {
+                            blip.0
+                        } else {
+                            0
+                        },
                     });
                 }
             }
@@ -19055,6 +19430,7 @@ fn collect_images(
                         after_text: false,
                         under: None,
                         chrome_flat_run: None,
+                        src: 0,
                     });
                     continue;
                 };
@@ -19109,6 +19485,7 @@ fn collect_images(
                         None
                     },
                     chrome_flat_run: None,
+                    src: 0,
                 });
             }
             for line in descendants_local(dom, root, "line") {
@@ -19283,6 +19660,7 @@ fn vml_line_image(dom: &Dom, line: NodeId, root: NodeId) -> Option<LaidImage> {
         after_text: false,
         under: None,
         chrome_flat_run: None,
+        src: 0,
     })
 }
 
@@ -19370,6 +19748,7 @@ fn vml_rect_image(
         after_text: trails_text(dom, para, root),
         under: None,
         chrome_flat_run: None,
+        src: 0,
     })
 }
 
@@ -24408,6 +24787,43 @@ impl<'a> Layout<'a> {
         line_box_from_natural(own, style) + (natural - own).max(0.0)
     }
 
+    fn pic_line(&self, line: &[TextRun], style: &ParaStyle) -> PicLine {
+        let mut h = 0.0_f32;
+        let mut under = 0.0_f32;
+        for run in line {
+            let Some(img) = run.pic.as_deref() else {
+                continue;
+            };
+            h = h.max(img.h.max(1.0));
+            if let Some(u) = img.under.as_ref() {
+                let face = self
+                    .fonts
+                    .get(self.fonts.resolve(&u.family, u.bold, u.italic));
+                under = under.max(face.line_descent_pt(u.layout_size()));
+            }
+        }
+        // A break marker on the picture's line is the line break, not
+        // text. The empty line it opens is the mark's line
+        // (66cfa52b0c: picture, w:br, 7pt mark). A strut is the empty
+        // carrier of an inline shape that was not spliced (212a1c9d's
+        // group after the logo): it carries no words, and counting it
+        // stacked the group under the picture.
+        let text = line.iter().any(|r| {
+            r.pic.is_none() && (r.list_marker || r.note_rule || !r.text.trim().is_empty())
+        });
+        let only = h > 0.0 && !text;
+        PicLine {
+            only,
+            h,
+            under: if only { under } else { 0.0 },
+            extra: if only {
+                self.picture_line_extra(style, style.mark_run.as_deref())
+            } else {
+                0.0
+            },
+        }
+    }
+
     fn line_face_metrics(&self, line: &[TextRun], marker: Option<&TextRun>) -> (f32, f32) {
         // Whitespace-only runs do not size the line: a trailing Calibri
         // space (002919b3) or an Aptos tab between Times TOC text keeps
@@ -24416,7 +24832,7 @@ impl<'a> Layout<'a> {
         let inked: Vec<&TextRun> = line
             .iter()
             .chain(marker)
-            .filter(|r| !r.text.trim().is_empty() || r.strut)
+            .filter(|r| r.pic.is_none() && (!r.text.trim().is_empty() || r.strut))
             .collect();
         // A break alone on its line sizes it (00accd5b's second, 13.5pt
         // break); a whitespace-only line is sized next to its mark: the
@@ -24427,7 +24843,12 @@ impl<'a> Layout<'a> {
         } else if !breaks.is_empty() {
             breaks
         } else {
-            line.last().or(marker).into_iter().collect()
+            line.iter()
+                .rev()
+                .find(|r| r.pic.is_none())
+                .or(marker)
+                .into_iter()
+                .collect()
         };
         // Word's line is the taller of its tallest single line and the
         // tallest part above the baseline (list marker included) over the
@@ -24467,6 +24888,11 @@ impl<'a> Layout<'a> {
                 down = down.max(math.descent);
                 single = single.max(math.ascent + math.descent);
                 ascent = ascent.max(math.ascent);
+                continue;
+            }
+            // A picture's height is applied after the text line is sized.
+            // Folding it into `natural` would multiply it by the line spacing.
+            if run.pic.is_some() {
                 continue;
             }
             // 000f4c0b's all-lowercase small-caps line is a 12pt line.
@@ -25705,17 +26131,70 @@ impl<'a> Layout<'a> {
                 continue;
             }
             let grid = para_grid_pitch(style, self.page.grid_pitch);
-            let line_box = if grid > 0.5 {
+            let text_box = if grid > 0.5 {
                 grid_line_box(natural, style, grid)
             } else {
                 self.lifted_line_box(line, marker.filter(|_| line_i == 0), natural, style)
             };
+            // Picture height is added after the text formulas. Growing the
+            // box first would change rise, shrink and the grid pad, and the
+            // line would deepen twice.
+            let pic = self.pic_line(line, style);
             // On a docGrid the text sits centred in its snapped box: 00d2ca27's
             // TNR 12 double lines on a 15.6pt grid start 8.7pt down.
-            let grid_pad = if grid > 0.5 {
-                ((line_box - natural) / 2.0).max(0.0)
+            let grid_pad = if pic.only {
+                0.0
+            } else if grid > 0.5 {
+                ((text_box - natural) / 2.0).max(0.0)
             } else {
                 0.0
+            };
+            let rise = if !pic.only && style.line_at_least.is_some() && grid_pad == 0.0 {
+                (text_box - natural).max(0.0)
+            } else {
+                0.0
+            };
+            // An auto multiple under single takes its cut off the top: the
+            // text rises into the line above and the lines step by the box
+            // (live Word: Trebuchet 11 at line=182 steps 9.6pt, its first
+            // line 2.7pt above the margin; we stepped ascent + 1).
+            let shrink = if !pic.only
+                && style.line_exact.is_none()
+                && style.line_at_least.is_none()
+                && grid <= 0.5
+                && text_box < natural
+            {
+                natural - text_box
+            } else {
+                0.0
+            };
+            let drop0 = if pic.only {
+                pic.h
+            } else if style.line_exact.is_some() {
+                exact_baseline(text_box)
+            } else {
+                ascent + rise - shrink
+            };
+            let (line_box, drop, fit_natural, fit_ascent) = if pic.only {
+                let pic_box = pic.h + pic.under + pic.extra;
+                (pic_box, pic.h, pic_box, pic.h)
+            } else if style.line_exact.is_some() && pic.h > text_box {
+                let pic_box = pic.h;
+                (pic_box, exact_baseline(pic_box), natural, ascent)
+            } else if pic.h > 0.0 && style.line_exact.is_none() {
+                let dy = (pic.h - drop0).max(0.0);
+                (
+                    text_box + dy,
+                    drop0 + dy,
+                    if dy > 0.0 {
+                        natural.max(pic.h)
+                    } else {
+                        natural
+                    },
+                    if dy > 0.0 { ascent.max(pic.h) } else { ascent },
+                )
+            } else {
+                (text_box, drop0, natural, ascent)
             };
             let fn_h = self.added_footnote_h(line);
             if fn_h > 0.0 {
@@ -25757,7 +26236,12 @@ impl<'a> Layout<'a> {
                     0.0
                 };
                 let after = self.after_over_notes(style, last);
-                self.ensure(line_fit_need(natural, ascent, style, line_box) + foot + after);
+                let need = if pic.only {
+                    line_box
+                } else {
+                    line_fit_need(fit_natural, fit_ascent, style, line_box)
+                };
+                self.ensure(need + foot + after);
             }
             // Lines moved to a new page box their borders there (probe
             // bd1001 b2: the rule under a moved line, not at the old y).
@@ -25800,34 +26284,9 @@ impl<'a> Layout<'a> {
                     color: fill,
                 });
             }
-            // An exact line's baseline is 4/5 down its box whatever the
-            // face (00080142 Arial exact 12: 9.53; 000e618d Tahoma exact
-            // 14: 11.23; 0015b689 SimHei exact 25: 19.92).
-            // An atLeast box stacks its extra height above the text
-            // (00df97e7's Arial 8 under 16.5pt sits 7.3pt down).
-            let rise = if style.line_at_least.is_some() && grid_pad == 0.0 {
-                (line_box - natural).max(0.0)
-            } else {
-                0.0
-            };
-            // An auto multiple under single takes its cut off the top: the
-            // text rises into the line above and the lines step by the box
-            // (live Word: Trebuchet 11 at line=182 steps 9.6pt, its first
-            // line 2.7pt above the margin; we stepped ascent + 1).
-            let shrink = if style.line_exact.is_none()
-                && style.line_at_least.is_none()
-                && grid <= 0.5
-                && line_box < natural
-            {
-                natural - line_box
-            } else {
-                0.0
-            };
-            let drop = if style.line_exact.is_some() {
-                exact_baseline(line_box)
-            } else {
-                ascent + rise - shrink
-            };
+            // `drop` and `line_box` were fixed from the text box before the
+            // picture deepened them. An exact line's baseline is still 4/5
+            // down its box (00080142 Arial exact 12: 9.53).
             self.y -= grid_pad + drop;
             // With a label, line one starts on a custom stop inside the
             // gutter when the paragraph sets one (`marker_gutter_stop`).
@@ -25982,6 +26441,16 @@ impl<'a> Layout<'a> {
                 trail,
                 align: style.align,
             });
+            // The row an inline box shares. `last_line_end` includes a
+            // trailing tab; the box loop advances that tab itself.
+            if pic.only {
+                self.pic_row = Some((
+                    self.pages.len(),
+                    self.picture_row_end(line, x),
+                    baseline,
+                    pic.h,
+                ));
+            }
             if line_i == 0 {
                 self.first_line = self.last_line.map(|l| FirstLine {
                     line: l,
@@ -25997,8 +26466,12 @@ impl<'a> Layout<'a> {
                 });
             }
             // An exact line is exactly its pitch even under a taller face
-            // (0016d88a's exact 10.6pt lines of 10.5pt MS Mincho).
-            self.y -= if style.line_exact.is_some() {
+            // (0016d88a's exact 10.6pt lines of 10.5pt MS Mincho). A
+            // picture-only line advances by the picture, its descent and
+            // the multiple's extra, with no phantom point.
+            self.y -= if pic.only {
+                (line_box - drop).max(0.0)
+            } else if style.line_exact.is_some() {
                 line_box - drop
             } else {
                 (line_box - grid_pad - drop).max(1.0)
@@ -26814,6 +27287,18 @@ impl<'a> Layout<'a> {
         x - x0
     }
 
+    /// X after a picture-only line's pictures. A tab advances only when a
+    /// picture follows it; a trailing tab is the stop the next inline box
+    /// takes (212a1c9d's title bar beside its logo). Counting that tab here
+    /// and again in the box loop lands the box one stop too far.
+    fn picture_row_end(&self, line: &[TextRun], x0: f32) -> f32 {
+        let end = line
+            .iter()
+            .rposition(|r| r.pic.is_some())
+            .map_or(0, |i| i + 1);
+        x0 + self.tab_line_width(&line[..end], x0)
+    }
+
     fn line_width_pt(&self, line: &[TextRun]) -> f32 {
         let mut i = 0;
         let mut w = 0.0;
@@ -26914,6 +27399,11 @@ impl<'a> Layout<'a> {
             && text == run.text
         {
             return math.width;
+        }
+        if let Some(img) = &run.pic
+            && text == run.text
+        {
+            return img.w.max(1.0);
         }
         if let Some(pieces) = script_pieces(&run.style, text) {
             let gaps: f32 = pieces
@@ -27198,6 +27688,14 @@ impl<'a> Layout<'a> {
     fn paint_run(&mut self, run: &TextRun, x: f32, y: f32) -> f32 {
         if let Some(math) = &run.math {
             return self.paint_math_box(run, math, x, y);
+        }
+        if let Some(img) = &run.pic {
+            let w = img.w.max(1.0);
+            let h = img.h.max(1.0);
+            self.push_image(img, x, y, w, h);
+            self.decorate_run(x, y, w, &run.style);
+            self.place_run_comments(run, x, y, w);
+            return x + w;
         }
         // Word's separator is the run's strikeout line on the 300dpi grid
         // (Word 16 probes 2026-10-03: Calibri 11 0.72 thick with its top
@@ -27659,7 +28157,7 @@ impl<'a> Layout<'a> {
             // An equation is one box. Splitting it on its spaces paints
             // the letters at body size and drops the bar (inline-symbol-runs
             // is justified, so its superscript fraction became "p+14").
-            if run.math.is_some() {
+            if run.math.is_some() || run.pic.is_some() {
                 x = self.paint_run(run, x, y);
                 idx += run.text.len();
                 self.place_run_comments(run, start, y, x - start);
@@ -34044,8 +34542,14 @@ fn wrap_runs_segment(
     let mut units: Vec<(Vec<WrapPiece<'_>>, bool)> = Vec::new();
     let mut open = false;
     for run in runs {
-        if let Some(math) = &run.math {
-            units.push((vec![(run, run.text.as_str(), math.width)], false));
+        if run.math.is_some() || run.pic.is_some() {
+            let w = run
+                .math
+                .as_ref()
+                .map(|math| math.width)
+                .or_else(|| run.pic.as_ref().map(|img| img.w.max(1.0)))
+                .unwrap_or(0.0);
+            units.push((vec![(run, run.text.as_str(), w)], false));
             open = false;
             continue;
         }
@@ -34225,7 +34729,9 @@ fn wrap_runs_segment(
         // (0129b302's "19.720.000") where it has room, so only a word
         // wider than its laid-out cell breaks; CJK text already breaks per
         // character where our fallback faces run wide (002c5410).
-        let math_unit = unit.iter().any(|(run, _, _)| run.math.is_some());
+        let math_unit = unit
+            .iter()
+            .any(|(run, _, _)| run.math.is_some() || run.pic.is_some());
         let cjk = unit
             .iter()
             .any(|(run, tok, _)| !run.style.ideograph_words && tok.chars().any(is_cjk));
@@ -34314,6 +34820,8 @@ fn wrap_runs_segment(
                 && !run.strut
                 && last.math.is_none()
                 && run.math.is_none()
+                && last.pic.is_none()
+                && run.pic.is_none()
                 // A run carrying comments stays its own run: its start is
                 // where the balloon connectors anchor, and the merge would
                 // drop its notes.
@@ -34459,12 +34967,21 @@ fn layout_with_facts(
                     // would take the follow (Word 16 probe kn 1001: a
                     // 250pt picture goes to the next page with its
                     // follower; PR #247 review).
-                    let pictures = !runs.iter().any(|r| !r.text.trim().is_empty());
+                    // A spliced picture is a run, not an image. Its object
+                    // character is not text, so a picture-only paragraph is
+                    // still as tall as the picture (kn 1001).
+                    let pictures = runs
+                        .iter()
+                        .all(|r| r.pic.is_some() || r.text.trim().is_empty());
                     let pic_h = if pictures {
                         images
                             .iter()
                             .filter(|im| matches!(im.slot, ImageSlot::Flow))
                             .map(|im| im.h)
+                            .chain(
+                                runs.iter()
+                                    .filter_map(|r| r.pic.as_deref().map(|img| img.h)),
+                            )
                             .chain(
                                 boxes
                                     .iter()
@@ -34827,7 +35344,14 @@ fn layout_with_facts(
                 let mark = (!has_ink)
                     .then(|| runs.first().map(|r| &r.style).or(style.mark_run.as_deref()))
                     .flatten();
+                // `emit_inline_pictures` clears the row even when it has
+                // nothing left to lay. A spliced picture already recorded
+                // one; leftover images still win when they paint their own.
+                let spliced_row = lay.pic_row.take();
                 lay.emit_inline_pictures(&inline, &style, mark, runs);
+                if lay.pic_row.is_none() {
+                    lay.pic_row = spliced_row;
+                }
                 if !has_ink && !inline.is_empty() {
                     lay.emit_picture_break_lines(&style, runs);
                 }
@@ -34854,14 +35378,22 @@ fn layout_with_facts(
                 if lay.pages.len() > pages_before {
                     lay.para_top = lay.page.height - lay.body_top;
                 }
+                // A spliced picture is a run, so the paragraph has ink, and
+                // it is still the picture row an inline box shares
+                // (212a1c9d). Text keeps the box on its own line. The exact
+                // and line-box fallbacks stay on a textless paragraph: a
+                // spliced line already took its height.
+                let pictures_only = runs
+                    .iter()
+                    .all(|r| r.pic.is_some() || r.text.trim().is_empty());
                 let mut row = lay
                     .pic_row
                     .take()
-                    .filter(|r| !has_ink && r.0 == lay.pages.len());
+                    .filter(|r| pictures_only && r.0 == lay.pages.len());
                 let line_box = para_first_line_pt(lay.fonts, runs, &style, lay.page.grid_pitch);
                 let mut box_x: Option<f32> = None;
                 for box_ in boxes {
-                    if !has_ink && matches!(box_.slot, ImageSlot::Flow) && !box_.reserve_only {
+                    if pictures_only && matches!(box_.slot, ImageSlot::Flow) && !box_.reserve_only {
                         // An inline box after the paragraph's pictures shares
                         // their line when it fits, past a tab to its stop
                         // (212a1c9d's title bar beside its logo).
@@ -34886,8 +35418,10 @@ fn layout_with_facts(
                         }
                         // An exact line holds its inline box on its baseline
                         // and grows by nothing (8aea3634's 0.5pt rule in a
-                        // 1pt paragraph).
-                        if images.is_empty()
+                        // 1pt paragraph). A spliced picture line already
+                        // took its height, so this stays on a textless one.
+                        if !has_ink
+                            && images.is_empty()
                             && let Some(e) = style.line_exact
                             && box_.h <= e + 0.01
                         {
@@ -34901,7 +35435,8 @@ fn layout_with_facts(
                         // text box under a 12.7pt line ends on the line's
                         // bottom (069252c3's logo letters; we laid a line,
                         // then each box under it).
-                        if images.is_empty()
+                        if !has_ink
+                            && images.is_empty()
                             && style.line_exact.is_none()
                             && box_.h <= line_box + 0.01
                         {
@@ -50164,6 +50699,7 @@ mod coverage_round_two_tests {
                     in_table: false,
                     toc: false,
                     open: None,
+                    flow_pics: false,
                 },
             );
             assert_eq!(text(&runs), expected);
@@ -50740,6 +51276,7 @@ mod coverage_round_three_tests {
                 in_table: false,
                 toc: false,
                 open: None,
+                flow_pics: false,
             },
         );
         assert_eq!(text(&collected), "ABend");
@@ -51364,6 +51901,7 @@ mod coverage_round_three_tests {
                     in_table,
                     toc: false,
                     open: Some(open),
+                    flow_pics: false,
                 },
             )
         }
@@ -51411,6 +51949,7 @@ mod coverage_round_three_tests {
                         comments: &HashMap::new(),
                         in_table: false,
                         toc,
+                        flow_pics: false,
                         open: None,
                     },
                 );
@@ -51658,6 +52197,7 @@ mod coverage_round_three_tests {
                     in_table: false,
                     toc: false,
                     open: None,
+                    flow_pics: false,
                 },
             );
             assert_eq!(text(&collected), "heading8910Z");
