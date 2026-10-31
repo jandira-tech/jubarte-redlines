@@ -17,6 +17,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [0.16.0] - 2026-10-31
 
+> **Summary.** Breaking: `changes --json` and `comments --json` emit records only on stdout; their `input_validity` status moved to one JSON line on stderr, which `-q` suppresses (#1925). New: `--version` and the `--help` header carry the build's short Git commit (#1924). `validate` resolves relationship attributes by namespace (#1937), checks every relationships part for missing targets (`MISSING_REL_TARGET`, #1938) and reports a nameless move range (`MOVE_RANGE_NAME_MISSING`, #1939). A PDF table whose rows reach past its grid takes Word's column widths (#1914). A keep-path `rewrite` marks one change per phrase (#1923). An edit can delete a paragraph's first words and insert at its start, with no panic (#1922). Inserted-only words stay ahead of one deleted table, as Word writes them (#1926). On the release's two 600-item samples, scored against Word's own output: redlines mean 74.36 (Docxodus 64.92), counting as 0 the 7 redlines Word 16.115 crashes opening; PDFs mean 79.19 (LibreOffice 54.61) with no failed document. LibreOffice aborts on 2 of the PDF sample's documents, which score 0 in its mean, and Word's own redline crashes Word on all 7 of those redline pairs. The Miri full suite was not run for this release.
+>
+> **Docs.** CHANGELOG.md gained the 0.16.0 section. docs/MARKDOWN.md and jubarte-wasm/npm/README.fragment.md (and the generated jubarte-wasm/npm/README.md) say that changes/comments --json put input_validity on stderr. docs/WORD_DIFFERENCES.md records the single-table order (difference 14/16) and the past-grid table widths (difference 17). The generated docs/rust.md, docs/python.md and docs/flags_datetime.md follow the CLI help (build version and the new validate codes).
+
 ### Changed
 
 - `changes --json` and `comments --json` now emit records only on stdout: the `input_validity` status moved from stdout to one JSON line on stderr, suppressed by `-q` (#1925). The Python CLI and npm CLI's `changes --json` follow the same rule.

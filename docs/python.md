@@ -54,7 +54,7 @@ binary when retention is needed.
 
 ```text
 $ jubarte-redlines --help
-jubarte-redlines 0.15.0
+jubarte-redlines 0.16.0
 Read, edit, compare and render Word documents
 
 Usage: jubarte-redlines [OPTIONS]
@@ -1719,7 +1719,7 @@ redaction therefore refuses with `REDACTION_LEAK` instead of accepting an
 incomplete scan. Comparer settings continue to supply their own limits.
 
 <!-- gen:python-api:start -->
-Reflects the `jubarte_redlines` package built from this source tree (`__version__` reports `0.15.0`).
+Reflects the `jubarte_redlines` package built from this source tree (`__version__` reports `0.16.0`).
 
 ### `JubarteError`
 
@@ -1728,7 +1728,7 @@ Raised when the jubarte-redlines engine cannot process a document.
 
 ### `__version__`
 
-`'0.15.0'`
+`'0.16.0'`
 
 ### `accept_revisions`
 

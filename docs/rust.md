@@ -222,7 +222,7 @@ use the native binary when retention is needed.
 
 ```text
 $ jubarte --help
-jubarte 0.15.0
+jubarte 0.16.0
 Read, edit, compare and render Word documents
 
 Usage: jubarte [OPTIONS]
