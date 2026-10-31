@@ -60,6 +60,250 @@ const EDIT: [&str; 6] = [
     "The fee is forty dollars.",
 ];
 
+/// #1894: these are process integration tests of the one-shot grammar.
+fn repeated_fee(dir: &Path) {
+    let text = "Préface with enough words to trim before the first fee is due; \
+                many intervening words keep the two windows separate; \
+                the second fee is waived with enough trailing words to trim.";
+    std::fs::write(dir.join("a.docx"), docx(&(para(text) + &para("fee")))).unwrap();
+}
+
+#[test]
+fn occurrence_1894_edit_selects_the_second_match_inside_its_group() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    repeated_fee(dir);
+    let (code, out, err) = run(
+        dir,
+        &[
+            "edit",
+            "a.docx",
+            "-p",
+            "p0",
+            "--anchor",
+            "fee",
+            "--occurrence",
+            "2",
+            "--content",
+            "cost",
+            "-p",
+            "p1",
+            "--anchor",
+            "fee",
+            "--content",
+            "charge",
+            "--editing-mode",
+        ],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let bytes = std::fs::read(dir.join("a_modified.docx")).unwrap();
+    let paragraphs = jubarte::inspect::paragraphs(&bytes).unwrap();
+    assert!(paragraphs[0].text.contains("first fee is due"));
+    assert!(paragraphs[0].text.contains("second cost is waived"));
+    assert_eq!(paragraphs[1].text, "charge");
+}
+
+#[test]
+fn occurrence_1894_add_comments_on_the_second_match() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    repeated_fee(dir);
+    let (code, out, err) = run(
+        dir,
+        &[
+            "add",
+            "a.docx",
+            "-p",
+            "p0",
+            "--anchor",
+            "fee",
+            "--occurrence",
+            "2",
+            "--content",
+            "Why waived?",
+        ],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let bytes = std::fs::read(dir.join("a_modified.docx")).unwrap();
+    let comments = jubarte::comments::list_comments(&bytes).unwrap();
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].anchor_text, "fee");
+    assert!(comments[0].before.ends_with("second "), "{:?}", comments[0]);
+    let (_, view, _) = run(dir, &["read", "a_modified.docx"]);
+    assert!(view.contains("first fee is due"), "{view}");
+    assert!(view.contains("second {==fee==}"), "{view}");
+}
+
+#[test]
+fn occurrence_1894_out_of_range_names_the_available_range() {
+    for verb in ["edit", "add"] {
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dir.path();
+        repeated_fee(dir);
+        let (code, out, err) = run(
+            dir,
+            &[
+                verb,
+                "a.docx",
+                "-p",
+                "p0",
+                "--anchor",
+                "fee",
+                "--occurrence",
+                "3",
+                "--content",
+                "cost",
+            ],
+        );
+        assert_eq!(code, 3, "{out}{err}");
+        assert!(err.contains("AMBIGUOUS_ANCHOR"), "{err}");
+        assert!(
+            err.contains("occurrence 3 is outside") && err.contains("1..=2"),
+            "{err}"
+        );
+        assert!(written(dir).is_empty());
+    }
+}
+
+#[test]
+fn occurrence_1894_ambiguity_uses_flags_and_shows_each_context_window() {
+    for verb in ["edit", "add"] {
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dir.path();
+        repeated_fee(dir);
+        let (code, out, err) = run(
+            dir,
+            &[
+                verb,
+                "a.docx",
+                "-p",
+                "p0",
+                "--anchor",
+                "fee",
+                "--content",
+                "cost",
+            ],
+        );
+        assert_eq!(code, 3, "{out}{err}");
+        assert!(err.contains("set --occurrence 1..=2"), "{err}");
+        assert!(!err.contains("set \"occurrence\""), "{err}");
+        let lines: Vec<_> = err.lines().collect();
+        assert!(
+            lines.iter().any(|l| l.trim_start().starts_with("1: ")
+                && l.contains("first fee is due")
+                && l.contains('…')),
+            "{err}"
+        );
+        assert!(
+            lines.iter().any(|l| l.trim_start().starts_with("2: ")
+                && l.contains("second fee is waived")
+                && l.contains('…')),
+            "{err}"
+        );
+        assert!(
+            err.contains("lengthen --anchor") && err.contains("pass --occurrence"),
+            "{err}"
+        );
+        assert!(written(dir).is_empty());
+    }
+}
+
+#[test]
+fn occurrence_1894_plan_keeps_1013_released_wording_exactly() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    repeated_fee(dir);
+    std::fs::write(dir.join("plan.json"), r#"{"schema_version":1,"author":"A","operations":[{"kind":"replace","paragraph":"p0","find":"fee","replacement":"cost"}]}"#).unwrap();
+    let (code, _, err) = run(dir, &["edit", "a.docx", "--plan", "plan.json"]);
+    assert_eq!(code, 3, "{err}");
+    assert_eq!(
+        err,
+        "error: plan refused: AMBIGUOUS_ANCHOR (op-1): \"fee\" occurs 2 times in the paragraph; set \"occurrence\" to 1..=2\n"
+    );
+}
+
+#[test]
+fn occurrence_1894_rejects_misplaced_duplicate_and_invalid_values() {
+    for verb in ["edit", "add"] {
+        for (flags, expected) in [
+            (
+                vec!["--occurrence", "2", "-p", "p0", "--anchor", "fee"],
+                "before the first -p",
+            ),
+            (
+                vec!["-p", "p0", "--occurrence", "2", "--anchor", "fee"],
+                "after --anchor",
+            ),
+            (
+                vec![
+                    "-p",
+                    "p0",
+                    "--anchor",
+                    "fee",
+                    "--occurrence",
+                    "1",
+                    "--occurrence",
+                    "2",
+                ],
+                "given twice",
+            ),
+            (
+                vec!["-p", "p0", "--anchor", "fee", "--occurrence", "0"],
+                "1-based",
+            ),
+            (
+                vec!["-p", "p0", "--anchor", "fee", "--occurrence", "many"],
+                "integer",
+            ),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let dir = dir.path();
+            repeated_fee(dir);
+            let mut args = vec![verb, "a.docx"];
+            args.extend(flags);
+            args.extend(["--content", "cost"]);
+            let (code, out, err) = run(dir, &args);
+            assert_eq!(code, 2, "{out}{err}");
+            assert!(err.contains(expected), "{err}");
+            assert!(written(dir).is_empty());
+        }
+    }
+}
+
+#[test]
+fn occurrence_1894_insert_delete_and_format_keep_the_selected_occurrence() {
+    for (flags, expected) in [
+        (vec!["--content", "fee!"], "second fee! is waived"),
+        (vec!["--content", "!fee"], "second !fee is waived"),
+        (vec!["--delete"], "second  is waived"),
+        (vec!["--style", "bold"], "second **fee** is waived"),
+        (
+            vec!["--content", "fee", "--style", "bold"],
+            "second **fee** is waived",
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dir.path();
+        repeated_fee(dir);
+        let mut args = vec![
+            "edit",
+            "a.docx",
+            "-p",
+            "p0",
+            "--anchor",
+            "fee",
+            "--occurrence=2",
+        ];
+        args.extend(flags);
+        args.push("--editing-mode");
+        let (code, out, err) = run(dir, &args);
+        assert_eq!(code, 0, "{out}{err}");
+        let (_, view, _) = run(dir, &["read", "a_modified.docx"]);
+        assert!(view.contains("first fee is due"), "{view}");
+        assert!(view.contains(expected), "{view}");
+    }
+}
+
 #[test]
 fn edit_writes_file_modified_docx_and_confirms_its_view() {
     let dir = tempfile::tempdir().unwrap();

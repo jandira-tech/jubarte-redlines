@@ -487,6 +487,16 @@ pub fn flag_operations(matches: &clap::ArgMatches) -> Result<Vec<FlagOp>, String
             tokens.extend(indices.zip(values).map(|(i, v)| (i, name, Some(v.clone()))));
         }
     }
+    if let (Some(indices), Some(values)) = (
+        matches.indices_of("occurrence"),
+        matches.get_many::<usize>("occurrence"),
+    ) {
+        tokens.extend(
+            indices
+                .zip(values)
+                .map(|(i, v)| (i, "occurrence", Some(v.to_string()))),
+        );
+    }
     for name in [
         "delete", "resolve", "before", "comment", "accept", "reject", "strike", "restore",
         "visible",
@@ -518,6 +528,16 @@ pub fn flag_operations(matches: &clap::ArgMatches) -> Result<Vec<FlagOp>, String
         match name {
             "anchor" if op.anchor.is_some() => return twice("anchor"),
             "anchor" => op.anchor = value,
+            "occurrence" if op.occurrence.is_some() => return twice("occurrence"),
+            "occurrence" if op.anchor.is_none() => {
+                return Err(format!(
+                    "-p {}: --occurrence must come after --anchor",
+                    op.at
+                ));
+            }
+            "occurrence" => {
+                op.occurrence = value.and_then(|v| v.parse().ok());
+            }
             "content" if op.content.is_some() => return twice("content"),
             "content" => op.content = value,
             "reply" if op.reply.is_some() => return twice("reply"),
@@ -1279,9 +1299,13 @@ pub enum Command {
         /// flags after it belong to it.
         #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append)]
         location: Vec<String>,
-        /// Text inside WHERE the operation applies to (must occur once).
+        /// Text inside WHERE the operation applies to (must occur once,
+        /// unless --occurrence picks a match).
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
         anchor: Vec<String>,
+        /// Pick the Nth anchor match (1-based), after --anchor in this -p group.
+        #[arg(long, value_name = "N", action = clap::ArgAction::Append, value_parser = edit_actions::positive)]
+        occurrence: Vec<usize>,
         /// New text: replaces the anchor; rewrites the paragraph without
         /// one; on c5, the comment's new text.
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
@@ -1404,9 +1428,13 @@ pub enum Command {
         /// Each -p starts an operation; the flags after it belong to it.
         #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append, required_unless_present = "plan")]
         location: Vec<String>,
-        /// Text inside WHERE to comment on (must occur once).
+        /// Text inside WHERE to comment on (must occur once, unless
+        /// --occurrence picks a match).
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
         anchor: Vec<String>,
+        /// Pick the Nth anchor match (1-based), after --anchor in this -p group.
+        #[arg(long, value_name = "N", action = clap::ArgAction::Append, value_parser = edit_actions::positive)]
+        occurrence: Vec<usize>,
         /// The paragraph, comment or reply text.
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
         content: Vec<String>,

@@ -1298,7 +1298,11 @@ Options:
           --restore). Each -p starts an operation; the flags after it belong to it
 
       --anchor <TEXT>
-          Text inside WHERE the operation applies to (must occur once)
+          Text inside WHERE the operation applies to (must occur once, unless
+          --occurrence picks a match)
+
+      --occurrence <N>
+          Pick the Nth anchor match (1-based), after --anchor in this -p group
 
       --content <TEXT>
           New text: replaces the anchor; rewrites the paragraph without one; on c5, the
@@ -1377,11 +1381,6 @@ Options:
 
           [default: auto]
 
-  -o, --output <FILE.docx>
-          The edited document, a .docx (default: `<FILE's
-          directory>/<stem>_modified.docx`). Any other extension is written as a .docx
-          too; .md, .json, .pdf and .png name the task that writes them
-
   -q, --quiet
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
           are still written; a reading task (`read`, `changes`, `compare` without -o,
@@ -1389,6 +1388,11 @@ Options:
           still print. `read`, `changes` and `comments` drop their stderr validity
           status (JSON under `changes --json` and `comments --json`). `read --json` and
           `read --for-edit` keep validity counts in their output, -q or not
+
+  -o, --output <FILE.docx>
+          The edited document, a .docx (default: `<FILE's
+          directory>/<stem>_modified.docx`). Any other extension is written as a .docx
+          too; .md, .json, .pdf and .png name the task that writes them
 
       --out-dir [<DIR>]
           Write the bundle instead: clean.docx, redline.docx, patch.diff and
@@ -1514,7 +1518,11 @@ Options:
           starts an operation; the flags after it belong to it
 
       --anchor <TEXT>
-          Text inside WHERE to comment on (must occur once)
+          Text inside WHERE to comment on (must occur once, unless --occurrence picks a
+          match)
+
+      --occurrence <N>
+          Pick the Nth anchor match (1-based), after --anchor in this -p group
 
       --content <TEXT>
           The paragraph, comment or reply text

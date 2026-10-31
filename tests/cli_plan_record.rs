@@ -45,6 +45,52 @@ fn plan(dir: &Path) -> serde_json::Value {
 }
 
 #[test]
+fn occurrence_1894_replace_names_paragraphs_with_one_match_each() {
+    replace_ambiguity_1894(false, "found 4: p6, p7, p40, p120; pick one with --at pN");
+}
+
+#[test]
+fn occurrence_1894_replace_names_paragraphs_and_repeated_match_counts() {
+    replace_ambiguity_1894(
+        true,
+        "found 5: p6 (2), p7, p40, p120; pick one with --at pN",
+    );
+}
+
+fn replace_ambiguity_1894(repeat: bool, expected: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    let body: String = (0..=120)
+        .map(|i| {
+            para(match i {
+                6 if repeat => "Affiliate Affiliate",
+                6 | 7 | 40 | 120 => "Affiliate",
+                _ => "Other text",
+            })
+        })
+        .collect();
+    std::fs::write(dir.join("a.docx"), docx(&body)).unwrap();
+    let (code, out, err) = run(
+        dir,
+        &[
+            "edit",
+            "replace",
+            "a.docx",
+            "--find",
+            "Affiliate",
+            "--text",
+            "Affiliatez",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(err.contains("AMBIGUOUS_ANCHOR"), "{err}");
+    assert!(err.contains(expected), "{err}");
+    assert!(!dir.join("out.docx").exists());
+}
+
+#[test]
 fn edit_and_add_record_into_one_plan_that_edit_applies_and_consumes() {
     let dir = tempfile::tempdir().unwrap();
     let dir = dir.path();

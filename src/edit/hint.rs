@@ -29,6 +29,47 @@ impl PlanSyntax {
     /// Every syntax, for the tests that check each one's fragments.
     pub const ALL: [Self; 4] = [Self::V1, Self::Flags, Self::V2, Self::Typed];
 
+    /// Quote the occurrence selector in the caller's grammar. Plans retain
+    /// #1013's released wording; one-shot flags also show every candidate.
+    pub(super) fn ambiguous_anchor(
+        self,
+        text: &str,
+        anchor: &str,
+        hits: &[(usize, usize)],
+    ) -> String {
+        let shown = super::anchor::shown(anchor);
+        let n = hits.len();
+        let selector = match self {
+            Self::Flags | Self::Typed => format!("set --occurrence 1..={n}"),
+            Self::V1 | Self::V2 => format!("set \"occurrence\" to 1..={n}"),
+        };
+        let mut message = format!("{shown} occurs {n} times in the paragraph; {selector}");
+        if self == Self::Flags {
+            for (i, &(start, end)) in hits.iter().enumerate() {
+                let before = if text[..start].chars().nth_back(20).is_some() {
+                    "…"
+                } else {
+                    ""
+                };
+                let after = if text[end..].chars().nth(20).is_some() {
+                    "…"
+                } else {
+                    ""
+                };
+                let window = super::context(text, start, end, &text[start..end]);
+                message.push_str(&format!(
+                    "\n  {}: {}",
+                    i + 1,
+                    super::anchor::shown(&format!("{before}{window}{after}"))
+                ));
+            }
+            message.push_str(
+                "\nlengthen --anchor to the words around the one you mean, or pass --occurrence",
+            );
+        }
+        message
+    }
+
     /// The same choice as a refusal's data records it.
     pub(super) const fn revision(self) -> super::refusal::RevisionSyntax {
         use super::refusal::RevisionSyntax;
