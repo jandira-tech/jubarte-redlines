@@ -728,3 +728,45 @@ fn a_kept_mark_loses_its_section_break_on_accept() {
         "c04 accept"
     );
 }
+
+#[test]
+fn reject_keeps_the_joined_paragraph_and_the_blank_inside_the_control() {
+    // #2006: the shape a Word-mode compare writes when a block control's
+    // paragraphs change. Word 16's Reject All (2026-10-31,
+    // jubarte-loop/agents/issues/2006) keeps both paragraphs in the control.
+    let eq = r#"<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><m:t>x</m:t></m:r></m:oMath>"#;
+    let wrapped = |kind: &str, inner: &str, id: u32| {
+        format!(r#"<w:{kind} w:id="{id}" {REV}>{inner}</w:{kind}>"#)
+    };
+    let cases = [
+        (
+            "t2006",
+            p(&mark("ins", 1), &tracked("ins", "New.", 2))
+                + &p(
+                    "",
+                    &(tracked("ins", "New2.", 3) + &tracked("del", "Old.", 4)),
+                )
+                + "<w:p/>",
+            "[sdt[pOld.][p]]",
+        ),
+        (
+            "m2006",
+            p(&mark("ins", 1), &wrapped("ins", eq, 2))
+                + &p("", &(wrapped("ins", eq, 3) + &wrapped("del", eq, 4)))
+                + "<w:p/>",
+            "[sdt[p{eq}][p]]",
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (word, blocks, expected) in cases {
+        let redline = docx_with(&sdt(&blocks), &[]);
+        let out = reject_revisions(&redline).unwrap();
+        let report = check_word_valid_package(&out);
+        assert!(report.ok(), "{word}: {:?}", report.errors);
+        let got = shape(&out);
+        if got != expected {
+            failures.push(format!("{word}: {got}, Word {expected}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

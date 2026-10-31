@@ -2682,6 +2682,13 @@ fn add_content_controls_with_owners(
         }
     }
 
+    // Document order of the new document's nodes; wrapping keeps it.
+    let order: HashMap<NodeId, usize> = dom
+        .descendants(new_document, None)
+        .into_iter()
+        .enumerate()
+        .map(|(i, n)| (n, i))
+        .collect();
     let mut paragraph_by_id: HashMap<String, NodeId> = HashMap::new();
     for p in dom.descendants(new_document, Some(&W::p())) {
         if let Some(id) = dom.attribute(p, &unique_id) {
@@ -2963,6 +2970,38 @@ fn add_content_controls_with_owners(
                 }
             }
             runs_in_new_document = anchors;
+        }
+
+        // A paragraph made only of this control's paragraphs belongs inside
+        // it, runs or not: a runless blank, an equation (`m:r`, no `w:r`).
+        // Word keeps both in the control (#2006).
+        if let Some(paragraph_owners) = paragraph_owners
+            && !runs_in_new_document.is_empty()
+            && !owned_paragraphs.is_empty()
+        {
+            let mut joined: Vec<NodeId> = paragraph_owners
+                .iter()
+                .filter(|(joined, owners)| {
+                    !owners.is_empty()
+                        && owners.iter().all(|o| owned_paragraphs.contains(o))
+                        && !runs_in_new_document.contains(joined)
+                        && order.contains_key(joined)
+                        && std::iter::successors(dom.parent(**joined), |&a| dom.parent(a))
+                            .any(|a| a == new_document)
+                })
+                .map(|(&joined, _)| joined)
+                .collect();
+            if !joined.is_empty() {
+                // An anchor inside a joined paragraph (one of its runs) is
+                // covered by the paragraph itself.
+                runs_in_new_document.retain(|&anchor| {
+                    !dom.ancestors(anchor, None)
+                        .iter()
+                        .any(|a| joined.contains(a))
+                });
+                runs_in_new_document.append(&mut joined);
+                runs_in_new_document.sort_by_key(|n| order.get(n).copied().unwrap_or(usize::MAX));
+            }
         }
 
         // deepest common ancestor of all the runs (nearest-first intersection)
