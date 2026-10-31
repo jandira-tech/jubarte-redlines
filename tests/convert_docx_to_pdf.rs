@@ -17132,6 +17132,72 @@ fn issue_1975_inline_picture_in_textbox_wraps_with_its_text() {
     );
 }
 
+/// #1734: when a caption and its following picture cannot share a line,
+/// the caption stays above the picture, in fixed/autofit cells and the body.
+fn assert_caption_above_inline_picture(docx: &[u8], context: &str) {
+    for revisions in [RevisionStyle::Word, RevisionStyle::Conventional] {
+        let pdf = one_text_object_per_glyph_run(
+            &docx_to_pdf_with(
+                docx,
+                PdfOptions {
+                    revisions,
+                    ..PdfOptions::default()
+                },
+            )
+            .expect("caption followed by an inline picture"),
+        );
+        assert_eq!(pdf_page_count(&pdf), 1, "{context}: stays on one page");
+        let (cx, cy) = pdf_glyph_text_xy(&pdf, "Caption").expect("Caption paints");
+        let (_, ty) = pdf_glyph_text_xy(&pdf, "text").expect("text paints");
+        let boxes = pdf_image_boxes(&pdf);
+        assert_eq!(boxes.len(), 1, "{context}: picture paints exactly once");
+        let (ix, iy, iw, ih) = boxes[0];
+        assert!(
+            (cy - ty).abs() < 0.1,
+            "{context}: Caption text stays on one line; caption={cy}, text={ty}"
+        );
+        // PDF coordinates grow upward: the caption baseline must be above
+        // the picture's TOP, not merely above its baseline/bottom edge.
+        assert!(
+            cy > iy + ih,
+            "{context}: caption baseline {cy} must be above picture top {}; picture={:?}",
+            iy + ih,
+            boxes[0]
+        );
+        assert!(
+            (ix - cx).abs() < 0.5 && (iw - 60.0).abs() < 0.1 && (ih - 30.0).abs() < 0.1,
+            "{context}: the 60x30pt picture wraps to the caption's left edge; caption x={cx}, picture={:?}",
+            boxes[0]
+        );
+    }
+}
+
+#[test]
+fn issue_1734_fixed_cell_caption_above_inline_picture() {
+    assert_caption_above_inline_picture(
+        include_bytes!("fixtures/inline-pictures/1734-cell.docx"),
+        "fixed 90pt cell",
+    );
+}
+
+#[test]
+fn issue_1734_autofit_cell_caption_above_inline_picture() {
+    // Constructed 315pt table, 2400/6000 grid, no tcW: column 1 is 90pt.
+    // An unconstrained autofit table can widen until both fit on one line.
+    assert_caption_above_inline_picture(
+        include_bytes!("fixtures/inline-pictures/1734-i1.docx"),
+        "autofit cell without tcW",
+    );
+}
+
+#[test]
+fn issue_1734_body_caption_above_inline_picture_control() {
+    assert_caption_above_inline_picture(
+        include_bytes!("fixtures/inline-pictures/1734-body90.docx"),
+        "90pt body control",
+    );
+}
+
 /// `drawing_docx` plus a numbering part, so a numPr marker and an inline
 /// picture live in one package.
 fn numbered_drawing_docx(body: &str, numbering: &str) -> Vec<u8> {
