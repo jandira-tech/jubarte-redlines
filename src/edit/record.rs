@@ -19,6 +19,7 @@ const APPLY_ONLY: &[&str] = &[
     "--consume",
     "--out-dir",
     "--output",
+    "--in-place",
     "--force",
     "--editing-mode",
     "--suggesting-mode",
@@ -450,6 +451,10 @@ mod tests {
         assert_eq!(
             plan_flag_conflict(true, &["--quiet", "--pdf", "--out-dir"], "p.json").unwrap(),
             "--out-dir takes effect when the plan is applied (jubarte edit FILE --plan p.json), and is not recorded"
+        );
+        assert_eq!(
+            plan_flag_conflict(true, &["--in-place"], "p.json").unwrap(),
+            "--in-place takes effect when the plan is applied (jubarte edit FILE --plan p.json), and is not recorded"
         );
         assert_eq!(
             plan_flag_conflict(true, &["--author", "--dry-run"], "p.json"),

@@ -291,6 +291,8 @@ struct Output<'a> {
     source: String,
     /// How a `.pdf` or `.png` output is drawn.
     render: &'a RenderArgs,
+    /// SHA-256 of the bytes `--in-place` replaces, set once they are read.
+    replaced_sha256: Option<String>,
 }
 
 impl<'a> Output<'a> {
@@ -316,6 +318,7 @@ impl<'a> Output<'a> {
             // An identifier agents read back: `/` on every OS (#568).
             source: format!("{} (not written)", slash_path(&path.with_extension("docx"))),
             render,
+            replaced_sha256: None,
         }
     }
 }
@@ -374,9 +377,27 @@ fn write_output(out: &Output<'_>, produced: Produced<'_>) -> Result<(), ConvertF
             ensure_writable(out.path, out.force)?;
             let before =
                 (!out.quiet).then(|| input_confirmation_view(out.input, out.markdown_input));
-            publish_file(out.path, bytes, out.force)?;
+            if let Some(expected) = out.replaced_sha256.clone() {
+                // `--in-place`: recheck the hash, then replace only this path.
+                // A symlink is followed inside `publish_files`.
+                let path = out.path.to_path_buf();
+                publish_files(
+                    &[(path.clone(), bytes)],
+                    &Recheck {
+                        force: false,
+                        replace_through: &|candidate| candidate == path,
+                        alias: &|_| Ok(()),
+                        source: &|| recheck_source_sha256(&path, &expected),
+                    },
+                )?;
+            } else {
+                publish_file(out.path, bytes, out.force)?;
+            }
             if !out.quiet {
-                eprintln!("{}", wrote_line(out.path, Format::Docx, bytes.len(), None));
+                match out.replaced_sha256.as_deref() {
+                    Some(sha) => eprintln!("{}", wrote_in_place_line(out.path, sha, None)),
+                    None => eprintln!("{}", wrote_line(out.path, Format::Docx, bytes.len(), None)),
+                }
             }
             if let Some(before) = before {
                 print_success(out.input, before, out.path, bytes)?;
@@ -451,22 +472,51 @@ fn comment_changes_note(left: usize) -> String {
     )
 }
 
+/// The `-o` of `accept` / `reject`, or FILE when `--in-place` names it.
+/// `-o FILE --force` still replaces FILE and says that spelling is deprecated.
+fn resolution_output<'a>(
+    task: Task,
+    file: &'a Path,
+    output: &'a Option<PathBuf>,
+    in_place: bool,
+    force: bool,
+    render: &'a RenderArgs,
+    quiet: bool,
+) -> Result<Output<'a>, String> {
+    let destination = output.as_deref().unwrap_or(file);
+    if !in_place && force && same_path(destination, file) {
+        eprintln!(
+            "warning: -o {} --force is deprecated; use --in-place",
+            slash_path(destination)
+        );
+    }
+    let mut out = task_output(task, destination, file, render, force || in_place, quiet)?;
+    // The input is a DOCX whatever its name. `.json` and `.md` would
+    // otherwise be inferred from the path and overwrite the package.
+    if in_place {
+        out.kind = Format::Docx;
+    }
+    Ok(out)
+}
+
 /// Shared body for `accept` / `reject`: read the redline, apply the package-wide
 /// resolution, and write the result under the compare path's no-clobber
 /// contract. Generic over the resolver's error so neither `OpcError`'s path nor
-/// the two arms' bodies are duplicated.
+/// the two arms' bodies are duplicated. `--in-place` records the hash of the
+/// bytes just read, then publishes through the same writer as `-o`.
 fn run_resolution(
     file: &Path,
-    out: &Output<'_>,
+    out: &mut Output<'_>,
     filter: &jubarte::changes::ChangeFilter,
     apply: fn(
         &[u8],
         &jubarte::changes::ChangeFilter,
     ) -> Result<jubarte::changes::ResolvedChanges, jubarte::changes::ChangeError>,
     what: &str,
+    in_place: bool,
 ) -> ExitCode {
     use jubarte::changes::ChangeError;
-    let run = || -> Result<(), (ExitCode, String)> {
+    let mut run = || -> Result<(), (ExitCode, String)> {
         let failed = |e: String| (ExitCode::FAILURE, e);
         // An id that is not a change id, or names two changes, is a usage
         // error: exit 2, as clap's own.
@@ -475,6 +525,9 @@ fn run_resolution(
             .map_err(|e| (ExitCode::from(2), e.to_string()))?;
         check_output(out).map_err(|f| (ExitCode::from(f.code), f.message))?;
         let bytes = read_word(file).map_err(failed)?;
+        if in_place {
+            out.replaced_sha256 = Some(jubarte::inspect::source_sha256(&bytes));
+        }
         let resolved = apply(&bytes, &filter).map_err(|e| match e {
             ChangeError::PartOfChange { named, whole, .. } => (
                 ExitCode::from(2),
@@ -963,6 +1016,7 @@ fn run_read_tables(
         view: args,
         source: String::new(),
         render: &render,
+        replaced_sha256: None,
     });
     if let Some(out) = &out {
         refuse_output_alias(out.path, &[(file, "the input")])
@@ -1082,6 +1136,7 @@ fn run_text(
             view: args,
             source: source.unwrap_or_default(),
             render: &render,
+            replaced_sha256: None,
         };
         check_output(&out)?;
         if kind == Format::Json {
@@ -1350,6 +1405,8 @@ struct EditJob<'a> {
     quiet: bool,
     /// `-a`/`--author` was given, or a plan names the author (#1891).
     author_given: bool,
+    /// `--in-place`: publish over FILE and say which bytes were replaced.
+    in_place: bool,
 }
 
 /// Exit 3: the plan was refused (stale source, ambiguous anchor, ...); the
@@ -1459,6 +1516,11 @@ fn run_edit(
             let output = default_output.as_deref();
             match taken_edit_output(job) {
                 Some(Taken::Blocked(why)) => edit_status(format_args!("note: {why}")),
+                // `--in-place` already authorizes replacing the input, so the
+                // next command does not grow a `--force`.
+                Some(Taken::Replaceable(_)) if job.in_place => {
+                    edit_status(format_args!("next: {}", next_command(false, output)));
+                }
                 Some(Taken::Replaceable(_)) if in_place && !job.force => {
                     edit_status(format_args!(
                         "note: the next command updates {} in place (--force)",
@@ -1840,9 +1902,15 @@ fn refuse_edit_output_alias(job: &EditJob<'_>, output: &Path) -> Result<(), (u8,
 /// Compare the exact preparation bytes with a fresh read of the named
 /// source. Never replace the preparation bytes with this second read.
 fn recheck_edit_source(file: &Path, source: &[u8]) -> Result<(), (u8, String)> {
+    recheck_source_sha256(file, &jubarte::inspect::source_sha256(source))
+}
+
+/// The same refusal as [`recheck_edit_source`], against a hash already
+/// taken: `accept` and `reject --in-place` keep the hash, not the bytes.
+fn recheck_source_sha256(file: &Path, expected: &str) -> Result<(), (u8, String)> {
     let current =
         std::fs::read(file).map_err(|e| (1, format!("rechecking {}: {e}", file.display())))?;
-    if jubarte::inspect::source_sha256(source) != jubarte::inspect::source_sha256(&current) {
+    if expected != jubarte::inspect::source_sha256(&current) {
         return Err((
             EXIT_PLAN_REFUSED,
             format!(
@@ -1852,6 +1920,18 @@ fn recheck_edit_source(file: &Path, source: &[u8]) -> Result<(), (u8, String)> {
         ));
     }
     Ok(())
+}
+
+/// The file `--in-place` replaces. A symlink's target is that file, so the
+/// link stays and the target keeps its mode. Any other path is itself.
+fn in_place_target(path: &Path) -> Result<PathBuf, (u8, String)> {
+    match path.symlink_metadata() {
+        Ok(meta) if meta.file_type().is_symlink() => std::fs::canonicalize(path)
+            .map_err(|e| (1, format!("resolving {}: {e}", slash_path(path)))),
+        Ok(_) => Ok(path.to_path_buf()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(path.to_path_buf()),
+        Err(e) => Err((1, format!("reading {}: {e}", path.display()))),
+    }
 }
 
 /// No two roles of a publication may resolve to the same output file.
@@ -1950,6 +2030,8 @@ fn publication_test_hook(_phase: &str) -> Result<(), String> {
 struct Recheck<'a> {
     /// `--force`: replace an existing destination instead of refusing it.
     force: bool,
+    /// `--in-place` may replace this path without `--force`. Only the input.
+    replace_through: &'a dyn Fn(&Path) -> bool,
     /// Refuse an output that now resolves to one of the command's inputs.
     alias: &'a dyn Fn(&Path) -> Refused,
     /// Refuse when the source changed since it was read.
@@ -1972,8 +2054,17 @@ fn publish_files(
     let publish = |staged: &mut Vec<(jubarte::publication::StagedFile, PathBuf)>,
                    committed: &mut Vec<PathBuf>| {
         for (path, bytes) in outputs {
-            let held = jubarte::publication::StagedFile::prepare(path, bytes, recheck.force)
-                .map_err(|e| (1, format!("writing {}: {e}", path.display())))?;
+            let through = (recheck.replace_through)(path);
+            // Follow a symlink only for the in-place input. Every other
+            // output still replaces the directory entry it was given.
+            let dest = if through {
+                in_place_target(path)?
+            } else {
+                path.clone()
+            };
+            let held =
+                jubarte::publication::StagedFile::prepare(&dest, bytes, recheck.force || through)
+                    .map_err(|e| (1, format!("writing {}: {e}", path.display())))?;
             staged.push((held, path.clone()));
         }
         publication_test_hook("staged").map_err(|e| (1, e))?;
@@ -1987,16 +2078,16 @@ fn publish_files(
                 .map(|(path, _)| path.clone())
                 .collect::<Vec<_>>(),
         )?;
-        if !recheck.force
-            && let Some((path, _)) = outputs
-                .iter()
-                .find(|(path, _)| path.symlink_metadata().is_ok())
-        {
+        if let Some((path, _)) = outputs.iter().find(|(path, _)| {
+            !recheck.force && !(recheck.replace_through)(path) && path.symlink_metadata().is_ok()
+        }) {
             return Err(taken_output(path));
         }
         for (held, path) in staged.drain(..) {
             (recheck.alias)(&path)?;
-            if committed.is_empty() {
+            // Companions may already be committed. The in-place input is
+            // still checked, and it is committed last.
+            if committed.is_empty() || (recheck.replace_through)(&path) {
                 (recheck.source)()?;
             }
             publication_test_hook("checked").map_err(|e| (1, e))?;
@@ -2341,6 +2432,19 @@ fn edit_notes(
     lines
 }
 
+/// The default `<stem>_modified.docx` sibling leaves FILE untouched (#1888).
+/// Absent for `-o`, `--out-dir`, `--in-place`, and an input that already is
+/// that default (its stem ends `_modified`, so the write is the file itself).
+fn default_output_unchanged_note(job: &EditJob<'_>, path: &Path) -> Option<String> {
+    if job.in_place || job.explicit_output || path == job.file {
+        return None;
+    }
+    Some(format!(
+        "; {} is unchanged (--in-place updates it)",
+        slash_path(job.file)
+    ))
+}
+
 /// A pure revision resolution keeps its existing absence of a bundle summary.
 fn is_pure_resolution(plan: &jubarte::edit::EditPlan, result: &jubarte::edit::EditResult) -> bool {
     plan.operations.is_empty()
@@ -2420,10 +2524,20 @@ fn write_edited(
             .collect::<Vec<_>>(),
     )?;
     // The PNG names are known only now: nothing is written over a file.
-    if !job.force
-        && let Some((taken, _)) = outputs.iter().find(|(p, _)| p.symlink_metadata().is_ok())
-    {
+    // `--in-place` authorizes the input only. A PDF, a PNG page or a
+    // failed-op plan that already exists still needs `--force`.
+    if let Some((taken, _)) = outputs.iter().find(|(output, _)| {
+        !job.force && !(job.in_place && output == job.file) && output.symlink_metadata().is_ok()
+    }) {
         return Err(taken_output(taken));
+    }
+    // Companions commit first. A failure there leaves the input untouched.
+    if job.in_place
+        && outputs.len() > 1
+        && let Some(index) = outputs.iter().position(|(output, _)| output == job.file)
+    {
+        let primary = outputs.remove(index);
+        outputs.push(primary);
     }
     // Stage beside each destination, then commit without clobbering unless
     // --force was requested; a precommit failure leaves nothing behind.
@@ -2431,6 +2545,7 @@ fn write_edited(
         &outputs,
         &Recheck {
             force: job.force,
+            replace_through: &|output| job.in_place && output == job.file,
             alias: &|path| refuse_edit_output_alias(job, path),
             source: &|| recheck_edit_source(job.file, source),
         },
@@ -2441,10 +2556,19 @@ fn write_edited(
         skipped_status(result, failed);
         return Ok(());
     }
-    edit_status(format_args!(
-        "{}",
-        wrote_line_with(path, Format::Docx, document.len(), None, markup.as_deref(),)
-    ));
+    let mut line = if job.in_place {
+        wrote_in_place_line(
+            path,
+            &jubarte::inspect::source_sha256(source),
+            markup.as_deref(),
+        )
+    } else {
+        wrote_line_with(path, Format::Docx, document.len(), None, markup.as_deref())
+    };
+    if let Some(note) = default_output_unchanged_note(job, path) {
+        line.push_str(&note);
+    }
+    edit_status(format_args!("{line}"));
     if markup.is_some() && !job.author_given {
         edit_status(format_args!(
             "warning: no -a given; the new markup is signed \"{}\"",
@@ -2741,6 +2865,7 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         revisions: flags.revisions,
         quiet: flags.quiet,
         author_given: flags.options.author_given || flags.plan.is_some(),
+        in_place: flags.options.in_place,
     };
     let skipped = run_edit(&job, &plan, &source, &notes, &plan_notes)?;
     if let Some((path, _)) = consumed.as_ref().filter(|_| skipped > 0) {
@@ -3083,6 +3208,7 @@ fn run(job: &Job) -> Result<(), ConvertFailure> {
         view: &job.read,
         source: source.clone(),
         render: &job.render,
+        replaced_sha256: None,
     });
     let original = read_document(&job.original)?;
     let modified = read_document(&job.modified)?;
@@ -4396,12 +4522,21 @@ fn cli_main() -> ExitCode {
         Some(Command::Accept {
             file,
             output,
+            in_place,
             force,
             keep_nested_comment,
             selection,
             render,
         }) => {
-            let out = match task_output(Task::Accept, &output, &file, &render, force, quiet) {
+            let mut out = match resolution_output(
+                Task::Accept,
+                &file,
+                &output,
+                in_place,
+                force,
+                &render,
+                quiet,
+            ) {
                 Ok(out) => out,
                 Err(e) => return exit_code(Err(e)),
             };
@@ -4410,17 +4545,33 @@ fn cli_main() -> ExitCode {
             } else {
                 jubarte::changes::accept_changes_with_report
             };
-            return run_resolution(&file, &out, &selection.filter(), apply, "accept");
+            return run_resolution(
+                &file,
+                &mut out,
+                &selection.filter(),
+                apply,
+                "accept",
+                in_place,
+            );
         }
         Some(Command::Reject {
             file,
             output,
+            in_place,
             force,
             keep_nested_comment,
             selection,
             render,
         }) => {
-            let out = match task_output(Task::Reject, &output, &file, &render, force, quiet) {
+            let mut out = match resolution_output(
+                Task::Reject,
+                &file,
+                &output,
+                in_place,
+                force,
+                &render,
+                quiet,
+            ) {
                 Ok(out) => out,
                 Err(e) => return exit_code(Err(e)),
             };
@@ -4429,7 +4580,14 @@ fn cli_main() -> ExitCode {
             } else {
                 jubarte::changes::reject_changes_with_report
             };
-            return run_resolution(&file, &out, &selection.filter(), apply, "reject");
+            return run_resolution(
+                &file,
+                &mut out,
+                &selection.filter(),
+                apply,
+                "reject",
+                in_place,
+            );
         }
         Some(Command::Convert {
             file,
@@ -5372,7 +5530,7 @@ mod tests {
                     jubarte::changes::ChangeFilter::default()
                 );
                 assert_eq!(file, PathBuf::from("rl.docx"));
-                assert_eq!(output, PathBuf::from("out.docx"));
+                assert_eq!(output.as_deref(), Some(Path::new("out.docx")));
                 assert!(force);
             }
             other => panic!("expected accept subcommand, got {other:?}"),
@@ -5436,7 +5594,7 @@ mod tests {
                     jubarte::changes::ChangeFilter::default()
                 );
                 assert_eq!(file, PathBuf::from("rl.docx"));
-                assert_eq!(output, PathBuf::from("out.docx"));
+                assert_eq!(output.as_deref(), Some(Path::new("out.docx")));
                 assert!(!force);
             }
             other => panic!("expected reject subcommand, got {other:?}"),

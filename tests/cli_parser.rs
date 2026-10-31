@@ -2574,18 +2574,22 @@ fn apply_help_names_only_the_ways_apply_publishes() {
             .to_string();
         help.split_whitespace().collect::<Vec<_>>().join(" ")
     };
-    // apply has no --save-plan: its output is required unless it bundles
-    // or dry-runs.
+    // apply has no --save-plan: its output is required unless it bundles,
+    // replaces FILE, or dry-runs. "saving" stays off this page.
     let apply = flat("apply");
     assert!(
-        apply.contains("Primary edited DOCX; required unless bundling or dry-running"),
+        apply.contains(
+            "Primary edited DOCX; required unless bundling, replacing FILE or dry-running"
+        ),
         "{apply}"
     );
     assert!(!apply.contains("saving"), "{apply}");
-    // An inline action saves a plan instead.
+    // An inline action saves a plan instead, and can replace FILE.
     let replace = flat("replace");
     assert!(
-        replace.contains("Primary edited DOCX; required unless saving, bundling or dry-running"),
+        replace.contains(
+            "Primary edited DOCX; required unless saving, bundling, replacing FILE or dry-running"
+        ),
         "{replace}"
     );
 }

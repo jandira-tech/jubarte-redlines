@@ -7,10 +7,12 @@ exit codes as the ``jubarte`` binary, driven in-process."""
 
 from __future__ import annotations
 
+import hashlib
 import importlib.metadata
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import zipfile
@@ -19,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+import jubarte_redlines.__main__ as cli
+import jubarte_redlines.document as document
 from jubarte_redlines.__main__ import main
 
 from docx_fixture import docx, para
@@ -29,6 +33,20 @@ def _listed(out: str) -> list[dict]:
     rows = [json.loads(line) for line in out.splitlines()]
     assert all("input_validity" not in row for row in rows), out
     return rows
+
+
+def _cli(argv: list[str], capsys: pytest.CaptureFixture[str]) -> tuple[int, str, str]:
+    """Run the CLI, turning a usage ``SystemExit`` into its code."""
+    try:
+        code = main(argv)
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 1
+    captured = capsys.readouterr()
+    return code, captured.out, captured.err
+
+
+def _sha8(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:8]
 
 
 @pytest.fixture
@@ -957,6 +975,304 @@ def test_edit_and_add_write_one_document_as_the_binary(
     assert main([*add, "--force"]) == 0
     assert f"\nsource: {written}\n" in capsys.readouterr().out
     assert sorted(p.name for p in tmp_path.glob("letter_modified*")) == ["letter_modified.docx", "letter_modified.pdf"]
+
+
+def test_in_place_edit_and_add_replace_the_input(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    before = letter.read_bytes()
+    prefix = _sha8(before)
+    code, _out, err = _cli(
+        [
+            "edit",
+            str(letter),
+            "-p",
+            "p1",
+            "--anchor",
+            "his or her",
+            "--content",
+            "their",
+            "-a",
+            "GiantCo",
+            "--in-place",
+        ],
+        capsys,
+    )
+    assert code == 0, err
+    line = err.splitlines()[0]
+    assert line.startswith(f"wrote {letter} in place (replaced sha256 {prefix}\u2026)"), line
+    assert '; 1 change by "GiantCo"' in line, line
+    assert "(docx," not in line, line
+    assert "no -a given" not in err
+    assert letter.read_bytes() != before
+    assert not (tmp_path / "letter_modified.docx").exists()
+
+    commented = tmp_path / "commented.docx"
+    commented.write_bytes(before)
+    prefix = _sha8(before)
+    code, _out, err = _cli(
+        [
+            "add",
+            str(commented),
+            "-p",
+            "p1",
+            "--anchor",
+            "his or her",
+            "--content",
+            "Cap the fee?",
+            "-a",
+            "GiantCo",
+            "--in-place",
+        ],
+        capsys,
+    )
+    assert code == 0, err
+    line = err.splitlines()[0]
+    assert line.startswith(f"wrote {commented} in place (replaced sha256 {prefix}\u2026)"), line
+    assert '; 1 comment by "GiantCo"' in line, line
+    assert "(docx," not in line
+    assert commented.read_bytes() != before
+    assert not (tmp_path / "commented_modified.docx").exists()
+
+
+def test_in_place_edit_without_author_keeps_the_warning(
+    letter: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, _out, err = _cli(
+        ["edit", str(letter), "-p", "p2", "--anchor", "3", "--content", "4", "--in-place"],
+        capsys,
+    )
+    assert code == 0, err
+    line = err.splitlines()[0]
+    assert ': no -a given' in line and 'by "Jubarte"' in line, line
+    assert 'warning: no -a given; the new markup is signed "Jubarte"' in err
+
+
+def test_in_place_accept_and_reject_replace_the_input(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    original = tmp_path / "a.docx"
+    modified = tmp_path / "b.docx"
+    original.write_bytes(docx(para("alpha beta")))
+    modified.write_bytes(docx(para("alpha gamma")))
+    redline = tmp_path / "redline.docx"
+    assert main(["compare", str(original), str(modified), "-o", str(redline), "-q"]) == 0
+    capsys.readouterr()
+    packed = redline.read_bytes()
+    prefix = _sha8(packed)
+    accept = tmp_path / "accept.docx"
+    reject = tmp_path / "reject.docx"
+    accept.write_bytes(packed)
+    reject.write_bytes(packed)
+
+    code, out, err = _cli(["accept", str(accept), "--in-place"], capsys)
+    assert code == 0, err
+    assert err.splitlines()[0] == f"wrote {accept} in place (replaced sha256 {prefix}\u2026)", err
+    assert "deprecated" not in err and "(docx," not in err
+    assert out == ""
+    assert main(["text", str(accept), "-q"]) == 0
+    assert "alpha gamma" in capsys.readouterr().out
+    assert not (tmp_path / "accept_modified.docx").exists()
+
+    code, _out, err = _cli(["reject", str(reject), "--in-place"], capsys)
+    assert code == 0, err
+    assert err.splitlines()[0] == f"wrote {reject} in place (replaced sha256 {prefix}\u2026)", err
+    assert "deprecated" not in err
+    assert main(["text", str(reject), "-q"]) == 0
+    assert "alpha beta" in capsys.readouterr().out
+
+
+def test_in_place_refusal_leaves_the_input_byte_identical(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    before = letter.read_bytes()
+    code, _out, err = _cli(
+        ["edit", str(letter), "-p", "p1", "--anchor", "absent words", "--content", "x", "--in-place"],
+        capsys,
+    )
+    assert code == 3, err
+    assert "absent words" in err or "absent words" in _out
+    assert letter.read_bytes() == before
+    assert not (tmp_path / "letter_modified.docx").exists()
+
+
+def test_in_place_conflicts_with_output(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    before = letter.read_bytes()
+    code, _out, err = _cli(
+        ["edit", str(letter), "-p", "p1", "--content", "x", "--in-place", "-o", str(tmp_path / "out.docx")],
+        capsys,
+    )
+    assert code == 2, err
+    assert "cannot be used with" in err and "--in-place" in err
+    assert letter.read_bytes() == before
+    assert not (tmp_path / "out.docx").exists()
+
+
+def test_in_place_does_not_clobber_a_pdf_without_force(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    before = letter.read_bytes()
+    pdf = tmp_path / "letter.pdf"
+    pdf.write_bytes(b"keep-pdf")
+    code, _out, err = _cli(
+        [
+            "edit",
+            str(letter),
+            "-p",
+            "p1",
+            "--anchor",
+            "his or her",
+            "--content",
+            "their",
+            "--in-place",
+            "--pdf",
+        ],
+        capsys,
+    )
+    assert code == 2, err
+    assert "OUTPUT_EXISTS" in err and "letter.pdf" in err, err
+    assert letter.read_bytes() == before
+    assert pdf.read_bytes() == b"keep-pdf"
+
+
+def test_in_place_companion_failure_leaves_the_input(
+    letter: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    before = letter.read_bytes()
+    real = cli._replace
+
+    def fail_pdf(path: Path, data: bytes | str) -> int:
+        if str(path).endswith(".pdf"):
+            raise cli.CliError(f"writing {path}: blocked")
+        return real(path, data)
+
+    monkeypatch.setattr(cli, "_replace", fail_pdf)
+    # main() catches CliError and returns the exit code. The input must
+    # still be the bytes from before the command.
+    code, _out, err = _cli(
+        [
+            "edit",
+            str(letter),
+            "-p",
+            "p1",
+            "--anchor",
+            "his or her",
+            "--content",
+            "their",
+            "--in-place",
+            "--pdf",
+            "-q",
+        ],
+        capsys,
+    )
+    assert code != 0, err
+    assert "blocked" in err, err
+    assert letter.read_bytes() == before
+
+
+def test_in_place_follows_a_symlink_and_keeps_its_mode(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    before = letter.read_bytes()
+    real = tmp_path / "real.docx"
+    letter.rename(real)
+    real.chmod(0o640)
+    link = tmp_path / "letter.docx"
+    link.symlink_to("real.docx")
+    prefix = _sha8(before)
+    code, _out, err = _cli(
+        [
+            "edit",
+            str(link),
+            "-p",
+            "p1",
+            "--anchor",
+            "his or her",
+            "--content",
+            "their",
+            "-a",
+            "GiantCo",
+            "--in-place",
+        ],
+        capsys,
+    )
+    assert code == 0, err
+    assert link.is_symlink()
+    assert link.readlink() == Path("real.docx")
+    assert stat.S_IMODE(real.stat().st_mode) == 0o640
+    assert real.read_bytes() != before
+    assert err.splitlines()[0].startswith(f"wrote {link} in place (replaced sha256 {prefix}\u2026)")
+
+
+def test_in_place_accept_rechecks_the_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    original = tmp_path / "a.docx"
+    modified = tmp_path / "b.docx"
+    original.write_bytes(docx(para("alpha beta")))
+    modified.write_bytes(docx(para("alpha gamma")))
+    redline = tmp_path / "redline.docx"
+    assert main(["compare", str(original), str(modified), "-o", str(redline), "-q"]) == 0
+    capsys.readouterr()
+    target = tmp_path / "accept.docx"
+    packed = redline.read_bytes()
+    target.write_bytes(packed)
+    other = docx(para("A different named source."))
+    real = document.Document.accept
+
+    def accept(self: document.Document, **kwargs: object) -> document.Document:
+        target.write_bytes(other)
+        return real(self, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(document.Document, "accept", accept)
+    code, _out, err = _cli(["accept", str(target), "--in-place"], capsys)
+    assert code == 3, err
+    assert "SOURCE_CHANGED:" in err and "nothing was published" in err, err
+    assert target.read_bytes() == other
+    assert "in place" not in err
+
+
+def test_accept_same_file_force_warns_it_is_deprecated(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    original = tmp_path / "a.docx"
+    modified = tmp_path / "b.docx"
+    original.write_bytes(docx(para("alpha beta")))
+    modified.write_bytes(docx(para("alpha gamma")))
+    redline = tmp_path / "redline.docx"
+    assert main(["compare", str(original), str(modified), "-o", str(redline), "-q"]) == 0
+    capsys.readouterr()
+    packed = redline.read_bytes()
+    target = tmp_path / "accept.docx"
+    target.write_bytes(packed)
+    warn = f"warning: -o {target} --force is deprecated; use --in-place"
+
+    code, _out, err = _cli(["accept", str(target), "-o", str(target)], capsys)
+    assert code == 1, err
+    assert "already exists" in err and "deprecated" not in err
+    assert target.read_bytes() == packed
+
+    code, _out, err = _cli(["accept", str(target), "-o", str(target), "--force"], capsys)
+    assert code == 0, err
+    assert warn in err, err
+    wrote = next(line for line in err.splitlines() if line.startswith("wrote "))
+    assert wrote.startswith(f"wrote {target} (docx, ") and wrote.endswith(" bytes)"), wrote
+    assert "in place" not in wrote
+
+    kept = target.read_bytes()
+    other = tmp_path / "other.docx"
+    code, _out, err = _cli(["accept", str(target), "-o", str(other), "-q"], capsys)
+    assert code == 0, err
+    assert err == ""
+    assert target.read_bytes() == kept
+    assert other.is_file()
+    # -q still warns, and prints no wrote line.
+    fresh = tmp_path / "quiet.docx"
+    fresh.write_bytes(packed)
+    quiet_warn = f"warning: -o {fresh} --force is deprecated; use --in-place"
+    code, _out, err = _cli(["reject", str(fresh), "-o", str(fresh), "--force", "-q"], capsys)
+    assert code == 0, err
+    assert err == f"{quiet_warn}\n", err
 
 
 def test_a_bare_plan_is_file_plan_json_as_the_binary(

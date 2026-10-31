@@ -130,7 +130,7 @@ pub enum EditAction {
     // or dry-runs.
     #[command(
         override_usage = "jubarte edit apply [OPTIONS] <FILE> --plan FILE",
-        mut_arg("output", |a| a.help("Primary edited DOCX; required unless bundling or dry-running"))
+        mut_arg("output", |a| a.help("Primary edited DOCX; required unless bundling, replacing FILE or dry-running"))
     )]
     Apply {
         /// Immutable source document.
@@ -196,7 +196,7 @@ pub struct InlineOptions {
     #[arg(long)]
     pub reject_change: Vec<String>,
     /// Save a source-bound PlanV2 without applying. Freezes targets, policy and time.
-    #[arg(long, value_name = "FILE", value_parser = super::plan_path(), conflicts_with_all = ["output", "out_dir", "report", "emit", "expect", "dry_run"])]
+    #[arg(long, value_name = "FILE", value_parser = super::plan_path(), conflicts_with_all = ["output", "out_dir", "report", "emit", "expect", "dry_run", "in_place"])]
     pub save_plan: Option<PathBuf>,
     /// Publication and source preconditions.
     #[command(flatten)]
@@ -206,7 +206,10 @@ pub struct InlineOptions {
 /// Publication and preparation options; never serialized into a saved plan.
 #[derive(Args, Debug, Serialize)]
 pub struct DeliveryOptions {
-    /// Primary edited DOCX; required unless saving, bundling or dry-running.
+    /// Replace FILE through the same atomic write as -o. A refused edit leaves FILE unchanged. Not with -o or --out-dir.
+    #[arg(long, conflicts_with_all = ["output", "out_dir", "dry_run"])]
+    pub in_place: bool,
+    /// Primary edited DOCX; required unless saving, bundling, replacing FILE or dry-running.
     #[arg(short = 'o', long, value_name = "FILE", conflicts_with = "out_dir")]
     pub output: Option<PathBuf>,
     /// Publish a new bundle directory (document.docx, changes.diff, report.json).
@@ -313,12 +316,12 @@ pub(super) fn validate(
             .clone()
             .error(clap::error::ErrorKind::ArgumentConflict, message)
     };
-    if !["output", "out_dir", "dry_run", "save_plan"]
+    if !["output", "out_dir", "dry_run", "save_plan", "in_place"]
         .into_iter()
         .any(present)
     {
         return Err(error(
-            "writes require -o FILE or --out-dir NEW_DIR; use --dry-run or inline --save-plan FILE",
+            "writes require -o FILE or --out-dir NEW_DIR or --in-place; use --dry-run or inline --save-plan FILE",
         ));
     }
     if action == "insert" {

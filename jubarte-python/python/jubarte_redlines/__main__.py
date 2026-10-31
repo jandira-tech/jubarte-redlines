@@ -204,6 +204,13 @@ def _replace(path: Path, data: bytes | str) -> int:
     return len(raw)
 
 
+def _replace_inplace(path: Path, data: bytes | str) -> int:
+    """``--in-place`` follows a symlink: the link stays, and the target keeps
+    its mode. Any other path is replaced as ``_replace`` replaces it."""
+    target = path.resolve() if path.is_symlink() else path
+    return _replace(target, data)
+
+
 def _refuse_alias_output(args: argparse.Namespace) -> None:
     """Refuses a ``read --tables -o`` that names its input — the same
     path, or the same file through a hard or symbolic link — before any
@@ -608,6 +615,62 @@ def _wrote(args: argparse.Namespace, path: Path, format: str, size: int, pages: 
     print(_native.wrote_line(shown, format, size, pages), file=sys.stderr)
 
 
+def _author_was_given(args: argparse.Namespace) -> bool:
+    """Whether ``-a`` was spelled. Applying a plan treats its author as explicit."""
+    return bool(getattr(args, "author_given", False)) or getattr(args, "plan", None) is not None
+
+
+def _count_words(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+def _markup_detail(changes: int, comments: int, author: str, author_given: bool) -> str | None:
+    """The ``; 1 change by "GiantCo"`` fragment (#1891). ``None`` when nothing was signed."""
+    if changes == 0 and comments == 0:
+        return None
+    parts: list[str] = []
+    if changes > 0:
+        parts.append(_count_words(changes, "change"))
+    if comments > 0:
+        parts.append(_count_words(comments, "comment"))
+    detail = ", ".join(parts) + f' by "{author}"'
+    if not author_given:
+        detail += ": no -a given"
+    return detail
+
+
+def _comments_still_published(published: bytes, result: EditResult) -> int:
+    """Comments this edit wrote that the published copy still holds."""
+    from . import _native
+
+    wanted = {op.comment_id for op in result.report.operations if op.comment_id is not None}
+    if not wanted:
+        return 0
+    try:
+        rows = json.loads(_native.list_comments_json(published))
+    except (json.JSONDecodeError, _native.JubarteError, OSError, TypeError):
+        return 0
+    return sum(1 for row in rows if isinstance(row, dict) and row.get("id") in wanted)
+
+
+def _published_markup(args: argparse.Namespace, result: EditResult, published: bytes) -> str | None:
+    """Suggesting mode counts the redline. Editing mode publishes the clean copy."""
+    if bool(getattr(args, "editing_mode", False)):
+        changes, comments = 0, _comments_still_published(published, result)
+    else:
+        changes, comments = result.report.revisions.total, result.report.comments_added
+    return _markup_detail(changes, comments, result.report.author, _author_was_given(args))
+
+
+def _in_place_line(path: str, original: bytes, detail: str | None) -> str:
+    """``wrote FILE in place (replaced sha256 <8 hex>…)``, plus the #1891 detail."""
+    from . import _native
+
+    prefix = _native.source_sha256(original)[:8]
+    extra = f"; {detail}" if detail else ""
+    return f"wrote {path} in place (replaced sha256 {prefix}\u2026){extra}"
+
+
 def _read_plan_text(plan: str) -> str | None:
     """PLAN.json's text, strictly UTF-8 as the binary reads it; ``None``
     when there is no such file."""
@@ -904,11 +967,26 @@ def _write_edited(
     outputs: list[tuple[Path, bytes]] = [(path, document)]
     pdf, png = bool(getattr(args, "pdf", False)), bool(getattr(args, "png", False))
     # FILE itself (X_modified.docx edited again, or -o FILE) exists, so it is
-    # replaced only with --force (D15). The PNG names wait for the page count.
-    for taken in [path] + ([path.with_suffix(".pdf")] if pdf else []):
-        if taken.exists() and not args.force:
-            _error(f"output '{taken}' already exists (use --force to overwrite)", EXIT_USAGE)
+    # replaced only with --force (D15). --in-place authorizes the input only.
+    # The PNG names wait for the page count.
+    in_place = bool(getattr(args, "in_place", False))
+    force = bool(args.force)
+
+    def may_replace(taken: Path) -> bool:
+        # ``--in-place`` authorizes the input only. A PDF or a PNG that
+        # already exists still needs ``--force``.
+        return force or (in_place and taken == path)
+
+    def refuse_taken(taken: Path) -> None:
+        if taken.exists() and not may_replace(taken):
+            _error(
+                f"OUTPUT_EXISTS: output '{taken}' already exists (use --force to overwrite)",
+                EXIT_USAGE,
+            )
             raise SystemExit(EXIT_USAGE)
+
+    for taken in [path] + ([path.with_suffix(".pdf")] if pdf else []):
+        refuse_taken(taken)
     pages, png_count = None, 0
     if pdf or png:
         # Render before writing, so a failed render writes nothing.
@@ -922,16 +1000,43 @@ def _write_edited(
             outputs.append((path.with_name(_png_name(path.stem, i, png_count)), image))
     # The PNG names are known only now: nothing is written over a file.
     for taken, _ in outputs:
-        if taken.exists() and not args.force:
-            _error(f"output '{taken}' already exists (use --force to overwrite)", EXIT_USAGE)
-            raise SystemExit(EXIT_USAGE)
+        refuse_taken(taken)
+    # Companions first. A failure there leaves the input byte-identical.
+    if in_place and len(outputs) > 1:
+        outputs = [item for item in outputs if item[0] != path] + [item for item in outputs if item[0] == path]
+    # Hash the input before the rename. ``source`` is the bytes just read.
+    original = source if source is not None else (path.read_bytes() if path.is_file() else b"")
     for output, data in outputs:
-        _write(output, data)
+        # --in-place renames a staged file over the input, through a symlink.
+        # A crash keeps the previous bytes. Companions use the same rename
+        # and still replace a link entry; only the input is followed.
+        if in_place and output == path:
+            if source is not None and path.read_bytes() != source:
+                _error(
+                    f"SOURCE_CHANGED: '{_spelled(args, 'file')}' changed since the edit was prepared; nothing was published",
+                    EXIT_PLAN_REFUSED,
+                )
+                return EXIT_PLAN_REFUSED
+            _replace_inplace(output, data)
+        elif in_place:
+            _replace(output, data)
+        else:
+            _write(output, data)
     if args.quiet:
         return EXIT_OK
-    print(f"wrote {path} (docx, {len(document)} bytes)", file=sys.stderr)
+    if in_place:
+        detail = _published_markup(args, result, document)
+        sys.stdout.flush()
+        print(_in_place_line(_spelled(args, "file"), original, detail), file=sys.stderr)
+        if detail is not None and not _author_was_given(args):
+            print(
+                f'warning: no -a given; the new markup is signed "{result.report.author}"',
+                file=sys.stderr,
+            )
+    else:
+        print(f"wrote {path} (docx, {len(document)} bytes)", file=sys.stderr)
     if pages is not None:
-        pdf_path, pdf_bytes = outputs[1]
+        pdf_path, pdf_bytes = next(item for item in outputs if item[0].suffix == ".pdf")
         print(
             f"wrote {pdf_path} (pdf, {len(pdf_bytes)} bytes, {pages} page{'' if pages == 1 else 's'})", file=sys.stderr
         )
@@ -1283,7 +1388,17 @@ def _resolution(args: argparse.Namespace, accept: bool) -> int:
     from . import _native
 
     doc = _read(args.file)
-    _ensure_writable(args.output, args.force)
+    original = doc.to_bytes()
+    in_place = bool(getattr(args, "in_place", False))
+    if not in_place:
+        # ``-o FILE --force`` still replaces FILE. Say that spelling is retired.
+        # The warning stays under ``-q``; the wrote line does not.
+        if bool(args.force) and args.output is not None and _same_file(args.output, args.file):
+            print(
+                f"warning: -o {_spelled(args, 'output')} --force is deprecated; use --in-place",
+                file=sys.stderr,
+            )
+        _ensure_writable(args.output, args.force)
     selection = {"ids": args.id, "authors": args.author, "kinds": args.kind}
     try:
         result = doc.accept(**selection) if accept else doc.reject(**selection)
@@ -1293,6 +1408,20 @@ def _resolution(args: argparse.Namespace, accept: bool) -> int:
         raise SystemExit(EXIT_USAGE) from exc
     except _native.JubarteError as exc:
         raise CliError(f"{'accept' if accept else 'reject'} failed: {exc}") from exc
+    if in_place:
+        # The bytes just read, not a second load. A change after accept or
+        # reject was prepared refuses; the receipt hashes those same bytes.
+        if args.file.read_bytes() != original:
+            _error(
+                f"SOURCE_CHANGED: '{_spelled(args, 'file')}' changed since the edit was prepared; nothing was published",
+                EXIT_PLAN_REFUSED,
+            )
+            return EXIT_PLAN_REFUSED
+        _replace_inplace(args.file, result.to_bytes())
+        if not args.quiet:
+            sys.stdout.flush()
+            print(_in_place_line(_spelled(args, "file"), original, None), file=sys.stderr)
+        return EXIT_OK
     _write_result(args, result.to_bytes(), source=_not_written(args))
     return EXIT_OK
 
