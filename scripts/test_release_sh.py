@@ -182,6 +182,27 @@ def step(n: int) -> str:
     return text[start:min(ends) if ends else len(text)]
 
 
+class WorkspaceFormatting(unittest.TestCase):
+    def test_step5_formats_every_workspace(self) -> None:
+        # Each binding has its own workspace: root cargo fmt cannot reach it.
+        manifests = (
+            "Cargo.toml", "jubarte-wasm/Cargo.toml",
+            "jubarte-python/Cargo.toml", "jubarte-rust-inproc/Cargo.toml",
+            "fuzz/Cargo.toml",
+        )
+        for manifest in manifests:
+            with self.subTest(manifest=manifest):
+                self.assertIn(f"cargo fmt --all --manifest-path {manifest} --check", step(5))
+
+    def test_ci_formats_every_workspace(self) -> None:
+        # CI must check what step 5 checks, or a PR merges what the release refuses.
+        ci = (HERE.parent / ".github/workflows/ci.yml").read_text()
+        for workspace in ("jubarte-wasm", "jubarte-python", "jubarte-rust-inproc", "fuzz"):
+            with self.subTest(workspace=workspace):
+                self.assertRegex(ci, rf"for m in [^\n]*\b{workspace}\b")
+        self.assertIn('cargo fmt --all --manifest-path "$m/Cargo.toml" --check', ci)
+
+
 class NpmCli(unittest.TestCase):
     """`npx jubarte-redlines` ships beside jubarte-wasm, on its version."""
 
@@ -2904,6 +2925,16 @@ class Lessons0140(unittest.TestCase):
         rows = self.rows(needle)
         self.assertEqual(len(rows), 1, f"one checklist row names {needle!r}")
         return "|".join(rows[0])
+
+    def test_ring2_stages_sources_from_the_bench_pool_before_sweeping(self) -> None:
+        row = self.one_row("Ring-2 validity ratchet")
+        for needle in ("scripts/stage_ring2_sources.py", "NEUROTIC_DOCX_BENCH",
+                       "../neurotic_docx_bench", "word_based_pairs.csv", "RENAMED.csv",
+                       "_scratch/ring2_sources", "not run", "maintainer"):
+            self.assertIn(needle, row)
+        self.assertLess(row.index("scripts/stage_ring2_sources.py"),
+                        row.index("scripts/redline-sweep.sh"))
+        self.assertNotIn("<its sources>", row)
 
     def test_ring3_opens_word_through_the_bench_and_reads_word_own_failures(self) -> None:
         # #1794: --probe drove Word through an osascript of its own. 0.14.0's

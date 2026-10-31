@@ -760,7 +760,7 @@ fn record_plan_json(
     options_json: &str,
     held: Option<&str>,
 ) -> String {
-    use jubarte::edit::record::{record_json, RecordError};
+    use jubarte::edit::record::{RecordError, record_json};
     match record_json(verb, operations_json, docx, held, options_json) {
         Ok(recorded) => format!(r#"{{"ok":true,"recorded":{recorded}}}"#),
         Err(e) => {
@@ -1794,9 +1794,11 @@ mod tests {
             let text = document_view(old, new, Some(&options)).unwrap();
             assert!(text.contains("30") && text.contains("60"), "{text}");
         }
-        assert!(document_view(old, new, None)
-            .unwrap()
-            .contains("diff --git"));
+        assert!(
+            document_view(old, new, None)
+                .unwrap()
+                .contains("diff --git")
+        );
         for value in ["true", "false", "-1", "1.5", "4294967296", "null", "\"3\""] {
             assert!(
                 document_view(old, new, Some(&format!("{{\"context\":{value}}}")))
@@ -1848,9 +1850,11 @@ mod tests {
             assert_eq!(document_view(&old, &new, Some(options)).unwrap(), "");
         }
         for options in [r#"{"oldFormat":"docx"}"#, r#"{"newFormat":"docx"}"#] {
-            assert!(document_view(b"plain", b"text", Some(options))
-                .unwrap_err()
-                .contains("DOCX"));
+            assert!(
+                document_view(b"plain", b"text", Some(options))
+                    .unwrap_err()
+                    .contains("DOCX")
+            );
         }
         assert!(
             document_view(&[255], b"text", Some(r#"{"oldFormat":"md"}"#))
@@ -1920,9 +1924,11 @@ mod tests {
         assert_eq!(comments[0].text, "keep");
         let dropped = append_documents(&a, &b, None).unwrap();
         assert!(dropped.warnings().contains("COMMENTS_DROPPED"));
-        assert!(jubarte::comments::list_comments(&dropped.docx())
-            .unwrap()
-            .is_empty());
+        assert!(
+            jubarte::comments::list_comments(&dropped.docx())
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[cfg(feature = "pdf")]
@@ -2047,9 +2053,11 @@ mod tests {
             Some(r#"{"max_entries": 100}"#.into()),
         )
         .unwrap();
-        assert!(get_revisions(&redline, None)
-            .unwrap()
-            .contains("\"Inserted\""));
+        assert!(
+            get_revisions(&redline, None)
+                .unwrap()
+                .contains("\"Inserted\"")
+        );
     }
 
     #[test]
@@ -2156,10 +2164,12 @@ mod tests {
         );
         // The bundle's patch names the edited file, as the binary's does.
         let named = apply_edit_plan(&source, plan, Some("terms.docx".into())).unwrap();
-        assert!(named
-            .patch()
-            .unwrap()
-            .starts_with("--- a/terms.docx\n+++ b/terms.docx\t"));
+        assert!(
+            named
+                .patch()
+                .unwrap()
+                .starts_with("--- a/terms.docx\n+++ b/terms.docx\t")
+        );
         assert!(preview_edit_plan(&source, plan).unwrap().patch().is_none());
     }
 
@@ -2560,9 +2570,11 @@ mod tests {
         .unwrap();
         assert_eq!(one["paragraphs"].as_array().unwrap().len(), 1);
         assert_eq!(one["changes"].as_array().unwrap().len(), 0);
-        assert!(read_json_of(&docx, Some(r#"{"paragraphs":"c5"}"#))
-            .unwrap_err()
-            .contains("expected pN"));
+        assert!(
+            read_json_of(&docx, Some(r#"{"paragraphs":"c5"}"#))
+                .unwrap_err()
+                .contains("expected pN")
+        );
         assert!(read_json_of(&docx, Some(r#"{"typo":1}"#)).is_err());
     }
 
@@ -2583,8 +2595,10 @@ mod tests {
         );
         let bad = change_filter_of(r#"{"ids":["c5"]}"#).unwrap_err();
         assert!(bad.starts_with("c5: expected a change id"), "{bad}");
-        assert!(change_filter_of(r#"{"typo":[]}"#)
-            .unwrap_err()
-            .contains("invalid change filter"));
+        assert!(
+            change_filter_of(r#"{"typo":[]}"#)
+                .unwrap_err()
+                .contains("invalid change filter")
+        );
     }
 }

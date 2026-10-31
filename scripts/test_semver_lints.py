@@ -164,7 +164,8 @@ class RealCrate(unittest.TestCase):
 
     def write(self, version: str, method: str, table: str) -> None:
         (self.crate / "Cargo.toml").write_text(
-            f'[package]\nname = "semverprobe"\nversion = "{version}"\nedition = "2021"\n\n'
+            # Standalone even when TMPDIR is inside the engine worktree.
+            f'[workspace]\n\n[package]\nname = "semverprobe"\nversion = "{version}"\nedition = "2021"\n\n'
             f"[package.metadata.cargo-semver-checks.lints]\n{table}"
         )
         (self.crate / "src" / "lib.rs").write_text(

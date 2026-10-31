@@ -39,7 +39,8 @@
 #
 # --validate (Ring 2): after generation, run tools/validate-docx against every
 # output and ratchet findings against tools/validity_baseline.tsv on
-# (pair_stem, error_id). NEW keys → exit 1; FIXED keys are printed for re-bless.
+# (pair_stem, error_id). NEW keys and baseline stems NOT RUN → exit 1.
+# Only keys of validated outputs can be FIXED; re-blessing requires the maintainer.
 
 set -uo pipefail
 
@@ -217,15 +218,25 @@ if [ "$VALIDATE" = "--validate" ]; then
     else
       VBIN=$(find "$VALIDATOR_DIR/bin/Release" -name 'validate-docx' -o -name 'validate-docx.dll' 2>/dev/null | head -1)
       : > "$OUT/validate_findings.tsv"
+      : > "$OUT/.validated_stems"
       while IFS= read -r f; do
         [ -n "$f" ] || continue
         [ -e "$f" ] || continue
+        vrc=0
         if [ -n "$VBIN" ] && [ "${VBIN##*.}" = "dll" ]; then
-          dotnet "$VBIN" "$f" >>"$OUT/validate_findings.tsv" 2>>"$OUT/validate.log" || true
+          dotnet "$VBIN" "$f" >>"$OUT/validate_findings.tsv" 2>>"$OUT/validate.log" || vrc=$?
         elif [ -x "$VBIN" ]; then
-          "$VBIN" "$f" >>"$OUT/validate_findings.tsv" 2>>"$OUT/validate.log" || true
+          "$VBIN" "$f" >>"$OUT/validate_findings.tsv" 2>>"$OUT/validate.log" || vrc=$?
         else
-          (cd "$VALIDATOR_DIR" && dotnet run -c Release --no-build -- "$f") >>"$OUT/validate_findings.tsv" 2>>"$OUT/validate.log" || true
+          (cd "$VALIDATOR_DIR" && dotnet run -c Release --no-build -- "$f") >>"$OUT/validate_findings.tsv" 2>>"$OUT/validate.log" || vrc=$?
+        fi
+        # validate-docx exits 0 (clean) or 1 (findings, OPEN_FAILED included).
+        # Anything else is a crashed validator: the stem was not validated, so
+        # its baseline keys stay NOT_RUN instead of reading as FIXED (#1791).
+        if [ "$vrc" -le 1 ]; then
+          basename "$f" .docx >> "$OUT/.validated_stems"
+        else
+          echo "validator exited $vrc on $(basename "$f"): not validated" >>"$OUT/validate.log"
         fi
       done < "$MANIFEST"
       # Ratchet: (stem, error_id) keys; NEW keys fail.
@@ -237,7 +248,16 @@ if [ "$VALIDATE" = "--validate" ]; then
         awk -F'\t' '!/^#/ && NF>=2 {print $1"\t"$2}' "$BASELINE" | sort -u >"$OUT/.baseline_keys"
         awk -F'\t' 'NF>=2 {print $1"\t"$2}' "$OUT/validate_findings.tsv" | sort -u >"$OUT/.current_keys"
         NEW=$(comm -13 "$OUT/.baseline_keys" "$OUT/.current_keys" || true)
-        FIXED=$(comm -23 "$OUT/.baseline_keys" "$OUT/.current_keys" || true)
+        # The manifest is from this run, not an output-folder glob. Baseline
+        # keys without a validated output are not evidence of a fix (#1791).
+        awk -F'\t' 'FILENAME==ARGV[1] {ran[$0]=1; next} $1 in ran' "$OUT/.validated_stems" "$OUT/.baseline_keys" > "$OUT/.ran_baseline_keys"
+        NOT_RUN=$(comm -23 "$OUT/.baseline_keys" "$OUT/.ran_baseline_keys" || true)
+        FIXED=$(comm -23 "$OUT/.ran_baseline_keys" "$OUT/.current_keys" || true)
+        if [ -n "$NOT_RUN" ]; then
+          echo "VALIDATOR NOT RUN (ratchet fail; restore sources, do not re-bless):" | tee -a "$OUT/validate.log"
+          echo "$NOT_RUN" | tee -a "$OUT/validate.log"
+          validate_fail=1
+        fi
         if [ -n "$NEW" ]; then
           echo "VALIDATOR NEW findings (ratchet fail):" | tee -a "$OUT/validate.log"
           echo "$NEW" | tee -a "$OUT/validate.log"
