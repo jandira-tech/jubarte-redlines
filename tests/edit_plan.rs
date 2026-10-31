@@ -2626,3 +2626,153 @@ fn check_plan_resolves_without_applying() {
     assert_eq!(checked.code, "ANCHOR_NOT_FOUND");
     assert_eq!(checked.code, previewed.code);
 }
+
+/// One-shot `-p pN --content` is a plan `rewrite`. Under `keep` and under
+/// `refuse` it must mark each diff hunk as one deletion and one insertion,
+/// never a chain of one-word substitutions of unrelated words (#1923).
+fn rewrite_ops(paragraph: &str, text: &str) -> String {
+    serde_json::json!([{
+        "kind": "rewrite",
+        "paragraph": paragraph,
+        "text": text,
+    }])
+    .to_string()
+}
+
+fn apply_rewrite(source: &[u8], paragraph: &str, text: &str, keep: bool) -> Vec<u8> {
+    let mut request = plan(source, &rewrite_ops(paragraph, text));
+    if keep {
+        request.existing_revisions = jubarte::edit::ExistingRevisions::Keep;
+    }
+    apply_plan(source, &request).unwrap().redline
+}
+
+/// `[-deleted-]{+inserted+}` pairs whose two sides are single words that
+/// share no letter: the positional pairing a hunk must not be written as.
+fn unrelated_one_word_pairs(marked: &str) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    let mut rest = marked;
+    while let Some(at) = rest.find("[-") {
+        rest = &rest[at + 2..];
+        let Some(end) = rest.find("-]{+") else {
+            break;
+        };
+        let deleted = &rest[..end];
+        rest = &rest[end + 4..];
+        let Some(end) = rest.find("+}") else {
+            break;
+        };
+        let inserted = &rest[..end];
+        rest = &rest[end + 2..];
+        let one = |s: &str| !s.is_empty() && !s.chars().any(char::is_whitespace);
+        let shares = deleted.chars().any(|c| {
+            c.is_alphabetic()
+                && inserted
+                    .chars()
+                    .any(|d| d.is_alphabetic() && c.eq_ignore_ascii_case(&d))
+        });
+        if one(deleted) && one(inserted) && !shares {
+            pairs.push((deleted.to_string(), inserted.to_string()));
+        }
+    }
+    pairs
+}
+
+#[test]
+fn rewrite_keep_and_refuse_mark_one_change_per_hunk() {
+    let old = "LargeCo Policies. In providing the Services, Provider agrees to abide by any LargeCo policies that are provided or made available to Provider.";
+    let new = "LargeCo Policies. In providing the Services, Provider agrees to abide by any LargeCo policies provided to Provider in writing that apply to third-party service providers generally. If a LargeCo policy conflicts with this Agreement, this Agreement controls.";
+    let source = docx(&para(old));
+    let refuse = marked_paragraphs(&apply_rewrite(&source, "p0", new, false));
+    let keep = marked_paragraphs(&apply_rewrite(&source, "p0", new, true));
+    assert!(
+        unrelated_one_word_pairs(&refuse[0]).is_empty(),
+        "refuse paired unrelated words: {}",
+        refuse[0]
+    );
+    assert!(
+        unrelated_one_word_pairs(&keep[0]).is_empty(),
+        "keep paired unrelated words: {}",
+        keep[0]
+    );
+    assert_eq!(keep, refuse, "keep and refuse must mark the same hunks");
+
+    // No word in common: D deleted words against I inserted, one hunk.
+    for (before, after) in [
+        ("alpha bravo charlie", "one two three four five"),
+        ("alpha bravo charlie", "one two three"),
+        ("alpha bravo charlie delta echo", "one two"),
+    ] {
+        let source = docx(&para(before));
+        let refuse = marked_paragraphs(&apply_rewrite(&source, "p0", after, false));
+        let keep = marked_paragraphs(&apply_rewrite(&source, "p0", after, true));
+        assert_eq!(keep, refuse, "{before:?} -> {after:?}");
+        assert_eq!(
+            keep,
+            vec![format!("[-{before}-]{{+{after}+}}")],
+            "{before:?} -> {after:?} must be one deletion and one insertion"
+        );
+        assert!(unrelated_one_word_pairs(&keep[0]).is_empty(), "{}", keep[0]);
+    }
+}
+
+/// A tracked change in another paragraph forces `keep`. Rewriting the clean
+/// paragraph still marks hunks whole, and an anchored `replace` of that
+/// sentence stays one substitution, not a positional word pairing (#1923).
+#[test]
+fn rewrite_keep_with_a_change_elsewhere_matches_refuse_and_replace_stays() {
+    let old = "LargeCo Policies. In providing the Services, Provider agrees to abide by any LargeCo policies that are provided or made available to Provider.";
+    let new = "LargeCo Policies. In providing the Services, Provider agrees to abide by any LargeCo policies provided to Provider in writing that apply to third-party service providers generally. If a LargeCo policy conflicts with this Agreement, this Agreement controls.";
+    let other = r#"<w:p><w:r><w:t xml:space="preserve">Note. </w:t></w:r><w:ins w:id="4" w:author="Other" w:date="2026-09-01T00:00:00Z"><w:r><w:t>See schedule.</w:t></w:r></w:ins></w:p>"#;
+    let dirty = docx(&format!("{other}{}", para(old)));
+    let clean = docx(&para(old));
+    let refused = apply_rewrite(&clean, "p0", new, false);
+    let kept_doc = apply_rewrite(&dirty, "p1", new, true);
+    let refuse = marked_paragraphs(&refused);
+    let kept = marked_paragraphs(&kept_doc);
+    assert_eq!(
+        kept[1], refuse[0],
+        "a change elsewhere must not fragment the rewrite"
+    );
+    assert!(unrelated_one_word_pairs(&kept[1]).is_empty(), "{}", kept[1]);
+    let red = part_string(&apply_rewrite(&dirty, "p1", new, true), "word/document.xml").unwrap();
+    assert!(
+        red.contains(
+            r#"<w:ins w:id="4" w:author="Other" w:date="2026-09-01T00:00:00Z"><w:r><w:t>See schedule.</w:t></w:r></w:ins>"#
+        ),
+        "the other author's insertion stays as it was: {red}"
+    );
+
+    let replacement = "provided to Provider in writing that apply to third-party service providers generally. If a LargeCo policy conflicts with this Agreement, this Agreement controls.";
+    let ops = serde_json::json!([{
+        "kind": "replace",
+        "paragraph": "p1",
+        "find": "that are provided or made available to Provider.",
+        "replacement": replacement,
+    }])
+    .to_string();
+    let mut request = plan(&dirty, &ops);
+    request.existing_revisions = jubarte::edit::ExistingRevisions::Keep;
+    let replaced = apply_plan(&dirty, &request).unwrap();
+    let marks = marked_paragraphs(&replaced.redline);
+    assert!(
+        unrelated_one_word_pairs(&marks[1]).is_empty(),
+        "replace must not pair words by index: {}",
+        marks[1]
+    );
+    // Locked to the pre-fix anchored replace: one insertion of the new
+    // words before the matched "that", then one substitution of the rest
+    // of the anchor. The period stays outside both marks.
+    assert_eq!(
+        marks[1],
+        "LargeCo Policies. In providing the Services, Provider agrees to abide by any LargeCo policies {+provided to Provider in writing +}that [-are provided or made available to Provider-]{+apply to third-party service providers generally. If a LargeCo policy conflicts with this Agreement, this Agreement controls+}.",
+        "anchored replace changed: {}",
+        marks[1]
+    );
+    assert!(
+        part_string(&replaced.redline, "word/document.xml")
+            .unwrap()
+            .contains(r#"w:id="4" w:author="Other""#),
+        "the other author's change stays"
+    );
+}
