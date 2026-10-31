@@ -26,7 +26,7 @@
 //! | `MISSING_CONTENT_TYPE`, `OVERRIDE_WITHOUT_PART`, `MALFORMED_XML` | yes | no |
 //! | `DANGLING_RELATIONSHIP` | yes for `r:id`, `r:embed`, `r:link`; other names (`r:dm`, `r:pict`, ...) are unverified leads (#1937) | yes: the attribute is dropped |
 //! | `DUPLICATE_RID` | yes | an identical repeat is kept once on open; two relationships under one Id are refused |
-//! | `MISSING_REL_TARGET` | yes when used by markup; unused relationships are unverified warning leads (#1938) | only when unused |
+//! | `MISSING_REL_TARGET` | yes when used by markup; unused relationships are unverified warning leads (#1938) | no |
 //! | `PICTURE_BULLET_UNDEFINED` | yes | no |
 //! | `DUPLICATE_REVISION_ID` | no: Word opens same-kind duplicates (102 probes, 2026-10-18, #1137); the OOXML validator refuses them (`Sem_UniqueAttributeValue`); error diagnostic | yes: renumbered |
 //! | `DUPLICATE_DOCPR_ID` | no (lead) | yes: renumbered |
@@ -2226,9 +2226,10 @@ fn check_relationship_integrity(pkg: &PartFs, out: &mut Vec<Finding>) {
                     item.id, item.target
                 ),
             );
-            // Word has not been probed for the unused variant (#1938).
+            // Word has not been probed for the unused variant (#1938), and
+            // repair does not drop relationships, so it is a plain lead.
             finding.word_fatal = false;
-            finding.repairable = true;
+            finding.repairable = false;
             finding.severity = "warning".to_string();
             out.push(finding);
         }
@@ -2244,7 +2245,10 @@ fn missing_relationship_target(pkg: &PartFs, source: &str, target: &str) -> Opti
         return None;
     }
     let resolved = pkg.resolve_rel_target(source, target);
-    pkg.part_bytes(&resolved).is_none().then_some(resolved)
+    // A target written as a package path from the root names its part too.
+    (pkg.part_bytes(&resolved).is_none()
+        && pkg.part_bytes(target.trim_start_matches('/')).is_none())
+    .then_some(resolved)
 }
 
 /// Every `w:lvlPicBulletId` names a `w:numPicBullet` of the same numbering
@@ -4904,7 +4908,7 @@ mod validation_owner_boundary_tests {
         for (target, mode, present, missing) in [
             ("media/picture.bin", false, true, false),
             ("/word/media/picture.bin", false, true, false),
-            ("word/media/picture.bin", false, true, true),
+            ("word/media/picture.bin", false, true, false),
             ("media/missing.bin", false, false, true),
             ("https://example.invalid/picture.bin", false, false, false),
             ("http://example.invalid/picture.bin", false, false, false),

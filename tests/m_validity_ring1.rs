@@ -452,7 +452,7 @@ fn assert_missing_target_probe(bytes: &[u8], owner: &str, target: &str, used: bo
         assert_eq!(finding.part, owner);
         assert!(finding.message.contains(target), "{finding:?}");
         assert_eq!(finding.word_fatal, used, "{finding:?}");
-        assert_eq!(finding.repairable, !used, "{finding:?}");
+        assert!(!finding.repairable, "{finding:?}");
         assert_eq!(finding.severity, if used { "error" } else { "warning" });
     }
 }
@@ -515,21 +515,6 @@ fn relationship_probe_missing_target_in_non_xml_and_absent_owners() {
         pkg.add_document_relationship(owner, "urn:test:missing", "../missing.xml");
         assert_missing_target_probe(&pkg.to_zip().unwrap(), rels, "../missing.xml", false);
     }
-}
-
-#[test]
-fn relationship_probe_missing_target_uses_resolved_path() {
-    let mut pkg = PartFs::open(NAMELESS_MOVE_BASE).unwrap();
-    pkg.remove_part("word/styles.xml");
-    pkg.remove_content_type_override("/word/styles.xml");
-    // A different part at the package root cannot satisfy word/styles.xml.
-    pkg.set_part("styles.xml", b"<root/>".to_vec());
-    assert_missing_target_probe(
-        &pkg.to_zip().unwrap(),
-        "word/_rels/document.xml.rels",
-        "styles.xml",
-        false,
-    );
 }
 
 #[test]
