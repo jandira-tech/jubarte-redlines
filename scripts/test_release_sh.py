@@ -1382,6 +1382,68 @@ class ChecklistPerStep(unittest.TestCase):
         self.assertIn("after|you|", block)
 
 
+class QualityGate1797(unittest.TestCase):
+    """#1797: the release is measured against the previous release, run on the
+    same corpus and machine — never a stored <baseline> file. The previous
+    release is found relative to the release being made (from v@V@^ once its
+    tag exists, from HEAD before it), B is the tag when resuming, the verdict
+    keeps the issue's >5% bar against this run's own self-noise, and the
+    ladder's corpus is named with --corpus."""
+
+    def row(self) -> str:
+        return next(line for line in checklist_block().splitlines()
+                    if "quality gate" in line)
+
+    def test_the_gate_row_names_the_previous_release_not_a_literal_baseline(self) -> None:
+        row = self.row()
+        self.assertNotIn("<baseline>", row)
+        self.assertIn("previous release", row)
+
+    def test_the_previous_release_is_found_relative_to_the_release_being_made(self) -> None:
+        # an old-release resume must not pick a tag newer than the release:
+        # describe walks from v@V@^ once the tag exists, from HEAD before it
+        row = self.row()
+        self.assertIn("v@V@^", row)
+        self.assertIn("--match 'v[0-9]*'", row)
+        self.assertIn("echo 'v@V@^' || echo HEAD", row)
+
+    def test_b_is_the_tag_when_resuming_and_head_before_it(self) -> None:
+        row = self.row()
+        self.assertIn("echo v@V@ || echo HEAD", row)
+
+    def test_the_gate_row_names_the_corpus_explicitly_and_how_to_get_it(self) -> None:
+        row = self.row()
+        proof = row.split("|", 3)[3]
+        self.assertIn("--corpus", proof)
+        self.assertIn("ladder_corpus", row)
+        self.assertIn("corpus/word", row)  # where the bench now keeps it
+        self.assertIn("fixtures download", row)  # how to get it
+
+    def test_the_gate_row_names_the_verdict_not_a_fixed_noise_floor(self) -> None:
+        # the issue's bar stays >5% per case, gated by this run's own
+        # self-noise; the 0.14.0 +9.7% observation never became a +10% pass
+        row = self.row()
+        self.assertNotIn("noise floor", row)
+        self.assertNotIn("9.7", row)
+        self.assertIn(">5%", row)
+        self.assertIn("self-noise", row)
+        self.assertIn("UNDECIDABLE", row)
+
+    def test_the_gate_row_runs_against_the_previous_binary_and_load_baseline(self) -> None:
+        row = self.row()
+        self.assertIn("--against", row)
+        self.assertIn("scripts/criterion_abab.sh", row)
+        self.assertIn("CRITERION_HOME", row)
+        proof = row.split("|", 3)[3]
+        self.assertNotIn("/tmp", proof)
+        self.assertNotIn("mktemp", proof)
+
+    def test_the_gates_run_the_ladder_and_abab_tests(self) -> None:
+        text = RELEASE_SH.read_text()
+        self.assertIn('"${py312[@]}" tools/test_parity_ladder.py', text)
+        self.assertIn('"${py312[@]}" scripts/test_criterion_abab.py', text)
+
+
 # stub gh for the CI-publish wait: the release.yml run and its publish job's
 # conclusion ("" while the job runs), driven by the environment.
 GH_PUBLISH_STUB = "#!/bin/bash\n" + GH_BOUND + r"""case "$*" in
