@@ -27,6 +27,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::changes::{Change, ChangeError, ChangeFilter, ChangeKind, MoveSide};
 
@@ -1124,7 +1125,7 @@ impl RunSpec {
 pub struct AnchorCandidate {
     /// Paragraph id as the views print it (`p53`, `header1.p1`).
     pub at: String,
-    /// The paragraph's first words, cut with an ellipsis when longer.
+    /// A grapheme-safe excerpt around the match, with ellipses at cuts.
     pub ctx: String,
 }
 
@@ -3072,6 +3073,10 @@ struct Transaction<'p> {
     /// `(story, index in that story)` per entry of `paragraph_nodes`.
     paragraph_story: Vec<(usize, usize)>,
     projections: Vec<Projection>,
+    /// Candidate lookup uses the fixed v1 normalization ladder against these
+    /// immutable projections. Within a transaction the anchor therefore keys
+    /// both the search text and its normalization, including empty results.
+    anchor_candidate_cache: std::cell::RefCell<HashMap<String, (Vec<AnchorCandidate>, usize)>>,
     /// The source's paragraphs and where they went, when settling
     /// revisions rewrote the document.
     origin: Option<origin::Origin>,
@@ -3265,6 +3270,7 @@ impl<'p> Transaction<'p> {
             paragraph_nodes,
             paragraph_story,
             projections,
+            anchor_candidate_cache: std::cell::RefCell::new(HashMap::new()),
             origin,
             outcomes: Vec::new(),
             resolved: Vec::new(),
@@ -4202,7 +4208,9 @@ impl<'p> Transaction<'p> {
                         "ANCHOR_NOT_FOUND",
                         Selector::Name(_) | Selector::Id { .. } | Selector::Index { .. },
                         Some(anchor),
-                    ) => self.candidates_note(anchor, &mut outcome),
+                    ) if comment_text_of(selector).is_none() => {
+                        self.candidates_note(anchor, &mut outcome)
+                    }
                     _ => String::new(),
                 };
                 return Err(fail(&code, format!("{msg}{note}"), outcome));
@@ -5744,25 +5752,52 @@ impl<'p> Transaction<'p> {
     /// the anchor lives (#1889). At most [`NAMED_ANCHOR_CANDIDATES`] come
     /// back; the second return counts the rest.
     fn anchor_candidates(&self, anchor: &str) -> (Vec<AnchorCandidate>, usize) {
+        if let Some(cached) = self.anchor_candidate_cache.borrow().get(anchor) {
+            return cached.clone();
+        }
+        #[cfg(test)]
+        CANDIDATE_SCANS.with(|calls| calls.set(calls.get() + 1));
+        // Selectors are read against the source, not the settled projection.
+        // Invert the same fates the views and `select` follow, choosing one
+        // source per working paragraph. Anchored edits can follow merges.
+        let sources = self.origin.as_ref().map(|origin| {
+            let ids = origin.ids();
+            let mut sources = vec![None; self.paragraph_nodes.len()];
+            for source in 0..ids.paragraph_nodes.len() {
+                if let origin::Fate::Kept(post) | origin::Fate::Merged(post) = origin.fate(source) {
+                    sources[post].get_or_insert_with(|| ids.id(source));
+                }
+            }
+            sources
+        });
         let mut found: Vec<AnchorCandidate> = Vec::new();
         let mut more = 0;
         for g in 0..self.paragraph_nodes.len() {
+            // A paragraph without a surviving source cannot be retried by id.
+            let source_id = match &sources {
+                Some(sources) => match &sources[g] {
+                    Some(id) => Some(id),
+                    None => continue,
+                },
+                None => None,
+            };
             let text = &self.projections[g].text;
-            if !anchor_readings(text, anchor)
-                .into_iter()
-                .any(|tries| !tries.is_empty())
-            {
+            let Some(span) = anchor_readings(text, anchor).find_map(|hits| hits.first().copied())
+            else {
                 continue;
-            }
+            };
             if found.len() == NAMED_ANCHOR_CANDIDATES {
                 more += 1;
             } else {
                 found.push(AnchorCandidate {
-                    at: self.paragraph_id(g),
-                    ctx: excerpt(text, ANCHOR_CANDIDATE_CHARS),
+                    at: source_id.cloned().unwrap_or_else(|| self.paragraph_id(g)),
+                    ctx: anchor_candidate_excerpt(text, span),
                 });
             }
         }
+        self.anchor_candidate_cache
+            .borrow_mut()
+            .insert(anchor.to_string(), (found.clone(), more));
         (found, more)
     }
 
@@ -8147,25 +8182,32 @@ fn new_position(edits: &[ScheduledEdit], pos: usize, inclusive: bool, own: Optio
 /// marks, then each as the text reads (a space for a non-breaking one,
 /// straight quotes for curly ones). A paragraph the same anchor would
 /// match is exactly one with a hit on some rung of this ladder (#1889).
-fn anchor_readings(text: &str, find: &str) -> Vec<Vec<(usize, usize)>> {
-    let exact = |needle: &str| -> Vec<(usize, usize)> {
+fn anchor_readings<'a>(
+    text: &'a str,
+    find: &'a str,
+) -> impl Iterator<Item = Vec<(usize, usize)>> + 'a {
+    let exact = move |needle: &str| -> Vec<(usize, usize)> {
         text.char_indices()
             .map(|(i, _)| i)
             .filter(|&i| text[i..].starts_with(needle))
             .map(|i| (i, i + needle.len()))
             .collect()
     };
-    let plain = crate::markdown::plain_anchor(find);
-    let plain = (!plain.is_empty() && plain != find).then_some(plain);
-    let mut tries = vec![exact(find)];
-    if let Some(plain) = &plain {
-        tries.push(exact(plain));
-    }
-    tries.push(anchor::reading_hits(text, find));
-    if let Some(plain) = &plain {
-        tries.push(anchor::reading_hits(text, plain));
-    }
-    tries
+    let mut plain = None;
+    // Each rung is computed only when requested. In particular, a literal
+    // hit allocates neither a plain anchor nor normalized offset maps.
+    (0..4).filter_map(move |rung| match rung {
+        0 => Some(exact(find)),
+        1 => {
+            let stripped = crate::markdown::plain_anchor(find);
+            plain = (!stripped.is_empty() && stripped != find).then_some(stripped);
+            plain.as_deref().map(exact)
+        }
+        2 => Some(anchor::reading_hits(text, find)),
+        _ => plain
+            .as_deref()
+            .map(|plain| anchor::reading_hits(text, plain)),
+    })
 }
 
 /// The unique occurrence of `find` in the paragraph, or its
@@ -8205,7 +8247,7 @@ fn locate(
     // one, or a straight quote for a curly one: the literal is tried
     // first, then the text without marks, then each as it reads
     // ([`anchor_readings`]).
-    let mut readings = anchor_readings(text, find).into_iter();
+    let mut readings = anchor_readings(text, find);
     let mut hits = inside(readings.next().expect("the literal is the first try"));
     if hits.is_empty()
         && let Some(found) = readings.map(inside).find(|t| !t.is_empty())
@@ -8321,10 +8363,41 @@ const SELECTOR_CHARS: usize = 60;
 /// (#1889).
 const NAMED_ANCHOR_CANDIDATES: usize = 3;
 
-/// How many characters of a candidate paragraph's text an
+/// How many graphemes of a candidate paragraph's text an
 /// `ANCHOR_NOT_FOUND` quotes (#1889): the issue's own example,
 /// `p53 ("10.2. Liability Cap. To the maximum extent…")`, is 42.
 const ANCHOR_CANDIDATE_CHARS: usize = 42;
+
+/// A bounded window centred on the matched span, shifted inward at either
+/// paragraph edge. Even a match inside a cluster includes the whole cluster;
+/// a match longer than the budget shows its middle. Never split a grapheme.
+fn anchor_candidate_excerpt(text: &str, (start, end): (usize, usize)) -> String {
+    let boundaries: Vec<usize> = text
+        .grapheme_indices(true)
+        .map(|(i, _)| i)
+        .chain(std::iter::once(text.len()))
+        .collect();
+    let count = boundaries.len() - 1;
+    let first = boundaries
+        .partition_point(|&i| i <= start)
+        .saturating_sub(1);
+    let last = boundaries.partition_point(|&i| i < end);
+    let width = ANCHOR_CANDIDATE_CHARS.min(count);
+    let matched = last - first;
+    let from = if matched <= width {
+        first.saturating_sub((width - matched) / 2)
+    } else {
+        first + (matched - width) / 2
+    }
+    .min(count - width);
+    let to = from + width;
+    format!(
+        "{}{}{}",
+        if from > 0 { "…" } else { "" },
+        &text[boundaries[from]..boundaries[to]],
+        if to < count { "…" } else { "" }
+    )
+}
 
 /// The byte span of the words of `text` that `[start, end)` touches: out
 /// to the nearest whitespace or comparer word separator on each side, so
@@ -10220,6 +10293,11 @@ mod tests {
         assert_eq!(e.to_string(), "X: why");
     }
 }
+#[cfg(test)]
+thread_local! {
+    static CANDIDATE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 // Reuse the repository's existing, entirely in-memory package fixture.
 #[cfg(test)]
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
@@ -10236,6 +10314,50 @@ mod deeper_boundary_tests {
         EditPlan::from_json(&format!(
             r#"{{"schema_version":1,"author":"Boundary","date":"2026-01-01T00:00:00Z","operations":{operations}}}"#
         )).unwrap()
+    }
+
+    #[test]
+    fn anchor_candidate_literal_success_skips_normalized_searches() {
+        for find in ["Liability Cap", "**Liability Cap**"] {
+            let source = docx(&para("Liability Cap"));
+            let plan = plan(
+                &serde_json::json!([{
+                    "kind":"replace", "paragraph":"p0", "find":find, "replacement":"Cap"
+                }])
+                .to_string(),
+            );
+            let mut tx = Transaction::start(&source, &plan).unwrap();
+            anchor::READING_CALLS.with(|calls| calls.set(0));
+            tx.resolve().unwrap();
+            assert_eq!(
+                anchor::READING_CALLS.with(std::cell::Cell::get),
+                0,
+                "literal/plain success must not allocate normalized offset maps"
+            );
+        }
+    }
+
+    #[test]
+    fn anchor_candidate_repeated_failures_scan_once_per_anchor() {
+        let source = docx(&format!("{}{}", para("Other."), para("Liability Cap")));
+        let operations = serde_json::json!([
+            {"kind":"replace", "paragraph":"p0", "find":"Liability Cap", "replacement":"Cap"},
+            {"kind":"replace", "paragraph":"p0", "find":"Liability Cap", "replacement":"Cap"},
+            {"kind":"replace", "paragraph":"p0", "find":"absent", "replacement":"Cap"},
+            {"kind":"replace", "paragraph":"p0", "find":"absent", "replacement":"Cap"}
+        ]);
+        let plan = plan(&operations.to_string());
+        let mut tx = Transaction::start(&source, &plan).unwrap();
+        CANDIDATE_SCANS.with(|calls| calls.set(0));
+        let error = tx.resolve().unwrap_err();
+        assert_eq!(error.outcomes.len(), 4);
+        assert_eq!(error.outcomes[0].candidates, error.outcomes[1].candidates);
+        assert!(error.outcomes[2].candidates.is_empty());
+        assert_eq!(
+            CANDIDATE_SCANS.with(std::cell::Cell::get),
+            2,
+            "repeated failures must reuse both found and empty candidate results"
+        );
     }
 
     fn dom(xml: &str) -> (Dom, NodeId) {

@@ -298,3 +298,55 @@ fn a_skipped_operation_keeps_its_candidates_in_the_report() {
         "{jsonl}"
     );
 }
+
+#[test]
+fn candidate_excerpt_shows_a_late_anchor_and_preserves_graphemes() {
+    for (text, anchor, expected) in [
+        (
+            format!("{}Liability Cap{}", "a".repeat(80), "z".repeat(80)),
+            "Liability Cap",
+            format!("…{}Liability Cap{}…", "a".repeat(14), "z".repeat(15)),
+        ),
+        (
+            format!("{}Liability Cap{}", "e\u{301}".repeat(80), "👩‍💻".repeat(80)),
+            "Liability Cap",
+            format!(
+                "…{}Liability Cap{}…",
+                "e\u{301}".repeat(14),
+                "👩‍💻".repeat(15)
+            ),
+        ),
+        (
+            format!("{}curly’s{}", "a".repeat(80), "z".repeat(80)),
+            "curly's",
+            format!("…{}curly’s{}…", "a".repeat(17), "z".repeat(18)),
+        ),
+    ] {
+        let source = docx(&format!("{}{}", para("Other."), para(&text)));
+        let operations = serde_json::json!([{
+            "kind": "replace", "paragraph": "p0", "find": anchor, "replacement": "Cap"
+        }]);
+        let error = apply_plan(&source, &plan(&operations.to_string())).unwrap_err();
+        assert_eq!(error.code, "ANCHOR_NOT_FOUND");
+        assert_eq!(error.outcomes[0].candidates[0].ctx, expected);
+    }
+}
+
+#[test]
+fn missing_comment_text_never_suggests_document_candidates() {
+    for selector in [
+        serde_json::json!("c999.text"),
+        serde_json::json!({"id":"c999.text"}),
+    ] {
+        let operations = serde_json::json!([{
+            "kind": "replace", "paragraph": selector, "find": "Liability Cap", "replacement": "Cap"
+        }]);
+        let error = apply_plan(&contract(), &plan(&operations.to_string())).unwrap_err();
+        assert_eq!(error.code, "ANCHOR_NOT_FOUND");
+        assert_eq!(
+            error.message,
+            "no comment c999 covers text in this document"
+        );
+        assert!(error.outcomes[0].candidates.is_empty());
+    }
+}

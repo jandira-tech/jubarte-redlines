@@ -31,6 +31,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- Anchor-not-found candidates use retryable source paragraph IDs after revision settlement, show the matched text in grapheme-safe excerpts, and stay out of comment-text scope errors. Repeated failures reuse candidate scans, and literal/plain anchor successes skip normalized searches (#1889).
+
 - Incomplete-change refusals name runnable whole-change retries for edit flags (`-p r10+11 --accept` / `--reject`), typed edits (`--accept-change r10+11` / `--reject-change r10+11`), and top-level `accept` / `reject` (`--id r10+11`). One-shot selection errors omit the plan-only prefix, including when recording flags into a plan with visible rejects. JSON plans keep their released wording, and `--strike` still allows a single mark (#1895).
 
 - One-shot `edit` and `add` accept `--occurrence N` after `--anchor` in each `-p` group. Ambiguous anchors show numbered context windows and flag-based guidance; plans retain their released wording. `edit replace --find` lists matching paragraphs with their match counts and suggests `--at` or `--occurrence` (#1894).

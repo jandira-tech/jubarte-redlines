@@ -408,3 +408,24 @@ fn the_quoted_selector_round_trips() {
         assert_word_valid_package(&out.redline);
     }
 }
+
+#[test]
+fn anchor_candidates_retry_the_source_id_after_settlement() {
+    let source = merging();
+    for (anchor, expected) in [("Two.", "p2"), ("Three four.", "p3"), ("Five.", "p5")] {
+        let op = |at: &str| {
+            format!(
+                r#"{{"kind":"replace","paragraph":"{at}","find":"{anchor}","replacement":"Replaced."}}"#
+            )
+        };
+        let error = apply_plan(&source, &plan(ACCEPT, &op("p0"))).unwrap_err();
+        assert_eq!(error.code, "ANCHOR_NOT_FOUND");
+        let candidate = &error.outcomes[0].candidates[0];
+        assert_eq!(
+            candidate.at, expected,
+            "candidate must name a retryable source paragraph"
+        );
+        let retried = apply_plan(&source, &plan(ACCEPT, &op(&candidate.at))).unwrap();
+        assert!(texts(&retried.clean).iter().any(|t| t == "Replaced."));
+    }
+}
