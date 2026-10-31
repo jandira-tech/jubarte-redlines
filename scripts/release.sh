@@ -1147,7 +1147,11 @@ if [ -n "$headerless" ]; then
 fi
 if [ "$SKIP_GATES" = 0 ]; then
   say "5. Gates (sequential cargo, per AGENTS.md)"
-  cargo fmt --check
+  # The bindings declare separate workspaces; root fmt cannot reach them.
+  cargo fmt --all --manifest-path Cargo.toml --check
+  cargo fmt --all --manifest-path jubarte-wasm/Cargo.toml --check
+  cargo fmt --all --manifest-path jubarte-python/Cargo.toml --check
+  cargo fmt --all --manifest-path jubarte-rust-inproc/Cargo.toml --check
   cargo clippy --all-targets --all-features -- -D warnings
   cargo test --all-features
   # The docs.rs build: a dead intra-doc link renders as bare brackets there.

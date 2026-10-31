@@ -182,6 +182,18 @@ def step(n: int) -> str:
     return text[start:min(ends) if ends else len(text)]
 
 
+class WorkspaceFormatting(unittest.TestCase):
+    def test_step5_formats_every_workspace(self) -> None:
+        # Each binding has its own workspace: root cargo fmt cannot reach it.
+        manifests = (
+            "Cargo.toml", "jubarte-wasm/Cargo.toml",
+            "jubarte-python/Cargo.toml", "jubarte-rust-inproc/Cargo.toml",
+        )
+        for manifest in manifests:
+            with self.subTest(manifest=manifest):
+                self.assertIn(f"cargo fmt --all --manifest-path {manifest} --check", step(5))
+
+
 class NpmCli(unittest.TestCase):
     """`npx jubarte-redlines` ships beside jubarte-wasm, on its version."""
 
