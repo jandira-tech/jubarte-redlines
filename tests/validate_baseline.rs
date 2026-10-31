@@ -129,7 +129,8 @@ fn baseline_hides_the_inputs_findings() {
     assert_eq!(
         out,
         "new: none\nalready in the input: 2 (not yours)\n\
-         PASS: every difference from the baseline is yours and tracked\n"
+         new markup by: Claude (1 change)\n\
+         PASS: no new finding (authorship not checked: pass --author NAME)\n"
     );
     assert_eq!(err, "");
 }
@@ -151,7 +152,7 @@ fn baseline_reports_a_new_finding_even_at_the_same_count() {
         format!(
             "resolved: 1 (in the input, not in this file)\n{}\
              new: 1\n{}already in the input: 1 (not yours)\n\
-             FAIL: 1 finding (1 change, 0 comments); not ready to deliver\n",
+             FAIL: 1 finding (0 changes, 0 comments); not ready to deliver\n",
             unmatched("20000002"),
             unmatched("30000003")
         )
@@ -233,7 +234,7 @@ fn baseline_fails_only_on_new_findings_under_strict_too() {
         "{out}"
     );
     assert!(
-        out.ends_with("FAIL: 1 finding (1 change, 0 comments); not ready to deliver\n"),
+        out.ends_with("FAIL: 1 finding (0 changes, 0 comments); not ready to deliver\n"),
         "{out}"
     );
 }
@@ -520,14 +521,14 @@ fn resolved_findings_come_first_and_the_verdict_is_last() {
             "resolved: 1 (in the input, not in this file)\n{}\
              new: 1\n{}\
              already in the input: 1 (not yours)\n\
-             FAIL: 1 finding (1 change, 0 comments); not ready to deliver\n",
+             FAIL: 1 finding (0 changes, 0 comments); not ready to deliver\n",
             unmatched("20000002"),
             unmatched("30000003"),
         )
     );
     assert_eq!(
         out.lines().last(),
-        Some("FAIL: 1 finding (1 change, 0 comments); not ready to deliver")
+        Some("FAIL: 1 finding (0 changes, 0 comments); not ready to deliver")
     );
 }
 
@@ -599,7 +600,13 @@ fn baseline_json_gains_authors_and_verdict() {
                 {"name": "G: GiantCo", "changes": 1, "comments": 0},
                 {"name": "Jubarte", "changes": 0, "comments": 1},
             ],
-            "verdict": {"pass": false, "findings": 4, "changes": 3, "comments": 1},
+            "verdict": {
+                "pass": false,
+                "findings": 4,
+                "changes": 3,
+                "comments": 1,
+                "authored": true,
+            },
         })
     );
 
@@ -625,7 +632,13 @@ fn baseline_json_gains_authors_and_verdict() {
     let last = rows.last().unwrap();
     assert_eq!(
         last["verdict"],
-        serde_json::json!({"pass": true, "findings": 0, "changes": 0, "comments": 0})
+        serde_json::json!({
+            "pass": true,
+            "findings": 0,
+            "changes": 0,
+            "comments": 0,
+            "authored": true,
+        })
     );
     assert_eq!(
         last["authors"],
@@ -1358,4 +1371,184 @@ fn quiet_json_listings_end_with_a_record() {
         let field = if task == "changes" { "kind" } else { "text" };
         assert!(record.get(field).is_some(), "{record}");
     }
+}
+
+// --- The #1893 review: the verdict states what was checked, the counts
+// are objects and not findings, and the summary names the baseline's
+// markup. ---
+
+/// A tracked insertion of `text` by `author`, as change `id`.
+fn ins(id: u32, text: &str, author: &str) -> String {
+    format!(
+        r#"<w:ins w:id="{id}" w:author="{author}" w:date="2026-10-26T12:00:00Z"><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:ins>"#
+    )
+}
+
+/// Without `--author` no authorship was checked: the verdict says only
+/// that, and the summary still names who signed the new markup.
+#[test]
+fn the_verdict_without_an_author_says_only_what_was_checked() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), three_clean()).unwrap();
+    std::fs::write(
+        dir.path().join("out.docx"),
+        three_marked("Claude", "Claude", "Claude", "Claude"),
+    )
+    .unwrap();
+    let (code, out, err) = run(
+        dir.path(),
+        &["validate", "out.docx", "--baseline", "in.docx"],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        out,
+        "new: none\n\
+         already in the input: none\n\
+         new markup by: Claude (3 changes, 1 comment)\n\
+         PASS: no new finding (authorship not checked: pass --author NAME)\n"
+    );
+}
+
+/// Another author's text between two marks of one change leaves them one
+/// change: the finding names it once, as `changes` lists it.
+#[test]
+fn one_change_split_by_another_authors_text_is_one_finding() {
+    let base = docx(&para("Pay  end."));
+    let out = docx(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Pay </w:t></w:r>{}{}{}<w:r><w:t xml:space="preserve"> end.</w:t></w:r></w:p>"#,
+        ins(7, "within ", "Bob"),
+        ins(8, "thirty ", "Alice"),
+        ins(9, "days", "Bob"),
+    ));
+    let listed = jubarte::changes::list_logical_changes(&out).unwrap();
+    assert_eq!(listed.len(), 2, "the fixture is two logical changes");
+    assert_eq!(listed[0].id, "r7+9");
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), base).unwrap();
+    std::fs::write(dir.path().join("out.docx"), &out).unwrap();
+    let (code, stdout, err) = run(
+        dir.path(),
+        &[
+            "validate",
+            "out.docx",
+            "--baseline",
+            "in.docx",
+            "--author",
+            "Legal",
+        ],
+    );
+    assert_eq!(code, 2, "{stdout}{err}");
+    assert_eq!(
+        stdout,
+        concat!(
+            "new: 2\n",
+            "  FOREIGN_AUTHOR\terror\tword/document.xml#\tr7+9 by Bob is new\n",
+            "  FOREIGN_AUTHOR\terror\tword/document.xml#\tr8 by Alice is new\n",
+            "already in the input: none\n",
+            "new markup by: Bob (1 change), Alice (1 change)\n",
+            "2 names sign the new markup; one session signs with one -a\n",
+            "none of it is signed \"Legal\"\n",
+            "FAIL: 2 findings (2 changes, 0 comments); not ready to deliver\n",
+        )
+    );
+}
+
+/// A tracked paragraph mark inherited from the baseline does not hide the
+/// history of another author's change: the difference is tracked, not an
+/// untracked edit.
+#[test]
+fn a_tracked_paragraph_mark_elsewhere_keeps_the_history_explained() {
+    // The second paragraph's mark is inserted: rejecting every change
+    // merges it with the third, so the paragraphs are not the same
+    // number on both sides of the rejection.
+    let inserted_mark = r#"<w:pPr><w:rPr><w:ins w:id="9" w:author="Ann" w:date="2026-10-01T00:00:00Z"/></w:rPr></w:pPr>"#;
+    let base = docx(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Fee is 10.</w:t></w:r></w:p><w:p>{inserted_mark}<w:r><w:t xml:space="preserve">Second.</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve">Third.</w:t></w:r></w:p>"#
+    ));
+    let out = docx(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Fee is </w:t></w:r>{}{}<w:r><w:t xml:space="preserve">.</w:t></w:r></w:p><w:p>{inserted_mark}<w:r><w:t xml:space="preserve">Second.</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve">Third.</w:t></w:r></w:p>"#,
+        mark("del", 10, "GiantCo", "10"),
+        mark("ins", 11, "GiantCo", "12"),
+    ));
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), base).unwrap();
+    std::fs::write(dir.path().join("out.docx"), out).unwrap();
+    let (code, stdout, err) = run(
+        dir.path(),
+        &[
+            "validate",
+            "out.docx",
+            "--baseline",
+            "in.docx",
+            "--author",
+            "Legal",
+        ],
+    );
+    assert_eq!(code, 2, "{stdout}{err}");
+    assert!(stdout.contains("r10+11 by GiantCo is new"), "{stdout}");
+    assert!(!stdout.contains("UNTRACKED_EDIT"), "{stdout}");
+}
+
+/// A revision that names no author is counted, as `<no author>`.
+#[test]
+fn an_unsigned_revision_is_counted_as_no_author() {
+    let base = docx(&para("One."));
+    let out = docx(
+        r#"<w:p><w:r><w:t xml:space="preserve">One.</w:t></w:r><w:ins w:id="5"><w:r><w:t xml:space="preserve"> Two.</w:t></w:r></w:ins></w:p>"#,
+    );
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), base).unwrap();
+    std::fs::write(dir.path().join("out.docx"), out).unwrap();
+    let (code, stdout, err) = run(
+        dir.path(),
+        &[
+            "validate",
+            "out.docx",
+            "--baseline",
+            "in.docx",
+            "--author",
+            "Legal",
+        ],
+    );
+    assert_eq!(code, 2, "{stdout}{err}");
+    assert!(
+        stdout.contains("new markup by: <no author> (1 change)"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("r5 by <no author> is new"), "{stdout}");
+}
+
+/// The summary counts the markup the edit gained over the baseline: the
+/// baseline's own markup is inherited, not new.
+#[test]
+fn the_summary_counts_the_markup_over_the_baseline() {
+    let ann = ins(10, "two", "Ann");
+    let bob = ins(11, "three", "Bob");
+    let original = docx(&para("One."));
+    let base = docx(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">One.</w:t></w:r>{ann}</w:p>"#
+    ));
+    let out = docx(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">One.</w:t></w:r>{ann}{bob}</w:p>"#
+    ));
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("original.docx"), original).unwrap();
+    std::fs::write(dir.path().join("in.docx"), base).unwrap();
+    std::fs::write(dir.path().join("out.docx"), out).unwrap();
+    let (code, stdout, err) = run(
+        dir.path(),
+        &[
+            "validate",
+            "out.docx",
+            "--baseline",
+            "in.docx",
+            "--original",
+            "original.docx",
+            "--author",
+            "Legal",
+        ],
+    );
+    assert_eq!(code, 2, "{stdout}{err}");
+    assert!(stdout.contains("new markup by: Bob (1 change)"), "{stdout}");
+    assert!(!stdout.contains("new markup by: Ann"), "{stdout}");
 }

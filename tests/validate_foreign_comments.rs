@@ -286,3 +286,38 @@ fn a_foreign_comment_is_new_against_the_baseline() {
     assert!(stdout.contains(r#"c0 by "Bob" is gone"#), "{stdout}");
     assert!(stdout.contains("already in the input: none"), "{stdout}");
 }
+
+/// One comment, reworded and resolved, is one comment: the verdict counts
+/// objects, not findings.
+#[test]
+fn one_comment_reworded_and_resolved_is_one_comment() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), bobs()).unwrap();
+    let mine = edited(
+        &bobs(),
+        "Me",
+        &serde_json::json!([
+            {"kind": "edit_comment", "comment_id": 0, "text": "Fine."},
+            {"kind": "resolve_comment", "comment_id": 0},
+        ]),
+    );
+    std::fs::write(dir.path().join("out.docx"), mine).unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .current_dir(dir.path())
+        .args([
+            "validate",
+            "out.docx",
+            "--baseline",
+            "in.docx",
+            "--author",
+            "Me",
+        ])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(2), "{stdout}");
+    assert!(
+        stdout.ends_with("FAIL: 2 findings (0 changes, 1 comment); not ready to deliver\n"),
+        "{stdout}"
+    );
+}

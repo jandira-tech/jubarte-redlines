@@ -377,8 +377,9 @@ pub fn validate_with(
 /// document by [`identities`]). That original is `base` unless `original`
 /// names another; `author` turns the `edits` rule on as `validate_with`'s
 /// `original` does, so the other party's changes `base` already had are
-/// the input's, not the edit's. With `author`, `Baselined::authors` also
-/// names who signed the markup `docx` gained over that original (#1893).
+/// the input's, not the edit's. `Baselined::authors` names who signed the
+/// markup `docx` gained over the baseline, whoever that is (#1893): the
+/// summary needs no expected author, only `none of it is signed` does.
 ///
 /// # Errors
 ///
@@ -404,16 +405,20 @@ pub fn validate_baselined(
     let keys = identities(docx, &findings);
     let inherited_keys = identities(base, &inherited);
     let mut split = baseline_keyed(findings, &keys, inherited, &inherited_keys);
+    // The new markup is what the edit gained over the baseline, whoever
+    // signed it: the summary names them even without an author to check
+    // them against (#1893).
+    split.authors = new_markup(base, docx)?;
     if let Some(author) = author {
         split.author = Some(author.to_string());
-        split.authors = new_markup(original.unwrap_or(base), docx)?;
     }
     Ok(split)
 }
 
 /// Who signed the markup `edited` gained over `original` (#1893): the
-/// [`check_foreign_revisions`] comparison with nobody skipped, so the
-/// author's own changes count too, read from its `is new` findings, plus
+/// [`check_foreign_revisions`] comparison with nobody skipped — an author
+/// the run was given is the only one skipped, so a revision that names
+/// none counts as `<no author>` — read from its `is new` findings, plus
 /// `edited`'s comments no comment of `original` pairs with. One row per
 /// name, in first-appearance order: changes in document order, then
 /// comments. A change counts once, as `changes` lists it.
@@ -999,16 +1004,17 @@ pub struct AuthorMark {
 /// being what [`fails`] says of the new findings — the 0 against 2 exit.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Verdict {
-    /// True when every difference from the baseline is the author's and
-    /// tracked.
+    /// True when the new findings do not fail the run.
     pub pass: bool,
-    /// The new findings, and how many of them are about changes and about
-    /// comments.
+    /// The new findings.
     pub findings: usize,
-    /// Findings about changes: every code but `FOREIGN_COMMENT`.
+    /// The distinct logical changes the findings name.
     pub changes: usize,
-    /// `FOREIGN_COMMENT` findings.
+    /// The distinct comments the findings name.
     pub comments: usize,
+    /// True when the authorship of the new markup was checked: the run
+    /// had an author to check it against (#1893).
+    pub authored: bool,
 }
 
 /// A document's findings against those of the document it was made from
@@ -1023,8 +1029,8 @@ pub struct Baselined {
     pub resolved: Vec<Finding>,
     /// Who signed the markup the edit added over the baseline, counted per
     /// logical change as `changes` lists it and per comment, in
-    /// first-appearance order (#1893): [`validate_baselined`] fills it with
-    /// `--author`; empty without.
+    /// first-appearance order (#1893): [`validate_baselined`] fills it
+    /// with the markup `docx` gained over the baseline.
     pub authors: Vec<AuthorMark>,
     /// The `--author` the markup was checked against, when there is one;
     /// the text report's `none of it is signed` line reads it.
@@ -1033,21 +1039,57 @@ pub struct Baselined {
 
 impl Baselined {
     /// The run's verdict under `strict` (as [`fails`] reads the new
-    /// findings): `pass` is the 0 exit.
+    /// findings): `pass` is the 0 exit. The counts are objects, not
+    /// findings: the distinct logical changes and the distinct comments
+    /// the findings name; a finding about neither counts as a finding
+    /// only (#1893).
     #[must_use]
     pub fn verdict(&self, strict: bool) -> Verdict {
-        let comments = self
-            .new
-            .iter()
-            .filter(|f| f.code == "FOREIGN_COMMENT")
-            .count();
+        let mut changes: HashSet<String> = HashSet::new();
+        let mut comments: HashSet<String> = HashSet::new();
+        for f in &self.new {
+            match f.code.as_str() {
+                "FOREIGN_AUTHOR" => changes.extend(change_of(&f.message)),
+                "FOREIGN_COMMENT" => comments.extend(comment_of(&f.message)),
+                _ => {}
+            }
+        }
         Verdict {
             pass: !fails(&self.new, strict),
             findings: self.new.len(),
-            changes: self.new.len() - comments,
-            comments,
+            changes: changes.len(),
+            comments: comments.len(),
+            authored: self.author.is_some(),
         }
     }
+}
+
+/// The logical change a `FOREIGN_AUTHOR` finding names, by its first
+/// mark: `r10+11` and `r10` are one change (#1893).
+fn change_of(message: &str) -> Option<String> {
+    let id = if let Some(rest) = message
+        .strip_suffix(FOREIGN_NEW)
+        .or_else(|| message.strip_suffix(FOREIGN_ALTERED))
+    {
+        rest.trim_end().rsplit_once(" by ")?.0
+    } else {
+        let rest = message.strip_suffix(" in the original is gone")?;
+        rest.rsplit_once("'s ")?.1
+    };
+    Some(
+        crate::ids::parse_change_ids(id)
+            .ok()
+            .and_then(|ids| ids.first().map(crate::ids::ChangeId::short))
+            .unwrap_or_else(|| id.to_string()),
+    )
+}
+
+/// The comment a `FOREIGN_COMMENT` finding names: `c3`, whatever else the
+/// message says of it (#1893).
+fn comment_of(message: &str) -> Option<String> {
+    let rest = message.strip_prefix('c')?;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    (!digits.is_empty()).then(|| format!("c{digits}"))
 }
 
 /// Splits `new` (the findings of an edited document) by those of `base`
@@ -1160,6 +1202,8 @@ fn tier(pass: usize, key: &FindingKey) -> Option<([&str; 5], [Option<&str>; 5])>
 /// `new: N` and the new findings ([`findings_text`]'s lines), then
 /// `already in the input: N (not yours)` (or `none`), then the author
 /// summary ([`markup_text`]), and last the verdict ([`verdict_text`]).
+/// The verdict states what the run checked: without an author, no
+/// authorship was checked, and the line says so (#1893).
 pub fn baselined_text(split: &Baselined, strict: bool) -> String {
     let count = |n: usize| {
         if n == 0 {
@@ -1196,12 +1240,13 @@ pub fn baselined_text(split: &Baselined, strict: bool) -> String {
     out
 }
 
-/// The author-summary lines of `validate --baseline --author` (#1893):
+/// The author-summary lines of `validate --baseline` (#1893):
 /// `new markup by:` with one entry per signing name (counts per logical
 /// change as `changes` lists them, comments separately), then, when more
 /// than one name signs, the one-`-a` warning, and when none of the names
-/// is `--author`, the line that says so. Nothing when the edit signed no
-/// new markup.
+/// is `--author`, the line that says so. The summary needs no expected
+/// author: it names who signed, not who should have (#1893). Nothing when
+/// the edit signed no new markup.
 fn markup_text(split: &Baselined) -> String {
     if split.authors.is_empty() {
         return String::new();
@@ -1249,7 +1294,16 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 /// findings counted on changes and comments.
 fn verdict_text(verdict: &Verdict) -> String {
     if verdict.pass {
-        "PASS: every difference from the baseline is yours and tracked\n".to_string()
+        if verdict.authored {
+            "PASS: every difference from the baseline is yours and tracked\n".to_string()
+        } else if verdict.findings == 0 {
+            "PASS: no new finding (authorship not checked: pass --author NAME)\n".to_string()
+        } else {
+            format!(
+                "PASS: {} did not fail the run (authorship not checked: pass --author NAME)\n",
+                plural(verdict.findings, "finding", "findings")
+            )
+        }
     } else {
         format!(
             "FAIL: {} ({}, {}); not ready to deliver\n",
@@ -3970,16 +4024,20 @@ fn story_part(id: &str) -> String {
     }
 }
 
-/// `validate.py --original --author` without an XSD: every visible-text
-/// difference between `original` and `edited` must sit in a revision by
-/// `author`. Rejecting that author's changes must give back `original`'s
-/// text, body and stories alike; any residue is an `UNTRACKED_EDIT` finding
-/// at its paragraph id — but not when rejecting every change gives the
-/// paragraph back, for then its only difference is tracked history the
-/// `FOREIGN_AUTHOR` findings already name (#1893). Foreign revisions
-/// already in `original` may remain: only added, altered or removed
-/// foreign history is a `FOREIGN_AUTHOR` finding, one per logical change
-/// as `changes` lists it (`r10+11`, #1893), never one per mark.
+/// [`validate.py --original --author`](audit_tracked) without an XSD:
+/// every visible-text difference between `original` and `edited` must sit
+/// in a revision by `author`. Rejecting that author's changes must give
+/// back `original`'s text, body and stories alike; any residue is an
+/// `UNTRACKED_EDIT` finding at its paragraph id — but not when rejecting
+/// every change gives the paragraph back, for then its only difference is
+/// tracked history the `FOREIGN_AUTHOR` findings already name (#1893).
+/// That comparison is per story: the rejection of a tracked paragraph
+/// mark merges or splits paragraphs, so a story whose shape changed is
+/// compared by its text, and a story elsewhere in the document does not
+/// silence the check here (#1893). Foreign revisions already in
+/// `original` may remain: only added, altered or removed foreign history
+/// is a `FOREIGN_AUTHOR` finding, one per logical change as `changes`
+/// lists it (`r10+11`, #1893), never one per mark.
 /// Paragraphs are aligned by full text (including deleted text), story
 /// by story. An untracked paragraph merge or split around another author's
 /// revisions reports those revisions as new and gone alongside `UNTRACKED_EDIT`.
@@ -4048,16 +4106,39 @@ pub fn audit_tracked(
         let every = ChangeFilter::default();
         let projected_original = all_paragraphs(&reject_changes(original, &every)?)?;
         let projected_edited = all_paragraphs(&reject_changes(edited, &every)?)?;
-        // The rejection keeps the paragraphs, so an index still names the
-        // same one; when it does not, no difference is explained.
-        let aligned =
-            projected_original.len() == before.len() && projected_edited.len() == after.len();
+        // The paragraphs of each story, and where each of them sits in
+        // it: the stories pair by name, so a story of one document is
+        // compared with the same story of the other (#1893).
+        let before_stories = by_story(&before);
+        let after_stories = by_story(&after);
+        let original_stories = by_story(&projected_original);
+        let edited_stories = by_story(&projected_edited);
+        let places = story_places(&after);
         for i in differing {
-            let explained = aligned
-                && matches!(
-                    (projected_original.get(i), projected_edited.get(i)),
-                    (Some(b), Some(a)) if b.text == a.text
-                );
+            let story = story_part(&after[i].id);
+            let index = places
+                .get(after[i].id.as_str())
+                .map(|(_, index)| *index)
+                .unwrap_or_default();
+            let ubefore = story_of(&before_stories, &story);
+            let uafter = story_of(&after_stories, &story);
+            let po = story_of(&original_stories, &story);
+            let pe = story_of(&edited_stories, &story);
+            // The shape of the story decides how its paragraphs pair: with
+            // the same shape, the index names the same paragraph on both
+            // sides; with another, the rejection of a tracked paragraph
+            // mark merged or split paragraphs, and the story's text is
+            // the comparison — which no paragraph of it escapes: a
+            // paragraph that was split or joined keeps its text in the
+            // story's, and a story the two sides split differently reads
+            // differently, so the finding stands (#1893).
+            let explained = if po.len() == ubefore.len() && pe.len() == uafter.len() {
+                po.get(index)
+                    .zip(pe.get(index))
+                    .is_some_and(|(b, a)| b.text == a.text)
+            } else {
+                story_text(po) == story_text(pe)
+            };
             if !explained {
                 let (b, a) = (&before[i], &after[i]);
                 out.push(Finding::new(
@@ -4073,6 +4154,54 @@ pub fn audit_tracked(
         }
     }
     Ok(as_edits(out))
+}
+
+/// The paragraphs of `list` by the story they sit in ([`story_part`]),
+/// in order.
+fn by_story(list: &[crate::inspect::Paragraph]) -> Vec<(String, Vec<&crate::inspect::Paragraph>)> {
+    let mut out: Vec<(String, Vec<&crate::inspect::Paragraph>)> = Vec::new();
+    for p in list {
+        let story = story_part(&p.id);
+        match out.last_mut() {
+            Some((name, paragraphs)) if *name == story => paragraphs.push(p),
+            _ => out.push((story, vec![p])),
+        }
+    }
+    out
+}
+
+/// The paragraphs of `stories` that sit in `story`.
+fn story_of<'a>(
+    stories: &'a [(String, Vec<&'a crate::inspect::Paragraph>)],
+    story: &str,
+) -> &'a [&'a crate::inspect::Paragraph] {
+    stories
+        .iter()
+        .find(|(name, _)| name == story)
+        .map(|(_, paragraphs)| paragraphs.as_slice())
+        .unwrap_or_default()
+}
+
+/// The story each paragraph of `list` sits in, and its index in it.
+fn story_places(list: &[crate::inspect::Paragraph]) -> HashMap<&str, (String, usize)> {
+    let mut out = HashMap::with_capacity(list.len());
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for p in list {
+        let story = story_part(&p.id);
+        let index = counts.entry(story.clone()).or_default();
+        out.insert(p.id.as_str(), (story, *index));
+        *index += 1;
+    }
+    out
+}
+
+/// The text of a story's paragraphs, one per line.
+fn story_text(paragraphs: &[&crate::inspect::Paragraph]) -> String {
+    paragraphs
+        .iter()
+        .map(|p| p.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The logical-change grouping of the two compared documents, as
@@ -4642,13 +4771,14 @@ impl Wholes {
     }
 }
 
-/// One finding per logical change (#1893): findings for marks of one
+/// One finding per logical change (#1893): findings for the marks of one
 /// change, on one side, in one state, that together cover the whole
 /// change, print as one finding naming the change's id as `changes`
 /// prints it (`r10+11 by GiantCo is new`). Findings for some of a change's
 /// marks keep their mark's id, so a surviving mark is never named gone.
-/// The marks of one change are contiguous in document order, so one run
-/// of adjacent findings is one change.
+/// The findings are grouped by the change they belong to, not by their
+/// place: another author's text between two marks of one change leaves
+/// them one change (#1893).
 fn whole_changes(
     findings: ForeignFindings,
     before: &[ForeignGroup<'_>],
@@ -4662,55 +4792,49 @@ fn whole_changes(
             &after[index]
         }
     };
-    let mut out = Vec::with_capacity(findings.len());
-    let mut run: ForeignFindings = Vec::new();
+    /// The change a finding belongs to, with the side and the state it
+    /// names it in.
+    type Change = (bool, &'static str, String);
+    let key_of = |finding: &(bool, usize, Finding)| -> Change {
+        let (original, index, f) = finding;
+        (
+            *original,
+            foreign_state(f),
+            wholes
+                .whole(*original, &group_of(*original, *index).change.id)
+                .to_string(),
+        )
+    };
+    // The changes in the order they first appear, each with its findings.
+    let mut order: Vec<Change> = Vec::new();
+    let mut groups: HashMap<Change, Vec<(bool, usize, Finding)>> = HashMap::new();
+    let count = findings.len();
     for finding in findings {
-        let key = |(original, index, f): &(bool, usize, Finding)| {
-            (
-                *original,
-                foreign_state(f),
-                wholes.whole(*original, &group_of(*original, *index).change.id),
-            )
-        };
-        if run.last().is_none_or(|last| key(last) != key(&finding)) {
-            flush_whole_run(&mut run, &mut out, wholes, before, after);
+        let key = key_of(&finding);
+        if !groups.contains_key(&key) {
+            order.push(key.clone());
         }
-        run.push(finding);
+        groups.entry(key).or_default().push(finding);
     }
-    flush_whole_run(&mut run, &mut out, wholes, before, after);
+    let mut out = Vec::with_capacity(count);
+    for key in order {
+        let (original, state, whole) = &key;
+        let members = groups.remove(&key).unwrap_or_default();
+        if members.len() == wholes.marks(*original, whole) {
+            // The findings cover the whole change: one finding names it.
+            let (_, index, _) = &members[0];
+            let group = group_of(*original, *index);
+            out.push(foreign_message(
+                &group.key.part,
+                whole,
+                group.change.author.as_deref().unwrap_or("<no author>"),
+                state,
+            ));
+        } else {
+            out.extend(members.into_iter().map(|(_, _, finding)| finding));
+        }
+    }
     out
-}
-
-/// [`whole_changes`]'s run, as one finding when it covers a whole logical
-/// change, else as the marks' own findings.
-fn flush_whole_run(
-    run: &mut ForeignFindings,
-    out: &mut Vec<Finding>,
-    wholes: &Wholes,
-    before: &[ForeignGroup<'_>],
-    after: &[ForeignGroup<'_>],
-) {
-    let Some((original, index, first)) = run.first() else {
-        return;
-    };
-    let (original, index) = (*original, *index);
-    let group = if original {
-        &before[index]
-    } else {
-        &after[index]
-    };
-    let whole = wholes.whole(original, &group.change.id);
-    if run.len() == wholes.marks(original, whole) {
-        out.push(foreign_message(
-            &group.key.part,
-            whole,
-            group.change.author.as_deref().unwrap_or("<no author>"),
-            foreign_state(first),
-        ));
-    } else {
-        out.extend(run.drain(..).map(|(_, _, finding)| finding));
-    }
-    run.clear();
 }
 
 /// Match omitted markers within aligned paragraphs, ignoring revision ids.
@@ -4838,7 +4962,11 @@ fn check_foreign_revisions(
     relax_foreign_boundaries(&mut after_groups, &after_present, new_markers);
     let mut findings = Vec::new();
     for (key, (old, new)) in &by_key {
-        if skip == key.author.as_deref() {
+        // Only an author the run was given is skipped: a revision that
+        // names none is another author's (#1893).
+        if let Some(skip) = skip
+            && key.author.as_deref() == Some(skip)
+        {
             continue;
         }
         let a: Vec<_> = old.iter().map(|&i| before[i].label()).collect();
@@ -6344,13 +6472,13 @@ mod baseline_tests {
         assert_eq!(
             baselined_text(&empty, false),
             "new: none\nalready in the input: none\n\
-             PASS: every difference from the baseline is yours and tracked\n"
+             PASS: no new finding (authorship not checked: pass --author NAME)\n"
         );
         assert_eq!(
             baselined_json(&empty, false).unwrap(),
             "{\"resolved\":[]}\n\
              {\"authors\":[],\"verdict\":{\"pass\":true,\"findings\":0,\"changes\":0,\
-             \"comments\":0}}\n"
+             \"comments\":0,\"authored\":false}}\n"
         );
         let split = Baselined {
             new: vec![x.clone()],
@@ -6364,7 +6492,7 @@ mod baseline_tests {
             format!(
                 "resolved: 1 (in the input, not in this file)\n{line}\
                  new: 1\n{line}already in the input: 1 (not yours)\n\
-                 FAIL: 1 finding (1 change, 0 comments); not ready to deliver\n"
+                 FAIL: 1 finding (0 changes, 0 comments); not ready to deliver\n"
             )
         );
         let json = baselined_json(&split, false).unwrap();
@@ -6384,8 +6512,9 @@ mod baseline_tests {
                 "verdict": {
                     "pass": false,
                     "findings": 1,
-                    "changes": 1,
+                    "changes": 0,
                     "comments": 0,
+                    "authored": false,
                 },
             })
         );

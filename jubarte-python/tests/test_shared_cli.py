@@ -375,13 +375,13 @@ def test_validate_baseline_and_the_input_notice(tmp_path, capsys):
     assert _main(["validate", str(broken), "--baseline", str(broken)]) == 0
     assert capsys.readouterr().out == (
         "new: none\nalready in the input: 1 (not yours)\n"
-        "PASS: every difference from the baseline is yours and tracked\n"
+        "PASS: no new finding (authorship not checked: pass --author NAME)\n"
     )
     assert _main(["validate", str(broken), "--baseline", str(clean)]) == 2
     out = capsys.readouterr().out
     assert out.startswith("new: 1\n* TEXT_INSIDE_DELETION\terror\t"), out
     assert out.endswith(
-        "FAIL: 1 finding (1 change, 0 comments); not ready to deliver\n"
+        "FAIL: 1 finding (0 changes, 0 comments); not ready to deliver\n"
     ), out
     assert _main(["validate", str(clean), "--baseline", str(broken), "--json"]) == 0
     resolved, summary = [
@@ -394,6 +394,7 @@ def test_validate_baseline_and_the_input_notice(tmp_path, capsys):
         "findings": 0,
         "changes": 0,
         "comments": 0,
+        "authored": False,
     }
     assert _main(["validate", str(broken), "--baseline", str(broken), "--repair", str(tmp_path / "f.docx")]) == 2
     assert "cannot be used with" in capsys.readouterr().err
