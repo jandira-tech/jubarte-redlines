@@ -177,7 +177,7 @@ before|you|API snapshot: docs/api holds the previous release's rustdoc snapshot,
 before|you|hand-run Python proofs pin the interpreter to --python 3.12: uv's default on the release machine may be a free-threaded build (0.14.0: 3.15t) that no abi3 wheel serves, and an unpinned pip proof then builds the sdist and passes on nothing PyPI serves (0.13.0's PyPI PASS)|uv python find; uv run -q --isolated --no-project --python 3.12 --no-build-package jubarte-redlines --with jubarte-redlines==@V@ python -c 'import jubarte_redlines as j; print(j.capabilities()["engine_version"])'
 before|you|the app's scripts are bash (release-engine.sh, build-release-app.sh, notarize-direct.sh, publish-mac-app-store.sh): run each by its path or with bash, never sh or zsh — the release machine's shell is zsh, which does not word-split a variable and indexes arrays from 1|for f in release-engine.sh build-release-app.sh notarize-direct.sh publish-mac-app-store.sh; do bash -n jubarte-app/scripts/$f; done
 7|auto|keywords: the crate's keywords and categories are inside crates.io's limits (at most 5 each, keywords ASCII, a letter first, at most 20 characters) — one more fails the publish after the point of no return|scripts/release.sh step 7 (crate_keywords_ok)
-0|auto|The bump kind docs/VERSIONING.md asks for, proven before step 1 writes anything: pre-1.0 a patch carries no new feature (a ### Added heading), no public API change cargo-semver-checks finds against the previous release's tag (0.10.1 shipped four breaking fields as a patch), and no public item path the previous release's listing does not have (cargo-semver-checks 0.51.0 has no lint for a new free function, trait, module, macro or type alias; the baseline is docs/api/jubarte-<previous tag>.api.txt when that listing is the current shape, otherwise a worktree of the tag); a minor or major may|cargo semver-checks check-release -p jubarte-redlines --baseline-rev <previous tag> --release-type patch --default-features; scripts/api_snapshot.py --added docs/api/jubarte-<previous tag>.api.txt <HEAD listing>
+0|auto|The bump kind docs/VERSIONING.md asks for, proven before step 1 writes anything: pre-1.0 a patch carries no new feature (a ### Added heading), no public API change cargo-semver-checks finds against the previous release's tag (0.10.1 shipped four breaking fields as a patch), and no public item path the previous release's listing does not have (cargo-semver-checks 0.51.0 has no lint for a new free function, trait, module, macro or type alias; the baseline is always a listing built from the previous tag in a throwaway worktree of the tag with this checkout's script, and a committed docs/api file is not that baseline); a minor or major may|cargo semver-checks check-release -p jubarte-redlines --baseline-rev <previous tag> --release-type patch --default-features; scripts/api_snapshot.py --added <listing from the worktree of the tag> <HEAD listing>
 2|auto|The engine CHANGELOG section is complete: release.yml cuts it verbatim into the GitHub release notes, so it cites every fix/feat/perf/security PR merged since the previous release (by its number, an issue it closes, or a <!-- changelog-skip: #N --> line) and holds no TODO, TBD, FIXME or XXX|scripts/release.sh step 2 (unlisted_prs, changelog_placeholders)
 before|you|The six one-line notes are drafted before the run — the changelog, crates, npm, pypi and github summaries and the docs statement are mandatory flags; the github note leads the release notes from the tag body, the other four are grepped back out of their registries at verify|scripts/release.sh --help (the five --*-summary flags and --how-readme-and-other-docs-were-updated)
 before|you|CHANGELOG: engine section dated with the ASCII heading, link footer present; the app repository's own CHANGELOG carries its ## [@V@] section naming jubarte-redlines @V@ on its main (step 0 checks it)|grep -n '^## \[@V@\]' CHANGELOG.md jubarte-app/CHANGELOG.md (both sections are written by hand; step 3 holds their measured sentence to the results)
@@ -493,55 +493,61 @@ semver_lints_ok() { python3 scripts/semver_lints.py; }
 # Public item paths HEAD adds over the previous release ($1, no v).
 # cargo-semver-checks 0.51.0 has no lint for a new free function, trait,
 # module, macro or type alias (#1758); the listing scripts/api_snapshot.py
-# already computes is the source. A committed
-# docs/api/jubarte-v$prev.api.txt in the current shape (surface, kind, vis,
-# path) is that baseline. The three-column listings from before 0.11.3 are
-# not: every current path would read as added. Otherwise the tag is built
-# the way the checklist's backfill builds it, with this checkout's script,
-# in a worktree under target/ when this tree has one. $2 is the minor to
-# name when a path was added. The worktree is removed on the way out,
-# including when the comparison refuses the patch (die exits through the trap).
+# already computes is the source. The baseline is always built from tag
+# v$prev with this checkout's script, in a worktree under target/ when this
+# tree has one. A committed docs/api file is not the baseline: step 0 runs
+# before the version bump, so a listing written from the patch tree can
+# already name the new item, and a rustdoc crate_version that still equals
+# $prev does not prove the file came from the tag. $2 is the minor to name
+# when a path was added. The worktree and the HEAD listing are removed on
+# the way out, including when the comparison refuses the patch or a command
+# fails. Cleanup state is script-level (_JUBARTE_API_LISTING,
+# _JUBARTE_API_DIR): bash 3.2, and set -e on 3.2 and 5.3, unset a function's
+# locals before the EXIT trap. A trap already installed is saved and
+# restored; the die path runs it after the cleanup.
 patch_public_additions() {
-  local prev=$1 minor=$2 old listing dir parent added rc current
-  old="docs/api/jubarte-v${prev}.api.txt"
-  listing=""
-  dir=""
-  trap '[ -z "$listing" ] || rm -f "$listing"; if [ -n "$dir" ]; then git worktree remove --force "$dir" 2>/dev/null || true; rm -rf "$dir"; fi' EXIT
-  listing=$(mktemp "${TMPDIR:-/tmp}/jubarte-api-head.XXXXXX")
-  current=0
-  if [ -f "$old" ]; then
-    case $(head -n 1 "$old") in
-      api$'\t'*|internal$'\t'*) current=1 ;;
-    esac
+  local prev=$1 minor=$2 old added rc saved body parent
+  _JUBARTE_API_LISTING=""
+  _JUBARTE_API_DIR=""
+  _jubarte_api_prev_exit() { :; }
+  saved=$(trap -p EXIT || true)
+  if [ -n "$saved" ]; then
+    body=${saved#trap -- }
+    body=${body% EXIT}
+    eval "_jubarte_api_prev_exit() { eval $body; }"
   fi
-  if [ "$current" -ne 1 ]; then
-    # One rustdoc build of the previous tag, only when no current listing
-    # is committed. HEAD below is the other build; step 6 writes the snapshot.
-    if [ -d target ]; then parent=target; else parent="${TMPDIR:-/tmp}"; fi
-    dir=$(mktemp -d "$parent/jubarte-api-prev.XXXXXX")
-    git worktree add "$dir" "v$prev"
-    mkdir -p "$dir/scripts"
-    cp scripts/api_snapshot.py "$dir/scripts/api_snapshot.py"
-    (cd "$dir" && python3 scripts/api_snapshot.py "$prev")
-    old="$dir/docs/api/jubarte-v${prev}.api.txt"
-  fi
-  python3 scripts/api_snapshot.py --emit "$listing"
+  trap '[ -z "${_JUBARTE_API_LISTING:-}" ] || rm -f -- "${_JUBARTE_API_LISTING}"; if [ -n "${_JUBARTE_API_DIR:-}" ]; then git worktree remove --force "${_JUBARTE_API_DIR}" 2>/dev/null || true; rm -rf -- "${_JUBARTE_API_DIR}"; fi; _jubarte_api_prev_exit' EXIT
+  _JUBARTE_API_LISTING=$(mktemp "${TMPDIR:-/tmp}/jubarte-api-head.XXXXXX")
+  # One rustdoc build of the previous tag. HEAD below is the other build;
+  # step 6 writes the snapshot that ships.
+  if [ -d target ]; then parent=target; else parent="${TMPDIR:-/tmp}"; fi
+  _JUBARTE_API_DIR=$(mktemp -d "$parent/jubarte-api-prev.XXXXXX")
+  git worktree add "$_JUBARTE_API_DIR" "v$prev"
+  mkdir -p "$_JUBARTE_API_DIR/scripts"
+  cp scripts/api_snapshot.py "$_JUBARTE_API_DIR/scripts/api_snapshot.py"
+  (cd "$_JUBARTE_API_DIR" && python3 scripts/api_snapshot.py "$prev")
+  old="$_JUBARTE_API_DIR/docs/api/jubarte-v${prev}.api.txt"
+  python3 scripts/api_snapshot.py --emit "$_JUBARTE_API_LISTING"
   rc=0
-  added=$(python3 scripts/api_snapshot.py --added "$old" "$listing") || rc=$?
+  added=$(python3 scripts/api_snapshot.py --added "$old" "$_JUBARTE_API_LISTING") || rc=$?
   if [ "$rc" -eq 1 ] && [ -n "$added" ]; then
     die "$VER is a patch, but it adds public API paths a patch cannot carry:
 $(printf '%s\n' "$added" | sed 's/^/  /')
 new public items take a minor bump (docs/VERSIONING.md) — release $minor instead"
   fi
   [ "$rc" -eq 0 ] || die "the public API listing comparison failed (scripts/api_snapshot.py --added, exit $rc) — release $minor instead, or fix the listings above"
-  rm -f "$listing"
-  listing=""
-  if [ -n "$dir" ]; then
-    git worktree remove --force "$dir" 2>/dev/null || true
-    rm -rf "$dir"
-    dir=""
+  rm -f "$_JUBARTE_API_LISTING"
+  _JUBARTE_API_LISTING=""
+  if [ -n "$_JUBARTE_API_DIR" ]; then
+    git worktree remove --force "$_JUBARTE_API_DIR" 2>/dev/null || true
+    rm -rf "$_JUBARTE_API_DIR"
+    _JUBARTE_API_DIR=""
   fi
-  trap - EXIT
+  if [ -n "$saved" ]; then
+    eval "$saved"
+  else
+    trap - EXIT
+  fi
 }
 # Pre-1.0 (docs/VERSIONING.md) a patch carries no new feature and no public
 # API change; a minor or a major may. Proven before step 1 writes anything

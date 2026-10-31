@@ -33,7 +33,8 @@ One item a line, sorted: `surface<TAB>kind<TAB>visibility<TAB>path signature`.
 `--document-private-items` documents. Impls every type gets without the crate
 writing them (blanket impls such as `Into<U>`, auto traits such as `Send`) are
 left out, and a trait impl is one line (`Type::(impl Clone)`), without its
-methods.
+methods. Generic parameter names on an impl line are positional
+(`Deserialize<'0>`, `From<T0>`), in declaration order.
 
 The listings up to v0.11.2 are in the earlier three-column format
 (`kind<TAB>visibility<TAB>path`), blanket impls included. They stay as they
