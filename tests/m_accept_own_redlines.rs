@@ -2389,3 +2389,57 @@ fn a_style_restating_its_parent_records_no_change_of_its_own() {
         assert!(normal.contains(&format!(r#"w:ascii="{font}""#)), "{normal}");
     }
 }
+
+#[test]
+fn issue1704_wrapped_insertions_survive_accept_and_mirrored_reject() {
+    for wrapper in ["smartTag", "customXml"] {
+        for reverse in [false, true] {
+            let (mark, revision, text) = if reverse {
+                ("ins", "del", "delText")
+            } else {
+                ("del", "ins", "t")
+            };
+            let input = common::docx::docx(&format!(
+                "<w:p><w:r><w:t>Ka.</w:t></w:r></w:p><w:p><w:pPr><w:rPr><w:{mark} w:id=\"1\" w:author=\"Probe\"/></w:rPr></w:pPr></w:p><w:p><w:{wrapper} w:element=\"tag\"><w:{revision} w:id=\"2\" w:author=\"Probe\"><w:r><w:{text}>added</w:{text}></w:r></w:{revision}><w:r><w:t>kept</w:t></w:r></w:{wrapper}></w:p>"
+            ));
+            let output = if reverse {
+                reject_revisions(&input)
+            } else {
+                accept_revisions(&input)
+            }
+            .unwrap();
+            assert_eq!(
+                body_texts(&output),
+                ["Ka.", "addedkept"],
+                "{wrapper}, reverse={reverse}"
+            );
+            let xml = part_string(&output, "word/document.xml").unwrap();
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&xml);
+            let root = dom.root(doc).unwrap();
+            assert_eq!(dom.descendants(root, Some(&W::name(wrapper))).len(), 1);
+            assert!(dom.descendants(root, Some(&W::ins())).is_empty());
+            assert!(dom.descendants(root, Some(&W::del())).is_empty());
+        }
+    }
+}
+
+#[test]
+fn issue1711_direct_ruby_accept_preserves_reading_and_base_without_panicking() {
+    for wrapped in [false, true] {
+        let ruby = "<w:ruby><w:rubyPr><w:rubyAlign w:val=\"center\"/><w:hps w:val=\"10\"/><w:hpsRaise w:val=\"20\"/><w:hpsBaseText w:val=\"20\"/><w:lid w:val=\"en-US\"/></w:rubyPr><w:rt><w:r><w:t>ka</w:t></w:r></w:rt><w:rubyBase><w:r><w:t>Ka.</w:t></w:r></w:rubyBase></w:ruby>";
+        let content = if wrapped {
+            format!("<w:r>{ruby}</w:r>")
+        } else {
+            ruby.to_owned()
+        };
+        let input = common::docx::docx(&format!(
+            "<w:p><w:pPr><w:rPr><w:del w:id=\"1\" w:author=\"Probe\"/></w:rPr></w:pPr></w:p><w:p>{content}</w:p>"
+        ));
+        let output = accept_revisions(&input).unwrap();
+        assert_eq!(body_texts(&output), ["kaKa."]);
+        let xml = part_string(&output, "word/document.xml").unwrap();
+        assert!(xml.contains("rubyBase"));
+        assert!(!xml.contains("<w:del "));
+    }
+}

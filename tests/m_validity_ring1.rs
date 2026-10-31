@@ -3602,3 +3602,32 @@ fn vml_fallback_type_does_not_warn() {
         .collect();
     assert!(findings.is_empty(), "fallback must not warn: {findings:?}");
 }
+
+#[test]
+fn issue1711_ruby_directly_under_paragraph_is_schema_invalid_not_word_fatal() {
+    let ruby = "<w:ruby><w:rubyPr><w:rubyAlign w:val=\"center\"/><w:hps w:val=\"10\"/><w:hpsRaise w:val=\"20\"/><w:hpsBaseText w:val=\"20\"/><w:lid w:val=\"en-US\"/></w:rubyPr><w:rt><w:r><w:t>ka</w:t></w:r></w:rt><w:rubyBase><w:r><w:t>Ka.</w:t></w:r></w:rubyBase></w:ruby>";
+    for wrapped in [false, true] {
+        let content = if wrapped {
+            format!("<w:r>{ruby}</w:r>")
+        } else {
+            ruby.to_owned()
+        };
+        let bytes = common::docx::docx(&format!("<w:p>{content}</w:p>"));
+        let pkg = PartFs::open(&bytes).unwrap();
+        let findings: Vec<_> = jubarte::validate::ring1(&pkg)
+            .into_iter()
+            .filter(|f| f.code == "RUBY_OUTSIDE_RUN")
+            .collect();
+        assert_eq!(
+            findings.len(),
+            usize::from(!wrapped),
+            "direct paragraph ruby must be diagnosed; a run-contained ruby must pass"
+        );
+        if let Some(finding) = findings.first() {
+            assert_eq!(finding.severity, "error");
+            assert_eq!(finding.part, "word/document.xml");
+            assert!(finding.location.ends_with("w:p[0]/w:ruby[0]"));
+            assert!(!finding.word_fatal && !finding.repairable);
+        }
+    }
+}
