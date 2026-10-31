@@ -54,6 +54,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 - **Reject All joins a paragraph whose inserted mark also changed formatting** (#1722). Restoring an `rPrChange` on a paragraph mark (`w:pPr/w:rPr`) keeps the live `w:ins`, `w:del`, `w:moveFrom` and `w:moveTo`, in that order, and drops a saved copy of the same mark. Word 16 joins `ga1`, `ga3` and `h1` into one paragraph, and `n0` into one paragraph and one section. A deleted mark (`ga2`) still leaves the two paragraphs apart. A run's `rPrChange` is unchanged.
 
+- **A package with no styles part takes Word 16's built-in defaults** (#1725). Conversion seeded a styles-less package with Calibri 11 / line 276 / after 200 twips; Word 16 lays it out on the same stock defaults it gives a styles part without `pPrDefault`/`rPrDefault` — Aptos 12pt, kern 1pt, after 160, line 278 — so a `word/document.xml`-only package now renders exactly like the same package with an empty `<w:styles/>`.
+
 - Header and footer comparisons neutralize unresolved relationship attributes on both inputs before diffing, preserving content deletions and accept/reject round trips in Word and PowerTools modes (#1709). A story that cannot be read, carried or redlined now returns a typed `StoryDiffError` naming the part, instead of silently retaining the original without revision marks.
 
 - **A pure accept or reject no longer hides an error from its resolved lines** (#1702). The Python CLI computes that text before printing and catches only `JubarteError`, the engine refusing the text. That refusal still prints the changed view once and exits 0. Any other error reaches the CLI's handler: `error: …` on stderr and exit 1, with nothing from the resolved view on stdout.

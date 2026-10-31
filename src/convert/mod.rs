@@ -7,8 +7,11 @@
 //!
 //! Layout aims at LibreOffice visual parity: the Carlito / Liberation
 //! faces (the same metric-compatible substitutes soffice embeds),
-//! Word's `docDefaults` (Calibri 11 / line 276 / after 200 twips) and
-//! `sectPr` page geometry. A page-by-page visual diff against a Word PDF
+//! Word's `docDefaults` (Calibri 11 / line 276 / after 200 twips while
+//! the file states them, Word 16's built-ins — Aptos 12 / line 278 /
+//! after 160 twips — when the styles part or its pPrDefault /
+//! rPrDefault are absent) and `sectPr` page geometry. A page-by-page
+//! visual diff against a Word PDF
 //! is the `diff_render` family; per-page font resolutions and the page
 //! text are in `RenderReport`.
 //!
@@ -929,7 +932,7 @@ fn with_layout<T>(
             if settings_flag(&pkg, "balanceSingleByteDoubleByteWidth")
                 && east_asian_layout(&pkg, &sheet, &fonts)
             {
-                balance_spaces(&mut blocks, &fonts);
+                balance_spaces(&mut blocks, &fonts, sheet.defaults.run.family_ea.as_deref());
             }
             squeeze_bracket_pairs(&mut blocks);
             if settings_flag(&pkg, "adjustLineHeightInTable") {
@@ -1813,6 +1816,29 @@ impl Defaults {
             normal_spacing: [false; 3],
             normal_run: (false, false),
             normal_ind_jc: (false, false),
+        }
+    }
+
+    /// Word 16's built-in paragraph defaults — what a missing
+    /// `pPrDefault` (or no styles part at all) lays out on: after 160
+    /// twips, line 278 auto.
+    fn word_stock_para(&mut self) {
+        self.para.after = 8.0;
+        self.para.line_mult = 278.0 / 240.0;
+    }
+
+    /// Word 16's built-in run defaults — what a missing `rPrDefault` (or
+    /// no styles part at all) lays out on: Aptos 12pt, kern 1pt.
+    fn word_stock_run(&mut self) {
+        self.run.size = 12.0;
+        self.run.kern_half = 2;
+        self.run.family = "Aptos".into();
+        for slot in [
+            &mut self.run.family_hansi,
+            &mut self.run.family_ea,
+            &mut self.run.family_cs,
+        ] {
+            *slot = Some("Aptos".into());
         }
     }
 }
@@ -3518,6 +3544,11 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     defaults.para.sum_spacing = settings_flag(pkg, "doNotUseHTMLParagraphAutoSpacing");
     let mut raw: std::collections::HashMap<String, RawStyle> = std::collections::HashMap::new();
     let Some(xml) = pkg.part_string(&main_rel_part(pkg, "styles", "word/styles.xml")) else {
+        // No styles part at all: Word 16 lays the package out on the same
+        // stock defaults a styles part without pPrDefault / rPrDefault
+        // takes below — after=160 line=278, Aptos 12pt kern 1pt (#1725).
+        defaults.word_stock_para();
+        defaults.word_stock_run();
         return StyleSheet {
             defaults,
             by_id: HashMap::new(),
@@ -3569,20 +3600,10 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     // those; `<w:docDefaults/>` lays out the same. Present but empty, they
     // mean the OOXML ones: single-spaced Times New Roman.
     if !has("pPrDefault") {
-        defaults.para.after = 8.0;
-        defaults.para.line_mult = 278.0 / 240.0;
+        defaults.word_stock_para();
     }
     if !has("rPrDefault") {
-        defaults.run.size = 12.0;
-        defaults.run.kern_half = 2;
-        defaults.run.family = "Aptos".into();
-        for slot in [
-            &mut defaults.run.family_hansi,
-            &mut defaults.run.family_ea,
-            &mut defaults.run.family_cs,
-        ] {
-            *slot = Some("Aptos".into());
-        }
+        defaults.word_stock_run();
     }
     let doc_defaults = dom
         .descendants(root, Some(&W::name("docDefaults")))
@@ -7020,7 +7041,12 @@ fn mark_ideograph_words(blocks: &mut [Block], fonts: &Fonts, compat_mode: u8) {
 /// at a run's edge; Word's PDF of ee79137dd5 keeps those at Calibri's width.
 /// Each stretch becomes a run of its own carrying the width
 /// (`RunStyle::fixed_advance`).
-fn balance_spaces(blocks: &mut [Block], fonts: &Fonts) {
+///
+/// `default_ea` is the document default eastAsia face: a run that names
+/// none inherits it, and an inherited Latin name (Word 16's stock Aptos,
+/// #1725) is no eastAsia font at all — Word balances such a run on the
+/// Latin average, where an authored absent name borrows a loaded one.
+fn balance_spaces(blocks: &mut [Block], fonts: &Fonts, default_ea: Option<&str>) {
     let mut loaded = Vec::new();
     for_each_block_runs(blocks, &mut |runs| {
         for run in runs.iter() {
@@ -7039,7 +7065,9 @@ fn balance_spaces(blocks: &mut [Block], fonts: &Fonts) {
             }
         }
     });
-    for_each_block_runs(blocks, &mut |runs| balance_run_spaces(runs, fonts, &loaded));
+    for_each_block_runs(blocks, &mut |runs| {
+        balance_run_spaces(runs, fonts, &loaded, default_ea);
+    });
 }
 
 /// Whether Word runs its East Asian layout code, which balances spaces:
@@ -7084,7 +7112,12 @@ fn for_each_block_runs(blocks: &mut [Block], f: &mut dyn FnMut(&mut Vec<TextRun>
     }
 }
 
-fn balance_run_spaces(runs: &mut Vec<TextRun>, fonts: &Fonts, loaded: &[(f32, bool, f32)]) {
+fn balance_run_spaces(
+    runs: &mut Vec<TextRun>,
+    fonts: &Fonts,
+    loaded: &[(f32, bool, f32)],
+    default_ea: Option<&str>,
+) {
     let is_space = |c: char| matches!(c, ' ' | '\u{a0}');
     let flat: Vec<char> = runs.iter().flat_map(|r| r.text.chars()).collect();
     let marks: Vec<bool> = (0..flat.len())
@@ -7102,6 +7135,11 @@ fn balance_run_spaces(runs: &mut Vec<TextRun>, fonts: &Fonts, loaded: &[(f32, bo
         let latin = fonts.get(ink_face(fonts, &run.style, " "));
         let em = match run.style.family_ea.as_deref() {
             Some(family) if family.eq_ignore_ascii_case(&run.style.family) => None,
+            // The inherited default: a non-East-Asian one is Word's
+            // unset eastAsia slot, which balances on the Latin average.
+            Some(family) if default_ea == Some(family) && !fonts.family_is_east_asian(family) => {
+                None
+            }
             Some(family) => fonts
                 .family_is_east_asian(family)
                 .then(|| fonts.east_asia_avg_em(family))
