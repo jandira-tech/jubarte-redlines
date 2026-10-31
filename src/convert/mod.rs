@@ -17404,30 +17404,32 @@ fn collect_textboxes_styled(
         let vml_unstroked = descendants_local(dom, shape, "shape").into_iter().any(|s| {
             attr_any(dom, s, "stroked").is_some_and(|v| v == "f" || v.eq_ignore_ascii_case("false"))
         });
+        let wps = !descendants_local(dom, shape, "wsp").is_empty();
         out.push(LaidTextBox {
             w,
             h,
             runs,
             slot,
             chart,
-            // VML unstroked (image_out) and DrawingML a:ln noFill
-            // (Strict01 Rectangle 467 tx2 fill; Text Box 465 unfilled
-            // Author) must not grow a 0.6pt hairline. Unfilled txbx
-            // without a:ln/noFill still stroke (mcdoc / Datum plane).
-            // Distinct from mini 511 a:ln/@w width (still 0.6 when stroking).
-            // Chart-bearing boxes still stroke 0.6 black (mini 568):
-            // skipping it dropped RL clones −0.03 to −0.07.
-            stroke: !(diagram
-                || (vml_slot.is_some() && vml_unstroked)
-                || shape_ln_is_nofill(dom, shape))
-                && (vml_slot.is_some() || !(fill.is_some() && line.is_none())),
+            // WPS has no implicit outline: Word 16.115 paints the unstyled
+            // 1975-textbox without one (#1979). mcdoc's outline comes from
+            // its explicit a:ln, not a rendering default. Preserve the VML
+            // default and the separate ChartSpace frame (mini 568).
+            stroke: if wps {
+                !shape_ln_is_nofill(dom, shape)
+                    && (!descendants_local(dom, shape, "ln").is_empty()
+                        || ln_ref_idx(dom, shape).is_some_and(|idx| idx > 0))
+            } else {
+                !(diagram
+                    || (vml_slot.is_some() && vml_unstroked)
+                    || shape_ln_is_nofill(dom, shape))
+                    && (vml_slot.is_some() || !(fill.is_some() && line.is_none()))
+            },
             fill,
-            // A text-bearing preset polygon still outlines in its own line
-            // colour. A rectangle does too when its a:ln names a fill: Word
-            // strokes 5fb9cedf's form boxes 3pt in their accent blue. One
-            // with only a style reference keeps the tuned 0.6 black path.
-            line: line.filter(|_| geom_is_preset_polygon(geom) || explicit_ln),
-            line_width: if explicit_ln {
+            // WPS style references supply their colour just like explicit
+            // a:ln fills (5fb9cedf's form boxes use 3pt accent blue).
+            line: line.filter(|_| wps || geom_is_preset_polygon(geom) || explicit_ln),
+            line_width: if wps || explicit_ln {
                 shape_line_width(dom, shape, theme)
             } else {
                 1.0
@@ -20692,8 +20694,8 @@ fn shape_has_picture_fill(dom: &Dom, shape: NodeId) -> bool {
 }
 
 fn shape_ln_is_nofill(dom: &Dom, shape: NodeId) -> bool {
-    // Explicit `a:ln/a:noFill` (Strict01 Text Box 465 Author). Distinct
-    // from no `a:ln` at all (unfilled txbx still hairline: mcdoc).
+    // Explicit `a:ln/a:noFill` overrides even a style-supplied outline
+    // (Strict01 Text Box 465 Author).
     descendants_local(dom, shape, "ln")
         .into_iter()
         .any(|ln| !descendants_local(dom, ln, "noFill").is_empty())
@@ -47069,10 +47071,24 @@ mod comments_spacing_tests {
         let mut empty_boxes = 0usize;
         for block in &blocks {
             if let Block::Paragraph {
-                images: im, boxes, ..
+                images: im,
+                boxes,
+                runs,
+                ..
             } = block
             {
-                images += im.len();
+                // Inline pictures now belong to their text runs (#1975).
+                // Count raster payloads in both locations, not text-box
+                // reservations carried by the same run-picture interface.
+                images += im.len()
+                    + runs
+                        .iter()
+                        .filter(|run| {
+                            run.pic.as_ref().is_some_and(|pic| {
+                                matches!(pic.kind, ImageKind::Jpeg { .. } | ImageKind::Rgb { .. })
+                            })
+                        })
+                        .count();
                 empty_boxes += boxes
                     .iter()
                     .filter(|b| {
@@ -59570,6 +59586,134 @@ mod rendering_uncovered_contract_tests {
                     }
                 }
             }
+        }
+    }
+
+    // Use the checked-in package and embedded fonts entirely in memory. The
+    // oracle is the supplied Word 16.115 PDF for 1975-textbox.docx (#1979).
+    fn issue_1979_fixture_xml() -> String {
+        PartFs::open(include_bytes!(
+            "../../tests/fixtures/inline-pictures/1975-textbox.docx"
+        ))
+        .unwrap()
+        .part_string("word/document.xml")
+        .unwrap()
+    }
+
+    fn issue_1979_assert_outline(xml: &str, expected: Option<[f32; 3]>) {
+        for revisions in [RevisionStyle::Conventional, RevisionStyle::Word] {
+            with_options(
+                PdfOptions {
+                    revisions,
+                    ..PdfOptions::default()
+                },
+                || {
+                    let mut dom = Dom::new();
+                    let doc = dom.parse_xdocument(xml);
+                    let root = dom.root(doc).unwrap();
+                    let para = dom.descendants(root, Some(&W::p()))[0];
+                    let boxes = collect_textboxes(
+                        None,
+                        &dom,
+                        para,
+                        &Defaults::word().run,
+                        &ThemeFonts::default(),
+                    );
+                    assert_eq!(boxes.len(), 1, "the text box must be collected");
+                    assert!(boxes[0].runs.iter().any(|r| !r.text.trim().is_empty()));
+                    let fonts = embedded_fonts();
+                    let mut lay =
+                        Layout::new(&fonts, Defaults::word().page, HfChrome::default(), 15);
+                    lay.paint_box_geom(&boxes[0], 10.0, 20.0, boxes[0].w, boxes[0].h);
+                    let strokes: Vec<_> = lay.pages[0]
+                        .ops
+                        .iter()
+                        .filter_map(|op| match op {
+                            Op::StrokeRect { color, .. }
+                            | Op::Line { color, .. }
+                            | Op::StrokePoly { color, .. }
+                            | Op::StrokePath { color, .. }
+                            | Op::Cubic { color, .. } => Some(*color),
+                            _ => None,
+                        })
+                        .collect();
+                    if let Some(color) = expected {
+                        assert!(
+                            !strokes.is_empty(),
+                            "authored/default VML outline must paint"
+                        );
+                        assert!(
+                            strokes.iter().all(|actual| *actual == color),
+                            "outline must use its authored colour: {strokes:?}, expected {color:?}"
+                        );
+                    } else {
+                        assert!(
+                            strokes.is_empty(),
+                            "text box without a line must emit no StrokeRect or other outline op; got {}",
+                            strokes.len()
+                        );
+                    }
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn issue_1979_unstyled_wps_fixture_has_no_outline() {
+        let xml = issue_1979_fixture_xml();
+        assert!(!xml.contains("<a:ln") && !xml.contains("<wps:style"));
+        issue_1979_assert_outline(&xml, None);
+    }
+
+    #[test]
+    fn issue_1979_explicit_solid_line_keeps_its_colour() {
+        let xml = issue_1979_fixture_xml().replacen(
+            "</wps:spPr>",
+            r#"<a:ln><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:ln></wps:spPr>"#,
+            1,
+        );
+        issue_1979_assert_outline(&xml, Some([1.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn issue_1979_nofill_line_overrides_style_outline() {
+        for style in [
+            "",
+            r#"<wps:style><a:lnRef idx="1"><a:srgbClr val="FF0000"/></a:lnRef></wps:style>"#,
+        ] {
+            let xml = issue_1979_fixture_xml().replacen(
+                "</wps:spPr>",
+                &format!("<a:ln><a:noFill/></a:ln></wps:spPr>{style}"),
+                1,
+            );
+            issue_1979_assert_outline(&xml, None);
+        }
+    }
+
+    #[test]
+    fn issue_1979_style_line_ref_controls_outline_and_colour() {
+        for idx in [1, 2, 3] {
+            let xml = issue_1979_fixture_xml().replacen("</wps:spPr>",
+                &format!(r#"</wps:spPr><wps:style><a:lnRef idx="{idx}"><a:srgbClr val="00FF00"/></a:lnRef></wps:style>"#), 1);
+            issue_1979_assert_outline(&xml, Some([0.0, 1.0, 0.0]));
+        }
+    }
+
+    #[test]
+    fn issue_1979_zero_line_ref_has_no_outline() {
+        let xml = issue_1979_fixture_xml().replacen("</wps:spPr>",
+            r#"</wps:spPr><wps:style><a:lnRef idx="0"><a:srgbClr val="00FF00"/></a:lnRef></wps:style>"#, 1);
+        issue_1979_assert_outline(&xml, None);
+    }
+
+    #[test]
+    fn issue_1979_vml_textbox_keeps_default_stroke() {
+        for position in ["", "position:absolute;"] {
+            let xml = format!(
+                r#"<w:document xmlns:w="{}" xmlns:v="urn:schemas-microsoft-com:vml"><w:body><w:p><w:r><w:pict><v:shape style="{position}width:160pt;height:100pt"><v:textbox><w:txbxContent><w:p><w:r><w:t>VML box</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p></w:body></w:document>"#,
+                W::URI
+            );
+            issue_1979_assert_outline(&xml, Some([0.0; 3]));
         }
     }
 
