@@ -6,7 +6,7 @@
 
 use super::{
     ExistingRevisions,
-    for_edit::{ForEditRequest, for_edit},
+    for_edit::{ForEditRequest, for_edit_quoting},
     v2::{self, PlanV2, Target},
 };
 use crate::cli::edit_actions::EditAction;
@@ -60,7 +60,7 @@ pub fn compile(
         super::source_refs::decisions(source, &inline.accept_change, &inline.reject_change)
             .map_err(edit_error)?;
     // Select all original identities, then match anchors in their working text.
-    let view = for_edit(
+    let view = for_edit_quoting(
         source,
         &ForEditRequest {
             all: true,
@@ -76,6 +76,7 @@ pub fn compile(
             track: inline.track == "on",
             ..Default::default()
         },
+        super::PlanSyntax::Typed,
     )
     .map_err(edit_error)?;
     let at = match action {

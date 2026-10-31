@@ -50,7 +50,8 @@ pub(super) fn prepare_skipping(
     // whole plan gives them, so a skip never renames one after an
     // operation still live.
     let mine = plan.operations.len();
-    let mut named = super::visible::lower(source, plan)?.unwrap_or_else(|| plan.clone());
+    let mut named =
+        super::visible::lower(source, plan, options.syntax)?.unwrap_or_else(|| plan.clone());
     for (i, op) in named.operations.iter_mut().enumerate() {
         op.id.get_or_insert_with(|| format!("op-{}", i + 1));
     }

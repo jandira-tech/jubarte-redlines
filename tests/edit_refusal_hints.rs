@@ -32,6 +32,292 @@ fn replace(find: &str, text: &str) -> Value {
     json!([{"kind":"replace","paragraph":"p0","find":find,"replacement":text}])
 }
 
+/// One logical insertion, split into two marks by formatting.
+fn incomplete_change_source() -> Vec<u8> {
+    docx(&incomplete_change_body())
+}
+
+fn incomplete_change_body() -> String {
+    format!(
+        r#"<w:p><w:ins w:id="10" w:author="Bob" w:date="{OLD}"><w:r><w:t xml:space="preserve">new </w:t></w:r></w:ins><w:ins w:id="11" w:author="Bob" w:date="{OLD}"><w:r><w:rPr><w:i/></w:rPr><w:t>words</w:t></w:r></w:ins></w:p>"#
+    )
+}
+
+fn incomplete_change_flags(verb: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), incomplete_change_source()).unwrap();
+    let run = |id: &str| {
+        Command::new(env!("CARGO_BIN_EXE_jubarte"))
+            .current_dir(dir.path())
+            .args([
+                "edit",
+                "in.docx",
+                "-a",
+                "A",
+                "--datetime",
+                DATE,
+                "-p",
+                id,
+                verb,
+                "-o",
+                "out.docx",
+            ])
+            .output()
+            .unwrap()
+    };
+    let out = run("r10");
+    assert_eq!(out.status.code(), Some(3));
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    let message = stderr
+        .lines()
+        .find(|line| line.contains("INCOMPLETE_CHANGE:"))
+        .unwrap();
+    assert_eq!(
+        message,
+        format!(
+            "error: plan refused: INCOMPLETE_CHANGE: r10 is part of r10+11; name the whole change: -p r10+11 {verb}"
+        )
+    );
+    assert!(!stderr.contains("resolve_revisions:"), "{stderr}");
+    assert!(!dir.path().join("out.docx").exists());
+    let retry = run("r10+11");
+    assert!(
+        retry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&retry.stderr)
+    );
+    let output = std::fs::read(dir.path().join("out.docx")).unwrap();
+    assert!(jubarte::changes::list_changes(&output).unwrap().is_empty());
+    assert_eq!(
+        jubarte::inspect::paragraphs(&output).unwrap()[0].text,
+        if verb == "--accept" { "new words" } else { "" }
+    );
+}
+
+#[test]
+fn incomplete_change_typed_names_runnable_retry() {
+    for verb in ["accept", "reject"] {
+        let dir = tempfile::tempdir().unwrap();
+        // The edit remains valid after either settlement.
+        let source = docx(&format!("{}{}", incomplete_change_body(), para("plain")));
+        std::fs::write(dir.path().join("in.docx"), source).unwrap();
+        let flag = format!("--{verb}-change");
+        let run = |id: &str| {
+            Command::new(env!("CARGO_BIN_EXE_jubarte"))
+                .current_dir(dir.path())
+                .args([
+                    "edit", "replace", "in.docx", "--at", "p1", "--find", "plain", "--text",
+                    "edited", "--author", "A", &flag, id, "-o", "out.docx",
+                ])
+                .output()
+                .unwrap()
+        };
+        let out = run("r10");
+        assert_eq!(out.status.code(), Some(3));
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert!(
+            stderr.contains(&format!(
+                "INCOMPLETE_CHANGE: r10 is part of r10+11; name the whole change: {flag} r10+11"
+            )),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("resolve_revisions:"), "{stderr}");
+        assert!(!dir.path().join("out.docx").exists());
+        let retry = run("r10+11");
+        assert!(
+            retry.status.success(),
+            "{}",
+            String::from_utf8_lossy(&retry.stderr)
+        );
+        let output = std::fs::read(dir.path().join("out.docx")).unwrap();
+        assert_eq!(
+            jubarte::inspect::paragraphs(&output).unwrap()[1].text,
+            "edited"
+        );
+    }
+}
+
+fn selection_source(ambiguous: bool) -> Vec<u8> {
+    if ambiguous {
+        docx(&format!(
+            r#"<w:p><w:ins w:id="10" w:author="Bob" w:date="{OLD}"><w:r><w:t>one</w:t></w:r></w:ins></w:p><w:p><w:ins w:id="10" w:author="Sue" w:date="{OLD}"><w:r><w:t>two</w:t></w:r></w:ins></w:p>"#
+        ))
+    } else {
+        incomplete_change_source()
+    }
+}
+
+#[test]
+fn selection_errors_quote_each_syntax_and_keep_plan_wording() {
+    for ambiguous in [false, true] {
+        let source = selection_source(ambiguous);
+        let id = if ambiguous { "r10" } else { "r999" };
+        let underlying = jubarte::changes::ChangeFilter::ids([id])
+            .check(&jubarte::changes::list_changes(&source).unwrap())
+            .unwrap_err()
+            .to_string();
+        let code = if ambiguous {
+            "AMBIGUOUS_CHANGE"
+        } else {
+            "UNKNOWN_CHANGE"
+        };
+        for syntax in PlanSyntax::ALL {
+            for keep_others in [false, true] {
+                let request = json!({"schema_version":1,"author":"A","date":DATE,
+                    "existing_revisions":"keep","operations":[],
+                    "resolve_revisions":{"reject":{"ids":[id]}}});
+                let mut plan = EditPlan::from_json(&request.to_string()).unwrap();
+                if keep_others {
+                    plan.others = jubarte::edit::Others::Keep;
+                }
+                let e = jubarte::edit::check_plan_quoting(&source, &plan, syntax).unwrap_err();
+                assert_eq!(e.code, code);
+                let expected = if matches!(syntax, PlanSyntax::V1 | PlanSyntax::V2) {
+                    format!("resolve_revisions: {underlying}")
+                } else {
+                    underlying.clone()
+                };
+                assert_eq!(e.message, expected, "{syntax:?}, keep_others={keep_others}");
+            }
+        }
+    }
+}
+
+fn selection_errors_flags(ambiguous: bool) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), selection_source(ambiguous)).unwrap();
+    let id = if ambiguous { "r10" } else { "r999" };
+    let code = if ambiguous {
+        "AMBIGUOUS_CHANGE"
+    } else {
+        "UNKNOWN_CHANGE"
+    };
+    let out = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .current_dir(dir.path())
+        .args([
+            "edit", "in.docx", "-a", "A", "-p", id, "--reject", "-o", "out.docx",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(3));
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains(code), "{stderr}");
+    assert!(!stderr.contains("resolve_revisions:"), "{stderr}");
+    assert!(!dir.path().join("out.docx").exists());
+}
+
+#[test]
+fn visible_reject_uses_callers_syntax_in_check_prepare_and_skip() {
+    let source = incomplete_change_source();
+    let request = json!({"schema_version":1,"author":"A","date":DATE,
+        "existing_revisions":"keep","operations":[],
+        "resolve_revisions":{"reject":{"ids":["r10"],"visible":true}}});
+    let plan = EditPlan::from_json(&request.to_string()).unwrap();
+    for syntax in PlanSyntax::ALL {
+        let expected = match syntax {
+            PlanSyntax::Flags => "r10 is part of r10+11; name the whole change: -p r10+11 --reject",
+            PlanSyntax::Typed => {
+                "r10 is part of r10+11; name the whole change: --reject-change r10+11"
+            }
+            _ => "resolve_revisions: r10 is part of r10+11; name the whole change (r10+11)",
+        };
+        let e = jubarte::edit::check_plan_quoting(&source, &plan, syntax).unwrap_err();
+        assert_eq!(e.message, expected, "check {syntax:?}");
+        for skip_failed in [false, true] {
+            let e = jubarte::edit::prepare(
+                &source,
+                &plan,
+                &PrepareOptions {
+                    syntax,
+                    skip_failed,
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+            assert_eq!(e.code, "INCOMPLETE_CHANGE");
+            assert_eq!(
+                e.message, expected,
+                "prepare {syntax:?}, skip={skip_failed}"
+            );
+        }
+    }
+}
+
+#[test]
+fn incomplete_change_flags_reject_names_runnable_command() {
+    incomplete_change_flags("--reject");
+}
+
+#[test]
+fn incomplete_change_flags_accept_names_runnable_command() {
+    incomplete_change_flags("--accept");
+}
+
+#[test]
+fn incomplete_change_json_plan_keeps_released_wording() {
+    for verb in ["accept", "reject"] {
+        let request = json!({"schema_version":1,"author":"A","date":DATE,
+            "existing_revisions":"keep","operations":[],
+            "resolve_revisions":{verb:{"ids":["r10"]}}});
+        let plan = EditPlan::from_json(&request.to_string()).unwrap();
+        let error = apply_plan(&incomplete_change_source(), &plan).unwrap_err();
+        assert_eq!(error.code, "INCOMPLETE_CHANGE");
+        assert_eq!(
+            error.message,
+            "resolve_revisions: r10 is part of r10+11; name the whole change (r10+11)"
+        );
+    }
+}
+
+#[test]
+fn incomplete_change_flags_strike_still_targets_one_mark() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), incomplete_change_source()).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .current_dir(dir.path())
+        .args([
+            "edit",
+            "in.docx",
+            "-a",
+            "A",
+            "--datetime",
+            DATE,
+            "-p",
+            "r10",
+            "--strike",
+            "-o",
+            "out.docx",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let output = std::fs::read(dir.path().join("out.docx")).unwrap();
+    let changes = jubarte::changes::list_changes(&output).unwrap();
+    for id in ["r10", "r11"] {
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.id == id && c.author.as_deref() == Some("Bob"))
+        );
+    }
+    let struck: Vec<_> = changes
+        .iter()
+        .filter(|c| c.kind == jubarte::changes::ChangeKind::Deletion)
+        .collect();
+    assert_eq!(struck.len(), 1);
+    assert_eq!(struck[0].text, "new ");
+    assert_eq!(struck[0].author.as_deref(), Some("A"));
+    let accepted = jubarte::changes::accept_changes(&output, &Default::default()).unwrap();
+    assert_eq!(
+        jubarte::inspect::paragraphs(&accepted).unwrap()[0].text,
+        "words"
+    );
+}
+
 #[test]
 fn deletion_hint_offers_restore_first_then_both_settles_then_comment() {
     let e = apply_plan(STEP2, &plan(replace("bankers", "brokers"))).unwrap_err();
@@ -575,4 +861,91 @@ fn a_header_revision_routes_by_its_header_ids() {
     let out = apply_v2(&source, &q).unwrap_or_else(|x| panic!("{x}: {e}"));
     let kept = part_string(&out.clean, "word/header1.xml").unwrap();
     assert!(!kept.contains("gamma"), "{kept}");
+}
+
+#[test]
+fn visible_reject_recording_flags_has_runnable_hint() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), incomplete_change_source()).unwrap();
+    let request = json!({"schema_version":1,"author":"A","date":DATE,
+        "existing_revisions":"keep","operations":[],
+        "resolve_revisions":{"reject":{"ids":["r10"],"visible":true}}});
+    let original = request.to_string();
+    std::fs::write(dir.path().join("plan.json"), &original).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .current_dir(dir.path())
+        .args([
+            "add",
+            "in.docx",
+            "--plan",
+            "plan.json",
+            "-a",
+            "A",
+            "--datetime",
+            DATE,
+            "-p",
+            "p0",
+            "--comment",
+            "--content",
+            "note",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains(
+            "INCOMPLETE_CHANGE: r10 is part of r10+11; name the whole change: -p r10+11 --reject"
+        ),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("resolve_revisions:"), "{stderr}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("plan.json")).unwrap(),
+        original
+    );
+}
+
+#[test]
+fn incomplete_change_v2_apply_quotes_typed_and_plan_syntax() {
+    let source = incomplete_change_source();
+    let mut q = v2_plan(&source);
+    q["operations"] = json!([]);
+    q["resolve_revisions"] = json!({"accept":[],"reject":[{
+        "short_id":"r10", "long_id":"document.w:ins.w:id.10"
+    }]});
+    for syntax in [PlanSyntax::Typed, PlanSyntax::V2] {
+        let e = jubarte::edit::prepare_v2(
+            &source,
+            &PlanV2::from_json(&q.to_string()).unwrap(),
+            &PrepareOptions {
+                syntax,
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(e.code, "INCOMPLETE_CHANGE", "{e}");
+        assert_eq!(
+            e.message,
+            if syntax == PlanSyntax::Typed {
+                "r10 is part of r10+11; name the whole change: --reject-change r10+11"
+            } else {
+                "resolve_revisions: r10 is part of r10+11; name the whole change (r10+11)"
+            }
+        );
+    }
+}
+
+#[test]
+fn selection_errors_flags_unknown_have_no_plan_prefix() {
+    selection_errors_flags(false);
+}
+#[test]
+fn selection_errors_flags_ambiguous_have_no_plan_prefix() {
+    selection_errors_flags(true);
 }

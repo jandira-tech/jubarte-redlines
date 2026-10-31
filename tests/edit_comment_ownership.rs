@@ -684,9 +684,9 @@ fn deleting_your_own_thread_would_take_another_authors_reply() {
 
 #[test]
 fn the_flags_allow_delete_and_resolve_unless_keep_others() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("in.docx"), bobs_comment()).unwrap();
     for flag in ["--delete", "--resolve"] {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("in.docx"), bobs_comment()).unwrap();
         let edit = |extra: &[&str], output: &str| {
             let mut args = vec![
                 "edit", "in.docx", "-p", "c0", flag, "--author", "Alice", "--quiet", "-o", output,

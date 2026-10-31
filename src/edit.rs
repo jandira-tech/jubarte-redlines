@@ -1458,23 +1458,23 @@ fn open_error(error: crate::inspect::InspectError) -> EditError {
 }
 
 /// A [`ChangeError`] of a `resolve_revisions` selection as the plan's error.
-fn selection_error(e: ChangeError) -> EditError {
+fn selection_error(e: ChangeError, syntax: PlanSyntax, verb: &str) -> EditError {
     match e {
         ChangeError::UnknownChange(id) => err(
             "UNKNOWN_CHANGE",
             None,
-            format!("resolve_revisions: no tracked change {id}"),
+            syntax.selection_message(format_args!("no tracked change {id}")),
         ),
         ChangeError::InvalidId(m) => err("INVALID_PLAN", None, format!("resolve_revisions: {m}")),
         ambiguous @ ChangeError::Ambiguous { .. } => err(
             "AMBIGUOUS_CHANGE",
             None,
-            format!("resolve_revisions: {ambiguous}"),
+            syntax.selection_message(ambiguous),
         ),
         part @ ChangeError::PartOfChange { .. } => err(
             "INCOMPLETE_CHANGE",
             None,
-            format!("resolve_revisions: {part}"),
+            syntax.incomplete_change(&part, verb),
         ),
         ChangeError::Package(m) => err("INVALID_DOCUMENT", None, m),
     }
@@ -1485,10 +1485,12 @@ fn selection_error(e: ChangeError) -> EditError {
 fn selected_ids(
     listed: &[Change],
     filter: Option<&ChangeFilter>,
+    syntax: PlanSyntax,
 ) -> Result<Vec<String>, EditError> {
     let Some(filter) = filter else {
         return Ok(Vec::new());
     };
+    let selection_error = |e| selection_error(e, syntax, "");
     let filter = &filter.normalized().map_err(selection_error)?;
     filter.check(listed).map_err(selection_error)?;
     let hit: Vec<&Change> = listed.iter().filter(|c| filter.matches(c)).collect();
@@ -1521,28 +1523,32 @@ fn resolve_selected(
     source: &[u8],
     selection: Option<&ResolveRevisions>,
     policy: RemovedAnchorComments,
+    syntax: PlanSyntax,
 ) -> Result<(Option<Vec<u8>>, ResolvedRevisions, AnchorChanges), EditError> {
     let mut comments = AnchorChanges::default();
     let mut resolved = ResolvedRevisions::default();
     let Some(selection) = selection else {
         return Ok((None, resolved, comments));
     };
-    let change_err = selection_error;
+    let change_err = |e| selection_error(e, syntax, "");
     // Each side names whole changes, checked on the source: an accept can
     // join what is left (#1261).
-    for side in [selection.accept.as_ref(), selection.reject.as_ref()]
-        .into_iter()
-        .flatten()
-    {
-        crate::changes::check_whole_changes(source, side).map_err(change_err)?;
+    for (side, verb) in [
+        (selection.accept.as_ref(), "accept"),
+        (selection.reject.as_ref(), "reject"),
+    ] {
+        if let Some(side) = side {
+            crate::changes::check_whole_changes(source, side)
+                .map_err(|e| selection_error(e, syntax, verb))?;
+        }
     }
     let listed = crate::changes::list_changes(source).map_err(change_err)?;
-    let accept = selected_ids(&listed, selection.accept.as_ref())?;
+    let accept = selected_ids(&listed, selection.accept.as_ref(), syntax)?;
     // A visible reject settles nothing: it is lowered to operations.
     let reject = if selection.reject_visible {
         Vec::new()
     } else {
-        selected_ids(&listed, selection.reject.as_ref())?
+        selected_ids(&listed, selection.reject.as_ref(), syntax)?
     };
     if let Some(both) = accept.iter().find(|id| reject.contains(id)) {
         return Err(err(
@@ -1562,7 +1568,7 @@ fn resolve_selected(
             crate::revision_processor::Resolution::Accept,
             policy == RemovedAnchorComments::Keep,
         )
-        .map_err(change_err)?;
+        .map_err(|e| selection_error(e, syntax, "accept"))?;
         comments.extend(
             removed,
             kept,
@@ -1585,7 +1591,7 @@ fn resolve_selected(
             crate::revision_processor::Resolution::Reject,
             policy == RemovedAnchorComments::Keep,
         )
-        .map_err(change_err)?;
+        .map_err(|e| selection_error(e, syntax, "reject"))?;
         comments.extend(
             removed,
             kept,
@@ -1619,6 +1625,7 @@ pub(crate) fn revisions_left(source: &[u8], plan: &EditPlan) -> bool {
         source,
         plan.resolve_revisions.as_ref(),
         plan.removed_anchor_comments,
+        PlanSyntax::V1,
     )
     .ok()
     .and_then(|(bytes, _, _)| bytes);
@@ -1632,7 +1639,7 @@ pub(crate) fn revisions_left(source: &[u8], plan: &EditPlan) -> bool {
 /// edit, the paragraph and the thread are gone and the reply lands nowhere.
 /// A plan that does not resolve names none here: running it reports why.
 pub fn replies_on_deleted_paragraphs(source: &[u8], plan: &EditPlan) -> Vec<(u32, Option<String>)> {
-    let Ok(lowered) = visible::lower(source, plan) else {
+    let Ok(lowered) = visible::lower(source, plan, PlanSyntax::V1) else {
         return Vec::new();
     };
     let plan = lowered.as_ref().unwrap_or(plan);
@@ -1867,17 +1874,19 @@ pub(crate) fn guard_keep_others(
     selection: Option<&ResolveRevisions>,
     wholesale: Option<&str>,
     settle_comment_bodies: bool,
+    syntax: PlanSyntax,
 ) -> Result<(), EditError> {
     if selection.is_none() && wholesale.is_none() {
         return Ok(());
     }
-    let listed = crate::changes::list_changes(source).map_err(selection_error)?;
+    let listed =
+        crate::changes::list_changes(source).map_err(|e| selection_error(e, syntax, ""))?;
     if let Some(selection) = selection {
-        let accept = selected_ids(&listed, selection.accept.as_ref())?;
+        let accept = selected_ids(&listed, selection.accept.as_ref(), syntax)?;
         let reject = if selection.reject_visible {
             Vec::new()
         } else {
-            selected_ids(&listed, selection.reject.as_ref())?
+            selected_ids(&listed, selection.reject.as_ref(), syntax)?
         };
         let mut removals = Vec::new();
         for (id, accepting) in accept
@@ -1942,7 +1951,12 @@ pub(crate) fn guard_keep_others(
 /// Settle `source` (opened as `probe`) as `plan` asks: accept and reject
 /// what `resolve_revisions` selects, then apply `existing_revisions` to the
 /// changes left.
-fn settle(source: &[u8], plan: &EditPlan, probe: Opened) -> Result<Settled, EditError> {
+fn settle(
+    source: &[u8],
+    plan: &EditPlan,
+    probe: Opened,
+    syntax: PlanSyntax,
+) -> Result<Settled, EditError> {
     if plan.others.keeps() {
         let wholesale = match plan.existing_revisions {
             ExistingRevisions::Accept => Some("accept"),
@@ -1955,12 +1969,14 @@ fn settle(source: &[u8], plan: &EditPlan, probe: Opened) -> Result<Settled, Edit
             plan.resolve_revisions.as_ref(),
             wholesale,
             false,
+            syntax,
         )?;
     }
     let (resolved_source, resolved_revisions, mut comment_changes) = resolve_selected(
         source,
         plan.resolve_revisions.as_ref(),
         plan.removed_anchor_comments,
+        syntax,
     )?;
     let (source, probe) = match &resolved_source {
         Some(bytes) => (bytes.as_slice(), Opened::open(bytes).map_err(open_error)?),
@@ -2694,7 +2710,7 @@ pub fn check_plan_quoting(
     plan: &EditPlan,
     syntax: PlanSyntax,
 ) -> Result<(), EditError> {
-    let lowered = visible::lower(source, plan)?;
+    let lowered = visible::lower(source, plan, syntax)?;
     resolved(source, lowered.as_ref().unwrap_or(plan), syntax).map(|_| ())
 }
 
@@ -2704,8 +2720,7 @@ fn resolved<'a>(
     syntax: PlanSyntax,
 ) -> Result<Transaction<'a>, EditError> {
     check_update_fields(plan)?;
-    let mut tx = Transaction::start(source, plan)?;
-    tx.syntax = syntax;
+    let mut tx = Transaction::start_quoting(source, plan, syntax)?;
     tx.resolve()?;
     tracked::check(&tx)?;
     tx.emits_directly()?;
@@ -3106,6 +3121,14 @@ struct StoryPart {
 
 impl<'p> Transaction<'p> {
     fn start(source: &[u8], plan: &'p EditPlan) -> Result<Self, EditError> {
+        Self::start_quoting(source, plan, PlanSyntax::V1)
+    }
+
+    fn start_quoting(
+        source: &[u8],
+        plan: &'p EditPlan,
+        syntax: PlanSyntax,
+    ) -> Result<Self, EditError> {
         if plan.schema_version != SCHEMA_VERSION {
             return Err(err(
                 "UNSUPPORTED_SCHEMA",
@@ -3149,7 +3172,7 @@ impl<'p> Transaction<'p> {
             resolved_revisions,
             comment_changes,
             changed,
-        } = settle(source, plan, probe)?;
+        } = settle(source, plan, probe, syntax)?;
         let mut renumbered = false;
         if let Some(normalized) = ranges::normalize_permission_ids(&base)? {
             base = normalized;
@@ -3225,7 +3248,7 @@ impl<'p> Transaction<'p> {
             resolved: Vec::new(),
             claims: BTreeMap::new(),
             anchor_window: std::cell::Cell::new(None),
-            syntax: PlanSyntax::default(),
+            syntax,
             comments: Vec::new(),
             deletion_comments: Vec::new(),
             preset_comment_ids: Vec::new(),
@@ -10220,7 +10243,13 @@ mod deeper_boundary_tests {
             },
         ] {
             assert_eq!(
-                resolve_selected(&source, Some(&selection), RemovedAnchorComments::Remove).unwrap(),
+                resolve_selected(
+                    &source,
+                    Some(&selection),
+                    RemovedAnchorComments::Remove,
+                    PlanSyntax::V1
+                )
+                .unwrap(),
                 (None, ResolvedRevisions::default(), AnchorChanges::default())
             );
         }
@@ -10229,8 +10258,13 @@ mod deeper_boundary_tests {
             reject: Some(ChangeFilter::ids(["r1"])),
             reject_visible: false,
         };
-        let (bytes, resolved, _) =
-            resolve_selected(&source, Some(&selection), RemovedAnchorComments::Remove).unwrap();
+        let (bytes, resolved, _) = resolve_selected(
+            &source,
+            Some(&selection),
+            RemovedAnchorComments::Remove,
+            PlanSyntax::V1,
+        )
+        .unwrap();
         assert_eq!(
             resolved,
             ResolvedRevisions {

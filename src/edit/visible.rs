@@ -93,7 +93,11 @@ pub(super) fn check_keep(plan: &EditPlan) -> Result<(), EditError> {
 /// reject side selects becomes a `strike` (an insertion) or a `restore` (a
 /// deletion) after the plan's operations, in document order, and the
 /// reject side settles nothing. `None` when the plan asks for none.
-pub(super) fn lower(source: &[u8], plan: &EditPlan) -> Result<Option<EditPlan>, EditError> {
+pub(super) fn lower(
+    source: &[u8],
+    plan: &EditPlan,
+    syntax: super::PlanSyntax,
+) -> Result<Option<EditPlan>, EditError> {
     let Some(selection) = plan.resolve_revisions.as_ref().filter(|s| s.reject_visible) else {
         return Ok(None);
     };
@@ -105,10 +109,12 @@ pub(super) fn lower(source: &[u8], plan: &EditPlan) -> Result<Option<EditPlan>, 
         ));
     }
     if let Some(reject) = &selection.reject {
-        crate::changes::check_whole_changes(source, reject).map_err(super::selection_error)?;
+        crate::changes::check_whole_changes(source, reject)
+            .map_err(|e| super::selection_error(e, syntax, "reject"))?;
     }
-    let listed = crate::changes::list_changes(source).map_err(super::selection_error)?;
-    let ids = super::selected_ids(&listed, selection.reject.as_ref())?;
+    let listed = crate::changes::list_changes(source)
+        .map_err(|e| super::selection_error(e, syntax, "reject"))?;
+    let ids = super::selected_ids(&listed, selection.reject.as_ref(), syntax)?;
     let mut lowered = plan.clone();
     lowered.resolve_revisions = selection
         .accept

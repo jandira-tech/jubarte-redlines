@@ -290,7 +290,13 @@ impl Origin {
             }
         }
         let tagged_bytes = package_of(&mut tagged, &tagged_stories)?;
-        let mut settled = settle(&tagged_bytes, plan, open(&tagged_bytes)?)?.opened;
+        let mut settled = settle(
+            &tagged_bytes,
+            plan,
+            open(&tagged_bytes)?,
+            super::PlanSyntax::V1,
+        )?
+        .opened;
         let Loaded {
             stories: settled_stories,
             paragraph_nodes: settled_nodes,
