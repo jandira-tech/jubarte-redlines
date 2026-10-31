@@ -2,45 +2,37 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Drawing / shape id renumbering.
+//! Drawing / shape id repair.
 //!
-//! The produced document splices content from two source packages, so the
-//! original ids collide and Word offers to repair it. Each fixup renumbers a
-//! target element's `id` attribute (no namespace) sequentially and rewrites
-//! the linked attribute where one exists. The compare pipeline calls
-//! [`fix_up_doc_pr_ids`], [`fix_up_shape_ids`], and [`fix_up_shape_type_ids`]
-//! once mid-stream and again after the Word-mode merge passes; the package
-//! facade [`fix_up_drawing_ids_in_package`] covers the IDENTICAL-INPUT
-//! short-circuit (empty redline still renumbers to avoid the collision).
+//! The produced document splices content from two source packages. DrawingML
+//! ids are renumbered; VML ids are preserved unless they collide, sharing one
+//! space across shapes, shapetypes, groups and other VML elements (#1800).
+//! References follow the renamed definition. The compare pipeline calls
+//! [`fix_up_drawing_ids`] mid-stream and after the Word-mode merge passes;
+//! [`fix_up_drawing_ids_in_package`] covers the identical-input shortcut.
 //!
-//! `FixUpGroupIds` is intentionally not wired into the produce path; the
-//! C# oracle only calls it from the consolidate path (:1524), and wiring
-//! it in here would diverge from upstream.
+//! [`fix_up_group_ids`] remains the standalone upstream consolidate helper;
+//! compare uses the shared VML repair instead.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use crate::namespaces::{O, VML};
+use crate::namespaces::{MC, O, PT, VML, W};
 use crate::xmllinq::{Dom, NodeId, XName};
 
 fn id_attr() -> XName {
     XName::get("id", "")
 }
 
-/// The three renumbers the compare pipeline runs: [`fix_up_doc_pr_ids`],
-/// [`fix_up_shape_ids`] and [`fix_up_shape_type_ids`]. An edit's redline
-/// (`preserve_untouched`) renames only an id that repeats: an id the
-/// document holds once stays as written, so Accept All gives back the
-/// clean copy's drawings (#1872).
+/// Repair drawing ids after splicing sources. An edit's redline
+/// (`preserve_untouched`) also keeps unique DrawingML ids (#1872).
+/// VML always keeps unique source ids, regardless of compare mode (#1800).
 pub fn fix_up_drawing_ids(dom: &mut Dom, root: NodeId, preserve_untouched: bool) {
     if preserve_untouched {
         rename_repeated_doc_pr_ids(dom, root);
-        rename_repeated_shape_ids(dom, root);
-        relink_shape_types(dom, root, true);
     } else {
         fix_up_doc_pr_ids(dom, root);
-        fix_up_shape_ids(dom, root);
-        fix_up_shape_type_ids(dom, root);
     }
+    fix_up_shape_ids(dom, root);
 }
 
 /// Every drawing's `wp:docPr`, in document order: any element named
@@ -92,38 +84,6 @@ fn rename_repeated_doc_pr_ids(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// Rename a `v:shape` whose id an earlier shape already holds, and the
-/// sibling `o:OLEObject/@ShapeID` that named it.
-fn rename_repeated_shape_ids(dom: &mut Dom, root: NodeId) {
-    let id = id_attr();
-    let shape_id = XName::get("ShapeID", "");
-    let vml_shape = VML::shape();
-    let o_ole_object = O::ole_object();
-    let shapes = dom.descendants(root, Some(&vml_shape));
-    let mut taken: HashSet<String> = shapes
-        .iter()
-        .filter_map(|&s| dom.attribute(s, &id).map(str::to_string))
-        .collect();
-    let mut seen = HashSet::new();
-    for shape in shapes {
-        let Some(old) = dom.attribute(shape, &id).map(str::to_string) else {
-            continue;
-        };
-        if seen.insert(old.clone()) {
-            continue;
-        }
-        let new = unused_id(&old, &mut taken);
-        dom.set_attribute_value(shape, &id, Some(&new));
-        if let Some(parent) = dom.parent(shape) {
-            for ole in dom.elements(parent, Some(&o_ole_object)) {
-                if dom.attribute(ole, &shape_id) == Some(old.as_str()) {
-                    dom.set_attribute_value(ole, &shape_id, Some(&new));
-                }
-            }
-        }
-    }
-}
-
 /// Renumber every drawing's `wp:docPr/@id` starting from 1, in document
 /// order. Matches elements whose local name is `docPr` (and not only the
 /// transitional `WP` URI) so Strict and remapped drawings are renumbered
@@ -136,110 +96,172 @@ pub fn fix_up_doc_pr_ids(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// Renumber every `v:shape/@id` from 1, in document order, and rewrite
-/// any sibling `o:OLEObject/@ShapeID` that referenced the old id so the
-/// OLE ↔ shape linkage survives the renumber. An unlinked OLE object is
-/// left with its old `ShapeID`.
+/// Keep source VML ids unless they collide within this part. All VML
+/// elements share the same id space, including `shape`, `shapetype`, `rect`
+/// and `group`, plus `o:spid`. Rewrite references when their targets change;
+/// leave AlternateContent Fallback copies untouched.
 pub fn fix_up_shape_ids(dom: &mut Dom, root: NodeId) {
+    repair_vml_ids(dom, root);
+}
+
+/// Repair VML ids and their type references in one pass, just as
+/// [`fix_up_shape_ids`] does. Kept as an entry point for callers that used
+/// the former separate shapetype pass; running both is idempotent.
+pub fn fix_up_shape_type_ids(dom: &mut Dom, root: NodeId) {
+    repair_vml_ids(dom, root);
+}
+
+/// Carry source ownership through cloning and merging. Stamping after block
+/// hashing keeps it out of content identity; the normal scratch cleanup drops
+/// it after the first repair. Forward references must not bind the other
+/// source's same-named definition just because it was emitted first (#1800).
+pub(crate) fn stamp_vml_source(dom: &mut Dom, root: NodeId) {
+    let source = root.0.to_string();
+    for node in dom.descendants(root, None) {
+        if (is_vml(dom, node)
+            || dom.name_is(node, &O::ole_object())
+            || dom.name_is(node, &W::name("control")))
+            && !in_fallback(dom, node)
+        {
+            dom.set_attribute_value(node, &PT::name("VmlSource"), Some(&source));
+        }
+    }
+}
+
+fn is_vml(dom: &Dom, node: NodeId) -> bool {
+    dom.name(node)
+        .is_some_and(|name| name.namespace_name() == VML::URI)
+}
+
+fn in_fallback(dom: &Dom, node: NodeId) -> bool {
+    !dom.ancestors(node, Some(&MC::name("Fallback"))).is_empty()
+}
+
+struct VmlDefinition {
+    node: NodeId,
+    position: usize,
+    old: String,
+    new: String,
+}
+
+/// Resolve within the originating copy first, then the merged part (a shared
+/// definition can have been coalesced). Prefer an enclosing/self definition,
+/// otherwise the nearest preceding definition, else the first following one.
+fn vml_target<'a>(
+    dom: &Dom,
+    definitions: &'a [VmlDefinition],
+    node: NodeId,
+    position: usize,
+    key: &str,
+    kind: Option<&XName>,
+) -> Option<&'a str> {
+    let candidates: Vec<_> = definitions
+        .iter()
+        .filter(|d| d.old == key && kind.is_none_or(|kind| dom.name_is(d.node, kind)))
+        .collect();
+    let source_attr = PT::name("VmlSource");
+    let source = dom.attribute(node, &source_attr);
+    let same_source =
+        |d: &&VmlDefinition| source.is_none() || dom.attribute(d.node, &source_attr) == source;
+    let own: Vec<_> = candidates.iter().copied().filter(same_source).collect();
+    let candidates = if own.is_empty() { &candidates } else { &own };
+    let ancestors = dom.ancestors(node, None);
+    candidates
+        .iter()
+        .find(|d| d.node == node || ancestors.contains(&d.node))
+        .or_else(|| candidates.iter().rev().find(|d| d.position <= position))
+        .or_else(|| candidates.first())
+        .map(|d| d.new.as_str())
+}
+
+/// Keep ids and spids in one part-scoped space. Fallback twins reserve names
+/// but are never rewritten: their ids pair with the Choice's docPr names.
+/// Snapshot definitions before relinking all id-valued references.
+fn repair_vml_ids(dom: &mut Dom, root: NodeId) {
     let id = id_attr();
-    let shape_id = XName::get("ShapeID", "");
-    let vml_shape = VML::shape();
-    let o_ole_object = O::ole_object();
-    for (next, shape) in (1u32..).zip(dom.descendants(root, Some(&vml_shape))) {
-        let old = dom.attribute(shape, &id).map(|s| s.to_string());
-        let new = next.to_string();
-        dom.set_attribute_value(shape, &id, Some(&new));
-        // rewrite any sibling o:OLEObject whose ShapeID referenced the old id
-        if let (Some(old), Some(parent)) = (old, dom.parent(shape)) {
-            for ole in dom.elements(parent, Some(&o_ole_object)) {
-                if dom.attribute(ole, &shape_id) == Some(old.as_str()) {
-                    dom.set_attribute_value(ole, &shape_id, Some(&new));
+    let spid = O::name("spid");
+    let nodes = dom.descendants(root, None);
+    let mut taken = HashSet::new();
+    for &node in &nodes {
+        if is_vml(dom, node) {
+            for attr in [&id, &spid] {
+                if let Some(value) = dom.attribute(node, attr) {
+                    taken.insert(value.to_string());
                 }
             }
         }
     }
-}
-
-/// Renumber every `v:shapetype/@id` from 1, in document order, and rewrite
-/// every `v:shape/@type` that named one (both the bare value and the `#…`
-/// prefixed form). Word writes a shapetype once, beside the first shape
-/// that uses it, and later shapes in other `w:pict`s name it by id: C#
-/// rewrote only the sibling's `type`, so a later shape named an id that no
-/// longer existed and Word drew it without the shapetype's path (#1872).
-pub fn fix_up_shape_type_ids(dom: &mut Dom, root: NodeId) {
-    relink_shape_types(dom, root, false);
-}
-
-/// Give each `v:shapetype` its new id (the next number, or under
-/// `keep_unique` its own unless an earlier shapetype holds it), then point
-/// each `v:shape/@type` at the nearest shapetype before it that had the id
-/// it names, else the first one after it.
-fn relink_shape_types(dom: &mut Dom, root: NodeId, keep_unique: bool) {
-    let id = id_attr();
-    let type_attr = XName::get("type", "");
-    let shapetype = VML::shapetype();
-    let shape = VML::shape();
-    let nodes: Vec<NodeId> = dom
-        .descendants(root, None)
-        .into_iter()
-        .filter(|&n| dom.name_is(n, &shapetype) || dom.name_is(n, &shape))
-        .collect();
-    let shapetypes: Vec<NodeId> = nodes
-        .iter()
-        .copied()
-        .filter(|&n| dom.name_is(n, &shapetype))
-        .collect();
-    let mut taken: HashSet<String> = shapetypes
-        .iter()
-        .filter_map(|&n| dom.attribute(n, &id).map(str::to_string))
-        .collect();
     let mut seen = HashSet::new();
-    // Each shapetype's (old id, new id), and the new id of the first
-    // shapetype that had each old one.
-    let mut renamed: HashMap<NodeId, (String, String)> = HashMap::new();
-    let mut first: HashMap<String, String> = HashMap::new();
-    let mut next = 0u32;
-    for node in shapetypes {
-        let old = dom.attribute(node, &id).map(str::to_string);
-        let new = if keep_unique {
-            let Some(old) = old.clone() else {
+    let mut definitions = Vec::new();
+    for (position, &node) in nodes.iter().enumerate() {
+        if !is_vml(dom, node) || in_fallback(dom, node) {
+            continue;
+        }
+        let old_id = dom.attribute(node, &id).map(str::to_string);
+        let mut new_id = None;
+        for attr in [&id, &spid] {
+            let Some(old) = dom.attribute(node, attr).map(str::to_string) else {
                 continue;
             };
-            if seen.insert(old.clone()) {
-                old
+            // id and spid may be aliases on the same shape, not a collision.
+            let new = if attr == &spid && old_id.as_deref() == Some(&old) {
+                new_id.clone().unwrap_or_else(|| old.clone())
+            } else if seen.insert(old.clone()) {
+                old.clone()
+            } else if old.starts_with("_x0000_s")
+                && (attr == &spid || dom.attribute(node, &spid) == Some(old.as_str()))
+            {
+                let fresh = (1025u32..)
+                    .map(|n| format!("_x0000_s{n}"))
+                    .find(|candidate| !taken.contains(candidate))
+                    .unwrap();
+                taken.insert(fresh.clone());
+                fresh
             } else {
                 unused_id(&old, &mut taken)
+            };
+            if new != old {
+                dom.set_attribute_value(node, attr, Some(&new));
             }
-        } else {
-            next += 1;
-            next.to_string()
-        };
-        dom.set_attribute_value(node, &id, Some(&new));
-        if let Some(old) = old {
-            first.entry(old.clone()).or_insert_with(|| new.clone());
-            renamed.insert(node, (old, new));
+            if attr == &id {
+                new_id = Some(new.clone());
+                definitions.push(VmlDefinition {
+                    node,
+                    position,
+                    old,
+                    new,
+                });
+            }
         }
     }
-    let mut latest: HashMap<String, String> = HashMap::new();
-    for node in nodes {
-        if let Some((old, new)) = renamed.get(&node) {
-            latest.insert(old.clone(), new.clone());
+    for (position, &node) in nodes.iter().enumerate() {
+        let mut refs = Vec::new();
+        if is_vml(dom, node) {
+            refs.push((XName::get("type", ""), Some(VML::shapetype()), false));
+            refs.push((O::name("regroupid"), Some(VML::group()), false));
+            refs.push((XName::get("href", ""), None, true));
+        } else if dom.name_is(node, &O::ole_object()) {
+            refs.push((XName::get("ShapeID", ""), Some(VML::shape()), false));
+        } else if dom.name_is(node, &W::name("control")) {
+            refs.push((W::name("shapeid"), Some(VML::shape()), false));
+        }
+        if refs.is_empty() || in_fallback(dom, node) {
             continue;
         }
-        if !dom.name_is(node, &shape) {
-            continue;
-        }
-        let Some(named) = dom.attribute(node, &type_attr).map(str::to_string) else {
-            continue;
-        };
-        let (hash, key) = match named.strip_prefix('#') {
-            Some(key) => ("#", key),
-            None => ("", named.as_str()),
-        };
-        if let Some(new) = latest.get(key).or_else(|| first.get(key)) {
-            let value = format!("{hash}{new}");
-            if value != named {
-                dom.set_attribute_value(node, &type_attr, Some(&value));
+        for (attr, kind, fragment_only) in refs {
+            let Some(value) = dom.attribute(node, &attr).map(str::to_string) else {
+                continue;
+            };
+            let (prefix, key) = match value.strip_prefix('#') {
+                Some(key) => ("#", key),
+                None if fragment_only => continue,
+                None => ("", value.as_str()),
+            };
+            if let Some(new) = vml_target(dom, &definitions, node, position, key, kind.as_ref()) {
+                let new = format!("{prefix}{new}");
+                if new != value {
+                    dom.set_attribute_value(node, &attr, Some(&new));
+                }
             }
         }
     }
@@ -257,7 +279,7 @@ pub fn fix_up_group_ids(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// Apply the three drawing-id fixups (doc / shape / shape-type) to a
+/// Apply the DrawingML and shared VML id fixups to a
 /// package's main document and write the redlined package back to bytes.
 ///
 /// Used by the IDENTICAL-INPUT short-circuit so an empty redline still

@@ -715,6 +715,9 @@ pub fn try_compare_bodies_faithful_with_notes(
         &preprocess::null_rel_resolver,
     );
 
+    fixups::stamp_vml_source(dom, body1);
+    fixups::stamp_vml_source(dom, body2);
+
     let atoms1 = atomize::create_comparison_unit_atom_list(dom, body1, settings);
     let atoms2 = atomize::create_comparison_unit_atom_list(dom, body2, settings);
     let cus1 = units::get_comparison_unit_list(dom, &atoms1, settings);
@@ -940,11 +943,10 @@ pub fn try_compare_bodies_faithful_with_notes(
     } else {
         root
     };
-    // F.6 — renumber drawing/shape ids spliced from two docs (Word-repair preventer).
-    // Matches the TS produce path (:2442-2444): docPr, shape, shapetype — and NOT
-    // group. `fixups::fix_up_group_ids` is intentionally omitted here: the oracle
-    // only calls FixUpGroupIds in the consolidate path (:1524), never in
-    // compare/produce, so wiring it in would diverge from upstream.
+    // F.6 — repair drawing ids and colliding VML ids from the two sources.
+    // Unlike upstream's separate renumber-all shape/type sequences, VML
+    // keeps unique values and repairs collisions across all VML kinds,
+    // including groups, in one shared part-scoped space (#1800).
     fixups::fix_up_drawing_ids(dom, root, settings.preserve_untouched);
     // B's stamped pre-deletions → pending w:del (must run BEFORE the pt
     // scratch strip removes the stamps).

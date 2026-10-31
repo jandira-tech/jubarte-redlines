@@ -30,6 +30,7 @@
 //! | `PICTURE_BULLET_UNDEFINED` | yes | no |
 //! | `DUPLICATE_REVISION_ID` | no: Word opens same-kind duplicates (102 probes, 2026-10-18, #1137); the OOXML validator refuses them (`Sem_UniqueAttributeValue`); error diagnostic | yes: renumbered |
 //! | `DUPLICATE_DOCPR_ID` | no (lead) | yes: renumbered |
+//! | `VML_SHAPE_TYPE_INVALID` | no: self-referential or missing VML type; warning (#1800) | no |
 //! | `PARA_ID_OUT_OF_RANGE` | no: Word opens it; the schema forbids it | yes: renumbered |
 //! | `TEXT_INSIDE_DELETION`, `DELTEXT_OUTSIDE_DELETION`, `MOVEFROM_WITH_DELTEXT` | yes | yes: `w:t` and `w:delText` swapped |
 //! | `INSTR_TEXT_INSIDE_DELETION` | no (not probed in Word) | yes |
@@ -209,7 +210,7 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 33] = [
+const RING1_CODES: [&str; 34] = [
     "DATA_BINDING_WITHOUT_STORE",
     "MOVE_RANGE_COUNT_MISMATCH",
     "MOVE_RANGE_NAME_MISSING",
@@ -225,6 +226,7 @@ const RING1_CODES: [&str; 33] = [
     "PICTURE_BULLET_UNDEFINED",
     "DUPLICATE_REVISION_ID",
     "DUPLICATE_DOCPR_ID",
+    "VML_SHAPE_TYPE_INVALID",
     "PARA_ID_OUT_OF_RANGE",
     "TEXT_INSIDE_DELETION",
     "INSTR_TEXT_INSIDE_DELETION",
@@ -2548,6 +2550,41 @@ fn check_revision_and_drawing_ids(pkg: &PartFs, out: &mut Vec<Finding>) {
         let mut rev_ids: HashSet<String> = HashSet::new();
         let mut docpr_ids: HashSet<String> = HashSet::new();
         collect_ids(&dom, root, &mut rev_ids, &mut docpr_ids, out, &name);
+        // Word writes repeated ids (including AlternateContent twins). Only
+        // a self-reference or a type absent from this part is diagnostic.
+        // The maintainer's six #1800 probes all opened cleanly, so this is
+        // a warning, never a Word-fatal uniqueness invariant.
+        let id_attr = XName::get("id", "");
+        let active: Vec<_> = dom
+            .descendants(root, None)
+            .into_iter()
+            .filter(|&n| {
+                (dom.name_is(n, &VML::shape()) || dom.name_is(n, &VML::shapetype()))
+                    && dom.ancestors(n, Some(&MC::name("Fallback"))).is_empty()
+            })
+            .collect();
+        let types: HashSet<_> = active
+            .iter()
+            .filter(|&&n| dom.name_is(n, &VML::shapetype()))
+            .filter_map(|&n| dom.attribute(n, &id_attr))
+            .collect();
+        for node in active {
+            if dom.name_is(node, &VML::shape())
+                && let Some(target) = dom
+                    .attribute(node, &XName::get("type", ""))
+                    .and_then(|s| s.strip_prefix('#'))
+                && (dom.attribute(node, &id_attr) == Some(target) || !types.contains(target))
+            {
+                out.push(Finding::new(
+                    "VML_SHAPE_TYPE_INVALID",
+                    &name,
+                    element_path(&dom, node),
+                    format!(
+                        "VML shape type '#{target}' names its own id or no shapetype in '{name}'"
+                    ),
+                ));
+            }
+        }
     }
 }
 
