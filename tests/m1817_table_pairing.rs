@@ -327,3 +327,252 @@ fn plain_3x3_moves_the_originals_surplus_rows_to_a_table_of_their_own() {
     assert_eq!(grids[1], ["2790"], "the original's grid");
     assert_table_counts(&redline, &a, &b);
 }
+
+/// Constructed #1913 fixtures isolate the split grid from corpus row pairing.
+fn grid_document(grid: &[u32], rows: &str, fixed: bool) -> Vec<u8> {
+    let cols: String = grid
+        .iter()
+        .map(|w| format!(r#"<w:gridCol w:w="{w}"/>"#))
+        .collect();
+    let layout = if fixed {
+        r#"<w:tblLayout w:type="fixed"/>"#
+    } else {
+        ""
+    };
+    common::docx::docx(&format!(
+        r#"<w:p><w:r><w:t>Before</w:t></w:r></w:p><w:tbl><w:tblPr>{layout}</w:tblPr><w:tblGrid>{cols}</w:tblGrid>{rows}</w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>"#
+    ))
+}
+
+fn grid_row(spans: &[usize], properties: &str, text: &str) -> String {
+    let cells: String = spans.iter().enumerate().map(|(i, span)| format!(r#"<w:tc><w:tcPr><w:gridSpan w:val="{span}"/></w:tcPr><w:p><w:r><w:t>{text} {i}</w:t></w:r></w:p></w:tc>"#)).collect();
+    format!("<w:tr><w:trPr>{properties}</w:trPr>{cells}</w:tr>")
+}
+
+fn assert_split_grid(
+    grid: &[u32],
+    deleted: &str,
+    expected: &[u32],
+    spans: &[Vec<usize>],
+    skips: &[(usize, usize)],
+) {
+    let kept = grid_row(&vec![1; grid.len()], "", "Keep this exact cell");
+    let a = grid_document(grid, &format!("{kept}{deleted}"), false);
+    let b = grid_document(grid, &kept, true);
+    let output = compare(&a, &b); // Existing Ring-1 Word-validity helper.
+    let pkg = PartFs::open(&output).unwrap();
+    assert!(
+        jubarte::validate::ring1(&pkg).is_empty(),
+        "jubarte validate Ring-1"
+    );
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&pkg.part_string("word/document.xml").unwrap());
+    let body = dom.element(dom.root(doc).unwrap(), &W::body()).unwrap();
+    let tables = dom.elements(body, Some(&W::tbl()));
+    assert_eq!(tables.len(), 2, "one live and one deleted run");
+    let split = tables[1];
+    let g = dom.element(split, &W::tbl_grid()).unwrap();
+    let widths: Vec<u32> = dom
+        .elements(g, Some(&W::grid_col()))
+        .iter()
+        .map(|&c| dom.attribute(c, &W::name("w")).unwrap().parse().unwrap())
+        .collect();
+    assert_eq!(widths, expected, "#1913 split-off grid");
+    assert!(
+        dom.element(g, &W::name("tblGridChange")).is_none(),
+        "Word saves a split deleted table without a grid change"
+    );
+    let count = |pr: Option<NodeId>, name: &str, default: usize| {
+        pr.and_then(|pr| dom.element(pr, &W::name(name)))
+            .and_then(|n| dom.attribute(n, &W::val()))
+            .map(|v| v.parse().unwrap())
+            .unwrap_or(default)
+    };
+    let rows = dom.elements(split, Some(&W::tr()));
+    let actual: Vec<Vec<usize>> = rows
+        .iter()
+        .map(|&r| {
+            dom.elements(r, Some(&W::tc()))
+                .iter()
+                .map(|&c| count(dom.element(c, &W::tc_pr()), "gridSpan", 1))
+                .collect()
+        })
+        .collect();
+    assert_eq!(actual, spans, "cell spans in the rebuilt grid");
+    let actual: Vec<_> = rows
+        .iter()
+        .map(|&r| {
+            let pr = dom.element(r, &W::tr_pr());
+            (count(pr, "gridBefore", 0), count(pr, "gridAfter", 0))
+        })
+        .collect();
+    assert_eq!(actual, skips, "row omissions in the rebuilt grid");
+    for (&row, &(before, after)) in rows.iter().zip(skips) {
+        let pr = dom.element(row, &W::tr_pr()).unwrap();
+        for (name, count, width) in [
+            ("wBefore", before, expected[..before].iter().sum::<u32>()),
+            (
+                "wAfter",
+                after,
+                expected[expected.len() - after..].iter().sum::<u32>(),
+            ),
+        ] {
+            if let Some(el) = dom.element(pr, &W::name(name)) {
+                assert_ne!(count, 0, "no stale omission width");
+                assert_eq!(dom.attribute(el, &W::name("w")).unwrap(), width.to_string());
+            }
+        }
+    }
+    // Integration gate: exercise the same output through the public CLI.
+    let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+    let path = dir.path().join("split.docx");
+    std::fs::write(&path, &output).unwrap();
+    let validation = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .arg("validate")
+        .arg(&path)
+        .args(["--rules", "word"])
+        .output()
+        .unwrap();
+    assert!(
+        validation.status.success(),
+        "validate: {}{}",
+        String::from_utf8_lossy(&validation.stdout),
+        String::from_utf8_lossy(&validation.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&validation.stdout).trim(),
+        "no findings"
+    );
+}
+
+#[test]
+fn split_grid_1913_be486e3b25_drops_unused_trailing_columns() {
+    assert_split_grid(
+        &[4606, 4606],
+        &grid_row(
+            &[1],
+            r#"<w:gridAfter w:val="1"/><w:wAfter w:w="4606" w:type="dxa"/>"#,
+            "Deleted",
+        ),
+        &[4606],
+        &[vec![1]],
+        &[(0, 0)],
+    );
+}
+
+#[test]
+fn split_grid_1913_81ecf9d6d2_full_width_cell() {
+    assert_split_grid(
+        &[4159, 3329, 3420],
+        &grid_row(&[3], "", "Deleted"),
+        &[10908],
+        &[vec![1]],
+        &[(0, 0)],
+    );
+}
+
+#[test]
+fn split_grid_1913_70c30e926c_full_width_cell() {
+    assert_split_grid(
+        &[6570, 2880],
+        &grid_row(&[2], "", "Deleted"),
+        &[9450],
+        &[vec![1]],
+        &[(0, 0)],
+    );
+}
+
+#[test]
+fn split_grid_1913_b13a27e36d_three_columns_from_eight() {
+    let rows = format!(
+        "{}{}",
+        grid_row(&[3, 3, 2], "", "Deleted"),
+        grid_row(&[8], "", "Removed")
+    );
+    assert_split_grid(
+        &[1663, 2193, 1331, 952, 2740, 1494, 3805, 1381],
+        &rows,
+        &[5187, 5186, 5186],
+        &[vec![1, 1, 1], vec![3]],
+        &[(0, 0), (0, 0)],
+    );
+}
+
+#[test]
+fn split_grid_1913_fea87b305c_removes_seven_twip_sliver() {
+    assert_split_grid(
+        &[3091, 7, 5928],
+        &grid_row(&[2, 1], "", "Deleted"),
+        &[3098, 5928],
+        &[vec![1, 1]],
+        &[(0, 0)],
+    );
+}
+
+#[test]
+fn split_grid_1913_reindexes_omissions_and_preserves_their_widths() {
+    let rows = format!(
+        "{}{}",
+        grid_row(&[6], "", "Deleted"),
+        grid_row(
+            &[2],
+            r#"<w:gridBefore w:val="2"/><w:gridAfter w:val="2"/><w:wBefore w:w="300" w:type="dxa"/><w:wAfter w:w="1100" w:type="dxa"/>"#,
+            "Removed"
+        )
+    );
+    assert_split_grid(
+        &[100, 200, 300, 400, 500, 600],
+        &rows,
+        &[300, 700, 1100],
+        &[vec![3], vec![1]],
+        &[(0, 0), (1, 1)],
+    );
+}
+
+#[test]
+fn split_grid_1913_trims_only_the_common_trailing_omission() {
+    let rows = format!(
+        "{}{}",
+        grid_row(
+            &[2],
+            r#"<w:gridAfter w:val="2"/><w:wAfter w:w="700" w:type="dxa"/>"#,
+            "Deleted"
+        ),
+        grid_row(
+            &[3],
+            r#"<w:gridAfter w:val="1"/><w:wAfter w:w="400" w:type="dxa"/>"#,
+            "Removed"
+        )
+    );
+    assert_split_grid(
+        &[100, 200, 300, 400],
+        &rows,
+        &[300, 300],
+        &[vec![1], vec![2]],
+        &[(0, 1), (0, 0)],
+    );
+}
+
+#[test]
+fn split_grid_1913_keeps_leading_omission_widths() {
+    let rows = format!(
+        "{}{}",
+        grid_row(
+            &[2],
+            r#"<w:gridBefore w:val="2"/><w:gridAfter w:val="2"/><w:wBefore w:w="300" w:type="dxa"/><w:wAfter w:w="1100" w:type="dxa"/>"#,
+            "Deleted"
+        ),
+        grid_row(
+            &[3],
+            r#"<w:gridBefore w:val="1"/><w:gridAfter w:val="2"/><w:wBefore w:w="100" w:type="dxa"/><w:wAfter w:w="1100" w:type="dxa"/>"#,
+            "Removed"
+        )
+    );
+    assert_split_grid(
+        &[100, 200, 300, 400, 500, 600],
+        &rows,
+        &[100, 200, 700],
+        &[vec![1], vec![2]],
+        &[(2, 0), (1, 0)],
+    );
+}

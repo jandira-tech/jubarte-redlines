@@ -10,7 +10,7 @@
 //! two adjacent rows differ in table style (matched by name, as Compare maps
 //! the two documents' styles) or in layout type. So where the two sides of a
 //! paired table differ in either, each run of the original's deleted rows is
-//! a table of its own, with the original's properties and grid, and each run
+//! a table of its own, with the original's properties and its rows' grid, and each run
 //! of live rows keeps the revision's. Word's probes (fix23 round 32): the
 //! style and the layout split the rows; borders, width, indent, alignment,
 //! look and cell margins do not. In Word's redlines of the 72 bench pairs
@@ -241,9 +241,168 @@ pub fn split_rows_by_table_identity(
                 dom.remove(row);
                 dom.add(table, row);
             }
+            if deleted {
+                rebuild_deleted_grid(dom, table, layout);
+            }
             dom.add_before_self(tbl, table);
         }
         dom.remove(tbl);
+    }
+}
+
+/// A row's cell edges, expressed in the original grid's column indices.
+struct RowEdges {
+    row: NodeId,
+    cells: Vec<NodeId>,
+    edges: Vec<usize>,
+    after: usize,
+}
+
+fn grid_count(dom: &Dom, pr: Option<NodeId>, name: &str, default: usize) -> Option<usize> {
+    match pr.and_then(|pr| dom.element(pr, &W::name(name))) {
+        Some(el) => dom.attribute(el, &W::val())?.parse().ok(),
+        None => Some(default),
+    }
+}
+
+/// Coalesce columns at edges no cell in this deleted run uses (#1913).
+/// Widths come only from the original grid, never the revision's section or
+/// preferred tcW (which may be a percentage). Layout-resolved widths are a
+/// separate, still open part of #1913.
+///
+/// Word's saved redlines have no tblGridChange on any of the 108 adjacent
+/// all-deleted tables in fix23/r47. This is the split table's own grid, not
+/// another tracked edit. In be486e3b25 Word also drops the trailing columns
+/// every row explicitly omits; retained cell widths do not change.
+fn rebuild_deleted_grid(dom: &mut Dom, table: NodeId, grid: NodeId) {
+    let columns = dom.elements(grid, Some(&W::grid_col()));
+    let Some(widths): Option<Vec<u32>> = columns
+        .iter()
+        .map(|&col| dom.attribute(col, &W::name("w"))?.parse().ok())
+        .collect()
+    else {
+        return;
+    };
+    if widths.is_empty() || widths.contains(&0) {
+        return;
+    }
+    let mut rows = Vec::new();
+    // Include sdt/customXml wrappers, but never the rows of a nested table.
+    for row in dom.descendants(table, Some(&W::tr())) {
+        if dom.ancestors(row, Some(&W::tbl())).first() != Some(&table) {
+            continue;
+        }
+        let pr = dom.element(row, &W::tr_pr());
+        let (Some(before), Some(after)) = (
+            grid_count(dom, pr, "gridBefore", 0),
+            grid_count(dom, pr, "gridAfter", 0),
+        ) else {
+            return;
+        };
+        let cells: Vec<_> = dom
+            .descendants(row, Some(&W::tc()))
+            .into_iter()
+            .filter(|&cell| dom.ancestors(cell, Some(&W::tr())).first() == Some(&row))
+            .collect();
+        if cells.is_empty() {
+            return;
+        }
+        let mut edges = vec![before];
+        let mut end = before;
+        for &cell in &cells {
+            let Some(span) = grid_count(dom, dom.element(cell, &W::tc_pr()), "gridSpan", 1)
+                .filter(|&span| span > 0)
+            else {
+                return;
+            };
+            let Some(next) = end.checked_add(span).filter(|&n| n <= widths.len()) else {
+                return;
+            };
+            end = next;
+            edges.push(end);
+        }
+        if end.checked_add(after) != Some(widths.len()) {
+            // An incomplete/malformed row supplies no reliable geometry.
+            // Leave the whole run alone rather than guess at missing cells.
+            return;
+        }
+        rows.push(RowEdges {
+            row,
+            cells,
+            edges,
+            after,
+        });
+    }
+    let Some(trailing) = rows.iter().map(|r| r.after).min() else {
+        return;
+    };
+    let end = widths.len() - trailing;
+    let mut edges = vec![0, end];
+    edges.extend(rows.iter().flat_map(|r| r.edges.iter().copied()));
+    edges.sort_unstable();
+    edges.dedup();
+    if edges == (0..=widths.len()).collect::<Vec<_>>() {
+        return;
+    }
+    for col in columns {
+        dom.remove(col);
+    }
+    for pair in edges.windows(2) {
+        let width: u64 = widths[pair[0]..pair[1]].iter().map(|&w| u64::from(w)).sum();
+        let col = dom.new_element(W::grid_col());
+        dom.set_attribute_value(col, &W::name("w"), Some(&width.to_string()));
+        dom.add(grid, col);
+    }
+    for row in rows {
+        // Every row edge was inserted above, so each binary search succeeds.
+        let indices: Vec<_> = row
+            .edges
+            .iter()
+            .map(|e| edges.binary_search(e).unwrap())
+            .collect();
+        for (&cell, pair) in row.cells.iter().zip(indices.windows(2)) {
+            set_grid_count(dom, cell, "tcPr", "gridSpan", pair[1] - pair[0], 1);
+        }
+        set_grid_count(dom, row.row, "trPr", "gridBefore", indices[0], 0);
+        let after = edges.len() - 1 - indices[indices.len() - 1];
+        set_grid_count(dom, row.row, "trPr", "gridAfter", after, 0);
+        if let Some(pr) = dom.element(row.row, &W::tr_pr()) {
+            for (name, count) in [("wBefore", indices[0]), ("wAfter", after)] {
+                if let Some(width) = dom.element(pr, &W::name(name)) {
+                    if count == 0 {
+                        dom.remove(width);
+                    } else if name == "wAfter" && trailing > 0 {
+                        let last = row.edges[row.edges.len() - 1];
+                        let remaining: u64 = widths[last..end].iter().map(|&w| u64::from(w)).sum();
+                        dom.set_attribute_value(width, &W::name("w"), Some(&remaining.to_string()));
+                        dom.set_attribute_value(width, &W::name("type"), Some("dxa"));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Coalescing only reduces counts, so a non-default result already has a
+/// property. Update it in place to retain schema order and revision records.
+fn set_grid_count(
+    dom: &mut Dom,
+    owner: NodeId,
+    props: &str,
+    name: &str,
+    count: usize,
+    default: usize,
+) {
+    let Some(el) = dom
+        .element(owner, &W::name(props))
+        .and_then(|pr| dom.element(pr, &W::name(name)))
+    else {
+        return;
+    };
+    if count == default {
+        dom.remove(el);
+    } else {
+        dom.set_attribute_value(el, &W::val(), Some(&count.to_string()));
     }
 }
 
@@ -251,6 +410,76 @@ pub fn split_rows_by_table_identity(
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_grid_wrapped_cells_and_rows_do_not_absorb_nested_table_edges() {
+        let mut dom = Dom::new();
+        let xml = format!(
+            r#"<w:tbl xmlns:w="{}"><w:tblGrid><w:gridCol w:w="100"/><w:gridCol w:w="200"/><w:gridCol w:w="300"/></w:tblGrid><w:sdt><w:sdtContent><w:tr><w:sdt><w:sdtContent><w:tc><w:tcPr><w:tcW w:w="2500" w:type="pct"/><w:gridSpan w:val="2"/></w:tcPr><w:tbl><w:tblGrid><w:gridCol w:w="99"/><w:gridCol w:w="1"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p/></w:tc></w:tr></w:tbl><w:p/></w:tc></w:sdtContent></w:sdt><w:tc><w:p/></w:tc></w:tr></w:sdtContent></w:sdt></w:tbl>"#,
+            W::URI
+        );
+        let doc = dom.parse_xdocument(&xml);
+        let table = dom.root(doc).unwrap();
+        let grid = dom.element(table, &W::tbl_grid()).unwrap();
+        let nested = dom.descendants(table, Some(&W::tbl()))[0];
+        let before = dom.serialize_element(nested);
+        rebuild_deleted_grid(&mut dom, table, grid);
+        let widths: Vec<_> = dom
+            .elements(grid, Some(&W::grid_col()))
+            .iter()
+            .map(|&col| dom.attribute(col, &W::name("w")).unwrap())
+            .collect();
+        assert_eq!(widths, ["300", "300"]);
+        assert_eq!(dom.serialize_element(nested), before);
+        let cells = dom.descendants(table, Some(&W::tc()));
+        let pr = dom.element(cells[0], &W::tc_pr()).unwrap();
+        assert!(dom.element(pr, &W::grid_span()).is_none());
+        let width = dom.element(pr, &W::name("tcW")).unwrap();
+        assert_eq!(dom.attribute(width, &W::name("w")), Some("2500"));
+        assert_eq!(dom.attribute(width, &W::name("type")), Some("pct"));
+    }
+
+    #[test]
+    fn split_grid_leaves_unusable_geometry_untouched() {
+        let good = r#"<w:gridCol w:w="100"/><w:gridCol w:w="200"/>"#;
+        for (grid, props, cells) in [
+            ("", "", "<w:tc><w:p/></w:tc>"),
+            (r#"<w:gridCol w:w="bad"/>"#, "", "<w:tc><w:p/></w:tc>"),
+            (r#"<w:gridCol/>"#, "", "<w:tc><w:p/></w:tc>"),
+            (r#"<w:gridCol w:w="0"/>"#, "", "<w:tc><w:p/></w:tc>"),
+            (
+                good,
+                r#"<w:gridBefore w:val="bad"/>"#,
+                "<w:tc><w:p/></w:tc>",
+            ),
+            (good, r#"<w:gridAfter w:val="bad"/>"#, "<w:tc><w:p/></w:tc>"),
+            (good, "", ""),
+            (
+                good,
+                "",
+                r#"<w:tc><w:tcPr><w:gridSpan w:val="0"/></w:tcPr><w:p/></w:tc>"#,
+            ),
+            (
+                good,
+                "",
+                r#"<w:tc><w:tcPr><w:gridSpan w:val="bad"/></w:tcPr><w:p/></w:tc>"#,
+            ),
+            (
+                good,
+                "",
+                r#"<w:tc><w:tcPr><w:gridSpan w:val="3"/></w:tcPr><w:p/></w:tc>"#,
+            ),
+            (good, "", "<w:tc><w:p/></w:tc>"),
+        ] {
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&format!(r#"<w:tbl xmlns:w="{}"><w:tblGrid>{grid}</w:tblGrid><w:tr><w:trPr>{props}</w:trPr>{cells}</w:tr></w:tbl>"#, W::URI));
+            let table = dom.root(doc).unwrap();
+            let grid = dom.element(table, &W::tbl_grid()).unwrap();
+            let before = dom.serialize_element(table);
+            rebuild_deleted_grid(&mut dom, table, grid);
+            assert_eq!(dom.serialize_element(table), before);
+        }
+    }
 
     /// A styles part whose "Normal Table" (default) and "Table Grid" styles
     /// go by the ids given.

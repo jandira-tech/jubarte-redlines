@@ -33,6 +33,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **Split-off deleted tables use their own rows' grid** (#1913, step 1). In Word-mode comparisons, the deleted runs split out by #1912 coalesce unused column edges and rewrite cell spans and row omissions, preserving retained cell widths. Trailing columns every row explicitly omits are dropped, as in Word's saved redlines. Layout-resolved widths (step 2) remain open pending a Word probe.
+
 - Anchor-not-found candidates use retryable source paragraph IDs after revision settlement, show the matched text in grapheme-safe excerpts, and stay out of comment-text scope errors. Repeated failures reuse candidate scans, and literal/plain anchor successes skip normalized searches (#1889).
 
 - Incomplete-change refusals name runnable whole-change retries for edit flags (`-p r10+11 --accept` / `--reject`), typed edits (`--accept-change r10+11` / `--reject-change r10+11`), and top-level `accept` / `reject` (`--id r10+11`). One-shot selection errors omit the plan-only prefix, including when recording flags into a plan with visible rejects. JSON plans keep their released wording, and `--strike` still allows a single mark (#1895).
