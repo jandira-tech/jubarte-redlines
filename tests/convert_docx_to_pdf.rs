@@ -16957,17 +16957,18 @@ fn inline_pictures_in_one_paragraph_sit_side_by_side() {
     );
 }
 
+/// An 11.2×11.25pt inline PNG, the audio icon in English part b 7eb842c8.
+fn audio_icon_run() -> &'static str {
+    r#"<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="141896" cy="142875"/><wp:docPr id="1" name="P"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#
+}
+
 #[test]
-// TODO(7eb842c8): an inline picture after a list tab still paints a line
-// low with its text over the icon; un-ignore once the layout places it on
-// the first line's baseline like Word.
-#[ignore = "TODO(7eb842c8): inline picture after a tab paints a line low"]
 fn an_inline_picture_after_a_tab_sits_on_its_text_line() {
     // English part b 7eb842c8: "1." tab, an 11.2pt audio icon, then text.
     // Word sets the icon on the first line's baseline and the text after
-    // it; we painted it a line lower and set the text over its slot, which
-    // pushed the page down 9pt.
-    let pic = r#"<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="141896" cy="142875"/><wp:docPr id="1" name="P"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
+    // it; painting the icon as its own row put it a line lower, the text
+    // over its slot, and the page down 9pt.
+    let pic = audio_icon_run();
     let body = format!(
         r#"<w:p><w:pPr><w:ind w:left="272" w:hanging="272"/></w:pPr><w:r><w:t>1.</w:t></w:r><w:r><w:tab/></w:r>{pic}<w:r><w:t xml:space="preserve"> Listen</w:t></w:r></w:p><w:sectPr/>"#
     );
@@ -16979,6 +16980,362 @@ fn an_inline_picture_after_a_tab_sits_on_its_text_line() {
         (iy - ly).abs() < 1.5 && lx >= ix + iw,
         "icon on the text baseline, text after it; icon={boxes:?} text=({lx},{ly})"
     );
+}
+
+#[test]
+fn an_inline_picture_after_text_sits_on_its_text_line() {
+    // Same icon with no tab: "Alpha" then the picture then " Beta". Word
+    // keeps all three on one baseline, the picture hard against "Alpha"
+    // and "Beta" after the picture.
+    let pic = audio_icon_run();
+    let body = format!(
+        r#"<w:p><w:r><w:t>Alpha</w:t></w:r>{pic}<w:r><w:t xml:space="preserve"> Beta</w:t></w:r></w:p><w:sectPr/>"#
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("icon after text");
+    let (ax, ay) = pdf_glyph_text_xy(&pdf, "Alpha").expect("Alpha");
+    let (bx, by) = pdf_glyph_text_xy(&pdf, "Beta").expect("Beta");
+    let boxes = pdf_image_boxes(&pdf);
+    let &(ix, iy, iw, _) = boxes.first().expect("icon paints");
+    assert!(
+        (ay - iy).abs() < 1.5 && (by - iy).abs() < 1.5 && ax + 1.0 < ix && bx >= ix + iw - 0.5,
+        "picture between Alpha and Beta on their baseline; icon={boxes:?} alpha=({ax},{ay}) beta=({bx},{by})"
+    );
+}
+
+#[test]
+fn two_inline_pictures_after_a_tab_share_its_text_line() {
+    // Two icons after the list tab share the text line, side by side, and
+    // the words follow the second one.
+    let pic = audio_icon_run();
+    let body = format!(
+        r#"<w:p><w:pPr><w:ind w:left="272" w:hanging="272"/></w:pPr><w:r><w:t>1.</w:t></w:r><w:r><w:tab/></w:r>{pic}{pic}<w:r><w:t xml:space="preserve"> Listen</w:t></w:r></w:p><w:sectPr/>"#
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("two icons after a tab");
+    let (lx, ly) = pdf_glyph_text_xy(&pdf, "Listen").expect("text paints");
+    let mut boxes = pdf_image_boxes(&pdf);
+    boxes.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    assert_eq!(boxes.len(), 2, "two icons; boxes={boxes:?}");
+    let (x0, y0, w0, _) = boxes[0];
+    let (x1, y1, w1, _) = boxes[1];
+    assert!(
+        (y0 - ly).abs() < 1.5
+            && (y1 - ly).abs() < 1.5
+            && (x1 - (x0 + w0)).abs() < 1.0
+            && lx >= x1 + w1 - 0.5,
+        "both icons on the text line, text after them; boxes={boxes:?} text=({lx},{ly})"
+    );
+}
+
+#[test]
+fn an_inline_picture_that_does_not_fit_wraps_with_the_text_after_it() {
+    // Thirty M's leave too little of the line for a 420pt picture. Word
+    // wraps an inline picture that does not fit the remainder onto the
+    // next line and takes the text after it with the picture. The M's
+    // stay on the line above. (No Word PDF of this synthetic pair; the
+    // wrap is Word's ordinary inline-object rule.)
+    let pic = r#"<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="5334000" cy="142875"/><wp:docPr id="1" name="P"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
+    let body = format!(
+        r#"<w:p><w:r><w:t>MMMMMMMMMMMMMMMMMMMMMMMMMMMMMM</w:t></w:r>{pic}<w:r><w:t xml:space="preserve"> ZZEND</w:t></w:r></w:p><w:sectPr/>"#
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("wide icon");
+    let (px, py) = pdf_glyph_text_xy(&pdf, "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMM").expect("prefix");
+    let (sx, sy) = pdf_glyph_text_xy(&pdf, "ZZEND").expect("suffix");
+    let boxes = pdf_image_boxes(&pdf);
+    let &(ix, iy, iw, _) = boxes.first().expect("icon paints");
+    assert!(
+        py > iy + 8.0 && (sy - iy).abs() < 1.5 && sx >= ix + iw - 0.5 && (ix - px).abs() < 1.0,
+        "picture and ZZEND share the next line under the M's; icon={boxes:?} prefix=({px},{py}) suffix=({sx},{sy})"
+    );
+}
+
+/// An inline PNG of `w`×`h` points (EMU = pt × 12700).
+fn inline_png_run(w_pt: f32, h_pt: f32) -> String {
+    let emu = |pt: f32| (pt * 12700.0).round() as i64;
+    format!(
+        r#"<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{}" cy="{}"/><wp:docPr id="1" name="P"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#,
+        emu(w_pt),
+        emu(h_pt)
+    )
+}
+
+/// `drawing_docx` plus a numbering part, so a numPr marker and an inline
+/// picture live in one package.
+fn numbered_drawing_docx(body: &str, numbering: &str) -> Vec<u8> {
+    let document = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+           xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" \
+           xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+           xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+           xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\" \
+           xmlns:v=\"urn:schemas-microsoft-com:vml\">\
+         <w:body>{body}</w:body></w:document>"
+    );
+    let content_types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+        <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+        <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+        <Default Extension=\"png\" ContentType=\"image/png\"/>\
+        <Override PartName=\"/word/document.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
+        <Override PartName=\"/word/numbering.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml\"/>\
+        </Types>";
+    let rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rId1\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" \
+          Target=\"word/document.xml\"/>\
+        </Relationships>";
+    let doc_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rIdImg\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" \
+          Target=\"media/dot.png\"/>\
+        <Relationship Id=\"rIdN\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering\" \
+          Target=\"numbering.xml\"/>\
+        </Relationships>";
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = SimpleFileOptions::default();
+    zip.start_file("[Content_Types].xml", opts).unwrap();
+    zip.write_all(content_types.as_bytes()).unwrap();
+    zip.start_file("_rels/.rels", opts).unwrap();
+    zip.write_all(rels.as_bytes()).unwrap();
+    zip.start_file("word/document.xml", opts).unwrap();
+    zip.write_all(document.as_bytes()).unwrap();
+    zip.start_file("word/_rels/document.xml.rels", opts)
+        .unwrap();
+    zip.write_all(doc_rels.as_bytes()).unwrap();
+    zip.start_file("word/numbering.xml", opts).unwrap();
+    zip.write_all(numbering.as_bytes()).unwrap();
+    zip.start_file("word/media/dot.png", opts).unwrap();
+    zip.write_all(TINY_PNG).unwrap();
+    zip.finish().unwrap().into_inner()
+}
+
+fn decimal_list_numbering() -> &'static str {
+    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+              <w:lvlText w:val=\"%1.\"/><w:lvlJc w:val=\"left\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>"
+}
+
+/// Heights of filled rects wider than a glyph (paragraph shading).
+fn pdf_wide_fill_heights(pdf: &[u8]) -> Vec<f32> {
+    let hay = String::from_utf8_lossy(pdf);
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = hay[from..].find(" re f\n") {
+        let start = hay[..from + rel].rfind('\n').map_or(0, |i| i + 1);
+        let line = &hay[start..from + rel];
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 4
+            && let (Ok(w), Ok(h)) = (
+                parts[parts.len() - 2].parse::<f32>(),
+                parts[parts.len() - 1].parse::<f32>(),
+            )
+            && w > 100.0
+        {
+            out.push(h);
+        }
+        from += rel + 6;
+    }
+    out
+}
+
+#[test]
+fn an_inline_picture_after_a_numpr_marker_sits_on_its_text_line() {
+    // The marker is generated ("1.\t"), not a w:t. Counting only DOM
+    // characters sees nothing before the picture and leaves it on its own
+    // row under the item.
+    let pic = audio_icon_run();
+    let body = format!(
+        r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>{pic}<w:r><w:t xml:space="preserve"> Listen</w:t></w:r></w:p><w:sectPr/>"#
+    );
+    let pdf =
+        docx_to_pdf(&numbered_drawing_docx(&body, decimal_list_numbering())).expect("numPr icon");
+    let (mx, my) = pdf_glyph_text_xy(&pdf, "1.").expect("marker");
+    let (lx, ly) = pdf_glyph_text_xy(&pdf, "Listen").expect("item text");
+    let boxes = pdf_image_boxes(&pdf);
+    let &(ix, iy, iw, _) = boxes.first().expect("icon paints");
+    // Body indent is 72 + 36 = 108. The marker sits in the gutter; the
+    // icon follows it, on the item's baseline.
+    assert!(
+        (iy - ly).abs() < 1.5
+            && (my - ly).abs() < 1.5
+            && mx + 1.0 < ix
+            && ix > 100.0
+            && lx >= ix + iw - 0.5,
+        "marker, then icon at the indent, then Listen; icon={boxes:?} marker=({mx},{my}) text=({lx},{ly})"
+    );
+}
+
+#[test]
+fn an_inline_picture_on_line_two_sits_on_that_line() {
+    // A break puts "Mid", the icon and "End" on line 2. Joining only the
+    // first line drops the icon onto a row of its own under both.
+    let pic = audio_icon_run();
+    let body = format!(
+        r#"<w:p><w:r><w:t>LINEONE</w:t></w:r><w:r><w:br/></w:r><w:r><w:t>Mid</w:t></w:r>{pic}<w:r><w:t xml:space="preserve"> End</w:t></w:r></w:p><w:sectPr/>"#
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("icon on line two");
+    let (_, oy) = pdf_glyph_text_xy(&pdf, "LINEONE").expect("line one");
+    let (mx, my) = pdf_glyph_text_xy(&pdf, "Mid").expect("Mid");
+    let (ex, ey) = pdf_glyph_text_xy(&pdf, "End").expect("End");
+    let boxes = pdf_image_boxes(&pdf);
+    let &(ix, iy, iw, _) = boxes.first().expect("icon paints");
+    assert!(
+        oy > my + 4.0
+            && (iy - my).abs() < 1.5
+            && (ey - my).abs() < 1.5
+            && mx + 1.0 < ix
+            && ex >= ix + iw - 0.5,
+        "icon shares line two with Mid and End; icon={boxes:?} line1_y={oy} mid=({mx},{my}) end=({ex},{ey})"
+    );
+}
+
+#[test]
+fn an_inline_picture_in_a_full_line_wraps_the_text_after_it() {
+    // A left tab at 400pt. "ZZ" plus "ENDOFLINE" fits the remainder; the
+    // 11pt icon between them does not. Shifting the already-painted word
+    // keeps it on this line, past the right margin (540).
+    let pic = audio_icon_run();
+    let body = format!(
+        r#"<w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="8000"/></w:tabs></w:pPr><w:r><w:t>Head</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>ZZ</w:t></w:r>{pic}<w:r><w:t xml:space="preserve"> ENDOFLINE</w:t></w:r></w:p><w:sectPr/>"#
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("full line");
+    let (zx, zy) = pdf_glyph_text_xy(&pdf, "ZZ").expect("ZZ");
+    let (ex, ey) = pdf_glyph_text_xy(&pdf, "ENDOFLINE").expect("ENDOFLINE");
+    let boxes = pdf_image_boxes(&pdf);
+    let &(ix, iy, _, _) = boxes.first().expect("icon paints");
+    assert!(
+        (iy - zy).abs() < 1.5 && ix > zx && ey < zy - 4.0 && ex < 120.0,
+        "ENDOFLINE wraps under the full line, icon stays with ZZ; icon={boxes:?} zz=({zx},{zy}) end=({ex},{ey})"
+    );
+}
+
+#[test]
+fn an_inline_picture_on_a_justified_line_stays_inside_the_measure() {
+    // Justification stretches "AA BB CC" out to the right margin, then a
+    // picture shoved in afterwards carries "CC" past it. The picture is
+    // 48pt, narrow enough to "fit" beside "AA", wide enough that the
+    // shift is obvious (letter right edge 540).
+    // A following line makes this one eligible for justification (Word
+    // does not justify a paragraph's last line).
+    let pic = inline_png_run(48.0, 11.0);
+    let body = format!(
+        r#"<w:p><w:pPr><w:jc w:val="both"/></w:pPr><w:r><w:t>AA</w:t></w:r>{pic}<w:r><w:t xml:space="preserve"> BB CC</w:t></w:r><w:r><w:br/></w:r><w:r><w:t>More</w:t></w:r></w:p><w:sectPr/>"#
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("justified icon");
+    let (ax, ay) = pdf_glyph_text_xy(&pdf, "AA").expect("AA");
+    let (cx, cy) = pdf_glyph_text_xy(&pdf, "CC").expect("CC");
+    let (_, my) = pdf_glyph_text_xy(&pdf, "More").expect("More");
+    let boxes = pdf_image_boxes(&pdf);
+    let &(ix, iy, iw, _) = boxes.first().expect("icon paints");
+    assert!(
+        my < ay - 4.0
+            && (cy - ay).abs() < 1.5
+            && (iy - ay).abs() < 1.5
+            && ix > ax
+            && cx >= ix + iw - 1.0
+            && cx < 530.0,
+        "CC stays inside the measure, picture on the line; icon={boxes:?} aa=({ax},{ay}) cc=({cx},{cy}) more_y={my}"
+    );
+}
+
+#[test]
+fn an_inline_picture_after_deleted_text_follows_that_text() {
+    // Word mode still paints the struck "CD". The picture follows "EF",
+    // then "GH". Skipping deleted runs anchors the icon before "EF".
+    let pic = audio_icon_run();
+    let body = format!(
+        r#"<w:p><w:r><w:t>AB</w:t></w:r><w:del w:id="1" w:author="Ann" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>CD</w:delText></w:r></w:del><w:r><w:t>EF</w:t></w:r>{pic}<w:r><w:t>GH</w:t></w:r></w:p><w:sectPr/>"#
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("deleted before icon");
+    let (abx, aby) = pdf_glyph_text_xy(&pdf, "AB").expect("AB");
+    let (cdx, _) = pdf_glyph_text_xy(&pdf, "CD").expect("CD");
+    let (efx, efy) = pdf_glyph_text_xy(&pdf, "EF").expect("EF");
+    let (ghx, ghy) = pdf_glyph_text_xy(&pdf, "GH").expect("GH");
+    let boxes = pdf_image_boxes(&pdf);
+    let &(ix, iy, iw, _) = boxes.first().expect("icon paints");
+    assert!(
+        cdx > abx + 0.5
+            && efx > cdx + 0.5
+            && ix > efx + 0.5
+            && ghx >= ix + iw - 0.5
+            && (iy - efy).abs() < 1.5
+            && (ghy - efy).abs() < 1.5
+            && (aby - efy).abs() < 1.5,
+        "icon after EF, GH after the icon, one baseline; icon={boxes:?} ab=({abx},{aby}) cd={cdx} ef=({efx},{efy}) gh=({ghx},{ghy})"
+    );
+}
+
+#[test]
+fn an_inline_picture_near_the_page_floor_moves_its_line() {
+    // Page 260pt, margins 72: body 116pt. A 40pt line above leaves 76pt.
+    // The text fits; a 100pt picture on that line does not, so the line
+    // moves to page 2. Space-before on a blank page is the cover rule and
+    // must not break (9f2c60b301).
+    let pic = inline_png_run(20.0, 100.0);
+    let body = format!(
+        r#"<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="800" w:lineRule="exact"/></w:pPr><w:r><w:t>Above</w:t></w:r></w:p><w:p><w:pPr><w:spacing w:before="0" w:after="0"/></w:pPr><w:r><w:t>Near</w:t></w:r>{pic}<w:r><w:t xml:space="preserve"> Floor</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="5200"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>"#
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("near the floor");
+    let boxes = pdf_image_boxes(&pdf);
+    let &(ix, iy, _, ih) = boxes.first().expect("picture paints");
+    let (nx, ny) = pdf_glyph_text_xy(&pdf, "Near").expect("Near");
+    assert!(
+        pdf_page_count(&pdf) == 2 && iy >= 72.0 && (iy - ny).abs() < 1.5 && ix > nx,
+        "the line moves to page 2 above the footer; pages={} icon=({ix},{iy},h={ih}) near=({nx},{ny})",
+        pdf_page_count(&pdf)
+    );
+}
+
+#[test]
+fn an_inline_picture_taller_than_its_text_deepens_the_shading() {
+    // The yellow band is the line box. A 40pt picture on the line makes
+    // that box at least 40pt; a band painted for the text alone stays
+    // about one line tall.
+    let pic = inline_png_run(18.0, 40.0);
+    let body = format!(
+        r#"<w:p><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="FFFF00"/></w:pPr><w:r><w:t>Shade</w:t></w:r>{pic}</w:p><w:sectPr/>"#
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("shaded picture");
+    let heights = pdf_wide_fill_heights(&pdf);
+    let (sx, sy) = pdf_glyph_text_xy(&pdf, "Shade").expect("Shade");
+    let boxes = pdf_image_boxes(&pdf);
+    let &(ix, iy, _, ih) = boxes.first().expect("picture paints");
+    assert!(
+        heights.iter().any(|h| *h >= 36.0) && (iy - sy).abs() < 1.5 && ix > sx && ih >= 36.0,
+        "shading covers the picture's line; heights={heights:?} icon={boxes:?} shade=({sx},{sy})"
+    );
+}
+
+#[test]
+fn an_inline_picture_on_a_centred_or_right_line_shares_that_line() {
+    // Centre and right were left on the own-row path. "A", the icon and
+    // "B" share the line.
+    let pic = audio_icon_run();
+    for jc in ["center", "right"] {
+        let body = format!(
+            r#"<w:p><w:pPr><w:jc w:val="{jc}"/></w:pPr><w:r><w:t>A</w:t></w:r>{pic}<w:r><w:t>B</w:t></w:r></w:p><w:sectPr/>"#
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect(jc);
+        let (ax, ay) = pdf_glyph_text_xy(&pdf, "A").expect("A");
+        let (bx, by) = pdf_glyph_text_xy(&pdf, "B").expect("B");
+        let boxes = pdf_image_boxes(&pdf);
+        let &(ix, iy, iw, _) = boxes.first().expect("icon paints");
+        assert!(
+            (iy - ay).abs() < 1.5 && (by - ay).abs() < 1.5 && ax + 0.5 < ix && bx >= ix + iw - 0.5,
+            "{jc}: icon between A and B on their baseline; icon={boxes:?} a=({ax},{ay}) b=({bx},{by})"
+        );
+    }
 }
 
 #[test]
