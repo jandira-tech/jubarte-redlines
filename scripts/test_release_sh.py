@@ -2481,7 +2481,7 @@ class InstallProofs(unittest.TestCase):
     channel the way a user does. 0.13.0 never reached npm (both packages
     stop at 0.12.0) and no step said so."""
 
-    FNS = ("host_archive", "archive_runs", "pip_installs", "npx_runs", "npm_requires", "docsrs_built")
+    FNS = ("answers_version", "host_archive", "archive_runs", "pip_installs", "npx_runs", "npm_requires", "docsrs_built")
 
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="install-")).resolve()
@@ -2723,6 +2723,37 @@ class Lessons0140(unittest.TestCase):
         row = self.one_row("never sh or zsh")
         for script in ("release-engine.sh", "build-release-app.sh", "notarize-direct.sh"):
             self.assertIn(script, row)
+
+
+
+class VersionAnswerTests(unittest.TestCase):
+    """Step 12 reads a binary's `--version`, which carries the build commit
+    as SemVer build metadata since #1924 (`jubarte 0.16.0+00b32d2`)."""
+
+    def answers(self, got: str, ver: str = "0.16.0") -> bool:
+        script = f'{shell_functions("answers_version")}\nVER={ver}\nanswers_version "$1"'
+        return subprocess.run(["bash", "-c", script, "-", got]).returncode == 0
+
+    def test_a_bare_version_answers(self) -> None:
+        self.assertTrue(self.answers("jubarte 0.16.0"))
+        self.assertTrue(self.answers("jubarte-redlines 0.16.0"))
+
+    def test_the_build_commit_answers(self) -> None:
+        self.assertTrue(self.answers("jubarte 0.16.0+00b32d2"))
+        self.assertTrue(self.answers("jubarte-redlines 0.16.0+e65644b4f"))
+
+    def test_a_dirty_build_or_another_version_does_not(self) -> None:
+        self.assertFalse(self.answers("jubarte 0.16.0+00b32d2.dirty"))
+        self.assertFalse(self.answers("jubarte 0.16.1"))
+        self.assertFalse(self.answers("jubarte 0x16x0"))
+        self.assertFalse(self.answers("jubarte 0.16.0+xyz"))
+        self.assertFalse(self.answers("jubarte 0.16.0 extra"))
+
+    def test_step_12_reads_versions_through_it(self) -> None:
+        text = RELEASE_SH.read_text()
+        for name in ("archive_runs() {", "npx_runs() {"):
+            start = text.index(name)
+            self.assertIn("answers_version", text[start : text.index("\n}\n", start)])
 
 
 if __name__ == "__main__":

@@ -1591,6 +1591,13 @@ host_archive() {
   case "$(uname -m)" in arm64 | aarch64) arch=aarch64 ;; x86_64 | amd64) arch=x86_64 ;; *) return 1 ;; esac
   printf 'jubarte-%s-%s-%s.tar.gz\n' "$VER" "$os" "$arch"
 }
+# A `--version` line that answers $VER: bare, or with the build's commit as
+# SemVer build metadata (`jubarte 0.16.0+00b32d2`, #1924). A `.dirty` build
+# never ships.
+answers_version() {
+  local v=${VER//./\\.}
+  [[ $1 =~ ^(jubarte|jubarte-redlines)\ ${v}(\+[0-9a-f]{7,40})?$ ]]
+}
 # This machine's archive from the GitHub release: its line in SHA256SUMS.txt
 # matches, and the binary inside answers `jubarte $VER`.
 archive_runs() {
@@ -1601,7 +1608,7 @@ archive_runs() {
   [ "$rc" = 0 ] && (cd "$dir" \
     && awk -v f="$f" '$2 == f' SHA256SUMS.txt | grep . | shasum -a 256 -c - >/dev/null 2>&1 \
     && tar xzf "$f" \
-    && [ "$("./${f%.tar.gz}/jubarte" --version 2>/dev/null)" = "jubarte $VER" ]) || rc=1
+    && answers_version "$("./${f%.tar.gz}/jubarte" --version 2>/dev/null)") || rc=1
   rm -rf dist/install-proof
   return "$rc"
 }
@@ -1629,7 +1636,7 @@ npx_runs() {
         && npx -y --prefer-online "jubarte-redlines@$VER" --version 2>/dev/null) || rc=1
   rm -rf dist/install-proof
   [ "$rc" = 0 ] || return 1
-  case "$got" in "jubarte-redlines $VER" | "jubarte $VER") ;; *) return 1 ;; esac
+  answers_version "$got"
 }
 # `npm i jubarte-wasm@$VER` into an empty project, then require() it.
 npm_requires() {
