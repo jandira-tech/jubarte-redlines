@@ -694,9 +694,11 @@ fn the_flags_allow_delete_and_resolve_unless_keep_others() {
             args.extend_from_slice(extra);
             run(dir.path(), &args)
         };
-        let allowed = edit(&[], "allowed.docx");
+        // One output per flag: the loop shares the directory.
+        let allowed_name = format!("allowed{flag}.docx");
+        let allowed = edit(&[], &allowed_name);
         assert_eq!(allowed.status.code(), Some(0), "{flag}: {allowed:?}");
-        assert_word_valid_package(&std::fs::read(dir.path().join("allowed.docx")).unwrap());
+        assert_word_valid_package(&std::fs::read(dir.path().join(&allowed_name)).unwrap());
         let refused = edit(&["--keep-others", "--force"], "refused.docx");
         assert_eq!(refused.status.code(), Some(3), "{flag}: {refused:?}");
         let stderr = String::from_utf8(refused.stderr).unwrap();
