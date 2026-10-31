@@ -10861,11 +10861,19 @@ fn linked_txbx_part_paints_textbox_text() {
     zip.write_all(txbx.as_bytes()).unwrap();
     let docx = zip.finish().unwrap().into_inner();
     let pdf = docx_to_pdf(&docx).expect("convert linked txbx");
-    let text = String::from_utf8_lossy(&pdf);
     assert!(
-        text.contains("0.60 w"),
-        "linked txbx part must paint a box; tail {}",
-        &text[text.len().saturating_sub(240)..]
+        pdf_literal_td_xy(&pdf, "LinkedHello").is_some(),
+        "the linked part's text must paint"
+    );
+    // This synthetic WPS has neither a:ln nor wps:style (#1979).
+    let streams = pdf_content_streams(&pdf);
+    assert!(
+        !streams.is_empty(),
+        "linked text must have a content stream"
+    );
+    assert!(
+        streams.iter().all(|stream| !stream.contains(" RG")),
+        "the unstyled linked text box must not invent an outline"
     );
 }
 
