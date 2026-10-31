@@ -1321,8 +1321,8 @@ fn validate_run(
             )
             .map_err(|e| e.to_string())?;
             return Ok((
-                baselined_json(&split).map_err(|e| e.to_string())?,
-                baselined_text(&split),
+                baselined_json(&split, strict).map_err(|e| e.to_string())?,
+                baselined_text(&split, strict),
                 fails(&split.new, strict),
             ));
         }

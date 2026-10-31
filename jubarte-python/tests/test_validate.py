@@ -57,9 +57,10 @@ def test_audit_tracked_names_an_untracked_edit_and_passes_a_tracked_one() -> Non
     codes = {f.code for f in foreign}
     assert "FOREIGN_AUTHOR" in codes, foreign
     assert all("Reviewer" in f.message for f in foreign if f.code == "FOREIGN_AUTHOR"), foreign
-    # Reviewer's edit survives the rejection of Someone Else's changes, so the
-    # text still differs from the original.
-    assert "UNTRACKED_EDIT" in codes, foreign
+    # Reviewer's edit is the paragraph's only difference, and the
+    # FOREIGN_AUTHOR finding names it, so no UNTRACKED_EDIT stands beside it
+    # (#1893).
+    assert "UNTRACKED_EDIT" not in codes, foreign
 
 
 def test_validate_command_exit_codes_and_repair(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
