@@ -21870,7 +21870,7 @@ fn chrome_part_xml(
             // note bar 0.75pt under its line top). A stroked or filled
             // shape without text is a box too (e0fe3a82eb's connector).
             let effects: Vec<([f32; 4], RunStyle)> = part_dom
-                .descendants(para, Some(&WP::name("inline")))
+                .descendants(para, Some(&WP::inline()))
                 .into_iter()
                 .filter(|inl| {
                     (!descendants_local(&part_dom, *inl, "txbx").is_empty()
@@ -21999,7 +21999,7 @@ fn chrome_part_xml(
         let flow = (no_text || hf_pic_owns_line(&part_dom, para, sheet, text_w))
             && (vml_inline
                 || part_dom
-                    .descendants(para, Some(&WP::name("inline")))
+                    .descendants(para, Some(&WP::inline()))
                     .into_iter()
                     .any(|inl| part_dom.ancestors(inl, Some(&W::txbx_content())).is_empty()));
         // A picture paragraph with no text or bare line after it in the
@@ -22897,7 +22897,7 @@ fn hf_inline_pic_h(dom: &Dom, para: NodeId) -> f32 {
 }
 
 fn hf_unbound_inline_pic_h(dom: &Dom, para: NodeId, bound: &HashSet<u32>) -> f32 {
-    dom.descendants(para, Some(&WP::name("inline")))
+    dom.descendants(para, Some(&WP::inline()))
         .into_iter()
         .filter(|inl| dom.ancestors(*inl, Some(&W::txbx_content())).is_empty())
         .filter(|inl| {
@@ -22923,7 +22923,7 @@ fn hf_flat_pic_run(
         return None;
     }
     let inl = dom
-        .descendants(para, Some(&WP::name("inline")))
+        .descendants(para, Some(&WP::inline()))
         .into_iter()
         .find(|inl| dom.ancestors(*inl, Some(&W::txbx_content())).is_empty())?;
     let mut run = prun.clone();
@@ -22954,7 +22954,7 @@ fn hf_pic_owns_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) ->
         {
             break;
         }
-        if dom.name_is(n, &WP::name("inline"))
+        if dom.name_is(n, &WP::inline())
             && let Some(cx) = first_named_any(dom, n, "extent")
                 .and_then(|ext| attr_any(dom, ext, "cx"))
                 .and_then(parse_finite_f32)
@@ -22993,7 +22993,7 @@ fn hf_pic_trails_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) 
             seen_text = true;
             text.push_str(&element_text(dom, n));
         } else if seen_text
-            && dom.name_is(n, &WP::name("inline"))
+            && dom.name_is(n, &WP::inline())
             && let Some(ext) = first_named_any(dom, n, "extent")
             && let Some(cx) = attr_any(dom, ext, "cx").and_then(parse_finite_f32)
         {
@@ -23055,7 +23055,7 @@ fn hf_para_is_bare_line(dom: &Dom, root: NodeId, para: NodeId) -> bool {
                 (dom.name_is(d, &W::pict()) && para_hrule(dom, d).is_none()
                     || (dom.name_is(d, &W::drawing())
                         && dom
-                            .descendants(d, Some(&WP::name("inline")))
+                            .descendants(d, Some(&WP::inline()))
                             .into_iter()
                             .any(|i| !inside_text_box(dom, i, d))))
                     && !dom.ancestors(d, None).iter().any(|a| {

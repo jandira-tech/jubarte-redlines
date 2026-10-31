@@ -466,7 +466,7 @@ fn clone_internal_unsalted(
             children,
         )];
     }
-    if name == O::name("OLEObject") {
+    if name == O::ole_object() {
         let children = clone_children(dom, node, include_related_parts, settings, rel_hash);
         return vec![new_with_filtered_attrs(
             dom,
@@ -480,7 +480,7 @@ fn clone_internal_unsalted(
         let children = clone_children(dom, node, include_related_parts, settings, rel_hash);
         return vec![new_with_filtered_attrs(dom, name, node, is_pt, children)];
     }
-    if name == WP::name("docPr") {
+    if name == WP::doc_pr() {
         let children = clone_children(dom, node, include_related_parts, settings, rel_hash);
         return vec![new_with_filtered_attrs(
             dom,
@@ -1418,7 +1418,7 @@ mod coverage_hash_owner_boundaries {
                         &WmlComparerSettings::default(),
                         &resolver,
                     );
-                    let object = dom.descendants(projected, Some(&O::name("OLEObject")))[0];
+                    let object = dom.descendants(projected, Some(&O::ole_object()))[0];
                     for (attr, expected) in [
                         ("Type", kind),
                         ("ProgID", "Excel.Sheet.12"),
