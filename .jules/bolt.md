@@ -1,3 +1,3 @@
-## 2025-02-12 - [Avoid Eager Allocations in LegacyDocument Traversals]
-**Learning:** [In `legacy_doc.rs`, eagerly collecting strings into large vectors from document blocks like `Block::Table` rows (e.g. using `.flatten().cloned().collect()`) causes unnecessary allocations and high peak memory overhead on large documents, especially for simple validation checks.]
-**Action:** [Use lazy evaluation like `.iter().any(...)` or `.find(...)` to check for string presence incrementally without intermediate container allocations.]
+## 2025-02-12 - [LegacyDocument Placeholder Search Optimization Failure]
+**Learning:** [Replacing eager collection of `LegacyDocument` blocks with lazy `.any()` evaluation failed in `empty_placeholder`. Because `paragraph.text()` allocates an owned `String`, evaluating it repeatedly for every rejected placeholder candidate in a collision causes more heap allocations than eagerly collecting all strings upfront once.]
+**Action:** [When optimizing allocations using lazy evaluation inside `.find` or `.any`, always verify whether the mapping function inside the check allocates. If it does (like `paragraph.text()`), and collisions/retries are possible, an upfront `.collect()` may actually be more memory efficient.]
