@@ -16957,17 +16957,18 @@ fn inline_pictures_in_one_paragraph_sit_side_by_side() {
     );
 }
 
+/// An 11.2×11.25pt inline PNG, the audio icon in English part b 7eb842c8.
+fn audio_icon_run() -> &'static str {
+    r#"<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="141896" cy="142875"/><wp:docPr id="1" name="P"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#
+}
+
 #[test]
-// TODO(7eb842c8): an inline picture after a list tab still paints a line
-// low with its text over the icon; un-ignore once the layout places it on
-// the first line's baseline like Word.
-#[ignore = "TODO(7eb842c8): inline picture after a tab paints a line low"]
 fn an_inline_picture_after_a_tab_sits_on_its_text_line() {
     // English part b 7eb842c8: "1." tab, an 11.2pt audio icon, then text.
     // Word sets the icon on the first line's baseline and the text after
-    // it; we painted it a line lower and set the text over its slot, which
-    // pushed the page down 9pt.
-    let pic = r#"<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="141896" cy="142875"/><wp:docPr id="1" name="P"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
+    // it; painting the icon as its own row put it a line lower, the text
+    // over its slot, and the page down 9pt.
+    let pic = audio_icon_run();
     let body = format!(
         r#"<w:p><w:pPr><w:ind w:left="272" w:hanging="272"/></w:pPr><w:r><w:t>1.</w:t></w:r><w:r><w:tab/></w:r>{pic}<w:r><w:t xml:space="preserve"> Listen</w:t></w:r></w:p><w:sectPr/>"#
     );
@@ -16978,6 +16979,72 @@ fn an_inline_picture_after_a_tab_sits_on_its_text_line() {
     assert!(
         (iy - ly).abs() < 1.5 && lx >= ix + iw,
         "icon on the text baseline, text after it; icon={boxes:?} text=({lx},{ly})"
+    );
+}
+
+#[test]
+fn an_inline_picture_after_text_sits_on_its_text_line() {
+    // Same icon with no tab: "Alpha" then the picture then " Beta". Word
+    // keeps all three on one baseline, the picture hard against "Alpha"
+    // and "Beta" after the picture.
+    let pic = audio_icon_run();
+    let body = format!(
+        r#"<w:p><w:r><w:t>Alpha</w:t></w:r>{pic}<w:r><w:t xml:space="preserve"> Beta</w:t></w:r></w:p><w:sectPr/>"#
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("icon after text");
+    let (ax, ay) = pdf_glyph_text_xy(&pdf, "Alpha").expect("Alpha");
+    let (bx, by) = pdf_glyph_text_xy(&pdf, "Beta").expect("Beta");
+    let boxes = pdf_image_boxes(&pdf);
+    let &(ix, iy, iw, _) = boxes.first().expect("icon paints");
+    assert!(
+        (ay - iy).abs() < 1.5 && (by - iy).abs() < 1.5 && ax + 1.0 < ix && bx >= ix + iw - 0.5,
+        "picture between Alpha and Beta on their baseline; icon={boxes:?} alpha=({ax},{ay}) beta=({bx},{by})"
+    );
+}
+
+#[test]
+fn two_inline_pictures_after_a_tab_share_its_text_line() {
+    // Two icons after the list tab share the text line, side by side, and
+    // the words follow the second one.
+    let pic = audio_icon_run();
+    let body = format!(
+        r#"<w:p><w:pPr><w:ind w:left="272" w:hanging="272"/></w:pPr><w:r><w:t>1.</w:t></w:r><w:r><w:tab/></w:r>{pic}{pic}<w:r><w:t xml:space="preserve"> Listen</w:t></w:r></w:p><w:sectPr/>"#
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("two icons after a tab");
+    let (lx, ly) = pdf_glyph_text_xy(&pdf, "Listen").expect("text paints");
+    let mut boxes = pdf_image_boxes(&pdf);
+    boxes.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    assert_eq!(boxes.len(), 2, "two icons; boxes={boxes:?}");
+    let (x0, y0, w0, _) = boxes[0];
+    let (x1, y1, w1, _) = boxes[1];
+    assert!(
+        (y0 - ly).abs() < 1.5
+            && (y1 - ly).abs() < 1.5
+            && (x1 - (x0 + w0)).abs() < 1.0
+            && lx >= x1 + w1 - 0.5,
+        "both icons on the text line, text after them; boxes={boxes:?} text=({lx},{ly})"
+    );
+}
+
+#[test]
+fn an_inline_picture_that_does_not_fit_wraps_with_the_text_after_it() {
+    // Thirty M's leave too little of the line for a 420pt picture. Word
+    // wraps an inline picture that does not fit the remainder onto the
+    // next line and takes the text after it with the picture. The M's
+    // stay on the line above. (No Word PDF of this synthetic pair; the
+    // wrap is Word's ordinary inline-object rule.)
+    let pic = r#"<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="5334000" cy="142875"/><wp:docPr id="1" name="P"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
+    let body = format!(
+        r#"<w:p><w:r><w:t>MMMMMMMMMMMMMMMMMMMMMMMMMMMMMM</w:t></w:r>{pic}<w:r><w:t xml:space="preserve"> ZZEND</w:t></w:r></w:p><w:sectPr/>"#
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("wide icon");
+    let (px, py) = pdf_glyph_text_xy(&pdf, "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMM").expect("prefix");
+    let (sx, sy) = pdf_glyph_text_xy(&pdf, "ZZEND").expect("suffix");
+    let boxes = pdf_image_boxes(&pdf);
+    let &(ix, iy, iw, _) = boxes.first().expect("icon paints");
+    assert!(
+        py > iy + 8.0 && (sy - iy).abs() < 1.5 && sx >= ix + iw - 0.5 && (ix - px).abs() < 1.0,
+        "picture and ZZEND share the next line under the M's; icon={boxes:?} prefix=({px},{py}) suffix=({sx},{sy})"
     );
 }
 

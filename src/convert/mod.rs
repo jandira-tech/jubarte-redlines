@@ -2430,7 +2430,13 @@ struct LaidImage {
     /// Spaces and tabs before the paragraph's first inline picture, as
     /// characters of its runs: they push the picture along the line
     /// (0081ba58's logo sits after 36 spaces and three tabs).
+    /// `usize::MAX` when non-whitespace text precedes the picture.
     lead_chars: usize,
+    /// Characters of the paragraph before this picture, tabs included.
+    /// 0 when the picture is uncounted (a group member, a broken blip) or
+    /// is the paragraph's first content. A flow picture with text before
+    /// it joins that text's line at the painted piece that starts here.
+    at_chars: usize,
     /// The picture follows its paragraph's text with only whitespace and
     /// pictures after it: Word sets it at the end of the last text line.
     after_text: bool,
@@ -3131,6 +3137,7 @@ fn text_box_image(b: LaidTextBox, effect: [f32; 4]) -> LaidImage {
         outline: None,
         gap_before: 0.0,
         lead_chars: 0,
+        at_chars: 0,
         after_text: false,
         under: None,
         chrome_flat_run: None,
@@ -11974,6 +11981,7 @@ fn paragraph_block(
                 outline: None,
                 gap_before: 0.0,
                 lead_chars: 0,
+                at_chars: 0,
                 after_text: false,
                 under: None,
                 chrome_flat_run: None,
@@ -18529,6 +18537,68 @@ fn lead_chars_before(dom: &Dom, para: NodeId, drawing: NodeId) -> usize {
     0
 }
 
+/// Characters of `para` before `drawing`: the same `w:t` / tab / break
+/// leaves `collect_runs` paints, so a picture can join the glyph run that
+/// starts at this offset. Other drawings, text boxes and deleted runs
+/// contribute nothing. Uncollapsed whitespace can disagree with the painted
+/// runs; the join then finds no piece and leaves the picture on its own row.
+fn chars_before_drawing(dom: &Dom, para: NodeId, drawing: NodeId) -> usize {
+    fn skip_subtree(dom: &Dom, node: NodeId) -> bool {
+        skip_non_text(dom, node)
+            || local_name_is(dom, node, "txbxContent")
+            || dom.name_is(node, &W::del())
+            || dom.name_is(node, &W::move_from())
+    }
+    fn consume_leaf(dom: &Dom, node: NodeId, n: &mut usize) -> bool {
+        if dom.name_is(node, &W::t()) {
+            *n += element_text(dom, node).chars().count();
+            return true;
+        }
+        if dom.name_is(node, &W::name("tab"))
+            && dom.ancestors(node, Some(&W::name("tabs"))).is_empty()
+        {
+            *n += 1;
+            return true;
+        }
+        if dom.name_is(node, &W::name("ptab"))
+            || dom.name_is(node, &W::name("cr"))
+            || dom.name_is(node, &W::name("noBreakHyphen"))
+            || dom.name_is(node, &W::name("br"))
+        {
+            *n += 1;
+            return true;
+        }
+        false
+    }
+    // (node, next child, first visit). Iterative so a deep paragraph does
+    // not recurse with the DOM.
+    let mut n = 0usize;
+    let mut stack = vec![(para, 0usize, true)];
+    while let Some((node, next, first)) = stack.pop() {
+        if first {
+            if node == drawing {
+                return n;
+            }
+            if node != para
+                && (!dom.is_element(node)
+                    || skip_subtree(dom, node)
+                    || consume_leaf(dom, node, &mut n))
+            {
+                continue;
+            }
+            stack.push((node, 0, false));
+            continue;
+        }
+        if next >= dom.child_count(node) {
+            continue;
+        }
+        let child = dom.child_at(node, next);
+        stack.push((node, next + 1, false));
+        stack.push((child, 0, true));
+    }
+    n
+}
+
 /// Text before `drawing` in its paragraph and none after it: the picture
 /// ends the paragraph's last line.
 fn trails_text(dom: &Dom, para: NodeId, drawing: NodeId) -> bool {
@@ -18733,6 +18803,7 @@ fn collect_images(
                     outline: None,
                     gap_before: 0.0,
                     lead_chars: 0,
+                    at_chars: 0,
                     after_text: false,
                     under: None,
                     chrome_flat_run: None,
@@ -18793,6 +18864,7 @@ fn collect_images(
                     outline: None,
                     gap_before: 0.0,
                     lead_chars: 0,
+                    at_chars: 0,
                     after_text: false,
                     under: None,
                     chrome_flat_run: None,
@@ -18860,6 +18932,7 @@ fn collect_images(
                         outline: picture_outline(dom, drawing),
                         gap_before: space_before_drawing(dom, drawing),
                         lead_chars: lead_chars_before(dom, para, drawing),
+                        at_chars: chars_before_drawing(dom, para, drawing),
                         after_text: trails_text(dom, para, drawing),
                         under: if matches!(slot, ImageSlot::Flow) {
                             run_style(drawing).filter(|run| run.underline)
@@ -18898,6 +18971,7 @@ fn collect_images(
                         outline: None,
                         gap_before: 0.0,
                         lead_chars: 0,
+                        at_chars: 0,
                         after_text: false,
                         under: None,
                         chrome_flat_run: None,
@@ -18977,6 +19051,7 @@ fn collect_images(
                         outline: None,
                         gap_before: 0.0,
                         lead_chars: 0,
+                        at_chars: 0,
                         after_text: false,
                         under: None,
                         chrome_flat_run: None,
@@ -19023,6 +19098,7 @@ fn collect_images(
                     outline: None,
                     gap_before: 0.0,
                     lead_chars: 0,
+                    at_chars: 0,
                     after_text: false,
                     // An inserted or underlined w:pict / w:object keeps its
                     // run's descent under it, as a DrawingML picture does
@@ -19203,6 +19279,7 @@ fn vml_line_image(dom: &Dom, line: NodeId, root: NodeId) -> Option<LaidImage> {
         outline: None,
         gap_before: 0.0,
         lead_chars: 0,
+        at_chars: 0,
         after_text: false,
         under: None,
         chrome_flat_run: None,
@@ -19289,6 +19366,7 @@ fn vml_rect_image(
         outline: None,
         gap_before: 0.0,
         lead_chars: lead_chars_before(dom, para, root),
+        at_chars: chars_before_drawing(dom, para, root),
         after_text: trails_text(dom, para, root),
         under: None,
         chrome_flat_run: None,
@@ -28204,6 +28282,209 @@ impl<'a> Layout<'a> {
         }
     }
 
+    /// A flow picture with text before it joins that text's first line at
+    /// the painted piece that starts at `at_chars` (7eb842c8's icon after
+    /// "1.<tab>"). The line deepens by the same `(height - drop)` the lead
+    /// and trailing joins use, and the words after the picture move past
+    /// it. A picture that does not fit the remainder wraps to the next
+    /// line with those words. Only left and justified lines, the same gate
+    /// as the lead join. Pictures this places are the returned pointers.
+    fn join_mid_pictures(
+        &mut self,
+        flow: &[&LaidImage],
+        style: &ParaStyle,
+        runs: &[TextRun],
+        line: FirstLine,
+        list: bool,
+    ) -> Vec<*const LaidImage> {
+        if !matches!(style.align, Align::Left | Align::Justify) || flow.is_empty() {
+            return Vec::new();
+        }
+        let start = line.line.ops_start;
+        let (pieces, chars) = {
+            let ops = &self.current().ops;
+            let end = line.ops_end.min(ops.len());
+            if start > end {
+                return Vec::new();
+            }
+            first_line_pieces(ops, start, end, runs)
+        };
+        let sizes: Vec<(f32, f32)> = flow.iter().map(|img| self.image_wh(img)).collect();
+        let mut clusters: Vec<MidCluster> = Vec::new();
+        for (i, img) in flow.iter().enumerate() {
+            if img.lead_chars != usize::MAX || img.after_text || img.at_chars == 0 {
+                continue;
+            }
+            if let Some(last) = clusters.last_mut()
+                && last.at == img.at_chars
+            {
+                last.idxs.push(i);
+                last.width += sizes[i].0;
+                last.height = last.height.max(sizes[i].1);
+                continue;
+            }
+            let Some(anchor) = pieces
+                .iter()
+                .find(|(at, _)| *at == img.at_chars)
+                .map(|(_, x)| *x)
+            else {
+                break;
+            };
+            clusters.push(MidCluster {
+                at: img.at_chars,
+                anchor,
+                width: sizes[i].0,
+                height: sizes[i].1,
+                idxs: vec![i],
+            });
+        }
+        if clusters.is_empty() {
+            return Vec::new();
+        }
+        let right = self.flow_left() + self.content_width() - style.indent_right + 0.5;
+        let mut fit: Vec<MidCluster> = Vec::new();
+        let mut wrap: Vec<MidCluster> = Vec::new();
+        let mut used = 0.0;
+        for cluster in clusters {
+            if wrap.is_empty() && cluster.anchor + used + cluster.width <= right {
+                used += cluster.width;
+                fit.push(cluster);
+            } else {
+                wrap.push(cluster);
+            }
+        }
+        let drop = line.line.drop;
+        let dy1 = (fit.iter().map(|c| c.height).fold(0.0, f32::max) - drop).max(0.0);
+        let dy_wrap = (wrap.iter().map(|c| c.height).fold(0.0, f32::max) - drop).max(0.0);
+        let step = if wrap.is_empty() {
+            0.0
+        } else {
+            self.line_step(style, runs, chars, drop)
+        };
+        let y_total = dy1 + if wrap.is_empty() { 0.0 } else { step + dy_wrap };
+        let wrap_anchor = wrap.first().map(|c| c.anchor);
+        let cont_x = {
+            let indent = style.indent_left + if list { 18.0 } else { 0.0 };
+            let x = self.flow_left() + indent;
+            let margin = self.page.margin_l;
+            x + ((margin / 0.24) + 0.5).floor() * 0.24 - margin
+        };
+        let fit_at = |x: f32| -> f32 {
+            fit.iter()
+                .filter(|c| c.anchor <= x + 0.25)
+                .map(|c| c.width)
+                .sum()
+        };
+        let wrap_at = |x: f32| -> f32 {
+            wrap.iter()
+                .filter(|c| c.anchor <= x + 0.25)
+                .map(|c| c.width)
+                .sum()
+        };
+        let single = self
+            .last_line
+            .is_some_and(|l| l.ops_start == line.line.ops_start);
+        {
+            let ops = &mut self.current().ops;
+            let end = line.ops_end.min(ops.len());
+            let lefts: Vec<Option<f32>> = ops[start..end].iter().map(op_left).collect();
+            for (op, left) in ops[start..end].iter_mut().zip(&lefts) {
+                if let Some(anchor) = wrap_anchor
+                    && let Some(x) = *left
+                    && x + 0.25 >= anchor
+                {
+                    shift_op_x(op, cont_x + (x - anchor) + wrap_at(x) - x);
+                    shift_op_y(op, -(dy1 + step + dy_wrap));
+                    continue;
+                }
+                if let Some(x) = left {
+                    let extra = fit_at(*x);
+                    if extra != 0.0 {
+                        shift_op_x(op, extra);
+                    }
+                }
+                if dy1 != 0.0 {
+                    shift_op_y(op, -dy1);
+                }
+            }
+            if y_total != 0.0 {
+                for op in &mut ops[end..] {
+                    shift_op_y(op, -y_total);
+                }
+            }
+        }
+        self.y -= y_total;
+        if let Some(end) = self.last_line_end.as_mut() {
+            if single && wrap_anchor.is_none() {
+                end.0 += fit_at(end.0);
+                end.1 -= dy1;
+            } else if single && let Some(anchor) = wrap_anchor {
+                let (ox, oy) = *end;
+                let nx = if ox + 0.25 >= anchor {
+                    cont_x + (ox - anchor) + wrap_at(ox)
+                } else {
+                    ox + fit_at(ox)
+                };
+                *end = (nx, oy - y_total);
+            } else {
+                end.1 -= y_total;
+            }
+        }
+        let mut placed = Vec::new();
+        let mut cursor = 0.0;
+        for cluster in &fit {
+            let mut x = cluster.anchor + cursor;
+            for &idx in &cluster.idxs {
+                let (w, h) = sizes[idx];
+                self.push_image(flow[idx], x, line.baseline - dy1, w, h);
+                placed.push(std::ptr::from_ref(flow[idx]));
+                x += w;
+            }
+            cursor += cluster.width;
+        }
+        if let Some(anchor) = wrap_anchor {
+            let mut cursor = 0.0;
+            let y = line.baseline - y_total;
+            for cluster in &wrap {
+                let mut x = cont_x + (cluster.anchor - anchor) + cursor;
+                for &idx in &cluster.idxs {
+                    let (w, h) = sizes[idx];
+                    self.push_image(flow[idx], x, y, w, h);
+                    placed.push(std::ptr::from_ref(flow[idx]));
+                    x += w;
+                }
+                cursor += cluster.width;
+            }
+        }
+        placed
+    }
+
+    /// Baseline-to-baseline step of the first line, matching
+    /// `emit_paragraph_runs`: an exact line steps by its box, and any
+    /// other line steps by `drop + (box - drop)`.
+    fn line_step(&self, style: &ParaStyle, runs: &[TextRun], chars: usize, drop: f32) -> f32 {
+        let prefix = prefix_runs(runs, chars);
+        let (marker, body) = split_hanging_marker(&prefix, style.indent_first < 0.0);
+        let (natural, _) = self.line_face_metrics(body, marker);
+        let grid = para_grid_pitch(style, self.page.grid_pitch);
+        let line_box = if grid > 0.5 {
+            grid_line_box(natural, style, grid)
+        } else {
+            self.lifted_line_box(body, marker, natural, style)
+        };
+        let grid_pad = if grid > 0.5 {
+            ((line_box - natural) / 2.0).max(0.0)
+        } else {
+            0.0
+        };
+        let after = if style.line_exact.is_some() {
+            line_box - drop
+        } else {
+            (line_box - grid_pad - drop).max(1.0)
+        };
+        after + grid_pad + drop
+    }
+
     /// Lay a paragraph's inline pictures out in lines: left to right on a
     /// shared baseline, aligned by the paragraph's jc, wrapping when the
     /// next one would pass the measure.
@@ -34310,6 +34591,7 @@ fn layout_with_facts(
                 // Heading2 next or not (docxide case15; fixtures_500
                 // 00189bfa's " " line 16.5pt over heading 8).
                 let mut lead_pictures_done = false;
+                let mut mid_joined: Vec<*const LaidImage> = Vec::new();
                 if has_ink || (images.is_empty() && boxes.is_empty()) || !skip_empty_line {
                     if lay.side_float.is_some_and(|sf| lay.y <= sf.bottom + 0.5) {
                         lay.side_float = None;
@@ -34416,17 +34698,19 @@ fn layout_with_facts(
                         // Inline pictures ahead of text that fit its first
                         // line open that line: it deepens to them and the
                         // text follows them (5fb9cedf's logo, then a centre
-                        // tab to its title).
-                        let first = lay.first_line.take().filter(|f| {
-                            f.line.page == lay.pages.len()
-                                && has_ink
-                                && !flow.is_empty()
-                                && flow.len() == images.len()
-                                && flow
-                                    .iter()
-                                    .all(|img| img.lead_chars != usize::MAX && !img.after_text)
-                        });
-                        if let Some(f) = first {
+                        // tab to its title). A picture after text on that
+                        // line joins it the same way (7eb842c8's icon).
+                        let saved = lay
+                            .first_line
+                            .take()
+                            .filter(|f| f.line.page == lay.pages.len() && has_ink);
+                        let lead_here = saved.is_some()
+                            && !flow.is_empty()
+                            && flow.len() == images.len()
+                            && flow
+                                .iter()
+                                .all(|img| img.lead_chars != usize::MAX && !img.after_text);
+                        if lead_here && let Some(f) = saved {
                             let sizes: Vec<(f32, f32)> =
                                 flow.iter().map(|img| lay.image_wh(img)).collect();
                             let pics_w: f32 = sizes.iter().map(|s| s.0).sum::<f32>()
@@ -34461,6 +34745,8 @@ fn layout_with_facts(
                                 }
                                 lead_pictures_done = true;
                             }
+                        } else if let Some(f) = saved {
+                            mid_joined = lay.join_mid_pictures(&flow, &style, runs, f, *list);
                         }
                     }
                     lay.paint_hrule(&style);
@@ -34477,7 +34763,13 @@ fn layout_with_facts(
                 // cover pictures sit side by side); floats place themselves.
                 let mut inline: Vec<&LaidImage> = images
                     .iter()
-                    .filter(|img| !lead_pictures_done && matches!(img.slot, ImageSlot::Flow))
+                    .filter(|img| {
+                        !lead_pictures_done
+                            && matches!(img.slot, ImageSlot::Flow)
+                            && !mid_joined
+                                .iter()
+                                .any(|p| std::ptr::eq(std::ptr::from_ref(*img), *p))
+                    })
                     .collect();
                 // One no taller than the text sits on the last line's
                 // baseline and adds no height (0005cabe's 0.24pt dot pushed
@@ -36724,6 +37016,166 @@ fn right_arrow_points(x: f32, y: f32, dw: f32, dh: f32) -> Vec<(f32, f32)> {
         (x + body_w, shaft_bot),
         (x, shaft_bot),
     ]
+}
+
+/// Pictures that share one painted piece on the first line.
+struct MidCluster {
+    at: usize,
+    anchor: f32,
+    width: f32,
+    height: f32,
+    idxs: Vec<usize>,
+}
+
+/// The first `n` characters of `runs`, split on a run boundary.
+fn prefix_runs(runs: &[TextRun], n: usize) -> Vec<TextRun> {
+    let mut left = n;
+    let mut out = Vec::new();
+    for run in runs {
+        if left == 0 {
+            break;
+        }
+        let count = run.text.chars().count();
+        if count <= left {
+            out.push(run.clone());
+            left -= count;
+        } else {
+            out.push(run.with_text(run.text.chars().take(left).collect::<String>()));
+            break;
+        }
+    }
+    out
+}
+
+/// Left edge of an op, for deciding which side of a picture it sits on.
+/// A watermark and a pin stay where they are.
+fn op_left(op: &Op) -> Option<f32> {
+    match op {
+        Op::Text { x, .. }
+        | Op::FillRect { x, .. }
+        | Op::StrokeRect { x, .. }
+        | Op::Jpeg { x, .. }
+        | Op::Rgb { x, .. } => Some(*x),
+        Op::Line { x1, x2, .. } => Some(x1.min(*x2)),
+        Op::FillPoly { points, .. } | Op::StrokePoly { points, .. } => {
+            points.iter().map(|p| p.0).min_by(f32::total_cmp)
+        }
+        Op::FillPath { contours, .. } => contours
+            .iter()
+            .flatten()
+            .map(|p| p.0)
+            .min_by(f32::total_cmp),
+        Op::StrokePath { subpaths, .. } => subpaths
+            .iter()
+            .flat_map(|(pts, _)| pts.iter())
+            .map(|p| p.0)
+            .min_by(f32::total_cmp),
+        Op::Cubic {
+            start, segments, ..
+        } => {
+            let mut x = start.0;
+            for seg in segments {
+                for p in seg {
+                    x = x.min(p.0);
+                }
+            }
+            Some(x)
+        }
+        Op::Watermark { .. } | Op::Pin(_) => None,
+    }
+}
+
+/// Glyphs of the first line, one character at a time. The first character
+/// of an op carries that op's x; a later character of the same op does not.
+struct GlyphCursor<'a> {
+    texts: &'a [(f32, &'a str)],
+    op_i: usize,
+    char_i: usize,
+}
+
+impl GlyphCursor<'_> {
+    fn peek(&self) -> Option<(char, Option<f32>)> {
+        let (x, text) = self.texts.get(self.op_i)?;
+        let ch = text.chars().nth(self.char_i)?;
+        Some((ch, (self.char_i == 0).then_some(*x)))
+    }
+
+    fn next(&mut self) -> Option<(char, Option<f32>)> {
+        let got = self.peek()?;
+        self.char_i += 1;
+        let (_, text) = self.texts[self.op_i];
+        if self.char_i >= text.chars().count() {
+            self.op_i += 1;
+            self.char_i = 0;
+        }
+        Some(got)
+    }
+}
+
+/// Painted piece starts on the first line: `(character offset, x)`.
+/// A piece starts at the first character, after a tab, or at a run
+/// boundary. A tab leader's dots are not text. A mismatch keeps the
+/// pieces already recorded, so a line number painted after the glyphs
+/// cannot throw the line away.
+fn first_line_pieces(
+    ops: &[Op],
+    start: usize,
+    end: usize,
+    runs: &[TextRun],
+) -> (Vec<(usize, f32)>, usize) {
+    let end = end.min(ops.len());
+    let texts: Vec<(f32, &str)> = ops[start..end]
+        .iter()
+        .filter_map(|op| match op {
+            Op::Text { x, text, .. } if !text.is_empty() => Some((*x, text.as_str())),
+            _ => None,
+        })
+        .collect();
+    let mut cursor = GlyphCursor {
+        texts: &texts,
+        op_i: 0,
+        char_i: 0,
+    };
+    let mut pieces = Vec::new();
+    let mut pos = 0usize;
+    let mut after_tab = false;
+    for run in runs {
+        let mut first_of_run = true;
+        for ch in run.text.chars() {
+            if ch == '\t' {
+                pos += 1;
+                after_tab = true;
+                first_of_run = false;
+                continue;
+            }
+            if ch == '\n' || is_break_mark(ch) {
+                return (pieces, pos);
+            }
+            if after_tab {
+                while let Some((got, _)) = cursor.peek() {
+                    if got == ch || !matches!(got, '.' | '-' | '_') {
+                        break;
+                    }
+                    cursor.next();
+                }
+            }
+            let Some((got, x)) = cursor.next() else {
+                return (pieces, pos);
+            };
+            if got != ch {
+                return (pieces, pos);
+            }
+            if (pos == 0 || after_tab || first_of_run)
+                && let Some(x) = x
+            {
+                pieces.push((pos, x));
+            }
+            pos += 1;
+            after_tab = false;
+            first_of_run = false;
+        }
+    }
+    (pieces, pos)
 }
 
 fn shift_op_y(op: &mut Op, dy: f32) {
