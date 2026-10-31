@@ -17058,6 +17058,72 @@ fn inline_png_run(w_pt: f32, h_pt: f32) -> String {
     )
 }
 
+/// #1975: the same inline box contract as #1840, in each nested story.
+fn assert_nested_inline_picture(docx: &[u8], context: &str) {
+    for revisions in [RevisionStyle::Word, RevisionStyle::Conventional] {
+        let pdf = one_text_object_per_glyph_run(
+            &docx_to_pdf_with(
+                docx,
+                PdfOptions {
+                    revisions,
+                    ..PdfOptions::default()
+                },
+            )
+            .expect("nested inline picture"),
+        );
+        let (ax, ay) = pdf_glyph_text_xy(&pdf, "Alpha").expect("Alpha");
+        let (bx, by) = pdf_glyph_text_xy(&pdf, "Beta").expect("Beta");
+        let (ex, ey) = pdf_glyph_text_xy(&pdf, "ENDOFLINE").expect("ENDOFLINE");
+        let boxes = pdf_image_boxes(&pdf);
+        assert_eq!(
+            boxes.len(),
+            1,
+            "{context}: picture paints exactly once; {boxes:?}"
+        );
+        let (ix, iy, iw, _) = boxes[0];
+        assert!(
+            (ay - iy).abs() < 1.5 && (by - iy).abs() < 1.5 && ix > ax + 1.0 && bx >= ix + iw - 0.5,
+            "{context}: picture between Alpha and Beta on their baseline; icon={boxes:?} alpha=({ax},{ay}) beta=({bx},{by})"
+        );
+        assert!(
+            ey < ay - 4.0 && (ex - ax).abs() < 1.0,
+            "{context}: ENDOFLINE wraps below the picture line; alpha=({ax},{ay}) end=({ex},{ey})"
+        );
+    }
+}
+
+#[test]
+fn issue_1975_inline_picture_in_cell_wraps_with_its_text() {
+    assert_nested_inline_picture(
+        include_bytes!("fixtures/inline-pictures/1975-cell.docx"),
+        "cell",
+    );
+}
+
+#[test]
+fn issue_1975_inline_picture_in_header_wraps_with_its_text() {
+    assert_nested_inline_picture(
+        include_bytes!("fixtures/inline-pictures/1975-header.docx"),
+        "header",
+    );
+}
+
+#[test]
+fn issue_1975_inline_picture_in_footer_wraps_with_its_text() {
+    assert_nested_inline_picture(
+        include_bytes!("fixtures/inline-pictures/1975-footer.docx"),
+        "footer",
+    );
+}
+
+#[test]
+fn issue_1975_inline_picture_in_textbox_wraps_with_its_text() {
+    assert_nested_inline_picture(
+        include_bytes!("fixtures/inline-pictures/1975-textbox.docx"),
+        "textbox",
+    );
+}
+
 /// `drawing_docx` plus a numbering part, so a numPr marker and an inline
 /// picture live in one package.
 fn numbered_drawing_docx(body: &str, numbering: &str) -> Vec<u8> {

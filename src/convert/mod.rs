@@ -10131,6 +10131,16 @@ fn para_content_extent(fonts: &Fonts, para: &CellPara) -> (f32, f32) {
         if marks.replace(mark).is_some_and(|prev| prev != mark) {
             carry = 0.0;
         }
+        if let Some(pic) = &run.pic {
+            // An inline box is an independent unbreakable unit. Autofit
+            // must reserve its real width, not the U+FFFC glyph's advance.
+            let width = pic.w.max(1.0);
+            min = min.max(width + indent);
+            line += width;
+            trailing = 0.0;
+            carry = 0.0;
+            continue;
+        }
         let face = fonts.get(ink_face(fonts, &run.style, &run.text));
         let size = run.style.layout_size();
         let width = |t: &str| face.width_pt(t, size) * run.style.hscale();
@@ -10675,7 +10685,24 @@ fn cell_line_metrics(fonts: &Fonts, para: &CellPara, line: &[TextRun]) -> (f32, 
 
 fn cell_runs_line_box(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle) -> (f32, f32) {
     let (size, box_h) = cell_font_line_box(fonts, runs, style);
-    (size, line_box_for_math(fonts, runs, size, box_h, style))
+    let box_h = line_box_for_math(fonts, runs, size, box_h, style);
+    let pic_h = runs
+        .iter()
+        .filter_map(|r| r.pic.as_ref().map(|p| p.h))
+        .fold(0.0_f32, f32::max);
+    let drop = runs
+        .iter()
+        .filter_map(|r| r.math.as_ref().map(|m| m.ascent))
+        .fold(
+            fonts.get(cell_runs_face(fonts, runs).1).ascent_pt(size),
+            f32::max,
+        );
+    let extra = if style.line_exact.is_some() {
+        0.0
+    } else {
+        (pic_h - drop).max(0.0)
+    };
+    (size, box_h + extra)
 }
 
 /// A math box is taller than its font. The cell line holds the ascent
@@ -10721,7 +10748,12 @@ fn cell_baseline_drop(
     }
     let math_up = line
         .iter()
-        .filter_map(|run| run.math.as_ref().map(|math| math.ascent))
+        .filter_map(|run| {
+            run.math
+                .as_ref()
+                .map(|math| math.ascent)
+                .or_else(|| run.pic.as_ref().map(|p| p.h))
+        })
         .fold(0.0_f32, f32::max);
     // The equation's own ascent. A grid pad on top of it drops the
     // radical out of the row.
@@ -13685,18 +13717,19 @@ fn table_block(
                         in_table: true,
                         toc: false,
                         open: None,
-                        flow_pics: false,
+                        flow_pics: media.is_some(),
                     },
                 );
                 // An empty cell paragraph is a Word line like any other
                 // (fixtures_500 0126ebd8 menu rows are 27.6pt apart, not
                 // 13.8), sized from its mark's pPr/rPr.
-                let images: Vec<LaidImage> = media
+                let mut images: Vec<LaidImage> = media
                     .map(|(pkg, part)| collect_images(pkg, part, dom, child, &|_| None))
                     .unwrap_or_default()
                     .into_iter()
                     .filter(cell_holds_image)
                     .collect();
+                bind_flow_pictures(&mut runs, &mut images);
                 let boxes: Vec<std::rc::Rc<LaidTextBox>> = collect_textboxes_styled(
                     media,
                     dom,
@@ -15233,7 +15266,7 @@ struct RunBag<'a> {
     /// The comment ranges open where this paragraph starts, written back
     /// with those still open at its end.
     open: Option<&'a RefCell<Vec<String>>>,
-    /// Splice simple body inline pictures into the runs (`flow_pics`).
+    /// Splice simple inline pictures into runs when their owner can bind them.
     flow_pics: bool,
 }
 
@@ -16777,8 +16810,8 @@ enum FlowPiece {
     Pic(u32),
 }
 
-/// Blip ids of a simple inline picture: no group, no anchor, no text-box
-/// picture. Empty when the drawing stays on the `LaidImage` path.
+/// Blip ids of a simple inline picture: no group, no anchor, no nested
+/// text-box picture. Empty when the drawing stays on the `LaidImage` path.
 fn flow_blip_ids(dom: &Dom, drawing: NodeId) -> Vec<u32> {
     if drawing_group(dom, drawing).is_some()
         || !matches!(drawing_slot(dom, drawing), ImageSlot::Flow)
@@ -17971,7 +18004,30 @@ fn txbx_paragraphs(
         .into_iter()
         .map(|p| {
             let (mut style, run) = para_base(dom, p, sheet, None);
-            let mut runs = collect_runs(dom, p, &run, theme);
+            let mut runs = if let Some((pkg, part)) = media {
+                let mut runs = collect_runs_in(
+                    dom,
+                    p,
+                    &run,
+                    theme,
+                    None,
+                    &mut RunBag {
+                        authors: &mut AuthorColors::default(),
+                        comments: &HashMap::new(),
+                        in_table: false,
+                        toc: false,
+                        open: None,
+                        flow_pics: true,
+                    },
+                );
+                let mut images = collect_images(pkg, part, dom, p, &|drawing| {
+                    picture_run_style(dom, drawing, &run, theme, &sheet.by_id)
+                });
+                bind_flow_pictures(&mut runs, &mut images);
+                strip_page_marks(runs)
+            } else {
+                collect_runs(dom, p, &run, theme)
+            };
             // An empty paragraph is a line of its mark (010300e3's 8pt
             // blank between "Dear Ms. Smith:" and the letter), and so is
             // one of only spaces: a fitted box grows by the mark's line
@@ -21668,7 +21724,11 @@ fn chrome_part_xml(
     let Some(root) = part_dom.root(doc) else {
         return empty_chrome();
     };
-    let runs = collect_hf_runs(&part_dom, root, sheet, text_w);
+    let runs = collect_hf_runs(&part_dom, root, sheet, text_w, Some((pkg, path)));
+    let spliced: HashSet<u32> = runs
+        .iter()
+        .filter_map(|r| r.pic.as_ref().map(|p| p.src))
+        .collect();
     let mut images = Vec::new();
     let mut boxes = Vec::new();
     let watermark = parse_header_watermark(&part_dom, root);
@@ -21942,6 +22002,7 @@ fn chrome_part_xml(
             collect_images(pkg, path, &part_dom, para, &|_| None)
                 .into_iter()
                 .chain(flow_boxes)
+                .filter(|img| img.src == 0 || !spliced.contains(&img.src))
                 .filter(|img| !(table_owned && cell_holds_image(img)))
                 .map(|mut img| {
                     img.chrome_align = jc;
@@ -22482,7 +22543,13 @@ fn hf_para_is_shape_text(dom: &Dom, para: NodeId) -> bool {
     false
 }
 
-fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet, text_w: f32) -> Vec<TextRun> {
+fn collect_hf_runs(
+    dom: &Dom,
+    node: NodeId,
+    sheet: &StyleSheet,
+    text_w: f32,
+    media: Option<(&PartFs, &str)>,
+) -> Vec<TextRun> {
     let header = dom.name_is(node, &W::hdr());
     // One footer/header <w:p> is one painted line. Flattening sd_2517's
     // "Smith Family Trust" + PAGE into one run list produced Trust106.
@@ -22544,9 +22611,26 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet, text_w: f32) -> 
             pstyle.tab_stops = ptabs;
         }
         let pstyle = std::rc::Rc::new(pstyle);
-        let mut scan = FieldScan::default();
+        // Picture-only chrome keeps its dedicated band/row placement:
+        // page frames, square floats and trailing tabs size that band.
+        // Text/field paragraphs instead wrap their pictures with the ink.
+        let flow_pics = media.is_some()
+            && (!para_shown_text(dom, para).trim().is_empty()
+                || !dom.descendants(para, Some(&W::fld_simple())).is_empty()
+                || !dom.descendants(para, Some(&W::fld_char())).is_empty());
+        let mut scan = FieldScan {
+            flow_pics,
+            ..FieldScan::default()
+        };
         let mut line = Vec::new();
         collect_hf_rec(dom, para, &prun, sheet, &mut scan, &mut line);
+        if let Some((pkg, part)) = media {
+            let mut images = collect_images(pkg, part, dom, para, &|drawing| {
+                picture_run_style(dom, drawing, &prun, &sheet.theme, &sheet.by_id)
+            });
+            bind_flow_pictures(&mut line, &mut images);
+        }
+        let spliced = line.iter().any(|r| r.pic.is_some());
         // A right or centre ptab relative to the margin stretches an
         // auto-width frame to the margins, so it prints as the unframed
         // line (54f4bb7's centred footer frame: "Metadata" at the left
@@ -22630,8 +22714,8 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet, text_w: f32) -> 
         }
         // Text under a line-filling picture is a line of its own; one after
         // the text wraps to a line of its own under it (PR #247 review).
-        let trails = hf_pic_trails_line(dom, para, sheet, text_w);
-        let pic_h = if trails || hf_pic_owns_line(dom, para, sheet, text_w) {
+        let trails = !spliced && hf_pic_trails_line(dom, para, sheet, text_w);
+        let pic_h = if spliced || trails || hf_pic_owns_line(dom, para, sheet, text_w) {
             0.0
         } else {
             hf_inline_pic_h(dom, para)
@@ -22963,7 +23047,9 @@ fn hf_line_chars(fonts: &Fonts, line: &[TextRun]) -> Vec<(usize, char, f32)> {
             let face = fonts.get(ink_face(fonts, &run.style, &run.text));
             let size = run.style.layout_size();
             run.text.chars().map(move |ch| {
-                let w = if ch == '\t' {
+                let w = if let Some(pic) = &run.pic {
+                    pic.w.max(1.0)
+                } else if ch == '\t' {
                     0.0
                 } else {
                     face.width_pt(ch.encode_utf8(&mut [0; 4]), size) * run.style.hscale()
@@ -23197,6 +23283,8 @@ fn hf_paragraph_lines(runs: &[TextRun]) -> Vec<(Vec<TextRun>, f32)> {
 
 #[derive(Default)]
 struct FieldScan {
+    /// The owning story can resolve and bind inline picture placeholders.
+    flow_pics: bool,
     kind: Option<FieldKind>,
     result: bool,
     emitted: bool,
@@ -23252,6 +23340,7 @@ fn collect_hf_rev(
     let start = runs.len();
     if dom.name_is(node, &W::fld_simple()) {
         let outer = std::mem::take(scan);
+        scan.flow_pics = outer.flow_pics;
         let instr = attr_any(dom, node, "instr").unwrap_or("");
         scan.result = true;
         scan.kind = numeric_field_kind(instr);
@@ -23332,7 +23421,10 @@ fn collect_hf_rev_runs(
                 } else if !scan.emitted && is_datetime_field(&scan.instr) {
                     runs.push(field_run(datetime_field_text(&scan.instr), base));
                 }
-                *scan = FieldScan::default();
+                *scan = FieldScan {
+                    flow_pics: scan.flow_pics,
+                    ..FieldScan::default()
+                };
             }
             _ => {}
         }
@@ -23417,6 +23509,34 @@ fn collect_hf_rev_runs(
                     if scan.result {
                         scan.emitted = true;
                     }
+                }
+            }
+            return;
+        }
+        // Use the same atomic pieces as body flow without changing chrome fields.
+        if scan.flow_pics
+            && !matches!(mark, RevMark::Del | RevMark::MoveFrom)
+            && let Some(pieces) = flow_run_pieces(dom, node, BreakText::Drop)
+        {
+            for piece in pieces {
+                let mut run = match piece {
+                    FlowPiece::Pic(src) => {
+                        let mut run = TextRun::new(INLINE_PIC, style.clone());
+                        run.pic_src = Some(src);
+                        run
+                    }
+                    FlowPiece::Text(raw) => TextRun::new(
+                        rev_text(&raw, mark, run_preserves_space(dom, node)),
+                        style.clone(),
+                    ),
+                };
+                if run.text.is_empty() {
+                    continue;
+                }
+                run.rev = mark != RevMark::None;
+                runs.push(run);
+                if scan.result {
+                    scan.emitted = true;
                 }
             }
             return;
@@ -23844,7 +23964,10 @@ fn chrome_line_metrics(fonts: &Fonts, line: &[TextRun]) -> (f32, f32) {
         ascent
     };
     // An inline picture sharing the line stands on its baseline.
-    let pic = line.iter().map(|r| r.hf_pic_h).fold(0.0_f32, f32::max);
+    let pic = line
+        .iter()
+        .map(|r| r.hf_pic_h.max(r.pic.as_ref().map_or(0.0, |p| p.h)))
+        .fold(0.0_f32, f32::max);
     if pic > drop && para.is_none_or(|p| p.line_exact.is_none()) {
         return (pic, line_box + pic - drop);
     }
@@ -30515,6 +30638,7 @@ impl<'a> Layout<'a> {
         // The host paragraph's anchors still read its own top and probe.
         let para_state = (
             self.para_top,
+            self.first_line,
             self.line_probe,
             self.pbdr_joins,
             self.last_line_end,
@@ -30567,6 +30691,7 @@ impl<'a> Layout<'a> {
         self.last_style_id = last_style;
         (
             self.para_top,
+            self.first_line,
             self.line_probe,
             self.pbdr_joins,
             self.last_line_end,
@@ -32533,6 +32658,9 @@ impl<'a> Layout<'a> {
             let w: f32 = frame
                 .iter()
                 .map(|r| {
+                    if r.pic.is_some() {
+                        return self.run_width_pt(r, &r.text);
+                    }
                     let f = self
                         .fonts
                         .resolve(&r.style.family, r.style.bold, r.style.italic);
@@ -32620,6 +32748,9 @@ impl<'a> Layout<'a> {
         let line_w: f32 = runs
             .iter()
             .map(|r| {
+                if r.pic.is_some() {
+                    return self.run_width_pt(r, &r.text);
+                }
                 // NUMPAGES is painted as @@N@@ then patched to the real
                 // count. Measuring the mark (~45pt) shoved I_am_sharing
                 // "Page 1 of 9" to x=470 vs Word 509. A tab in an aligned
@@ -32656,7 +32787,9 @@ impl<'a> Layout<'a> {
             if run.text.is_empty() {
                 continue;
             }
-            if run.style.track.abs() > 0.01 && chrome_measure_text(&run.text) == run.text {
+            if run.pic.is_some()
+                || (run.style.track.abs() > 0.01 && chrome_measure_text(&run.text) == run.text)
+            {
                 x = self.paint_run(run, x, y);
                 continue;
             }
@@ -55195,6 +55328,45 @@ mod coverage_round_three_tests {
         }
 
         #[test]
+        fn issue_1975_textbox_restores_host_first_line() {
+            let fonts = fonts();
+            for host_line in [false, true] {
+                let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+                if host_line {
+                    lay.emit_runs(
+                        &[TextRun::new("Host", Defaults::word().run)],
+                        &exact_style(),
+                        false,
+                        FloatWrap::default(),
+                    );
+                }
+                let snapshot = |line: Option<FirstLine>| {
+                    line.map(|f| {
+                        (
+                            f.line.page,
+                            f.line.ops_start,
+                            f.ops_end,
+                            f.baseline,
+                            f.tab_led,
+                        )
+                    })
+                };
+                let before = snapshot(lay.first_line);
+                let mut box_ = shape();
+                box_.paras = vec![(
+                    vec![TextRun::new("Nested", Defaults::word().run)],
+                    exact_style(),
+                )];
+                lay.emit_textbox_paras(&box_, 10.0, 20.0, 120.0, 80.0);
+                assert_eq!(
+                    snapshot(lay.first_line),
+                    before,
+                    "text box must restore its host's first line, including None"
+                );
+            }
+        }
+
+        #[test]
         fn textbox_tables_and_group_children_keep_source_order_and_independent_coordinates() {
             let fonts = fonts();
             let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
@@ -59572,7 +59744,7 @@ mod rendering_uncovered_contract_tests {
             panic!("nested table retained")
         };
         assert_eq!(inner[0][0].paras[0].runs[0].text, "Inner");
-        let flow = collect_hf_runs(&dom, root, &sheet(), 400.0);
+        let flow = collect_hf_runs(&dom, root, &sheet(), 400.0, None);
         assert!(flow.iter().any(|r| r.text == "Tail"));
         assert!(
             flow.iter()
@@ -60277,7 +60449,7 @@ mod rendering_uncovered_contract_tests {
             let (dom, root) = xml(&format!(
                 r#"<w:p><w:pPr><w:jc w:val="both"/><w:ind w:left="200" w:right="400"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Arial"/><w:sz w:val="20"/></w:rPr><w:t>{text}</w:t></w:r></w:p>"#
             ));
-            let runs = collect_hf_runs(&dom, root, &sheet(), 252.0);
+            let runs = collect_hf_runs(&dom, root, &sheet(), 252.0, None);
             let mut lay = Layout::new(&fonts, compact_page(), HfChrome::default(), 15);
             lay.draw_hf_line(&runs, 250.0, Align::Justify, wraps);
             let ink: Vec<_> = lay.pages[0]
@@ -60314,7 +60486,7 @@ mod rendering_uncovered_contract_tests {
         let (dom, root) = xml(
             r#"<w:p><w:r><w:rPr><w:rFonts w:ascii="Arial"/><w:sz w:val="20"/><w:spacing w:val="20"/></w:rPr><w:t>AB</w:t></w:r><w:r><w:rPr><w:rFonts w:ascii="Arial"/><w:sz w:val="20"/></w:rPr><w:t>C</w:t></w:r></w:p>"#,
         );
-        let runs = collect_hf_runs(&dom, root, &sheet(), 252.0);
+        let runs = collect_hf_runs(&dom, root, &sheet(), 252.0, None);
         let mut lay = Layout::new(&fonts, compact_page(), HfChrome::default(), 15);
         lay.draw_hf_line(&runs, 250.0, Align::Left, false);
         let ink: Vec<_> = lay.pages[0]
@@ -62135,7 +62307,7 @@ mod rendering_uncovered_contract_tests {
                             ""
                         }
                     ));
-                    let mut runs = collect_hf_runs(&dom, root, &sheet(), 252.0);
+                    let mut runs = collect_hf_runs(&dom, root, &sheet(), 252.0, None);
                     runs.retain(|r| r.text != HF_LINE_BREAK);
                     assert_eq!(run_text(&runs), if body { "PageBody" } else { "Page" });
                     runs[0].frame_center = center;
@@ -67735,10 +67907,10 @@ mod chrome_collector_source_boundary_tests {
     fn collected_without_mutation(dom: &Dom, root: NodeId) -> Vec<TextRun> {
         let before = dom.serialize_element(root);
         let nodes = dom.node_count();
-        let runs = collect_hf_runs(dom, root, &sheet(), 400.0);
+        let runs = collect_hf_runs(dom, root, &sheet(), 400.0, None);
         assert_eq!(dom.serialize_element(root), before);
         assert_eq!(dom.node_count(), nodes);
-        let repeat = collect_hf_runs(dom, root, &sheet(), 400.0);
+        let repeat = collect_hf_runs(dom, root, &sheet(), 400.0, None);
         assert_eq!(
             runs.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
             repeat.iter().map(|r| r.text.as_str()).collect::<Vec<_>>()
