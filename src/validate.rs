@@ -24,7 +24,7 @@
 //! |---|---|---|
 //! | `MC_UNBOUND_PREFIX` | yes | when the prefix is a conventional one |
 //! | `MISSING_CONTENT_TYPE`, `OVERRIDE_WITHOUT_PART`, `MALFORMED_XML` | yes | no |
-//! | `DANGLING_RELATIONSHIP` | yes | yes: the attribute is dropped |
+//! | `DANGLING_RELATIONSHIP` | yes for `r:id`, `r:embed`, `r:link`; other names (`r:dm`, `r:pict`, ...) are unverified leads (#1937) | yes: the attribute is dropped |
 //! | `DUPLICATE_RID` | yes | an identical repeat is kept once on open; two relationships under one Id are refused |
 //! | `MISSING_REL_TARGET` | yes | no |
 //! | `PICTURE_BULLET_UNDEFINED` | yes | no |
@@ -2117,7 +2117,8 @@ fn check_content_types_and_xml(pkg: &PartFs, out: &mut Vec<Finding>) {
     }
 }
 
-/// Every `r:id` / `r:embed` / `r:link` in a part resolves in that part's `.rels`;
+/// Every attribute in the officeDocument relationships namespace resolves in
+/// that part's `.rels`;
 /// no duplicate rIds; no dangling internal targets.
 fn check_relationship_integrity(pkg: &PartFs, out: &mut Vec<Finding>) {
     // Opening kept one copy of each identical repeat; the source still
@@ -2139,9 +2140,6 @@ fn check_relationship_integrity(pkg: &PartFs, out: &mut Vec<Finding>) {
         if !name.ends_with(".xml") || name.ends_with(".rels") {
             continue;
         }
-        let Some(xml) = pkg.part_string(&name) else {
-            continue;
-        };
         let rels = pkg.read_rels_for(&name);
         let mut ids: HashSet<String> = HashSet::new();
         let mut targets: HashMap<String, (String, bool)> = HashMap::new();
@@ -2161,53 +2159,54 @@ fn check_relationship_integrity(pkg: &PartFs, out: &mut Vec<Finding>) {
                 targets.insert(item.id.clone(), (item.target.clone(), external));
             }
         }
-        // Scan for r:id / r:embed / r:link attributes (namespace-agnostic local).
-        for attr in ["r:id=\"", "r:embed=\"", "r:link=\""] {
-            let mut rest = xml.as_str();
-            while let Some(i) = rest.find(attr) {
-                let after = &rest[i + attr.len()..];
-                if let Some(end) = after.find('"') {
-                    let rid = &after[..end];
-                    if rid.is_empty() {
-                        rest = &after[end + 1..];
-                        continue;
+        let Some((dom, root)) = parse_part(pkg, &name) else {
+            continue;
+        };
+        for element in dom.descendants_and_self(root, None) {
+            for (attribute, rid) in dom.attributes_iter(element) {
+                if attribute.namespace_name() != R::URI || rid.is_empty() {
+                    continue;
+                }
+                if !ids.contains(rid) {
+                    let mut finding = Finding::new(
+                        "DANGLING_RELATIONSHIP",
+                        &name,
+                        "",
+                        format!("dangling relationship id '{rid}' referenced from '{name}'"),
+                    );
+                    // `id`, `embed` and `link` keep the Word-fatal finding they
+                    // always had; the names this walk added remain repairable
+                    // leads until probed in Word (#1937).
+                    if !matches!(attribute.local_name(), "id" | "embed" | "link") {
+                        finding.word_fatal = false;
+                        finding.severity = "warning".to_string();
                     }
-                    if !ids.contains(rid) {
-                        out.push(Finding::new(
-                            "DANGLING_RELATIONSHIP",
-                            &name,
-                            "",
-                            format!("dangling relationship id '{rid}' referenced from '{name}'"),
-                        ));
-                    } else if let Some((target, external)) = targets.get(rid)
-                        && !external
+                    out.push(finding);
+                } else if let Some((target, external)) = targets.get(rid)
+                    && !external
+                {
+                    let resolved = pkg.resolve_rel_target(&name, target);
+                    if pkg.part_bytes(&resolved).is_none()
+                        && pkg.part_bytes(target.trim_start_matches('/')).is_none()
                     {
-                        let resolved = pkg.resolve_rel_target(&name, target);
-                        if pkg.part_bytes(&resolved).is_none()
-                            && pkg.part_bytes(target.trim_start_matches('/')).is_none()
+                        // External-looking absolute targets without External mode
+                        // are still flagged only when the target is clearly a package
+                        // path that is missing. Skip http(s) and mailto.
+                        let t = target.as_str();
+                        if !t.starts_with("http://")
+                            && !t.starts_with("https://")
+                            && !t.starts_with("mailto:")
                         {
-                            // External-looking absolute targets without External mode
-                            // are still flagged only when the target is clearly a package
-                            // path that is missing. Skip http(s) and mailto.
-                            let t = target.as_str();
-                            if !t.starts_with("http://")
-                                && !t.starts_with("https://")
-                                && !t.starts_with("mailto:")
-                            {
-                                out.push(Finding::new(
-                                    "MISSING_REL_TARGET",
-                                    &name,
-                                    "",
-                                    format!(
-                                        "relationship '{rid}' on '{name}' targets missing part '{target}' (resolved '{resolved}')"
-                                    ),
-                                ));
-                            }
+                            out.push(Finding::new(
+                                "MISSING_REL_TARGET",
+                                &name,
+                                "",
+                                format!(
+                                    "relationship '{rid}' on '{name}' targets missing part '{target}' (resolved '{resolved}')"
+                                ),
+                            ));
                         }
                     }
-                    rest = &after[end + 1..];
-                } else {
-                    break;
                 }
             }
         }
