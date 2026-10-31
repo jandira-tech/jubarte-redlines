@@ -610,7 +610,7 @@ fn prepare_once(
     tx.apply()?;
     check_dom_realized(&tx, options.exact_text)?;
     let result = produce(&mut tx, emit, options.role)?;
-    let effect = primary_effect(&tx, &result);
+    let effect = primary_effect(&tx, &result)?;
     let (primary, primary_bytes) = match effect {
         Effect::Unchanged => (source.to_vec(), PrimaryBytes::Source),
         _ => match options.role {
@@ -660,7 +660,7 @@ fn prepare_once(
 /// The primary transaction's document effect. Aggregated text equality
 /// alone never proves `unchanged`: revision resolution, comments, thread
 /// state, formatting, media, fields and structure are effects too.
-fn primary_effect(tx: &Transaction<'_>, result: &EditResult) -> Effect {
+fn primary_effect(tx: &Transaction<'_>, result: &EditResult) -> Result<Effect, EditError> {
     let report = &result.report;
     if !report.resolved_revisions.is_empty()
         || report.revisions.total > 0
@@ -671,7 +671,7 @@ fn primary_effect(tx: &Transaction<'_>, result: &EditResult) -> Effect {
         || tx.settings.is_some()
         || tx.notes_story.is_some()
     {
-        return Effect::Changed;
+        return Ok(Effect::Changed);
     }
     for (op, resolved) in &tx.resolved {
         // Only plain text operations can be truly no-effect; a comment,
@@ -687,17 +687,17 @@ fn primary_effect(tx: &Transaction<'_>, result: &EditResult) -> Effect {
                     | OperationKind::Rewrite { .. }
             )
         {
-            return Effect::Changed;
+            return Ok(Effect::Changed);
         }
     }
     // A text edit that meant to change the text is an effect even when the
     // engine wrote nothing for it.
-    if expected_texts(tx, false).into_iter().any(|(p, e)| {
+    if expected_texts(tx, false)?.into_iter().any(|(p, e)| {
         matches!(e.scope, ExpectedScope::Paragraph) && e.text != tx.projections[p].text
     }) {
-        return Effect::Changed;
+        return Ok(Effect::Changed);
     }
-    Effect::Unchanged
+    Ok(Effect::Unchanged)
 }
 
 /// Reject All of `redline` gives the source back, so it keeps each of the
@@ -968,7 +968,10 @@ enum ExpectedScope {
 /// composed over the base projection, or, under `exact`, the `rewrite`'s
 /// requested text itself — so a requested change the algorithm normalizes
 /// away is detected instead of passing as a no-op.
-fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText)> {
+fn expected_texts(
+    tx: &Transaction<'_>,
+    exact: bool,
+) -> Result<Vec<(usize, ExpectedText)>, EditError> {
     /// `para` → (first op id, `(start, end, replacement, op, restore,
     /// attach_before)` spans).
     type Spans = (String, Vec<(usize, usize, String, usize, bool, bool)>);
@@ -1044,7 +1047,11 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText
         // but in an empty paragraph the start edge's text comes first, as
         // `sort_edits` applies it (#1303).
         let empty = base.is_empty();
-        spans.sort_by_key(|&(start, .., restore, after)| (start, !restore, empty && after));
+        // Match the writers' source-range order: an insertion at a removal's
+        // start precedes that removal, independent of plan order (#1922).
+        spans.sort_by_key(|&(start, end, _, op, restore, after)| {
+            (start, !restore, end, empty && after, op)
+        });
         let mut text = String::with_capacity(base.len());
         // The rewrite's own spans alone, composed on the base: a rewrite
         // beside co-resident edits must still realize its request, or the
@@ -1052,18 +1059,45 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText
         let mut own = String::with_capacity(base.len());
         let mut at = 0;
         let mut own_at = 0;
+        let mut previous_op = None;
         for (start, end, replacement, span_op, ..) in spans {
-            text.push_str(&base[at..start]);
+            let conflict = || {
+                let previous = previous_op.unwrap_or(span_op);
+                tx.conflict(
+                    span_op,
+                    &format!(
+                        "{} and {} have text ranges that cannot be composed in p{para}",
+                        tx.outcomes[previous].id, tx.outcomes[span_op].id
+                    ),
+                )
+            };
+            // Check every bound, including UTF-8 boundaries. Even an invalid
+            // resolved span must refuse rather than reach slice_error_fail.
+            let gap = base.get(at..start).ok_or_else(conflict)?;
+            base.get(start..end).ok_or_else(conflict)?;
+            text.push_str(gap);
             text.push_str(&replacement);
             at = end;
             if Some(span_op) == rewrite_op {
-                own.push_str(&base[own_at..start]);
+                own.push_str(base.get(own_at..start).ok_or_else(conflict)?);
                 own.push_str(&replacement);
                 own_at = end;
             }
+            previous_op = Some(span_op);
         }
-        text.push_str(&base[at..]);
-        own.push_str(&base[own_at..]);
+        // Both cursors came from a checked span (or remain at zero).
+        text.push_str(base.get(at..).ok_or_else(|| {
+            tx.conflict(
+                previous_op.unwrap_or(0),
+                "text range ends outside the paragraph",
+            )
+        })?);
+        own.push_str(base.get(own_at..).ok_or_else(|| {
+            tx.conflict(
+                rewrite_op.unwrap_or(0),
+                "rewrite range ends outside the paragraph",
+            )
+        })?);
         if let Some((rewrite_op, requested)) = rewrite {
             let entry = if own == requested {
                 // The rewrite's own edits realize its request: the
@@ -1156,7 +1190,7 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText
         ));
     }
     out.sort_by_key(|(para, _)| *para);
-    out
+    Ok(out)
 }
 
 /// The first `rewrite` op on `para` and the text it asks for, or `None`
@@ -1200,7 +1234,7 @@ fn attached(tx: &Transaction<'_>, para: usize) -> bool {
 /// candidate is serialized from. A realized difference is
 /// `POSTCONDITION_FAILED` with the plan's outcomes, never a silent miss.
 pub(super) fn check_dom_realized(tx: &Transaction<'_>, exact: bool) -> Result<(), EditError> {
-    for (para, expected) in expected_texts(tx, exact) {
+    for (para, expected) in expected_texts(tx, exact)? {
         if !attached(tx, para) {
             // Merged-away or deleted paragraphs carry no text postcondition;
             // merge survivors are checked on their own entry.

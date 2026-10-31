@@ -24,9 +24,9 @@
 //! |---|---|---|
 //! | `MC_UNBOUND_PREFIX` | yes | when the prefix is a conventional one |
 //! | `MISSING_CONTENT_TYPE`, `OVERRIDE_WITHOUT_PART`, `MALFORMED_XML` | yes | no |
-//! | `DANGLING_RELATIONSHIP` | yes | yes: the attribute is dropped |
+//! | `DANGLING_RELATIONSHIP` | yes for `r:id`, `r:embed`, `r:link`; other names (`r:dm`, `r:pict`, ...) are unverified leads (#1937) | yes: the attribute is dropped |
 //! | `DUPLICATE_RID` | yes | an identical repeat is kept once on open; two relationships under one Id are refused |
-//! | `MISSING_REL_TARGET` | yes | no |
+//! | `MISSING_REL_TARGET` | yes when used by markup; unused relationships are unverified warning leads (#1938) | no |
 //! | `PICTURE_BULLET_UNDEFINED` | yes | no |
 //! | `DUPLICATE_REVISION_ID` | no: Word opens same-kind duplicates (102 probes, 2026-10-18, #1137); the OOXML validator refuses them (`Sem_UniqueAttributeValue`); error diagnostic | yes: renumbered |
 //! | `DUPLICATE_DOCPR_ID` | no (lead) | yes: renumbered |
@@ -49,6 +49,7 @@
 //! | `NESTED_TEXT_BOX` | yes: A/C/E crash; F/H refuse to load; B/D/G open (Word probes 2026-10-18, #1132) | no |
 //! | `COMMENT_RANGE_UNPAIRED`, `BARE_RUN_IN_DELETED_TEXTBOX`, `BOOKMARK_*` | no | no |
 //! | `MOVE_RANGE_COUNT_MISMATCH` | no: Word opens it but Reject All can duplicate moved text (#1214); warning | no |
+//! | `MOVE_RANGE_NAME_MISSING` | no: `w:name` is schema-required; Word's reaction to a nameless range is unverified (#1939); warning | no |
 //! | `DATA_BINDING_WITHOUT_STORE` | no: Word opens it and shows the bound control empty (#1427); warning | no |
 //! | `CELL_FINAL_MARK_REVISION` | no: Word opens it, but Accept All or Reject All never returns (#1669, Word 16, 2026-10-23); error diagnostic | no |
 //! | `DELETED_SECTION_PAGE_FIELD` | no: Word 16.115 crashed opening 9 of 11 such redlines (#1833, 2026-10-25); warning | no |
@@ -208,9 +209,10 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 32] = [
+const RING1_CODES: [&str; 33] = [
     "DATA_BINDING_WITHOUT_STORE",
     "MOVE_RANGE_COUNT_MISMATCH",
+    "MOVE_RANGE_NAME_MISSING",
     "NESTED_TEXT_BOX",
     "NESTED_PPR",
     "MC_UNBOUND_PREFIX",
@@ -1122,8 +1124,8 @@ pub fn input_notice_of(validity: &InputValidity) -> Option<String> {
 
 /// The input's own validity findings as the JSON reads report them
 /// (#1309): `read --json` in its snapshot's `summary`, `changes --json` and
-/// `comments --json` on their last line ([`input_validity_line`]), where
-/// [`input_notice`]'s stderr line would break `--json 2>&1 | jq`.
+/// `comments --json` in a JSON stderr status ([`input_validity_line`]),
+/// suppressed by `--quiet` (#1925).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InputValidity {
     /// Findings of severity `error`.
@@ -1158,7 +1160,7 @@ pub fn input_validity_of(docx: &[u8], file: &str) -> InputValidity {
     input_validity(&validate(docx).unwrap_or_default(), file)
 }
 
-/// The last line `changes --json` and `comments --json` print:
+/// The status `changes --json` and `comments --json` print on stderr unless quiet:
 /// `{"input_validity":{"errors":0,"warnings":2,"next":"jubarte validate FILE"}}`,
 /// its keys in that order.
 ///
@@ -1355,6 +1357,15 @@ fn check_inserted_text_before_deleted_tables(pkg: &PartFs, out: &mut Vec<Finding
 /// between the two, 2 of 42 crashed, near the sample's 23 in 600, and
 /// moving their words cost their views Word's placement: 14.8
 /// bench points on average, against Word's own redlines (#1851).
+///
+/// A single deleted table does not count when the paragraph after it
+/// keeps no words, no deleted table precedes this one, and this
+/// paragraph's own content is nothing but insertions. Word writes those
+/// words on the deleted mark, ahead of that table (#1926). A paragraph
+/// that also holds the original's deleted words still moves: that text
+/// against the deleted row crashed Word 16.115 (diff_before16 ×
+/// diff_before19). So does a paragraph between two deleted tables
+/// (w06, s278).
 pub(crate) fn inserted_text_before_deleted_tables(
     dom: &Dom,
     body: NodeId,
@@ -1391,10 +1402,30 @@ pub(crate) fn inserted_text_before_deleted_tables(
                 && only_mark_deleted(dom, block)
                 && !keeps_words(dom, block, "del"))
         });
+        let preceded_by_deleted_table = at > 0
+            && dom.name_is(blocks[at - 1], &W::tbl())
+            && table_revised(dom, blocks[at - 1], "del");
+        // Nothing but the insertion: a deleted run of the original's
+        // own words, or any other child, keeps the move (#1851).
+        let only_inserted_runs = dom
+            .elements(paragraph, None)
+            .into_iter()
+            .filter(|&child| !dom.name_is(child, &W::p_pr()))
+            .all(|child| dom.name_is(child, &W::ins()));
         if let Some(joined) = joined.filter(|&joined| {
             tables > 0
                 && dom.name_is(joined, &W::p())
                 && !mark_carries(dom, joined, &[W::del(), W::move_from()])
+                // One deleted table, an empty paragraph after it, no
+                // deleted table before, and nothing in this paragraph but
+                // the insertion: Word's order, the words stay (#1926).
+                // Two tables, a paragraph after the table that already
+                // keeps words, or deleted words beside the insertion,
+                // still move (#1851).
+                && (tables > 1
+                    || preceded_by_deleted_table
+                    || keeps_words(dom, joined, "del")
+                    || !only_inserted_runs)
         }) {
             out.push((paragraph, joined));
         }
@@ -1706,6 +1737,9 @@ fn check_data_bindings_have_stores(pkg: &PartFs, out: &mut Vec<Finding>) {
 
 /// Word opens unequal per-name move ranges cleanly, but Reject All can
 /// restore the destination over only one source range and duplicate text.
+/// A start whose `w:name` is missing or empty cannot be paired. The
+/// attribute is schema-required; Word's reaction is unverified, so that
+/// finding is a warning lead (#1939).
 fn check_move_range_counts(pkg: &PartFs, out: &mut Vec<Finding>) {
     for part in xml_parts(pkg) {
         let Some((dom, root)) = parse_part(pkg, &part) else {
@@ -1718,6 +1752,14 @@ fn check_move_range_counts(pkg: &PartFs, out: &mut Vec<Finding>) {
                     .attribute(start, &W::name("name"))
                     .filter(|n| !n.is_empty())
                 else {
+                    out.push(Finding::new(
+                        "MOVE_RANGE_NAME_MISSING",
+                        &part,
+                        element_path(&dom, start),
+                        format!(
+                            "w:{side} has no w:name; the attribute is required to pair the range (#1939)"
+                        ),
+                    ));
                     continue;
                 };
                 let counts = moves
@@ -2075,9 +2117,11 @@ fn check_content_types_and_xml(pkg: &PartFs, out: &mut Vec<Finding>) {
     }
 }
 
-/// Every `r:id` / `r:embed` / `r:link` in a part resolves in that part's `.rels`;
+/// Every attribute in the officeDocument relationships namespace resolves in
+/// that part's `.rels`;
 /// no duplicate rIds; no dangling internal targets.
 fn check_relationship_integrity(pkg: &PartFs, out: &mut Vec<Finding>) {
+    let mut reported_missing = HashSet::new();
     // Opening kept one copy of each identical repeat; the source still
     // repeats it, which Word refuses (docxide case8).
     for (part, id) in pkg.repaired_duplicate_ids() {
@@ -2097,9 +2141,6 @@ fn check_relationship_integrity(pkg: &PartFs, out: &mut Vec<Finding>) {
         if !name.ends_with(".xml") || name.ends_with(".rels") {
             continue;
         }
-        let Some(xml) = pkg.part_string(&name) else {
-            continue;
-        };
         let rels = pkg.read_rels_for(&name);
         let mut ids: HashSet<String> = HashSet::new();
         let mut targets: HashMap<String, (String, bool)> = HashMap::new();
@@ -2119,57 +2160,95 @@ fn check_relationship_integrity(pkg: &PartFs, out: &mut Vec<Finding>) {
                 targets.insert(item.id.clone(), (item.target.clone(), external));
             }
         }
-        // Scan for r:id / r:embed / r:link attributes (namespace-agnostic local).
-        for attr in ["r:id=\"", "r:embed=\"", "r:link=\""] {
-            let mut rest = xml.as_str();
-            while let Some(i) = rest.find(attr) {
-                let after = &rest[i + attr.len()..];
-                if let Some(end) = after.find('"') {
-                    let rid = &after[..end];
-                    if rid.is_empty() {
-                        rest = &after[end + 1..];
-                        continue;
+        let Some((dom, root)) = parse_part(pkg, &name) else {
+            continue;
+        };
+        for element in dom.descendants_and_self(root, None) {
+            for (attribute, rid) in dom.attributes_iter(element) {
+                if attribute.namespace_name() != R::URI || rid.is_empty() {
+                    continue;
+                }
+                if !ids.contains(rid) {
+                    let mut finding = Finding::new(
+                        "DANGLING_RELATIONSHIP",
+                        &name,
+                        "",
+                        format!("dangling relationship id '{rid}' referenced from '{name}'"),
+                    );
+                    // `id`, `embed` and `link` keep the Word-fatal finding they
+                    // always had; the names this walk added remain repairable
+                    // leads until probed in Word (#1937).
+                    if !matches!(attribute.local_name(), "id" | "embed" | "link") {
+                        finding.word_fatal = false;
+                        finding.severity = "warning".to_string();
                     }
-                    if !ids.contains(rid) {
-                        out.push(Finding::new(
-                            "DANGLING_RELATIONSHIP",
-                            &name,
-                            "",
-                            format!("dangling relationship id '{rid}' referenced from '{name}'"),
-                        ));
-                    } else if let Some((target, external)) = targets.get(rid)
-                        && !external
-                    {
-                        let resolved = pkg.resolve_rel_target(&name, target);
-                        if pkg.part_bytes(&resolved).is_none()
-                            && pkg.part_bytes(target.trim_start_matches('/')).is_none()
-                        {
-                            // External-looking absolute targets without External mode
-                            // are still flagged only when the target is clearly a package
-                            // path that is missing. Skip http(s) and mailto.
-                            let t = target.as_str();
-                            if !t.starts_with("http://")
-                                && !t.starts_with("https://")
-                                && !t.starts_with("mailto:")
-                            {
-                                out.push(Finding::new(
-                                    "MISSING_REL_TARGET",
-                                    &name,
-                                    "",
-                                    format!(
-                                        "relationship '{rid}' on '{name}' targets missing part '{target}' (resolved '{resolved}')"
-                                    ),
-                                ));
-                            }
-                        }
-                    }
-                    rest = &after[end + 1..];
-                } else {
-                    break;
+                    out.push(finding);
+                } else if let Some((target, external)) = targets.get(rid)
+                    && !external
+                    && let Some(resolved) = missing_relationship_target(pkg, &name, target)
+                    && reported_missing.insert((name.to_ascii_lowercase(), rid.to_string()))
+                {
+                    out.push(Finding::new(
+                        "MISSING_REL_TARGET",
+                        &name,
+                        "",
+                        format!(
+                            "relationship '{rid}' on '{name}' targets missing part '{target}' (resolved '{resolved}')"
+                        ),
+                    ));
                 }
             }
         }
     }
+    // PartFs keeps parsed .rels separately from parts(), including the
+    // package's _rels/.rels and relationships of missing/non-XML owners.
+    for (source, rels) in pkg.relationship_parts() {
+        for item in &rels.items {
+            if item.target_mode.as_deref() == Some("External")
+                || reported_missing.contains(&(source.to_ascii_lowercase(), item.id.clone()))
+            {
+                continue;
+            }
+            let Some(resolved) = missing_relationship_target(pkg, source, &item.target) else {
+                continue;
+            };
+            let rels_part = if let Some((dir, file)) = source.rsplit_once('/') {
+                format!("{dir}/_rels/{file}.rels")
+            } else {
+                format!("_rels/{source}.rels")
+            };
+            let mut finding = Finding::new(
+                "MISSING_REL_TARGET",
+                &rels_part,
+                "",
+                format!(
+                    "unused relationship '{}' in '{rels_part}' targets missing part '{}' (resolved '{resolved}')",
+                    item.id, item.target
+                ),
+            );
+            // Word has not been probed for the unused variant (#1938), and
+            // repair does not drop relationships, so it is a plain lead.
+            finding.word_fatal = false;
+            finding.repairable = false;
+            finding.severity = "warning".to_string();
+            out.push(finding);
+        }
+    }
+}
+
+/// Internal targets must name a part at their resolved package path.
+fn missing_relationship_target(pkg: &PartFs, source: &str, target: &str) -> Option<String> {
+    if target.starts_with("http://")
+        || target.starts_with("https://")
+        || target.starts_with("mailto:")
+    {
+        return None;
+    }
+    let resolved = pkg.resolve_rel_target(source, target);
+    // A target written as a package path from the root names its part too.
+    (pkg.part_bytes(&resolved).is_none()
+        && pkg.part_bytes(target.trim_start_matches('/')).is_none())
+    .then_some(resolved)
 }
 
 /// Every `w:lvlPicBulletId` names a `w:numPicBullet` of the same numbering

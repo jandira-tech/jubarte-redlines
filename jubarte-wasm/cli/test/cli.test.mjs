@@ -35,11 +35,10 @@ const parses = (argv) => JSON.parse(binding.parseCli(JSON.stringify(argv))).exit
 const authorFilter = parses(["changes", "a.docx", "--author", "Ann"]);
 const tablesOutput = parses(["read", "a.docx", "--tables", "-o", "t.md"]);
 
-/** The records `changes --json` prints: its last line is the input's
- * validity (#1309) once the binding has it, never a record. */
+/** Every stdout line of `changes --json` is a record (#1925). */
 function records(out) {
   const rows = out.split("\n").filter(Boolean).map((line) => JSON.parse(line));
-  if (inputValidity) assert.deepEqual(Object.keys(rows.pop()), ["input_validity"], out);
+  assert.ok(rows.every((row) => ["kind", "id", "paragraph"].every((field) => field in row)), out);
   return rows;
 }
 
@@ -1627,7 +1626,7 @@ test("read --json and --tables take the view's options; errors under --json are 
   assert.match(missing.err, /t9 is not a table of this document/);
 });
 
-test("the JSON reads carry the input's validity, never on stderr (#1309)", { skip: !inputValidity && "the checked-in binding predates #1309" }, () => {
+test("JSON snapshots carry validity; JSON Lines send status to stderr (#1925)", { skip: !inputValidity && "the checked-in binding predates #1309" }, () => {
   copy(path.join(repo, "tests/fixtures/agent-view/received.docx"), "received-1309.docx");
   const wanted = { errors: 0, warnings: 2, next: "jubarte validate received-1309.docx" };
   for (const quiet of [[], ["-q"]]) {
@@ -1637,10 +1636,9 @@ test("the JSON reads carry the input's validity, never on stderr (#1309)", { ski
     assert.deepEqual(JSON.parse(read.out).summary.input_validity, wanted);
     const changes = run("changes", "received-1309.docx", "--json", ...quiet);
     assert.equal(changes.code, 0, changes.err);
-    assert.equal(changes.err, "");
+    assert.equal(changes.err, quiet.length ? "" : JSON.stringify({ input_validity: wanted }) + "\n");
     const lines = changes.out.trim().split("\n");
-    assert.deepEqual(JSON.parse(lines.at(-1)), { input_validity: wanted });
-    assert.ok(lines.slice(0, -1).every((line) => !("input_validity" in JSON.parse(line))), changes.out);
+    assert.ok(lines.every((line) => ["kind", "id", "paragraph"].every((field) => field in JSON.parse(line))), changes.out);
   }
   // -o FILE.json writes what --json prints; the stderr line stays.
   const printed = run("read", "received-1309.docx", "--json").out;
@@ -1648,6 +1646,12 @@ test("the JSON reads carry the input's validity, never on stderr (#1309)", { ski
   assert.equal(written.code, 0, written.err);
   assert.equal(fs.readFileSync(path.join(tmp, "received-1309.json"), "utf8"), printed);
   assert.match(written.err, /^input has 2 validity warnings; jubarte validate received-1309.docx lists them\n/);
+  for (const file of [tracked, untracked]) {
+    const quiet = run("changes", file, "--json", "-q");
+    assert.equal(quiet.code, 0, quiet.err);
+    assert.equal(quiet.err, "");
+    assert.ok(records(quiet.out).every((row) => "kind" in row), quiet.out);
+  }
   // A clean input counts zero, with nothing to run next.
   assert.deepEqual(JSON.parse(run("read", untracked, "--json").out).summary.input_validity, { errors: 0, warnings: 0 });
 });

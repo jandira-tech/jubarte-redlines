@@ -10124,14 +10124,7 @@ pub fn reorder_replaced_blocks(dom: &mut Dom, root: NodeId) {
     fn block_class(dom: &Dom, el: NodeId) -> Option<bool> {
         let n = dom.name(el)?;
         if n == W::p() {
-            // A paragraph whose mark carries the other revision is a mix:
-            // inserted text on a deleted mark is the original's paragraph,
-            // and its mark stays where it stands (#1826: moved ahead of a
-            // deleted table, it left two deleted tables adjacent, and
-            // rejecting fused them).
-            let class = para_replacement_class(dom, el)?;
-            let other = if class { W::del() } else { W::ins() };
-            return (!para_mark_revision(dom, el, &other)).then_some(class);
+            return para_replacement_class(dom, el);
         }
         if n == W::tbl() {
             let trs = dom.descendants(el, Some(&W::tr()));
@@ -10181,7 +10174,35 @@ pub fn reorder_replaced_blocks(dom: &mut Dom, root: NodeId) {
     containers.extend(dom.descendants(root, Some(&W::tc())));
     for container in containers {
         let children: Vec<NodeId> = dom.elements(container, None);
-        let classes: Vec<Option<bool>> = children.iter().map(|&c| block_class(dom, c)).collect();
+        let mut classes: Vec<Option<bool>> =
+            children.iter().map(|&c| block_class(dom, c)).collect();
+        // A paragraph whose mark carries the other revision stays put only
+        // when it sits between two deleted tables (#1826). Moved ahead of
+        // the first, it left the tables adjacent and rejecting fused them.
+        // Anywhere else, including a region with one deleted table, it
+        // takes its own class, so inserted words move ahead of that table
+        // as Word writes them (#1926).
+        for idx in 0..children.len() {
+            if !dom.name_is(children[idx], &W::p()) {
+                continue;
+            }
+            let Some(class) = classes[idx] else {
+                continue;
+            };
+            let other = if class { W::del() } else { W::ins() };
+            if !para_mark_revision(dom, children[idx], &other) {
+                continue;
+            }
+            let between = idx > 0
+                && idx + 1 < children.len()
+                && classes[idx - 1] == Some(false)
+                && classes[idx + 1] == Some(false)
+                && dom.name_is(children[idx - 1], &W::tbl())
+                && dom.name_is(children[idx + 1], &W::tbl());
+            if between {
+                classes[idx] = None;
+            }
+        }
         let paras: Vec<bool> = children.iter().map(|&c| dom.name_is(c, &W::p())).collect();
         let mut i = 0;
         while i < children.len() {
@@ -28624,6 +28645,15 @@ mod consecutive_block_splice_tests {
         let (mut dom, root) = parse(&format!("{}{inserted}", table("First")));
         reorder_replaced_blocks(&mut dom, root);
         let (expected, expected_root) = parse(&format!("{inserted}{}", table("First")));
+        assert_eq!(
+            dom.serialize_element(root),
+            expected.serialize_element(expected_root)
+        );
+        // One deleted table: the same inserted text on a deleted mark
+        // takes its inserted class and moves ahead of the table (#1926).
+        let (mut dom, root) = parse(&format!("{}{mixed}", table("Only")));
+        reorder_replaced_blocks(&mut dom, root);
+        let (expected, expected_root) = parse(&format!("{mixed}{}", table("Only")));
         assert_eq!(
             dom.serialize_element(root),
             expected.serialize_element(expected_root)

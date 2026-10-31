@@ -1240,7 +1240,8 @@ def cmd_changes(args: argparse.Namespace) -> int:
     authors = args.author or None
     if args.json:
         _json_lines(_native.list_changes_json(docx, authors=authors))
-        print(_native.input_validity_line(docx, _spelled(args, "file")))
+        if not args.quiet:
+            print(_native.input_validity_line(docx, _spelled(args, "file")), file=sys.stderr)
     else:
         sys.stdout.write(_native.changes_text(docx, authors=authors))
     return EXIT_OK
@@ -1252,7 +1253,8 @@ def cmd_comments(args: argparse.Namespace) -> int:
     docx = _input(args, notice=not args.json)
     if args.json:
         _json_lines(_native.list_comments_json(docx, author=args.author, latest=args.latest))
-        print(_native.input_validity_line(docx, _spelled(args, "file")))
+        if not args.quiet:
+            print(_native.input_validity_line(docx, _spelled(args, "file")), file=sys.stderr)
     else:
         sys.stdout.write(_native.comments_text(docx, author=args.author, latest=args.latest))
     return EXIT_OK

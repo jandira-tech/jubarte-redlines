@@ -18,7 +18,8 @@ pub(crate) use crate::util::datetime::parse_datetime;
 /// Read, edit, compare and render Word documents.
 #[derive(Parser, Debug, Serialize)]
 #[command(
-    name = "jubarte", version,
+    name = "jubarte", version = env!("JUBARTE_BUILD_VERSION"),
+    help_template = "{name} {version}\n{about-with-newline}\n{usage-heading} {usage}\n\n{all-args}{after-help}",
     about = "Read, edit, compare and render Word documents",
     long_about = None,
     styles = styles(),
@@ -38,9 +39,9 @@ pub struct Cli {
     /// Files are still written; a reading task
     /// (`read`, `changes`, `compare` without -o, `diff`, `capabilities`)
     /// still prints what it read, and warnings and errors still print.
-    /// `read`, `changes` and `comments` drop their one stderr line naming
-    /// the input's validity findings; under --json and read --for-edit the
-    /// output counts them, -q or not.
+    /// `read`, `changes` and `comments` drop their stderr validity status
+    /// (JSON under `changes --json` and `comments --json`). `read --json`
+    /// and `read --for-edit` keep validity counts in their output, -q or not.
     #[arg(
         short = 'q',
         long,
@@ -974,7 +975,8 @@ pub enum Command {
         /// The document (.docx).
         #[arg(value_name = "FILE")]
         file: PathBuf,
-        /// Emit one JSON object per line.
+        /// Emit one record per line on stdout (records only). The input_validity
+        /// status is one JSON line on stderr; -q silences it.
         #[arg(long)]
         json: bool,
         /// Only listed changes by this author (exact match); repeat for several.
@@ -1560,7 +1562,8 @@ pub enum Command {
         /// The document (.docx).
         #[arg(value_name = "FILE")]
         file: PathBuf,
-        /// Emit one JSON object per line.
+        /// Emit one record per line on stdout (records only). The input_validity
+        /// status is one JSON line on stderr; -q silences it.
         #[arg(long)]
         json: bool,
         /// Only this author's comments (exact match).
@@ -4134,7 +4137,8 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
     // Rebuild only the outer presentation, cloning every argument/group/task
     // from the derive model. Clap itself parses both native and facade inputs.
     let mut command = clap::Command::new(program.to_string())
-        .version(env!("CARGO_PKG_VERSION"))
+        .version(env!("JUBARTE_BUILD_VERSION"))
+        .help_template("{name} {version}\n{about-with-newline}\n{usage-heading} {usage}\n\n{all-args}{after-help}")
         .about("Read, edit, compare and render Word documents")
         .color(clap::ColorChoice::Never)
         .styles(styles())

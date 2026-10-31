@@ -1,14 +1,15 @@
 Test fixtures copied from neurotic_docx_bench
 =============================================
 
-The files under tests/corpus/neurotic_docx_bench/ and
-tests/corpus/_to_improve_accepted_changes/ are test inputs copied from the
-neurotic_docx_bench benchmark (the public dataset
+The files under tests/corpus/neurotic_docx_bench/,
+tests/corpus/_to_improve_accepted_changes/ and tests/corpus/issue_1926/ are
+test inputs copied from the neurotic_docx_bench benchmark (the public dataset
 arthrod/neurotic_docx_bench-fixtures on the Hugging Face Hub, ODC-By 1.0) so
 that jubarte's tests do not depend on a checkout of the benchmark. They keep
-the relative paths they have in the benchmark. Jandira Technologies, LLC does
-not license them under this repository's AGPL-3.0-only license, and nothing
-here grants rights in them. They are used only as test inputs.
+the relative paths they have in the benchmark, except tests/corpus/issue_1926/,
+which keeps short names for two parity-ladder pairs. Jandira Technologies, LLC
+does not license them under this repository's AGPL-3.0-only license, and
+nothing here grants rights in them. They are used only as test inputs.
 
 Where they come from:
 
@@ -35,3 +36,8 @@ Where they come from:
   Word's compares of benchmark pairs, and Word's Reject All or Accept All of
   those compares.
 - corpus/word/notices/: the benchmark's own selection tables.
+- tests/corpus/issue_1926/: the parity-ladder pairs
+  employee_directory_table → employee_review_john_smith_suggesting_insertions
+  and meeting_agenda_table → meeting_minutes_id_paraid_overflow, with Word's
+  redlines of them (0.15.0 ladder corpus). Same jubarte-first fixtures and
+  Word compares as corpus/word_based/.
