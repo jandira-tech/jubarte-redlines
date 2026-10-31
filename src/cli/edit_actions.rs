@@ -237,7 +237,7 @@ pub struct DeliveryOptions {
     pub jsonl: bool,
 }
 
-fn positive(s: &str) -> Result<usize, String> {
+pub(super) fn positive(s: &str) -> Result<usize, String> {
     s.parse()
         .ok()
         .filter(|n| *n > 0)

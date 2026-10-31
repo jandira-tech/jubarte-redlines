@@ -480,7 +480,8 @@ Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply
 | `--plan` |  | [<PLAN.json>] |  |  |  | Edit plan JSON: a list of operations of any kind (see `jubarte capabilities --json`). Alone, it is applied to FILE; with operation flags, they are recorded into it (created on first use) and FILE is left as it is. Without a value: FILE_plan.json beside FILE |
 | `--consume` |  |  | false |  |  | Delete PLAN.json once it has been applied and the outputs are written (with --plan and no operation flags). Kept when --skip-failed left operations out |
 | `-p, --location` |  | <WHERE> |  |  | append | Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment), c5.text (the text c5 covers) or r12 (a revision, with --accept, --reject, --strike or --restore). Each -p starts an operation; the flags after it belong to it |
-| `--anchor` |  | <TEXT> |  |  | append | Text inside WHERE the operation applies to (must occur once) |
+| `--anchor` |  | <TEXT> |  |  | append | Text inside WHERE the operation applies to (must occur once, unless --occurrence picks a match) |
+| `--occurrence` |  | <N> |  |  | append | Pick the Nth anchor match (1-based), after --anchor in this -p group |
 | `--content` |  | <TEXT> |  |  | append | New text: replaces the anchor; rewrites the paragraph without one; on c5, the comment's new text |
 | `--delete` |  |  |  |  | append | Delete the anchor, or the whole paragraph (or comment) without one |
 | `--resolve` |  |  |  |  | append | Resolve comment c5 (with -p c5) |
@@ -520,7 +521,8 @@ Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per c
 | `--plan` |  | [<PLAN.json>] |  |  |  | Edit plan JSON. With operation flags, they are recorded into it (created on first use) and FILE is left as it is; alone, it is applied to FILE, as `edit --plan` does. Without a value: FILE_plan.json beside FILE |
 | `--consume` |  |  | false |  |  | Delete PLAN.json once it has been applied and the outputs are written (with --plan and no operation flags) |
 | `-p, --location` |  | <WHERE> |  |  | append | Where: p12, header1, footer2.p1, t0.row1.cell2, or c5 for a reply. Each -p starts an operation; the flags after it belong to it |
-| `--anchor` |  | <TEXT> |  |  | append | Text inside WHERE to comment on (must occur once) |
+| `--anchor` |  | <TEXT> |  |  | append | Text inside WHERE to comment on (must occur once, unless --occurrence picks a match) |
+| `--occurrence` |  | <N> |  |  | append | Pick the Nth anchor match (1-based), after --anchor in this -p group |
 | `--content` |  | <TEXT> |  |  | append | The paragraph, comment or reply text |
 | `--reply` |  | <TEXT> |  |  | append | Reply to comment c5 (with -p c5); the same as --content there |
 | `--before` |  |  |  |  | append | A new paragraph before WHERE instead of after it |
@@ -770,7 +772,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--no-overlay` | visual-diff | `default=false values=` |
 | `--no-page-markers` | (shorthand), compare, convert, read | `default=false values=` |
 | `--no-paragraph-merge` | (shorthand), compare | `default=false values=` |
-| `--occurrence` | __edit-v2 replace, __edit-v2 insert, __edit-v2 delete | `<OCCURRENCE> default= values=` |
+| `--occurrence` | __edit-v2 replace, __edit-v2 insert, __edit-v2 delete, edit, add | **differs**: `<N> default= values=` on edit, add; `<OCCURRENCE> default= values=` on __edit-v2 replace, __edit-v2 insert, __edit-v2 delete |
 | `--operation` | capabilities | `<OPERATION> default= values=` |
 | `--original` | (shorthand), compare, validate | **differs**: `-b <FILE> default= values=` on (shorthand), compare; `<FILE> default= values=` on validate |
 | `--out-dir` | __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert, __edit-v2 delete, __edit-v2 apply, edit, add, visual-diff | **differs**: `<DIR> default= values=` on visual-diff; `<NEW_DIR> default= values=` on __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert, __edit-v2 delete, __edit-v2 apply; `[<DIR>] default= values=` on edit, add |

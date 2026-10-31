@@ -4123,6 +4123,7 @@ impl<'p> Transaction<'p> {
                         *occurrence,
                         &mut outcome,
                         self.anchor_window.get(),
+                        self.syntax,
                     )
                     .map_err(|(c, m)| fail(&c, m, outcome.clone()))?,
                     None => {
@@ -5352,6 +5353,7 @@ impl<'p> Transaction<'p> {
             occurrence,
             outcome,
             self.anchor_window.get(),
+            self.syntax,
         ) {
             Err((code, message)) if code == "ANCHOR_NOT_FOUND" => {
                 return Err(match self.removed_anchor(projection, find) {
@@ -7672,6 +7674,7 @@ fn locate(
     occurrence: Option<usize>,
     outcome: &mut EditOutcome,
     window: Option<(u32, usize, usize)>,
+    syntax: PlanSyntax,
 ) -> Result<(usize, usize), (String, String)> {
     if find.is_empty() {
         return Err(("INVALID_EDIT".into(), "find must be nonempty".into()));
@@ -7756,10 +7759,9 @@ fn locate(
         }
         ([one], None) => *one,
         (many, None) => {
-            let n = many.len();
             return Err((
                 "AMBIGUOUS_ANCHOR".into(),
-                format!("{shown} occurs {n} times in the paragraph; set \"occurrence\" to 1..={n}"),
+                syntax.ambiguous_anchor(text, find, many),
             ));
         }
         (many, Some(k)) if k <= many.len() => many[k - 1],
