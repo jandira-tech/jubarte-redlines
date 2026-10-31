@@ -1600,6 +1600,297 @@ fn explicit_default_author_is_not_a_missing_author_warning() {
     assert!(!err.contains("no -a given"), "{err}");
 }
 
+/// #1891: `--editing-mode` publishes the clean copy. The internal redline's
+/// tracked changes are not in that file, so the wrote line names no change
+/// and does not warn.
+#[test]
+fn editing_mode_wrote_line_ignores_the_internal_redline() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "a.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty",
+            "--editing-mode",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let line = wrote_docx(&err);
+    assert!(
+        line.starts_with("wrote out.docx (docx, ") && line.ends_with(" bytes)"),
+        "{err}"
+    );
+    assert!(!line.contains(';'), "{err}");
+    assert!(!err.contains("warning: no -a given"), "{err}");
+    let xml = document_xml(&dir.join("out.docx"));
+    assert!(xml.contains("forty"), "{xml}");
+    assert!(!xml.contains("<w:ins "), "{xml}");
+    assert!(!xml.contains("<w:del "), "{xml}");
+}
+
+/// #1891: a comment `--editing-mode` keeps in the clean copy still counts.
+#[test]
+fn editing_mode_wrote_line_counts_a_published_comment() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let author = default_author();
+    let (code, _, err) = run(
+        dir,
+        &[
+            "add",
+            "a.docx",
+            "-p",
+            "p1",
+            "--comment",
+            "--content",
+            "Cap the fee?",
+            "--editing-mode",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let published = std::fs::read(dir.join("out.docx")).unwrap();
+    let comments = jubarte::comments::list_comments(&published).unwrap();
+    assert_eq!(comments.len(), 1, "{comments:?}");
+    assert_eq!(comments[0].text, "Cap the fee?");
+    assert_wrote_markup(
+        &err,
+        "out.docx",
+        &format!(r#"1 comment by "{author}": no -a given"#),
+    );
+    assert!(
+        err.contains(&format!(
+            r#"warning: no -a given; the new markup is signed "{author}""#
+        )),
+        "{err}"
+    );
+    let xml = document_xml(&dir.join("out.docx"));
+    assert!(!xml.contains("<w:ins "), "{xml}");
+}
+
+/// #1891: a comment on deleted text lives in the redline only. Editing mode
+/// publishes the clean copy, which has neither the change nor the comment.
+#[test]
+fn editing_mode_ignores_a_comment_the_clean_copy_drops() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    std::fs::write(
+        dir.join("plan.json"),
+        r#"{"schema_version":1,"author":"GiantCo","operations":[{"kind":"delete","paragraph":"p1","find":"thirty","comment":"why"}]}"#,
+    )
+    .unwrap();
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "a.docx",
+            "--plan",
+            "plan.json",
+            "--editing-mode",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let published = std::fs::read(dir.join("out.docx")).unwrap();
+    let comments = jubarte::comments::list_comments(&published).unwrap();
+    assert!(
+        comments.is_empty(),
+        "the clean copy kept a deletion comment: {comments:?}"
+    );
+    let line = wrote_docx(&err);
+    assert!(
+        line.starts_with("wrote out.docx (docx, ") && line.ends_with(" bytes)"),
+        "{err}"
+    );
+    assert!(!line.contains(';'), "{err}");
+    assert!(!err.contains("warning: no -a given"), "{err}");
+    assert!(
+        !document_xml(&dir.join("out.docx")).contains("thirty"),
+        "{err}"
+    );
+}
+
+/// #1891: a replace whose comment the clean copy keeps counts the comment,
+/// not the internal redline's tracked change. The plan names the author.
+#[test]
+fn editing_mode_counts_a_comment_on_text_it_publishes() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    std::fs::write(
+        dir.join("plan.json"),
+        r#"{"schema_version":1,"author":"GiantCo","operations":[{"kind":"replace","paragraph":"p1","find":"thirty","replacement":"forty","comment":"Cap it"}]}"#,
+    )
+    .unwrap();
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "a.docx",
+            "--plan",
+            "plan.json",
+            "--editing-mode",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let published = std::fs::read(dir.join("out.docx")).unwrap();
+    let comments = jubarte::comments::list_comments(&published).unwrap();
+    assert_eq!(comments.len(), 1, "{comments:?}");
+    assert_eq!(comments[0].author, "GiantCo");
+    assert_wrote_markup(&err, "out.docx", r#"1 comment by "GiantCo""#);
+    assert!(!err.contains("no -a given"), "{err}");
+    let xml = document_xml(&dir.join("out.docx"));
+    assert!(xml.contains("forty") && !xml.contains("<w:ins "), "{xml}");
+}
+
+/// #1891: `--out-dir` names who signed, the same detail as `-o`.
+#[test]
+fn out_dir_wrote_line_names_the_given_author() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "a.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty",
+            "-a",
+            "GiantCo",
+            "--out-dir",
+            "r",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let line = err
+        .lines()
+        .find(|line| line.starts_with("wrote r ("))
+        .unwrap_or(&err);
+    assert!(line.contains("4 files:"), "{line}");
+    assert!(line.ends_with(r#"; 1 change by "GiantCo")"#), "{line}");
+    assert!(!err.contains("warning: no -a given"), "{err}");
+}
+
+/// #1891: `--out-dir` without `-a` names the default and warns.
+#[test]
+fn out_dir_wrote_line_without_author_warns() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let author = default_author();
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "a.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty",
+            "--out-dir",
+            "r",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let line = err
+        .lines()
+        .find(|line| line.starts_with("wrote r ("))
+        .unwrap_or(&err);
+    assert!(
+        line.ends_with(&format!(r#"; 1 change by "{author}": no -a given)"#)),
+        "{line}"
+    );
+    assert!(
+        err.contains(&format!(
+            r#"warning: no -a given; the new markup is signed "{author}""#
+        )),
+        "{err}"
+    );
+}
+
+/// #1891: an editing-mode bundle publishes the clean copy. A comment it
+/// keeps counts; the internal redline's change does not.
+#[test]
+fn out_dir_editing_mode_counts_a_published_comment_and_no_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "a.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty",
+            "--editing-mode",
+            "--out-dir",
+            "plain",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let plain = err
+        .lines()
+        .find(|line| line.starts_with("wrote plain ("))
+        .unwrap_or(&err);
+    assert!(plain.contains("2 files:"), "{plain}");
+    assert!(!plain.contains(';'), "{plain}");
+    assert!(!err.contains("warning: no -a given"), "{err}");
+
+    let (code, _, err) = run(
+        dir,
+        &[
+            "add",
+            "a.docx",
+            "-p",
+            "p1",
+            "--comment",
+            "--content",
+            "Cap the fee?",
+            "-a",
+            "GiantCo",
+            "--editing-mode",
+            "--out-dir",
+            "noted",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let noted = std::fs::read(dir.join("noted/clean.docx")).unwrap();
+    assert_eq!(jubarte::comments::list_comments(&noted).unwrap().len(), 1);
+    let line = err
+        .lines()
+        .find(|line| line.starts_with("wrote noted ("))
+        .unwrap_or(&err);
+    assert!(line.ends_with(r#"; 1 comment by "GiantCo")"#), "{line}");
+    assert!(!err.contains("warning: no -a given"), "{err}");
+}
+
 /// #1891: a dry-run JSONL envelope still carries `author`.
 #[test]
 fn dry_run_jsonl_keeps_the_author_field() {

@@ -3802,10 +3802,26 @@ impl Cli {
             (Some(Command::Compare(compare)), Some((_, args))) => {
                 compare.view_given = view_given(args);
             }
+            (Some(Command::TypedEdit(typed)), Some((_, args))) => {
+                mark_typed_author(typed, args);
+            }
             (None, _) => cli.compare.view_given = view_given(&matches),
             _ => {}
         }
         Ok(cli)
+    }
+}
+
+/// `-a` on a typed edit is explicit only when the command line spelled it.
+/// The default `"Jubarte"` is not. `edit apply` has no author flag.
+fn mark_typed_author(typed: &mut edit_actions::TypedEdit, args: &clap::ArgMatches) {
+    let Some((_, action)) = args.subcommand() else {
+        return;
+    };
+    let given = action.try_contains_id("author").unwrap_or(false)
+        && action.value_source("author") == Some(clap::parser::ValueSource::CommandLine);
+    if let Some(inline) = typed.action.inline_mut() {
+        inline.author_given = given;
     }
 }
 

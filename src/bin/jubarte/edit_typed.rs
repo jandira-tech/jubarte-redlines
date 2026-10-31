@@ -399,7 +399,7 @@ fn prepare_and_publish(
     action: &EditAction,
     source: &[u8],
     command: &str,
-) -> Result<(Envelope, bool), Failure> {
+) -> Result<(Envelope, bool, Option<String>), Failure> {
     let delivery = action.delivery();
     let payload_bytes = action
         .payload()
@@ -639,6 +639,14 @@ fn prepare_and_publish(
     data.counts.comments_added = prepared.result.report.comments_added;
     data.counts.revisions_accepted = prepared.result.report.resolved_revisions.accepted.len();
     data.counts.revisions_rejected = prepared.result.report.resolved_revisions.rejected.len();
+    // Count the published primary. v2 publishes the redline (track off
+    // leaves its revision total at zero); v1 apply asks for that role too.
+    let markup = jubarte::cli::wrote_markup_detail(
+        prepared.result.report.revisions.total,
+        prepared.result.report.comments_added,
+        &prepared.result.report.author,
+        action.author_was_given(),
+    );
     let redacted = prepared
         .result
         .report
@@ -651,7 +659,7 @@ fn prepare_and_publish(
         } else {
             PredictedEffect::Unchanged
         });
-        return Ok((receipt, redacted));
+        return Ok((receipt, redacted, markup));
     }
     let mut outputs = Vec::<(PathBuf, Vec<u8>, MediaRole)>::new();
     if let Some(path) = save {
@@ -789,7 +797,7 @@ fn prepare_and_publish(
         )
         .map_err(publish_failure)?;
     }
-    Ok((receipt, redacted))
+    Ok((receipt, redacted, markup))
 }
 
 pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
@@ -799,7 +807,7 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
     if let Ok(source) = &source {
         super::warn_nested_text_boxes(source);
     }
-    let (receipt, redacted) = match source.as_ref() {
+    let (receipt, redacted, markup) = match source.as_ref() {
         Ok(source) => prepare_and_publish(action, source, &command).unwrap_or_else(|error| {
             let operational = matches!(
                 error.code.as_str(),
@@ -822,7 +830,7 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
             {
                 data.verification.expectations = "unresolved".to_string();
             }
-            (receipt, false)
+            (receipt, false, None)
         }),
         Err(error) => (
             Envelope::new_error(
@@ -831,6 +839,7 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
                 *error.clone(),
             ),
             false,
+            None,
         ),
     };
     let code = edit_envelope_exit(&receipt);
@@ -886,8 +895,16 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
                 note
             })
             .unwrap_or_default();
+        let authored = if paths.is_empty() || !matches!(data.phase, Some(Phase::Committed)) {
+            String::new()
+        } else {
+            markup
+                .as_deref()
+                .map(|detail| format!("; {detail}"))
+                .unwrap_or_default()
+        };
         format!(
-            "{}: {outcome}{}{expectations}\n",
+            "{}: {outcome}{}{authored}{expectations}\n",
             receipt.command,
             if paths.is_empty() {
                 String::new()
@@ -918,6 +935,25 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
             }
         );
         return ExitCode::from(1);
+    }
+    // Stderr, including under --json/--jsonl: the receipt on stdout stays
+    // the envelope. -q suppresses it with the rest of this status (#1891).
+    if !quiet
+        && markup.is_some()
+        && !action.author_was_given()
+        && receipt
+            .data
+            .as_ref()
+            .is_some_and(|data| data.phase == Some(Phase::Committed))
+    {
+        let author = receipt
+            .effective_options
+            .get("author")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("Jubarte");
+        edit_status(format_args!(
+            "warning: no -a given; the new markup is signed \"{author}\""
+        ));
     }
     if code == 0
         && !quiet
