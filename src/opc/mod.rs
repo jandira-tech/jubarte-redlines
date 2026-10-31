@@ -1079,6 +1079,19 @@ impl PartFs {
         &self.package_rels
     }
 
+    /// All parsed relationships, including those whose source part is absent.
+    /// The package's own relationships have the empty source name.
+    pub(crate) fn relationship_parts(&self) -> Vec<(&str, &Relationships)> {
+        let mut parts: Vec<_> = self
+            .part_rels
+            .iter()
+            .map(|(source, rels)| (source.trim_start_matches('/'), rels))
+            .collect();
+        parts.sort_by_key(|(source, _)| *source);
+        parts.insert(0, ("", self.package_relationships()));
+        parts
+    }
+
     /// Add a package-level relationship, returning its id.
     pub fn add_package_relationship(&mut self, rel_type: &str, target: &str) -> String {
         self.package_rels.add(rel_type, target)

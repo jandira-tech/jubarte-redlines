@@ -26,7 +26,7 @@
 //! | `MISSING_CONTENT_TYPE`, `OVERRIDE_WITHOUT_PART`, `MALFORMED_XML` | yes | no |
 //! | `DANGLING_RELATIONSHIP` | yes for `r:id`, `r:embed`, `r:link`; other names (`r:dm`, `r:pict`, ...) are unverified leads (#1937) | yes: the attribute is dropped |
 //! | `DUPLICATE_RID` | yes | an identical repeat is kept once on open; two relationships under one Id are refused |
-//! | `MISSING_REL_TARGET` | yes | no |
+//! | `MISSING_REL_TARGET` | yes when used by markup; unused relationships are unverified warning leads (#1938) | no |
 //! | `PICTURE_BULLET_UNDEFINED` | yes | no |
 //! | `DUPLICATE_REVISION_ID` | no: Word opens same-kind duplicates (102 probes, 2026-10-18, #1137); the OOXML validator refuses them (`Sem_UniqueAttributeValue`); error diagnostic | yes: renumbered |
 //! | `DUPLICATE_DOCPR_ID` | no (lead) | yes: renumbered |
@@ -2121,6 +2121,7 @@ fn check_content_types_and_xml(pkg: &PartFs, out: &mut Vec<Finding>) {
 /// that part's `.rels`;
 /// no duplicate rIds; no dangling internal targets.
 fn check_relationship_integrity(pkg: &PartFs, out: &mut Vec<Finding>) {
+    let mut reported_missing = HashSet::new();
     // Opening kept one copy of each identical repeat; the source still
     // repeats it, which Word refuses (docxide case8).
     for (part, id) in pkg.repaired_duplicate_ids() {
@@ -2184,33 +2185,70 @@ fn check_relationship_integrity(pkg: &PartFs, out: &mut Vec<Finding>) {
                     out.push(finding);
                 } else if let Some((target, external)) = targets.get(rid)
                     && !external
+                    && let Some(resolved) = missing_relationship_target(pkg, &name, target)
+                    && reported_missing.insert((name.to_ascii_lowercase(), rid.to_string()))
                 {
-                    let resolved = pkg.resolve_rel_target(&name, target);
-                    if pkg.part_bytes(&resolved).is_none()
-                        && pkg.part_bytes(target.trim_start_matches('/')).is_none()
-                    {
-                        // External-looking absolute targets without External mode
-                        // are still flagged only when the target is clearly a package
-                        // path that is missing. Skip http(s) and mailto.
-                        let t = target.as_str();
-                        if !t.starts_with("http://")
-                            && !t.starts_with("https://")
-                            && !t.starts_with("mailto:")
-                        {
-                            out.push(Finding::new(
-                                "MISSING_REL_TARGET",
-                                &name,
-                                "",
-                                format!(
-                                    "relationship '{rid}' on '{name}' targets missing part '{target}' (resolved '{resolved}')"
-                                ),
-                            ));
-                        }
-                    }
+                    out.push(Finding::new(
+                        "MISSING_REL_TARGET",
+                        &name,
+                        "",
+                        format!(
+                            "relationship '{rid}' on '{name}' targets missing part '{target}' (resolved '{resolved}')"
+                        ),
+                    ));
                 }
             }
         }
     }
+    // PartFs keeps parsed .rels separately from parts(), including the
+    // package's _rels/.rels and relationships of missing/non-XML owners.
+    for (source, rels) in pkg.relationship_parts() {
+        for item in &rels.items {
+            if item.target_mode.as_deref() == Some("External")
+                || reported_missing.contains(&(source.to_ascii_lowercase(), item.id.clone()))
+            {
+                continue;
+            }
+            let Some(resolved) = missing_relationship_target(pkg, source, &item.target) else {
+                continue;
+            };
+            let rels_part = if let Some((dir, file)) = source.rsplit_once('/') {
+                format!("{dir}/_rels/{file}.rels")
+            } else {
+                format!("_rels/{source}.rels")
+            };
+            let mut finding = Finding::new(
+                "MISSING_REL_TARGET",
+                &rels_part,
+                "",
+                format!(
+                    "unused relationship '{}' in '{rels_part}' targets missing part '{}' (resolved '{resolved}')",
+                    item.id, item.target
+                ),
+            );
+            // Word has not been probed for the unused variant (#1938), and
+            // repair does not drop relationships, so it is a plain lead.
+            finding.word_fatal = false;
+            finding.repairable = false;
+            finding.severity = "warning".to_string();
+            out.push(finding);
+        }
+    }
+}
+
+/// Internal targets must name a part at their resolved package path.
+fn missing_relationship_target(pkg: &PartFs, source: &str, target: &str) -> Option<String> {
+    if target.starts_with("http://")
+        || target.starts_with("https://")
+        || target.starts_with("mailto:")
+    {
+        return None;
+    }
+    let resolved = pkg.resolve_rel_target(source, target);
+    // A target written as a package path from the root names its part too.
+    (pkg.part_bytes(&resolved).is_none()
+        && pkg.part_bytes(target.trim_start_matches('/')).is_none())
+    .then_some(resolved)
 }
 
 /// Every `w:lvlPicBulletId` names a `w:numPicBullet` of the same numbering
