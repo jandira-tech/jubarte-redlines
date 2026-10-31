@@ -853,18 +853,12 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
     if args.quiet:
         return EXIT_OK
     # A pure accept/reject prints the resolved lines on stdout, nothing
-    # else; the bundle's report.jsonl still holds the summary.
-    # Any failure falls back to the summary and the view, as the binary
-    # does; the bundle already holds the result.
+    # else; the bundle's report.jsonl still holds the summary. The text is
+    # computed first. Only an engine refusal falls back to the summary and
+    # the view; the bundle already holds the result. Anything else propagates.
     if _is_pure_resolution(parsed, result):
-        with contextlib.suppress(Exception):
-            resolved = result.report.resolved_revisions
-            text = _native.resolution_text(
-                source_bytes,
-                json.dumps(
-                    {"accepted": list(resolved.accepted), "rejected": list(resolved.rejected)}, ensure_ascii=False
-                ),
-            )
+        text = _resolved_lines(source_bytes, result)
+        if text is not None:
             names = [name for name, _ in outputs] + ["report.jsonl"]
             sys.stdout.flush()
             print(f"wrote {out_dir} ({len(names)} files: {', '.join(names)})", file=sys.stderr)
@@ -914,20 +908,32 @@ def _is_pure_resolution(parsed: object, result: EditResult) -> bool:
     return bool(resolved.accepted or resolved.rejected)
 
 
-def _print_resolution_or_view(source: bytes, parsed: object, result: EditResult, editing: bool, shown: Path) -> None:
-    """The resolved lines for a pure accept/reject, or the changed view
-    otherwise. Failures fall back to the view, as the binary does."""
+def _resolved_lines(source: bytes, result: EditResult) -> str | None:
+    """The resolved-lines text, or None when the engine refuses it.
+
+    ``resolution_text`` reports that refusal as ``JubarteError``. That is
+    the only failure the fallback exists for, and it is caught before
+    anything is printed. A defect or an I/O error propagates; ``main``
+    prints it and exits 1.
+    """
     from . import _native
 
+    resolved = result.report.resolved_revisions
+    try:
+        return _native.resolution_text(
+            source,
+            json.dumps({"accepted": list(resolved.accepted), "rejected": list(resolved.rejected)}, ensure_ascii=False),
+        )
+    except _native.JubarteError:
+        return None
+
+
+def _print_resolution_or_view(source: bytes, parsed: object, result: EditResult, editing: bool, shown: Path) -> None:
+    """The resolved lines for a pure accept/reject, or the changed view
+    otherwise. An engine refusal falls back to the view."""
     if _is_pure_resolution(parsed, result):
-        with contextlib.suppress(Exception):
-            resolved = result.report.resolved_revisions
-            text = _native.resolution_text(
-                source,
-                json.dumps(
-                    {"accepted": list(resolved.accepted), "rejected": list(resolved.rejected)}, ensure_ascii=False
-                ),
-            )
+        text = _resolved_lines(source, result)
+        if text is not None:
             sys.stdout.write(text)
             return
     _print_changed_view(result, editing, shown)
