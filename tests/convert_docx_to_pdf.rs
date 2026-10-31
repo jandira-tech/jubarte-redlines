@@ -10,7 +10,30 @@ use std::process::Command;
 use jubarte::convert::{PdfOptions, RevisionStyle, docx_to_pdf_with, pdf_page_count};
 
 /// These tests lock Word's own output, tracked-change marks included.
+///
+/// Since #1725 a styles-less package renders on Word 16's stock defaults
+/// (Aptos 12) while these fixtures were goldenized when it took
+/// `Defaults::word()` (Calibri 11). The real documents they compress carry
+/// a styles part, so the entry injects `DEFAULT_DOC_DEFAULTS` into any
+/// package without one (`with_default_styles`): fixtures keep the shape —
+/// and layout — of the file they stand for. Fixtures whose real document
+/// IS styles-less (the #1716/#1732 probes) convert through
+/// `docx_to_pdf_styleless`.
 fn docx_to_pdf(docx: &[u8]) -> Result<Vec<u8>, jubarte::convert::ConvertError> {
+    docx_to_pdf_with(
+        &with_default_styles(docx.to_vec()),
+        PdfOptions {
+            revisions: RevisionStyle::Word,
+            ..PdfOptions::default()
+        },
+    )
+    .map(|pdf| one_text_object_per_glyph_run(&pdf))
+}
+
+/// `docx_to_pdf` without the implied-styles injection: the package is
+/// converted exactly as authored. For fixtures of documents that have no
+/// styles part (Word 16 lays them out Aptos 12 / after 160 / line 278).
+fn docx_to_pdf_styleless(docx: &[u8]) -> Result<Vec<u8>, jubarte::convert::ConvertError> {
     docx_to_pdf_with(
         docx,
         PdfOptions {
@@ -194,6 +217,99 @@ fn minimal_docx(paragraphs: &[&str], table: Option<&[&[&str]]>) -> Vec<u8> {
     zip.write_all(rels.as_bytes()).unwrap();
     zip.start_file("word/document.xml", opts).unwrap();
     zip.write_all(document.as_bytes()).unwrap();
+    zip.finish().unwrap().into_inner()
+}
+
+/// A styles part holding the Calibri-11 defaults `Defaults::word()` used
+/// to give a styles-less package (before #1725): the real documents these
+/// fixtures stand for carry it, and Word 16 reads it the same way.
+const DEFAULT_DOC_DEFAULTS: &str = "<w:docDefaults><w:rPrDefault><w:rPr>\
+       <w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/><w:sz w:val=\"22\"/>\
+     </w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>\
+       <w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/>\
+     </w:pPr></w:pPrDefault></w:docDefaults><w:latentStyles/>";
+
+/// `docx` plus a `word/styles.xml` holding [`DEFAULT_DOC_DEFAULTS`]: the
+/// implied styles part of the real file a styles-less fixture compresses.
+/// A package that already names a styles part — in `word/styles.xml` or
+/// under a producer-chosen name through the main part's relationships — is
+/// returned unchanged.
+fn with_default_styles(docx: Vec<u8>) -> Vec<u8> {
+    let mut styled = false;
+    let mut have_rels = false;
+    {
+        let mut archive = zip::ZipArchive::new(Cursor::new(&docx)).unwrap();
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i).unwrap();
+            match file.name().expect("decode ZIP fixture name").as_ref() {
+                "word/_rels/document.xml.rels" => {
+                    have_rels = true;
+                    let mut data = String::new();
+                    file.read_to_string(&mut data).unwrap();
+                    styled = styled || data.contains("relationships/styles\"");
+                }
+                "word/styles.xml" => styled = true,
+                _ => {}
+            }
+        }
+    }
+    if styled {
+        return docx;
+    }
+    let mut archive = zip::ZipArchive::new(Cursor::new(docx)).unwrap();
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = SimpleFileOptions::default();
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).unwrap();
+        let name = file.name().expect("decode ZIP fixture name").into_owned();
+        let mut data = Vec::new();
+        std::io::Read::read_to_end(&mut file, &mut data).unwrap();
+        let data = match name.as_str() {
+            "[Content_Types].xml" => String::from_utf8(data)
+                .expect("content types")
+                .replace(
+                    "</Types>",
+                    "<Override PartName=\"/word/styles.xml\" \
+                      ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml\"/></Types>",
+                )
+                .into_bytes(),
+            "word/_rels/document.xml.rels" => String::from_utf8(data)
+                .expect("document rels")
+                .replace(
+                    "</Relationships>",
+                    "<Relationship Id=\"rIdStyles\" \
+                      Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" \
+                      Target=\"styles.xml\"/></Relationships>",
+                )
+                .into_bytes(),
+            _ => data,
+        };
+        zip.start_file(name, opts).unwrap();
+        zip.write_all(&data).unwrap();
+    }
+    if !have_rels {
+        zip.start_file("word/_rels/document.xml.rels", opts)
+            .unwrap();
+        zip.write_all(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+             <Relationship Id=\"rIdStyles\" \
+               Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" \
+               Target=\"styles.xml\"/></Relationships>"
+                .as_bytes(),
+        )
+        .unwrap();
+    }
+    zip.start_file("word/styles.xml", opts).unwrap();
+    zip.write_all(
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+             {DEFAULT_DOC_DEFAULTS}</w:styles>"
+        )
+        .as_bytes(),
+    )
+    .unwrap();
     zip.finish().unwrap().into_inner()
 }
 
@@ -2975,7 +3091,10 @@ fn compressed_punctuation_narrows_a_left_line_before_compat_15() {
         let settings = format!(
             r#"<w:characterSpacingControl w:val="{spacing}"/>{lang}<w:compat>{compat}<w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
         );
-        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("squeeze");
+        // The probes have no styles part; docDefaults rFonts in
+        // DEFAULT_DOC_DEFAULTS would switch the squeeze off.
+        let pdf =
+            docx_to_pdf_styleless(&minimal_docx_with_settings(&body, &settings)).expect("squeeze");
         let (_, a) = pdf_glyph_text_xy(&pdf, "ab").expect("first word");
         let (zx, z) = pdf_glyph_text_xy(&pdf, "Z").expect("last word");
         (a, z, zx)
@@ -3018,7 +3137,10 @@ fn compressed_punctuation_narrows_a_cell_line_before_compat_15() {
         let settings = format!(
             r#"<w:characterSpacingControl w:val="{spacing}"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
         );
-        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("cell squeeze");
+        // The probes have no styles part; docDefaults rFonts in
+        // DEFAULT_DOC_DEFAULTS would switch the squeeze off.
+        let pdf = docx_to_pdf_styleless(&minimal_docx_with_settings(&body, &settings))
+            .expect("cell squeeze");
         let (_, a) = pdf_glyph_text_xy(&pdf, "ab").expect("first word");
         let (_, z) = pdf_glyph_text_xy(&pdf, "Z").expect("last word");
         assert_eq!(
@@ -7328,7 +7450,9 @@ fn a_page_anchored_table_above_the_flow_starts_the_next_page() {
     // long table's own page count is not asserted, only where it starts
     // and that AfterTable follows its last row.
     for (rows, pages_want) in [(20, Some(2)), (58, None)] {
-        let pdf = docx_to_pdf(&minimal_docx_with_settings(&doc(rows), settings)).expect("float");
+        // The probe document has no styles part.
+        let pdf = docx_to_pdf_styleless(&minimal_docx_with_settings(&doc(rows), settings))
+            .expect("float");
         let pages = pdf_content_streams(&pdf);
         let page_of = |tag: &str| {
             pages
@@ -13917,7 +14041,8 @@ fn bordered_letter_table(tcpr: &str) -> (Vec<u8>, Vec<f32>) {
            <w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/>\
          </w:tblGrid><w:tr>{cells}</w:tr></w:tbl><w:sectPr/>"
     );
-    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert table");
+    // The #1716 probe documents have no styles part.
+    let pdf = docx_to_pdf_styleless(&minimal_docx_body(&body)).expect("convert table");
     let rules = pdf_vertical_rule_xs(&pdf);
     (pdf, rules)
 }
@@ -13944,10 +14069,9 @@ fn fixed_width_table_is_not_stretched_to_the_page() {
 
 #[test]
 fn a_bordered_autofit_table_without_tcw_shrinks_to_its_letters() {
-    // The same table with no tcW (#1716 probe fw). Word 16 fits each
-    // column to its letter: the right border is at 97.4, not 371.8. Word
-    // sets this styles-less body in Aptos 12 and jubarte in Calibri 11, so
-    // our letters, and the table, are a few points narrower.
+    // The same table with no tcW (#1716 probe fw, no styles part). Word 16
+    // fits each column to its letter: the right border is at 97.4, not
+    // 371.8. jubarte sets this styles-less body in Aptos 12, as Word does.
     let (_, rules) = bordered_letter_table("");
     let right = rules.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     assert!(
@@ -16201,10 +16325,12 @@ fn tblind_table_body() -> &'static str {
 
 #[test]
 fn tbl_ind_mode12_sits_at_indent_minus_cell_margin() {
-    // Word compat < 15: border at margin + tblInd - left cell margin. With
-    // no styles part that margin is 0.5pt: Word 16 draws this body's left
-    // rule at 143.28..143.76 and its text at 144.0 (2026-10-01).
-    let pdf = docx_to_pdf(&minimal_docx_body(tblind_table_body())).expect("convert tblInd");
+    // Word compat < 15: border at margin + tblInd - left cell margin. The
+    // probe has no styles part and its margin is 0.5pt: Word 16 draws this
+    // body's left rule at 143.28..143.76 and its text at 144.0 (2026-10-01).
+    // The probe document has no styles part (its cell margin is 0.5pt).
+    let pdf =
+        docx_to_pdf_styleless(&minimal_docx_body(tblind_table_body())).expect("convert tblInd");
     let rules = pdf_vertical_rule_xs(&pdf);
     assert!(
         rules.iter().any(|x| (*x - 143.5).abs() < 0.3),
@@ -32848,7 +32974,9 @@ fn a_cell_margins_start_and_end_are_its_left_and_right() {
             letter_body_sect()
         );
         let settings = r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="14"/></w:compat>"#;
-        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("start/end");
+        // The s1-s5 probe documents have no styles part.
+        let pdf =
+            docx_to_pdf_styleless(&minimal_docx_with_settings(&body, settings)).expect("start/end");
         pdf_glyph_text_xy(&pdf, "QQ").expect("QQ").0
     };
     let start = r#"<w:tblCellMar><w:start w:w="288" w:type="dxa"/><w:end w:w="288" w:type="dxa"/></w:tblCellMar>"#;
@@ -32889,7 +33017,9 @@ fn an_unstyled_tables_cells_pad_half_a_point_on_every_side() {
         let settings = format!(
             r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
         );
-        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("unstyled");
+        // The p1/p3 probe documents have no styles part.
+        let pdf =
+            docx_to_pdf_styleless(&minimal_docx_with_settings(&body, &settings)).expect("unstyled");
         let rules = pdf_vertical_rule_xs(&pdf);
         assert!(
             rules.iter().any(|x| (x - rule).abs() < 0.3),
@@ -34675,7 +34805,8 @@ fn tblw_pct_sixty_stretches_narrow_grid() {
            </w:tr></w:tbl>\
          <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
            <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
-    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert pct table");
+    // Word ran this body with no styles part.
+    let pdf = docx_to_pdf_styleless(&minimal_docx_body(body)).expect("convert pct table");
     let xs = pdf_vertical_rule_xs(&pdf);
     // 60% of 468 is 280.8 from the margin: with no styles part nothing
     // pulls the table left. Word itself runs this exact body 72.0-353.76
@@ -40891,7 +41022,7 @@ fn a_leading_empty_footer_paragraph_raises_the_body_floor() {
     // top is its full height above w:footer and the body stops there;
     // the empty paragraph was dropped and every page took one extra
     // line. Three empties: 36 + 3 + 5×13.8 = 108pt. (sd_2517's footer
-    // style has after=0; this styles-less fixture states it.)
+    // style has after=0; this fixture states it and converts styleless.)
     let sp = "<w:spacing w:after=\"0\"/>";
     let times = "<w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
          <w:sz w:val=\"24\"/></w:rPr>";
@@ -40912,7 +41043,7 @@ fn a_leading_empty_footer_paragraph_raises_the_body_floor() {
            <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
              w:header=\"720\" w:footer=\"720\"/></w:sectPr>",
     );
-    let pdf = docx_to_pdf(&hf_docx(
+    let pdf = docx_to_pdf_styleless(&hf_docx(
         &body,
         &[("rIdF1", "footer", "footer1.xml")],
         &[("word/footer1.xml", footer)],
@@ -41255,7 +41386,7 @@ fn a_header_of_only_empty_paragraphs_still_pushes_the_body() {
     // fixtures_500 0003b3ae: the blank first-page header is three empty
     // paragraphs. Word stacks them from w:header (36pt) down, so the body
     // starts at 36 + 3 × 13.8 = 77.4pt, below the 72pt margin. (Its styles
-    // have after=0; this styles-less fixture states it.)
+    // have after=0; this fixture states it and converts styleless.)
     let sp = "<w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>";
     let times = "<w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
          <w:sz w:val=\"24\"/></w:rPr>";
@@ -41271,7 +41402,7 @@ fn a_header_of_only_empty_paragraphs_still_pushes_the_body() {
            <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
              w:header=\"720\" w:footer=\"720\"/></w:sectPr>"
     );
-    let pdf = docx_to_pdf(&hf_docx(
+    let pdf = docx_to_pdf_styleless(&hf_docx(
         &body,
         &[("rIdH1", "header", "header1.xml")],
         &[("word/header1.xml", header)],
@@ -41782,7 +41913,8 @@ fn cell_picture_table(tcpr: [&str; 2], pic: &str) -> (Vec<u8>, Vec<f32>) {
            <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
         tcpr[0], tcpr[1]
     );
-    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert cell picture");
+    // The #1716 probe documents have no styles part.
+    let pdf = docx_to_pdf_styleless(&drawing_docx(&body)).expect("convert cell picture");
     let rules = pdf_vertical_rule_xs(&pdf);
     (pdf, rules)
 }
@@ -41828,10 +41960,10 @@ fn an_autofit_cell_without_tcw_fits_its_column_to_its_picture() {
     // each column to its content and counts the picture: the label column
     // ends just after "Label" (101.5) and the picture column is as wide as
     // the picture, so the table ends at 222.5 and the centred picture
-    // starts at its column's edge, 102.2. Word sets this styles-less body
-    // in Aptos 12 and jubarte in Calibri 11, so our "Label", and the table,
-    // are a few points narrower. Not counting the picture left its column
-    // a sliver: the table ended at 97.4 with the picture hanging out of it.
+    // starts at its column's edge, 102.2. jubarte sets this styles-less
+    // body in Aptos 12, as Word does (#1725). Not counting the picture left
+    // its column a sliver: the table ended at 97.4 with the picture
+    // hanging out of it.
     let (x, y, right) = column_centred_cell_picture(["", ""]);
     assert!(
         (90.0..=110.0).contains(&x),
@@ -44130,7 +44262,8 @@ fn bordered_autofit_table(grid: &[u32], rows: &str) -> (Vec<u8>, Vec<f32>) {
          <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" \
          w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
     );
-    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("bordered autofit table");
+    // The #1716/#1732 probe documents have no styles part.
+    let pdf = docx_to_pdf_styleless(&minimal_docx_body(&body)).expect("bordered autofit table");
     let mut rules = pdf_vertical_rule_xs(&pdf);
     rules.sort_by(f32::total_cmp);
     rules.dedup_by(|a, b| (*a - *b).abs() < 0.5);
@@ -44320,9 +44453,9 @@ fn a_column_reached_only_through_a_widthless_spanning_cell_fits_its_content() {
     // is a single cell spanning both columns, no tcW, "Title words". No
     // other cell gives either column a width: Word fits the table to the
     // two words, its right border at 128.6, where the grid ends at 491.8.
-    // jubarte's fit ends 6pt short of Word's, as on probe o3: Word sets
-    // a document without a styles part in Aptos 12, jubarte in Calibri 11
-    // (#1725).
+    // jubarte's fit runs short of Word's, as on probe o3: Word sets a
+    // document without a styles part in Aptos 12, and after #1725 so does
+    // jubarte.
     let rows = format!(
         "<w:tr><w:tc><w:tcPr><w:gridSpan w:val=\"2\"/></w:tcPr>{}</w:tc></w:tr>",
         text_para("Title words")
@@ -44491,8 +44624,9 @@ fn an_autofit_table_whose_rows_outrun_its_grid_fits_as_word_does() {
     // would move it away from Word. g2, no tcW anywhere: Word fits the
     // second column to the margin (540.2). g1, the second column with a
     // dxa tcW 6000 in every row: Word fits the first column to LABEL:
-    // (37.6pt in its Aptos 12, #1725) and gives the second its 300pt;
-    // jubarte widens the second to the margin until #1733.
+    // (37.6pt in Aptos 12, the styles-less default since #1725) and gives
+    // the second its 300pt; jubarte widens the second to the margin until
+    // #1733.
     let cell = |w: Option<u32>, text: &str| {
         let tcw = w.map_or(String::new(), |w| {
             format!("<w:tcW w:w=\"{w}\" w:type=\"dxa\"/>")
@@ -45084,6 +45218,51 @@ fn a_styles_part_without_default_properties_takes_words_built_in_ones() {
     assert!(
         step < 14.0 && !aptos,
         "empty default properties stay single-spaced without Aptos, got {step}"
+    );
+}
+
+#[test]
+fn a_package_without_a_styles_part_takes_words_built_in_ones() {
+    // #1725: no styles.xml at all. Word 16 seeds the same built-in defaults
+    // as a styles part without pPrDefault / rPrDefault (Aptos 12pt, kern
+    // 1pt, after=160 line=278), so a package of only word/document.xml lays
+    // out exactly like the same package plus an empty <w:styles/>.
+    let body = "<w:p><w:r><w:t>ParaOneQ ©</w:t></w:r></w:p>\
+        <w:p><w:r><w:t>ParaTwoQ</w:t></w:r></w:p><w:sectPr/>";
+    let empty_styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"/>";
+    let no_styles =
+        docx_to_pdf_styleless(&numbering_docx_with_styles(body, None, None)).expect("no styles");
+    let with_styles =
+        docx_to_pdf(&numbering_docx_with_styles(body, None, Some(empty_styles))).expect("styles");
+    for (which, pdf) in [
+        ("no styles part", &no_styles),
+        ("empty styles part", &with_styles),
+    ] {
+        let text = String::from_utf8_lossy(pdf);
+        assert!(
+            text.contains("Aptos"),
+            "{which}: Word's built-in family paints the run"
+        );
+        assert!(
+            !pdf_tf_xs(pdf, "12.00 Tf").is_empty(),
+            "{which}: Word's built-in size is 12pt"
+        );
+    }
+    // Same layout: same baselines, same paragraph step (line 278, after 8).
+    let one = pdf_glyph_text_xy(&no_styles, "ParaOneQ").expect("para one");
+    let two = pdf_glyph_text_xy(&no_styles, "ParaTwoQ").expect("para two");
+    let styled_one = pdf_glyph_text_xy(&with_styles, "ParaOneQ").expect("para one");
+    let styled_two = pdf_glyph_text_xy(&with_styles, "ParaTwoQ").expect("para two");
+    assert_eq!(
+        one, styled_one,
+        "the first baseline matches the empty-styles package"
+    );
+    assert!(
+        ((one.1 - two.1) - (styled_one.1 - styled_two.1)).abs() < 0.01,
+        "the paragraph step matches: {} vs {}",
+        one.1 - two.1,
+        styled_one.1 - styled_two.1
     );
 }
 
@@ -49258,8 +49437,11 @@ fn balanced_spaces_take_the_east_asia_faces_average_width() {
         + "<w:sectPr/>";
     let flag = "<w:compat><w:balanceSingleByteDoubleByteWidth/>\
         <w:compatSetting w:name=\"compatibilityMode\" w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
+    // sp1-sp5 carry no styles part: only that shape turns Word's East
+    // Asian layout on without a named default eastAsia face.
     let gaps = |settings: &str| -> Vec<f32> {
-        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("balanced");
+        let pdf =
+            docx_to_pdf_styleless(&minimal_docx_with_settings(&body, settings)).expect("balanced");
         let x = |w: &str| pdf_glyph_text_xy(&pdf, w).expect(w).0;
         vec![
             x("Bb") - x("Aa"),
@@ -49329,7 +49511,9 @@ fn an_absent_east_asia_face_borrows_only_its_own_kind() {
         + "<w:sectPr/>";
     let settings = "<w:compat><w:balanceSingleByteDoubleByteWidth/>\
         <w:compatSetting w:name=\"compatibilityMode\" w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
-    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("kinds");
+    // sp9 has no styles part either: styles turn the East Asian layout
+    // off unless a default eastAsia face is named.
+    let pdf = docx_to_pdf_styleless(&minimal_docx_with_settings(&body, settings)).expect("kinds");
     let x = |w: &str| pdf_glyph_text_xy(&pdf, w).expect(w).0;
     // Aa: Arial A .667 + a .556 at 16pt; Cc: TNR C .667 + c .444 at 14pt;
     // Ee: Arial E .667 + e .556 at 12pt.
