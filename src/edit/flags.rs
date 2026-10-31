@@ -170,6 +170,7 @@ pub fn plan_from_flags(
             operations,
             update_fields: false,
             rewrite_others_comments: false,
+            others: super::Others::Allow,
         },
         notes,
     })
@@ -784,6 +785,9 @@ pub(crate) fn record_into(plan: Option<EditPlan>, more: EditPlan) -> Result<Edit
     plan.operations.extend(more.operations);
     // A permission recorded once holds for the whole plan.
     plan.rewrite_others_comments |= more.rewrite_others_comments;
+    if more.others.keeps() {
+        plan.others = super::Others::Keep;
+    }
     // The merged plan is previewed against `more`'s source before it is
     // written, so an unpinned plan may take that pin.
     plan.source_sha256 = plan.source_sha256.or(more.source_sha256);

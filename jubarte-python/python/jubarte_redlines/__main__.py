@@ -483,18 +483,34 @@ def _read_task(args: argparse.Namespace) -> int:
 _DOCX_NEEDS_MARKDOWN = "--to docx requires Markdown input in the Python CLI"
 
 
+def _keep_others(args: argparse.Namespace) -> bool:
+    """The guard is on: ``--keep-others``, or exactly ``JUBARTE_KEEP_OTHERS=1``.
+
+    The environment is read here, in the CLI, and nowhere in the library.
+    Any other value leaves the guard off.
+    """
+    return bool(getattr(args, "keep_others", False)) or os.environ.get("JUBARTE_KEEP_OTHERS") == "1"
+
+
 def _edit_plan(args: argparse.Namespace, verb: str, source: bytes) -> tuple[str, list[str]]:
     """``--plan``'s text, or the plan the operation flags describe, and its
-    notes; ``--rewrite-others-comments`` sets the plan's field."""
+    notes. ``--rewrite-others-comments`` still sets its field (a no-op).
+    ``--keep-others`` and ``JUBARTE_KEEP_OTHERS=1`` set ``"others": "keep"``."""
     plan, notes = _edit_plan_as_given(args, verb, source)
-    if getattr(args, "rewrite_others_comments", False):
-        try:
-            parsed = json.loads(plan)
-        except ValueError:
-            return plan, notes  # reported as INVALID_PLAN when applied
-        if isinstance(parsed, dict):
+    rewrite = bool(getattr(args, "rewrite_others_comments", False))
+    keep = _keep_others(args)
+    if not rewrite and not keep:
+        return plan, notes
+    try:
+        parsed = json.loads(plan)
+    except ValueError:
+        return plan, notes  # reported as INVALID_PLAN when applied
+    if isinstance(parsed, dict):
+        if rewrite:
             parsed["rewrite_others_comments"] = True
-            plan = json.dumps(parsed, ensure_ascii=False)
+        if keep:
+            parsed["others"] = "keep"
+        plan = json.dumps(parsed, ensure_ascii=False)
     return plan, notes
 
 
@@ -627,6 +643,9 @@ def _record(args: argparse.Namespace, verb: str, doc: Document) -> int:
         "dryRun": dry_run,
         "rewriteOthersComments": bool(getattr(args, "rewrite_others_comments", False)),
     }
+    # Only when set: an engine that predates the field rejects an unknown key.
+    if _keep_others(args):
+        options["keepOthers"] = True
     try:
         recorded = json.loads(
             _native.record_plan(

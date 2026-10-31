@@ -271,6 +271,9 @@ pub struct NextAction {
     /// Human-readable purpose.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub purpose: Option<String>,
+    /// The action erases another author's markup. Omitted when it does not.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub destructive: bool,
 }
 
 impl NextAction {
@@ -280,7 +283,15 @@ impl NextAction {
             argv,
             prerequisites: None,
             purpose: None,
+            destructive: false,
         }
+    }
+
+    /// Mark the action as erasing another author's markup.
+    #[must_use]
+    pub fn with_destructive(mut self) -> Self {
+        self.destructive = true;
+        self
     }
 
     /// Set the purpose string.

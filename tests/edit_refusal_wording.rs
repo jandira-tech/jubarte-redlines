@@ -23,30 +23,42 @@ const STAMP: &str = r#"w:id="7" w:author="Alice" w:date="2026-10-17T00:00:00Z""#
 /// The accept and reject routes' labels and costs, by what the revision did.
 type Routes = [(&'static str, &'static str); 2];
 const MOVED: Routes = [
-    ("keep the move", "the words stay where they moved, unmarked"),
     (
-        "undo it silently",
+        r#"keep the move (erases "Alice"'s move)"#,
+        "the words stay where they moved, unmarked",
+    ),
+    (
+        r#"undo it silently (erases "Alice"'s move)"#,
         "the words go back where they were, no trace",
     ),
 ];
 const DELETED: Routes = [
-    ("let it go", "their words leave the document for good"),
     (
-        "put it back silently",
+        r#"let it go (erases "Alice"'s deletion)"#,
+        "their words leave the document for good",
+    ),
+    (
+        r#"put it back silently (erases "Alice"'s deletion)"#,
         "their deletion disappears, no trace",
     ),
 ];
 const INSERTED: Routes = [
-    ("keep it", "their words stay, unmarked"),
     (
-        "take it out silently",
+        r#"keep it (erases "Alice"'s insertion)"#,
+        "their words stay, unmarked",
+    ),
+    (
+        r#"take it out silently (erases "Alice"'s insertion)"#,
         "their insertion disappears, no trace",
     ),
 ];
 const FORMATTED: Routes = [
-    ("keep their formatting", "their formatting stays, unmarked"),
     (
-        "undo it silently",
+        r#"keep their formatting (erases "Alice"'s formatting)"#,
+        "their formatting stays, unmarked",
+    ),
+    (
+        r#"undo it silently (erases "Alice"'s formatting)"#,
         "the old formatting comes back, no trace",
     ),
 ];
@@ -471,17 +483,34 @@ fn check(site: &str, syntax: &str) {
         error["message"].as_str().unwrap().to_string()
     };
     // The revision, then accept, reject and a comment, each with its cost,
-    // lined up in two columns.
+    // lined up in two columns. An insertion also offers strike first, where
+    // the syntax has it: their insertion stays, with your deletion showing.
     let lines: Vec<&str> = message.lines().collect();
-    assert_eq!(lines.len(), 4, "{message}");
+    let strike_line = c.verb == "inserted" && matches!(syntax, "library" | "v1" | "flags");
+    assert_eq!(lines.len(), if strike_line { 5 } else { 4 }, "{message}");
     assert_eq!(lines[0], header(&c, syntax), "{message}");
+    let route_lines: Vec<&str> = if strike_line {
+        let (label, fragment, cost, _, _) = route(lines[1]);
+        assert_eq!(
+            (label, cost),
+            (
+                "strike it",
+                Some("their insertion stays, your deletion shows")
+            ),
+            "{message}"
+        );
+        assert!(fragment.contains("strike"), "{message}");
+        lines[2..].to_vec()
+    } else {
+        lines[1..].to_vec()
+    };
     let [accept, reject] = c.routes;
     let wanted = [
         (accept.0, settle(&c, "accept", syntax), Some(accept.1)),
         (reject.0, settle(&c, "reject", syntax), Some(reject.1)),
         ("or comment on it", comment(&c, syntax), None),
     ];
-    let routes: Vec<_> = lines[1..].iter().map(|line| route(line)).collect();
+    let routes: Vec<_> = route_lines.iter().map(|line| route(line)).collect();
     for ((label, fragment, cost, _, _), (want_label, want_fragment, want_cost)) in
         routes.iter().zip(&wanted)
     {
@@ -505,14 +534,39 @@ fn check(site: &str, syntax: &str) {
         let actions = error["next_actions"]
             .as_array()
             .expect("both structured review choices");
-        assert_eq!(actions.len(), 2);
-        for (action, key) in actions.iter().zip(["accept", "reject"]) {
+        // Another author's deletion or insertion lists the keeping move
+        // first. Accept and reject stay, and each is marked destructive.
+        let keeping = match c.verb {
+            "deleted" => Some("restore"),
+            "inserted" => Some("strike"),
+            _ => None,
+        };
+        let settle_from = usize::from(keeping.is_some());
+        assert_eq!(actions.len(), 2 + settle_from, "{actions:?}");
+        if let Some(flag) = keeping {
+            let argv = actions[0]["argv"]
+                .as_array()
+                .expect("argv array, never shell text");
+            assert!(argv.contains(&json!(format!("--{flag}"))), "{actions:?}");
+            assert!(!argv.iter().any(|arg| arg == "template"), "{actions:?}");
+        }
+        let settle = &actions[settle_from..];
+        for (action, key) in settle.iter().zip(["accept", "reject"]) {
             let argv = action["argv"]
                 .as_array()
                 .expect("argv array, never shell text");
             assert!(argv.iter().all(Value::is_string));
             assert!(argv.contains(&json!(format!("--{key}-change"))));
             assert!(argv.contains(&json!(short(&c))));
+            assert_eq!(action["destructive"], true, "{action}");
+        }
+        if c.verb == "deleted" {
+            let purpose = settle[1]["purpose"].as_str().unwrap();
+            assert!(
+                purpose.contains("rejecting erases their change"),
+                "{purpose}"
+            );
+            assert!(!purpose.contains("restores the deleted"), "{purpose}");
         }
     }
     match syntax {
@@ -798,6 +852,7 @@ fn structured_choices(syntax: &str) {
                 .unwrap()
                 .contains(if key == "accept" { c.accept } else { c.reject })
         );
+        assert_eq!(action["destructive"], true, "{action}");
         let generated = Command::new(env!("CARGO_BIN_EXE_jubarte"))
             .current_dir(dir.path())
             .args(&argv[1..])

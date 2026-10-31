@@ -1319,13 +1319,18 @@ pub enum Command {
         /// Reply to comment c5 (with -p c5), as `add -p c5 --content`.
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
         reply: Vec<String>,
-        /// Let `-p c5 --content`, `--delete` and `--resolve` change a comment
-        /// another author wrote (a reworded one keeps their name), and
-        /// `--delete` take their reply with your thread. Without it that is
-        /// refused (COMMENT_NOT_YOURS): one author answers another with
-        /// --reply.
-        #[arg(long)]
+        /// Accepted and ignored. Deleting, resolving or rewording another
+        /// author's comment is allowed unless --keep-others is set. Kept so
+        /// older scripts still parse.
+        #[arg(long, hide = true)]
         rewrite_others_comments: bool,
+        /// Refuse to accept or reject another author's tracked change, and
+        /// to delete, resolve, reopen or reword their comment. Restore,
+        /// strike, a comment and a reply stay allowed. JUBARTE_KEEP_OTHERS=1
+        /// sets the same guard. Another author is anyone other than
+        /// --author (Jubarte when --author is left out).
+        #[arg(long)]
+        keep_others: bool,
         /// Accept revision r12 (with -p r12; r1+2 for several); prints the
         /// resolved change (`accepted r1+2 in p3: "from" > "to"`).
         #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
@@ -1441,6 +1446,14 @@ pub enum Command {
         /// Reply to comment c5 (with -p c5); the same as --content there.
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
         reply: Vec<String>,
+        /// Refuse to accept or reject another author's tracked change, and
+        /// to delete, resolve, reopen or reword their comment, when this
+        /// command applies or records a plan. Restore, strike, a comment
+        /// and a reply stay allowed. JUBARTE_KEEP_OTHERS=1 sets the same
+        /// guard. Another author is anyone other than --author (Jubarte
+        /// when --author is left out).
+        #[arg(long)]
+        keep_others: bool,
         /// A new paragraph before WHERE instead of after it.
         #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
         before: Vec<bool>,

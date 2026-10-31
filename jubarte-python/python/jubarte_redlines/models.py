@@ -766,12 +766,14 @@ class EditPlan:
     operations: tuple[dict[str, object], ...] = ()
     resolve_revisions: dict[str, dict[str, list[str]]] | None = None
     update_fields: bool = False
-    #: Let ``edit_comment``, ``delete_comment`` and ``resolve_comment``
-    #: change another author's comment (a reworded one keeps their name), and
-    #: a delete take another author's reply with its thread. Without it that
-    #: is refused (``COMMENT_NOT_YOURS``): one author answers another with
-    #: ``reply_comment``.
+    #: Accepted and ignored. Deleting, resolving or rewording another
+    #: author's comment is allowed unless ``others`` is ``"keep"``.
     rewrite_others_comments: bool = False
+    #: ``"keep"`` refuses to erase another author's change
+    #: (``CHANGE_NOT_YOURS``) or comment (``COMMENT_NOT_YOURS``). Absent or
+    #: ``"allow"`` permits both. Restore, strike, a comment and a reply stay
+    #: allowed either way.
+    others: Literal["keep", "allow"] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.author, str) or not self.author.strip():
@@ -780,6 +782,8 @@ class EditPlan:
             raise TypeError("update_fields must be a bool")
         if not isinstance(self.rewrite_others_comments, bool):
             raise TypeError("rewrite_others_comments must be a bool")
+        if self.others is not None and self.others not in ("keep", "allow"):
+            raise ValueError("others must be keep, allow or omitted")
         if self.existing_revisions not in ("refuse", "accept", "reject", "keep"):
             raise ValueError("existing_revisions must be refuse, accept, reject or keep")
 
@@ -1052,8 +1056,8 @@ class EditPlan:
     def resolve_comment(self, comment_id: int, *, done: bool = True, id: str | None = None) -> EditPlan:
         """Resolve comment ``comment_id`` and its replies; ``done=False`` reopens them.
 
-        Another author's comment is refused (``COMMENT_NOT_YOURS``) unless the
-        plan sets ``rewrite_others_comments``.
+        Another author's comment is allowed. ``others="keep"`` refuses it
+        (``COMMENT_NOT_YOURS``): reply instead.
         """
         op: dict[str, object] = {"kind": "resolve_comment", "comment_id": comment_id, "done": done}
         return self._with(_with_optional(op, id=id))
@@ -1061,8 +1065,8 @@ class EditPlan:
     def edit_comment(self, comment_id: int, *, text: str, id: str | None = None) -> EditPlan:
         """Replace the text of comment ``comment_id``; its author, date and thread stay.
 
-        Another author's comment is refused (``COMMENT_NOT_YOURS``) unless the
-        plan sets ``rewrite_others_comments``.
+        Another author's comment is allowed and noted. ``others="keep"``
+        refuses it (``COMMENT_NOT_YOURS``): reply instead.
         """
         op: dict[str, object] = {"kind": "edit_comment", "comment_id": comment_id, "text": text}
         return self._with(_with_optional(op, id=id))
@@ -1071,8 +1075,8 @@ class EditPlan:
         """Remove comment ``comment_id`` with its replies and anchors.
 
         Another author's comment, or one of yours whose thread holds another
-        author's reply, is refused (``COMMENT_NOT_YOURS``) unless the plan
-        sets ``rewrite_others_comments``.
+        author's reply, is allowed and noted. ``others="keep"`` refuses it
+        (``COMMENT_NOT_YOURS``): reply, or resolve your own thread.
         """
         op: dict[str, object] = {"kind": "delete_comment", "comment_id": comment_id}
         return self._with(_with_optional(op, id=id))
@@ -1294,6 +1298,8 @@ class EditPlan:
             wire["update_fields"] = True
         if self.rewrite_others_comments:
             wire["rewrite_others_comments"] = True
+        if self.others == "keep":
+            wire["others"] = "keep"
         return wire
 
     def to_json(self) -> str:

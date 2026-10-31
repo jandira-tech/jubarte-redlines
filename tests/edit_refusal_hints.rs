@@ -41,10 +41,10 @@ fn deletion_hint_offers_restore_first_then_both_settles_then_comment() {
         e.message,
         [
             r#"the text is inside r4, "bankers" deleted by "Bob"."#,
-            r#"  put it back visibly:  {"kind":"restore","revision":"r4"}            (their deletion stays, your insertion shows)"#,
-            r#"  let it go:            "resolve_revisions":{"accept":{"ids":["r4"]}} (their words leave the document for good)"#,
-            r#"  put it back silently: "resolve_revisions":{"reject":{"ids":["r4"]}} (their deletion disappears, no trace)"#,
-            r#"  or comment on it:     {"kind":"comment","paragraph":"p0","find":"…","text":"…"}"#,
+            r#"  put it back visibly:                            {"kind":"restore","revision":"r4"}            (their deletion stays, your insertion shows)"#,
+            r#"  let it go (erases "Bob"'s deletion):            "resolve_revisions":{"accept":{"ids":["r4"]}} (their words leave the document for good)"#,
+            r#"  put it back silently (erases "Bob"'s deletion): "resolve_revisions":{"reject":{"ids":["r4"]}} (their deletion disappears, no trace)"#,
+            r#"  or comment on it:                               {"kind":"comment","paragraph":"p0","find":"…","text":"…"}"#,
         ]
         .join("\n")
     );
@@ -129,7 +129,7 @@ fn a_deletion_restore_cannot_take_offers_no_visible_route() {
             .lines()
             .nth(1)
             .unwrap()
-            .starts_with("  let it go:"),
+            .starts_with(r#"  let it go (erases "Bob"'s deletion):"#),
         "{e}"
     );
     assert!(!e.message.contains("restore"), "{e}");
@@ -155,9 +155,15 @@ fn move_hint_names_the_move_and_its_routes() {
             format!(r#"the text is inside r6, "beta" {verb} by "Alice"."#),
             "{kind}: {e}"
         );
-        assert!(lines[1].starts_with("  keep the move:"), "{e}");
+        assert!(
+            lines[1].starts_with(r#"  keep the move (erases "Alice"'s move):"#),
+            "{e}"
+        );
         assert!(lines[1].contains(r#"{"accept":{"ids":["r6"]}}"#), "{e}");
-        assert!(lines[2].starts_with("  undo it silently:"), "{e}");
+        assert!(
+            lines[2].starts_with(r#"  undo it silently (erases "Alice"'s move):"#),
+            "{e}"
+        );
         assert!(lines[2].contains(r#"{"reject":{"ids":["r6"]}}"#), "{e}");
         assert!(lines[3].starts_with("  or comment on it:"), "{e}");
     }
@@ -193,9 +199,9 @@ fn a_tracked_formatting_change_is_named_with_its_routes() {
         e.message,
         [
             r#"under keep, a paragraph whose formatting change is still tracked cannot be formatted again: that change is r9, "alpha beta" reformatted by "Alice"."#,
-            r#"  keep their formatting: "resolve_revisions":{"accept":{"ids":["r9"]}} (their formatting stays, unmarked)"#,
-            r#"  undo it silently:      "resolve_revisions":{"reject":{"ids":["r9"]}} (the old formatting comes back, no trace)"#,
-            r#"  or comment on it:      {"kind":"comment","paragraph":"p0","find":"…","text":"…"}"#,
+            r#"  keep their formatting (erases "Alice"'s formatting): "resolve_revisions":{"accept":{"ids":["r9"]}} (their formatting stays, unmarked)"#,
+            r#"  undo it silently (erases "Alice"'s formatting):      "resolve_revisions":{"reject":{"ids":["r9"]}} (the old formatting comes back, no trace)"#,
+            r#"  or comment on it:                                    {"kind":"comment","paragraph":"p0","find":"…","text":"…"}"#,
         ]
         .join("\n")
     );
@@ -249,7 +255,10 @@ fn a_tracked_mark_is_named_without_text() {
         lines[0],
         r#"under keep, a paragraph whose mark is already tracked cannot be merged: that mark is r7, inserted by "Bob"."#
     );
-    assert!(lines[1].starts_with("  keep it:"), "{e}");
+    assert!(
+        lines[1].starts_with(r#"  keep it (erases "Bob"'s insertion):"#),
+        "{e}"
+    );
     assert!(!e.message.contains("first with resolve_revisions"), "{e}");
 }
 

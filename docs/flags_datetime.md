@@ -93,6 +93,7 @@ Replace exact literal text; without --at, search one declared story
 | `--dry-run` |  |  | false |  | conflicts --out-dir --output --save-plan | Prepare and validate the actual candidate; write no files |
 | `--require-change` |  |  | false |  |  | Require a primary document change, independently of derived artifacts |
 | `--force` |  |  | false |  |  | Replace an explicitly named existing output; never overwrite an input |
+| `--keep-others` |  |  | false |  |  | Refuse to accept or reject another author's tracked change, and to delete, resolve, reopen or reword their comment. Restore, strike, a comment and a reply stay allowed. JUBARTE_KEEP_OTHERS=1 sets the same guard. Another author is anyone other than --author (Jubarte when --author is left out) |
 | `--json` |  |  | false |  | conflicts --jsonl | One result envelope, including empty results and refusals |
 | `--jsonl` |  |  | false |  | conflicts --json | Header and exactly one terminal result |
 | `--find` |  | <FIND> |  |  | required | Exact nonempty literal text |
@@ -129,6 +130,7 @@ Set exact desired paragraph text; an empty value retains the paragraph
 | `--dry-run` |  |  | false |  | conflicts --out-dir --output --save-plan | Prepare and validate the actual candidate; write no files |
 | `--require-change` |  |  | false |  |  | Require a primary document change, independently of derived artifacts |
 | `--force` |  |  | false |  |  | Replace an explicitly named existing output; never overwrite an input |
+| `--keep-others` |  |  | false |  |  | Refuse to accept or reject another author's tracked change, and to delete, resolve, reopen or reword their comment. Restore, strike, a comment and a reply stay allowed. JUBARTE_KEEP_OTHERS=1 sets the same guard. Another author is anyone other than --author (Jubarte when --author is left out) |
 | `--json` |  |  | false |  | conflicts --jsonl | One result envelope, including empty results and refusals |
 | `--jsonl` |  |  | false |  | conflicts --json | Header and exactly one terminal result |
 | `--at` |  | <AT> |  |  | required | Original paragraph ID |
@@ -160,6 +162,7 @@ Insert an explicitly typed text or paragraph payload
 | `--dry-run` |  |  | false |  | conflicts --out-dir --output --save-plan | Prepare and validate the actual candidate; write no files |
 | `--require-change` |  |  | false |  |  | Require a primary document change, independently of derived artifacts |
 | `--force` |  |  | false |  |  | Replace an explicitly named existing output; never overwrite an input |
+| `--keep-others` |  |  | false |  |  | Refuse to accept or reject another author's tracked change, and to delete, resolve, reopen or reword their comment. Restore, strike, a comment and a reply stay allowed. JUBARTE_KEEP_OTHERS=1 sets the same guard. Another author is anyone other than --author (Jubarte when --author is left out) |
 | `--json` |  |  | false |  | conflicts --jsonl | One result envelope, including empty results and refusals |
 | `--jsonl` |  |  | false |  | conflicts --json | Header and exactly one terminal result |
 | `--kind` |  | <KIND> |  | text, paragraph | required | Object type; position never infers the kind |
@@ -197,6 +200,7 @@ Delete one exact range, or explicitly delete a whole paragraph
 | `--dry-run` |  |  | false |  | conflicts --out-dir --output --save-plan | Prepare and validate the actual candidate; write no files |
 | `--require-change` |  |  | false |  |  | Require a primary document change, independently of derived artifacts |
 | `--force` |  |  | false |  |  | Replace an explicitly named existing output; never overwrite an input |
+| `--keep-others` |  |  | false |  |  | Refuse to accept or reject another author's tracked change, and to delete, resolve, reopen or reword their comment. Restore, strike, a comment and a reply stay allowed. JUBARTE_KEEP_OTHERS=1 sets the same guard. Another author is anyone other than --author (Jubarte when --author is left out) |
 | `--json` |  |  | false |  | conflicts --jsonl | One result envelope, including empty results and refusals |
 | `--jsonl` |  |  | false |  | conflicts --json | Header and exactly one terminal result |
 | `--at` |  | <AT> |  |  | required | Original paragraph ID; mandatory even for a range deletion |
@@ -222,6 +226,7 @@ Apply only: never record into, consume, or rewrite the plan
 | `--dry-run` |  |  | false |  | conflicts --out-dir --output | Prepare and validate the actual candidate; write no files |
 | `--require-change` |  |  | false |  |  | Require a primary document change, independently of derived artifacts |
 | `--force` |  |  | false |  |  | Replace an explicitly named existing output; never overwrite an input |
+| `--keep-others` |  |  | false |  |  | Refuse to accept or reject another author's tracked change, and to delete, resolve, reopen or reword their comment. Restore, strike, a comment and a reply stay allowed. JUBARTE_KEEP_OTHERS=1 sets the same guard. Another author is anyone other than --author (Jubarte when --author is left out) |
 | `--json` |  |  | false |  | conflicts --jsonl | One result envelope, including empty results and refusals |
 | `--jsonl` |  |  | false |  | conflicts --json | Header and exactly one terminal result |
 | `-o, --output` |  | <FILE> |  |  | conflicts --dry-run --out-dir | Primary edited DOCX; required unless bundling or dry-running |
@@ -257,6 +262,7 @@ Generate a source-bound JSON plan without applying edits
 | `-d, --datetime` |  | <DATETIME> |  |  |  | Frozen timestamp; default current UTC |
 | `--track` |  | <TRACK> | on | on, off |  | Track new edits when the plan is applied |
 | `--existing-revisions` |  | <EXISTING_REVISIONS> | keep | keep, accept, reject, refuse |  | Remaining history after the explicitly selected decisions |
+| `--keep-others` |  |  | false |  |  | Refuse to accept or reject another author's tracked change, and to delete, resolve, reopen or reword their comment. Restore, strike, a comment and a reply stay allowed. JUBARTE_KEEP_OTHERS=1 sets the same guard. Another author is anyone other than --author (Jubarte when --author is left out). The generated plan carries `"others": "keep"` |
 | `--expect-sha256` |  | <HASH> |  |  |  | Require these exact source bytes |
 | `--dry-run` |  |  | false |  |  | Report coverage and readiness; write no files. No -o required |
 | `--report` |  | <FILE> |  |  |  | Explicit receipt path (not another plan); not written during dry-run |
@@ -486,7 +492,8 @@ Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply
 | `--delete` |  |  |  |  | append | Delete the anchor, or the whole paragraph (or comment) without one |
 | `--resolve` |  |  |  |  | append | Resolve comment c5 (with -p c5) |
 | `--reply` |  | <TEXT> |  |  | append | Reply to comment c5 (with -p c5), as `add -p c5 --content` |
-| `--rewrite-others-comments` |  |  | false |  |  | Let `-p c5 --content`, `--delete` and `--resolve` change a comment another author wrote (a reworded one keeps their name), and `--delete` take their reply with your thread. Without it that is refused (COMMENT_NOT_YOURS): one author answers another with --reply |
+| `--rewrite-others-comments` |  |  | false |  | hidden | Accepted and ignored. Deleting, resolving or rewording another author's comment is allowed unless --keep-others is set. Kept so older scripts still parse |
+| `--keep-others` |  |  | false |  |  | Refuse to accept or reject another author's tracked change, and to delete, resolve, reopen or reword their comment. Restore, strike, a comment and a reply stay allowed. JUBARTE_KEEP_OTHERS=1 sets the same guard. Another author is anyone other than --author (Jubarte when --author is left out) |
 | `--accept` |  |  |  |  | append | Accept revision r12 (with -p r12; r1+2 for several); prints the resolved change (`accepted r1+2 in p3: "from" > "to"`) |
 | `--reject` |  |  |  |  | append | Reject revision r12 (with -p r12; r1+2 for several); prints the resolved change (`rejected r0 in p3: "from" > "to"`) |
 | `--strike` |  |  |  |  | append | Strike another author's insertion r12 (with -p r12; r10+11 for a change of several marks, a replacement's insertion only): our tracked deletion inside it, so the decision shows. --content is one comment on the struck words |
@@ -525,6 +532,7 @@ Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per c
 | `--occurrence` |  | <N> |  |  | append | Pick the Nth anchor match (1-based), after --anchor in this -p group |
 | `--content` |  | <TEXT> |  |  | append | The paragraph, comment or reply text |
 | `--reply` |  | <TEXT> |  |  | append | Reply to comment c5 (with -p c5); the same as --content there |
+| `--keep-others` |  |  | false |  |  | Refuse to accept or reject another author's tracked change, and to delete, resolve, reopen or reword their comment, when this command applies or records a plan. Restore, strike, a comment and a reply stay allowed. JUBARTE_KEEP_OTHERS=1 sets the same guard. Another author is anyone other than --author (Jubarte when --author is left out) |
 | `--before` |  |  |  |  | append | A new paragraph before WHERE instead of after it |
 | `--comment` |  |  |  |  | append | A comment on the whole paragraph (with --anchor the comment sits on the anchor and this flag is implied) |
 | `--style` |  | <SPEC> |  |  | append | Formatting for the new paragraph's text (bold, italic, underline, highlight=yellow) or its paragraph style (Heading2) |
@@ -757,6 +765,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--json` | (shorthand), __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert, __edit-v2 delete, __edit-v2 apply, __edit-template template, compare, changes, read, capabilities, visual-diff, comments, validate, check | `default=false values=` |
 | `--jsonl` | __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert, __edit-v2 delete, __edit-v2 apply, __edit-template template | `default=false values=` |
 | `--keep-nested-comment` | accept, reject, convert | `default=false values=` |
+| `--keep-others` | __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert, __edit-v2 delete, __edit-v2 apply, __edit-template template, edit, add | `default=false values=` |
 | `--keep-sections` | append | `default=false values=` |
 | `--kind` | __edit-v2 insert, accept, reject | **differs**: `<KIND> default= values=insertion, deletion, move, formatting` on accept, reject; `<KIND> default= values=text, paragraph` on __edit-v2 insert |
 | `--latest` | comments | `default=false values=` |

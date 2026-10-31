@@ -1290,7 +1290,11 @@ fn delete_paragraph_holding_a_move_is_refused_with_the_move_named() {
         e.message.lines().next().unwrap(),
         r#"under keep, a paragraph that holds a move cannot be deleted yet: the move is r6, "beta" moved here by "Alice"."#
     );
-    assert!(e.message.contains("keep the move:"), "{e}");
+    assert!(
+        e.message
+            .contains(r#"keep the move (erases "Alice"'s move):"#),
+        "{e}"
+    );
 }
 
 #[test]

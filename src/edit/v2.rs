@@ -51,14 +51,22 @@ pub struct PlanV2 {
         skip_serializing_if = "Option::is_none"
     )]
     pub removed_anchor_comments: Option<super::RemovedAnchorComments>,
-    /// Opt-in `edit_comment` on another author's comment, which keeps that
-    /// author; refused (`COMMENT_NOT_YOURS`) when absent or false.
+    /// Accepted and ignored. Deleting, resolving or rewording another
+    /// author's comment is allowed unless [`super::Others::Keep`] is set.
     #[serde(
         default,
         deserialize_with = "present",
         skip_serializing_if = "Option::is_none"
     )]
     pub rewrite_others_comments: Option<bool>,
+    /// When `keep`, refuse to erase another author's markup. Absent or
+    /// `allow` permits it. `rewrite_others_comments` is accepted and ignored.
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub others: Option<super::Others>,
     /// Attribution for new revisions and comments; contains a non-whitespace character.
     pub author: String,
     /// Timezone-bearing RFC 3339 timestamp, retaining its supplied offset.

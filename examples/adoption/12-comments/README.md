@@ -34,9 +34,10 @@ jubarte edit review-1/clean.docx --plan plan-2-thread.json --out-dir review-2 --
 jubarte comments review-2/clean.docx --json
 ```
 
-The comment Ben Vendor resolves is Ann Counsel's, so the second plan sets
-`"rewrite_others_comments": true`. Without it, `edit` refuses to resolve
-another author's comment (`COMMENT_NOT_YOURS`) and suggests a reply instead.
+The comment Ben Vendor resolves is Ann Counsel's. Resolving another
+author's comment is allowed and noted. `"rewrite_others_comments": true`
+is accepted and ignored. `"others": "keep"` (`--keep-others`) refuses it
+(`COMMENT_NOT_YOURS`) and suggests a reply instead.
 
 `comments_jubarte.jsonl` was regenerated on 2026-10-14 with jubarte 0.12.0 (main), which prints short ids (`r12`, `c3`, `p4`) and the `ref`/`paragraph` fields.
 Tool versions used here: jubarte 0.11.2, python-docx 1.2.0. Both page-1

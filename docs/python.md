@@ -54,7 +54,7 @@ binary when retention is needed.
 
 ```text
 $ jubarte-redlines --help
-jubarte-redlines 0.16.0
+jubarte-redlines 0.15.0
 Read, edit, compare and render Word documents
 
 Usage: jubarte-redlines [OPTIONS]
@@ -1124,11 +1124,7 @@ Options:
           --restore). Each -p starts an operation; the flags after it belong to it
 
       --anchor <TEXT>
-          Text inside WHERE the operation applies to (must occur once, unless
-          --occurrence picks a match)
-
-      --occurrence <N>
-          Pick the Nth anchor match (1-based), after --anchor in this -p group
+          Text inside WHERE the operation applies to (must occur once)
 
       --content <TEXT>
           New text: replaces the anchor; rewrites the paragraph without one; on c5, the
@@ -1143,11 +1139,11 @@ Options:
       --reply <TEXT>
           Reply to comment c5 (with -p c5), as `add -p c5 --content`
 
-      --rewrite-others-comments
-          Let `-p c5 --content`, `--delete` and `--resolve` change a comment another
-          author wrote (a reworded one keeps their name), and `--delete` take their
-          reply with your thread. Without it that is refused (COMMENT_NOT_YOURS): one
-          author answers another with --reply
+      --keep-others
+          Refuse to accept or reject another author's tracked change, and to delete,
+          resolve, reopen or reword their comment. Restore, strike, a comment and a
+          reply stay allowed. JUBARTE_KEEP_OTHERS=1 sets the same guard. Another author
+          is anyone other than --author (Jubarte when --author is left out)
 
       --accept
           Accept revision r12 (with -p r12; r1+2 for several); prints the resolved
@@ -1337,17 +1333,20 @@ Options:
           starts an operation; the flags after it belong to it
 
       --anchor <TEXT>
-          Text inside WHERE to comment on (must occur once, unless --occurrence picks a
-          match)
-
-      --occurrence <N>
-          Pick the Nth anchor match (1-based), after --anchor in this -p group
+          Text inside WHERE to comment on (must occur once)
 
       --content <TEXT>
           The paragraph, comment or reply text
 
       --reply <TEXT>
           Reply to comment c5 (with -p c5); the same as --content there
+
+      --keep-others
+          Refuse to accept or reject another author's tracked change, and to delete,
+          resolve, reopen or reword their comment, when this command applies or records
+          a plan. Restore, strike, a comment and a reply stay allowed.
+          JUBARTE_KEEP_OTHERS=1 sets the same guard. Another author is anyone other than
+          --author (Jubarte when --author is left out)
 
       --before
           A new paragraph before WHERE instead of after it
@@ -1727,7 +1726,7 @@ redaction therefore refuses with `REDACTION_LEAK` instead of accepting an
 incomplete scan. Comparer settings continue to supply their own limits.
 
 <!-- gen:python-api:start -->
-Reflects the `jubarte_redlines` package built from this source tree (`__version__` reports `0.16.0`).
+Reflects the `jubarte_redlines` package built from this source tree (`__version__` reports `0.15.0`).
 
 ### `JubarteError`
 
@@ -1736,7 +1735,7 @@ Raised when the jubarte-redlines engine cannot process a document.
 
 ### `__version__`
 
-`'0.16.0'`
+`'0.15.0'`
 
 ### `accept_revisions`
 
@@ -2367,6 +2366,7 @@ EditPlan(
     resolve_revisions: dict[str, dict[str, list[str]]] | None = None,
     update_fields: bool = False,
     rewrite_others_comments: bool = False,
+    others: Literal['keep', 'allow'] | None = None,
 )
 ```
 
@@ -2542,8 +2542,8 @@ EditPlan.resolve_comment(self, comment_id: 'int', *, done: 'bool' = True, id: 's
 
 Resolve comment ``comment_id`` and its replies; ``done=False`` reopens them.
 
-Another author's comment is refused (``COMMENT_NOT_YOURS``) unless the
-plan sets ``rewrite_others_comments``.
+Another author's comment is allowed. ``others="keep"`` refuses it
+(``COMMENT_NOT_YOURS``): reply instead.
 
 #### `EditPlan.edit_comment`
 
@@ -2553,8 +2553,8 @@ EditPlan.edit_comment(self, comment_id: 'int', *, text: 'str', id: 'str | None' 
 
 Replace the text of comment ``comment_id``; its author, date and thread stay.
 
-Another author's comment is refused (``COMMENT_NOT_YOURS``) unless the
-plan sets ``rewrite_others_comments``.
+Another author's comment is allowed and noted. ``others="keep"``
+refuses it (``COMMENT_NOT_YOURS``): reply instead.
 
 #### `EditPlan.delete_comment`
 
@@ -2565,8 +2565,8 @@ EditPlan.delete_comment(self, comment_id: 'int', *, id: 'str | None' = None) -> 
 Remove comment ``comment_id`` with its replies and anchors.
 
 Another author's comment, or one of yours whose thread holds another
-author's reply, is refused (``COMMENT_NOT_YOURS``) unless the plan
-sets ``rewrite_others_comments``.
+author's reply, is allowed and noted. ``others="keep"`` refuses it
+(``COMMENT_NOT_YOURS``): reply, or resolve your own thread.
 
 #### `EditPlan.watermark`
 
