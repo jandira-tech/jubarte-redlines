@@ -382,6 +382,10 @@ pub struct EditOptions {
     /// comparer.
     #[arg(long, value_enum, value_name = "MODE", default_value_t = ExistingArg::Auto)]
     pub existing_revisions: ExistingArg,
+    /// Replace FILE through the same atomic write as -o. A refused edit or a
+    /// failed check leaves FILE unchanged. Not with -o or --out-dir.
+    #[arg(long, conflicts_with_all = ["output", "out_dir"])]
+    pub in_place: bool,
     /// The edited document, a .docx (default: `<FILE's
     /// directory>/<stem>_modified.docx`). Any other extension is written as
     /// a .docx too; .md, .json, .pdf and .png name the task that writes them.
@@ -412,10 +416,14 @@ pub enum EditTarget {
 }
 
 impl EditOptions {
-    /// Where `edit FILE` (or `add FILE`) writes: `--out-dir [DIR]`'s
-    /// bundle, else `-o`, else `<FILE's dir>/<stem>_modified.docx`. A FILE
-    /// whose stem already ends in `_modified` keeps its name. Pure.
+    /// Where `edit FILE` (or `add FILE`) writes: `--in-place` replaces
+    /// FILE, else `--out-dir [DIR]`'s bundle, else `-o`, else `<FILE's
+    /// dir>/<stem>_modified.docx`. A FILE whose stem already ends in
+    /// `_modified` keeps its name. Pure.
     pub fn target(&self, file: &Path) -> EditTarget {
+        if self.in_place {
+            return EditTarget::Single(file.to_path_buf());
+        }
         let beside = |name: String| match file.parent().filter(|p| !p.as_os_str().is_empty()) {
             Some(dir) => dir.join(name),
             None => PathBuf::from(name),
@@ -1031,11 +1039,21 @@ pub enum Command {
         /// The document (.docx) whose revisions to accept.
         #[arg(value_name = "FILE")]
         file: PathBuf,
+        /// Replace FILE through the same atomic write as -o. A refused
+        /// resolution leaves FILE unchanged. Not with -o.
+        #[arg(long)]
+        in_place: bool,
         /// Output path; its extension picks the format: .docx (also any
         /// other), .md (the agent view), .pdf, .png (one file per page) or
         /// .json (the snapshot).
-        #[arg(short = 'o', long, value_name = "FILE")]
-        output: PathBuf,
+        #[arg(
+            short = 'o',
+            long,
+            value_name = "FILE",
+            required_unless_present = "in_place",
+            conflicts_with = "in_place"
+        )]
+        output: Option<PathBuf>,
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
@@ -1061,11 +1079,21 @@ pub enum Command {
         /// The document (.docx) whose revisions to reject.
         #[arg(value_name = "FILE")]
         file: PathBuf,
+        /// Replace FILE through the same atomic write as -o. A refused
+        /// resolution leaves FILE unchanged. Not with -o.
+        #[arg(long)]
+        in_place: bool,
         /// Output path; its extension picks the format: .docx (also any
         /// other), .md (the agent view), .pdf, .png (one file per page) or
         /// .json (the snapshot).
-        #[arg(short = 'o', long, value_name = "FILE")]
-        output: PathBuf,
+        #[arg(
+            short = 'o',
+            long,
+            value_name = "FILE",
+            required_unless_present = "in_place",
+            conflicts_with = "in_place"
+        )]
+        output: Option<PathBuf>,
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
@@ -1261,8 +1289,8 @@ pub enum Command {
     /// Edit a document: -p WHERE with --anchor, --content, --delete,
     /// --resolve, --reply, --accept, --reject, --strike, --restore or --style
     /// (several -p per command), or a JSON plan. Writes FILE_modified.docx
-    /// (--out-dir: the bundle), then prints SUCCESS and a fenced before/after
-    /// diff of the full agent views (refusal: exit 3).
+    /// (--in-place replaces FILE; --out-dir: the bundle), then prints SUCCESS
+    /// and a fenced before/after diff of the full agent views (refusal: exit 3).
     #[command(after_help = "Examples:\n  \
         jubarte edit a.docx -p p12 --anchor \"thirty days\" --content \"forty-five days\"\n  \
         jubarte edit a.docx -p p12 --anchor thirty --content \"thirty (30)\"   an insertion\n  \
@@ -1292,7 +1320,7 @@ pub enum Command {
         jubarte edit apply FILE --plan edits.json -o OUTPUT.docx        tracked changes for the difference\n\n\
         Typed actions: jubarte edit replace|rewrite|insert|delete FILE [OPTIONS]\n  Inline --save-plan FILE saves without applying; writes require -o or --out-dir.\n  Run jubarte edit ACTION --help for its grammar.\nRouting: valid legacy calls, including `edit replace -p p0 --content TEXT`,\n  retain v1 semantics. Use ./replace (or ./rewrite, ./insert, ./delete, ./apply)\n  to explicitly name a legacy input whose name equals an action.")]
     Edit {
-        /// The source document (.docx). Never modified.
+        /// The source document (.docx). Left unchanged unless --in-place.
         #[arg(value_name = "FILE")]
         file: PathBuf,
         /// Edit plan JSON: a list of operations of any kind (see
@@ -1419,8 +1447,9 @@ pub enum Command {
         operations: Vec<FlagOp>,
     },
     /// Add a paragraph, a comment or a reply: -p WHERE --content TEXT
-    /// (several -p per command). Writes FILE_modified.docx, as edit does,
-    /// and prints SUCCESS and a fenced before/after diff of the full agent views.
+    /// (several -p per command). Writes FILE_modified.docx, as edit does
+    /// (--in-place replaces FILE), and prints SUCCESS and a fenced
+    /// before/after diff of the full agent views.
     #[command(after_help = "Examples:\n  \
         jubarte add a.docx -p p12 --content \"Time is of the essence.\"   new paragraph after p12\n  \
         jubarte add a.docx -p p12 --content Recitals --before --style Heading2\n  \
@@ -1430,7 +1459,7 @@ pub enum Command {
         jubarte add a.docx -p c5 --reply \"Agreed, will fix.\"             the same reply\n  \
         jubarte add a.docx --plan plan.json -p p5 --comment --content \"Cap?\"   record into plan.json")]
     Add {
-        /// The source document (.docx). Never modified.
+        /// The source document (.docx). Left unchanged unless --in-place.
         #[arg(value_name = "FILE")]
         file: PathBuf,
         /// Edit plan JSON. With operation flags, they are recorded into it
@@ -2242,6 +2271,18 @@ pub fn refused_package(path: &Path, bytes: &[u8]) -> Option<String> {
 /// `wrote r.pdf (pdf, 48213 bytes, 3 pages)`; `pages` is a PDF's.
 pub fn wrote_line(path: &Path, format: Format, bytes: usize, pages: Option<usize>) -> String {
     wrote_line_with(path, format, bytes, pages, None)
+}
+
+/// `wrote contract.docx in place (replaced sha256 4eb2e9c3…)`, plus the
+/// optional `; 1 change by "GiantCo"` detail (#1888, #1891).
+#[must_use]
+pub fn wrote_in_place_line(path: &Path, replaced_sha256: &str, detail: Option<&str>) -> String {
+    let prefix = replaced_sha256.get(..8).unwrap_or(replaced_sha256);
+    let extra = detail.map_or_else(String::new, |detail| format!("; {detail}"));
+    format!(
+        "wrote {} in place (replaced sha256 {prefix}\u{2026}){extra}",
+        path.display()
+    )
 }
 
 /// [`wrote_line`] with an optional `; 1 change by "GiantCo"` suffix (#1891).
@@ -4204,8 +4245,32 @@ fn parse_subcommand_json(
         value["args"]["out_dir"] = slashed(out_dir.as_ref());
     }
     let written = match &task {
-        Command::Accept { output, .. } => Some((Task::Accept, Some(output.as_path()))),
-        Command::Reject { output, .. } => Some((Task::Reject, Some(output.as_path()))),
+        Command::Accept {
+            file,
+            output,
+            in_place,
+            ..
+        } => Some((
+            Task::Accept,
+            if *in_place {
+                Some(file.as_path())
+            } else {
+                output.as_deref()
+            },
+        )),
+        Command::Reject {
+            file,
+            output,
+            in_place,
+            ..
+        } => Some((
+            Task::Reject,
+            if *in_place {
+                Some(file.as_path())
+            } else {
+                output.as_deref()
+            },
+        )),
         Command::Append { output, .. } => Some((Task::Append, Some(output.as_path()))),
         Command::Scrub { output, .. } => Some((Task::Scrub, Some(output.as_path()))),
         Command::Read { output, .. } => Some((Task::Read, output.as_deref())),

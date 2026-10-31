@@ -240,12 +240,13 @@ Tasks:
                 comments with ids
   edit          Edit a document: -p WHERE with --anchor, --content, --delete, --resolve,
                 --reply, --accept, --reject, --strike, --restore or --style (several -p
-                per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the
-                bundle), then prints SUCCESS and a fenced before/after diff of the full
-                agent views (refusal: exit 3)
+                per command), or a JSON plan. Writes FILE_modified.docx (--in-place
+                replaces FILE; --out-dir: the bundle), then prints SUCCESS and a fenced
+                before/after diff of the full agent views (refusal: exit 3)
   add           Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several
-                -p per command). Writes FILE_modified.docx, as edit does, and prints
-                SUCCESS and a fenced before/after diff of the full agent views
+                -p per command). Writes FILE_modified.docx, as edit does (--in-place
+                replaces FILE), and prints SUCCESS and a fenced before/after diff of the
+                full agent views
   capabilities  What this binary can do, for agents choosing an operation
   visual-diff   Compare rendered pages pixel by pixel (different pages: exit 5)
   comments      List comments, threads and the text they annotate
@@ -597,13 +598,17 @@ Every part counts: the body, headers, footers, notes and comment bodies. An auth
 kind selection reaches comment bodies too, but no ID names a comment-body change, so an
 ID selection leaves those tracked.
 
-Usage: jubarte accept [OPTIONS] --output <FILE> <FILE>
+Usage: jubarte accept [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
           The document (.docx) whose revisions to accept
 
 Options:
+      --in-place
+          Replace FILE through the same atomic write as -o. A refused resolution leaves
+          FILE unchanged. Not with -o
+
   -o, --output <FILE>
           Output path; its extension picks the format: .docx (also any other), .md (the
           agent view), .pdf, .png (one file per page) or .json (the snapshot)
@@ -692,13 +697,17 @@ Every part counts: the body, headers, footers, notes and comment bodies. An auth
 kind selection reaches comment bodies too, but no ID names a comment-body change, so an
 ID selection leaves those tracked.
 
-Usage: jubarte reject [OPTIONS] --output <FILE> <FILE>
+Usage: jubarte reject [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
           The document (.docx) whose revisions to reject
 
 Options:
+      --in-place
+          Replace FILE through the same atomic write as -o. A refused resolution leaves
+          FILE unchanged. Not with -o
+
   -o, --output <FILE>
           Output path; its extension picks the format: .docx (also any other), .md (the
           agent view), .pdf, .png (one file per page) or .json (the snapshot)
@@ -1278,14 +1287,14 @@ Read options:
 $ jubarte edit --help
 Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply,
 --accept, --reject, --strike, --restore or --style (several -p per command), or a JSON
-plan. Writes FILE_modified.docx (--out-dir: the bundle), then prints SUCCESS and a
-fenced before/after diff of the full agent views (refusal: exit 3)
+plan. Writes FILE_modified.docx (--in-place replaces FILE; --out-dir: the bundle), then
+prints SUCCESS and a fenced before/after diff of the full agent views (refusal: exit 3)
 
 Usage: jubarte edit [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
-          The source document (.docx). Never modified
+          The source document (.docx). Left unchanged unless --in-place
 
 Options:
       --plan [<PLAN.json>]
@@ -1395,6 +1404,10 @@ Options:
 
           [default: auto]
 
+      --in-place
+          Replace FILE through the same atomic write as -o. A refused edit or a failed
+          check leaves FILE unchanged. Not with -o or --out-dir
+
   -o, --output <FILE.docx>
           The edited document, a .docx (default: `<FILE's
           directory>/<stem>_modified.docx`). Any other extension is written as a .docx
@@ -1500,14 +1513,14 @@ Routing: valid legacy calls, including `edit replace -p p0 --content TEXT`,
 ```text
 $ jubarte add --help
 Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command).
-Writes FILE_modified.docx, as edit does, and prints SUCCESS and a fenced before/after
-diff of the full agent views
+Writes FILE_modified.docx, as edit does (--in-place replaces FILE), and prints SUCCESS
+and a fenced before/after diff of the full agent views
 
 Usage: jubarte add [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
-          The source document (.docx). Never modified
+          The source document (.docx). Left unchanged unless --in-place
 
 Options:
       --plan [<PLAN.json>]
@@ -1583,6 +1596,10 @@ Options:
           - refuse: Refuse a file that has them
 
           [default: auto]
+
+      --in-place
+          Replace FILE through the same atomic write as -o. A refused edit or a failed
+          check leaves FILE unchanged. Not with -o or --out-dir
 
   -o, --output <FILE.docx>
           The edited document, a .docx (default: `<FILE's

@@ -373,8 +373,8 @@ Python wheel, the npm CLI) is in the [per-surface guides](#documentation).
 | `jubarte convert` | Convert Word or Markdown to DOCX, PDF, PNG or Markdown |
 | `jubarte diff` | Review differences as GitHub, word, normal, context or side-by-side text |
 | `jubarte read` | Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids |
-| `jubarte edit` | Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply, --accept, --reject, --strike, --restore or --style (several -p per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then prints SUCCESS and a fenced before/after diff of the full agent views (refusal: exit 3) |
-| `jubarte add` | Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command). Writes FILE_modified.docx, as edit does, and prints SUCCESS and a fenced before/after diff of the full agent views |
+| `jubarte edit` | Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply, --accept, --reject, --strike, --restore or --style (several -p per command), or a JSON plan. Writes FILE_modified.docx (--in-place replaces FILE; --out-dir: the bundle), then prints SUCCESS and a fenced before/after diff of the full agent views (refusal: exit 3) |
+| `jubarte add` | Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command). Writes FILE_modified.docx, as edit does (--in-place replaces FILE), and prints SUCCESS and a fenced before/after diff of the full agent views |
 | `jubarte capabilities` | What this binary can do, for agents choosing an operation |
 | `jubarte visual-diff` | Compare rendered pages pixel by pixel (different pages: exit 5) |
 | `jubarte comments` | List comments, threads and the text they annotate |

@@ -343,7 +343,8 @@ Accept all tracked changes, or select by ID, author or kind
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
 | `<FILE>` |  | <FILE> |  |  | required | The document (.docx) whose revisions to accept |
-| `-o, --output` |  | <FILE> |  |  | required | Output path; its extension picks the format: .docx (also any other), .md (the agent view), .pdf, .png (one file per page) or .json (the snapshot) |
+| `--in-place` |  |  | false |  | conflicts --output | Replace FILE through the same atomic write as -o. A refused resolution leaves FILE unchanged. Not with -o |
+| `-o, --output` |  | <FILE> |  |  | conflicts --in-place | Output path; its extension picks the format: .docx (also any other), .md (the agent view), .pdf, .png (one file per page) or .json (the snapshot) |
 | `--force` |  |  | false |  |  | Overwrite the output file if it already exists |
 | `--keep-nested-comment` |  |  | false |  |  | Keep comments and replies whose whole anchor is removed, on an empty anchor |
 | `--id` |  | <ID> |  |  | append | Only this change: `r12` (as the view and `jubarte changes` print it), `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids and stay tracked |
@@ -365,7 +366,8 @@ Reject all tracked changes, or select by ID, author or kind
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
 | `<FILE>` |  | <FILE> |  |  | required | The document (.docx) whose revisions to reject |
-| `-o, --output` |  | <FILE> |  |  | required | Output path; its extension picks the format: .docx (also any other), .md (the agent view), .pdf, .png (one file per page) or .json (the snapshot) |
+| `--in-place` |  |  | false |  | conflicts --output | Replace FILE through the same atomic write as -o. A refused resolution leaves FILE unchanged. Not with -o |
+| `-o, --output` |  | <FILE> |  |  | conflicts --in-place | Output path; its extension picks the format: .docx (also any other), .md (the agent view), .pdf, .png (one file per page) or .json (the snapshot) |
 | `--force` |  |  | false |  |  | Overwrite the output file if it already exists |
 | `--keep-nested-comment` |  |  | false |  |  | Keep comments and replies whose whole anchor is removed, on an empty anchor |
 | `--id` |  | <ID> |  |  | append | Only this change: `r12` (as the view and `jubarte changes` print it), `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids and stay tracked |
@@ -478,11 +480,11 @@ Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments w
 
 ## jubarte edit
 
-Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply, --accept, --reject, --strike, --restore or --style (several -p per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then prints SUCCESS and a fenced before/after diff of the full agent views (refusal: exit 3)
+Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply, --accept, --reject, --strike, --restore or --style (several -p per command), or a JSON plan. Writes FILE_modified.docx (--in-place replaces FILE; --out-dir: the bundle), then prints SUCCESS and a fenced before/after diff of the full agent views (refusal: exit 3)
 
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
-| `<FILE>` |  | <FILE> |  |  | required | The source document (.docx). Never modified |
+| `<FILE>` |  | <FILE> |  |  | required | The source document (.docx). Left unchanged unless --in-place |
 | `--plan` |  | [<PLAN.json>] |  |  |  | Edit plan JSON: a list of operations of any kind (see `jubarte capabilities --json`). Alone, it is applied to FILE; with operation flags, they are recorded into it (created on first use) and FILE is left as it is. Without a value: FILE_plan.json beside FILE |
 | `--consume` |  |  | false |  |  | Delete PLAN.json once it has been applied and the outputs are written (with --plan and no operation flags). Kept when --skip-failed left operations out |
 | `-p, --location` |  | <WHERE> |  |  | append | Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment), c5.text (the text c5 covers) or r12 (a revision, with --accept, --reject, --strike or --restore). Each -p starts an operation; the flags after it belong to it |
@@ -505,8 +507,9 @@ Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply
 | `--suggesting-mode` |  |  | false |  | conflicts --editing-mode | The edits are tracked changes (the default): the file written is the redline and the view shows the marks |
 | `--editing-mode` |  |  | false |  | conflicts --suggesting-mode | The edits land directly: the file written is the result, and the view shows it with rev tags on the id lines |
 | `--existing-revisions` |  | <MODE> | auto | auto, keep, accept, reject, refuse |  | What to do when FILE already holds tracked changes: auto keeps them and tracks the new edits beside them; a clean file goes through the comparer |
-| `-o, --output` |  | <FILE.docx> |  |  | conflicts --out-dir | The edited document, a .docx (default: `<FILE's directory>/<stem>_modified.docx`). Any other extension is written as a .docx too; .md, .json, .pdf and .png name the task that writes them |
-| `--out-dir` |  | [<DIR>] |  |  | conflicts --output | Write the bundle instead: clean.docx, redline.docx, patch.diff and report.jsonl (clean.docx and report.jsonl in editing mode) in DIR (default: `<FILE's directory>/<stem>.edit`) |
+| `--in-place` |  |  | false |  | conflicts --out-dir --output | Replace FILE through the same atomic write as -o. A refused edit or a failed check leaves FILE unchanged. Not with -o or --out-dir |
+| `-o, --output` |  | <FILE.docx> |  |  | conflicts --in-place --out-dir | The edited document, a .docx (default: `<FILE's directory>/<stem>_modified.docx`). Any other extension is written as a .docx too; .md, .json, .pdf and .png name the task that writes them |
+| `--out-dir` |  | [<DIR>] |  |  | conflicts --in-place --output | Write the bundle instead: clean.docx, redline.docx, patch.diff and report.jsonl (clean.docx and report.jsonl in editing mode) in DIR (default: `<FILE's directory>/<stem>.edit`) |
 | `--force` |  |  | false |  |  | Replace an existing output (the bundle directory's files) |
 | `--dry-run` |  |  | false |  |  | Resolve and report only; write nothing. When every operation passes, stderr ends with the command that applies it (`next:`) |
 | `--skip-failed` |  |  | false |  |  | Apply every operation that passes; leave out the ones that fail and every operation of their "group". Exit 0 when one landed. The failed ones go to PLAN.failed.json (FILE_plan.failed.json for operation flags): a plan to fix and run on the output |
@@ -520,11 +523,11 @@ Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply
 
 ## jubarte add
 
-Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command). Writes FILE_modified.docx, as edit does, and prints SUCCESS and a fenced before/after diff of the full agent views
+Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command). Writes FILE_modified.docx, as edit does (--in-place replaces FILE), and prints SUCCESS and a fenced before/after diff of the full agent views
 
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
-| `<FILE>` |  | <FILE> |  |  | required | The source document (.docx). Never modified |
+| `<FILE>` |  | <FILE> |  |  | required | The source document (.docx). Left unchanged unless --in-place |
 | `--plan` |  | [<PLAN.json>] |  |  |  | Edit plan JSON. With operation flags, they are recorded into it (created on first use) and FILE is left as it is; alone, it is applied to FILE, as `edit --plan` does. Without a value: FILE_plan.json beside FILE |
 | `--consume` |  |  | false |  |  | Delete PLAN.json once it has been applied and the outputs are written (with --plan and no operation flags) |
 | `-p, --location` |  | <WHERE> |  |  | append | Where: p12, header1, footer2.p1, t0.row1.cell2, or c5 for a reply. Each -p starts an operation; the flags after it belong to it |
@@ -541,8 +544,9 @@ Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per c
 | `--suggesting-mode` |  |  | false |  | conflicts --editing-mode | The edits are tracked changes (the default): the file written is the redline and the view shows the marks |
 | `--editing-mode` |  |  | false |  | conflicts --suggesting-mode | The edits land directly: the file written is the result, and the view shows it with rev tags on the id lines |
 | `--existing-revisions` |  | <MODE> | auto | auto, keep, accept, reject, refuse |  | What to do when FILE already holds tracked changes: auto keeps them and tracks the new edits beside them; a clean file goes through the comparer |
-| `-o, --output` |  | <FILE.docx> |  |  | conflicts --out-dir | The edited document, a .docx (default: `<FILE's directory>/<stem>_modified.docx`). Any other extension is written as a .docx too; .md, .json, .pdf and .png name the task that writes them |
-| `--out-dir` |  | [<DIR>] |  |  | conflicts --output | Write the bundle instead: clean.docx, redline.docx, patch.diff and report.jsonl (clean.docx and report.jsonl in editing mode) in DIR (default: `<FILE's directory>/<stem>.edit`) |
+| `--in-place` |  |  | false |  | conflicts --out-dir --output | Replace FILE through the same atomic write as -o. A refused edit or a failed check leaves FILE unchanged. Not with -o or --out-dir |
+| `-o, --output` |  | <FILE.docx> |  |  | conflicts --in-place --out-dir | The edited document, a .docx (default: `<FILE's directory>/<stem>_modified.docx`). Any other extension is written as a .docx too; .md, .json, .pdf and .png name the task that writes them |
+| `--out-dir` |  | [<DIR>] |  |  | conflicts --in-place --output | Write the bundle instead: clean.docx, redline.docx, patch.diff and report.jsonl (clean.docx and report.jsonl in editing mode) in DIR (default: `<FILE's directory>/<stem>.edit`) |
 | `--force` |  |  | false |  |  | Replace an existing output (the bundle directory's files) |
 | `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
@@ -762,6 +766,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--head` | (shorthand), compare, read | `<N> default= values=` |
 | `--id` | accept, reject | `<ID> default= values=` |
 | `--ignore-case` | (shorthand), __edit-template template, compare, read | `default=false values=` |
+| `--in-place` | accept, reject, edit, add | `default=false values=` |
 | `--json` | (shorthand), __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert, __edit-v2 delete, __edit-v2 apply, __edit-template template, compare, changes, read, capabilities, visual-diff, comments, validate, check | `default=false values=` |
 | `--jsonl` | __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert, __edit-v2 delete, __edit-v2 apply, __edit-template template | `default=false values=` |
 | `--keep-nested-comment` | accept, reject, convert | `default=false values=` |
