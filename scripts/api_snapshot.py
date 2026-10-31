@@ -8,6 +8,8 @@
 
     scripts/api_snapshot.py [label]        label defaults to the Cargo version
     scripts/api_snapshot.py --drift PREV NEW [--private]
+    scripts/api_snapshot.py --added OLD NEW
+    scripts/api_snapshot.py --emit OUT
 
 The first form writes two artifacts, regenerated on every release:
 
@@ -29,6 +31,18 @@ two releases. The public surface comes in full, what was removed or changed
 before what was added; the crate-private rest is counted by module
 (`--private` lists it). Both sides are rebuilt from their `.json.gz`, so a
 change to the listing's format never reads as drift.
+
+`--added` prints each public item NEW has and OLD does not, one a line, as
+`namespace path`, and exits 1 when there is any. The namespace is Rust's:
+`type` (structs, enums, traits, modules, aliases), `value` (functions,
+constants, statics) or `macro`. A function and a macro can share a path;
+they do not share an identity. A public glob re-export counts as the
+items it makes nameable. An impl's generic parameter names are positional
+(`Deserialize<'0>`, `From<T0>`). OLD and NEW are `.api.txt` listings or
+rustdoc JSON (plain or gzipped). A method body is not in the listing.
+`--emit` writes this tree's listing to OUT and leaves `docs/api/` alone, so
+a release gate can compare a patch without dirtying the tree; the labelled
+form still writes the snapshot.
 
 rustdoc JSON is still unstable: with a nightly toolchain present it runs
 `cargo +nightly doc`; without one it falls back to RUSTC_BOOTSTRAP=1 on the
@@ -97,23 +111,35 @@ def build_doc_json() -> None:
 # --- rustdoc JSON -> flattened listing --------------------------------------
 
 
-def _args(args: dict | None) -> str:
-    """Render generic argument lists (`<T, 'a>` or `(A) -> B`)."""
+def _args(args: dict | None, names: dict[str, str] | None = None) -> str:
+    """Render generic argument lists (`<T, 'a>` or `(A) -> B`).
+
+    `names` renames generic parameters (impl paths only). An empty map
+    renames nothing; it is not the same as omitting the map.
+    """
     if not args:
         return ""
     if "angle_bracketed" in args:
         parts = []
         for a in args["angle_bracketed"].get("args", []):
             kind, val = next(iter(a.items()))
-            parts.append(ty(val) if kind == "type" else str(val or "_"))
+            if kind == "type":
+                parts.append(ty(val, names))
+            elif kind == "lifetime" and names is not None:
+                text = str(val or "_")
+                parts.append(names.get(text, text))
+            elif kind == "const" and names is not None and isinstance(val, str):
+                parts.append(names.get(val, val))
+            else:
+                parts.append(str(val or "_"))
         for c in args["angle_bracketed"].get("constraints", []):
             inner = c.get("assoc_item_constraint", c)
             parts.append(f"{inner.get('name', '?')}")
         return f"<{', '.join(parts)}>" if parts else ""
     if "parenthesized" in args:
         p = args["parenthesized"]
-        ins = ", ".join(ty(t) for t in p.get("inputs", []))
-        out = f" -> {ty(p['output'])}" if p.get("output") else ""
+        ins = ", ".join(ty(t, names) for t in p.get("inputs", []))
+        out = f" -> {ty(p['output'], names)}" if p.get("output") else ""
         return f"({ins}){out}"
     return ""
 
@@ -122,60 +148,68 @@ def _path_of(ref: dict) -> str:
     return ref.get("path", "?")
 
 
-def bound(b: dict) -> str:
+def bound(b: dict, names: dict[str, str] | None = None) -> str:
     kind, val = next(iter(b.items()))
     if kind == "trait_bound":
         tr = val["trait"]
-        s = _path_of(tr) + _args(tr.get("args"))
+        s = _path_of(tr) + _args(tr.get("args"), names)
         if val.get("modifier") == "maybe":
             s = "?" + s
         return s
     if kind == "outlives":
+        if names is not None and isinstance(val, str):
+            return names.get(val, val)
         return val
     return str(val)
 
 
-def ty(t) -> str:
+def ty(t, names: dict[str, str] | None = None) -> str:
     if t is None:
         return "()"
     if isinstance(t, str):
         return t
     kind, val = next(iter(t.items()))
     if kind == "resolved_path":
-        return _path_of(val) + _args(val.get("args"))
-    if kind in ("generic", "primitive"):
+        return _path_of(val) + _args(val.get("args"), names)
+    if kind == "generic":
+        text = val if isinstance(val, str) else str(val)
+        return names.get(text, text) if names is not None else text
+    if kind == "primitive":
         return val
     if kind == "borrowed_ref":
         lt = (val.get("lifetime") or "")
+        if names is not None and lt in names:
+            lt = names[lt]
         mut = "mut " if val.get("is_mutable", val.get("mutable")) else ""
-        return f"&{lt}{' ' if lt else ''}{mut}{ty(val['type'])}"
+        return f"&{lt}{' ' if lt else ''}{mut}{ty(val['type'], names)}"
     if kind == "raw_pointer":
         mut = val.get("is_mutable", val.get("mutable"))
-        return f"*{'mut' if mut else 'const'} {ty(val['type'])}"
+        return f"*{'mut' if mut else 'const'} {ty(val['type'], names)}"
     if kind == "slice":
-        return f"[{ty(val)}]"
+        return f"[{ty(val, names)}]"
     if kind == "array":
-        return f"[{ty(val['type'])}; {val['len']}]"
+        return f"[{ty(val['type'], names)}; {val['len']}]"
     if kind == "tuple":
-        return "(" + ", ".join(ty(x) for x in val) + ("," if len(val) == 1 else "") + ")"
+        return "(" + ", ".join(ty(x, names) for x in val) + ("," if len(val) == 1 else "") + ")"
     if kind == "impl_trait":
-        return "impl " + " + ".join(bound(b) for b in val)
+        return "impl " + " + ".join(bound(b, names) for b in val)
     if kind == "dyn_trait":
         parts = [
-            _path_of(tb["trait"]) + _args(tb["trait"].get("args"))
+            _path_of(tb["trait"]) + _args(tb["trait"].get("args"), names)
             for tb in val.get("traits", [])
         ]
         if val.get("lifetime"):
-            parts.append(val["lifetime"])
+            life = val["lifetime"]
+            parts.append(names.get(life, life) if names is not None and isinstance(life, str) else life)
         return "dyn " + " + ".join(parts)
     if kind == "qualified_path":
         tr = val.get("trait", {})
         base = _path_of(tr.get("resolved_path", tr)) if tr else "?"
-        return f"<{ty(val['self_type'])} as {base}>::{val['name']}"
+        return f"<{ty(val['self_type'], names)} as {base}>::{val['name']}"
     if kind == "function_pointer":
         sig = val.get("sig", val.get("decl", {}))
-        ins = ", ".join(ty(i[1]) for i in sig.get("inputs", []))
-        out = f" -> {ty(sig['output'])}" if sig.get("output") else ""
+        ins = ", ".join(ty(i[1], names) for i in sig.get("inputs", []))
+        out = f" -> {ty(sig['output'], names)}" if sig.get("output") else ""
         return f"fn({ins}){out}"
     if kind in ("infer", "inferred"):
         return "_"
@@ -293,6 +327,87 @@ def _children(item: dict) -> list[str]:
     return [str(k) for k in kids if k is not None]
 
 
+def _detail(kind: str, inner: dict) -> str:
+    """The listing's signature or type, the part after the path."""
+    if kind == "function" and isinstance(inner, dict):
+        return " " + _sig(inner)
+    if not isinstance(inner, dict):
+        return ""
+    if kind in ("type_alias", "assoc_type") and inner.get("type"):
+        return f" = {ty(inner['type'])}"
+    if kind in ("constant", "static", "assoc_const") and inner.get("type"):
+        return f": {ty(inner['type'])}"
+    if kind == "struct_field":
+        return f": {ty(inner)}"
+    if kind == "use":
+        return f" = {inner.get('source', '?')}"
+    return ""
+
+
+def _glob_names(index: dict, container_id: str, seen: set[str]) -> list[tuple[str, str]]:
+    """`(name, item id)` pairs a public glob of this module or enum imports.
+
+    A module contributes its public items. A public glob inside it is
+    expanded, because those names are in the module. An enum contributes
+    its variants, which carry no visibility of their own.
+    """
+    if not container_id or container_id in seen or container_id not in index:
+        return []
+    seen.add(container_id)
+    kind, inner = _kind(index[container_id])
+    if not isinstance(inner, dict):
+        return []
+    names: list[tuple[str, str]] = []
+    if kind == "enum":
+        for vid in inner.get("variants") or []:
+            if vid is None:
+                continue
+            vid = str(vid)
+            name = index.get(vid, {}).get("name")
+            if name:
+                names.append((name, vid))
+        return names
+    if kind != "module":
+        return []
+    for kid in inner.get("items") or []:
+        if kid is None:
+            continue
+        kid = str(kid)
+        child = index.get(kid)
+        if child is None or child.get("visibility") != "public":
+            continue
+        ck, cinner = _kind(child)
+        if ck == "use" and isinstance(cinner, dict) and cinner.get("is_glob"):
+            names.extend(_glob_names(index, str(cinner.get("id")), seen))
+            continue
+        if ck == "use" and isinstance(cinner, dict):
+            name = cinner.get("name") or child.get("name")
+            target = str(cinner.get("id"))
+            if name and name != "*":
+                names.append((name, target if target in index else kid))
+            continue
+        if ck in ("impl", "extern_crate", "import"):
+            continue
+        name = child.get("name")
+        if name:
+            names.append((name, kid))
+    return names
+
+
+def _glob_entries(index: dict, target_id: str, prefix: str) -> list[Entry]:
+    """Concrete items a public `use prefix::*` makes nameable at `prefix`."""
+    out = []
+    for name, tid in _glob_names(index, target_id, set()):
+        if tid not in index:
+            continue
+        kind, inner = _kind(index[tid])
+        if kind in ("extern_crate", "import", "keyword", "primitive", "impl"):
+            continue
+        path = f"{prefix}::{name}" if prefix else name
+        out.append(Entry("api", kind, "pub", path, _detail(kind, inner)))
+    return out
+
+
 def _is_noise_impl(inner: dict) -> bool:
     """Impls every type gets without the crate writing them: blanket ones
     (`impl<T> Into<U> for T`), auto traits (`Send`, `Unpin`), and the marker
@@ -302,6 +417,36 @@ def _is_noise_impl(inner: dict) -> bool:
     if inner.get("is_synthetic", inner.get("synthetic")):
         return True
     return (inner.get("trait") or {}).get("path") == "StructuralPartialEq"
+
+
+def _canonical_params(generics: dict | None) -> dict[str, str]:
+    """Positional names for one impl's own parameters.
+
+    `impl<'de> Deserialize<'de>` and `impl<'input> Deserialize<'input>` are
+    the same impl; the path uses `'0`, `T0`, `C0` in declaration order.
+    Callers pass the dict even when it is empty so a present map is not
+    confused with "do not rename".
+    """
+    mapping: dict[str, str] = {}
+    if not generics:
+        return mapping
+    life = types = consts = 0
+    for param in generics.get("params") or []:
+        kind = next(iter(param["kind"]))
+        name = param["name"]
+        if kind == "lifetime":
+            mapping[name] = f"'{life}"
+            life += 1
+        elif kind == "type":
+            val = param["kind"]["type"]
+            if isinstance(val, dict) and (val.get("is_synthetic") or val.get("synthetic")):
+                continue
+            mapping[name] = f"T{types}"
+            types += 1
+        elif kind == "const":
+            mapping[name] = f"C{consts}"
+            consts += 1
+    return mapping
 
 
 def _local_target(inner: dict, index: dict) -> str | None:
@@ -394,10 +539,11 @@ def entries(doc: dict) -> list[Entry]:
         inner = index[iid]["inner"]["impl"]
         trait = inner.get("trait")
         target = _local_target(inner, index)
-        written = ty(inner["for"]) if inner.get("for") else "?"
+        names = _canonical_params(inner.get("generics"))
+        written = ty(inner["for"], names) if inner.get("for") else "?"
         if not trait:
             return full_path(target) if target else f"(impl {written})"
-        what = _path_of(trait) + _args(trait.get("args"))
+        what = _path_of(trait) + _args(trait.get("args"), names)
         if target:
             return f"{full_path(target)}::(impl {what})"
         return f"(impl {what} for {written})"
@@ -430,21 +576,16 @@ def entries(doc: dict) -> list[Entry]:
             continue  # reachable only through a left-out impl
         elif kind == "function" and in_trait_impl:
             continue  # the trait fixes its signature
-        detail = ""
-        if kind == "function":
-            detail = " " + _sig(inner)
-        elif kind in ("type_alias", "assoc_type") and inner.get("type"):
-            detail = f" = {ty(inner['type'])}"
-        elif kind in ("constant", "static", "assoc_const") and inner.get("type"):
-            detail = f": {ty(inner['type'])}"
-        elif kind == "struct_field":
-            detail = f": {ty(inner)}"
-        elif kind == "use":
-            detail = f" = {inner.get('source', '?')}"
         out.append(Entry(
             "api" if iid in api else "internal",
-            kind, _vis(item.get("visibility")), full_path(iid), detail,
+            kind, _vis(item.get("visibility")), full_path(iid), _detail(kind, inner),
         ))
+        # A public glob is the names it imports, not the `*` line. `pub use
+        # b::*` makes `b`'s public items nameable beside the glob.
+        if kind == "use" and iid in api and isinstance(inner, dict) and inner.get("is_glob"):
+            parent_id = parent.get(iid)
+            prefix = full_path(parent_id) if parent_id else ""
+            out.extend(_glob_entries(index, str(inner.get("id")), prefix))
     return sorted(set(out))
 
 
@@ -553,6 +694,124 @@ def load_snapshot(label: str) -> list[Entry]:
         return entries(json.load(gz))
 
 
+# Kinds whose listing detail starts at a fixed separator. Anything else
+# (a module, a struct, an impl — `(impl Trait)` included) is the path.
+_COLON_DETAIL = frozenset({"struct_field", "constant", "static", "assoc_const"})
+_EQ_DETAIL = frozenset({"type_alias", "assoc_type", "use"})
+
+
+def listing_path(kind: str, rest: str) -> str:
+    """The item path in a listing line's last column.
+
+    A function's signature follows the first space (`code const (self: ...)`).
+    A field or const is `path: type`, a type alias or re-export `path = …`.
+    An impl path contains spaces (`Type::(impl Trait)`) and has no detail.
+    """
+    if kind == "function":
+        return rest.split(None, 1)[0] if rest else rest
+    if kind in _COLON_DETAIL and ": " in rest:
+        return rest.split(": ", 1)[0]
+    if kind in _EQ_DETAIL and " = " in rest:
+        return rest.split(" = ", 1)[0]
+    return rest
+
+
+def _refuse_listing(msg: str) -> None:
+    print(msg, file=sys.stderr)
+    raise SystemExit(2)
+
+
+# Rust's three item namespaces (rustc `DefKind::ns`). A function and a
+# macro, or a struct and a function, can share a path; the added-path gate
+# must not treat them as one item. Impls and fields are not in those
+# namespaces and keep their own groups, so a field is not a method.
+_TYPE_NS = frozenset({
+    "module", "struct", "enum", "union", "trait", "trait_alias",
+    "type_alias", "assoc_type", "variant",
+})
+_VALUE_NS = frozenset({"function", "constant", "static", "assoc_const"})
+_MACRO_NS = frozenset({"macro", "proc_macro", "proc_derive", "proc_attribute"})
+
+
+def _namespace(kind: str) -> str:
+    if kind in _TYPE_NS:
+        return "type"
+    if kind in _VALUE_NS:
+        return "value"
+    if kind in _MACRO_NS:
+        return "macro"
+    if kind == "struct_field":
+        return "field"
+    if kind == "impl":
+        return "impl"
+    return kind
+
+
+def _path_identity(kind: str, path: str) -> str | None:
+    """`(namespace, path)` as one token. A glob's `*` line is not a name."""
+    if not path or path.rsplit("::", 1)[-1] == "*":
+        return None
+    return f"{_namespace(kind)} {path}"
+
+
+def public_paths_of_listing(text: str, name: str) -> set[str]:
+    """Public item identities in a flattened `.api.txt` listing."""
+    paths: set[str] = set()
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        if len(parts) != 4 or parts[0] not in ("api", "internal"):
+            _refuse_listing(
+                f"{name}:{lineno}: not a listing line (surface, kind, vis, path)"
+            )
+        surface, kind, _vis, rest = parts
+        if surface == "api":
+            ident = _path_identity(kind, listing_path(kind, rest))
+            if ident:
+                paths.add(ident)
+    return paths
+
+
+def public_paths_of_doc(doc: dict, name: str) -> set[str]:
+    if not isinstance(doc, dict) or "index" not in doc or "root" not in doc:
+        _refuse_listing(f"{name}: rustdoc JSON has no index and root")
+    idents = set()
+    for entry in entries(doc):
+        if entry.surface != "api":
+            continue
+        ident = _path_identity(entry.kind, entry.path)
+        if ident:
+            idents.add(ident)
+    return idents
+
+
+def load_public_paths(path: str) -> set[str]:
+    """Public item paths from an `.api.txt` listing or rustdoc JSON."""
+    file = Path(path)
+    if not file.is_file():
+        _refuse_listing(f"no API listing {file}")
+    raw = file.read_bytes()
+    if raw.startswith(b"\x1f\x8b") or file.name.endswith(".gz"):
+        try:
+            raw = gzip.decompress(raw)
+        except gzip.BadGzipFile as exc:
+            _refuse_listing(f"{file} is not readable gzip: {exc}")
+    stripped = raw.lstrip()
+    if file.suffix == ".json" or file.name.endswith(".json.gz") or stripped.startswith(b"{"):
+        try:
+            doc = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            _refuse_listing(f"{file} is not rustdoc JSON: {exc}")
+        return public_paths_of_doc(doc, str(file))
+    return public_paths_of_listing(raw.decode(), str(file))
+
+
+def added_public_paths(old: set[str], new: set[str]) -> list[str]:
+    """Public identities (`namespace path`) in `new` that `old` does not have."""
+    return sorted(new - old)
+
+
 def write_gz(path: Path, data: bytes) -> None:
     """Compress `data` to `path` with no timestamp in the gzip header."""
     with open(path, "wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz:
@@ -561,14 +820,23 @@ def write_gz(path: Path, data: bytes) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Write the API snapshot of a release, or show the drift between two."
+        description="Write the API snapshot of a release, show drift, or list added public paths."
     )
     parser.add_argument("label", nargs="?", help="defaults to the Cargo version")
     parser.add_argument("--drift", nargs=2, metavar=("PREV", "NEW"),
                         help="report the drift between two snapshots under docs/api/")
     parser.add_argument("--private", action="store_true",
                         help="with --drift: list the crate-private drift line by line")
+    parser.add_argument("--added", nargs=2, metavar=("OLD", "NEW"),
+                        help="print public item paths in NEW missing from OLD "
+                             "(a listing or rustdoc JSON); exit 1 if any")
+    parser.add_argument("--emit", metavar="OUT",
+                        help="write this tree's flattened listing to OUT, not docs/api")
     args = parser.parse_args(argv)
+    modes = [name for name, on in (("--drift", args.drift), ("--added", args.added),
+                                    ("--emit", args.emit)) if on]
+    if len(modes) > 1:
+        parser.error(f"choose one of {', '.join(modes)}")
 
     if args.drift:
         prev, new = args.drift
@@ -577,13 +845,26 @@ def main(argv: list[str] | None = None) -> None:
         )
         return
 
-    label = args.label or crate_version()
+    if args.added:
+        old, new = args.added
+        added = added_public_paths(load_public_paths(old), load_public_paths(new))
+        sys.stdout.write("".join(f"{path}\n" for path in added))
+        if added:
+            raise SystemExit(1)
+        return
+
     build_doc_json()
     doc = json.loads(DOC_JSON.read_text())
+    text = "\n".join(flatten(doc)) + "\n"
+    if args.emit:
+        Path(args.emit).write_text(text)
+        print(f"{args.emit} written")
+        return
 
+    label = args.label or crate_version()
     API_DIR.mkdir(parents=True, exist_ok=True)
     write_gz(API_DIR / f"jubarte-v{label}.json.gz", DOC_JSON.read_bytes())
-    (API_DIR / f"jubarte-v{label}.api.txt").write_text("\n".join(flatten(doc)) + "\n")
+    (API_DIR / f"jubarte-v{label}.api.txt").write_text(text)
     print(f"docs/api/jubarte-v{label}.json.gz + .api.txt written")
 
 

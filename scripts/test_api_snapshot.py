@@ -97,6 +97,14 @@ def item(iid: int, name, kind: str, inner, vis="public", crate: int = 0) -> dict
     return {"id": iid, "crate_id": crate, "name": name, "visibility": vis, "inner": {kind: inner}}
 
 
+def _doc(items: list, paths: dict) -> dict:
+    return {
+        "root": items[0]["id"],
+        "index": {str(i["id"]): i for i in items},
+        "paths": {str(k): {"crate_id": 0, "path": v, "kind": "x"} for k, v in paths.items()},
+    }
+
+
 def fn() -> dict:
     return {
         "sig": {"inputs": [], "output": None, "is_c_variadic": False},
@@ -398,6 +406,254 @@ class CommittedSnapshots(unittest.TestCase):
         with self.assertRaises(SystemExit) as raised:
             api.main(["--drift", "v0.0.0", self.NEW])
         self.assertIn("jubarte-v0.0.0.json.gz", str(raised.exception))
+
+
+def _run_added(old: Path, new: Path) -> tuple[int, str, str]:
+    out, err = io.StringIO(), io.StringIO()
+    code = 0
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            api.main(["--added", str(old), str(new)])
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 1
+    return code, out.getvalue(), err.getvalue()
+
+
+class AddedPaths(unittest.TestCase):
+    """#1758: public item paths present in NEW and absent in OLD. A method
+    body is not a path, and neither is a crate-private item."""
+
+    KEEP = "api\tfunction\tpub\tjubarte::keep ()\n"
+    ADDED = KEEP + "api\tfunction\tpub\tjubarte::something ()\n"
+
+    def test_a_new_public_free_function_is_named_and_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            old, new = Path(tmp) / "old.api.txt", Path(tmp) / "new.api.txt"
+            old.write_text(self.KEEP)
+            new.write_text(self.ADDED + "internal\tfunction\tpub(crate)\tjubarte::secret ()\n")
+            code, out, err = _run_added(old, new)
+        self.assertEqual((code, err), (1, ""), (out, err))
+        self.assertEqual(out, "value jubarte::something\n")
+
+    def test_equal_listings_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "same.api.txt"
+            path.write_text(self.KEEP)
+            code, out, err = _run_added(path, path)
+        self.assertEqual((code, out, err), (0, "", ""))
+
+    def test_a_changed_signature_is_the_same_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            old, new = Path(tmp) / "old.api.txt", Path(tmp) / "new.api.txt"
+            old.write_text(self.KEEP)
+            new.write_text("api\tfunction\tpub\tjubarte::keep (x: u8)\n")
+            code, out, _err = _run_added(old, new)
+        self.assertEqual((code, out), (0, ""))
+
+    def test_listing_paths_match_the_rustdoc_public_surface(self) -> None:
+        # `(impl Clone)` contains a space. A parser that stops at the first
+        # space reports that path as added when the other side is rustdoc JSON.
+        with tempfile.TemporaryDirectory() as tmp:
+            listing, doc = Path(tmp) / "demo.api.txt", Path(tmp) / "demo.json"
+            listing.write_text("\n".join(api.flatten(demo_doc())) + "\n")
+            doc.write_text(json.dumps(demo_doc()))
+            self.assertEqual(_run_added(listing, doc)[:2], (0, ""))
+            self.assertEqual(_run_added(doc, listing)[:2], (0, ""))
+
+    def _line_spacing(self, impls: list[tuple[int, dict]]) -> dict:
+        items = [
+            item(0, "jubarte", "module", {"is_crate": True, "items": [1]}),
+            item(1, "edit", "module", {"items": [2]}),
+            item(2, "LineSpacing", "struct", struct([], [i for i, _ in impls])),
+        ]
+        for iid, inner in impls:
+            items.append(item(iid, None, "impl", inner, vis="default"))
+        return _doc(items, {
+            0: ["jubarte"], 1: ["jubarte", "edit"], 2: ["jubarte", "edit", "LineSpacing"],
+        })
+
+    def test_renaming_an_impl_parameter_is_not_an_added_path(self) -> None:
+        # #1758: `impl<'de> Deserialize<'de>` and `impl<'input> Deserialize<'input>`
+        # are the same impl. So are `From<T>` and `From<U>`. A new trait impl
+        # is still an addition. Parameter names are canonicalized positionally
+        # (`'0`, `T0`); trait impls stay in the gate because cargo-semver-checks
+        # does not fail a patch for adding one.
+        def de(name: str) -> dict:
+            return {
+                "trait": {"path": "Deserialize", "id": 900, "args": {
+                    "angle_bracketed": {"args": [{"lifetime": name}], "constraints": []},
+                }},
+                "for": {"resolved_path": {"path": "LineSpacing", "id": 2, "args": None}},
+                "items": [],
+                "generics": {"params": [{"name": name, "kind": {"lifetime": {"outlives": []}}}],
+                             "where_predicates": []},
+                "blanket_impl": None, "is_synthetic": False,
+            }
+
+        def from_type(name: str) -> dict:
+            return {
+                "trait": {"path": "From", "id": 901, "args": {
+                    "angle_bracketed": {"args": [{"type": {"generic": name}}], "constraints": []},
+                }},
+                "for": {"resolved_path": {"path": "LineSpacing", "id": 2, "args": None}},
+                "items": [],
+                "generics": {"params": [{"name": name, "kind": {
+                    "type": {"bounds": [], "default": None, "is_synthetic": False},
+                }}], "where_predicates": []},
+                "blanket_impl": None, "is_synthetic": False,
+            }
+
+        def serialize() -> dict:
+            return {
+                "trait": {"path": "Serialize", "id": 902, "args": None},
+                "for": {"resolved_path": {"path": "LineSpacing", "id": 2, "args": None}},
+                "items": [],
+                "generics": {"params": [], "where_predicates": []},
+                "blanket_impl": None, "is_synthetic": False,
+            }
+
+        old = self._line_spacing([(3, de("'de")), (4, from_type("T"))])
+        renamed = self._line_spacing([(3, de("'input")), (4, from_type("U"))])
+        added = self._line_spacing([(3, de("'input")), (4, from_type("U")), (5, serialize())])
+        with tempfile.TemporaryDirectory() as tmp:
+            old_path, renamed_path, added_path = (Path(tmp) / n for n in ("old.json", "renamed.json", "added.json"))
+            old_path.write_text(json.dumps(old))
+            renamed_path.write_text(json.dumps(renamed))
+            added_path.write_text(json.dumps(added))
+            same, same_out, same_err = _run_added(old_path, renamed_path)
+            code, out, err = _run_added(old_path, added_path)
+        self.assertEqual((same, same_out, same_err), (0, "", ""))
+        self.assertEqual(err, "", out)
+        self.assertEqual((code, out), (
+            1, "impl jubarte::edit::LineSpacing::(impl Serialize)\n",
+        ))
+
+    def test_a_new_glob_reexport_adds_the_names_it_makes_public(self) -> None:
+        # #1758: `pub use a::*` then `pub use b::*`. Both use-lines are
+        # `jubarte::*`; `b::second` was already public at its own path.
+        # The glob makes `jubarte::second` nameable. A crate-private item
+        # in `b` is not.
+        def surface(use_ids: list[int]) -> dict:
+            return _doc([
+                item(0, "jubarte", "module", {"is_crate": True, "items": [1, 2, *use_ids]}),
+                item(1, "a", "module", {"items": [4]}),
+                item(2, "b", "module", {"items": [5, 6]}),
+                item(3, None, "use", {"source": "a::*", "name": "*", "id": 1, "is_glob": True}),
+                item(4, "first", "function", fn()),
+                item(5, "second", "function", fn()),
+                item(6, "buried", "function", fn(), vis="crate"),
+                item(8, None, "use", {"source": "b::*", "name": "*", "id": 2, "is_glob": True}),
+            ], {
+                0: ["jubarte"], 1: ["jubarte", "a"], 2: ["jubarte", "b"],
+                4: ["jubarte", "a", "first"], 5: ["jubarte", "b", "second"],
+                6: ["jubarte", "b", "buried"],
+            })
+
+        with tempfile.TemporaryDirectory() as tmp:
+            old, new = Path(tmp) / "old.json", Path(tmp) / "new.json"
+            old.write_text(json.dumps(surface([3])))
+            new.write_text(json.dumps(surface([3, 8])))
+            code, out, err = _run_added(old, new)
+        self.assertEqual(err, "", out)
+        self.assertEqual((code, out), (1, "value jubarte::second\n"))
+
+    def test_a_glob_of_an_enum_adds_its_variants(self) -> None:
+        # `use` items with is_glob point at a module or an enum. Variants
+        # carry no visibility of their own; they are as public as the enum.
+        def surface(items_at_root: list[int]) -> dict:
+            return _doc([
+                item(0, "jubarte", "module", {"is_crate": True, "items": items_at_root}),
+                item(1, "E", "enum", {"variants": [2, 3], "impls": []}),
+                item(2, "A", "variant", {"kind": "plain"}, vis="default"),
+                item(3, "B", "variant", {"kind": "plain"}, vis="default"),
+                item(4, None, "use", {"source": "E::*", "name": "*", "id": 1, "is_glob": True}),
+            ], {0: ["jubarte"], 1: ["jubarte", "E"]})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            old, new = Path(tmp) / "old.json", Path(tmp) / "new.json"
+            old.write_text(json.dumps(surface([1])))
+            new.write_text(json.dumps(surface([1, 4])))
+            code, out, err = _run_added(old, new)
+        self.assertEqual(err, "", out)
+        self.assertEqual((code, out), (1, "type jubarte::A\ntype jubarte::B\n"))
+
+    def test_a_macro_is_not_the_function_of_the_same_path(self) -> None:
+        # #1758: `fn something` and `something!` share a path and not a
+        # namespace. cargo-semver-checks 0.51.0 has no macro_added lint, so
+        # the gate has to name the macro. Identity is the Rust namespace
+        # (type, value, macro) plus the path.
+        paths = {0: ["jubarte"], 1: ["jubarte", "something"], 2: ["jubarte", "something"]}
+        old = _doc([
+            item(0, "jubarte", "module", {"is_crate": True, "items": [1]}),
+            item(1, "something", "function", fn()),
+        ], paths)
+        new = _doc([
+            item(0, "jubarte", "module", {"is_crate": True, "items": [1, 2]}),
+            item(1, "something", "function", fn()),
+            item(2, "something", "macro", "macro_rules! something { () => {}; }"),
+        ], paths)
+        with tempfile.TemporaryDirectory() as tmp:
+            old_path, new_path = Path(tmp) / "old.json", Path(tmp) / "new.json"
+            old_path.write_text(json.dumps(old))
+            new_path.write_text(json.dumps(new))
+            code, out, err = _run_added(old_path, new_path)
+        self.assertEqual(err, "", out)
+        self.assertEqual((code, out), (1, "macro jubarte::something\n"))
+
+    def test_rustdoc_json_names_an_added_free_function(self) -> None:
+        old_doc = demo_doc()
+        new_doc = demo_doc()
+        new_doc["index"]["1"]["inner"]["module"]["items"].append(21)
+        new_doc["index"]["21"] = item(21, "something", "function", fn())
+        new_doc["paths"]["21"] = {
+            "crate_id": 0, "path": ["demo", "api", "something"], "kind": "function",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            old, new = Path(tmp) / "old.json", Path(tmp) / "new.json.gz"
+            old.write_text(json.dumps(old_doc))
+            with gzip.open(new, "wt") as gz:
+                json.dump(new_doc, gz)
+            code, out, err = _run_added(old, new)
+        self.assertEqual((code, err), (1, ""), out)
+        self.assertEqual(out, "value demo::api::something\n")
+
+    def test_the_shapes_a_listing_line_can_take(self) -> None:
+        lines = [
+            "api\tfunction\tpub\tjubarte::admission::AdmissionError::code const (self: &Self) -> &'static str",
+            "api\timpl\t\tjubarte::admission::AdmissionError::(impl Clone)",
+            "api\ttype_alias\tpub\tjubarte::audit::LayoutPass = &'a mut dyn FnMut(&[u8])",
+            "api\tassoc_type\tpub\tjubarte::cli::Cli::(impl Deref)::Target = CompareArgs",
+            "api\tstruct_field\tpub\tjubarte::append::AppendError::Admission::document: &'static str",
+            "api\tuse\tpub\tjubarte::WmlDocument = wml_document::WmlDocument",
+            "internal\tfunction\tpub(crate)\tjubarte::secret ()",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            old, new = Path(tmp) / "old.api.txt", Path(tmp) / "new.api.txt"
+            old.write_text(lines[0] + "\n")
+            new.write_text("\n".join(lines) + "\n")
+            code, out, err = _run_added(old, new)
+        self.assertEqual(err, "")
+        self.assertEqual(code, 1)
+        self.assertEqual(out.splitlines(), [
+            "field jubarte::append::AppendError::Admission::document",
+            "impl jubarte::admission::AdmissionError::(impl Clone)",
+            "type jubarte::audit::LayoutPass",
+            "type jubarte::cli::Cli::(impl Deref)::Target",
+            "use jubarte::WmlDocument",
+        ])
+
+    def test_emit_writes_a_listing_outside_docs_api(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            built = Path(tmp) / "jubarte.json"
+            built.write_text(json.dumps(demo_doc()))
+            out = Path(tmp) / "head.api.txt"
+            with mock.patch.object(api, "build_doc_json"):
+                with mock.patch.object(api, "DOC_JSON", built):
+                    with mock.patch.object(api, "API_DIR", Path(tmp) / "api"):
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            api.main(["--emit", str(out)])
+            self.assertEqual(out.read_text().splitlines(), api.flatten(demo_doc()))
+            self.assertFalse((Path(tmp) / "api").exists())
 
 
 if __name__ == "__main__":

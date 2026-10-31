@@ -1582,35 +1582,115 @@ case "$1" in
 esac
 """
 
+# A public item the listing already had. A method body is not in the listing,
+# so two equal listings are that change.
+KEEP_LISTING = "api\tfunction\tpub\tjubarte::keep ()\n"
+
+# python3 and git stand in for the rustdoc build and the previous-tag
+# worktree. --added runs the real script (the comparison is the thing under
+# test); --emit and `api_snapshot.py VERSION` copy fixture listings, so the
+# gate never starts cargo. git worktree add/remove only touch the temp dir.
+PYTHON_API_STUB = r"""#!/bin/bash
+set -euo pipefail
+echo "python3 $* cwd=$(pwd)" >> "$CALLS"
+if [ "$1" = scripts/api_snapshot.py ] && [ "$2" = --added ]; then
+  exec "$REAL_PYTHON" "$REAL_SNAPSHOT" --added "$3" "$4"
+fi
+if [ "$1" = scripts/api_snapshot.py ] && [ "$2" = --emit ]; then
+  if [ "${FAIL_EMIT:-}" = 1 ]; then
+    echo "emit failed" >&2
+    exit 1
+  fi
+  cp "$HEAD_LISTING" "$3"
+  exit 0
+fi
+if [ "$1" = scripts/api_snapshot.py ]; then
+  ver=$2
+  mkdir -p docs/api
+  cp "$PREV_BUILT_LISTING" "docs/api/jubarte-v${ver}.api.txt"
+  exit 0
+fi
+echo "unexpected python3 $*" >&2
+exit 9
+"""
+
+GIT_WORKTREE_STUB = r"""#!/bin/bash
+set -euo pipefail
+echo "git $*" >> "$CALLS"
+if [ "$1" = worktree ] && [ "$2" = add ]; then
+  dir=$3 rev=$4
+  if [ "$3" = --detach ]; then dir=$4 rev=$5; fi
+  mkdir -p "$dir/scripts" "$dir/docs/api"
+  echo "$rev" > "$dir/.rev"
+  exit 0
+fi
+if [ "$1" = worktree ] && [ "$2" = remove ]; then
+  dir=$3
+  [ "$3" = --force ] && dir=$4
+  rm -rf "$dir"
+  exit 0
+fi
+echo "unexpected git $*" >&2
+exit 9
+"""
+
 
 class BumpGate(unittest.TestCase):
     """#1742: docs/VERSIONING.md's bump rule is proven before step 1 writes
     anything. Pre-1.0, a patch carries no new feature (`### Added`) and no
-    change cargo-semver-checks reports; a minor or major may."""
+    change cargo-semver-checks reports; a minor or major may. #1758: a patch
+    also carries no public item path the previous release's listing does not
+    have — cargo-semver-checks 0.51.0 has no lint for a new free function,
+    trait, module, macro or type alias."""
 
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="bumpgate-"))
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         (self.tmp / "bin").mkdir()
-        (self.tmp / "bin" / "cargo").write_text(CARGO_SEMVER_STUB)
-        (self.tmp / "bin" / "cargo").chmod(0o755)
+        for name, body in (("cargo", CARGO_SEMVER_STUB), ("python3", PYTHON_API_STUB),
+                           ("git", GIT_WORKTREE_STUB)):
+            path = self.tmp / "bin" / name
+            path.write_text(body)
+            path.chmod(0o755)
         self.calls = self.tmp / "calls"
 
-    def gate(self, ver: str, prev: str, section: str, **env: str) -> subprocess.CompletedProcess[str]:
+    def gate(self, ver: str, prev: str, section: str, *,
+             snapshot: str | None = KEEP_LISTING, head: str | None = None,
+             built: str | None = None, prelude: str = "", bash: str = "bash",
+             **env: str) -> subprocess.CompletedProcess[str]:
         (self.tmp / "CHANGELOG.md").write_text(
             f"# Changelog\n\n## [Unreleased]\n\n## [{ver}] - 2026-10-25\n\n{section}\n"
             f"## [{prev}] - 2026-10-22\n\n### Fixed\n\n- old\n"
         )
-        functions = shell_functions("bump_kind", "changelog_section", "bump_gate")
+        if head is None:
+            head = snapshot if snapshot is not None else KEEP_LISTING
+        if built is None:
+            built = head
+        if snapshot is not None:
+            listing = self.tmp / "docs" / "api" / f"jubarte-v{prev}.api.txt"
+            listing.parent.mkdir(parents=True, exist_ok=True)
+            listing.write_text(snapshot)
+        head_file = self.tmp / "head.api.txt"
+        built_file = self.tmp / "built.api.txt"
+        head_file.write_text(head)
+        built_file.write_text(built)
+        (self.tmp / "scripts").mkdir(exist_ok=True)
+        shutil.copy(HERE / "api_snapshot.py", self.tmp / "scripts" / "api_snapshot.py")
+        functions = shell_functions(
+            "bump_kind", "changelog_section", "bump_gate", "patch_public_additions",
+        )
         script = (
-            f"set -euo pipefail\nVER={ver}; TAG=v{ver}\n"
+            f"set -euo pipefail\n{prelude}VER={ver}; TAG=v{ver}\n"
             'step() { echo "  - $*"; }\ndie() { echo "ERROR: $*" >&2; exit 1; }\n'
             'semver_lints_ok() { return "${LINTS:-0}"; }\n'
             f"{functions}\nbump_gate v{prev}\n"
         )
         full = dict(os.environ, PATH=f"{self.tmp / 'bin'}:{os.environ['PATH']}",
-                    CALLS=str(self.calls), **env)
-        return subprocess.run(["bash", "-c", script], cwd=self.tmp, env=full,
+                    CALLS=str(self.calls),
+                    HEAD_LISTING=str(head_file), PREV_BUILT_LISTING=str(built_file),
+                    REAL_PYTHON=sys.executable, REAL_SNAPSHOT=str(HERE / "api_snapshot.py"),
+                    TMPDIR=str(self.tmp), **env)
+        return subprocess.run([bash, "-c", script], cwd=self.tmp, env=full,
                               capture_output=True, text=True, timeout=60)
 
     def cargo_calls(self) -> str:
@@ -1664,6 +1744,148 @@ class BumpGate(unittest.TestCase):
         r = self.gate("0.14.0", "0.13.0", "### Added\n\n- a feature\n### Changed\n\n- an API\n")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.cargo_calls(), "")
+
+    def test_a_patch_that_adds_a_public_free_function_is_refused(self) -> None:
+        # #1758: cargo-semver-checks 0.51.0 has no function_added lint, so the
+        # listing is what stops the patch, and the message names the path.
+        # The baseline is the tag's listing, so the committed snapshot (which
+        # defaults to the same text as HEAD) cannot hide the new function.
+        head = KEEP_LISTING + "api\tfunction\tpub\tjubarte::something ()\n"
+        r = self.gate("0.13.1", "0.13.0", "### Fixed\n\n- a fix\n",
+                      head=head, built=KEEP_LISTING)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("jubarte::something", r.stderr)
+        self.assertIn("0.14.0", r.stderr)
+        self.assertIn("docs/VERSIONING.md", r.stderr)
+        self.assertNotIn("jubarte::keep", r.stderr)
+        self.assertIn("git worktree add", self.cargo_calls())
+
+    def test_a_patch_whose_listings_are_equal_passes(self) -> None:
+        # A method body never reaches the listing, so the two sides match.
+        # The tag listing is built even when a current file is committed.
+        calls_before = self.cargo_calls()
+        r = self.gate("0.13.1", "0.13.0", "### Fixed\n\n- a fix\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        calls = self.cargo_calls()
+        self.assertNotEqual(calls, calls_before)
+        self.assertIn("scripts/api_snapshot.py --added", calls)
+        self.assertIn("scripts/api_snapshot.py --emit", calls)
+        self.assertIn("git worktree add", calls)
+        self.assertIn("git worktree remove --force", calls)
+        self.assertIn("semver-checks", calls)
+        self.assertEqual(list(self.tmp.glob("jubarte-api-*")), [])
+
+    def test_a_minor_skips_the_added_public_path_check(self) -> None:
+        head = KEEP_LISTING + "api\tfunction\tpub\tjubarte::something ()\n"
+        r = self.gate("0.14.0", "0.13.0", "### Added\n\n- a feature\n", head=head)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("api_snapshot", self.cargo_calls())
+        self.assertNotIn("jubarte::something", r.stderr)
+        self.assertNotIn("git worktree", self.cargo_calls())
+
+    def test_a_missing_listing_is_built_at_the_tag_and_removed(self) -> None:
+        head = KEEP_LISTING + "api\tfunction\tpub\tjubarte::something ()\n"
+        r = self.gate("0.13.1", "0.13.0", "### Fixed\n\n- a fix\n",
+                      snapshot=None, head=head, built=KEEP_LISTING)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("jubarte::something", r.stderr)
+        calls = self.cargo_calls()
+        found = re.search(r"git worktree add (\S+) v0.13.0", calls)
+        self.assertIsNotNone(found, calls)
+        assert found is not None
+        self.assertIn(f"python3 scripts/api_snapshot.py 0.13.0 cwd={found.group(1)}", calls)
+        self.assertIn("cp scripts/api_snapshot.py", shell_functions("patch_public_additions"))
+        self.assertFalse(Path(found.group(1)).exists(), found.group(1))
+        self.assertIn("git worktree remove --force", calls)
+
+    def test_an_old_three_column_listing_is_built_at_the_tag(self) -> None:
+        # v0.11.2's committed file has no surface column. Reusing it would
+        # read every current public path as added.
+        old = "assoc_const\tpub\t(impl A)::URI: &'static str\n"
+        r = self.gate("0.13.1", "0.13.0", "### Fixed\n\n- a fix\n",
+                      snapshot=old, head=KEEP_LISTING, built=KEEP_LISTING)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        calls = self.cargo_calls()
+        found = re.search(r"git worktree add (\S+) v0.13.0", calls)
+        self.assertIsNotNone(found, calls)
+        assert found is not None
+        self.assertFalse(Path(found.group(1)).exists(), found.group(1))
+
+    def test_the_checklist_names_the_added_path_check(self) -> None:
+        row = next(line for line in checklist_block().splitlines()
+                   if line.startswith("0|auto|The bump kind"))
+        self.assertIn("free function", row)
+        self.assertIn("scripts/api_snapshot.py --added", row)
+        self.assertNotIn("current shape", row)
+        self.assertIn("worktree of the tag", row)
+        self.assertEqual(row.count("|"), 3)
+
+    def test_a_committed_listing_cannot_authorize_an_addition(self) -> None:
+        # The four-column file was generated from the patch tree, so it
+        # already names the new function. The tag does not. A header check
+        # is not provenance: step 0 runs before the version bump, so the
+        # patch tree's crate version can still equal the previous release.
+        committed = KEEP_LISTING + "api\tfunction\tpub\tjubarte::something ()\n"
+        r = self.gate("0.13.1", "0.13.0", "### Fixed\n\n- a fix\n",
+                      snapshot=committed, head=committed, built=KEEP_LISTING)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("value jubarte::something", r.stderr)
+        self.assertIn("git worktree add", self.cargo_calls())
+        self.assertNotIn("jubarte::keep", r.stderr)
+
+    def test_a_truncated_committed_listing_is_not_the_baseline(self) -> None:
+        # A short four-column file would read every real path as added.
+        r = self.gate("0.13.1", "0.13.0", "### Fixed\n\n- a fix\n",
+                      snapshot="api\tfunction\tpub\tjubarte::other ()\n",
+                      head=KEEP_LISTING, built=KEEP_LISTING)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("git worktree add", self.cargo_calls())
+
+    def _prev_trap(self, marker: Path) -> str:
+        return f"trap 'echo RAN >> \"{marker}\"' EXIT\n"
+
+    def test_die_on_bash_32_removes_the_listing_and_runs_the_previous_trap(self) -> None:
+        # bash 3.2 unsets a function's locals before the EXIT trap. The trap
+        # used to abort on `listing: unbound variable` and skip every cleanup,
+        # and it replaced any trap the caller had installed.
+        marker = self.tmp / "prev-die"
+        head = KEEP_LISTING + "api\tfunction\tpub\tjubarte::something ()\n"
+        r = self.gate("0.13.1", "0.13.0", "### Fixed\n\n- a fix\n",
+                      head=head, built=KEEP_LISTING, bash="/bin/bash",
+                      prelude=self._prev_trap(marker))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("jubarte::something", r.stderr)
+        self.assertEqual(list(self.tmp.glob("jubarte-api-head.*")), [])
+        self.assertEqual(list(self.tmp.glob("jubarte-api-prev.*")), [])
+        self.assertTrue(marker.is_file(), r.stderr)
+        self.assertEqual(marker.read_text().strip(), "RAN")
+
+    def test_a_failed_command_still_cleans_up_under_bash_32_and_53(self) -> None:
+        # set -e unsets function locals before the EXIT trap on bash 3.2 and
+        # on bash 5.3. A rustdoc failure must not leave the listing or the
+        # previous-tag worktree behind, and the caller's trap still runs.
+        for shell in ("/bin/bash", "bash"):
+            marker = self.tmp / f"prev-emit-{Path(shell).name}"
+            if marker.exists():
+                marker.unlink()
+            r = self.gate("0.13.1", "0.13.0", "### Fixed\n\n- a fix\n",
+                          head=KEEP_LISTING, built=KEEP_LISTING, bash=shell,
+                          prelude=self._prev_trap(marker), FAIL_EMIT="1")
+            with self.subTest(shell=shell):
+                self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertEqual(list(self.tmp.glob("jubarte-api-head.*")), [])
+                self.assertEqual(list(self.tmp.glob("jubarte-api-prev.*")), [])
+                self.assertTrue(marker.is_file(), r.stderr)
+                self.assertEqual(marker.read_text().strip(), "RAN")
+
+    def test_a_clean_patch_keeps_the_previous_exit_trap(self) -> None:
+        marker = self.tmp / "prev-ok"
+        r = self.gate("0.13.1", "0.13.0", "### Fixed\n\n- a fix\n",
+                      bash="/bin/bash", prelude=self._prev_trap(marker))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(list(self.tmp.glob("jubarte-api-*")), [])
+        self.assertTrue(marker.is_file(), r.stderr)
+        self.assertEqual(marker.read_text().strip(), "RAN")
 
     def test_step_0_runs_it_before_step_1_writes_anything(self) -> None:
         s0 = step(0)
