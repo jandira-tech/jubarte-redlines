@@ -125,6 +125,55 @@ const STRICT_ORIGINAL: &[u8] = include_bytes!("fixtures/strict/Strict01.docx");
 /// A Transitional modified document (the f-3 modified).
 const MODIFIED: &[u8] = include_bytes!("fixtures/strict/sd-2517-localized-heading-styles.docx");
 
+/// Both identical-input exits must apply the same validity repairs as a diff
+/// (#1796). Strict permits boolean-only cnfStyle; Transitional requires val.
+fn assert_identical_strict_validity(original: &[u8], modified: &[u8]) {
+    let out = compare_documents(original, modified, "Redline").unwrap();
+    let pkg = PartFs::open(&out).unwrap();
+    let mut cnf_styles = 0;
+    for part in pkg.parts() {
+        let Some(xml) = pkg
+            .part_string(&part)
+            .filter(|xml| xml.contains("cnfStyle"))
+        else {
+            continue;
+        };
+        let mut dom = jubarte::xmllinq::Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom.root(doc).unwrap();
+        for node in dom.descendants(root, Some(&jubarte::namespaces::W::name("cnfStyle"))) {
+            cnf_styles += 1;
+            assert!(
+                dom.attribute(node, &jubarte::namespaces::W::val())
+                    .is_some(),
+                "{part}: Transitional w:cnfStyle must carry w:val"
+            );
+        }
+    }
+    assert!(cnf_styles > 0, "fixture must exercise w:cnfStyle");
+    let findings = jubarte::validate::ring1(&pkg);
+    assert!(findings.is_empty(), "Ring-1 findings: {findings:#?}");
+}
+
+#[test]
+fn identical_strict_self_compare_runs_validity_sweep() {
+    assert_identical_strict_validity(STRICT_ORIGINAL, STRICT_ORIGINAL);
+}
+
+#[test]
+fn identical_after_strict_translation_runs_validity_sweep() {
+    let translated =
+        jubarte::strict_translation::strict_to_transitional_docx(STRICT_ORIGINAL).unwrap();
+    assert_ne!(STRICT_ORIGINAL, translated.as_slice());
+    // Translation is idempotent: prep makes these distinct inputs byte-identical,
+    // exercising the second exit rather than the full comparison path.
+    assert_eq!(
+        translated,
+        jubarte::strict_translation::strict_to_transitional_docx(&translated).unwrap()
+    );
+    assert_identical_strict_validity(STRICT_ORIGINAL, &translated);
+}
+
 /// One part of a docx, by raw zip read.
 fn read_part(docx: &[u8], name: &str) -> String {
     all_zip_entries(docx)

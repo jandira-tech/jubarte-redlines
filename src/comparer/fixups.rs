@@ -8,8 +8,9 @@
 //! ids are renumbered; VML ids are preserved unless they collide, sharing one
 //! space across shapes, shapetypes, groups and other VML elements (#1800).
 //! References follow the renamed definition. The compare pipeline calls
-//! [`fix_up_drawing_ids`] mid-stream and after the Word-mode merge passes;
-//! [`fix_up_drawing_ids_in_package`] covers the identical-input shortcut.
+//! [`fix_up_drawing_ids`] mid-stream and after the Word-mode merge passes.
+//! The identical-input shortcut calls [`rename_repeated_doc_pr_ids`] only:
+//! unique DrawingML ids and schema-permitted repeated VML ids stay untouched.
 //!
 //! [`fix_up_group_ids`] remains the standalone upstream consolidate helper;
 //! compare uses the shared VML repair instead.
@@ -57,7 +58,7 @@ fn unused_id(old: &str, taken: &mut HashSet<String>) -> String {
 
 /// Give a `wp:docPr` whose id an earlier one already holds (or that holds
 /// none a number can read) the next id above every other.
-fn rename_repeated_doc_pr_ids(dom: &mut Dom, root: NodeId) {
+pub(crate) fn rename_repeated_doc_pr_ids(dom: &mut Dom, root: NodeId) {
     let id = id_attr();
     let nodes = doc_pr_nodes(dom, root);
     // Every id the drawings hold: a new one may be none of them, nor one
@@ -282,9 +283,9 @@ pub fn fix_up_group_ids(dom: &mut Dom, root: NodeId) {
 /// Apply the DrawingML and shared VML id fixups to a
 /// package's main document and write the redlined package back to bytes.
 ///
-/// Used by the IDENTICAL-INPUT short-circuit so an empty redline still
-/// renumbers colliding source `wp:docPr/@id` values the full pipeline
-/// would have fixed.
+/// Standalone byte facade for callers that need full drawing normalization.
+/// The identical-input comparer repairs only invalid DrawingML ids directly
+/// in its admitted package, without this facade's serialization/reopening.
 //
 ///
 /// # Errors
@@ -295,8 +296,8 @@ pub fn fix_up_drawing_ids_in_package(docx: &[u8]) -> Result<Vec<u8>, crate::opc:
     fix_up_drawing_ids_in_package_within(docx, crate::admission::InputLimits::compare(), false)
 }
 
-/// Keep the identical-input comparer's already-admitted budget through the
-/// fixup; `preserve_untouched` as in [`fix_up_drawing_ids`].
+/// Keep the caller's admission budget through the byte facade;
+/// `preserve_untouched` as in [`fix_up_drawing_ids`].
 pub(crate) fn fix_up_drawing_ids_in_package_within(
     docx: &[u8],
     limits: crate::admission::InputLimits,
