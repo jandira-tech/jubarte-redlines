@@ -3554,14 +3554,23 @@ fn inserted_text_no_deleted_table_separates_passes() {
     }
 }
 
-/// #1800 is an ambiguous VML id, not evidence of Word refusing a file.
+/// #1800: only self-referential or unresolved shape types warn. Word also
+/// writes repeated ids, including paired AlternateContent fallback shapes.
 #[test]
-fn duplicate_vml_ids_are_part_scoped_warnings() {
-    let xml = r##"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml"><w:body><w:p><w:r><w:pict><v:shapetype id="1"/><v:shape id="1" type="#1"/><v:rect id="1"/></w:pict></w:r></w:p></w:body></w:document>"##;
-    let bytes = zip_with_parts(&[("word/document.xml", xml)]);
+fn vml_shape_type_warnings_are_part_scoped() {
+    let wrap = |body: &str| {
+        format!(
+            r#"<w:document xmlns:w="{}" xmlns:v="urn:schemas-microsoft-com:vml"><w:body>{body}</w:body></w:document>"#,
+            jubarte::namespaces::W::URI
+        )
+    };
+    let bad = wrap(
+        r##"<v:shapetype id="same"/><v:shape id="same" type="#same"/><v:shape id="other" type="#missing"/>"##,
+    );
+    let bytes = zip_with_parts(&[("word/document.xml", &bad)]);
     let findings: Vec<_> = jubarte::validate::ring1(&PartFs::open(&bytes).unwrap())
         .into_iter()
-        .filter(|f| f.code == "DUPLICATE_VML_ID")
+        .filter(|f| f.code == "VML_SHAPE_TYPE_INVALID")
         .collect();
     assert_eq!(findings.len(), 2, "{findings:?}");
     for finding in findings {
@@ -3570,13 +3579,26 @@ fn duplicate_vml_ids_are_part_scoped_warnings() {
         assert_eq!(finding.part, "word/document.xml");
         assert!(!finding.location.is_empty());
     }
-    let clean = xml
-        .replace("<v:shape id=\"1\"", "<v:shape id=\"2\"")
-        .replace("<v:rect id=\"1\"", "<v:rect id=\"3\"");
-    let bytes = zip_with_parts(&[("word/document.xml", &clean), ("word/header1.xml", &clean)]);
-    assert!(
-        jubarte::validate::ring1(&PartFs::open(&bytes).unwrap())
-            .iter()
-            .all(|f| f.code != "DUPLICATE_VML_ID")
+    let good = wrap(
+        r##"<v:shapetype id="t"/><v:shape id="s" type="#t"/><v:shape id="s" type="#t"/><v:rect id="s"/>"##,
     );
+    let missing = wrap(r##"<v:shape id="s" type="#t"/>"##);
+    let bytes = zip_with_parts(&[("word/document.xml", &good), ("word/header1.xml", &missing)]);
+    let findings: Vec<_> = jubarte::validate::ring1(&PartFs::open(&bytes).unwrap())
+        .into_iter()
+        .filter(|f| f.code.contains("VML"))
+        .collect();
+    assert_eq!(findings.len(), 1, "repeated ids are allowed: {findings:?}");
+    assert_eq!(findings[0].part, "word/header1.xml");
+}
+
+#[test]
+fn vml_fallback_type_does_not_warn() {
+    let xml = r##"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><w:body><v:shape id="s"/><mc:AlternateContent><mc:Choice Requires="v"><v:shape id="s"/></mc:Choice><mc:Fallback><v:shape id="s" type="#s"/><v:shape id="s" type="#missing"/></mc:Fallback></mc:AlternateContent></w:body></w:document>"##;
+    let bytes = zip_with_parts(&[("word/document.xml", xml)]);
+    let findings: Vec<_> = jubarte::validate::ring1(&PartFs::open(&bytes).unwrap())
+        .into_iter()
+        .filter(|f| f.code.contains("VML"))
+        .collect();
+    assert!(findings.is_empty(), "fallback must not warn: {findings:?}");
 }

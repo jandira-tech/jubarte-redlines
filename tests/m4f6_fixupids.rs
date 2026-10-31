@@ -367,3 +367,205 @@ fn m4_f6_vml_collision_space_and_references() {
         assert_eq!(d.serialize_element(body), once, "fixup is idempotent");
     }
 }
+
+#[test]
+fn m4_f6_fallback_ids_are_reserved_and_untouched() {
+    let mut d = Dom::new();
+    let doc = d.parse_xdocument(r##"<w:body xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><v:shape id="box"/><v:shape id="box"/><mc:AlternateContent><mc:Choice Requires="v"/><mc:Fallback><v:shapetype id="box_1"/><v:shape id="box" type="#box_1"/></mc:Fallback></mc:AlternateContent></w:body>"##);
+    let root = d.root(doc).unwrap();
+    let fallback = d.descendants(root, Some(&jubarte::namespaces::MC::name("Fallback")))[0];
+    let before = d.serialize_element(fallback);
+    fix_up_shape_ids(&mut d, root);
+    assert_eq!(
+        d.serialize_element(fallback),
+        before,
+        "Fallback ids pair with docPr names"
+    );
+    let shapes = d.descendants(root, Some(&VML::shape()));
+    assert_eq!(
+        d.attribute(shapes[1], &id()),
+        Some("box_2"),
+        "fallback ids are reserved"
+    );
+}
+
+#[test]
+fn m4_f6_spids_share_id_space_and_preserve_unique_values() {
+    let mut d = Dom::new();
+    let doc = d.parse_xdocument(r#"<w:body xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><v:shape id="a" o:spid="_x0000_s1026"/><v:shape id="b" o:spid="_x0000_s1026"/><v:shape id="_x0000_s1027" o:spid="_x0000_s1027"/><v:shape id="_x0000_s1028"/><v:shape id="c" o:spid="_x0000_s1028"/><v:shape id="_x0000_s1027" o:spid="_x0000_s1027"/></w:body>"#);
+    let root = d.root(doc).unwrap();
+    fix_up_shape_ids(&mut d, root);
+    let shapes = d.descendants(root, Some(&VML::shape()));
+    let spid = O::name("spid");
+    assert_eq!(d.attribute(shapes[0], &spid), Some("_x0000_s1026"));
+    assert_ne!(
+        d.attribute(shapes[1], &spid),
+        Some("_x0000_s1026"),
+        "colliding spid must change"
+    );
+    assert_eq!(
+        d.attribute(shapes[2], &spid),
+        Some("_x0000_s1027"),
+        "own id/spid alias is unique"
+    );
+    assert_ne!(
+        d.attribute(shapes[4], &spid),
+        Some("_x0000_s1028"),
+        "spid collides with another shape id"
+    );
+    let alias = d.attribute(shapes[5], &spid).unwrap();
+    assert_eq!(
+        Some(alias),
+        d.attribute(shapes[5], &id()),
+        "colliding aliases stay paired"
+    );
+    assert!(
+        alias
+            .strip_prefix("_x0000_s")
+            .unwrap()
+            .bytes()
+            .all(|b| b.is_ascii_digit()),
+        "renumbered spid keeps its numeric form: {alias}"
+    );
+    let once = d.serialize_element(root);
+    fix_up_shape_ids(&mut d, root);
+    assert_eq!(d.serialize_element(root), once);
+}
+
+#[test]
+fn m4_f6_all_vml_id_references_follow_renames() {
+    let mut d = Dom::new();
+    let doc = d.parse_xdocument(r##"<w:body xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><w:pict><v:group id="g"/><v:shape id="s"/></w:pict><w:object><v:group id="g"><v:shape id="s" o:regroupid="g" href="#s"><o:OLEObject ShapeID="s"/></v:shape></v:group><w:control w:shapeid="s"/><v:rect href="https://example.test/#s"/></w:object></w:body>"##);
+    let root = d.root(doc).unwrap();
+    fix_up_shape_ids(&mut d, root);
+    let shape = d.descendants(root, Some(&VML::shape()))[1];
+    let group = d.descendants(root, Some(&VML::group()))[1];
+    let control = d.descendants(root, Some(&W::name("control")))[0];
+    let ole = d.descendants(root, Some(&O::ole_object()))[0];
+    assert_eq!(
+        d.attribute(control, &W::name("shapeid")),
+        d.attribute(shape, &id()),
+        "control follows renamed shape"
+    );
+    assert_eq!(
+        d.attribute(shape, &O::name("regroupid")),
+        d.attribute(group, &id()),
+        "regroup follows renamed group"
+    );
+    assert_eq!(d.attribute(shape, &XName::get("href", "")), Some("#s_1"));
+    assert_eq!(
+        d.attribute(ole, &XName::get("ShapeID", "")),
+        d.attribute(shape, &id()),
+        "nested OLE follows host"
+    );
+    let rect = d.descendants(root, Some(&VML::name("rect")))[0];
+    assert_eq!(
+        d.attribute(rect, &XName::get("href", "")),
+        Some("https://example.test/#s")
+    );
+    let once = d.serialize_element(root);
+    fix_up_shape_ids(&mut d, root);
+    assert_eq!(d.serialize_element(root), once);
+}
+
+fn source_vml(text: &str, forward: bool) -> String {
+    let definition = format!(
+        r#"<w:p><w:r><w:pict><v:shapetype id="t" coordsize="{text}"/></w:pict></w:r></w:p>"#
+    );
+    let shape = format!(
+        r##"<w:p><w:r><w:pict><v:shape id="s" type="#t" o:spid="_x0000_s1026" style="width:100pt;height:30pt" title="{text}"/></w:pict><w:t>{text}</w:t></w:r></w:p>"##
+    );
+    let body = if forward {
+        format!("{shape}{definition}")
+    } else {
+        format!("{definition}{shape}")
+    };
+    format!(
+        r#"<w:sdt xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><w:sdtContent>{body}</w:sdtContent></w:sdt>"#
+    )
+}
+
+fn assert_source_vml(xml: &str) {
+    assert!(
+        !xml.contains("VmlSource"),
+        "source bookkeeping must not escape"
+    );
+    let mut d = Dom::new();
+    let doc = d.parse_xdocument(xml);
+    let root = d.root(doc).unwrap();
+    let shapes = d.descendants(root, Some(&VML::shape()));
+    assert_eq!(shapes.len(), 2, "both source shapes survive: {xml}");
+    for shape in shapes {
+        let target = d
+            .attribute(shape, &XName::get("type", ""))
+            .unwrap()
+            .trim_start_matches('#');
+        let definition = d
+            .descendants(root, Some(&VML::shapetype()))
+            .into_iter()
+            .find(|&n| d.attribute(n, &id()) == Some(target))
+            .unwrap();
+        assert_eq!(
+            d.attribute(definition, &XName::get("coordsize", "")),
+            d.attribute(shape, &XName::get("title", "")),
+            "shape must bind its own source definition: {xml}"
+        );
+    }
+    let mut ids = std::collections::HashSet::new();
+    let mut spids = std::collections::HashSet::new();
+    for node in d.descendants(root, None) {
+        if d.name(node).is_some_and(|n| n.namespace_name() == VML::URI) {
+            if let Some(id) = d.attribute(node, &id()) {
+                assert!(ids.insert(id), "duplicate {id}: {xml}");
+            }
+            if let Some(spid) = d.attribute(node, &O::name("spid")) {
+                assert!(spids.insert(spid), "duplicate spid {spid}: {xml}");
+            }
+        }
+    }
+}
+
+#[test]
+fn m4_f6_forward_type_binds_own_source_through_compare() {
+    use common::docx::{docx, part_string};
+    let a = docx(&source_vml("100,100", false));
+    let b = docx(&source_vml("200,200", true));
+    let out = jubarte::document_comparer::compare_documents(&a, &b, "Test").unwrap();
+    assert_source_vml(&part_string(&out, "word/document.xml").unwrap());
+}
+
+#[test]
+fn m4_f6_header_footer_collisions_through_compare() {
+    use common::docx::{Part, docx_with_sect, para, part_string};
+    for (kind, tag) in [("header", "hdr"), ("footer", "ftr")] {
+        let part = format!("word/{kind}1.xml");
+        let content_type =
+            format!("application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}+xml");
+        let rel_type =
+            format!("http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}");
+        let build = |text| {
+            let xml = format!(
+                r#"<w:{tag} xmlns:w="{}">{}</w:{tag}>"#,
+                W::URI,
+                source_vml(text, false)
+            );
+            docx_with_sect(
+                &para("Unchanged body"),
+                &[Part {
+                    name: &part,
+                    content_type: &content_type,
+                    rel_type: &rel_type,
+                    xml: &xml,
+                }],
+                &format!(r#"<w:{kind}Reference w:type="default" r:id="rIdX0"/>"#),
+            )
+        };
+        let out = jubarte::document_comparer::compare_documents(
+            &build("100,100"),
+            &build("200,200"),
+            "Test",
+        )
+        .unwrap();
+        assert_source_vml(&part_string(&out, &part).unwrap());
+    }
+}
