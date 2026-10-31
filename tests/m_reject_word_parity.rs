@@ -2389,3 +2389,42 @@ fn reject_1724_c3_keeps_a_continued_merge_cell_and_drops_its_text() {
         "{xml}"
     );
 }
+
+/// #1724 `c3b`, `c3c`, `c3d`: the `c3` cell in the second row of a two-row
+/// table, under a plain cell, under a live `w:vMerge` restart, and with no
+/// `w:tcPrChange`. Word 16's Reject All empties the cell in all three
+/// (2026-10-31), so the `c3` rule is not an artifact of a one-row table.
+#[test]
+fn reject_1724_c3_two_rows_empties_the_continued_merge_cell() {
+    let merge = format!(r#"<w:cellMerge w:id="3" {REV} w:vMerge="rest" w:vMergeOrig="cont"/>"#);
+    let with_change = format!(
+        r#"<w:tcPr>{TCW}{SHADE_RED}{merge}{}</w:tcPr>{}"#,
+        tc_change(&format!("{TCW}{SHADE_GREEN}")),
+        target_paragraph()
+    );
+    let no_change = format!(
+        r#"<w:tcPr>{TCW}{SHADE_RED}{merge}</w:tcPr>{}"#,
+        target_paragraph()
+    );
+    for (above_props, target) in [
+        ("", &with_change),
+        (r#"<w:vMerge w:val="restart"/>"#, &with_change),
+        ("", &no_change),
+    ] {
+        let body = format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr>{TCW}</w:tcPr><w:p><w:r><w:t>KEEP1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr>{TCW}{above_props}</w:tcPr><w:p><w:r><w:t>ABOVE</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr>{TCW}</w:tcPr><w:p><w:r><w:t>KEEP</w:t></w:r></w:p></w:tc><w:tc>{target}</w:tc></w:tr></w:tbl><w:p/>"#
+        );
+        let rejected = reject_revisions(&docx(&body)).unwrap();
+        assert_word_valid_package(&rejected);
+        let xml = part_string(&rejected, "word/document.xml").unwrap();
+        assert_eq!(
+            cell_texts(&rejected),
+            ["KEEP1", "ABOVE", "KEEP", ""],
+            "{xml}"
+        );
+        assert!(
+            !xml.contains("cellMerge") && !xml.contains("tcPrChange"),
+            "{xml}"
+        );
+    }
+}
