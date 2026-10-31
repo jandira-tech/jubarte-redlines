@@ -253,9 +253,40 @@ fn parts_only_deleted_breaks_reference(
         .collect()
 }
 
+/// Unmerged comparisons retain A's section stories. This cleanup deliberately
+/// follows the flag, not a preset: faithful mode, `--no-paragraph-merge`, and
+/// custom settings all need the same Accept All semantics and Word-crash fix.
+fn needs_unmerged_section_story_cleanup(settings: &WmlComparerSettings) -> bool {
+    !settings.merge_replaced_paragraphs
+}
+
+/// A story slot includes both its kind and its default/first/even type.
+fn has_header_footer_slot(refs: &[(String, String, String)], kind: &str, ty: &str) -> bool {
+    refs.iter().any(|(k, t, _)| k == kind && t == ty)
+}
+
+/// Whole-story deletion must not touch a part shared with any slot B keeps.
+fn a_only_header_footer_parts(
+    original: &PartFs,
+    revised: &PartFs,
+) -> std::collections::HashSet<String> {
+    let a_refs = header_footer_refs(original);
+    let b_refs = header_footer_refs(revised);
+    let shared: std::collections::HashSet<&String> = a_refs
+        .iter()
+        .filter(|(kind, ty, _)| has_header_footer_slot(&b_refs, kind, ty))
+        .map(|(_, _, part)| part)
+        .collect();
+    a_refs
+        .iter()
+        .filter(|(_, _, part)| !shared.contains(part))
+        .map(|(_, _, part)| part.clone())
+        .collect()
+}
+
 /// PowerTools drops the original's section breaks altogether. We preserve
 /// them for Reject All, but must not promote their A-only stories onto the
-/// live final section (#1837). Leave shared kinds and live earlier sections
+/// live final section (#1837). Leave shared slots and live earlier sections
 /// alone; their treatment remains the faithful preset's existing behavior.
 fn strip_final_a_only_deleted_break_stories(
     dom: &mut Dom,
@@ -295,13 +326,15 @@ fn strip_final_a_only_deleted_break_stories(
         } else {
             continue;
         };
-        if b_refs.iter().any(|(k, _, _)| k == kind) {
+        let ty = dom.attribute(reference, &W::type_()).unwrap_or("default");
+        if has_header_footer_slot(&b_refs, kind, ty) {
             continue;
         }
         let target = dom
             .attribute(reference, &R::id())
             .and_then(|id| rels.items.iter().find(|r| r.id == id).map(|r| &r.target));
         if target.is_some_and(|t| dead.contains(&referenced_part(out, main, t))) {
+            // Reject cannot restore this reference; an earlier live section may supply a different story.
             dom.remove(reference);
         }
     }
@@ -5847,8 +5880,8 @@ fn mark_adopted_hf_content_as_inserted(
 /// M383 — when the revised document has **no** headers/footers but the original
 /// does, Word marks all original HF content pure-D. Eng left A HF live (−45 on
 /// h_f_normal_odd_even_firstpg×basic_footnotes). Inverse of M378. The rule
-/// holds per kind: a revision that keeps its headers but has no footer drops
-/// the original's footers too (bc0135eaa1). A part in `dead_only` (only
+/// holds per (kind, type) slot: a first-page footer does not preserve A's
+/// default footer (#1837). A part in `dead_only` (only
 /// deleted section breaks reference it) goes as a whole story (#1833).
 fn mark_a_only_hf_content_as_deleted(
     out: &mut PartFs,
@@ -5857,19 +5890,24 @@ fn mark_a_only_hf_content_as_deleted(
     dead_only: &std::collections::HashSet<String>,
     settings: &WmlComparerSettings,
 ) {
-    let b_refs = header_footer_refs(pkg2);
+    let a_only = a_only_header_footer_parts(pkg1, pkg2);
     let mut seen = std::collections::HashSet::new();
-    for (kind, _, part) in header_footer_refs(pkg1) {
-        // B references this kind: the slot-level content diff owns the markup.
-        if b_refs.iter().any(|(k, _, _)| *k == kind) || !seen.insert(part.clone()) {
+    let (section_count, a_refs) = header_footer_refs_by_section(pkg1);
+    for (_, _, _, part) in &a_refs {
+        // A shared slot's content diff owns the markup for its entire part.
+        if !a_only.contains(part) || !seen.insert(part.clone()) {
             continue;
         }
         // Part may be stored under the same name in out (A-based package).
-        let whole_story = dead_only.contains(&part);
-        if !settings.merge_replaced_paragraphs && !whole_story {
+        let whole_story = dead_only.contains(part);
+        let final_only = a_refs
+            .iter()
+            .filter(|(_, _, _, p)| p == part)
+            .all(|(section, _, _, _)| section + 1 == section_count);
+        if needs_unmerged_section_story_cleanup(settings) && !whole_story && !final_only {
             continue;
         }
-        mark_hf_part_content_as_deleted(out, &part, settings, whole_story);
+        mark_hf_part_content_as_deleted(out, part, settings, whole_story);
     }
 }
 
@@ -7085,19 +7123,15 @@ fn compare_documents_impl(
             result_root,
             &final_header_footer_slots(&pkg2),
         );
-    } else {
+    }
+    if needs_unmerged_section_story_cleanup(settings) {
         strip_final_a_only_deleted_break_stories(&mut dom, result_root, &out, &pkg2, &main1);
     }
-    // A-only stories on deleted breaks must disappear on Accept All in both
-    // presets. Word mode also deletes stories that still have a live section.
+    // A-only stories on deleted breaks or solely on the final section must
+    // disappear on Accept All, including when paragraph merging is disabled.
     let mut dead_only = parts_only_deleted_breaks_reference(&dom, result_root, &out, &main1);
-    if !settings.merge_replaced_paragraphs {
-        let b_refs = header_footer_refs(&pkg2);
-        let a_only: std::collections::HashSet<String> = header_footer_refs(&pkg1)
-            .into_iter()
-            .filter(|(kind, _, _)| !b_refs.iter().any(|(k, _, _)| k == kind))
-            .map(|(_, _, part)| part)
-            .collect();
+    if needs_unmerged_section_story_cleanup(settings) {
+        let a_only = a_only_header_footer_parts(&pkg1, &pkg2);
         dead_only.retain(|part| a_only.contains(part));
     }
     mark_a_only_hf_content_as_deleted(&mut out, &pkg1, &pkg2, &dead_only, settings);
