@@ -45,10 +45,10 @@ else
   echo "gen_docs: warning: build failed, using the existing target/debug/jubarte" >&2
 fi
 python3 scripts/gen_cli_docs.py \
-  --runner "$ROOT/target/debug/jubarte" \
+  --runner "$(printf %q "$ROOT/target/debug/jubarte")" \
   --display jubarte --file docs/rust.md --marker cli-rust
 python3 scripts/gen_cli_docs.py --summary \
-  --runner "$ROOT/target/debug/jubarte" \
+  --runner "$(printf %q "$ROOT/target/debug/jubarte")" \
   --display jubarte --file README.md --marker cli-summary
 # Every flag (clap's model) and every id the CLI prints or takes.
 scripts/cli_flags.sh
@@ -56,18 +56,24 @@ python3 scripts/cli_locations.py
 
 # --- Python CLI + API ---------------------------------------------------------
 PY=$ROOT/jubarte-python/.venv/bin/python
-if [ ! -x "$PY" ]; then
+# Rebuild when the package is missing, not only when the interpreter is: a
+# venv left by a failed `maturin develop` has Python but no jubarte_redlines
+# (#1810).
+if [ ! -x "$PY" ] || ! "$PY" -c 'import jubarte_redlines'; then
   command -v uv >/dev/null \
-    || { echo "error: uv not found and jubarte-python/.venv is missing" >&2; exit 1; }
+    || { echo "error: uv not found and $PY cannot import jubarte_redlines" >&2; exit 1; }
   uv run --directory jubarte-python --with maturin maturin develop --release
 fi
+# --runner is ONE shell command line (gen_cli_docs.py shlex-splits it): a
+# `-m` in argv form never reaches it — argparse's nargs="+" ends at the dash
+# (#1810). %q keeps a $ROOT with spaces one word.
 if [ -x "$ROOT/jubarte-python/.venv/bin/jubarte-redlines" ]; then
   PY_RUNNER=("$ROOT/jubarte-python/.venv/bin/jubarte-redlines")
 else
   PY_RUNNER=("$PY" -m jubarte_redlines)
 fi
 python3 scripts/gen_cli_docs.py \
-  --runner "${PY_RUNNER[@]}" \
+  --runner "$(printf '%q ' "${PY_RUNNER[@]}")" \
   --display jubarte-redlines --file docs/python.md --marker cli-python
 "$PY" scripts/gen_python_api.py --file docs/python.md
 
@@ -94,7 +100,7 @@ mkdir -p jubarte-wasm/cli/node_modules
 rm -rf jubarte-wasm/cli/node_modules/jubarte-wasm
 ln -sfn ../../npm jubarte-wasm/cli/node_modules/jubarte-wasm
 python3 scripts/gen_cli_docs.py \
-  --runner node "$ROOT/jubarte-wasm/cli/bin/jubarte-redlines.mjs" \
+  --runner "node $(printf %q "$ROOT/jubarte-wasm/cli/bin/jubarte-redlines.mjs")" \
   --display jubarte-redlines --file docs/javascript.md --marker cli-npm
 python3 scripts/gen_wasm_api.py \
   --dts jubarte-wasm/npm/node/jubarte_wasm.d.ts \

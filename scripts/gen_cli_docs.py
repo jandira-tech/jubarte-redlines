@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shlex
 import subprocess
 
 START = "<!-- gen:{marker}:start -->"
@@ -216,9 +217,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--runner",
-        nargs="+",
         required=True,
-        help="argv prefix that launches the CLI (e.g. `target/debug/jubarte`)",
+        help="one shell command line that launches the CLI "
+        "(e.g. `target/debug/jubarte` or `'py -m jubarte_redlines'`); "
+        "it is shlex-split, so an argv with dashes stays intact",
     )
     parser.add_argument("--display", required=True, help="command name to show")
     parser.add_argument("--file", required=True, help="markdown file to update")
@@ -235,11 +237,17 @@ def main() -> None:
         help="write a one-row-per-command table instead of every --help",
     )
     args = parser.parse_args()
+    # nargs="+" cannot carry a runner whose argv starts a dash (`-m pkg`):
+    # argparse ends the option list there (#1810). One shell command line
+    # does, and shlex.split restores the argv.
+    runner = shlex.split(args.runner)
+    if not runner:
+        parser.error("--runner must name a command")
 
     if args.summary:
-        block = build_summary(args.runner, args.display)
+        block = build_summary(runner, args.display)
     else:
-        block = build_block(args.runner, args.display, args.max_depth)
+        block = build_block(runner, args.display, args.max_depth)
     with open(args.file, encoding="utf-8") as f:
         text = f.read()
     updated = replace_block(text, args.marker, block)
