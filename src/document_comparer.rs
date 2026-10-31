@@ -18,6 +18,89 @@ use crate::namespaces::{R, W, W14};
 use crate::opc::{OpcError, PartFs};
 use crate::xmllinq::{Dom, NodeId, XName};
 
+/// A header/footer comparison that cannot produce a faithful redline.
+/// Carried inside [`OpcError::Io`]; callers can downcast its `get_ref()`.
+#[derive(Debug)]
+pub struct StoryDiffError {
+    /// Package part whose comparison failed.
+    pub part: String,
+    /// The failed operation or output invariant.
+    pub reason: &'static str,
+}
+
+impl std::fmt::Display for StoryDiffError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "STORY_DIFF_FAILED: {}: {}", self.part, self.reason)
+    }
+}
+
+impl std::error::Error for StoryDiffError {}
+
+fn story_diff_error(part: &str, reason: &'static str) -> OpcError {
+    crate::opc::refused(StoryDiffError {
+        part: part.to_string(),
+        reason,
+    })
+}
+
+fn ensure_story_text_tracked(
+    part: &str,
+    original: &str,
+    revised: &str,
+    redlined: &str,
+    has_revisions: bool,
+) -> Result<(), OpcError> {
+    if !has_revisions && (original != revised || redlined != original) {
+        return Err(story_diff_error(
+            part,
+            "story text changed without revision marks",
+        ));
+    }
+    Ok(())
+}
+
+/// An unresolved reference has no meaning in its source story. Neutralize
+/// each side against its OWN rels before comparing, even when the other side
+/// happens to resolve the same spelling. Keep valid references for the carry
+/// step, which must fail explicitly if their type cannot be carried.
+fn neutralize_story_relationships(pkg: &PartFs, part: &str, xml: &str) -> Result<String, OpcError> {
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(xml);
+    let root = dom
+        .root(doc)
+        .ok_or_else(|| story_diff_error(part, "story has no root element"))?;
+    let mut changed = false;
+    for el in dom.descendants_and_self(root, None) {
+        for (name, rid) in dom.attributes(el) {
+            if !crate::comparer::tables::S_RELATIONSHIP_ATTRIBUTE_NAMES.contains(&name) {
+                continue;
+            }
+            let resolves = pkg.read_rels_for(part).is_some_and(|rels| {
+                rels.items.iter().any(|r| {
+                    r.id == rid
+                        && (r.target_mode.as_deref() == Some("External")
+                            || crate::comparer::parts::is_external_relationship(
+                                &r.rel_type,
+                                &r.target,
+                            )
+                            || pkg
+                                .part_bytes(&pkg.resolve_rel_target(part, &r.target))
+                                .is_some())
+                })
+            });
+            if !resolves {
+                dom.set_attribute_value(el, &name, None);
+                changed = true;
+            }
+        }
+    }
+    Ok(if changed {
+        dom.serialize_document(doc)
+    } else {
+        xml.to_string()
+    })
+}
+
 /// `xml` (part `part_b` of `pkg2`) with each relationship it references
 /// carried onto `part_a` of `out` under a fresh id (an image with A's bytes
 /// reuses A's relationship), so B's content means what it meant in B once
@@ -8186,8 +8269,9 @@ fn compare_documents_impl(
     // M4.H.x: header/footer CONTENT diff (Word redlines header/footer changes; we
     // previously only copied the original's). Match A's parts to B's by reference
     // (kind,type), diff the content and write the redline into the output's
-    // (original's) part. That part keeps A's rels, so a part whose B references
-    // (a logo, a hyperlink) would resolve to something else there is skipped.
+    // (original's) part. Neutralize dangling references on both sides and
+    // carry B's valid references into A's rels before diffing. A failed story
+    // comparison must refuse the package, never silently retain A (#1709).
     {
         let (sections_a, refs_a) = header_footer_refs_by_section(&pkg1);
         let (sections_b, refs_b) = header_footer_refs_by_section(&pkg2);
@@ -8225,22 +8309,41 @@ fn compare_documents_impl(
                 continue;
             };
             let part_b = &part_b;
-            if let (Some(xa), Some(xb)) = (pkg1.part_string(&part_a), pkg2.part_string(part_b)) {
+            {
+                let xa = pkg1.part_string(&part_a).ok_or_else(|| {
+                    story_diff_error(&part_a, "original story XML is unavailable")
+                })?;
+                let xb = pkg2
+                    .part_string(part_b)
+                    .ok_or_else(|| story_diff_error(part_b, "revised story XML is unavailable"))?;
+                let xa = neutralize_story_relationships(&pkg1, &part_a, &xa)?;
+                let xb = neutralize_story_relationships(&pkg2, part_b, &xb)?;
                 // B's references that mean something else in A's part (both
                 // headers picture their own logo as rId1) move to fresh ids.
                 let xb = if part_rels_agree((&pkg1, &part_a), (&pkg2, part_b), &xb) {
                     xb
                 } else {
-                    match carry_revised_part_relationships(&mut out, &part_a, (&pkg2, part_b), &xb)
-                    {
-                        Some(x) => x,
-                        None => continue,
-                    }
+                    carry_revised_part_relationships(&mut out, &part_a, (&pkg2, part_b), &xb)
+                        .ok_or_else(|| {
+                            story_diff_error(part_b, "cannot carry revised story relationships")
+                        })?
                 };
                 let mut hd = Dom::new();
                 let da = hd.parse_xdocument(&xa);
                 let db = hd.parse_xdocument(&xb);
-                if let (Some(ra), Some(rb)) = (hd.root(da), hd.root(db)) {
+                let ra = hd.root(da).ok_or_else(|| {
+                    story_diff_error(&part_a, "original story has no root element")
+                })?;
+                let rb = hd
+                    .root(db)
+                    .ok_or_else(|| story_diff_error(part_b, "revised story has no root element"))?;
+                let container_name = if kind == "header" { W::hdr() } else { W::ftr() };
+                for (root, part) in [(ra, part_a.as_str()), (rb, part_b.as_str())] {
+                    if !hd.name_is(root, &container_name) {
+                        return Err(story_diff_error(part, "unexpected story root element"));
+                    }
+                }
+                {
                     let text_of = |d: &Dom, n: crate::xmllinq::NodeId| -> String {
                         d.descendants(n, Some(&W::t()))
                             .into_iter()
@@ -8249,6 +8352,7 @@ fn compare_documents_impl(
                     };
                     // capture BEFORE the compare mutates the arena
                     let a_text = text_of(&hd, ra);
+                    let b_text = text_of(&hd, rb);
                     let b_ends_with_table = hd
                         .elements(rb, None)
                         .last()
@@ -8260,10 +8364,9 @@ fn compare_documents_impl(
                     // hdr/ftr under that wrapper is dead (PR #81 / kilo): re-wrap
                     // the body children as the original container type so the
                     // redlined part stays a valid header/footer part.
-                    let container_name = if kind == "header" { W::hdr() } else { W::ftr() };
-                    let Some(out_body) = hd.element(res, &W::body()) else {
-                        continue;
-                    };
+                    let out_body = hd.element(res, &W::body()).ok_or_else(|| {
+                        story_diff_error(&part_a, "story comparison produced no body")
+                    })?;
                     let container = hd.new_element(container_name);
                     // Preserve source-root namespace decls (w already on body
                     // children; copy any extras from A's original root).
@@ -8296,24 +8399,20 @@ fn compare_documents_impl(
                             &settings.author_for_revisions,
                         );
                     }
-                    // M-PAG mech 1 guard: the diff must never leave a slot A
-                    // populates with B's wholesale content. When B's matched
-                    // part is effectively empty (run-less paragraphs) the
-                    // "diff" degenerates to B's paragraphs with no revision
-                    // markup, silently blanking A's footer (sd-2517 vs
-                    // sectpr-headerref: all 19 footers blanked, −3 rendered
-                    // pages). Word RETAINS A's content for slots A populates
-                    // (GT-verified), so accept the diff only when it carries
-                    // revision markup or still reads as A's text; otherwise
-                    // keep A's part untouched.
+                    // A changed story with no revision marks is not a redline.
+                    // The old M-PAG guard silently kept A when this failed;
+                    // refuse instead, including when the diff lost B's text.
                     let redlined = hd.serialize_element(container);
-                    let has_revisions = redlined.contains("<w:ins")
-                        || redlined.contains("<w:del")
-                        || redlined.contains("pPrChange")
-                        || redlined.contains("rPrChange");
-                    if has_revisions || text_of(&hd, container) == a_text {
-                        out.set_part(&part_a, redlined.into_bytes());
-                    }
+                    let has_revisions =
+                        crate::revision_processor::xml_has_tracked_revisions(&redlined);
+                    ensure_story_text_tracked(
+                        &part_a,
+                        &a_text,
+                        &b_text,
+                        &text_of(&hd, container),
+                        has_revisions,
+                    )?;
+                    out.set_part(&part_a, redlined.into_bytes());
                 }
             }
         }
@@ -14199,5 +14298,68 @@ mod public_numbering_definition_source_owner_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod story_diff_failure_tests {
+    use super::*;
+
+    #[test]
+    fn neutralization_preserves_resolved_internal_references_and_source_package() {
+        let mut pkg =
+            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let part = "word/header1.xml";
+        pkg.set_part("word/media/owned.bin", vec![1, 2, 3]);
+        let rid =
+            pkg.add_document_relationship(part, &format!("{}/image", R::URI), "media/owned.bin");
+        let valid = format!(
+            "<w:hdr xmlns:w='{}' xmlns:r='{}'><w:p r:embed='{rid}'/></w:hdr>",
+            W::URI,
+            R::URI,
+        );
+        assert_eq!(
+            neutralize_story_relationships(&pkg, part, &valid).unwrap(),
+            valid
+        );
+        let mixed = valid.replace("<w:p ", "<w:p r:link='missing' ");
+        let before = pkg.to_zip().unwrap();
+        let neutralized = neutralize_story_relationships(&pkg, part, &mixed).unwrap();
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&neutralized);
+        let p = dom.element(dom.root(doc).unwrap(), &W::p()).unwrap();
+        assert_eq!(dom.attribute(p, &R::name("embed")), Some(rid.as_str()));
+        assert_eq!(dom.attribute(p, &R::name("link")), None);
+        assert_eq!(pkg.to_zip().unwrap(), before);
+    }
+
+    #[test]
+    fn unmarked_story_loss_is_a_typed_refusal() {
+        for (a, b, redline) in [("A", "B", "A"), ("A", "B", "B"), ("A", "A", "")] {
+            let err = ensure_story_text_tracked("word/header1.xml", a, b, redline, false)
+                .expect_err("neither silently keeping A nor replacing it with B is a redline");
+            let OpcError::Io(io) = err else {
+                panic!("expected a typed refusal");
+            };
+            let typed = io
+                .get_ref()
+                .unwrap()
+                .downcast_ref::<StoryDiffError>()
+                .unwrap();
+            assert_eq!(typed.part, "word/header1.xml");
+            assert_eq!(typed.reason, "story text changed without revision marks");
+        }
+        ensure_story_text_tracked("word/header1.xml", "A", "A", "A", false).unwrap();
+        ensure_story_text_tracked("word/header1.xml", "A", "B", "AB", true).unwrap();
+    }
+
+    #[test]
+    fn rootless_story_cannot_be_neutralized_into_a_silent_copy() {
+        let pkg = PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let err = neutralize_story_relationships(&pkg, "word/footer1.xml", "").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("STORY_DIFF_FAILED: word/footer1.xml")
+        );
     }
 }

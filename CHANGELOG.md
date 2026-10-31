@@ -44,6 +44,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- Header and footer comparisons neutralize unresolved relationship attributes on both inputs before diffing, preserving content deletions and accept/reject round trips in Word and PowerTools modes (#1709). A story that cannot be read, carried or redlined now returns a typed `StoryDiffError` naming the part, instead of silently retaining the original without revision marks.
+
 - **A pure accept or reject no longer hides an error from its resolved lines** (#1702). The Python CLI computes that text before printing and catches only `JubarteError`, the engine refusing the text. That refusal still prints the changed view once and exits 0. Any other error reaches the CLI's handler: `error: …` on stderr and exit 1, with nothing from the resolved view on stdout.
 
 - Accept All and mirrored Reject All no longer panic while joining paragraphs containing nested smart tags, custom XML, content controls, fields, hyperlinks or direction wrappers (#1704). The paragraph-content probe walks through those wrappers and preserves unknown children, including malformed paragraph-level ruby (#1711). `validate` reports direct `w:p > w:ruby` as `RUBY_OUTSIDE_RUN`, a schema error with no automatic repair; Word behavior remains unverified.
