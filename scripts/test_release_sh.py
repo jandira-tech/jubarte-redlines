@@ -188,10 +188,19 @@ class WorkspaceFormatting(unittest.TestCase):
         manifests = (
             "Cargo.toml", "jubarte-wasm/Cargo.toml",
             "jubarte-python/Cargo.toml", "jubarte-rust-inproc/Cargo.toml",
+            "fuzz/Cargo.toml",
         )
         for manifest in manifests:
             with self.subTest(manifest=manifest):
                 self.assertIn(f"cargo fmt --all --manifest-path {manifest} --check", step(5))
+
+    def test_ci_formats_every_workspace(self) -> None:
+        # CI must check what step 5 checks, or a PR merges what the release refuses.
+        ci = (HERE.parent / ".github/workflows/ci.yml").read_text()
+        for workspace in ("jubarte-wasm", "jubarte-python", "jubarte-rust-inproc", "fuzz"):
+            with self.subTest(workspace=workspace):
+                self.assertRegex(ci, rf"for m in [^\n]*\b{workspace}\b")
+        self.assertIn('cargo fmt --all --manifest-path "$m/Cargo.toml" --check', ci)
 
 
 class NpmCli(unittest.TestCase):

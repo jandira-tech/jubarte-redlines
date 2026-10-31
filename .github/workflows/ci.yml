@@ -45,6 +45,12 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: ./.github/actions/mbx
       - run: cargo fmt --check
+      # Every workspace, as release.sh step 5 checks them (#1760): the root
+      # check never reads jubarte-wasm, jubarte-python, jubarte-rust-inproc or fuzz.
+      - run: |
+          for m in jubarte-wasm jubarte-python jubarte-rust-inproc fuzz; do
+            cargo fmt --all --manifest-path "$m/Cargo.toml" --check
+          done
       - run: cargo clippy --all-targets --all-features -- -D warnings
       # The library without the `cli` feature (clap) must still build: a
       # library path once called into src/cli.rs and only --all-features ran.

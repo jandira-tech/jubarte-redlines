@@ -1152,6 +1152,7 @@ if [ "$SKIP_GATES" = 0 ]; then
   cargo fmt --all --manifest-path jubarte-wasm/Cargo.toml --check
   cargo fmt --all --manifest-path jubarte-python/Cargo.toml --check
   cargo fmt --all --manifest-path jubarte-rust-inproc/Cargo.toml --check
+  cargo fmt --all --manifest-path fuzz/Cargo.toml --check
   cargo clippy --all-targets --all-features -- -D warnings
   cargo test --all-features
   # The docs.rs build: a dead intra-doc link renders as bare brackets there.
