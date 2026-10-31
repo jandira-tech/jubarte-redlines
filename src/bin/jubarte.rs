@@ -460,7 +460,7 @@ fn check_side_file(
 }
 
 /// The note a selection prints when it leaves tracked changes inside
-/// comment bodies, which no `--id` can name (#1223).
+/// comment bodies. They are `comments.rN`; this selection did not name them.
 fn comment_changes_note(left: usize) -> String {
     let (s, were, them) = if left == 1 {
         ("", "was", "it")
@@ -468,7 +468,7 @@ fn comment_changes_note(left: usize) -> String {
         ("s", "were", "them")
     };
     format!(
-        "note: {left} tracked change{s} inside comments {were} left; accept or reject all to settle {them}"
+        "note: {left} tracked change{s} inside comments {were} left; accept or reject {them} by id (comments.r…) or all"
     )
 }
 
@@ -559,8 +559,8 @@ fn run_resolution(
         ) {
             eprintln!("note: {note}");
         }
-        // #1223: --id cannot name a comment-body change, so a selection can
-        // leave some; say how many (an empty selection resolves them all).
+        // A selection can leave comment-body revisions (`comments.rN`); say
+        // how many. An empty selection resolves them all.
         if resolved.comment_changes_left > 0 {
             eprintln!("{}", comment_changes_note(resolved.comment_changes_left));
         }
@@ -5076,11 +5076,11 @@ mod tests {
     fn comment_changes_note_agrees_with_its_count() {
         assert_eq!(
             comment_changes_note(1),
-            "note: 1 tracked change inside comments was left; accept or reject all to settle it"
+            "note: 1 tracked change inside comments was left; accept or reject it by id (comments.r…) or all"
         );
         assert_eq!(
             comment_changes_note(2),
-            "note: 2 tracked changes inside comments were left; accept or reject all to settle them"
+            "note: 2 tracked changes inside comments were left; accept or reject them by id (comments.r…) or all"
         );
     }
 

@@ -746,13 +746,18 @@ fn edit_keep_others_sees_a_revision_inside_a_comment() {
         !comment_still_has_carols_deletion(&out.clean),
         "guard off erases the comment-body deletion"
     );
-    // A comment-only file has no listed change, so v1 accept does not
-    // flatten it. The guard must not refuse a settlement that changes nothing.
+    // A comment-only file lists `comments.r9`. v1 accept with the guard on
+    // refuses to erase Carol; with the guard off it settles the deletion.
     let only = comment_deletion_only();
-    let untouched = jubarte::edit::apply_plan(&only, &plan(&value)).unwrap();
+    let err = jubarte::edit::apply_plan(&only, &plan(&value)).unwrap_err();
+    assert_eq!(err.code, "CHANGE_NOT_YOURS", "{err}");
+    assert!(err.message.contains(r#""Carol""#), "{err}");
+    let mut allow_only = value.clone();
+    allow_only.as_object_mut().unwrap().remove("others");
+    let settled = jubarte::edit::apply_plan(&only, &plan(&allow_only)).unwrap();
     assert!(
-        comment_still_has_carols_deletion(&untouched.clean),
-        "v1 does not settle a comment-only revision"
+        !comment_still_has_carols_deletion(&settled.clean),
+        "v1 accept settles a comment-only revision"
     );
     // v2 accept does flatten that comment body, so the guard refuses it.
     let err =

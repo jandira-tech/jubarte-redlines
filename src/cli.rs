@@ -1015,7 +1015,7 @@ pub enum Command {
     ///
     /// One line per logical change: the marks Word wrote for one edit are
     /// one change with a joined id (`r7+8+9+10`), its text followed by
-    /// `(N elements)`.
+    /// `(N elements)`. A revision inside a comment body is `comments.r9`.
     Changes {
         /// The document (.docx).
         #[arg(value_name = "FILE")]
@@ -1025,16 +1025,14 @@ pub enum Command {
         #[arg(long)]
         json: bool,
         /// Only listed changes by this author (exact match); repeat for several.
-        /// Comment-body revisions are not listed, even without this filter.
         #[arg(long, value_name = "NAME", action = clap::ArgAction::Append)]
         author: Vec<String>,
     },
     /// Accept all tracked changes, or select by ID, author or kind.
     ///
     /// Every part counts: the body, headers, footers, notes and comment
-    /// bodies. An author or kind selection reaches comment bodies too, but
-    /// no ID names a comment-body change, so an ID selection leaves those
-    /// tracked.
+    /// bodies. A comment-body revision is `comments.r9`, the id `changes`
+    /// lists, and an id, author or kind selection settles it.
     Accept {
         /// The document (.docx) whose revisions to accept.
         #[arg(value_name = "FILE")]
@@ -1072,9 +1070,8 @@ pub enum Command {
     /// Reject all tracked changes, or select by ID, author or kind.
     ///
     /// Every part counts: the body, headers, footers, notes and comment
-    /// bodies. An author or kind selection reaches comment bodies too, but
-    /// no ID names a comment-body change, so an ID selection leaves those
-    /// tracked.
+    /// bodies. A comment-body revision is `comments.r9`, the id `changes`
+    /// lists, and an id, author or kind selection settles it.
     Reject {
         /// The document (.docx) whose revisions to reject.
         #[arg(value_name = "FILE")]
@@ -3000,8 +2997,7 @@ pub enum Revisions {
 /// Filters selecting individual tracked changes.
 pub struct Selection {
     /// Only this change: `r12` (as the view and `jubarte changes` print
-    /// it), `header1.r1`, or `r1+2` (both). Repeatable. Comment-body
-    /// changes have no ids and stay tracked.
+    /// it), `header1.r1`, `comments.r9`, or `r1+2` (both). Repeatable.
     #[arg(long = "id", value_name = "ID")]
     pub ids: Vec<String>,
     /// Only changes by this author. Repeatable.

@@ -7,11 +7,11 @@
 
 mod common;
 
-use common::docx::{Part, docx, docx_with_sect, part_string};
+use common::docx::{Part, docx, docx_with, docx_with_sect, part_string};
 use common::validity::{assert_word_valid_package, check_word_valid_package};
 use jubarte::changes::{
     Change, ChangeError, ChangeFilter, ChangeKind, MoveSide, accept_changes, accept_elements,
-    list_changes, list_logical_changes, reject_changes, reject_elements,
+    by_authors, changes_text, list_changes, list_logical_changes, reject_changes, reject_elements,
 };
 use jubarte::document_comparer::{accept_revisions, reject_revisions};
 use std::collections::HashSet;
@@ -1168,32 +1168,216 @@ fn comments_xml(pkg: &[u8]) -> String {
     part_string(pkg, "word/comments.xml").unwrap()
 }
 
-/// #1223: `jubarte changes` (and the view) still names no revision inside a
-/// comment body; accept/reject all settles them anyway.
+/// #1706: a revision inside a comment body is listed under the comments
+/// story (`comments.r20`), beside the body's `r1`. Accept all still
+/// settles both.
 #[test]
-fn comment_body_changes_stay_unlisted() {
-    assert_eq!(ids(&commented_body()), ["r1"]);
+fn comment_body_changes_list_under_the_comments_story() {
+    assert_eq!(
+        ids(&commented_body()),
+        ["r1", "comments.r20", "comments.r21"]
+    );
     let accepted = accept_changes(&commented_body(), &ChangeFilter::default()).unwrap();
     let xml = comments_xml(&accepted);
     assert!(!xml.contains("<w:ins") && !xml.contains("<w:del"), "{xml}");
 }
 
-/// #1223: `--id` cannot name a comment-body revision; selecting a body
-/// change leaves the comment's revisions tracked.
+/// #1706: `--id comments.r20` names that comment-body revision. Selecting
+/// only the body's `r1` still leaves the comment's revisions tracked.
 #[test]
-fn an_id_selection_leaves_comment_body_changes() {
-    let accepted = accept_changes(&commented_body(), &filter_ids(&["r1"])).unwrap();
-    assert_word_valid_package(&accepted);
-    let xml = comments_xml(&accepted);
+fn an_id_selection_names_comment_body_changes() {
+    let left = accept_changes(&commented_body(), &filter_ids(&["r1"])).unwrap();
+    assert_word_valid_package(&left);
+    let xml = comments_xml(&left);
     assert!(
         xml.contains(r#"<w:ins w:id="20""#) && xml.contains(r#"<w:del w:id="21""#),
         "comment revisions left tracked: {xml}"
     );
-    // A comment-story id names no listed change.
-    let err = accept_changes(&commented_body(), &filter_ids(&["comments.r20"])).unwrap_err();
+    let settled = accept_changes(
+        &commented_body(),
+        &filter_ids(&["comments.r20", "comments.r21"]),
+    )
+    .unwrap();
+    assert_word_valid_package(&settled);
+    let xml = comments_xml(&settled);
     assert!(
-        matches!(&err, ChangeError::UnknownChange(id) if id == "comments.r20"),
+        !xml.contains("<w:ins") && !xml.contains("<w:del"),
+        "comment revisions settled: {xml}"
+    );
+    let doc = part_string(&settled, "word/document.xml").unwrap();
+    assert!(
+        doc.contains(r#"<w:ins w:id="1""#),
+        "the body's r1 stays tracked: {doc}"
+    );
+    let rejected = reject_changes(&commented_body(), &filter_ids(&["comments.r21"])).unwrap();
+    let xml = comments_xml(&rejected);
+    assert!(
+        xml.contains(">out ") && !xml.contains(r#"<w:del w:id="21""#),
+        "rejecting comments.r21 restores its text: {xml}"
+    );
+    assert!(
+        xml.contains(r#"<w:ins w:id="20""#),
+        "the comment's other revision stays: {xml}"
+    );
+}
+
+/// The document from #1706: the only revision is Cara's insertion inside
+/// comment 0. The body anchors the comment and holds no revision of its own.
+fn issue_1706_document() -> Vec<u8> {
+    let comment = r#"<w:comment w:id="0" w:author="Rev"><w:p><w:r><w:t>plain </w:t></w:r><w:ins w:id="9" w:author="Cara" w:date="2026-10-01T00:00:00Z"><w:r><w:t>revised</w:t></w:r></w:ins></w:p></w:comment>"#;
+    comment_revisions::docx(
+        &format!("<w:p>{}</w:p>", comment_revisions::anchor(0, "anchored")),
+        &[comment.to_string()],
+    )
+}
+
+/// #1706: `changes` lists that insertion as `comments.r9` — the comments
+/// part's story, the same spelling as `header1.r1` and `footnotes.r1` —
+/// in the text listing and the JSON records Python `list_changes` and
+/// WASM `listChanges` / `changesText` print (they call
+/// [`list_logical_changes`] and [`changes_text`]). `c0.r9` is not a change
+/// id: `c0` already names the comment.
+#[test]
+fn issue_1706_lists_the_comment_body_insertion() {
+    let pkg = issue_1706_document();
+    let listed = list_changes(&pkg).unwrap();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    let change = &listed[0];
+    assert_eq!(change.id, "comments.r9");
+    assert_eq!(change.r#ref, "comments.r9");
+    assert_eq!(change.kind, ChangeKind::Insertion);
+    assert_eq!(change.author.as_deref(), Some("Cara"));
+    assert_eq!(change.text, "revised");
+    assert_eq!(change.paragraph.as_deref(), Some("comments"));
+    let text = changes_text(&list_logical_changes(&pkg).unwrap());
+    assert_eq!(
+        text,
+        "comments.r9\tinsertion\ttext\tCara\tcomments\t\"revised\"\n1 change(s)\n"
+    );
+    let json = serde_json::to_value(list_logical_changes(&pkg).unwrap()).unwrap();
+    assert_eq!(json[0]["id"], "comments.r9");
+    assert_eq!(json[0]["author"], "Cara");
+    assert_eq!(
+        by_authors(list_logical_changes(&pkg).unwrap(), &["Cara".into()])
+            .iter()
+            .map(|c| c.id.as_str())
+            .collect::<Vec<_>>(),
+        ["comments.r9"]
+    );
+    assert!(
+        by_authors(list_logical_changes(&pkg).unwrap(), &["Rev".into()]).is_empty(),
+        "the comment's author is not the revision's"
+    );
+
+    let accepted = accept_changes(&pkg, &filter_ids(&["comments.r9"])).unwrap();
+    assert_word_valid_package(&accepted);
+    let xml = comments_xml(&accepted);
+    assert!(!xml.contains("<w:ins"), "{xml}");
+    assert!(xml.contains("revised"), "{xml}");
+    let rejected = reject_changes(&pkg, &filter_ids(&["comments.r9"])).unwrap();
+    let xml = comments_xml(&rejected);
+    assert!(!xml.contains("<w:ins") && !xml.contains("revised"), "{xml}");
+    assert!(xml.contains("plain"), "{xml}");
+
+    // The body's spelling of the same w:id names nothing here.
+    let err = accept_changes(&pkg, &filter_ids(&["r9"])).unwrap_err();
+    assert!(
+        matches!(&err, ChangeError::UnknownChange(id) if id == "r9"),
         "{err:?}"
+    );
+    // Under the comment (`c0.r9`) is not this id, and it is not a change id.
+    let err = accept_changes(&pkg, &filter_ids(&["c0.r9"])).unwrap_err();
+    assert!(
+        matches!(&err, ChangeError::InvalidId(message) if message.contains("c0.r9")),
+        "{err:?}"
+    );
+}
+
+/// The same `w:id` in the body and in a comment body are two changes.
+/// Each id settles only its own story.
+#[test]
+fn a_comment_body_revision_sharing_a_body_id_lists_apart() {
+    let body = format!(
+        r#"<w:p>{}<w:ins w:id="9" w:author="Other" w:date="2026-10-01T00:00:00Z"><w:r><w:t>body</w:t></w:r></w:ins></w:p>"#,
+        comment_revisions::anchor(0, "anchor")
+    );
+    let comment = r#"<w:comment w:id="0" w:author="Rev"><w:p><w:r><w:t>plain </w:t></w:r><w:ins w:id="9" w:author="Cara" w:date="2026-10-01T00:00:00Z"><w:r><w:t>revised</w:t></w:r></w:ins></w:p></w:comment>"#;
+    let pkg = comment_revisions::docx(&body, &[comment.to_string()]);
+    assert_eq!(ids(&pkg), ["r9", "comments.r9"]);
+
+    let body_only = accept_changes(&pkg, &filter_ids(&["r9"])).unwrap();
+    let doc = part_string(&body_only, "word/document.xml").unwrap();
+    assert!(!doc.contains(r#"<w:ins w:id="9""#), "{doc}");
+    let xml = comments_xml(&body_only);
+    assert!(xml.contains(r#"<w:ins w:id="9""#), "{xml}");
+
+    let comment_only = accept_changes(&pkg, &filter_ids(&["comments.r9"])).unwrap();
+    let doc = part_string(&comment_only, "word/document.xml").unwrap();
+    assert!(doc.contains(r#"<w:ins w:id="9""#), "{doc}");
+    let xml = comments_xml(&comment_only);
+    assert!(!xml.contains("<w:ins"), "{xml}");
+    assert!(xml.contains("revised"), "{xml}");
+}
+
+/// A deletion and a formatting change inside a comment are listed too.
+#[test]
+fn comment_body_lists_a_deletion_and_a_formatting_change() {
+    let comment = r#"<w:comment w:id="0" w:author="Rev"><w:p><w:del w:id="10" w:author="Cara" w:date="2026-10-01T00:00:00Z"><w:r><w:delText>gone</w:delText></w:r></w:del><w:r><w:rPr><w:b/><w:rPrChange w:id="11" w:author="Cara" w:date="2026-10-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr><w:t>bold</w:t></w:r></w:p></w:comment>"#;
+    let pkg = comment_revisions::docx(
+        &comment_revisions::anchor(0, "anchor"),
+        &[comment.to_string()],
+    );
+    let got: Vec<_> = list_changes(&pkg)
+        .unwrap()
+        .into_iter()
+        .map(|c| (c.id, c.kind, c.text))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("comments.r10".into(), ChangeKind::Deletion, "gone".into()),
+            ("comments.r11".into(), ChangeKind::Formatting, "bold".into()),
+        ]
+    );
+}
+
+/// Footnotes are already a listed story. `commentsExtended` is metadata:
+/// accept does not walk it, and `changes` does not list a revision parked
+/// there. The gap #1706 closes is the comments part alone.
+#[test]
+fn footnotes_are_listed_and_comments_extended_is_not_a_story() {
+    let footnotes = format!(
+        r#"<w:footnotes xmlns:w="{}"><w:footnote w:id="1"><w:p><w:ins w:id="20" w:author="Cara" w:date="2026-10-01T00:00:00Z"><w:r><w:t>noted</w:t></w:r></w:ins></w:p></w:footnote></w:footnotes>"#,
+        common::docx::W_NS
+    );
+    let extended = r#"<w15:commentsEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:ins w:id="30" w:author="Cara" w:date="2026-10-01T00:00:00Z"><w:r><w:t>hidden</w:t></w:r></w:ins></w15:commentsEx>"#;
+    // The reference keeps the note: accept prunes a footnote nobody cites.
+    let pkg = docx_with(
+        r#"<w:p><w:r><w:t>Body.</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>"#,
+        &[
+            Part {
+                name: "word/footnotes.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+                xml: &footnotes,
+            },
+            Part {
+                name: "word/commentsExtended.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml",
+                rel_type: "http://schemas.microsoft.com/office/2011/relationships/commentsExtended",
+                xml: extended,
+            },
+        ],
+    );
+    assert_eq!(ids(&pkg), ["footnotes.r20"]);
+    let accepted = accept_changes(&pkg, &ChangeFilter::default()).unwrap();
+    let notes = part_string(&accepted, "word/footnotes.xml").unwrap();
+    assert!(!notes.contains("<w:ins"), "{notes}");
+    assert!(notes.contains("noted"), "{notes}");
+    let extended = part_string(&accepted, "word/commentsExtended.xml").unwrap();
+    assert!(
+        extended.contains(r#"w:id="30""#),
+        "accept does not walk commentsExtended: {extended}"
     );
 }
 

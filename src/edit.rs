@@ -1886,11 +1886,10 @@ fn note_foreign(change: &Change, actor: &str, authors: &mut Vec<String>, nameles
 ///
 /// A decision that removes content is also refused when a revision nested
 /// inside it, or a comment anchor it holds, belongs to someone else
-/// (`COMMENT_NOT_YOURS` for the comment). `settle_comment_bodies` is set
-/// when the settlement resolves revisions inside comment bodies even though
-/// [`crate::changes::list_changes`] does not list them (#1223). A settlement
-/// that would not touch those bodies leaves them out, so a comment-only
-/// file is not refused for an erasure that does not happen.
+/// (`COMMENT_NOT_YOURS` for the comment). Comment-body revisions are listed
+/// as `comments.rN` (#1706), so a comment-only file holds tracked changes.
+/// `settle_comment_bodies` still loads that part when a settlement resolves
+/// it and the listing has no other text change.
 pub(crate) fn guard_keep_others(
     source: &[u8],
     author: &str,
@@ -1943,9 +1942,9 @@ pub(crate) fn guard_keep_others(
     let Some(policy) = wholesale else {
         return Ok(());
     };
-    // Comment-body revisions have no public id (#1223). Count them only
-    // when this settlement will resolve them: v2 accept and reject always
-    // do, and v1 does once some listed change of the text makes it flatten.
+    // Comment-body revisions are in `listed` as `comments.rN` (#1706).
+    // Also count the comments part when this settlement resolves it and
+    // the listing has not already got a text change (a style-only file).
     let comment_changes =
         if settle_comment_bodies || listed.iter().any(|c| !c.id.starts_with(STYLES_STORY)) {
             let opened = Opened::open(source).map_err(open_error)?;

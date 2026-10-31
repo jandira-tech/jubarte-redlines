@@ -559,7 +559,8 @@ $ jubarte changes --help
 List tracked changes with IDs for accept, reject and edit plans.
 
 One line per logical change: the marks Word wrote for one edit are one change with a
-joined id (`r7+8+9+10`), its text followed by `(N elements)`.
+joined id (`r7+8+9+10`), its text followed by `(N elements)`. A revision inside a
+comment body is `comments.r9`.
 
 Usage: jubarte changes [OPTIONS] <FILE>
 
@@ -573,8 +574,7 @@ Options:
           is one JSON line on stderr; -q silences it
 
       --author <NAME>
-          Only listed changes by this author (exact match); repeat for several.
-          Comment-body revisions are not listed, even without this filter
+          Only listed changes by this author (exact match); repeat for several
 
   -q, --quiet
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
@@ -594,9 +594,9 @@ Options:
 $ jubarte accept --help
 Accept all tracked changes, or select by ID, author or kind.
 
-Every part counts: the body, headers, footers, notes and comment bodies. An author or
-kind selection reaches comment bodies too, but no ID names a comment-body change, so an
-ID selection leaves those tracked.
+Every part counts: the body, headers, footers, notes and comment bodies. A comment-body
+revision is `comments.r9`, the id `changes` lists, and an id, author or kind selection
+settles it.
 
 Usage: jubarte accept [OPTIONS] <FILE>
 
@@ -621,8 +621,7 @@ Options:
 
       --id <ID>
           Only this change: `r12` (as the view and `jubarte changes` print it),
-          `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids
-          and stay tracked
+          `header1.r1`, `comments.r9`, or `r1+2` (both). Repeatable
 
       --author <NAME>
           Only changes by this author. Repeatable
@@ -693,9 +692,9 @@ Rendering (-o FILE.pdf or FILE.png):
 $ jubarte reject --help
 Reject all tracked changes, or select by ID, author or kind.
 
-Every part counts: the body, headers, footers, notes and comment bodies. An author or
-kind selection reaches comment bodies too, but no ID names a comment-body change, so an
-ID selection leaves those tracked.
+Every part counts: the body, headers, footers, notes and comment bodies. A comment-body
+revision is `comments.r9`, the id `changes` lists, and an id, author or kind selection
+settles it.
 
 Usage: jubarte reject [OPTIONS] <FILE>
 
@@ -720,8 +719,7 @@ Options:
 
       --id <ID>
           Only this change: `r12` (as the view and `jubarte changes` print it),
-          `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids
-          and stay tracked
+          `header1.r1`, `comments.r9`, or `r1+2` (both). Repeatable
 
       --author <NAME>
           Only changes by this author. Repeatable

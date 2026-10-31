@@ -1432,7 +1432,7 @@ fn read_tables_force_replaces_output_entry() {
 }
 
 /// `changes --author NAME` filters listed changes by exact, repeatable names
-/// (#1690). Comment-body changes are outside the listing's scope.
+/// (#1690), comment-body revisions included (#1706).
 #[test]
 fn changes_filter_by_author() {
     let dir = tempfile::tempdir().unwrap();
@@ -1479,8 +1479,12 @@ fn changes_filter_by_author() {
     assert_eq!(json[0]["author"], "Bo");
 }
 
+/// #1706: the issue's document — Cara's insertion inside comment 0, and no
+/// body revision — is one change, `comments.r9`, in the text listing, in
+/// `--json`, and under `--author Cara`. `accept`/`reject --id` settle that
+/// id. `c0.r9` is refused: it is not a change id.
 #[test]
-fn changes_help_discloses_unlisted_comment_body_revisions() {
+fn changes_lists_a_revision_inside_a_comment_body() {
     use common::docx::{Part, W_NS, docx_with, part_string};
     let dir = tempfile::tempdir().unwrap();
     let comments = format!(
@@ -1497,38 +1501,114 @@ fn changes_help_discloses_unlisted_comment_body_revisions() {
     );
     let source = dir.path().join("source.docx");
     std::fs::write(&source, &bytes).unwrap();
-    // Check unfiltered changes first: this is a listing boundary, not an
-    // author-filter regression.
-    for filter in [vec![], vec!["--author", "Cara"]] {
-        let mut args = vec!["changes", source.to_str().unwrap()];
-        args.extend(filter);
-        let (code, stdout, stderr) = run(&args);
-        assert_eq!(code, 0, "{stderr}");
-        assert_eq!(stdout.trim(), "0 change(s)");
-    }
+    let source = source.to_str().unwrap();
+    let (code, stdout, stderr) = run(&["changes", source]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("comments.r9\tinsertion\ttext\tCara\t"),
+        "{stdout}"
+    );
+    assert!(stdout.trim_end().ends_with("1 change(s)"), "{stdout}");
+    let (code, stdout, stderr) = run(&["changes", source, "--author", "Cara"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("comments.r9"), "{stdout}");
+    let (code, stdout, stderr) = run(&["changes", source, "--author", "Rev"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(stdout.trim(), "0 change(s)");
+    let (code, stdout, stderr) = run(&["changes", source, "--json"]);
+    assert_eq!(code, 0, "{stderr}");
+    let record: serde_json::Value = serde_json::from_str(stdout.lines().next().unwrap()).unwrap();
+    assert_eq!(record["id"], "comments.r9");
+    assert_eq!(record["author"], "Cara");
+    assert_eq!(record["kind"], "insertion");
+
     let accepted = dir.path().join("accepted.docx");
     let (code, _, stderr) = run(&[
         "accept",
-        source.to_str().unwrap(),
-        "--author",
-        "Cara",
+        source,
+        "--id",
+        "comments.r9",
         "-o",
         accepted.to_str().unwrap(),
     ]);
     assert_eq!(code, 0, "{stderr}");
-    let comments = part_string(&std::fs::read(accepted).unwrap(), "word/comments.xml").unwrap();
+    let comments = part_string(&std::fs::read(&accepted).unwrap(), "word/comments.xml").unwrap();
     assert!(!comments.contains("<w:ins"), "{comments}");
     assert!(comments.contains("revised"), "{comments}");
+
+    let rejected = dir.path().join("rejected.docx");
+    let (code, _, stderr) = run(&[
+        "reject",
+        source,
+        "--id",
+        "comments.r9",
+        "-o",
+        rejected.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    let comments = part_string(&std::fs::read(&rejected).unwrap(), "word/comments.xml").unwrap();
+    assert!(
+        !comments.contains("<w:ins") && !comments.contains("revised"),
+        "{comments}"
+    );
+
+    let missed = dir.path().join("miss.docx");
+    let (code, _, stderr) = run(&[
+        "accept",
+        source,
+        "--id",
+        "r9",
+        "-o",
+        missed.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 1, "{stderr}");
+    assert!(
+        stderr.contains("no tracked change r9"),
+        "a body id does not name the comment revision: {stderr}"
+    );
+    let (code, _, stderr) = run(&[
+        "accept",
+        source,
+        "--id",
+        "c0.r9",
+        "-o",
+        missed.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("c0.r9"), "{stderr}");
+
+    let (code, _, stderr) = run(&[
+        "accept",
+        source,
+        "--author",
+        "Cara",
+        "-o",
+        accepted.to_str().unwrap(),
+        "--force",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    let comments = part_string(&std::fs::read(&accepted).unwrap(), "word/comments.xml").unwrap();
+    assert!(
+        !comments.contains("<w:ins") && comments.contains("revised"),
+        "{comments}"
+    );
     let (code, help, stderr) = run(&["changes", "--help"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(
-        help.contains("Comment-body revisions are not listed"),
-        "disclose listing scope: {help}"
+        help.contains("comments.r9"),
+        "the listing names the comments story: {help}"
     );
     assert!(
-        !help.contains("as `accept --author` selects them"),
+        !help.contains("Comment-body revisions are not listed"),
         "{help}"
     );
+    let (code, help, stderr) = run(&["accept", "--help"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        !help.contains("no ID names a comment-body change"),
+        "{help}"
+    );
+    assert!(help.contains("comments.r9"), "{help}");
 }
 
 /// `edit --help` names a plan's contents as operations, shows one
