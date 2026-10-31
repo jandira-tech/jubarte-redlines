@@ -16,7 +16,7 @@ touch `word/document.xml`.
 |---|---|
 | Read | `jubarte read file.docx`: header + Markdown with `<!-- pN -->` ids; ids are `p12`, `header1`, `footer2.p1`, `t0.row1.cell2`, `c5`, `r12`. `jubarte read file.docx --json` gives the same document as data |
 | Edit (tracked changes + comments) | `jubarte edit file.docx -p p12 --anchor "thirty days" --content "forty-five days" --author "Name"` (several `-p` per command; writes `file_modified.docx` and prints SUCCESS and a fenced before/after diff of the full agent views), or a plan: `jubarte edit file.docx --plan plan.json --out-dir review --pdf --png` |
-| Add a paragraph, comment or reply | `jubarte add file.docx -p p12 --content "New clause."` (`--before`), `-p p5 --anchor "fee" --content "Cap?"` (a comment), `-p c5 --reply "Agreed."` (a reply) |
+| Add a paragraph, comment or reply | `jubarte add file.docx -p p12 --content "New clause." --author "Name"` (`--before`), `-p p5 --anchor "fee" --content "Cap?"` (a comment), `-p c5 --reply "Agreed."` (a reply) |
 | Resolve one change | `jubarte edit file.docx -p r12 --accept` (or `--reject`; `-p` repeats; prints SUCCESS and a fenced diff containing the resolved text) |
 | Look at pages | `jubarte convert file.docx -o pages.png --dpi 100` then `Read` the PNGs |
 | Page count / page text | `jubarte convert file.docx -o pages.png --report pages.json` |
@@ -524,7 +524,9 @@ date takes `-a`/`-d` (`--datetime`), else the front matter's `author:` and
 `last_modified:` (or `modified:`, `date:`, `created:`), else the reference doc's creator and creation date, else
 `Redline` and now; pass `-d 1970-01-01T00:00:00Z` for byte-identical
 output. `compare`, `edit` and `add` sign with `--author` and date with
-`-d` (default now), never with the files' own metadata.
+`-d` (default now), never with the files' own metadata. An `edit` or `add`
+write that signs markup requires `-a` (or `JUBARTE_AUTHOR`): without one it
+is `AUTHOR_REQUIRED` (exit 2) and nothing is written.
 
 ## 6. Before sending a document out
 

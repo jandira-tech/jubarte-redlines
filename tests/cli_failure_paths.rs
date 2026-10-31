@@ -850,6 +850,8 @@ fn edit_writes_a_docx_under_an_unknown_extension() {
             "--comment",
             "--content",
             "Note.",
+            "-a",
+            "Jubarte",
             "-o",
             "result.zip",
         ],
@@ -867,6 +869,8 @@ fn edit_writes_a_docx_under_an_unknown_extension() {
             "--comment",
             "--content",
             "Note.",
+            "-a",
+            "Jubarte",
             "-o",
             "result.pdf",
         ],
@@ -994,7 +998,16 @@ fn publication_failure_reports_actual_commit_state() {
     }
     let out = Command::new(env!("CARGO_BIN_EXE_jubarte"))
         .current_dir(dir.path())
-        .args(["edit", "a.docx", "-p", "p0", "--content", "Two."])
+        .args([
+            "edit",
+            "a.docx",
+            "-p",
+            "p0",
+            "--content",
+            "Two.",
+            "-a",
+            "Jubarte",
+        ])
         .stdout(std::process::Stdio::from(std::os::fd::OwnedFd::from(
             writer,
         )))
@@ -1023,8 +1036,16 @@ fn broken_stderr_keeps_the_committed_result_on_stdout() {
         let (reader, writer) = std::io::pipe().unwrap();
         drop(reader);
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_jubarte"));
-        cmd.current_dir(dir.path())
-            .args(["edit", "a.docx", "-p", "p0", "--content", "Two."]);
+        cmd.current_dir(dir.path()).args([
+            "edit",
+            "a.docx",
+            "-p",
+            "p0",
+            "--content",
+            "Two.",
+            "-a",
+            "Jubarte",
+        ]);
         if bundle {
             cmd.args(["--out-dir", "r"]);
         }

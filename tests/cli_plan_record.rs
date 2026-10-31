@@ -1172,6 +1172,8 @@ fn action_named_files_execute_the_unchanged_legacy_route() {
                 "p0",
                 "--content",
                 "Legacy.",
+                "-a",
+                "GiantCo",
                 "-o",
                 &format!("{name}-out.docx"),
             ],
@@ -1281,6 +1283,8 @@ fn typed_delivery_reports_and_bundles_are_explicit_and_inputs_remain_immutable()
         "p0",
         "--text",
         "Changed.",
+        "-a",
+        "GiantCo",
     ];
     let (code, out, err) = run(
         dir,
@@ -1886,6 +1890,8 @@ fn review_10_derived_patch_alias_refuses_before_publication() {
             "fee",
             "--text-file",
             "out.diff",
+            "-a",
+            "GiantCo",
             "-o",
             "out.docx",
             "--emit",
@@ -2035,11 +2041,10 @@ fn typed_replace_receipt_names_the_given_author() {
 
 /// #1891: without `-a`, the receipt names the default and stderr warns.
 #[test]
-fn typed_replace_receipt_without_author_warns() {
+fn typed_replace_receipt_without_an_author_is_author_required() {
     let dir = tempfile::tempdir().unwrap();
     letter(dir.path(), "letter.docx", "fee");
-    let author = typed_default_author();
-    let (code, out, err) = run(
+    let (code, _, err) = run(
         dir.path(),
         &[
             "edit",
@@ -2053,18 +2058,12 @@ fn typed_replace_receipt_without_author_warns() {
             "out.docx",
         ],
     );
-    assert_eq!(code, 0, "{out} {err}");
-    let line = receipt_line(&out);
+    assert_eq!(code, 2, "{err}");
     assert!(
-        line.contains(&format!(r#"; 1 change by "{author}": no -a given"#)),
-        "{line}"
-    );
-    assert!(
-        err.contains(&format!(
-            r#"warning: no -a given; the new markup is signed "{author}""#
-        )),
+        err.contains("AUTHOR_REQUIRED: sign the new markup with -a NAME"),
         "{err}"
     );
+    assert!(!dir.path().join("out.docx").exists());
 }
 
 /// #1891: `-a` with the default name is explicit.
@@ -2226,14 +2225,11 @@ fn typed_track_off_receipt_names_no_tracked_change() {
 }
 
 /// #1891: `--json` / `--jsonl` keep the receipt shape. Stdout is the machine
-/// stream (proposal §12: structured output on stdout, diagnostics on stderr),
-/// so the default-author warning stays on stderr and out of the JSON.
+/// stream (proposal §12: structured output on stdout, diagnostics on stderr).
 #[test]
-fn typed_json_receipt_keeps_its_shape_and_warns_on_stderr() {
+fn typed_json_receipt_keeps_its_shape() {
     let dir = tempfile::tempdir().unwrap();
     letter(dir.path(), "letter.docx", "fee");
-    let author = typed_default_author();
-    let warning = format!(r#"warning: no -a given; the new markup is signed "{author}""#);
     for mode in ["--json", "--jsonl"] {
         let (code, out, err) = run(
             dir.path(),
@@ -2245,6 +2241,8 @@ fn typed_json_receipt_keeps_its_shape_and_warns_on_stderr() {
                 "fee",
                 "--text",
                 "cost",
+                "-a",
+                "GiantCo",
                 "-o",
                 &format!("out{mode}.docx"),
                 mode,
@@ -2253,7 +2251,7 @@ fn typed_json_receipt_keeps_its_shape_and_warns_on_stderr() {
         assert_eq!(code, 0, "{mode}: {out} {err}");
         assert!(!out.contains("warning:"), "{mode}: {out}");
         assert!(!out.contains("no -a given"), "{mode}: {out}");
-        assert!(err.contains(&warning), "{mode}: {err}");
+        assert!(!err.contains("warning:"), "{mode}: {err}");
         let value = if mode == "--json" {
             serde_json::from_str::<serde_json::Value>(&out).unwrap()
         } else {
@@ -2261,7 +2259,7 @@ fn typed_json_receipt_keeps_its_shape_and_warns_on_stderr() {
             serde_json::to_value(parsed.terminal).unwrap()
         };
         assert_eq!(
-            value["effective_options"]["author"], author,
+            value["effective_options"]["author"], "GiantCo",
             "{mode}: {out}"
         );
         let keys: Vec<&str> = value["effective_options"]
@@ -2308,6 +2306,8 @@ fn typed_quiet_json_does_not_warn() {
             "fee",
             "--text",
             "cost",
+            "-a",
+            "GiantCo",
             "-o",
             "out.docx",
             "--json",
@@ -2524,25 +2524,20 @@ fn review_10_all_actions_help_and_human_success_and_usage_exit_two() {
             "fee",
             "--text",
             "cost",
+            "-a",
+            "GiantCo",
             "-o",
             "out.docx",
         ],
     );
     assert_eq!(code, 0, "{out} {err}");
-    let author = typed_default_author();
     let summary = format!(
-        "edit replace: changed; wrote {}; 1 change by \"{author}\": no -a given\n",
+        "edit replace: changed; wrote {}; 1 change by \"GiantCo\"\n",
         slash_path(&dir.path().join("out.docx").canonicalize().unwrap())
     );
     assert!(
         out.starts_with(&format!("{summary}SUCCESS:\n~~~~diff\n")),
         "{out}"
-    );
-    assert!(
-        err.contains(&format!(
-            r#"warning: no -a given; the new markup is signed "{author}""#
-        )),
-        "{err}"
     );
     assert!(
         out.contains("--- before letter.docx\n+++ after out.docx\n@@ "),
@@ -2578,15 +2573,16 @@ fn review_11_wrote_summary_canonicalizes_a_relative_output() {
             "fee",
             "--text",
             "cost",
+            "-a",
+            "GiantCo",
             "-o",
             "./out.docx",
         ],
     );
     assert_eq!(code, 0, "{out} {err}");
     let canonical = dir.path().canonicalize().unwrap().join("out.docx");
-    let author = typed_default_author();
     let expected_summary = format!(
-        "edit replace: changed; wrote {}; 1 change by \"{author}\": no -a given\n",
+        "edit replace: changed; wrote {}; 1 change by \"GiantCo\"\n",
         slash_path(&canonical)
     );
     assert!(out.starts_with(&expected_summary), "{out}");
@@ -2958,6 +2954,8 @@ fn typed_in_place_does_not_clobber_a_patch_without_force() {
             "fee",
             "--text",
             "cost",
+            "-a",
+            "GiantCo",
             "--in-place",
             "--emit",
             "patch",
@@ -2993,22 +2991,18 @@ fn typed_in_place_replace_rewrites_the_input_and_names_the_replaced_hash() {
             "fee",
             "--text",
             "cost",
+            "-a",
+            "GiantCo",
             "--in-place",
         ],
     );
     assert_eq!(code, 0, "{out}{err}");
-    let author = typed_default_author();
     let wrote = slash_path(&file.canonicalize().unwrap());
     let summary = format!(
-        "edit replace: changed; wrote {wrote} in place (replaced sha256 {prefix}\u{2026}); 1 change by \"{author}\": no -a given\n"
+        "edit replace: changed; wrote {wrote} in place (replaced sha256 {prefix}\u{2026}); 1 change by \"GiantCo\"\n"
     );
     assert!(out.starts_with(&summary), "{out}");
-    assert!(
-        err.contains(&format!(
-            r#"warning: no -a given; the new markup is signed "{author}""#
-        )),
-        "{err}"
-    );
+    assert!(!err.contains("no -a given"), "{err}");
     assert_ne!(std::fs::read(&file).unwrap(), before);
     assert!(!dir.join("letter_modified.docx").exists());
     assert!(!out.contains("(docx,"), "{out}");
@@ -3023,6 +3017,8 @@ fn typed_in_place_replace_rewrites_the_input_and_names_the_replaced_hash() {
             "cost",
             "--text",
             "price",
+            "-a",
+            "GiantCo",
             "--in-place",
             "--json",
         ],
@@ -3032,6 +3028,144 @@ fn typed_in_place_replace_rewrites_the_input_and_names_the_replaced_hash() {
     let path = value["artifacts"][0]["path"].as_str().unwrap();
     assert!(path.ends_with("letter.docx"), "{path}");
     assert!(!path.contains("in place"), "{out}");
+}
+
+/// #1997: a typed write that adds markup needs `-a` (or `JUBARTE_AUTHOR`):
+/// `AUTHOR_REQUIRED`, exit 2, naming the authors the document's markup
+/// already carries. `--track off` signs nothing, `edit apply` keeps the
+/// plan's author.
+#[test]
+fn typed_markup_write_without_an_author_is_author_required() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir, "letter.docx", "fee");
+    let (code, out, err) = run(
+        dir,
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "cost",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(
+        err.contains("error: AUTHOR_REQUIRED: sign the new markup with -a NAME"),
+        "{err}"
+    );
+    assert!(
+        !err.contains("this document has markup by"),
+        "a markup-free letter names no author: {err}"
+    );
+    assert!(!dir.join("out.docx").exists());
+
+    // A document that already has markup names who signed it.
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "cost",
+            "-a",
+            "GiantCo",
+            "-o",
+            "signed.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "delete",
+            "signed.docx",
+            "--at",
+            "p1",
+            "--whole-block",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains(
+            r#"AUTHOR_REQUIRED: sign the new markup with -a NAME (this document has markup by "GiantCo")"#
+        ),
+        "{err}"
+    );
+
+    // --track off signs nothing: no author needed.
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "cost",
+            "--track",
+            "off",
+            "-o",
+            "clean.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+
+    // `edit apply` keeps the plan's author.
+    std::fs::write(
+        dir.join("plan.json"),
+        r#"{"schema_version":1,"author":"GiantCo","operations":[{"kind":"replace","paragraph":"p2","find":"fee","replacement":"cost"}]}"#,
+    )
+    .unwrap();
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "apply",
+            "letter.docx",
+            "--plan",
+            "plan.json",
+            "--allow-unbound-plan",
+            "-o",
+            "applied.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+
+    // JUBARTE_AUTHOR counts as -a.
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .current_dir(dir)
+        .args([
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "price",
+            "-o",
+            "env.docx",
+        ])
+        .env("JUBARTE_AUTHOR", "Trainer 1 - AgentCo")
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code().unwrap_or(-1), 0, "{err}");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains(r#"1 change by "Trainer 1 - AgentCo""#),
+        "{err}"
+    );
 }
 
 /// #1888: a spelled `-a` drops the default-author warning from the receipt.
@@ -3197,6 +3331,8 @@ fn typed_in_place_delete_and_apply() {
             "--at",
             "p2",
             "--whole-block",
+            "-a",
+            "GiantCo",
             "--in-place",
         ],
     );

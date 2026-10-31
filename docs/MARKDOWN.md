@@ -1029,19 +1029,19 @@ jubarte A B                            accept both sides' changes, compare, prin
 jubarte compare A B                    the same; -o FILE writes the redline (.docx, .pdf, .png, .md)
 jubarte diff A B                       the paragraph patch (text only; -o FILE.patch keeps it)
 
-jubarte edit FILE -p WHERE --anchor FIND --content WITH        replace FIND (an insertion when WITH keeps FIND at its start or end)
-jubarte edit FILE -p WHERE --content TEXT                      rewrite the paragraph
-jubarte edit FILE -p WHERE [--anchor FIND] --delete            delete FIND, or the paragraph
-jubarte edit FILE -p WHERE [--anchor FIND] --style SPEC        format FIND, or set the paragraph style
-jubarte edit FILE -p c5 --content TEXT | --delete | --resolve  a comment (another author's is allowed; --keep-others refuses it)
-jubarte edit FILE -p c5 --reply TEXT                           a reply
-jubarte edit FILE -p c5.text --content TEXT                    replace the text c5 covers
+jubarte edit FILE -p WHERE --anchor FIND --content WITH -a NAME   replace FIND (an insertion when WITH keeps FIND at its start or end)
+jubarte edit FILE -p WHERE --content TEXT -a NAME                 rewrite the paragraph
+jubarte edit FILE -p WHERE [--anchor FIND] --delete -a NAME       delete FIND, or the paragraph
+jubarte edit FILE -p WHERE [--anchor FIND] --style SPEC -a NAME   format FIND, or set the paragraph style
+jubarte edit FILE -p c5 --content TEXT | --delete | --resolve -a NAME  a comment (another author's is allowed; --keep-others refuses it)
+jubarte edit FILE -p c5 --reply TEXT -a NAME                      a reply
+jubarte edit FILE -p c5.text --content TEXT -a NAME               replace the text c5 covers
 jubarte edit FILE -p r12 --accept | --reject                   resolve one tracked change (prints SUCCESS and a fenced diff containing the resolved text)
 jubarte edit FILE -p r12 --strike | --restore                  reject another author's change visibly (--reject --visible picks by kind)
 jubarte edit FILE --plan PLAN.json --skip-failed              apply what passes; the failed operations go to PLAN.failed.json
-jubarte add  FILE -p WHERE --content TEXT [--before]           a new paragraph after (or before) WHERE
-jubarte add  FILE -p WHERE --anchor FIND --content TEXT        a comment on FIND (--comment: on the whole paragraph)
-jubarte add  FILE -p c5 --content TEXT                         a reply (also --reply TEXT)
+jubarte add  FILE -p WHERE --content TEXT [--before] -a NAME      a new paragraph after (or before) WHERE
+jubarte add  FILE -p WHERE --anchor FIND --content TEXT -a NAME   a comment on FIND (--comment: on the whole paragraph)
+jubarte add  FILE -p c5 --content TEXT -a NAME                    a reply (also --reply TEXT)
 ```
 
 `read --tables` prints the table inventory: a `table N: ROWSxCOLS

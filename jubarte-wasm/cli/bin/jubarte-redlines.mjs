@@ -201,7 +201,30 @@ function inPlaceLine(file, bytes, detail) {
   return `wrote ${file} in place (replaced sha256 ${prefix}\u2026)${extra}`;
 }
 
-/** The `; 1 change by "GiantCo"` fragment. Null when the write added no markup. */
+/** Comments this edit wrote that `published` still holds. A deletion's
+ * comment is written only into the redline, so the clean copy does not
+ * count it. */
+function commentsStillPublished(published, result) {
+  let report;
+  try {
+    report = JSON.parse(result.json);
+  } catch {
+    return 0;
+  }
+  const wanted = new Set((report.operations ?? []).map((op) => op.comment_id).filter((id) => id != null));
+  if (!wanted.size) return 0;
+  let rows;
+  try {
+    rows = JSON.parse(wasm.listComments(published, null, false));
+  } catch {
+    return 0;
+  }
+  return rows.filter((row) => wanted.has(row.id)).length;
+}
+
+/** The `; 1 change by "GiantCo"` fragment. Null when the write added no
+ * markup. A markup write without a spelled author refuses (#1997), so the
+ * name is always the one the caller gave. */
 function markupDetail(result, o) {
   let report;
   try {
@@ -210,15 +233,27 @@ function markupDetail(result, o) {
     return null;
   }
   const editing = Boolean(o.editing_mode);
+  const published = editing ? result.clean : result.redline;
   const changes = editing ? 0 : (report.revisions?.total ?? 0);
-  const comments = editing ? 0 : (report.comments_added ?? 0);
+  const comments = editing ? commentsStillPublished(published, result) : (report.comments_added ?? 0);
   if (!changes && !comments) return null;
   const parts = [];
   if (changes) parts.push(`${changes} change${changes === 1 ? "" : "s"}`);
   if (comments) parts.push(`${comments} comment${comments === 1 ? "" : "s"}`);
-  let detail = `${parts.join(", ")} by "${report.author}"`;
-  if (!o.author_given) detail += ": no -a given";
-  return detail;
+  return `${parts.join(", ")} by "${report.author}"`;
+}
+
+/** The distinct authors the document's tracked changes and comments name,
+ * sorted; an unsigned mark reads `<no author>`. */
+function markupAuthors(docx) {
+  const authors = new Set();
+  try {
+    for (const change of JSON.parse(wasm.listChanges(docx, null))) authors.add(change.author ?? "<no author>");
+  } catch {}
+  try {
+    for (const comment of JSON.parse(wasm.listComments(docx, null, false))) authors.add(comment.author ?? "<no author>");
+  } catch {}
+  return [...authors].sort();
 }
 
 /** A value with every object's keys sorted, as the binary's JSON prints them. */
@@ -652,6 +687,21 @@ function planIdentityMatches(fd, name) {
 }
 
 function runEdit(verb, file, o) {
+  // JUBARTE_AUTHOR, set and non-empty, signs the way a spelled -a does
+  // (#1997). The shared parser cannot see it: wasm has no environment.
+  const envAuthor = process.env.JUBARTE_AUTHOR;
+  if (!o.author_given && envAuthor) {
+    // The binary's parse_author: trimmed, a leading '@' stripped, and not
+    // empty (nor a second '@'). An invalid one is a usage error naming the
+      // variable.
+    const name = envAuthor.trim();
+    const handle = name.startsWith("@") ? name.slice(1) : name;
+    if (!handle || handle.startsWith("@")) {
+      throw new UsageError("JUBARTE_AUTHOR: needs an author: a handle such as AC, or the full name");
+    }
+    o.author = name;
+    o.author_given = true;
+  }
   const docx = read(file);
   if (o.plan != null && o.operations?.length) return recordPlan(verb, file, docx, o);
   // What --consume deletes once the edit is written: the plan file as it
@@ -726,6 +776,14 @@ function applyEdit(verb, file, docx, o) {
   if (!result.ok) return printRefusal(result);
   const report = wasm.editReportJsonl(result.json);
   if (o.dry_run) return void process.stdout.write(report);
+  // #1997: a write that signs markup needs a spelled -a (or
+  // JUBARTE_AUTHOR). It refuses before anything is written. Applying a
+  // plan signs with the plan's own author, as a spelled -a does.
+  if (markupDetail(result, o) != null && !o.author_given && o.plan == null) {
+    const authors = markupAuthors(docx);
+    const named = authors.length ? ` (this document has markup by ${authors.map((a) => JSON.stringify(a)).join(", ")})` : "";
+    throw new UsageError(`AUTHOR_REQUIRED: sign the new markup with -a NAME${named}`);
+  }
   // The shared parser resolved the target: `output` for the one document
   // (FILE_modified.docx by default), `out_dir` for the bundle.
   const outDir = o.out_dir;
@@ -877,9 +935,6 @@ function writeEdited(output, result, notes, o, docx, plan) {
   if (o.in_place) {
     const detail = markupDetail(result, o);
     console.error(inPlaceLine(output, docx ?? document, detail));
-    if (detail && !o.author_given) {
-      console.error(`warning: no -a given; the new markup is signed "${JSON.parse(result.json).author}"`);
-    }
   } else {
     console.error(`wrote ${output} (docx, ${document.length} bytes)`);
   }
@@ -923,6 +978,12 @@ function resolution(accept) {
       // A DOCX keeps that name or not. `--in-place` always writes the
       // package, so a `.json` or `.md` name is not an output format.
       // Sniff the bytes: the name's declared kind would refuse the package.
+      // `-o` naming the input is a usage refusal pointing to `--in-place`
+      // (#1998); the 0.16.0 deprecation is over. It fires before the read,
+      // as the binary's does.
+      if (!o.in_place && o.output != null && sameFile(o.output, file)) {
+        throw new UsageError(`OUTPUT_ALIAS: the output '${o.output}' is the same file as the input '${file}'; use --in-place`);
+      }
       const docx = o.in_place ? read(file, null) : read(file);
       if (!o.in_place) ensureWritable(o.output, o.force);
       let out;

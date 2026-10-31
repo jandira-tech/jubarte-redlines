@@ -1191,7 +1191,8 @@ Options:
           paragraph style (Heading2)
 
   -a, --author <NAME>
-          Author of the changes and comments (operation flags; a plan names its own)
+          Author of the changes and comments (operation flags; a plan names its own). A
+          write that adds markup needs it spelled here or in JUBARTE_AUTHOR
 
           [default: Jubarte]
 
@@ -1290,16 +1291,18 @@ Revision marks:
           Marks for --revisions custom (see `convert --help`)
 
 Examples:
-  jubarte edit a.docx -p p12 --anchor "thirty days" --content "forty-five days"
-  jubarte edit a.docx -p p12 --anchor thirty --content "thirty (30)"   an insertion
-  jubarte edit a.docx -p p7 --anchor "at its sole discretion" --delete -p p9 --delete
-  jubarte edit a.docx -p p3 --content "The parties agree as follows."    rewrite
-  jubarte edit a.docx -p p4 --anchor Fees --style bold -p p5 --style Heading2
-  jubarte edit a.docx -p c5 --content "Agreed." -p c7 --resolve
-  jubarte edit a.docx -p c5 --reply "Agreed, will fix."
-  jubarte edit a.docx -p c5.text --content "net 30"   the text c5 covers
+  jubarte edit a.docx -p p12 --anchor "thirty days" --content "forty-five days" -a NAME
+  jubarte edit a.docx -p p12 --anchor thirty --content "thirty (30)" -a NAME   an
+  insertion
+  jubarte edit a.docx -p p7 --anchor "at its sole discretion" --delete -p p9 --delete -a
+  NAME
+  jubarte edit a.docx -p p3 --content "The parties agree as follows." -a NAME    rewrite
+  jubarte edit a.docx -p p4 --anchor Fees --style bold -p p5 --style Heading2 -a NAME
+  jubarte edit a.docx -p c5 --content "Agreed." -p c7 --resolve -a NAME
+  jubarte edit a.docx -p c5 --reply "Agreed, will fix." -a NAME
+  jubarte edit a.docx -p c5.text --content "net 30" -a NAME   the text c5 covers
   jubarte edit a.docx -p r3 --accept -p header1.r1 --reject
-  jubarte edit a.docx -p p3 --delete -o b.docx --pdf   b.docx and b.pdf
+  jubarte edit a.docx -p p3 --delete -o b.docx --pdf -a NAME   b.docx and b.pdf
   jubarte edit a.docx --plan plan.json --out-dir review   the bundle in review/
   jubarte edit a.docx --plan plan.json -p p3 --content "New."   record into plan.json
   jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it
@@ -1385,7 +1388,8 @@ Options:
           highlight=yellow) or its paragraph style (Heading2)
 
   -a, --author <NAME>
-          Author of the changes and comments (operation flags; a plan names its own)
+          Author of the changes and comments (operation flags; a plan names its own). A
+          write that adds markup needs it spelled here or in JUBARTE_AUTHOR
 
           [default: Jubarte]
 
@@ -1443,13 +1447,15 @@ Options:
           Print help (see a summary with '-h')
 
 Examples:
-  jubarte add a.docx -p p12 --content "Time is of the essence."   new paragraph after
-  p12
-  jubarte add a.docx -p p12 --content Recitals --before --style Heading2
-  jubarte add a.docx -p p5 --anchor "monthly fee" --content "Net of taxes?"   a comment
-  jubarte add a.docx -p p5 --comment --content "Whole clause needs a cap."
-  jubarte add a.docx -p c5 --content "Agreed, will fix."           a reply
-  jubarte add a.docx -p c5 --reply "Agreed, will fix."             the same reply
+  jubarte add a.docx -p p12 --content "Time is of the essence." -a NAME   new paragraph
+  after p12
+  jubarte add a.docx -p p12 --content Recitals --before --style Heading2 -a NAME
+  jubarte add a.docx -p p5 --anchor "monthly fee" --content "Net of taxes?" -a NAME   a
+  comment
+  jubarte add a.docx -p p5 --comment --content "Whole clause needs a cap." -a NAME
+  jubarte add a.docx -p c5 --content "Agreed, will fix." -a NAME           a reply
+  jubarte add a.docx -p c5 --reply "Agreed, will fix." -a NAME             the same
+  reply
   jubarte add a.docx --plan plan.json -p p5 --comment --content "Cap?"   record into
   plan.json
 ```

@@ -473,7 +473,8 @@ fn comment_changes_note(left: usize) -> String {
 }
 
 /// The `-o` of `accept` / `reject`, or FILE when `--in-place` names it.
-/// `-o FILE --force` still replaces FILE and says that spelling is deprecated.
+/// `-o` naming the input is a usage refusal pointing to `--in-place`
+/// (#1998): the 0.16.0 deprecation of `-o INPUT --force` is over.
 fn resolution_output<'a>(
     task: Task,
     file: &'a Path,
@@ -482,15 +483,20 @@ fn resolution_output<'a>(
     force: bool,
     render: &'a RenderArgs,
     quiet: bool,
-) -> Result<Output<'a>, String> {
+) -> Result<Output<'a>, (u8, String)> {
     let destination = output.as_deref().unwrap_or(file);
-    if !in_place && force && same_path(destination, file) {
-        eprintln!(
-            "warning: -o {} --force is deprecated; use --in-place",
-            slash_path(destination)
-        );
+    if !in_place && output.is_some() && same_path(destination, file) {
+        return Err((
+            EXIT_USAGE,
+            format!(
+                "OUTPUT_ALIAS: the output '{}' is the same file as the input '{}'; use --in-place",
+                slash_path(destination),
+                slash_path(file)
+            ),
+        ));
     }
-    let mut out = task_output(task, destination, file, render, force || in_place, quiet)?;
+    let mut out = task_output(task, destination, file, render, force || in_place, quiet)
+        .map_err(|e| (1, e))?;
     // The input is a DOCX whatever its name. `.json` and `.md` would
     // otherwise be inferred from the path and overwrite the package.
     if in_place {
@@ -1413,6 +1419,42 @@ struct EditJob<'a> {
 /// per-operation report is on stdout and nothing was written.
 const EXIT_PLAN_REFUSED: u8 = 3;
 
+/// `sign the new markup with -a NAME` (#1997), naming the authors the
+/// document's markup already carries when there are any. The callers add
+/// the `AUTHOR_REQUIRED` code where their error shape prints it.
+fn author_required_message(source: &[u8]) -> String {
+    let mut message = "sign the new markup with -a NAME".to_string();
+    let authors = markup_authors(source);
+    if !authors.is_empty() {
+        let quoted = authors
+            .iter()
+            .map(|name| format!("\"{name}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        message.push_str(&format!(" (this document has markup by {quoted})"));
+    }
+    message
+}
+
+/// The distinct authors the document's tracked changes and comments name,
+/// sorted; an unsigned mark reads `<no author>`.
+fn markup_authors(source: &[u8]) -> Vec<String> {
+    let mut authors: Vec<String> = jubarte::changes::list_logical_changes(source)
+        .map(|changes| {
+            changes
+                .into_iter()
+                .map(|change| change.author.unwrap_or_else(|| "<no author>".to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Ok(comments) = jubarte::comments::list_comments(source) {
+        authors.extend(comments.iter().map(|comment| comment.author.clone()));
+    }
+    authors.sort();
+    authors.dedup();
+    authors
+}
+
 /// Exit 2: the operation flags do not describe an operation.
 const EXIT_USAGE: u8 = 2;
 
@@ -1572,6 +1614,15 @@ fn publish_edit(
         Mode::Editing => &result.clean,
     };
     let digest = jubarte::inspect::source_sha256(primary);
+    // #1997: a write that signs markup needs a spelled -a (or
+    // JUBARTE_AUTHOR). It refuses before anything is written, so the
+    // input and every output stay as they were.
+    if published_markup(job, &result, primary).is_some() && !job.author_given {
+        return Err((
+            EXIT_USAGE,
+            format!("AUTHOR_REQUIRED: {}", author_required_message(source)),
+        ));
+    }
     result.report.output_sha256 = Some(digest.clone());
     // The failed operations, as a plan bound to the document written:
     // under suggesting mode that is a redline, whose tracked changes are
@@ -1800,12 +1851,6 @@ fn publish_edit(
             listed
         )),
     }
-    if markup.is_some() && !job.author_given {
-        edit_status(format_args!(
-            "warning: no -a given; the new markup is signed \"{}\"",
-            result.report.author
-        ));
-    }
     written_status(&result, failed);
     for note in edit_notes(notes, &result, primary, source) {
         edit_status(format_args!("{note}"));
@@ -1834,7 +1879,7 @@ fn edit_envelope_exit(receipt: &jubarte::result::Envelope) -> u8 {
     if receipt
         .error
         .as_ref()
-        .is_some_and(|error| error.code == "OUTPUT_EXISTS")
+        .is_some_and(|error| matches!(error.code.as_str(), "OUTPUT_EXISTS" | "AUTHOR_REQUIRED"))
     {
         EXIT_USAGE
     } else {
@@ -2569,12 +2614,6 @@ fn write_edited(
         line.push_str(&note);
     }
     edit_status(format_args!("{line}"));
-    if markup.is_some() && !job.author_given {
-        edit_status(format_args!(
-            "warning: no -a given; the new markup is signed \"{}\"",
-            result.report.author
-        ));
-    }
     if let Some(pages) = pdf_pages {
         let pdf = path.with_extension("pdf");
         let bytes = outputs
@@ -2988,7 +3027,7 @@ fn published_markup(
         Mode::Suggesting => (result.report.revisions.total, result.report.comments_added),
         Mode::Editing => (0, comments_in_published(published, result)),
     };
-    jubarte::cli::wrote_markup_detail(changes, comments, &result.report.author, job.author_given)
+    jubarte::cli::wrote_markup_detail(changes, comments, &result.report.author)
 }
 
 /// Comments this edit wrote that `published` still holds. A deletion's
@@ -4538,7 +4577,10 @@ fn cli_main() -> ExitCode {
                 quiet,
             ) {
                 Ok(out) => out,
-                Err(e) => return exit_code(Err(e)),
+                Err((code, e)) => {
+                    say_error(&e, code);
+                    return ExitCode::from(code);
+                }
             };
             let apply = if keep_nested_comment {
                 jubarte::changes::accept_changes_keeping_comments
@@ -4573,7 +4615,10 @@ fn cli_main() -> ExitCode {
                 quiet,
             ) {
                 Ok(out) => out,
-                Err(e) => return exit_code(Err(e)),
+                Err((code, e)) => {
+                    say_error(&e, code);
+                    return ExitCode::from(code);
+                }
             };
             let apply = if keep_nested_comment {
                 jubarte::changes::reject_changes_keeping_comments

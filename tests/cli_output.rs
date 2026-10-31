@@ -959,8 +959,8 @@ output_refusals! {
     existing_append: "out.docx" => ["append", "in.docx", "in.docx", "-o", "out.docx"];
     existing_scrub: "out.docx" => ["scrub", "in.docx", "-o", "out.docx"];
     existing_repair: "out.docx" => ["validate", "in.docx", "--repair", "out.docx"];
-    existing_edit: "out.docx" => ["edit", "in.docx", "-p", "p0", "--content", "Carol Diaz.", "-o", "out.docx"];
-    existing_add: "out.docx" => ["add", "in.docx", "-p", "p0", "--content", "Carol Diaz.", "-o", "out.docx"];
+    existing_edit: "out.docx" => ["edit", "in.docx", "-p", "p0", "--content", "Carol Diaz.", "-a", "Jubarte", "-o", "out.docx"];
+    existing_add: "out.docx" => ["add", "in.docx", "-p", "p0", "--content", "Carol Diaz.", "-a", "Jubarte", "-o", "out.docx"];
     existing_typed_edit: "out.docx" => ["edit", "rewrite", "in.docx", "--at", "p0", "--text", "Carol Diaz.", "--track", "off", "-o", "out.docx"];
     existing_edit_template: "out.json" => ["edit", "template", "in.docx", "-o", "out.json"];
     existing_read: "out.json" => ["read", "in.docx", "-o", "out.json"];

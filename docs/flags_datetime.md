@@ -77,7 +77,7 @@ Replace exact literal text; without --at, search one declared story
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
 | `<FILE>` |  | <FILE> |  |  | required | Immutable source document |
-| `-a, --author` |  | <AUTHOR> | Jubarte |  |  | New revision and comment author |
+| `-a, --author` |  | <AUTHOR> | Jubarte |  |  | New revision and comment author. A write that adds markup needs it spelled here or in JUBARTE_AUTHOR |
 | `-d, --datetime` |  | <DATETIME> |  |  |  | Frozen timestamp; timezone required. Default current UTC |
 | `--track` |  | <TRACK> | on | on, off |  | Track new edits, preserving earlier history according to policy |
 | `--existing-revisions` |  | <EXISTING_REVISIONS> | keep | keep, accept, reject, refuse |  | Policy for history remaining after explicit selected decisions |
@@ -115,7 +115,7 @@ Set exact desired paragraph text; an empty value retains the paragraph
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
 | `<FILE>` |  | <FILE> |  |  | required | Immutable source document |
-| `-a, --author` |  | <AUTHOR> | Jubarte |  |  | New revision and comment author |
+| `-a, --author` |  | <AUTHOR> | Jubarte |  |  | New revision and comment author. A write that adds markup needs it spelled here or in JUBARTE_AUTHOR |
 | `-d, --datetime` |  | <DATETIME> |  |  |  | Frozen timestamp; timezone required. Default current UTC |
 | `--track` |  | <TRACK> | on | on, off |  | Track new edits, preserving earlier history according to policy |
 | `--existing-revisions` |  | <EXISTING_REVISIONS> | keep | keep, accept, reject, refuse |  | Policy for history remaining after explicit selected decisions |
@@ -148,7 +148,7 @@ Insert an explicitly typed text or paragraph payload
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
 | `<FILE>` |  | <FILE> |  |  | required | Immutable source document |
-| `-a, --author` |  | <AUTHOR> | Jubarte |  |  | New revision and comment author |
+| `-a, --author` |  | <AUTHOR> | Jubarte |  |  | New revision and comment author. A write that adds markup needs it spelled here or in JUBARTE_AUTHOR |
 | `-d, --datetime` |  | <DATETIME> |  |  |  | Frozen timestamp; timezone required. Default current UTC |
 | `--track` |  | <TRACK> | on | on, off |  | Track new edits, preserving earlier history according to policy |
 | `--existing-revisions` |  | <EXISTING_REVISIONS> | keep | keep, accept, reject, refuse |  | Policy for history remaining after explicit selected decisions |
@@ -187,7 +187,7 @@ Delete one exact range, or explicitly delete a whole paragraph
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
 | `<FILE>` |  | <FILE> |  |  | required | Immutable source document |
-| `-a, --author` |  | <AUTHOR> | Jubarte |  |  | New revision and comment author |
+| `-a, --author` |  | <AUTHOR> | Jubarte |  |  | New revision and comment author. A write that adds markup needs it spelled here or in JUBARTE_AUTHOR |
 | `-d, --datetime` |  | <DATETIME> |  |  |  | Frozen timestamp; timezone required. Default current UTC |
 | `--track` |  | <TRACK> | on | on, off |  | Track new edits, preserving earlier history according to policy |
 | `--existing-revisions` |  | <EXISTING_REVISIONS> | keep | keep, accept, reject, refuse |  | Policy for history remaining after explicit selected decisions |
@@ -507,7 +507,7 @@ Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply
 | `--restore` |  |  |  |  | append | Restore another author's deletion r12 (with -p r12; r10+11 for a change of several marks, a replacement's deletion only): their deletion stays and our tracked insertion of its words follows it. --content is one comment on the restored words |
 | `--visible` |  |  |  |  | append | With --reject: strike each insertion and restore each deletion instead of removing the change without a trace |
 | `--style` |  | <SPEC> |  |  | append | Formatting for the anchored text: bold, italic, underline, strike, caps, highlight=yellow, font=Calibri, size=11, color=FF0000; any other value is a paragraph style (Heading2) |
-| `-a, --author` |  | <NAME> | Jubarte |  |  | Author of the changes and comments (operation flags; a plan names its own) |
+| `-a, --author` |  | <NAME> | Jubarte |  |  | Author of the changes and comments (operation flags; a plan names its own). A write that adds markup needs it spelled here or in JUBARTE_AUTHOR |
 | `-d, --datetime` |  | <ISO8601> |  |  |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
 | `--suggesting-mode` |  |  | false |  | conflicts --editing-mode | The edits are tracked changes (the default): the file written is the redline and the view shows the marks |
 | `--editing-mode` |  |  | false |  | conflicts --suggesting-mode | The edits land directly: the file written is the result, and the view shows it with rev tags on the id lines |
@@ -544,7 +544,7 @@ Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per c
 | `--before` |  |  |  |  | append | A new paragraph before WHERE instead of after it |
 | `--comment` |  |  |  |  | append | A comment on the whole paragraph (with --anchor the comment sits on the anchor and this flag is implied) |
 | `--style` |  | <SPEC> |  |  | append | Formatting for the new paragraph's text (bold, italic, underline, highlight=yellow) or its paragraph style (Heading2) |
-| `-a, --author` |  | <NAME> | Jubarte |  |  | Author of the changes and comments (operation flags; a plan names its own) |
+| `-a, --author` |  | <NAME> | Jubarte |  |  | Author of the changes and comments (operation flags; a plan names its own). A write that adds markup needs it spelled here or in JUBARTE_AUTHOR |
 | `-d, --datetime` |  | <ISO8601> |  |  |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
 | `--suggesting-mode` |  |  | false |  | conflicts --editing-mode | The edits are tracked changes (the default): the file written is the redline and the view shows the marks |
 | `--editing-mode` |  |  | false |  | conflicts --suggesting-mode | The edits land directly: the file written is the result, and the view shows it with rev tags on the id lines |

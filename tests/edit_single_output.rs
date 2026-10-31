@@ -51,13 +51,15 @@ fn written(dir: &Path) -> Vec<String> {
     names
 }
 
-const EDIT: [&str; 6] = [
+const EDIT: [&str; 8] = [
     "edit",
     "a.docx",
     "-p",
     "p1",
     "--content",
     "The fee is forty dollars.",
+    "-a",
+    "Jubarte",
 ];
 
 /// #1894: these are process integration tests of the one-shot grammar.
@@ -121,6 +123,8 @@ fn occurrence_1894_add_comments_on_the_second_match() {
             "2",
             "--content",
             "Why waived?",
+            "-a",
+            "Jubarte",
         ],
     );
     assert_eq!(code, 0, "{out}{err}");
@@ -342,6 +346,8 @@ fn a_modified_file_is_edited_in_place_with_force() {
         "p2",
         "--content",
         "New line.",
+        "-a",
+        "Jubarte",
     ];
     let (code, _, err) = run(dir, &again);
     assert_eq!(code, 2, "{err}");
@@ -385,7 +391,16 @@ fn add_writes_file_modified_docx_too() {
     letter(dir);
     let (code, _, err) = run(
         dir,
-        &["add", "a.docx", "-p", "p2", "--content", "New line."],
+        &[
+            "add",
+            "a.docx",
+            "-p",
+            "p2",
+            "--content",
+            "New line.",
+            "-a",
+            "Jubarte",
+        ],
     );
     assert_eq!(code, 0, "{err}");
     assert_eq!(written(dir), ["a_modified.docx"]);
@@ -535,7 +550,16 @@ fn diff_labels_spell_paths_with_forward_slashes() {
     letter(dir);
     std::fs::create_dir_all(dir.join("d")).unwrap();
     std::fs::rename(dir.join("a.docx"), dir.join("d\\a.docx")).unwrap();
-    let edit = ["edit", "d\\a.docx", "-p", "p1", "--content", "New line."];
+    let edit = [
+        "edit",
+        "d\\a.docx",
+        "-p",
+        "p1",
+        "--content",
+        "New line.",
+        "-a",
+        "Jubarte",
+    ];
     let (code, out, err) = run(dir, &edit);
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("+++ after d/a_modified.docx\n"), "{out}");
@@ -808,6 +832,8 @@ fn a_forced_bundle_never_deletes_an_input_inside_the_destination() {
             "p1",
             "--content",
             "The fee is forty dollars.",
+            "-a",
+            "Jubarte",
             "--out-dir",
             "r",
             "--force",
@@ -984,6 +1010,8 @@ fn bundle_member_and_foreign_links_keep_their_refusal_classes() {
                 "p1",
                 "--content",
                 "changed",
+                "-a",
+                "Jubarte",
                 "--out-dir",
                 "r",
                 "--force",
@@ -1450,16 +1478,18 @@ fn edit_wrote_line_names_the_given_author_and_change_count() {
     );
 }
 
-/// #1891: without `-a`, the wrote line names the default and says so; stderr
-/// warns that the new markup is signed with that default.
+/// #1997: a one-shot write that adds markup needs `-a` (or
+/// `JUBARTE_AUTHOR`): the refusal is `AUTHOR_REQUIRED`, exit 2, and names
+/// the authors the document's markup already carries. The document is
+/// untouched.
 #[test]
-fn edit_wrote_line_without_author_warns_and_names_the_default() {
+fn edit_adding_markup_without_an_author_is_author_required() {
     let dir = tempfile::tempdir().unwrap();
     let dir = dir.path();
     letter(dir);
-    let author = default_author();
-    let (code, _, err) = run(
-        dir,
+    let before = std::fs::read(dir.join("a.docx")).unwrap();
+    for args in [
+        // One-shot edit adding a tracked change.
         &[
             "edit",
             "a.docx",
@@ -1471,20 +1501,197 @@ fn edit_wrote_line_without_author_warns_and_names_the_default() {
             "forty",
             "-o",
             "out.docx",
+        ][..],
+        // One-shot add adding a comment.
+        &[
+            "add",
+            "a.docx",
+            "-p",
+            "p1",
+            "--comment",
+            "--content",
+            "Cap the fee?",
+            "-o",
+            "out.docx",
+        ][..],
+        // The bundle refuses the same way.
+        &[
+            "edit",
+            "a.docx",
+            "-p",
+            "p1",
+            "--content",
+            "x",
+            "--out-dir",
+            "bundle",
+        ][..],
+        // --in-place refuses before touching the input.
+        &[
+            "edit",
+            "a.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty",
+            "--in-place",
+        ][..],
+    ] {
+        let (code, _, err) = run(dir, args);
+        assert_eq!(code, 2, "{args:?}\n{err}");
+        assert!(
+            err.contains("AUTHOR_REQUIRED: sign the new markup with -a NAME"),
+            "{args:?}\n{err}"
+        );
+        assert!(
+            !err.contains("this document has markup by"),
+            "a markup-free letter names no author: {args:?}\n{err}"
+        );
+        assert_eq!(
+            std::fs::read(dir.join("a.docx")).unwrap(),
+            before,
+            "{args:?} changed the input"
+        );
+        assert!(!dir.join("out.docx").exists() && !dir.join("bundle").exists());
+    }
+    // A document that already has markup names who signed it.
+    let redline = redline(dir);
+    std::fs::write(dir.join("redline.docx"), &redline).unwrap();
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "redline.docx",
+            "-p",
+            "p2",
+            "--anchor",
+            "Last",
+            "--content",
+            "First",
+            "-o",
+            "out.docx",
         ],
     );
-    assert_eq!(code, 0, "{err}");
-    assert_wrote_markup(
-        &err,
-        "out.docx",
-        &format!(r#"1 change by "{author}": no -a given"#),
-    );
+    assert_eq!(code, 2, "{err}");
     assert!(
-        err.contains(&format!(
-            r#"warning: no -a given; the new markup is signed "{author}""#
-        )),
+        err.contains(
+            r#"AUTHOR_REQUIRED: sign the new markup with -a NAME (this document has markup by "GiantCo")"#
+        ),
         "{err}"
     );
+    assert!(!dir.join("out.docx").exists());
+}
+
+/// #1997: `JUBARTE_AUTHOR`, set and non-empty, counts as `-a`; an empty one
+/// does not.
+#[test]
+fn jubarte_author_env_signs_the_new_markup() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let out = Command::new(BIN)
+        .current_dir(dir)
+        .args([
+            "edit",
+            "a.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty",
+            "-o",
+            "out.docx",
+        ])
+        .env("JUBARTE_AUTHOR", "Trainer 1 - AgentCo")
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code().unwrap_or(-1), 0, "{err}");
+    assert_wrote_markup(&err, "out.docx", r#"1 change by "Trainer 1 - AgentCo""#);
+    assert!(!err.contains("no -a given"), "{err}");
+
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let out = Command::new(BIN)
+        .current_dir(dir)
+        .args([
+            "edit",
+            "a.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty",
+            "-o",
+            "out.docx",
+        ])
+        .env("JUBARTE_AUTHOR", "")
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code().unwrap_or(-1), 2, "{err}");
+    assert!(err.contains("AUTHOR_REQUIRED"), "{err}");
+}
+
+/// #1997: `-a` beats `JUBARTE_AUTHOR`, and a write that adds no markup
+/// (`--accept`/`--reject` only) needs neither.
+#[test]
+fn author_flag_beats_env_and_resolutions_need_no_author() {
+    const TRACKED: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/agent-view/received.docx"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    std::fs::copy(TRACKED, dir.join("in.docx")).unwrap();
+    let out = Command::new(BIN)
+        .current_dir(dir)
+        .args([
+            "edit",
+            "in.docx",
+            "-p",
+            "r0",
+            "--accept",
+            "-a",
+            "GiantCo",
+            "-o",
+            "accepted.docx",
+        ])
+        .env("JUBARTE_AUTHOR", "Trainer 1 - AgentCo")
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code().unwrap_or(-1), 0, "{err}");
+    // The spelled -a wins over the environment when markup is signed.
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let out = Command::new(BIN)
+        .current_dir(dir)
+        .args([
+            "edit",
+            "a.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty",
+            "-a",
+            "GiantCo",
+            "-o",
+            "out.docx",
+        ])
+        .env("JUBARTE_AUTHOR", "Trainer 1 - AgentCo")
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code().unwrap_or(-1), 0, "{err}");
+    assert_wrote_markup(&err, "out.docx", r#"1 change by "GiantCo""#);
 }
 
 /// #1891: `add --comment` counts comments, not changes.
@@ -1638,13 +1845,13 @@ fn editing_mode_wrote_line_ignores_the_internal_redline() {
     assert!(!xml.contains("<w:del "), "{xml}");
 }
 
-/// #1891: a comment `--editing-mode` keeps in the clean copy still counts.
+/// #1997: a comment `--editing-mode` keeps in the clean copy is markup
+/// too: it needs `-a` like the redline's. With `-a` the write counts it.
 #[test]
 fn editing_mode_wrote_line_counts_a_published_comment() {
     let dir = tempfile::tempdir().unwrap();
     let dir = dir.path();
     letter(dir);
-    let author = default_author();
     let (code, _, err) = run(
         dir,
         &[
@@ -1660,22 +1867,33 @@ fn editing_mode_wrote_line_counts_a_published_comment() {
             "out.docx",
         ],
     );
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("AUTHOR_REQUIRED"), "{err}");
+    assert!(!dir.join("out.docx").exists());
+
+    let (code, _, err) = run(
+        dir,
+        &[
+            "add",
+            "a.docx",
+            "-p",
+            "p1",
+            "--comment",
+            "--content",
+            "Cap the fee?",
+            "--editing-mode",
+            "-a",
+            "GiantCo",
+            "-o",
+            "out.docx",
+        ],
+    );
     assert_eq!(code, 0, "{err}");
     let published = std::fs::read(dir.join("out.docx")).unwrap();
     let comments = jubarte::comments::list_comments(&published).unwrap();
     assert_eq!(comments.len(), 1, "{comments:?}");
     assert_eq!(comments[0].text, "Cap the fee?");
-    assert_wrote_markup(
-        &err,
-        "out.docx",
-        &format!(r#"1 comment by "{author}": no -a given"#),
-    );
-    assert!(
-        err.contains(&format!(
-            r#"warning: no -a given; the new markup is signed "{author}""#
-        )),
-        "{err}"
-    );
+    assert_wrote_markup(&err, "out.docx", r#"1 comment by "GiantCo""#);
     let xml = document_xml(&dir.join("out.docx"));
     assert!(!xml.contains("<w:ins "), "{xml}");
 }
@@ -1792,13 +2010,12 @@ fn out_dir_wrote_line_names_the_given_author() {
     assert!(!err.contains("warning: no -a given"), "{err}");
 }
 
-/// #1891: `--out-dir` without `-a` names the default and warns.
+/// #1997: an `--out-dir` write without `-a` is `AUTHOR_REQUIRED` too.
 #[test]
-fn out_dir_wrote_line_without_author_warns() {
+fn out_dir_wrote_line_without_author_is_author_required() {
     let dir = tempfile::tempdir().unwrap();
     let dir = dir.path();
     letter(dir);
-    let author = default_author();
     let (code, _, err) = run(
         dir,
         &[
@@ -1814,21 +2031,12 @@ fn out_dir_wrote_line_without_author_warns() {
             "r",
         ],
     );
-    assert_eq!(code, 0, "{err}");
-    let line = err
-        .lines()
-        .find(|line| line.starts_with("wrote r ("))
-        .unwrap_or(&err);
+    assert_eq!(code, 2, "{err}");
     assert!(
-        line.ends_with(&format!(r#"; 1 change by "{author}": no -a given)"#)),
-        "{line}"
-    );
-    assert!(
-        err.contains(&format!(
-            r#"warning: no -a given; the new markup is signed "{author}""#
-        )),
+        err.contains("AUTHOR_REQUIRED: sign the new markup with -a NAME"),
         "{err}"
     );
+    assert!(!dir.join("r").exists(), "nothing was written");
 }
 
 /// #1891: an editing-mode bundle publishes the clean copy. A comment it
@@ -2043,13 +2251,13 @@ fn in_place_edit_and_add_replace_the_input() {
     assert_eq!(names(dir), ["contract.docx"]);
 }
 
-/// #1888: `--in-place` keeps #1891's no `-a` detail and warning.
+/// #1997: `--in-place` refuses a markup-adding write without `-a`,
+/// before the input is touched.
 #[test]
-fn in_place_edit_without_author_keeps_the_warning() {
+fn in_place_edit_without_an_author_is_author_required() {
     let dir = tempfile::tempdir().unwrap();
     let dir = dir.path();
-    contract(dir);
-    let author = default_author();
+    let before = contract(dir);
     let (code, _, err) = run(
         dir,
         &[
@@ -2064,18 +2272,9 @@ fn in_place_edit_without_author_keeps_the_warning() {
             "--in-place",
         ],
     );
-    assert_eq!(code, 0, "{err}");
-    let line = wrote_any(&err);
-    assert!(
-        line.contains(": no -a given") && line.contains(&format!("by \"{author}\"")),
-        "{line}"
-    );
-    assert!(
-        err.contains(&format!(
-            "warning: no -a given; the new markup is signed \"{author}\""
-        )),
-        "{err}"
-    );
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("AUTHOR_REQUIRED"), "{err}");
+    assert_eq!(std::fs::read(dir.join("contract.docx")).unwrap(), before);
 }
 
 /// #1888: `accept --in-place` and `reject --in-place` replace the input.
@@ -2237,68 +2436,74 @@ fn in_place_conflicts_with_output_and_out_dir() {
     assert_eq!(names(dir), ["contract.docx"]);
 }
 
-/// #1888: `accept`/`reject -o INPUT --force` still works and warns.
+/// #1998: `accept`/`reject -o INPUT` refuses and names `--in-place`,
+/// with or without `--force`. The 0.16.0 deprecation window is over.
 #[test]
-fn accept_reject_same_file_force_stays_and_warns_it_is_deprecated() {
+fn accept_reject_o_naming_the_input_refuses_in_favour_of_in_place() {
     let dir = tempfile::tempdir().unwrap();
     let dir = dir.path();
     let redline = redline(dir);
-    let warn = "warning: -o contract.docx --force is deprecated; use --in-place";
+    let refusal = "OUTPUT_ALIAS: the output 'contract.docx' is the same file as the input 'contract.docx'; use --in-place";
 
+    for args in [
+        &["accept", "contract.docx", "-o", "contract.docx"][..],
+        &["accept", "contract.docx", "-o", "contract.docx", "--force"][..],
+        &["reject", "contract.docx", "-o", "contract.docx"][..],
+        &["reject", "contract.docx", "-o", "contract.docx", "--force"][..],
+        // Another spelling of the same file is the same refusal.
+        &[
+            "accept",
+            "contract.docx",
+            "-o",
+            "./contract.docx",
+            "--force",
+        ][..],
+    ] {
+        std::fs::write(dir.join("contract.docx"), &redline).unwrap();
+        let (code, _, err) = run(dir, args);
+        assert_eq!(code, 2, "{args:?}\n{err}");
+        assert!(
+            err.contains("OUTPUT_ALIAS") && err.contains("; use --in-place"),
+            "{args:?}\n{err}"
+        );
+        assert!(
+            std::fs::read(dir.join("contract.docx")).unwrap() == redline,
+            "{args:?} changed the input"
+        );
+    }
+    std::fs::write(dir.join("contract.docx"), &redline).unwrap();
     let (code, _, err) = run(dir, &["accept", "contract.docx", "-o", "contract.docx"]);
     assert_eq!(code, 2, "{err}");
-    assert!(err.contains("OUTPUT_EXISTS"), "{err}");
-    assert!(!err.contains("deprecated"), "{err}");
-    assert_eq!(std::fs::read(dir.join("contract.docx")).unwrap(), redline);
+    assert!(err.contains(refusal), "{err}");
 
-    let (code, _, err) = run(
-        dir,
-        &["accept", "contract.docx", "-o", "contract.docx", "--force"],
-    );
-    assert_eq!(code, 0, "{err}");
-    assert!(err.contains(warn), "{err}");
-    let line = wrote_any(&err);
-    assert!(line.starts_with("wrote contract.docx (docx, "), "{line}");
-    assert!(line.ends_with(" bytes)"), "{line}");
-    assert!(!line.contains("in place"), "{line}");
-    let accepted = document_xml(&dir.join("contract.docx"));
-    assert!(
-        accepted.contains("forty") && !accepted.contains("<w:ins"),
-        "{accepted}"
-    );
-
-    std::fs::write(dir.join("contract.docx"), &redline).unwrap();
-    let (code, _, err) = run(dir, &["accept", "contract.docx", "-o", "other.docx"]);
-    assert_eq!(code, 0, "{err}");
-    assert!(!err.contains("deprecated"), "{err}");
-    assert_eq!(std::fs::read(dir.join("contract.docx")).unwrap(), redline);
-
+    // -q quiets status, never the error.
     std::fs::write(dir.join("quiet.docx"), &redline).unwrap();
     let (code, _, err) = run(
         dir,
         &["-q", "accept", "quiet.docx", "-o", "quiet.docx", "--force"],
     );
-    assert_eq!(code, 0, "{err}");
+    assert_eq!(code, 2, "{err}");
     assert!(
-        err.contains("warning: -o quiet.docx --force is deprecated; use --in-place"),
+        err.contains(
+            "the output 'quiet.docx' is the same file as the input 'quiet.docx'; use --in-place"
+        ),
         "{err}"
     );
-    assert!(!err.lines().any(|line| line.starts_with("wrote ")), "{err}");
 
+    // `-o` naming another file still writes it.
     std::fs::write(dir.join("contract.docx"), &redline).unwrap();
-    let (code, _, err) = run(
-        dir,
-        &["reject", "contract.docx", "-o", "contract.docx", "--force"],
-    );
+    let (code, _, err) = run(dir, &["accept", "contract.docx", "-o", "other.docx"]);
     assert_eq!(code, 0, "{err}");
-    assert!(err.contains(warn), "{err}");
-    let line = wrote_any(&err);
-    assert!(line.starts_with("wrote contract.docx (docx, "), "{line}");
-    assert!(!line.contains("in place"), "{line}");
-    let rejected = document_xml(&dir.join("contract.docx"));
+    assert_eq!(std::fs::read(dir.join("contract.docx")).unwrap(), redline);
+
+    // `--in-place` is the spelled-out route the refusal names.
+    std::fs::write(dir.join("contract.docx"), &redline).unwrap();
+    let (code, _, err) = run(dir, &["accept", "contract.docx", "--in-place"]);
+    assert_eq!(code, 0, "{err}");
+    let accepted = document_xml(&dir.join("contract.docx"));
     assert!(
-        rejected.contains("thirty") && !rejected.contains("forty"),
-        "{rejected}"
+        accepted.contains("forty") && !accepted.contains("<w:ins"),
+        "{accepted}"
     );
 }
 
@@ -2568,6 +2773,8 @@ fn in_place_does_not_clobber_companions_without_force() {
             "thirty",
             "--content",
             "forty",
+            "-a",
+            "Jubarte",
             "--in-place",
             "--pdf",
         ],
@@ -2595,6 +2802,8 @@ fn in_place_does_not_clobber_companions_without_force() {
             "thirty",
             "--content",
             "forty",
+            "-a",
+            "Jubarte",
             "--in-place",
             "--png",
         ],
@@ -2682,6 +2891,8 @@ fn in_place_unwritable_companion_leaves_the_input() {
         "thirty",
         "--content",
         "forty",
+        "-a",
+        "Jubarte",
         "--in-place",
         "--pdf",
     ]

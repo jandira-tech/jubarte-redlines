@@ -651,7 +651,6 @@ fn prepare_and_publish(
         prepared.result.report.revisions.total,
         prepared.result.report.comments_added,
         &prepared.result.report.author,
-        action.author_was_given(),
     );
     let redacted = prepared
         .result
@@ -666,6 +665,12 @@ fn prepare_and_publish(
             PredictedEffect::Unchanged
         });
         return Ok((receipt, redacted, markup));
+    }
+    // #1997: a write that signs markup needs a spelled -a (or
+    // JUBARTE_AUTHOR). It refuses before anything is published. Saving a
+    // plan signs nothing yet; `edit apply` carries the plan's own author.
+    if markup.is_some() && save.is_none() && !action.author_was_given() {
+        return Err(failure("AUTHOR_REQUIRED", author_required_message(source)));
     }
     let mut outputs = Vec::<(PathBuf, Vec<u8>, MediaRole)>::new();
     if let Some(path) = save {
@@ -854,7 +859,12 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
         Ok(source) => prepare_and_publish(action, source, &command).unwrap_or_else(|error| {
             let operational = matches!(
                 error.code.as_str(),
-                "IO_ERROR" | "OUTPUT_EXISTS" | "USAGE" | "OUTPUT_ALIAS" | "INVALID_UTF8"
+                "IO_ERROR"
+                    | "OUTPUT_EXISTS"
+                    | "USAGE"
+                    | "OUTPUT_ALIAS"
+                    | "INVALID_UTF8"
+                    | "AUTHOR_REQUIRED"
             );
             let mut receipt = if operational {
                 Envelope::new_error(&command, Source::new(source), *error)
@@ -992,25 +1002,6 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
             }
         );
         return ExitCode::from(1);
-    }
-    // Stderr, including under --json/--jsonl: the receipt on stdout stays
-    // the envelope. -q suppresses it with the rest of this status (#1891).
-    if !quiet
-        && markup.is_some()
-        && !action.author_was_given()
-        && receipt
-            .data
-            .as_ref()
-            .is_some_and(|data| data.phase == Some(Phase::Committed))
-    {
-        let author = receipt
-            .effective_options
-            .get("author")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("Jubarte");
-        edit_status(format_args!(
-            "warning: no -a given; the new markup is signed \"{author}\""
-        ));
     }
     if code == 0
         && !quiet
