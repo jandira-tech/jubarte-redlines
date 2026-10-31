@@ -4121,8 +4121,8 @@ fn numbering_part(pkg: &crate::opc::PartFs) -> Option<String> {
 }
 
 /// The main document's comments part (`word/comments.xml`), when it has
-/// one. Its revisions resolve like every other part's, but they are not
-/// listed, so `changes` skips this part.
+/// one. Its revisions resolve like every other part's and are listed as
+/// `comments.rN` (#1706).
 pub(crate) fn comments_part(pkg: &crate::opc::PartFs) -> Option<String> {
     related_part(pkg, "comments")
 }

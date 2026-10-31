@@ -253,7 +253,7 @@
 #### `comment_changes_in`  (L1003-1019)
 `fn comment_changes_in(pkg: &PartFs) -> Vec<Change>`
 
-- **Does:** The listed changes of the comments part only (empty when the package has none): [`changes_in`] skips it because the view has no ids there.
+- **Does:** The listed changes of the comments part only (empty when the package has none). The same changes are in [`changes_in`] as `comments.rN`.
 - **Calls (crate):** `comments_part` (revision_processor.rs:3708) L1004; `PartFs::part_string` (opc/mod.rs:636) L1007; `Dom::new` (xmllinq/mod.rs:387) L1010; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L1011; `Dom::root` (xmllinq/mod.rs:822) L1012; `carriers` (changes.rs:1124) L1015
 - **Calls (std/external/unresolved):** `.collect`, `.filter_map`, `.into_iter`, `Vec::new`
 - **Called by:** `resolve_for_edit_or_cli` (changes.rs:922)

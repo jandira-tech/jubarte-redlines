@@ -338,7 +338,7 @@ List tracked changes with IDs for accept, reject and edit plans
 |-|-|-|-|-|-|-|
 | `<FILE>` |  | <FILE> |  |  | required | The document (.docx) |
 | `--json` |  |  | false |  |  | Emit one record per line on stdout (records only). The input_validity status is one JSON line on stderr; -q silences it |
-| `--author` |  | <NAME> |  |  | append | Only listed changes by this author (exact match); repeat for several. Comment-body revisions are not listed, even without this filter |
+| `--author` |  | <NAME> |  |  | append | Only listed changes by this author (exact match); repeat for several |
 | `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte accept
@@ -352,7 +352,7 @@ Accept all tracked changes, or select by ID, author or kind
 | `-o, --output` |  | <FILE> |  |  | conflicts --in-place | Output path; its extension picks the format: .docx (also any other), .md (the agent view), .pdf, .png (one file per page) or .json (the snapshot) |
 | `--force` |  |  | false |  |  | Overwrite the output file if it already exists |
 | `--keep-nested-comment` |  |  | false |  |  | Keep comments and replies whose whole anchor is removed, on an empty anchor |
-| `--id` |  | <ID> |  |  | append | Only this change: `r12` (as the view and `jubarte changes` print it), `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids and stay tracked |
+| `--id` |  | <ID> |  |  | append | Only this change: `r12` (as the view and `jubarte changes` print it), `header1.r1`, `comments.r9`, or `r1+2` (both). Repeatable |
 | `--author` |  | <NAME> |  |  | append | Only changes by this author. Repeatable |
 | `--kind` |  | <KIND> |  | insertion, deletion, move, formatting | append | Only changes of this kind. Repeatable |
 | `--revisions` |  | <REVISIONS> | conventional | conventional, word, custom | under "Rendering (-o FILE.pdf or FILE.png)" | How tracked changes are painted: `conventional` (deletions red struck through, insertions blue underlined, moves green: double-struck where they left, double-underlined where they landed), `word` (what Microsoft Word's Save as PDF paints), or `custom` (see --revision-palette) |
@@ -375,7 +375,7 @@ Reject all tracked changes, or select by ID, author or kind
 | `-o, --output` |  | <FILE> |  |  | conflicts --in-place | Output path; its extension picks the format: .docx (also any other), .md (the agent view), .pdf, .png (one file per page) or .json (the snapshot) |
 | `--force` |  |  | false |  |  | Overwrite the output file if it already exists |
 | `--keep-nested-comment` |  |  | false |  |  | Keep comments and replies whose whole anchor is removed, on an empty anchor |
-| `--id` |  | <ID> |  |  | append | Only this change: `r12` (as the view and `jubarte changes` print it), `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids and stay tracked |
+| `--id` |  | <ID> |  |  | append | Only this change: `r12` (as the view and `jubarte changes` print it), `header1.r1`, `comments.r9`, or `r1+2` (both). Repeatable |
 | `--author` |  | <NAME> |  |  | append | Only changes by this author. Repeatable |
 | `--kind` |  | <KIND> |  | insertion, deletion, move, formatting | append | Only changes of this kind. Repeatable |
 | `--revisions` |  | <REVISIONS> | conventional | conventional, word, custom | under "Rendering (-o FILE.pdf or FILE.png)" | How tracked changes are painted: `conventional` (deletions red struck through, insertions blue underlined, moves green: double-struck where they left, double-underlined where they landed), `word` (what Microsoft Word's Save as PDF paints), or `custom` (see --revision-palette) |
