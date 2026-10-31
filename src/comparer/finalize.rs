@@ -11457,10 +11457,14 @@ fn strict_validity_artifacts(dom: &mut Dom, root: NodeId, comparison: bool) {
         for e in dom.descendants(root, Some(&WP14::name(local))) {
             let v = dom.value(e);
             if let Some(num) = v.trim().strip_suffix('%')
-                && let Ok(f) = num.trim().parse::<f64>()
+                && let Some(f) = crate::util::parse_finite_f64(num.trim())
             {
-                let per_thousand = (f * 1000.0).round() as i64;
-                dom.set_value(e, &per_thousand.to_string());
+                let scaled = f * 1000.0;
+                // A non-finite product, or one past i64, is left as written.
+                if scaled.is_finite() && scaled.abs() <= i64::MAX as f64 {
+                    let per_thousand = scaled.round() as i64;
+                    dom.set_value(e, &per_thousand.to_string());
+                }
             }
         }
     }
@@ -11568,8 +11572,10 @@ fn strict_validity_artifacts(dom: &mut Dom, root: NodeId, comparison: bool) {
             .filter_map(|(an, av)| {
                 let t = av.trim();
                 let num = t.strip_suffix('%')?;
-                let f: f64 = num.trim().parse().ok()?;
-                Some((an, (f * 1000.0).round() as i64))
+                let f = crate::util::parse_finite_f64(num.trim())?;
+                let scaled = f * 1000.0;
+                (scaled.is_finite() && scaled.abs() <= i64::MAX as f64)
+                    .then_some((an, scaled.round() as i64))
             })
             .collect();
         for (an, v) in percents {
@@ -11674,7 +11680,10 @@ fn normalize_measures(
         }
         let t = v.trim();
         if t.contains('.') {
-            return t.parse::<f64>().ok().map(|f| f.round() as i64);
+            let f = crate::util::parse_finite_f64(t)?;
+            let rounded = f.round();
+            // Do not rewrite a value that will not fit: `as i64` would saturate.
+            return (rounded.abs() <= i64::MAX as f64).then_some(rounded as i64);
         }
         None
     }

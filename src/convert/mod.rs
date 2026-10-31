@@ -51,6 +51,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::namespaces::{A, M, MC, R, W, W14, W15, WNE, WP};
 use crate::opc::PartFs;
+use crate::util::{narrow_finite_f32, parse_finite_f32, parse_finite_f64};
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 use font::{Face, FaceId, FaceRef, Fonts, NO_BREAK_HYPHEN};
@@ -3167,7 +3168,7 @@ fn twip(v: f32) -> f32 {
 /// Word Save-as-PDF A4 is 595.2×841.92 pt for `pgSz` 11906×16838 twips
 /// (plan.md Step 10 I). Linear twip/20 is 595.3×841.9.
 fn word_pgsz_pt(raw: &str, pt: f32) -> f32 {
-    let Ok(twips) = raw.trim().parse::<f32>() else {
+    let Some(twips) = parse_finite_f32(raw.trim()) else {
         return pt;
     };
     if (twips - 11906.0).abs() < 0.5 {
@@ -3252,7 +3253,7 @@ fn apply_tab_stops(stops: &mut Vec<TabStop>, dom: &Dom, ppr: NodeId) {
     let same = |a: f32, b: f32| (a - b).abs() < 0.05;
     for tab in dom.elements(tabs, Some(&W::name("tab"))) {
         if attr_any(dom, tab, "val") == Some("clear")
-            && let Some(pos) = attr_any(dom, tab, "pos").and_then(|s| s.parse::<f32>().ok())
+            && let Some(pos) = attr_any(dom, tab, "pos").and_then(parse_finite_f32)
         {
             stops.retain(|s| !same(s.pos, twip(pos)));
         }
@@ -3275,7 +3276,7 @@ fn parse_tab_stops(dom: &Dom, ppr: NodeId) -> Vec<TabStop> {
         if val == "clear" {
             continue;
         }
-        if let Some(pos) = attr_any(dom, tab, "pos").and_then(|s| s.parse::<f32>().ok()) {
+        if let Some(pos) = attr_any(dom, tab, "pos").and_then(parse_finite_f32) {
             let align = match val {
                 // ISO Strict ST_TabJc: end/start are LTR right/left
                 // (Strict01 TOC val=end leader=dot pos=9350).
@@ -3322,19 +3323,21 @@ fn merge_tab_stops(into: &mut Vec<TabStop>, extra: &[TabStop]) {
 }
 
 /// OOXML length: bare number is twips; `pt` / `in` / `cm` / `mm` are already units.
+/// A non-finite operand, or a conversion that overflows (`1e38in`), is absent.
 fn parse_len(s: &str) -> Option<f32> {
     let t = s.trim();
-    if let Some(rest) = t.strip_suffix("pt") {
-        rest.trim().parse().ok()
+    let points = if let Some(rest) = t.strip_suffix("pt") {
+        parse_finite_f32(rest.trim())?
     } else if let Some(rest) = t.strip_suffix("in") {
-        rest.trim().parse::<f32>().ok().map(|v| v * 72.0)
+        parse_finite_f32(rest.trim())? * 72.0
     } else if let Some(rest) = t.strip_suffix("cm") {
-        rest.trim().parse::<f32>().ok().map(|v| v * 72.0 / 2.54)
+        parse_finite_f32(rest.trim())? * 72.0 / 2.54
     } else if let Some(rest) = t.strip_suffix("mm") {
-        rest.trim().parse::<f32>().ok().map(|v| v * 72.0 / 25.4)
+        parse_finite_f32(rest.trim())? * 72.0 / 25.4
     } else {
-        t.parse().ok().map(twip)
-    }
+        twip(parse_finite_f32(t)?)
+    };
+    points.is_finite().then_some(points)
 }
 
 fn load_theme(pkg: &PartFs) -> ThemeFonts {
@@ -3463,8 +3466,10 @@ fn parse_fmt_scheme(dom: &Dom, root: NodeId, probe: &ThemeFonts) -> FmtScheme {
             if i >= 3 {
                 break;
             }
-            if let Some(w) = attr_any(dom, child, "w").and_then(|s| s.parse::<f64>().ok()) {
-                widths[i] = Some(((w / 12700.0) as f32).clamp(0.4, 4.0));
+            if let Some(w) = attr_any(dom, child, "w").and_then(parse_finite_f64)
+                && let Some(pt) = narrow_finite_f32(w / 12700.0)
+            {
+                widths[i] = Some(pt.clamp(0.4, 4.0));
             }
             lines[i] = scheme_color(dom, child, probe);
             i += 1;
@@ -3619,7 +3624,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
         .and_then(|dd| first_named(&dom, dd, "rPr"))
         .and_then(|rpr| first_named(&dom, rpr, "sz"))
         .and_then(|sz| attr_any(&dom, sz, "val"))
-        .and_then(|v| v.parse::<f32>().ok())
+        .and_then(parse_finite_f32)
         .map(|half| half / 2.0);
     let mut tables = HashMap::new();
     let mut implicit_para: Option<String> = None;
@@ -3917,7 +3922,7 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults, theme: &ThemeF
         .element(style, &W::r_pr())
         .and_then(|rpr| first_named(dom, rpr, "sz"))
         .and_then(|sz| attr_any(dom, sz, "val"))
-        .and_then(|v| v.parse::<f32>().ok())
+        .and_then(parse_finite_f32)
         .map(|half| half / 2.0);
     let run_family = dom
         .element(style, &W::r_pr())
@@ -4039,7 +4044,7 @@ fn parse_border_edge(dom: &Dom, el: NodeId) -> Option<([f32; 3], f32)> {
         return None;
     }
     let sz = attr_any(dom, el, "sz")
-        .and_then(|s| s.parse::<f32>().ok())
+        .and_then(parse_finite_f32)
         .unwrap_or(8.0);
     if sz <= 0.0 {
         return None;
@@ -4645,13 +4650,13 @@ fn paint_family<'a>(style: &'a RunStyle, text: &str) -> &'a str {
 fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
     if let Some(sz) = first_named(dom, rpr, "sz")
         && let Some(val) = dom.attribute(sz, &W::val())
-        && let Ok(half) = val.parse::<f32>()
+        && let Some(half) = parse_finite_f32(val)
     {
         style.size = half / 2.0;
     }
     if let Some(sz) = first_named(dom, rpr, "szCs")
         && let Some(val) = dom.attribute(sz, &W::val())
-        && let Ok(half) = val.parse::<f32>()
+        && let Some(half) = parse_finite_f32(val)
     {
         style.size_cs = Some(half / 2.0);
     }
@@ -4767,7 +4772,7 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
         && let Some(val) = attr_any(dom, w, "val")
         // ST_TextScale is a whole number or, in strict and newer files,
         // a percentage string (docxide case24: "150%").
-        && let Ok(pct) = val.trim().trim_end_matches('%').parse::<f32>()
+        && let Some(pct) = parse_finite_f32(val.trim().trim_end_matches('%'))
         && pct > 0.0
     {
         style.scale = pct / 100.0;
@@ -4785,7 +4790,7 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
     }
     if let Some(pos) = first_named(dom, rpr, "position")
         && let Some(val) = attr_any(dom, pos, "val")
-        && let Ok(half) = val.parse::<f32>()
+        && let Some(half) = parse_finite_f32(val)
     {
         style.offset = half / 2.0;
     }
@@ -4867,7 +4872,7 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
             // Each lineRule owns the whole line model: a later layer (child
             // style, direct pPr) must clear whatever an earlier one set.
             let unit = line.chars().any(|c| c.is_ascii_alphabetic());
-            let bare = if unit { None } else { line.parse::<f32>().ok() };
+            let bare = if unit { None } else { parse_finite_f32(line) };
             let spec = if unit {
                 parse_len(line)
             } else {
@@ -5260,7 +5265,7 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
             // 4096ths of a point (ECMA-376 17.6.5), not twips: 0016d88a's
             // -4301 is Word's 10.5 → 9.45pt CJK pitch, not -215pt a glyph.
             page.grid_char = attr_any(dom, grid, "charSpace")
-                .and_then(|v| v.parse::<f32>().ok())
+                .and_then(parse_finite_f32)
                 .map_or(0.0, |v| v / 4096.0);
         }
     }
@@ -5325,14 +5330,14 @@ fn parse_pg_borders(dom: &Dom, pb: NodeId) -> PageBorders {
             .and_then(parse_hex_color)
             .unwrap_or([0.0, 0.0, 0.0]);
         let width = attr_any(dom, el, "sz")
-            .and_then(|s| s.parse::<f32>().ok())
+            .and_then(parse_finite_f32)
             .map(|eighths| {
                 let pt = eighths / 8.0;
                 if pt < 0.5 { 0.24 } else { pt }
             })
             .unwrap_or(0.6);
         let space = attr_any(dom, el, "space")
-            .and_then(|s| s.parse::<f32>().ok())
+            .and_then(parse_finite_f32)
             .unwrap_or(24.0);
         let line = match val {
             "double" => BorderLine::Double,
@@ -6869,7 +6874,7 @@ fn lvl_marker_rpr(dom: &Dom, lvl: NodeId) -> (Option<f32>, bool, bool, bool) {
     };
     let size = first_named(dom, rpr, "sz")
         .and_then(|n| attr_any(dom, n, "val"))
-        .and_then(|s| s.parse::<f32>().ok())
+        .and_then(parse_finite_f32)
         .map(|half| half / 2.0);
     let underline = first_named(dom, rpr, "u").is_some_and(|n| {
         !val_is_false(dom, Some(n))
@@ -9392,7 +9397,7 @@ fn frame_box(
     let fp = para_frame_attrs(dom, first, ctx.sheet)?;
     let tw = |n: &str| {
         frame_attr(&fp, n)
-            .and_then(|v| v.parse::<f32>().ok())
+            .and_then(parse_finite_f32)
             .map(|v| v / 20.0)
     };
     // No x puts the frame on its anchor's edge (the key admits that only
@@ -11885,7 +11890,7 @@ fn para_hrule(dom: &Dom, para: NodeId) -> Option<HRule> {
         .and_then(|st| vml_style_pt(st, "height"))
         .unwrap_or(1.5);
     let pct = o_attr(dom, rect, "hrpct")
-        .and_then(|v| v.parse::<f32>().ok())
+        .and_then(parse_finite_f32)
         .unwrap_or(0.0);
     let fill = attr_any(dom, rect, "fillcolor")
         .and_then(vml_color)
@@ -11979,7 +11984,7 @@ fn paragraph_block(
                     names
                         .iter()
                         .find_map(|n| attr_any(dom, ind, n))
-                        .and_then(|v| v.parse::<f32>().ok())
+                        .and_then(parse_finite_f32)
                         .map(|v| v / 20.0)
                 })
             };
@@ -13510,10 +13515,7 @@ fn table_block(
             // gridCol's `w:type` says nothing: Word keeps the grid of a
             // table whose every cell has a tcW, with or without it (#1720
             // probes b1, b2).
-            let width = dom
-                .attribute(col, &w)
-                .and_then(|s| s.parse::<f32>().ok())
-                .filter(|v| v.is_finite());
+            let width = dom.attribute(col, &w).and_then(parse_finite_f32);
             foreign_grid |= width.is_none();
             cols.push(width.map(twip).unwrap_or(80.0));
         }
@@ -14370,7 +14372,7 @@ fn table_pref_width(dom: &Dom, table: NodeId) -> TblWidth {
     match attr_any(dom, tw, "type").unwrap_or("auto") {
         "pct" => {
             let fiftieths = attr_any(dom, tw, "w")
-                .and_then(|s| s.parse::<f32>().ok())
+                .and_then(parse_finite_f32)
                 .unwrap_or(5000.0);
             TblWidth::Pct(fiftieths / 5000.0)
         }
@@ -14728,7 +14730,7 @@ fn cell_pref_width(dom: &Dom, cell: NodeId) -> PrefWidth {
     match attr_any(dom, tw, "type").unwrap_or("auto") {
         "pct" => {
             let fiftieths = attr_any(dom, tw, "w")
-                .and_then(|s| s.parse::<f32>().ok())
+                .and_then(parse_finite_f32)
                 .unwrap_or(0.0);
             if fiftieths > 0.0 {
                 PrefWidth::Pct(fiftieths / 5000.0)
@@ -15079,7 +15081,7 @@ fn shd_paint(dom: &Dom, shd: NodeId) -> Option<[f32; 3]> {
     if val == "solid" {
         return Some(hex("color").unwrap_or([0.0; 3]));
     }
-    let Some(pct) = val.strip_prefix("pct").and_then(|n| n.parse::<f32>().ok()) else {
+    let Some(pct) = val.strip_prefix("pct").and_then(parse_finite_f32) else {
         return fill;
     };
     let share = (pct / 100.0).clamp(0.0, 1.0);
@@ -16725,7 +16727,7 @@ fn form_checkbox(dom: &Dom, run: NodeId) -> Option<(Option<f32>, bool)> {
     let cb = first_named(dom, fld, "ffData").and_then(|ff| first_named(dom, ff, "checkBox"))?;
     let size = first_named(dom, cb, "size")
         .and_then(|n| attr_any(dom, n, "val"))
-        .and_then(|v| v.parse::<f32>().ok())
+        .and_then(parse_finite_f32)
         .map(|half| half / 2.0);
     let on = |name: &str| {
         first_named(dom, cb, name)
@@ -17535,7 +17537,7 @@ fn drawing_group(dom: &Dom, drawing: NodeId) -> Option<(NodeId, Option<[f64; 2]>
     let ext = descendants_local(dom, drawing, "extent")
         .into_iter()
         .next()?;
-    let num = |k: &str| attr_any(dom, ext, k).and_then(|v| v.parse::<f64>().ok());
+    let num = |k: &str| attr_any(dom, ext, k).and_then(parse_finite_f64);
     Some((wpc, Some([num("cx")?, num("cy")?])))
 }
 
@@ -17618,7 +17620,7 @@ struct GroupText<'a> {
 fn xfrm_box(dom: &Dom, xfrm: NodeId) -> Option<[f64; 4]> {
     let num = |node: Option<NodeId>, key: &str| {
         node.and_then(|n| attr_any(dom, n, key))
-            .and_then(|v| v.parse::<f64>().ok())
+            .and_then(parse_finite_f64)
     };
     let off = descendants_local(dom, xfrm, "off").into_iter().next();
     let ext = descendants_local(dom, xfrm, "ext").into_iter().next();
@@ -17679,7 +17681,7 @@ fn collect_group(
     let num = |local: &str, key: &str| {
         xfrm.and_then(|x| descendants_local(dom, x, local).into_iter().next())
             .and_then(|n| attr_any(dom, n, key))
-            .and_then(|v| v.parse::<f64>().ok())
+            .and_then(parse_finite_f64)
     };
     let Some(ext) = xfrm
         .and_then(|x| xfrm_box(dom, x))
@@ -17697,10 +17699,12 @@ fn collect_group(
         return;
     }
     let place = |b: [f64; 4]| -> [f32; 4] {
-        let fx = ((b[0] - cox) / cex) as f32;
-        let fy = ((b[1] - coy) / cey) as f32;
-        let fw = (b[2] / cex) as f32;
-        let fh = (b[3] / cey) as f32;
+        // A ratio that does not fit in f32 is no offset: the child stays put.
+        let px = |v: f64| narrow_finite_f32(v).unwrap_or(0.0);
+        let fx = px((b[0] - cox) / cex);
+        let fy = px((b[1] - coy) / cey);
+        let fw = px(b[2] / cex);
+        let fh = px(b[3] / cey);
         [
             frac[0] + fx * frac[2],
             frac[1] + fy * frac[3],
@@ -17749,8 +17753,8 @@ fn collect_group(
             let polygon = geom_is_preset_polygon(geom) || custom.is_some();
             let (flip_h, flip_v) = shape_flip(dom, child);
             let mut shape = group_box(
-                (b[2] / 12700.0) as f32,
-                (b[3] / 12700.0) as f32,
+                narrow_finite_f32(b[2] / 12700.0).unwrap_or(0.0),
+                narrow_finite_f32(b[3] / 12700.0).unwrap_or(0.0),
                 ImageSlot::Flow,
                 geom,
                 false,
@@ -17839,7 +17843,7 @@ fn cust_geom(dom: &Dom, shape: NodeId) -> Option<preset_geom::CustomGeom> {
         .find(|e| attr_any(dom, *e, "cx").is_some());
     let extent = |key: &str| {
         ext.and_then(|e| attr_any(dom, e, key))
-            .and_then(|v| v.parse::<f64>().ok())
+            .and_then(parse_finite_f64)
             .unwrap_or(0.0)
     };
     let mut paths = Vec::new();
@@ -17849,7 +17853,7 @@ fn cust_geom(dom: &Dom, shape: NodeId) -> Option<preset_geom::CustomGeom> {
     {
         let num = |key: &str| {
             attr_any(dom, path, key)
-                .and_then(|v| v.parse::<f64>().ok())
+                .and_then(parse_finite_f64)
                 .unwrap_or(0.0)
         };
         let fill = match attr_any(dom, path, "fill").unwrap_or("norm") {
@@ -18102,7 +18106,7 @@ fn run_raise_pt(dom: &Dom, node: NodeId) -> f32 {
                 .element(n, &W::r_pr())
                 .and_then(|pr| first_named(dom, pr, "position"))
                 .and_then(|pos| attr_any(dom, pos, "val"))
-                .and_then(|v| v.parse::<f32>().ok())
+                .and_then(parse_finite_f32)
                 .map_or(0.0, |half| half / 2.0);
         }
         at = dom.parent(n);
@@ -18161,7 +18165,7 @@ fn textbox_insets(dom: &Dom, shape: NodeId) -> [f32; 4] {
     let mut ins = TXBX_INSETS;
     if let Some(body) = descendants_local(dom, shape, "bodyPr").first().copied() {
         for (i, key) in ["lIns", "tIns", "rIns", "bIns"].iter().enumerate() {
-            if let Some(v) = attr_any(dom, body, key).and_then(|v| v.parse::<f32>().ok()) {
+            if let Some(v) = attr_any(dom, body, key).and_then(parse_finite_f32) {
                 ins[i] = v / 12700.0;
             }
         }
@@ -18178,12 +18182,13 @@ fn textbox_insets(dom: &Dom, shape: NodeId) -> [f32; 4] {
 }
 
 /// A VML length (`0.1in`, `7.2pt`, `2mm`, `0.5cm`, bare EMU) in points.
+/// A non-finite operand, or a conversion that overflows, is absent.
 fn vml_len_pt(raw: &str) -> Option<f32> {
     let (num, unit) = raw
         .find(|c: char| c.is_ascii_alphabetic())
         .map_or((raw, ""), |i| raw.split_at(i));
-    let v: f32 = num.trim().parse().ok()?;
-    Some(match unit {
+    let v = parse_finite_f32(num.trim())?;
+    let points = match unit {
         "in" => v * 72.0,
         "pt" => v,
         "cm" => v * 72.0 / 2.54,
@@ -18191,7 +18196,8 @@ fn vml_len_pt(raw: &str) -> Option<f32> {
         "px" => v * 0.75,
         "" => v / 12700.0,
         _ => return None,
-    })
+    };
+    points.is_finite().then_some(points)
 }
 
 /// Word 2008+ can park textbox paragraphs in `word/txbxN.xml` and leave
@@ -18417,8 +18423,8 @@ fn diag_ln_stroke(dom: &Dom, sp: NodeId, theme: &ThemeFonts) -> Option<([f32; 3]
         return None;
     }
     let width = attr_any(dom, ln, "w")
-        .and_then(|s| s.parse::<f64>().ok())
-        .map(|emu| (emu / 12700.0) as f32)
+        .and_then(parse_finite_f64)
+        .and_then(|emu| narrow_finite_f32(emu / 12700.0))
         .unwrap_or(1.0)
         .clamp(0.4, 4.0);
     Some((color, width))
@@ -18426,8 +18432,8 @@ fn diag_ln_stroke(dom: &Dom, sp: NodeId, theme: &ThemeFonts) -> Option<([f32; 3]
 
 fn emu_attr(dom: &Dom, node: NodeId, name: &str) -> f32 {
     attr_any(dom, node, name)
-        .and_then(|s| s.parse::<f64>().ok())
-        .map(|v| (v / 12700.0) as f32)
+        .and_then(parse_finite_f64)
+        .and_then(|v| narrow_finite_f32(v / 12700.0))
         .unwrap_or(0.0)
 }
 
@@ -18564,7 +18570,7 @@ fn chart_pts_indexed(dom: &Dom, node: NodeId) -> (Vec<(usize, f32)>, usize) {
             .and_then(|s| s.parse().ok())
             .unwrap_or(pos);
         if let Some(v) = descendants_local(dom, pt, "v").into_iter().next()
-            && let Ok(n) = element_text(dom, v).trim().parse::<f32>()
+            && let Some(n) = parse_finite_f32(element_text(dom, v).trim())
         {
             pts.push((idx, n));
         }
@@ -18597,7 +18603,7 @@ fn chart_val_ax_scaling(dom: &Dom, root: NodeId) -> AxisScaling {
                 .next()
                 .and_then(|sc| descendants_local(dom, sc, local).into_iter().next())
                 .and_then(|n| attr_any(dom, n, "val"))
-                .and_then(|s| s.parse::<f32>().ok())
+                .and_then(parse_finite_f32)
         };
         let b = (bound("min"), bound("max"));
         if matches!(pos, "b" | "t") {
@@ -18762,7 +18768,7 @@ fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
         if let Some(val) = val {
             let nums: Vec<f32> = chart_pts(&dom, val)
                 .iter()
-                .filter_map(|s| s.parse().ok())
+                .filter_map(|s| parse_finite_f32(s))
                 .collect();
             if !nums.is_empty() {
                 names.push(chart_ser_name(&dom, ser, idx));
@@ -19078,7 +19084,7 @@ fn space_before_drawing(dom: &Dom, drawing: NodeId) -> f32 {
             .element(*sib, &W::r_pr())
             .and_then(|pr| first_named(dom, pr, "sz"))
             .and_then(|n| dom.attribute(n, &W::val()))
-            .and_then(|v| v.parse::<f32>().ok())
+            .and_then(parse_finite_f32)
             .map_or(11.0, |half| half / 2.0);
         gap += text.chars().count() as f32 * size * 0.25;
     }
@@ -19094,7 +19100,7 @@ fn inline_effect_pt(dom: &Dom, drawing: NodeId) -> [f32; 4] {
     };
     let side = |name: &str| {
         attr_any(dom, effect, name)
-            .and_then(|v| v.parse::<f32>().ok())
+            .and_then(parse_finite_f32)
             .map_or(0.0, |emu| (emu / 12700.0).max(0.0))
     };
     [side("l"), side("t"), side("r"), side("b")]
@@ -19594,7 +19600,7 @@ fn vml_line_image(dom: &Dom, line: NodeId, root: NodeId) -> Option<LaidImage> {
         let style = attr_any(dom, g, "style")?;
         let w = vml_style_pt(style, "width")?;
         let h = vml_style_pt(style, "height").unwrap_or(0.0);
-        let num = |v: &str| v.parse::<f32>().ok();
+        let num = |v: &str| parse_finite_f32(v);
         let size = attr_any(dom, g, "coordsize")
             .and_then(|c| pair(c, &num))
             .unwrap_or([1000.0, 1000.0]);
@@ -19616,7 +19622,7 @@ fn vml_line_image(dom: &Dom, line: NodeId, root: NodeId) -> Option<LaidImage> {
             if v.chars().any(|c| c.is_ascii_alphabetic()) {
                 vml_len_pt(v)
             } else {
-                v.parse::<f32>().ok().map(|px| px * 0.75)
+                parse_finite_f32(v).map(|px| px * 0.75)
             }
         };
         let p = pair(from, &len)?;
@@ -19820,7 +19826,7 @@ fn picture_outline(dom: &Dom, drawing: NodeId) -> Option<([f32; 3], f32)> {
     }
     let color = scheme_color(dom, ln, &ThemeFonts::default())?;
     let width = attr_any(dom, ln, "w")
-        .and_then(|w| w.parse::<f32>().ok())
+        .and_then(parse_finite_f32)
         .map_or(0.75, |w| w / 12700.0);
     Some((color, width))
 }
@@ -19831,7 +19837,7 @@ fn src_rect_frac(dom: &Dom, drawing: NodeId) -> Option<[f32; 4]> {
     let n = first_named_any(dom, drawing, "srcRect")?;
     let p = |k: &str| {
         attr_any(dom, n, k)
-            .and_then(|s| s.parse::<f32>().ok())
+            .and_then(parse_finite_f32)
             .unwrap_or(0.0)
             / 100_000.0
     };
@@ -19856,8 +19862,8 @@ fn vml_crop(dom: &Dom, imagedata: NodeId) -> Option<[f32; 4]> {
     let p = |k: &str| {
         let v = attr_any(dom, imagedata, k)?.trim();
         let frac = match v.strip_suffix('f') {
-            Some(n) => n.trim().parse::<f32>().ok()? / 65_536.0,
-            None => v.parse::<f32>().ok()?,
+            Some(n) => parse_finite_f32(n.trim())? / 65_536.0,
+            None => parse_finite_f32(v)?,
         };
         frac.is_finite().then(|| frac.clamp(-1.0, 1.0))
     };
@@ -19883,7 +19889,7 @@ fn picture_is_oval(dom: &Dom, drawing: NodeId) -> bool {
 fn drawing_rotate_deg(dom: &Dom, drawing: NodeId) -> f32 {
     for xfrm in descendants_local(dom, drawing, "xfrm") {
         if let Some(rot) = attr_any(dom, xfrm, "rot")
-            && let Ok(emu) = rot.parse::<f32>()
+            && let Some(emu) = parse_finite_f32(rot)
         {
             return emu / 60_000.0;
         }
@@ -19901,12 +19907,15 @@ fn drawing_extent_pt(dom: &Dom, drawing: NodeId) -> (f32, f32) {
         return (200.0, 120.0);
     };
     let cx = attr_any(dom, ext, "cx")
-        .and_then(|s| s.parse::<f64>().ok())
+        .and_then(parse_finite_f64)
         .unwrap_or(200.0 * 12700.0);
     let cy = attr_any(dom, ext, "cy")
-        .and_then(|s| s.parse::<f64>().ok())
+        .and_then(parse_finite_f64)
         .unwrap_or(120.0 * 12700.0);
-    ((cx / 12700.0) as f32, (cy / 12700.0) as f32)
+    (
+        narrow_finite_f32(cx / 12700.0).unwrap_or(200.0),
+        narrow_finite_f32(cy / 12700.0).unwrap_or(120.0),
+    )
 }
 
 fn local_text(dom: &Dom, node: NodeId) -> String {
@@ -19964,7 +19973,7 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
     let emu_pt = |name: &str| {
         anchor
             .and_then(|n| attr_any(dom, n, name))
-            .and_then(|s| s.parse::<f32>().ok())
+            .and_then(parse_finite_f32)
             .map(|emu| emu / 12700.0)
             .unwrap_or(0.0)
     };
@@ -19975,7 +19984,7 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
     let effect_pt = |name: &str| {
         effect
             .and_then(|n| attr_any(dom, n, name))
-            .and_then(|s| s.parse::<f32>().ok())
+            .and_then(parse_finite_f32)
             .map(|emu| emu / 12700.0)
             .unwrap_or(0.0)
     };
@@ -20029,13 +20038,13 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
 
 fn parse_pct_value(raw: &str) -> Option<f32> {
     let trimmed = raw.trim();
-    let n: f32 = trimmed.trim_end_matches('%').trim().parse().ok()?;
+    let n = parse_finite_f32(trimmed.trim_end_matches('%').trim())?;
     let frac = if trimmed.ends_with('%') || n.abs() <= 100.0 {
         n / 100.0
     } else {
         n / 100_000.0
     };
-    Some(frac.clamp(0.0, 10.0))
+    frac.is_finite().then_some(frac.clamp(0.0, 10.0))
 }
 
 fn parse_pct_offset(dom: &Dom, parent: NodeId, local: &str) -> Option<f32> {
@@ -20230,7 +20239,7 @@ fn vml_group_box(dom: &Dom, shape: NodeId, root: NodeId) -> Option<(NodeId, [f32
     if local_name_is(dom, shape, "group") {
         return None;
     }
-    let num = |v: &str| v.trim().parse::<f32>().ok();
+    let num = |v: &str| parse_finite_f32(v.trim());
     let pair = |node: NodeId, key: &str, dflt: [f32; 2]| {
         attr_any(dom, node, key)
             .and_then(|raw| {
@@ -20628,12 +20637,12 @@ fn apply_hsl_lum_mod(color: &mut [f32; 3], lum_mod: f32) {
 fn apply_lum(dom: &Dom, node: NodeId, color: &mut [f32; 3]) {
     let lum_mod = descendants_local(dom, node, "lumMod")
         .into_iter()
-        .find_map(|n| attr_any(dom, n, "val").and_then(|s| s.parse::<f32>().ok()))
+        .find_map(|n| attr_any(dom, n, "val").and_then(parse_finite_f32))
         .unwrap_or(100_000.0)
         / 100_000.0;
     let lum_off = descendants_local(dom, node, "lumOff")
         .into_iter()
-        .find_map(|n| attr_any(dom, n, "val").and_then(|s| s.parse::<f32>().ok()))
+        .find_map(|n| attr_any(dom, n, "val").and_then(parse_finite_f32))
         .unwrap_or(0.0)
         / 100_000.0;
     if lum_off.abs() < 1e-6 && (lum_mod - 1.0).abs() > 1e-6 {
@@ -20645,7 +20654,7 @@ fn apply_lum(dom: &Dom, node: NodeId, color: &mut [f32; 3]) {
     }
     let Some(shade) = descendants_local(dom, node, "shade")
         .into_iter()
-        .find_map(|n| attr_any(dom, n, "val").and_then(|s| s.parse::<f32>().ok()))
+        .find_map(|n| attr_any(dom, n, "val").and_then(parse_finite_f32))
         .map(|v| (v / 100_000.0).clamp(0.0, 1.0))
     else {
         return;
@@ -20719,10 +20728,11 @@ fn shape_line_width(dom: &Dom, shape: NodeId, theme: &ThemeFonts) -> f32 {
         if !descendants_local(dom, ln, "noFill").is_empty() {
             continue;
         }
-        if let Some(w) = attr_any(dom, ln, "w").and_then(|s| s.parse::<f64>().ok()) {
+        if let Some(w) = attr_any(dom, ln, "w").and_then(parse_finite_f64)
+            && let Some(pt) = narrow_finite_f32(w / 12700.0)
+        {
             // Word strokes the width as written (1f3856c4's 3175 EMU
             // arrows are 0.25pt in its PDF); w=0 keeps a visible hairline.
-            let pt = (w / 12700.0) as f32;
             return if pt > 0.0 { pt.min(4.0) } else { 0.4 };
         }
     }
@@ -20790,11 +20800,7 @@ fn preset_adjustments(dom: &Dom, shape: NodeId) -> Vec<(String, f64)> {
         .into_iter()
         .filter_map(|gd| {
             let name = attr_any(dom, gd, "name")?;
-            let v = attr_any(dom, gd, "fmla")?
-                .strip_prefix("val ")?
-                .trim()
-                .parse()
-                .ok()?;
+            let v = parse_finite_f64(attr_any(dom, gd, "fmla")?.strip_prefix("val ")?.trim())?;
             Some((name.to_string(), v))
         })
         .collect()
@@ -20882,10 +20888,8 @@ fn shape_line_color(dom: &Dom, shape: NodeId, theme: &ThemeFonts) -> Option<[f32
 fn pos_offset_pt(dom: &Dom, node: Option<NodeId>) -> Option<f32> {
     let parent = node?;
     let off = first_named_any(dom, parent, "posOffset")?;
-    local_text(dom, off)
-        .parse::<f64>()
-        .ok()
-        .map(|emu| (emu / 12700.0) as f32)
+    let emu = parse_finite_f64(local_text(dom, off).trim())?;
+    narrow_finite_f32(emu / 12700.0)
 }
 
 /// `wp:wrapPolygon`'s lowest vertex as a fraction of the extent (21600
@@ -20897,7 +20901,7 @@ fn wrap_polygon_bottom(dom: &Dom, drawing: NodeId) -> f32 {
     let lowest = ["start", "lineTo"]
         .iter()
         .flat_map(|local| dom.descendants(poly, Some(&WP::name(local))))
-        .filter_map(|pt| attr_any(dom, pt, "y")?.parse::<f32>().ok())
+        .filter_map(|pt| attr_any(dom, pt, "y").and_then(parse_finite_f32))
         .fold(f32::MIN, f32::max);
     if lowest > 0.0 {
         (lowest / 21600.0).min(1.0)
@@ -20977,8 +20981,8 @@ fn cell_left_rule(cell: &TableCell, borders: Option<TblBorders>) -> f32 {
 /// A VML fixed-point fraction (`19661f` = 19661/65536) or plain number.
 fn vml_fraction(value: &str) -> Option<f32> {
     match value.strip_suffix('f') {
-        Some(fixed) => fixed.trim().parse::<f32>().ok().map(|v| v / 65536.0),
-        None => value.trim().parse().ok(),
+        Some(fixed) => parse_finite_f32(fixed.trim()).map(|v| v / 65536.0),
+        None => parse_finite_f32(value.trim()),
     }
 }
 
@@ -21040,7 +21044,7 @@ fn washed_out(kind: ImageKind) -> ImageKind {
 fn soft_edge_pt(dom: &Dom, drawing: NodeId) -> Option<f32> {
     let pic = descendants_local(dom, drawing, "spPr").into_iter().next()?;
     let edge = descendants_local(dom, pic, "softEdge").into_iter().next()?;
-    let rad = attr_any(dom, edge, "rad")?.parse::<f32>().ok()? / 12_700.0;
+    let rad = parse_finite_f32(attr_any(dom, edge, "rad")?)? / 12_700.0;
     (rad > 0.0).then_some(rad)
 }
 
@@ -21108,7 +21112,7 @@ fn duotone_color(dom: &Dom, node: NodeId, pkg: &PartFs) -> Option<[f32; 3]> {
     apply_lum(dom, node, &mut color);
     if let Some(sat) = descendants_local(dom, node, "satMod")
         .into_iter()
-        .find_map(|n| attr_any(dom, n, "val").and_then(|s| s.parse::<f32>().ok()))
+        .find_map(|n| attr_any(dom, n, "val").and_then(parse_finite_f32))
     {
         let (h, s, l) = rgb_to_hsl(color[0], color[1], color[2]);
         let rgb = hsl_to_rgb(h, (s * sat / 100_000.0).clamp(0.0, 1.0), l);
@@ -21459,18 +21463,19 @@ struct ChromeTable {
 
 fn hf_table_width_pt(dom: &Dom, table: NodeId) -> f32 {
     match table_pref_width(dom, table) {
-        TblWidth::Dxa(w) if w > 1.0 => w,
+        TblWidth::Dxa(w) if w.is_finite() && w > 1.0 => w,
         _ => {
             let mut w = 0.0;
             if let Some(grid) = direct_named(dom, table, "tblGrid") {
                 for col in dom.elements(grid, Some(&W::grid_col())) {
+                    // A non-finite column is no width, same as an unparsable one.
                     w += attr_any(dom, col, "w")
-                        .and_then(|s| s.parse::<f32>().ok())
+                        .and_then(parse_finite_f32)
                         .map(twip)
                         .unwrap_or(0.0);
                 }
             }
-            if w > 1.0 { w } else { 144.0 }
+            if w.is_finite() && w > 1.0 { w } else { 144.0 }
         }
     }
 }
@@ -21858,7 +21863,7 @@ fn chrome_part_xml(
                 .descendants(para, Some(&W::name("sz")))
                 .into_iter()
                 .filter(|n| part_dom.ancestors(*n, Some(&W::txbx_content())).is_empty())
-                .filter_map(|n| attr_any(&part_dom, n, "val").and_then(|v| v.parse::<f32>().ok()))
+                .filter_map(|n| attr_any(&part_dom, n, "val").and_then(parse_finite_f32))
                 .map(|half| half / 2.0)
                 .fold(prun.size, f32::max);
             let line = pstyle
@@ -21991,7 +21996,7 @@ fn chrome_part_xml(
             .map(|fp| {
                 let at = |name: &str| {
                     attr_any(&part_dom, fp, name)
-                        .and_then(|v| v.parse::<f32>().ok())
+                        .and_then(parse_finite_f32)
                         .map_or(0.0, |tw| tw / 20.0)
                 };
                 (at("x"), at("y"), at("w"))
@@ -22354,7 +22359,7 @@ fn parse_header_watermark(dom: &Dom, root: NodeId) -> Option<Watermark> {
             {
                 if let Some(sz) = first_named(dom, rpr, "sz")
                     .and_then(|n| attr_any(dom, n, "val"))
-                    .and_then(|v| v.parse::<f32>().ok())
+                    .and_then(parse_finite_f32)
                 {
                     size = sz / 2.0;
                 }
@@ -22391,14 +22396,14 @@ fn parse_header_watermark(dom: &Dom, root: NodeId) -> Option<Watermark> {
                 .chars()
                 .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
                 .collect();
-            if let Ok(deg) = num.parse::<f32>() {
+            if let Some(deg) = parse_finite_f32(&num) {
                 rotate_deg = deg;
             }
         }
     }
     for xfrm in descendants_local(dom, root, "xfrm") {
         if let Some(rot) = attr_any(dom, xfrm, "rot")
-            && let Ok(emu) = rot.parse::<f32>()
+            && let Some(emu) = parse_finite_f32(rot)
         {
             rotate_deg = emu / 60_000.0;
         }
@@ -22507,7 +22512,7 @@ fn pbdr_edge(dom: &Dom, ppr: NodeId, edge: &str) -> Option<([f32; 3], f32, f32)>
         .and_then(parse_hex_color)
         .unwrap_or([0.0, 0.0, 0.0]);
     let width = attr_any(dom, el, "sz")
-        .and_then(|s| s.parse::<f32>().ok())
+        .and_then(parse_finite_f32)
         .map(|eighths| {
             let pt = eighths / 8.0;
             // file_146 / sample_iter2 heading pBdr sz=3 is Word 0.24pt
@@ -22518,7 +22523,7 @@ fn pbdr_edge(dom: &Dom, ppr: NodeId, edge: &str) -> Option<([f32; 3], f32, f32)>
         .unwrap_or(0.6);
     // Word ST_Pts; omitted space is 0 (ECMA-376 17.3.1.24).
     let space = attr_any(dom, el, "space")
-        .and_then(|s| s.parse::<f32>().ok())
+        .and_then(parse_finite_f32)
         .unwrap_or(0.0);
     Some((color, width, space))
 }
@@ -22847,7 +22852,7 @@ fn hf_unbound_inline_pic_h(dom: &Dom, para: NodeId, bound: &HashSet<u32>) -> f32
             blips.is_empty() || blips.iter().any(|b| !bound.contains(&b.0))
         })
         .filter_map(|inl| first_named_any(dom, inl, "extent"))
-        .filter_map(|ext| attr_any(dom, ext, "cy").and_then(|v| v.parse::<f32>().ok()))
+        .filter_map(|ext| attr_any(dom, ext, "cy").and_then(parse_finite_f32))
         .map(|cy| cy / 12700.0)
         .fold(0.0_f32, f32::max)
 }
@@ -22899,7 +22904,7 @@ fn hf_pic_owns_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) ->
         if dom.name_is(n, &WP::name("inline"))
             && let Some(cx) = first_named_any(dom, n, "extent")
                 .and_then(|ext| attr_any(dom, ext, "cx"))
-                .and_then(|v| v.parse::<f32>().ok())
+                .and_then(parse_finite_f32)
         {
             pics_w += cx / 12700.0;
         }
@@ -22937,10 +22942,10 @@ fn hf_pic_trails_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) 
         } else if seen_text
             && dom.name_is(n, &WP::name("inline"))
             && let Some(ext) = first_named_any(dom, n, "extent")
-            && let Some(cx) = attr_any(dom, ext, "cx").and_then(|v| v.parse::<f32>().ok())
+            && let Some(cx) = attr_any(dom, ext, "cx").and_then(parse_finite_f32)
         {
             pics_w += cx / 12700.0;
-            let cy = attr_any(dom, ext, "cy").and_then(|v| v.parse::<f32>().ok());
+            let cy = attr_any(dom, ext, "cy").and_then(parse_finite_f32);
             pics_h = pics_h.max(cy.unwrap_or(0.0) / 12700.0);
         }
     }
@@ -48490,11 +48495,34 @@ mod coverage_boundary_tests {
             ("25.4mm", 72.0),
             ("0pt", 0.0),
             ("-1in", -72.0),
+            // A finite exponent is still a number. Only a non-finite result is absent.
+            ("1e2", 5.0),
         ] {
             close(parse_len(input).expect(input), expected);
         }
         for input in [
-            "", "pt", "in", "cm", "mm", "xpt", "xin", "xcm", "xmm", "12px", "2PT",
+            "",
+            "pt",
+            "in",
+            "cm",
+            "mm",
+            "xpt",
+            "xin",
+            "xcm",
+            "xmm",
+            "12px",
+            "2PT",
+            "NaN",
+            "nan",
+            "inf",
+            "+inf",
+            "-inf",
+            "infinity",
+            "-infinity",
+            "1e40",
+            "1e40pt",
+            "1e38in",
+            "NaNin",
         ] {
             assert_eq!(parse_len(input), None, "{input}");
         }
@@ -57691,6 +57719,28 @@ mod coverage_round_three_tests {
                 ("", "<w:gridCol w:w=\"bad\"/><w:gridCol/>", 144.0),
                 ("", "", 144.0),
                 ("", "<w:gridCol w:w=\"10\"/>", 144.0),
+                // A non-finite column is no width, same as `bad`: the finite
+                // neighbour still contributes (#1737).
+                (
+                    "",
+                    "<w:gridCol w:w=\"bad\"/><w:gridCol w:w=\"5760\"/>",
+                    288.0,
+                ),
+                (
+                    "",
+                    "<w:gridCol w:w=\"NaN\"/><w:gridCol w:w=\"5760\"/>",
+                    288.0,
+                ),
+                (
+                    "",
+                    "<w:gridCol w:w=\"inf\"/><w:gridCol w:w=\"5760\"/>",
+                    288.0,
+                ),
+                (
+                    "",
+                    "<w:gridCol w:w=\"1e40\"/><w:gridCol w:w=\"5760\"/>",
+                    288.0,
+                ),
             ] {
                 let (dom, root) = xml(&format!(
                     "<w:tbl><w:tblPr>{props}</w:tblPr><w:tblGrid>{grid}</w:tblGrid></w:tbl>"

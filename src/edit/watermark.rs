@@ -131,7 +131,7 @@ fn header_open() -> String {
 
 fn twips(dom: &Dom, node: Option<NodeId>, attr: &str) -> Option<f64> {
     node.and_then(|n| dom.attribute(n, &W::name(attr)))
-        .and_then(|v| v.parse::<f64>().ok())
+        .and_then(crate::util::parse_finite_f64)
 }
 
 /// The shape size for a section: Word's own numbers on a portrait Letter
@@ -148,6 +148,9 @@ fn shape_size(dom: &Dom, sect_pr: NodeId) -> (f64, f64) {
     let left = twips(dom, pg_mar, "left").unwrap_or(1440.0);
     let right = twips(dom, pg_mar, "right").unwrap_or(1440.0);
     let width = ((w - left - right) / 20.0 * 0.9).max(36.0);
+    if !width.is_finite() {
+        return LETTER;
+    }
     let width = (width * 100.0).round() / 100.0;
     (width, width / 4.0)
 }

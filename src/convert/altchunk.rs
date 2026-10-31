@@ -177,15 +177,16 @@ fn css_pt(v: &str) -> Option<f32> {
         v.find(|c: char| c.is_ascii_alphabetic() || c == '%')
             .unwrap_or(v.len()),
     );
-    let n: f32 = num.trim().parse().ok()?;
-    Some(match unit {
+    let n = crate::util::parse_finite_f32(num.trim())?;
+    let points = match unit {
         "px" => n * 0.75,
         "in" => n * 72.0,
         "cm" => n * 72.0 / 2.54,
         "mm" => n * 72.0 / 25.4,
         "em" => n * 12.0,
         _ => n,
-    })
+    };
+    points.is_finite().then_some(points)
 }
 
 #[derive(Clone, Default)]

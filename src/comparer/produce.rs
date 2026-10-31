@@ -2110,8 +2110,9 @@ fn declared_width(dom: &Dom, tbl_w: NodeId, text_width: i64) -> Option<i64> {
         Some("dxa") => w.parse().ok()?,
         Some("pct") => match w.strip_suffix('%') {
             Some(percent) => {
-                let share = text_width as f64 * percent.parse::<f64>().ok()? / 100.0;
-                share.is_finite().then(|| share.round() as i64)?
+                let share = text_width as f64 * crate::util::parse_finite_f64(percent)? / 100.0;
+                (share.is_finite() && share.abs() <= i64::MAX as f64)
+                    .then(|| share.round() as i64)?
             }
             None => {
                 text_width

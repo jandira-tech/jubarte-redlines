@@ -576,9 +576,7 @@ fn text_width(section: &str) -> u32 {
         let key = format!("w:{name}=\"");
         let value = &tag[tag.find(&key)? + key.len()..];
         let value = &value[..value.find('"')?];
-        value
-            .parse::<f64>()
-            .ok()
+        crate::util::parse_finite_f64(value)
             .or_else(|| crate::util::universal_measure_twips(value))
             .filter(|t| t.is_finite())
     };
@@ -586,8 +584,13 @@ fn text_width(section: &str) -> u32 {
     let left = attribute("pgMar", "left").unwrap_or(1440.0);
     let right = attribute("pgMar", "right").unwrap_or(1440.0);
     let text = (width - left - right).round().max(1440.0);
-    // `as` saturates: a width past u32 is no page Word writes.
-    text as u32
+    // A width that does not fit in `u32` is no page Word writes. `as`
+    // would saturate, so use the Letter text width instead.
+    if text.is_finite() && text <= f64::from(u32::MAX) {
+        text as u32
+    } else {
+        9360
+    }
 }
 
 /// Drops the reference body's relationships (pictures, links, comments...)

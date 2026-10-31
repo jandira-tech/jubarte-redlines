@@ -617,9 +617,7 @@ pub(crate) fn render(f: &Facts) -> String {
 /// (`72pt`, `1in`) where Transitional writes the integer.
 fn twips(e: &Element, attr: &str) -> Option<f64> {
     e.attr(attr).and_then(|v| {
-        v.parse::<f64>()
-            .ok()
-            .or_else(|| crate::util::universal_measure_twips(v))
+        crate::util::parse_finite_f64(v).or_else(|| crate::util::universal_measure_twips(v))
     })
 }
 
@@ -632,8 +630,13 @@ pub(crate) fn text_width(sect: Option<&Element>) -> u32 {
     let width = size.and_then(|s| twips(s, "w")).unwrap_or(12240.0);
     let side = |a: &str| margins.and_then(|m| twips(m, a)).unwrap_or(1440.0);
     let text = (width - side("left") - side("right")).round().max(1440.0);
-    // `as` saturates: a width past u32 is no page Word writes.
-    text as u32
+    // A width that does not fit in `u32` is no page Word writes. `as`
+    // would saturate, so use the Letter text width instead.
+    if text.is_finite() && text <= f64::from(u32::MAX) {
+        text as u32
+    } else {
+        9360
+    }
 }
 
 /// `Letter portrait, margins 1in, header/footer 0.5in` for a `w:sectPr`.
@@ -823,8 +826,7 @@ fn apply(r: &mut Resolved, ppr: Option<&Element>, rpr: Option<&Element>, theme: 
             // `"11pt"` is 22, as the plain `"22"` is.
             r.size_half_points = rpr.child("sz").and_then(|s| {
                 s.attr("val").and_then(|v| {
-                    v.parse::<f64>()
-                        .ok()
+                    crate::util::parse_finite_f64(v)
                         .or_else(|| crate::util::universal_measure_half_points(v))
                 })
             });
@@ -1135,7 +1137,10 @@ fn table_style_line(styles: Option<&Element>, id: &str) -> String {
                     .iter()
                     .all(|s| s.as_ref() == Some(&(val.clone(), sz.clone()))) =>
         {
-            let pt = sz.parse::<f64>().map(|s| s / 8.0).unwrap_or(0.5);
+            let pt = crate::util::parse_finite_f64(&sz)
+                .map(|s| s / 8.0)
+                .filter(|pt| pt.is_finite())
+                .unwrap_or(0.5);
             let pt = format!("{pt:.2}");
             format!(
                 "{id}, all borders {}pt{named}",
@@ -1171,8 +1176,12 @@ fn table_style_line(styles: Option<&Element>, id: &str) -> String {
 fn border_side(side: &str, b: &Element) -> Option<String> {
     let val = b.attr("val").filter(|v| !v.is_empty())?;
     let mut out = format!("{side} {val}");
-    if let Some(sz) = b.attr("sz").and_then(|sz| sz.parse::<f64>().ok()) {
-        let pt = format!("{:.2}", sz / 8.0);
+    if let Some(sz) = b.attr("sz").and_then(crate::util::parse_finite_f64) {
+        let points = sz / 8.0;
+        if !points.is_finite() {
+            return Some(out);
+        }
+        let pt = format!("{points:.2}");
         let _ = write!(out, " {}pt", pt.trim_end_matches('0').trim_end_matches('.'));
     }
     if let Some(color) = b
