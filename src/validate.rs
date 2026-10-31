@@ -1357,6 +1357,15 @@ fn check_inserted_text_before_deleted_tables(pkg: &PartFs, out: &mut Vec<Finding
 /// between the two, 2 of 42 crashed, near the sample's 23 in 600, and
 /// moving their words cost their views Word's placement: 14.8
 /// bench points on average, against Word's own redlines (#1851).
+///
+/// A single deleted table does not count when the paragraph after it
+/// keeps no words, no deleted table precedes this one, and this
+/// paragraph's own content is nothing but insertions. Word writes those
+/// words on the deleted mark, ahead of that table (#1926). A paragraph
+/// that also holds the original's deleted words still moves: that text
+/// against the deleted row crashed Word 16.115 (diff_before16 ×
+/// diff_before19). So does a paragraph between two deleted tables
+/// (w06, s278).
 pub(crate) fn inserted_text_before_deleted_tables(
     dom: &Dom,
     body: NodeId,
@@ -1393,10 +1402,30 @@ pub(crate) fn inserted_text_before_deleted_tables(
                 && only_mark_deleted(dom, block)
                 && !keeps_words(dom, block, "del"))
         });
+        let preceded_by_deleted_table = at > 0
+            && dom.name_is(blocks[at - 1], &W::tbl())
+            && table_revised(dom, blocks[at - 1], "del");
+        // Nothing but the insertion: a deleted run of the original's
+        // own words, or any other child, keeps the move (#1851).
+        let only_inserted_runs = dom
+            .elements(paragraph, None)
+            .into_iter()
+            .filter(|&child| !dom.name_is(child, &W::p_pr()))
+            .all(|child| dom.name_is(child, &W::ins()));
         if let Some(joined) = joined.filter(|&joined| {
             tables > 0
                 && dom.name_is(joined, &W::p())
                 && !mark_carries(dom, joined, &[W::del(), W::move_from()])
+                // One deleted table, an empty paragraph after it, no
+                // deleted table before, and nothing in this paragraph but
+                // the insertion: Word's order, the words stay (#1926).
+                // Two tables, a paragraph after the table that already
+                // keeps words, or deleted words beside the insertion,
+                // still move (#1851).
+                && (tables > 1
+                    || preceded_by_deleted_table
+                    || keeps_words(dom, joined, "del")
+                    || !only_inserted_runs)
         }) {
             out.push((paragraph, joined));
         }
