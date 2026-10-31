@@ -1232,7 +1232,7 @@ def test_in_place_accept_rechecks_the_source(
     assert "in place" not in err
 
 
-def test_accept_same_file_force_warns_it_is_deprecated(
+def test_accept_o_naming_the_input_refuses_in_favour_of_in_place(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     original = tmp_path / "a.docx"
@@ -1245,34 +1245,32 @@ def test_accept_same_file_force_warns_it_is_deprecated(
     packed = redline.read_bytes()
     target = tmp_path / "accept.docx"
     target.write_bytes(packed)
-    warn = f"warning: -o {target} --force is deprecated; use --in-place"
+    refusal = (
+        f"OUTPUT_ALIAS: the output '{target}' is the same file as the input '{target}'; use --in-place"
+    )
 
-    code, _out, err = _cli(["accept", str(target), "-o", str(target)], capsys)
-    assert code == 1, err
-    assert "already exists" in err and "deprecated" not in err
-    assert target.read_bytes() == packed
+    for args in (
+        ["accept", str(target), "-o", str(target)],
+        ["accept", str(target), "-o", str(target), "--force"],
+        ["reject", str(target), "-o", str(target), "--force"],
+    ):
+        code, _out, err = _cli(args, capsys)
+        assert code == 2, (args, err)
+        assert refusal in err, err
+        assert target.read_bytes() == packed
 
-    code, _out, err = _cli(["accept", str(target), "-o", str(target), "--force"], capsys)
-    assert code == 0, err
-    assert warn in err, err
-    wrote = next(line for line in err.splitlines() if line.startswith("wrote "))
-    assert wrote.startswith(f"wrote {target} (docx, ") and wrote.endswith(" bytes)"), wrote
-    assert "in place" not in wrote
-
-    kept = target.read_bytes()
     other = tmp_path / "other.docx"
     code, _out, err = _cli(["accept", str(target), "-o", str(other), "-q"], capsys)
     assert code == 0, err
     assert err == ""
-    assert target.read_bytes() == kept
+    assert target.read_bytes() == packed
     assert other.is_file()
-    # -q still warns, and prints no wrote line.
+    # -q quiets status, never the refusal.
     fresh = tmp_path / "quiet.docx"
     fresh.write_bytes(packed)
-    quiet_warn = f"warning: -o {fresh} --force is deprecated; use --in-place"
     code, _out, err = _cli(["reject", str(fresh), "-o", str(fresh), "--force", "-q"], capsys)
-    assert code == 0, err
-    assert err == f"{quiet_warn}\n", err
+    assert code == 2, err
+    assert "use --in-place" in err, err
 
 
 def test_a_bare_plan_is_file_plan_json_as_the_binary(

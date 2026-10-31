@@ -265,6 +265,28 @@ test("changes, accept and reject by kind", () => {
   assert.equal(run("changes", base).out, "0 change(s)\n");
 });
 
+test("accept/reject -o naming the input refuses in favour of --in-place (#1998)", () => {
+  const file = path.join(tmp, "contract.docx");
+  fs.copyFileSync(tracked, file);
+  const packed = fs.readFileSync(file);
+  for (const args of [
+      ["accept", file, "-o", file],
+    ["accept", file, "-o", file, "--force"],
+    ["reject", file, "-o", file, "--force"],
+    // Another spelling of the same file is the same refusal.
+    ["accept", file, "-o", `${tmp}/./contract.docx`],
+    ]) {
+      const r = run(...args);
+    assert.equal(r.code, 2, `${args.join(" ")}: ${r.err}`);
+    assert.match(r.err, /^error: OUTPUT_ALIAS: the output '.*' is the same file as the input '.*'; use --in-place\n$/);
+    assert.deepEqual(fs.readFileSync(file), packed);
+    }
+    // `-o` naming another file still writes it.
+  const out = path.join(tmp, "other.docx");
+  assert.equal(run("accept", file, "-o", out).code, 0);
+  assert.deepEqual(fs.readFileSync(file), packed);
+  });
+
 test("errors read as the binary's: bad ids are usage, I/O as Rust words it, sorted report keys", () => {
   const out = path.join(tmp, "never-accepted.docx");
   const bad = run("accept", tracked, "-o", out, "--id", "c5");

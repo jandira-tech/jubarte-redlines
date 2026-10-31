@@ -40,9 +40,9 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 - **Breaking: deleting, resolving, reopening or rewording another author's comment is allowed unless `--keep-others` is set** (#1892, #1890). This undoes the #1853 default `COMMENT_NOT_YOURS` refusal. The report still notes each such change (`c0 is by "Bob"; their words were changed under their name`). Accepting or rejecting another author's tracked change stays allowed too. `--rewrite-others-comments` and `"rewrite_others_comments": true` stay accepted and are ignored; they do not turn the guard off. With the guard off, a refusal that names their change keeps the four routes and says what accepting or rejecting erases (`let it go (erases "Trainer 1 - AgentCo"'s deletion):`); `next_actions` lists restore or strike first and marks accept and reject `"destructive": true`. `EXISTING_REVISIONS`, in either guard state, and `--existing-revisions` beside `--plan`, say to add `"existing_revisions": "keep"` to the plan. Top-level `accept` and `reject` are unchanged. The comment default is breaking, so it ships after 0.16.0 with a minor bump.
 
-### Deprecated
+### Removed
 
-- **`accept` and `reject` with `-o INPUT --force`** (#1888). The command still replaces the input, and its `wrote` line stays `wrote INPUT (docx, N bytes)`. It now prints `warning: -o INPUT --force is deprecated; use --in-place`, including under `-q`. `-o` naming a different file does not warn. `-o INPUT` without `--force` is still `OUTPUT_EXISTS` (exit 2) and does not warn. The Python CLI prints the same warning (its existing-output refusal stays exit 1).
+- **Breaking: `accept`/`reject -o INPUT` refuses; use `--in-place`** (#1998, #1888). The spelling deprecated in 0.16.0 is gone: `-o` naming the input is now a typed usage refusal `error: OUTPUT_ALIAS: the output 'FILE' is the same file as the input 'FILE'; use --in-place` (exit 2), with or without `--force`, and it fires before the input is read. `-o` naming a different file is unchanged. The Python CLI and the npm runner refuse the same way, with the same code and exit.
 
 ### Fixed
 

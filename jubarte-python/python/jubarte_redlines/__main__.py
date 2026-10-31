@@ -1393,17 +1393,18 @@ def cmd_comments(args: argparse.Namespace) -> int:
 def _resolution(args: argparse.Namespace, accept: bool) -> int:
     from . import _native
 
+    in_place = bool(getattr(args, "in_place", False))
+    if not in_place and args.output is not None and _same_file(args.output, args.file):
+        # ``-o`` naming the input is a usage refusal pointing to
+        # ``--in-place`` (#1998); the 0.16.0 deprecation is over.
+        _error(
+            f"OUTPUT_ALIAS: the output '{_spelled(args, 'output')}' is the same file as the input '{_spelled(args, 'file')}'; use --in-place",
+            EXIT_USAGE,
+        )
+        raise SystemExit(EXIT_USAGE)
     doc = _read(args.file)
     original = doc.to_bytes()
-    in_place = bool(getattr(args, "in_place", False))
     if not in_place:
-        # ``-o FILE --force`` still replaces FILE. Say that spelling is retired.
-        # The warning stays under ``-q``; the wrote line does not.
-        if bool(args.force) and args.output is not None and _same_file(args.output, args.file):
-            print(
-                f"warning: -o {_spelled(args, 'output')} --force is deprecated; use --in-place",
-                file=sys.stderr,
-            )
         _ensure_writable(args.output, args.force)
     selection = {"ids": args.id, "authors": args.author, "kinds": args.kind}
     try:

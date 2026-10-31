@@ -923,6 +923,12 @@ function resolution(accept) {
       // A DOCX keeps that name or not. `--in-place` always writes the
       // package, so a `.json` or `.md` name is not an output format.
       // Sniff the bytes: the name's declared kind would refuse the package.
+      // `-o` naming the input is a usage refusal pointing to `--in-place`
+      // (#1998); the 0.16.0 deprecation is over. It fires before the read,
+      // as the binary's does.
+      if (!o.in_place && o.output != null && sameFile(o.output, file)) {
+        throw new UsageError(`OUTPUT_ALIAS: the output '${o.output}' is the same file as the input '${file}'; use --in-place`);
+      }
       const docx = o.in_place ? read(file, null) : read(file);
       if (!o.in_place) ensureWritable(o.output, o.force);
       let out;

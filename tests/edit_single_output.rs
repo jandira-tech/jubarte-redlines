@@ -2237,68 +2237,74 @@ fn in_place_conflicts_with_output_and_out_dir() {
     assert_eq!(names(dir), ["contract.docx"]);
 }
 
-/// #1888: `accept`/`reject -o INPUT --force` still works and warns.
+/// #1998: `accept`/`reject -o INPUT` refuses and names `--in-place`,
+/// with or without `--force`. The 0.16.0 deprecation window is over.
 #[test]
-fn accept_reject_same_file_force_stays_and_warns_it_is_deprecated() {
+fn accept_reject_o_naming_the_input_refuses_in_favour_of_in_place() {
     let dir = tempfile::tempdir().unwrap();
     let dir = dir.path();
     let redline = redline(dir);
-    let warn = "warning: -o contract.docx --force is deprecated; use --in-place";
+    let refusal = "OUTPUT_ALIAS: the output 'contract.docx' is the same file as the input 'contract.docx'; use --in-place";
 
+    for args in [
+        &["accept", "contract.docx", "-o", "contract.docx"][..],
+        &["accept", "contract.docx", "-o", "contract.docx", "--force"][..],
+        &["reject", "contract.docx", "-o", "contract.docx"][..],
+        &["reject", "contract.docx", "-o", "contract.docx", "--force"][..],
+        // Another spelling of the same file is the same refusal.
+        &[
+            "accept",
+            "contract.docx",
+            "-o",
+            "./contract.docx",
+            "--force",
+        ][..],
+    ] {
+        std::fs::write(dir.join("contract.docx"), &redline).unwrap();
+        let (code, _, err) = run(dir, args);
+        assert_eq!(code, 2, "{args:?}\n{err}");
+        assert!(
+            err.contains("OUTPUT_ALIAS") && err.contains("; use --in-place"),
+            "{args:?}\n{err}"
+        );
+        assert!(
+            std::fs::read(dir.join("contract.docx")).unwrap() == redline,
+            "{args:?} changed the input"
+        );
+    }
+    std::fs::write(dir.join("contract.docx"), &redline).unwrap();
     let (code, _, err) = run(dir, &["accept", "contract.docx", "-o", "contract.docx"]);
     assert_eq!(code, 2, "{err}");
-    assert!(err.contains("OUTPUT_EXISTS"), "{err}");
-    assert!(!err.contains("deprecated"), "{err}");
-    assert_eq!(std::fs::read(dir.join("contract.docx")).unwrap(), redline);
+    assert!(err.contains(refusal), "{err}");
 
-    let (code, _, err) = run(
-        dir,
-        &["accept", "contract.docx", "-o", "contract.docx", "--force"],
-    );
-    assert_eq!(code, 0, "{err}");
-    assert!(err.contains(warn), "{err}");
-    let line = wrote_any(&err);
-    assert!(line.starts_with("wrote contract.docx (docx, "), "{line}");
-    assert!(line.ends_with(" bytes)"), "{line}");
-    assert!(!line.contains("in place"), "{line}");
-    let accepted = document_xml(&dir.join("contract.docx"));
-    assert!(
-        accepted.contains("forty") && !accepted.contains("<w:ins"),
-        "{accepted}"
-    );
-
-    std::fs::write(dir.join("contract.docx"), &redline).unwrap();
-    let (code, _, err) = run(dir, &["accept", "contract.docx", "-o", "other.docx"]);
-    assert_eq!(code, 0, "{err}");
-    assert!(!err.contains("deprecated"), "{err}");
-    assert_eq!(std::fs::read(dir.join("contract.docx")).unwrap(), redline);
-
+    // -q quiets status, never the error.
     std::fs::write(dir.join("quiet.docx"), &redline).unwrap();
     let (code, _, err) = run(
         dir,
         &["-q", "accept", "quiet.docx", "-o", "quiet.docx", "--force"],
     );
-    assert_eq!(code, 0, "{err}");
+    assert_eq!(code, 2, "{err}");
     assert!(
-        err.contains("warning: -o quiet.docx --force is deprecated; use --in-place"),
+        err.contains(
+            "the output 'quiet.docx' is the same file as the input 'quiet.docx'; use --in-place"
+        ),
         "{err}"
     );
-    assert!(!err.lines().any(|line| line.starts_with("wrote ")), "{err}");
 
+    // `-o` naming another file still writes it.
     std::fs::write(dir.join("contract.docx"), &redline).unwrap();
-    let (code, _, err) = run(
-        dir,
-        &["reject", "contract.docx", "-o", "contract.docx", "--force"],
-    );
+    let (code, _, err) = run(dir, &["accept", "contract.docx", "-o", "other.docx"]);
     assert_eq!(code, 0, "{err}");
-    assert!(err.contains(warn), "{err}");
-    let line = wrote_any(&err);
-    assert!(line.starts_with("wrote contract.docx (docx, "), "{line}");
-    assert!(!line.contains("in place"), "{line}");
-    let rejected = document_xml(&dir.join("contract.docx"));
+    assert_eq!(std::fs::read(dir.join("contract.docx")).unwrap(), redline);
+
+    // `--in-place` is the spelled-out route the refusal names.
+    std::fs::write(dir.join("contract.docx"), &redline).unwrap();
+    let (code, _, err) = run(dir, &["accept", "contract.docx", "--in-place"]);
+    assert_eq!(code, 0, "{err}");
+    let accepted = document_xml(&dir.join("contract.docx"));
     assert!(
-        rejected.contains("thirty") && !rejected.contains("forty"),
-        "{rejected}"
+        accepted.contains("forty") && !accepted.contains("<w:ins"),
+        "{accepted}"
     );
 }
 

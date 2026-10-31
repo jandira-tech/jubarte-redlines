@@ -473,7 +473,8 @@ fn comment_changes_note(left: usize) -> String {
 }
 
 /// The `-o` of `accept` / `reject`, or FILE when `--in-place` names it.
-/// `-o FILE --force` still replaces FILE and says that spelling is deprecated.
+/// `-o` naming the input is a usage refusal pointing to `--in-place`
+/// (#1998): the 0.16.0 deprecation of `-o INPUT --force` is over.
 fn resolution_output<'a>(
     task: Task,
     file: &'a Path,
@@ -482,15 +483,20 @@ fn resolution_output<'a>(
     force: bool,
     render: &'a RenderArgs,
     quiet: bool,
-) -> Result<Output<'a>, String> {
+) -> Result<Output<'a>, (u8, String)> {
     let destination = output.as_deref().unwrap_or(file);
-    if !in_place && force && same_path(destination, file) {
-        eprintln!(
-            "warning: -o {} --force is deprecated; use --in-place",
-            slash_path(destination)
-        );
+    if !in_place && output.is_some() && same_path(destination, file) {
+        return Err((
+            EXIT_USAGE,
+            format!(
+                "OUTPUT_ALIAS: the output '{}' is the same file as the input '{}'; use --in-place",
+                slash_path(destination),
+                slash_path(file)
+            ),
+        ));
     }
-    let mut out = task_output(task, destination, file, render, force || in_place, quiet)?;
+    let mut out = task_output(task, destination, file, render, force || in_place, quiet)
+        .map_err(|e| (1, e))?;
     // The input is a DOCX whatever its name. `.json` and `.md` would
     // otherwise be inferred from the path and overwrite the package.
     if in_place {
@@ -4538,7 +4544,10 @@ fn cli_main() -> ExitCode {
                 quiet,
             ) {
                 Ok(out) => out,
-                Err(e) => return exit_code(Err(e)),
+                Err((code, e)) => {
+                    say_error(&e, code);
+                    return ExitCode::from(code);
+                }
             };
             let apply = if keep_nested_comment {
                 jubarte::changes::accept_changes_keeping_comments
@@ -4573,7 +4582,10 @@ fn cli_main() -> ExitCode {
                 quiet,
             ) {
                 Ok(out) => out,
-                Err(e) => return exit_code(Err(e)),
+                Err((code, e)) => {
+                    say_error(&e, code);
+                    return ExitCode::from(code);
+                }
             };
             let apply = if keep_nested_comment {
                 jubarte::changes::reject_changes_keeping_comments
