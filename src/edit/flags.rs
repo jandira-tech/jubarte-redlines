@@ -25,6 +25,8 @@ pub struct FlagOp {
     pub at: String,
     /// `--anchor`: text inside `at`.
     pub anchor: Option<String>,
+    /// `--occurrence`: 1-based match of `anchor` in this group.
+    pub occurrence: Option<usize>,
     /// `--content`: new text.
     pub content: Option<String>,
     /// `--delete`.
@@ -98,6 +100,12 @@ pub fn plan_from_flags(
     let (mut accept, mut reject) = (Vec::new(), Vec::new());
     let mut listed: Option<Vec<crate::changes::Change>> = None;
     for op in ops {
+        if op.occurrence.is_some() && op.anchor.is_none() {
+            return Err(format!("-p {}: --occurrence requires --anchor", op.at));
+        }
+        if op.occurrence == Some(0) {
+            return Err(format!("-p {}: --occurrence is 1-based", op.at));
+        }
         match revision_group(verb, op)? {
             Group::Settle { accept: true, ids } => accept.extend(ids),
             Group::Settle { accept: false, ids } => reject.extend(ids),
@@ -430,7 +438,7 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
         None => (None, None),
     };
     let comment_id = comment_number(at);
-    let kind = match (verb, comment_id, &op.anchor, content) {
+    let mut kind = match (verb, comment_id, &op.anchor, content) {
         (Verb::Add, _, _, _) if op.delete || op.resolve => {
             return bad("add takes no --delete or --resolve");
         }
@@ -574,6 +582,14 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
             (None, None) => return bad("edit needs --content, --delete, --resolve or --style"),
         },
     };
+    match &mut kind {
+        K::Replace { occurrence, .. }
+        | K::Insert { occurrence, .. }
+        | K::Delete { occurrence, .. }
+        | K::FormatRun { occurrence, .. }
+        | K::Comment { occurrence, .. } => *occurrence = op.occurrence,
+        _ => {}
+    }
     Ok((kind, note))
 }
 

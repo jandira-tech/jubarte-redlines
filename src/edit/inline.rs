@@ -210,13 +210,39 @@ pub fn compile(
                     Some(n) => n - 1,
                     None if hits.len() == 1 => 0,
                     None => {
+                        let mut message = format!("expected one exact match; found {}", hits.len());
+                        if !hits.is_empty() {
+                            let mut paragraphs: Vec<(&str, usize)> = Vec::new();
+                            for (row, _) in &hits {
+                                let id = row.target.short_id.as_str();
+                                if let Some((_, count)) =
+                                    paragraphs.last_mut().filter(|(p, _)| *p == id)
+                                {
+                                    *count += 1;
+                                } else {
+                                    paragraphs.push((id, 1));
+                                }
+                            }
+                            let shown = paragraphs
+                                .into_iter()
+                                .map(|(id, count)| {
+                                    if count == 1 {
+                                        id.to_string()
+                                    } else {
+                                        format!("{id} ({count})")
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            message.push_str(&format!(": {shown}; pick one with --at pN"));
+                        }
                         return Err(with_near(refusal(
                             if hits.is_empty() {
                                 "ANCHOR_NOT_FOUND"
                             } else {
                                 "AMBIGUOUS_ANCHOR"
                             },
-                            format!("expected one exact match; found {}", hits.len()),
+                            message,
                         )));
                     }
                 };
