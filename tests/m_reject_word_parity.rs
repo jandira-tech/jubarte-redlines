@@ -2183,3 +2183,51 @@ fn reject_1722_ga2_keeps_paragraphs_whose_deleted_mark_also_changed() {
         "{xml}"
     );
 }
+
+// =========================================================================
+// #1723: a row's w14:conflictIns / w14:conflictDel survives a trPrChange
+// and comes out as a plain w:ins / w:del. Word 16 (2026-10-24) keeps the
+// row tracked; it does not reject the conflict mark.
+// =========================================================================
+
+const W14_NS: &str = "http://schemas.microsoft.com/office/word/2010/wordml";
+
+/// Ann's `trPrChange` (saved row height) beside Bob's conflict mark.
+fn conflict_row(mark: &str) -> String {
+    format!(
+        r#"<w:trPrChange w:id="2" w:author="Ann" w:date="2026-01-01T00:00:00Z"><w:trPr><w:trHeight w:val="300"/></w:trPr></w:trPrChange><w14:{mark} xmlns:w14="{W14_NS}" w:id="5" w:author="Bob" w:date="2026-01-02T00:00:00Z"/>"#
+    )
+}
+
+fn assert_conflict_row_kept(pkg: &[u8], plain: &str) {
+    assert_word_valid_package(pkg);
+    assert_eq!(row_texts(pkg), ["Kept row.", "Row 0."]);
+    let xml = part_string(pkg, "word/document.xml").unwrap();
+    assert!(xml.contains(r#"<w:trHeight w:val="300""#), "{xml}");
+    assert!(
+        xml.contains(&format!("<w:{plain}"))
+            && xml.contains(r#"w:id="5""#)
+            && xml.contains(r#"w:author="Bob""#)
+            && xml.contains("2026-01-02T00:00:00Z"),
+        "expected a plain w:{plain} keeping Bob's id, author and date: {xml}"
+    );
+    assert!(
+        !xml.contains("conflictIns") && !xml.contains("conflictDel") && !xml.contains("trPrChange"),
+        "{xml}"
+    );
+}
+
+/// #1723 `r0`: Ann's `trPrChange` plus Bob's `w14:conflictIns`. Word's
+/// Reject All keeps the row and writes a plain `w:ins`.
+#[test]
+fn reject_1723_r0_keeps_a_conflict_insertion_as_an_insertion() {
+    let rejected = reject_revisions(&docx(&rows_table(&[&conflict_row("conflictIns")]))).unwrap();
+    assert_conflict_row_kept(&rejected, "ins");
+}
+
+/// #1723 `r1`: the deletion twin. Word writes a plain `w:del`.
+#[test]
+fn reject_1723_r1_keeps_a_conflict_deletion_as_a_deletion() {
+    let rejected = reject_revisions(&docx(&rows_table(&[&conflict_row("conflictDel")]))).unwrap();
+    assert_conflict_row_kept(&rejected, "del");
+}

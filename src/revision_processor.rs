@@ -32,7 +32,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use crate::markup_simplifier::remove_rsid_transform;
-use crate::namespaces::{M, PT, W};
+use crate::namespaces::{M, PT, W, W14};
 use crate::xmllinq::{Dom, NodeId, XName};
 
 /// Local names of `RevisionProcessor.TrackedRevisionsElements` (W namespace).
@@ -653,6 +653,15 @@ fn paragraph_mark_revision(name: &XName) -> bool {
         && matches!(name.local_name(), "ins" | "del" | "moveFrom" | "moveTo")
 }
 
+/// A row-history mark `CT_TrPr` allows and the saved `CT_TrPrBase` does
+/// not: `w:ins`, `w:del`, then `w14:conflictIns`, `w14:conflictDel`.
+fn row_history_mark(name: &XName) -> bool {
+    if name.namespace_name() == W::URI {
+        return matches!(name.local_name(), "ins" | "del");
+    }
+    name.namespace_name() == W14::URI && matches!(name.local_name(), "conflictIns" | "conflictDel")
+}
+
 /// Port of `RejectRevisionsForPartTransform` — revert the *non-invertible*
 /// revisions (property changes) and drop inserted structural markers. Returns
 /// `None` to drop the node.
@@ -715,17 +724,21 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
         // deletion. The live w:ins/w:del stay, so the reversal below still
         // finds the row's own revision and Reject All removes an inserted
         // row whose properties also changed.
+        // #1723: that base type also has no w14:conflictIns/conflictDel.
+        // They follow w:ins/w:del, which is where CT_TrPr puts them. A
+        // saved copy of either is dropped: two of one kind is invalid, and
+        // the live mark is the one Word keeps. Renaming them to w:ins/w:del
+        // waits until after accept (demote_row_conflict_marks): a w:ins in
+        // trPr would reverse into a w:del and Reject All would delete the
+        // row.
         if name == W::tr_pr() {
             for e in dom.elements(new_prop, None) {
-                if dom.name(e).is_some_and(|n| n == W::ins() || n == W::del()) {
+                if dom.name(e).is_some_and(|n| row_history_mark(&n)) {
                     dom.remove(e);
                 }
             }
             for mark in dom.elements(node, None) {
-                if dom
-                    .name(mark)
-                    .is_some_and(|n| n == W::ins() || n == W::del())
-                {
+                if dom.name(mark).is_some_and(|n| row_history_mark(&n)) {
                     let mark_clone = dom.clone_subtree(mark);
                     dom.add(new_prop, mark_clone);
                 }
@@ -851,7 +864,37 @@ fn reject_content(
     let reverted = normalize_orphan_moves(dom, reverted, OrphanMovePass::RejectMoveToMarkers);
     let reversed = reverse_revisions_transform(dom, reverted);
     let derssid = remove_rsid_transform(dom, reversed).expect("reject: root not dropped by rsid");
-    accept_content(dom, derssid, keep_comments, kept)
+    let accepted = accept_content(dom, derssid, keep_comments, kept);
+    // #1723: only now. The short-circuit above (no w: revision at all)
+    // never reaches here, so a bare conflict mark is left as Word wrote it.
+    demote_row_conflict_marks(dom, accepted);
+    accepted
+}
+
+/// Word's Reject All of a row writes `w14:conflictIns` / `w14:conflictDel`
+/// back as a plain `w:ins` / `w:del` on that row. The mark keeps its own
+/// id, author and date. A conflict mark on a run or a paragraph mark is
+/// not this case.
+fn demote_row_conflict_marks(dom: &mut Dom, root: NodeId) {
+    let conflict_ins = W14::name("conflictIns");
+    let conflict_del = W14::name("conflictDel");
+    let marks: Vec<(NodeId, bool)> = dom
+        .descendants(root, None)
+        .into_iter()
+        .filter_map(|mark| {
+            let ins = dom.name_is(mark, &conflict_ins);
+            if !ins && !dom.name_is(mark, &conflict_del) {
+                return None;
+            }
+            let in_row = dom
+                .parent(mark)
+                .is_some_and(|parent| dom.name_is(parent, &W::tr_pr()));
+            in_row.then_some((mark, ins))
+        })
+        .collect();
+    for (mark, ins) in marks {
+        dom.set_name(mark, if ins { W::ins() } else { W::del() });
+    }
 }
 
 // ───────────────────────────── A.0 — part-pipeline walkers ──────────────────

@@ -48,6 +48,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 - The wasm32 build no longer warns that `edit::record::plan_target` is never used: only the native publish path compiles it. CI's wasm32 clippy now also denies the engine's own warnings (#1700).
 
+- **Reject All keeps a row's conflict mark as an ordinary revision** (#1723). Restoring a `trPrChange` carries the live `w14:conflictIns` and `w14:conflictDel`, which the saved `CT_TrPrBase` cannot hold. After accept, a mark whose parent is that `w:trPr` becomes a plain `w:ins` or `w:del`, keeping its own id, author and date. Word 16 keeps `r0` and `r1` tracked that way. A conflict mark on a run or a paragraph mark, and a row mark with no `w:` revision beside it, stays as it was.
+
 - **Reject All joins a paragraph whose inserted mark also changed formatting** (#1722). Restoring an `rPrChange` on a paragraph mark (`w:pPr/w:rPr`) keeps the live `w:ins`, `w:del`, `w:moveFrom` and `w:moveTo`, in that order, and drops a saved copy of the same mark. Word 16 joins `ga1`, `ga3` and `h1` into one paragraph, and `n0` into one paragraph and one section. A deleted mark (`ga2`) still leaves the two paragraphs apart. A run's `rPrChange` is unchanged.
 
 - Header and footer comparisons neutralize unresolved relationship attributes on both inputs before diffing, preserving content deletions and accept/reject round trips in Word and PowerTools modes (#1709). A story that cannot be read, carried or redlined now returns a typed `StoryDiffError` naming the part, instead of silently retaining the original without revision marks.
