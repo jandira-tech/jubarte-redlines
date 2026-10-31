@@ -83,6 +83,9 @@ fn document(cell: &str) -> Vec<u8> {
 /// #1680, round 10).
 fn shape(bytes: &[u8]) -> String {
     let xml = part_string(bytes, "word/document.xml").unwrap();
+    // #1703: an emptied control's five-space placeholder run is Word's own
+    // chrome inside the wrapper, not a block of its own.
+    let xml = xml.replace(r#"<w:r><w:t xml:space="preserve">     </w:t></w:r>"#, "");
     let token = regex::Regex::new(
         r"<w:(tbl|tr|tc|p|sdt)\b[^>]*?(/?)>|</w:(tbl|tr|tc|p|sdt)>|<w:t(?: [^>]*)?>([^<]*)</w:t>",
     )

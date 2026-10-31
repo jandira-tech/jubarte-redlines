@@ -16,6 +16,20 @@ use jubarte::document_comparer::{
 use jubarte::namespaces::W;
 use jubarte::xmllinq::{Dom, NodeId};
 
+/// #1703: a control emptied by a resolution carries `w:showingPlcHdr` and
+/// Word's five-space placeholder run — chrome, not source text.
+fn shows_placeholder(dom: &Dom, sdt: NodeId) -> bool {
+    dom.element(sdt, &W::name("sdtPr"))
+        .is_some_and(|pr| dom.element(pr, &W::name("showingPlcHdr")).is_some())
+}
+
+/// `node` sits inside a control showing Word's placeholder.
+fn inside_placeholder(dom: &Dom, node: NodeId) -> bool {
+    dom.ancestors(node, Some(&W::sdt()))
+        .into_iter()
+        .any(|sdt| shows_placeholder(dom, sdt))
+}
+
 fn visible_text(bytes: &[u8]) -> String {
     let xml = part_string(bytes, "word/document.xml").unwrap();
     let mut dom = Dom::new();
@@ -23,6 +37,7 @@ fn visible_text(bytes: &[u8]) -> String {
     let root = dom.root(document).unwrap();
     dom.descendants(root, Some(&W::t()))
         .into_iter()
+        .filter(|&node| !inside_placeholder(&dom, node))
         .map(|node| dom.value(node))
         .collect()
 }
@@ -127,7 +142,8 @@ fn structured_text(bytes: &[u8]) -> String {
     dom.descendants(root, None)
         .into_iter()
         .filter(|&node| {
-            dom.name_is(node, &W::t()) || dom.name_is(node, &jubarte::namespaces::M::name("t"))
+            (dom.name_is(node, &W::t()) || dom.name_is(node, &jubarte::namespaces::M::name("t")))
+                && !inside_placeholder(&dom, node)
         })
         .map(|node| dom.value(node))
         .collect()
@@ -364,6 +380,11 @@ fn structured_signature_with_policy(
                 }
                 _ => {}
             }
+        }
+        // #1703: the placeholder run inside an emptied control is chrome,
+        // not content: the signature of a source never holds it.
+        if word && local == "sdt" && shows_placeholder(dom, node) {
+            return;
         }
         if boundary {
             let details = if local == "tc" {
@@ -2085,6 +2106,9 @@ fn control_ancestry_by_character(bytes: &[u8]) -> Vec<(char, ControlAncestry)> {
     let root = dom.root(doc).unwrap();
     let mut result = Vec::new();
     for text in dom.descendants(root, Some(&W::t())) {
+        if inside_placeholder(&dom, text) {
+            continue;
+        }
         let mut controls = dom.ancestors(text, Some(&W::sdt()));
         controls.reverse();
         let ancestry: Vec<_> = controls

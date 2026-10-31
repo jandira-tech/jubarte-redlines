@@ -311,7 +311,9 @@ fn controls_in_a_settled_paragraph_keep_their_source_ids() {
         .into_iter()
         .map(|p| p.text)
         .collect();
-    assert_eq!(texts, ["keep", "Y!"]);
+    // #1703: X's emptied control shows Word's five-space placeholder
+    // before Y's filled text.
+    assert_eq!(texts, ["keep", "     Y!"]);
     // Accepting keeps X's control, emptied, in the paragraph Y's took
     // over: `p1.cc0` still names X.
     let out = apply_plan(
@@ -327,6 +329,7 @@ fn controls_in_a_settled_paragraph_keep_their_source_ids() {
         .into_iter()
         .map(|p| p.text)
         .collect();
+    // The fill replaces the emptied control's placeholder (#1703).
     assert_eq!(texts, ["keep", "X!yy"]);
     let e = apply_plan(
         &source,

@@ -650,7 +650,14 @@ fn check_outputs(source: &[u8], plan: &EditPlan, expected: &[&str], what: &str) 
     let accepted = accept_revisions(&result.redline).unwrap();
     let rejected = reject_revisions(&result.redline).unwrap();
     assert_eq!(texts(&result.clean), expected, "{what}: clean");
-    assert_eq!(texts(&accepted), expected, "{what}: Accept All");
+    // #1703: a control emptied by the resolution shows Word's five-space
+    // placeholder where the clean copy has an empty paragraph — chrome,
+    // not content.
+    let accepted_texts: Vec<String> = texts(&accepted)
+        .into_iter()
+        .map(|text| if text == "     " { String::new() } else { text })
+        .collect();
+    assert_eq!(accepted_texts, expected, "{what}: Accept All");
     assert_eq!(
         texts(&rejected),
         texts(&reject_revisions(source).unwrap()),

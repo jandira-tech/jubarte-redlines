@@ -33,7 +33,7 @@ use std::sync::LazyLock;
 
 use crate::markup_simplifier::remove_rsid_transform;
 use crate::namespaces::{M, PT, W, W14};
-use crate::xmllinq::{Dom, NodeId, XName};
+use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 /// Local names of `RevisionProcessor.TrackedRevisionsElements` (W namespace).
 const TRACKED_REVISION_LOCALS: &[&str] = &[
@@ -3070,19 +3070,16 @@ fn add_content_controls_with_owners(
     new_document
 }
 
-/// Does `paragraph` (a source paragraph, before the mark merge) leave nothing
-/// once its marks go: no run with content outside a deletion or a move away,
-/// nothing else but its properties and markers? The markers are bookmarks,
-/// proofing marks, a comment's range and its reference run, and permission
-/// ranges. Anything not known to be empty brings something (#1694: only
-/// these shapes were checked against Word, rounds 1 to 9).
-fn brings_nothing(dom: &Dom, paragraph: NodeId) -> bool {
+/// `brings_nothing` with the revision containers still live: a `w:del`,
+/// `w:ins`, `w:moveFrom` or `w:moveTo` in the paragraph counts as content,
+/// so `emptied` answers "nothing authored here at all". With `emptied`
+/// true those containers count as nothing — the paragraph's words all go.
+fn paragraph_empties(dom: &Dom, paragraph: NodeId, emptied: bool) -> bool {
     let reference = W::comment_reference();
     dom.elements(paragraph, None).into_iter().all(|child| {
         dom.name(child).is_none_or(|name| {
             name == W::p_pr()
-                || name == W::del()
-                || name == W::move_from()
+                || (emptied && (name == W::del() || name == W::move_from()))
                 || name == W::bookmark_start()
                 || name == W::bookmark_end()
                 || name == W::proof_err()
@@ -3097,6 +3094,16 @@ fn brings_nothing(dom: &Dom, paragraph: NodeId) -> bool {
                         .all(|e| dom.name_is(e, &W::r_pr()) || dom.name_is(e, &reference)))
         })
     })
+}
+
+/// Does `paragraph` (a source paragraph, before the mark merge) leave nothing
+/// once its marks go: no run with content outside a deletion or a move away,
+/// nothing else but its properties and markers? The markers are bookmarks,
+/// proofing marks, a comment's range and its reference run, and permission
+/// ranges. Anything not known to be empty brings something (#1694: only
+/// these shapes were checked against Word, rounds 1 to 9).
+fn brings_nothing(dom: &Dom, paragraph: NodeId) -> bool {
+    paragraph_empties(dom, paragraph, true)
 }
 
 /// Does Word keep the deleted mark of paragraph `a` before `b`? It does
@@ -3910,6 +3917,116 @@ fn collect_empty_table_cells(
     }
 }
 
+/// The content of a control (`w:sdt`) holds nothing a resolution left
+/// behind: no children at all, or paragraphs that all bring nothing. A
+/// nested `w:sdt`, a `w:tbl` or a surviving run counts as content, so only
+/// the innermost of nested emptied controls qualifies (Word 16, hn30).
+/// `emptied` selects the paragraph test: live revision containers still
+/// count as content before the transforms (`authored`), as nothing after
+/// them (`resolved`).
+fn emptied_content(dom: &Dom, content: NodeId, resolved: bool) -> bool {
+    dom.elements(content, None)
+        .into_iter()
+        .all(|child| dom.name_is(child, &W::p()) && paragraph_empties(dom, child, resolved))
+}
+
+/// Stamp on a control that was already empty before the transforms ran,
+/// so [`mark_emptied_controls`] marks only controls this resolution
+/// emptied. Lives and dies inside `accept_content`; never serialized.
+fn authored_empty(dom: &Dom, control: NodeId) -> bool {
+    dom.element(control, &W::sdt_content())
+        .is_some_and(|content| emptied_content(dom, content, false))
+}
+
+/// Where the `w:` children of `w:sdtPr` that precede `w:showingPlcHdr` in
+/// `CT_SdtPr` end: before `dataBinding`, `label`, `tabIndex`, the type
+/// child and every extension-namespace child.
+fn before_showing_plc_hdr(dom: &Dom, sdt_pr: NodeId) -> Option<NodeId> {
+    const BEFORE: &[&str] = &[
+        "rPr",
+        "alias",
+        "tag",
+        "id",
+        "lock",
+        "placeholder",
+        "temporary",
+    ];
+    dom.elements(sdt_pr, None).into_iter().find(|&e| {
+        dom.name(e)
+            .is_some_and(|n| n.namespace_name() != W::URI || !BEFORE.contains(&n.local_name()))
+    })
+}
+
+/// Word's answer to an emptied content control, Accept All and Reject All
+/// alike (#1703, the #1694 A/B): `w:showingPlcHdr` in the control's
+/// `w:sdtPr` and a bare run of five spaces —
+/// `<w:r><w:t xml:space="preserve">     </w:t></w:r>` — inside the
+/// control's paragraph for a block control, directly in `w:sdtContent`
+/// for an inline one. A `pt:AuthoredEmpty` stamp tells a control emptied
+/// by this resolution from one authored empty, and gallery controls
+/// (`w:docPartObj`/`w:docPartList`) and controls naming a
+/// `w:placeholder/w:docPart` stay as the resolution left them — Word
+/// marks neither.
+fn mark_emptied_controls(dom: &mut Dom, root: NodeId) {
+    let authored = PT::name("AuthoredEmpty");
+    for control in dom.descendants(root, Some(&W::sdt())) {
+        let already = dom.attribute(control, &authored).is_some();
+        dom.set_attribute_value(control, &authored, None);
+        if already {
+            continue;
+        }
+        let Some(content) = dom.element(control, &W::sdt_content()) else {
+            continue;
+        };
+        if !emptied_content(dom, content, true) {
+            continue;
+        }
+        // Word's controls carry a `w:sdtPr` (the A/B's were empty); one
+        // without is a compare artifact, not a control Word authored, and
+        // stays as the resolution left it.
+        let Some(sdt_pr) = dom.element(control, &W::sdt_pr()) else {
+            continue;
+        };
+        // Word leaves a gallery control (w:docPartObj/w:docPartList)
+        // alone: its accepted "Page Numbers (Bottom of Page)" footer
+        // control keeps an empty paragraph, no placeholder (the Word
+        // corpus, b4cd671041). A control naming a w:placeholder/w:docPart
+        // shows that part's text, not five spaces (#1703 open questions).
+        if dom.elements(sdt_pr, None).iter().any(|&e| {
+            dom.name(e).is_some_and(|n| {
+                n.namespace_name() == W::URI
+                    && (matches!(n.local_name(), "docPartObj" | "docPartList")
+                        || (n.local_name() == "placeholder"
+                            && dom.element(e, &W::name("docPart")).is_some()))
+            })
+        }) {
+            continue;
+        }
+        if dom.element(sdt_pr, &W::name("showingPlcHdr")).is_none() {
+            let showing = dom.new_element(W::name("showingPlcHdr"));
+            match before_showing_plc_hdr(dom, sdt_pr) {
+                Some(later) => dom.add_before_self(later, showing),
+                None => dom.add(sdt_pr, showing),
+            }
+        }
+        let run = dom.new_element(W::r());
+        let t = dom.new_element(W::t());
+        dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+        dom.add_text(t, "     ");
+        dom.add(run, t);
+        let block = dom.elements(content, Some(&W::p())).first().copied();
+        match block {
+            Some(paragraph) => dom.add(paragraph, run),
+            None if dom.ancestors(control, Some(&W::p())).is_empty() => {
+                let paragraph = dom.new_element(W::p());
+                dom.add(content, paragraph);
+                dom.add(paragraph, run);
+            }
+            None => dom.add(content, run),
+        }
+    }
+}
+
 // ─────────────── A.10 — the full AcceptRevisionsForPart pipeline ────────────
 
 /// A.10 — `AcceptRevisionsForPart` (:1314) at content scope: the exact
@@ -3934,6 +4051,14 @@ fn accept_content(
     let has_rev = element_has_tracked_revisions(dom, root);
     let e = remove_rsid_transform(dom, root).expect("root not dropped by rsid removal");
     let e = if has_rev {
+        // #1703: flag the controls empty already; the post-pass cannot tell
+        // them from the ones the transforms below empty.
+        let authored = PT::name("AuthoredEmpty");
+        for control in dom.descendants(e, Some(&W::sdt())) {
+            if authored_empty(dom, control) {
+                dom.set_attribute_value(control, &authored, Some("1"));
+            }
+        }
         // O.0: normalize orphan move elements first — the comment/bookmark
         // prepasses and A.2/A.4 all treat matched moveFrom-range content as
         // deleted, so orphan `moveTo`/`moveFrom` elements must be `w:ins`/
@@ -3972,6 +4097,8 @@ fn accept_content(
         let e = accept_deleted_cells_transform(dom, e);
         let e = merge_adjacent_tables_transform(dom, e);
         bookmarks::drop_unpaired_bookmarks(dom, e);
+        // #1703: a control the resolution emptied shows Word's placeholder.
+        mark_emptied_controls(dom, e);
         e
     } else {
         e
