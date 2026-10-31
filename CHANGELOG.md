@@ -15,6 +15,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-31
+
 ### Changed
 
 - `changes --json` and `comments --json` now emit records only on stdout: the `input_validity` status moved from stdout to one JSON line on stderr, suppressed by `-q` (#1925). The Python CLI and npm CLI's `changes --json` follow the same rule.
@@ -4821,6 +4823,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.16.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.16.0
 [0.15.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.15.0
 [0.14.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.14.0
 [0.13.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.13.0
