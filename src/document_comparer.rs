@@ -253,7 +253,61 @@ fn parts_only_deleted_breaks_reference(
         .collect()
 }
 
-/// Word mode: a header or footer that holds a page number leaves the
+/// PowerTools drops the original's section breaks altogether. We preserve
+/// them for Reject All, but must not promote their A-only stories onto the
+/// live final section (#1837). Leave shared kinds and live earlier sections
+/// alone; their treatment remains the faithful preset's existing behavior.
+fn strip_final_a_only_deleted_break_stories(
+    dom: &mut Dom,
+    root: NodeId,
+    out: &PartFs,
+    revised: &PartFs,
+    main: &str,
+) {
+    let Some(final_sect) = dom
+        .element(root, &W::body())
+        .and_then(|body| dom.element(body, &W::sect_pr()))
+    else {
+        return;
+    };
+    let mut sections = section_story_parts(dom, root, out, main);
+    sections.pop(); // The direct body child is the final section.
+    let live: std::collections::HashSet<&String> = sections
+        .iter()
+        .filter(|(deleted, _)| !deleted)
+        .flat_map(|(_, parts)| parts)
+        .collect();
+    let dead: std::collections::HashSet<&String> = sections
+        .iter()
+        .filter(|(deleted, _)| *deleted)
+        .flat_map(|(_, parts)| parts)
+        .filter(|part| !live.contains(part))
+        .collect();
+    let b_refs = header_footer_refs(revised);
+    let Some(rels) = out.read_rels_for(main) else {
+        return;
+    };
+    for reference in dom.elements(final_sect, None) {
+        let kind = if dom.name_is(reference, &W::header_reference()) {
+            "header"
+        } else if dom.name_is(reference, &W::footer_reference()) {
+            "footer"
+        } else {
+            continue;
+        };
+        if b_refs.iter().any(|(k, _, _)| k == kind) {
+            continue;
+        }
+        let target = dom
+            .attribute(reference, &R::id())
+            .and_then(|id| rels.items.iter().find(|r| r.id == id).map(|r| &r.target));
+        if target.is_some_and(|t| dead.contains(&referenced_part(out, main, t))) {
+            dom.remove(reference);
+        }
+    }
+}
+
+/// A header or footer that holds a page number leaves the
 /// deleted section breaks of the redline `root` for its final section.
 /// For each (kind, `w:type`) slot the body's own `w:sectPr` does not set,
 /// the story it inherits from the nearest earlier section moves when that
@@ -273,7 +327,13 @@ fn parts_only_deleted_breaks_reference(
 /// show that section's footer instead, so the reference stays. Stories
 /// that stay keep their breaks, and `jubarte validate` reports them
 /// (`DELETED_SECTION_PAGE_FIELD`).
-fn move_page_story_to_final_section(dom: &mut Dom, root: NodeId, pkg: &PartFs, main: &str) {
+fn move_page_story_to_final_section(
+    dom: &mut Dom,
+    root: NodeId,
+    pkg: &PartFs,
+    main: &str,
+    eligible: &std::collections::HashSet<String>,
+) {
     let Some(rels) = pkg.read_rels_for(main) else {
         return;
     };
@@ -366,7 +426,8 @@ fn move_page_story_to_final_section(dom: &mut Dom, root: NodeId, pkg: &PartFs, m
             let first_unshown = slot.1 == "first"
                 && earlier[at..].iter().any(|&s| title_page(dom, s))
                 && !title_page(dom, last);
-            !(set.contains(slot)
+            !(!eligible.contains(part)
+                || set.contains(slot)
                 || shadowed
                 || first_unshown
                 || !deleted(dom, *sect)
@@ -5805,6 +5866,9 @@ fn mark_a_only_hf_content_as_deleted(
         }
         // Part may be stored under the same name in out (A-based package).
         let whole_story = dead_only.contains(&part);
+        if !settings.merge_replaced_paragraphs && !whole_story {
+            continue;
+        }
         mark_hf_part_content_as_deleted(out, &part, settings, whole_story);
     }
 }
@@ -7021,11 +7085,23 @@ fn compare_documents_impl(
             result_root,
             &final_header_footer_slots(&pkg2),
         );
-        // M383: A-only HF (B has no headers/footers) → pure-D (Word).
-        let dead_only = parts_only_deleted_breaks_reference(&dom, result_root, &out, &main1);
-        mark_a_only_hf_content_as_deleted(&mut out, &pkg1, &pkg2, &dead_only, settings);
-        move_page_story_to_final_section(&mut dom, result_root, &out, &main1);
+    } else {
+        strip_final_a_only_deleted_break_stories(&mut dom, result_root, &out, &pkg2, &main1);
     }
+    // A-only stories on deleted breaks must disappear on Accept All in both
+    // presets. Word mode also deletes stories that still have a live section.
+    let mut dead_only = parts_only_deleted_breaks_reference(&dom, result_root, &out, &main1);
+    if !settings.merge_replaced_paragraphs {
+        let b_refs = header_footer_refs(&pkg2);
+        let a_only: std::collections::HashSet<String> = header_footer_refs(&pkg1)
+            .into_iter()
+            .filter(|(kind, _, _)| !b_refs.iter().any(|(k, _, _)| k == kind))
+            .map(|(_, _, part)| part)
+            .collect();
+        dead_only.retain(|part| a_only.contains(part));
+    }
+    mark_a_only_hf_content_as_deleted(&mut out, &pkg1, &pkg2, &dead_only, settings);
+    move_page_story_to_final_section(&mut dom, result_root, &out, &main1, &dead_only);
 
     // M35: comments carryover is a package-validity invariant, not a
     // Word-visual formatting pass. Both supported comparer presets must union
@@ -9977,12 +10053,14 @@ mod coverage_boundary_tests {
         // No deleted row: the references stay on the deleted break.
         let mut dom = Dom::new();
         let top = root(&mut dom, &xml("document", &shape("")));
-        move_page_story_to_final_section(&mut dom, top, &pkg, MAIN);
+        let eligible = parts_only_deleted_breaks_reference(&dom, top, &pkg, MAIN);
+        move_page_story_to_final_section(&mut dom, top, &pkg, MAIN, &eligible);
         assert_eq!(references(&dom, top), unmoved);
 
         let mut dom = Dom::new();
         let top = root(&mut dom, &xml("document", &shape(row)));
-        move_page_story_to_final_section(&mut dom, top, &pkg, MAIN);
+        let eligible = parts_only_deleted_breaks_reference(&dom, top, &pkg, MAIN);
+        move_page_story_to_final_section(&mut dom, top, &pkg, MAIN, &eligible);
         assert_eq!(
             references(&dom, top),
             [
@@ -10013,7 +10091,8 @@ mod coverage_boundary_tests {
         );
         let mut dom = Dom::new();
         let top = root(&mut dom, &xml("document", &body));
-        move_page_story_to_final_section(&mut dom, top, &pkg, MAIN);
+        let eligible = parts_only_deleted_breaks_reference(&dom, top, &pkg, MAIN);
+        move_page_story_to_final_section(&mut dom, top, &pkg, MAIN, &eligible);
         assert_eq!(
             references(&dom, top),
             [
@@ -10035,7 +10114,8 @@ mod coverage_boundary_tests {
         );
         let mut dom = Dom::new();
         let top = root(&mut dom, &xml("document", &body));
-        move_page_story_to_final_section(&mut dom, top, &pkg, MAIN);
+        let eligible = parts_only_deleted_breaks_reference(&dom, top, &pkg, MAIN);
+        move_page_story_to_final_section(&mut dom, top, &pkg, MAIN, &eligible);
         assert_eq!(
             references(&dom, top),
             [
@@ -10049,7 +10129,8 @@ mod coverage_boundary_tests {
         // without sections, a body whose last section is a paragraph's.
         let mut dom = Dom::new();
         let top = root(&mut dom, &xml("document", &shape(row)));
-        move_page_story_to_final_section(&mut dom, top, &pkg, "word/other.xml");
+        let eligible = parts_only_deleted_breaks_reference(&dom, top, &pkg, "word/other.xml");
+        move_page_story_to_final_section(&mut dom, top, &pkg, "word/other.xml", &eligible);
         assert_eq!(references(&dom, top), unmoved);
         for body in [
             format!("<w:body>{row}<w:p/></w:body>"),
@@ -10060,7 +10141,8 @@ mod coverage_boundary_tests {
             let mut dom = Dom::new();
             let top = root(&mut dom, &xml("document", &body));
             let before = references(&dom, top);
-            move_page_story_to_final_section(&mut dom, top, &pkg, MAIN);
+            let eligible = parts_only_deleted_breaks_reference(&dom, top, &pkg, MAIN);
+            move_page_story_to_final_section(&mut dom, top, &pkg, MAIN, &eligible);
             assert_eq!(references(&dom, top), before, "{body}");
         }
     }
@@ -10112,7 +10194,8 @@ mod coverage_boundary_tests {
     fn moved(pkg: &PartFs, body: &str) -> Vec<Vec<(String, String, String)>> {
         let mut dom = Dom::new();
         let top = root(&mut dom, &xml("document", body));
-        move_page_story_to_final_section(&mut dom, top, pkg, MAIN);
+        let eligible = parts_only_deleted_breaks_reference(&dom, top, pkg, MAIN);
+        move_page_story_to_final_section(&mut dom, top, pkg, MAIN, &eligible);
         story_references(&dom, top)
     }
 

@@ -32,6 +32,12 @@
 //!   still crashed Word with every mark deleted.
 //! - s016: `0483e899af_file_143` → `cc82deb093_file_144`. The same footer,
 //!   referenced by the live final section, keeps Word's shape.
+//!
+//! #1837 also applies whole-story deletion and the PAGE-field workaround in
+//! PowerTools mode, only for A-only stories on deleted breaks. Docxodus
+//! WmlComparer (e605d62f9bac7b55c65155a818d06ad2417fe345, threshold 0.15)
+//! drops all earlier sections on s548 and leaves no final HF references.
+//! Keeping A's text live on our final section is therefore not fidelity.
 
 mod common;
 
@@ -147,6 +153,101 @@ fn live_text(pkg: &PartFs, part: &str) -> String {
         .filter(|&n| dom.name_is(n, &W::t()) || dom.name_is(n, &W::name("instrText")))
         .map(|n| dom.value(n))
         .collect()
+}
+
+#[test]
+fn powertools_s548_accepts_without_a_only_stories_and_rejects_to_a() {
+    let (_, a, b) = FAMILY[0];
+    let (a, b) = (fixture(a), fixture(b));
+    let redline =
+        compare_documents_with_settings(&a, &b, &WmlComparerSettings::powertools_faithful())
+            .expect("compare");
+    let base = PartFs::open(&a).unwrap();
+    let accepted = PartFs::open(&accept_revisions(&redline).unwrap()).unwrap();
+    let rejected = PartFs::open(&reject_revisions(&redline).unwrap()).unwrap();
+    for part in ["word/header1.xml", "word/footer1.xml"] {
+        let text = if accepted.part_string(part).is_some() {
+            live_text(&accepted, part)
+        } else {
+            String::new()
+        };
+        assert_eq!(text, "", "powertools accept retains A-only {part}");
+        assert_eq!(live_text(&rejected, part), live_text(&base, part));
+        assert_eq!(marks(&rejected, part), marks(&base, part));
+    }
+    let pkg = PartFs::open(&redline).unwrap();
+    for part in ["word/header1.xml", "word/footer1.xml"] {
+        assert_eq!(live_text(&pkg, part), "");
+        assert!(
+            marks(&pkg, part)
+                .iter()
+                .all(|(deleted, _, change)| *deleted && !change)
+        );
+    }
+    let mut inherited = check_word_valid_package(&a).errors;
+    let mut actual = check_word_valid_package(&redline).errors;
+    inherited.sort();
+    actual.sort();
+    assert_eq!(actual, inherited, "powertools adds no Ring-1 findings");
+}
+
+#[test]
+fn powertools_keeps_a_story_a_live_section_references() {
+    let a = fixture("clean/docx/0483e899af_file_143.docx");
+    let b = fixture("clean/docx/cc82deb093_file_144.docx");
+    let redline =
+        compare_documents_with_settings(&a, &b, &WmlComparerSettings::powertools_faithful())
+            .expect("compare");
+    let base = PartFs::open(&a).unwrap();
+    let pkg = PartFs::open(&redline).unwrap();
+    let footer = "word/footer1.xml";
+    assert!(!live_text(&base, footer).is_empty());
+    assert_eq!(live_text(&pkg, footer), live_text(&base, footer));
+    assert_eq!(marks(&pkg, footer), marks(&base, footer));
+    assert!(
+        sections(&pkg)
+            .iter()
+            .any(|(deleted, parts)| { !deleted && parts.iter().any(|p| p == footer) })
+    );
+}
+
+#[test]
+fn powertools_keeps_a_header_when_the_revision_also_has_one() {
+    let (_, a, b) = FAMILY[0];
+    let a = fixture(a);
+    let base = PartFs::open(&a).unwrap();
+    let mut revised = PartFs::open(&fixture(b)).unwrap();
+    let header = "word/header1.xml";
+    revised.set_part(header, base.part_bytes(header).unwrap().to_vec());
+    revised.add_content_type_override(
+        "/word/header1.xml",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+    );
+    let main = "word/document.xml";
+    let rid = revised.add_document_relationship(
+        main,
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+        "header1.xml",
+    );
+    let (mut dom, root) = parse(&revised, main);
+    let body = dom.element(root, &W::body()).unwrap();
+    let sect = dom.element(body, &W::sect_pr()).unwrap();
+    let reference = dom.new_element(W::header_reference());
+    dom.set_attribute_value(reference, &W::type_(), Some("default"));
+    dom.set_attribute_value(reference, &R::id(), Some(&rid));
+    dom.add_first(sect, reference);
+    revised.set_part(main, dom.serialize_element(root).into_bytes());
+    let redline = compare_documents_with_settings(
+        &a,
+        &revised.to_zip().unwrap(),
+        &WmlComparerSettings::powertools_faithful(),
+    )
+    .expect("compare");
+    let pkg = PartFs::open(&redline).unwrap();
+    assert_eq!(live_text(&pkg, header), live_text(&base, header));
+    assert_eq!(marks(&pkg, header), marks(&base, header));
+    assert!(sections(&pkg).last().unwrap().1.iter().any(|p| p == header));
+    assert_eq!(live_text(&pkg, "word/footer1.xml"), "");
 }
 
 #[test]
