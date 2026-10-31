@@ -278,7 +278,7 @@ fn probe_dangling_rid_fails() {
     );
 }
 
-fn assert_dangling_relationship_probe(markup: &str, count: usize) {
+fn assert_dangling_relationship_probe(markup: &str, count: usize, fatal: bool) {
     let bytes = splice_first_paragraph_end(&format!("<w:r>{markup}</w:r>"));
     let report = check_word_valid_package(&bytes);
     let findings: Vec<_> = report
@@ -289,8 +289,11 @@ fn assert_dangling_relationship_probe(markup: &str, count: usize) {
     assert_eq!(findings.len(), count, "{markup}: {:?}", report.findings);
     for finding in findings {
         assert_eq!(finding.part, "word/document.xml");
-        assert_eq!(finding.severity, "warning");
-        assert!(!finding.word_fatal && finding.repairable, "{finding:?}");
+        assert_eq!(finding.word_fatal, fatal, "{finding:?}");
+        assert!(finding.repairable, "{finding:?}");
+        if !fatal {
+            assert_eq!(finding.severity, "warning");
+        }
         assert_eq!(
             finding.message,
             "dangling relationship id 'rId99' referenced from 'word/document.xml'"
@@ -319,6 +322,7 @@ fn relationship_probe_diagram_attributes() {
     assert_dangling_relationship_probe(
         r#"<dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" r:dm="rId99" r:lo="rId99" r:qs="rId99" r:cs="rId99"/>"#,
         4,
+        false,
     );
 }
 
@@ -327,12 +331,13 @@ fn relationship_probe_rebound_prefix() {
     assert_dangling_relationship_probe(
         r#"<w:drawing xmlns:rel="http://schemas.openxmlformats.org/officeDocument/2006/relationships" rel:embed="rId99"/>"#,
         1,
+        true,
     );
 }
 
 #[test]
 fn relationship_probe_single_quotes() {
-    assert_dangling_relationship_probe("<w:pict r:link='rId99'/>", 1);
+    assert_dangling_relationship_probe("<w:pict r:link='rId99'/>", 1, true);
 }
 
 #[test]
@@ -349,7 +354,7 @@ fn relationship_probe_every_attribute_local_name() {
         "align",
         "futureAttribute",
     ] {
-        assert_dangling_relationship_probe(&format!("<w:pict r:{local} = 'rId99'/>"), 1);
+        assert_dangling_relationship_probe(&format!("<w:pict r:{local} = 'rId99'/>"), 1, false);
     }
 }
 

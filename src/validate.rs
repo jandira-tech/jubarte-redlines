@@ -24,7 +24,7 @@
 //! |---|---|---|
 //! | `MC_UNBOUND_PREFIX` | yes | when the prefix is a conventional one |
 //! | `MISSING_CONTENT_TYPE`, `OVERRIDE_WITHOUT_PART`, `MALFORMED_XML` | yes | no |
-//! | `DANGLING_RELATIONSHIP` | yes for `id`; other names are unverified leads | yes: the attribute is dropped |
+//! | `DANGLING_RELATIONSHIP` | yes for `r:id`, `r:embed`, `r:link`; other names (`r:dm`, `r:pict`, ...) are unverified leads (#1937) | yes: the attribute is dropped |
 //! | `DUPLICATE_RID` | yes | an identical repeat is kept once on open; two relationships under one Id are refused |
 //! | `MISSING_REL_TARGET` | yes | no |
 //! | `PICTURE_BULLET_UNDEFINED` | yes | no |
@@ -2174,9 +2174,10 @@ fn check_relationship_integrity(pkg: &PartFs, out: &mut Vec<Finding>) {
                         "",
                         format!("dangling relationship id '{rid}' referenced from '{name}'"),
                     );
-                    // Only `id` has a recorded Word refusal. Other relationship
-                    // names remain repairable leads until probed in Word (#1937).
-                    if attribute.local_name() != "id" {
+                    // `id`, `embed` and `link` keep the Word-fatal finding they
+                    // always had; the names this walk added remain repairable
+                    // leads until probed in Word (#1937).
+                    if !matches!(attribute.local_name(), "id" | "embed" | "link") {
                         finding.word_fatal = false;
                         finding.severity = "warning".to_string();
                     }
