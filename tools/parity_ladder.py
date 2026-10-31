@@ -6,7 +6,7 @@
 
 """Word-parity ladder: tiny, named findings from (A, B, word_redline) triples.
 
-Corpus: neurotic_docx_bench corpus_sanity/word_based layout —
+Corpus: the staged word-based layout (mapping CSV, docx_source, docx_redlines_word) —
   centralized_mapping.csv joins docx_source/{base,next}.docx to the
   Word-generated redline in docx_redlines_word/.
 
@@ -60,7 +60,10 @@ WPS = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
 HERE = os.path.dirname(os.path.abspath(__file__))
 CRATE = os.path.dirname(HERE)
 # BENCH_DIR is the neurotic_docx_bench checkout root (same as parity_ledger.sh /
-# run_abba_matrix.sh). Append corpus/word_based for load_pairs (CR #3642348727).
+# run_abba_matrix.sh). The bench's own corpus/word_based is gone (the corpus
+# moved to the hub): load_pairs wants a staged corpus — mapping CSV, docx_source,
+# docx_redlines_word — the shape jubarte-loop/release_0.14.0/gates/ladder_corpus
+# keeps; the release row names one with --corpus (CR #3642348727, #1797).
 _BENCH_ROOT = Path(
     os.environ.get(
         "BENCH_DIR",
