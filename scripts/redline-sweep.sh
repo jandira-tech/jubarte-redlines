@@ -222,14 +222,22 @@ if [ "$VALIDATE" = "--validate" ]; then
       while IFS= read -r f; do
         [ -n "$f" ] || continue
         [ -e "$f" ] || continue
+        vrc=0
         if [ -n "$VBIN" ] && [ "${VBIN##*.}" = "dll" ]; then
-          dotnet "$VBIN" "$f" >>"$OUT/validate_findings.tsv" 2>>"$OUT/validate.log" || true
+          dotnet "$VBIN" "$f" >>"$OUT/validate_findings.tsv" 2>>"$OUT/validate.log" || vrc=$?
         elif [ -x "$VBIN" ]; then
-          "$VBIN" "$f" >>"$OUT/validate_findings.tsv" 2>>"$OUT/validate.log" || true
+          "$VBIN" "$f" >>"$OUT/validate_findings.tsv" 2>>"$OUT/validate.log" || vrc=$?
         else
-          (cd "$VALIDATOR_DIR" && dotnet run -c Release --no-build -- "$f") >>"$OUT/validate_findings.tsv" 2>>"$OUT/validate.log" || true
+          (cd "$VALIDATOR_DIR" && dotnet run -c Release --no-build -- "$f") >>"$OUT/validate_findings.tsv" 2>>"$OUT/validate.log" || vrc=$?
         fi
-        basename "$f" .docx >> "$OUT/.validated_stems"
+        # validate-docx exits 0 (clean) or 1 (findings, OPEN_FAILED included).
+        # Anything else is a crashed validator: the stem was not validated, so
+        # its baseline keys stay NOT_RUN instead of reading as FIXED (#1791).
+        if [ "$vrc" -le 1 ]; then
+          basename "$f" .docx >> "$OUT/.validated_stems"
+        else
+          echo "validator exited $vrc on $(basename "$f"): not validated" >>"$OUT/validate.log"
+        fi
       done < "$MANIFEST"
       # Ratchet: (stem, error_id) keys; NEW keys fail.
       # Missing baseline must fail (not silently create empty) — CR #3599948509.

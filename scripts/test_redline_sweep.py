@@ -290,14 +290,15 @@ class ValidationSweep(unittest.TestCase):
 
     setUp = Sweep.setUp
 
-    def validate(self, rows, baseline="ran\tOldError\nmissing\tKnownError\n"):
+    def validate(self, rows, baseline="ran\tOldError\nmissing\tKnownError\n",
+                 dotnet_body="exit 0\n"):
         scripts = self.tmp / "scripts"
         scripts.mkdir(exist_ok=True)
         script = scripts / "redline-sweep.sh"
         shutil.copy(HERE / "redline-sweep.sh", script)
         (self.tmp / "tools/validate-docx").mkdir(parents=True, exist_ok=True)
         dotnet = self.tmp / "dotnet"
-        dotnet.write_text("#!/bin/sh\nexit 0\n")
+        dotnet.write_text("#!/bin/sh\n" + dotnet_body)
         dotnet.chmod(0o755)
         baseline_path = self.tmp / "baseline.tsv"
         baseline_path.write_text(baseline)
@@ -325,6 +326,15 @@ class ValidationSweep(unittest.TestCase):
         fixed = r.stdout.split("VALIDATOR FIXED (re-bless baseline?):", 1)[1]
         self.assertIn("ran\tOldError", fixed)
         self.assertNotIn("missing\tKnownError", fixed)
+
+    def test_a_crashed_validator_is_not_run_never_fixed(self):
+        # validate-docx exits 0 or 1; any other code is a crash that validated nothing.
+        crash = 'case "$*" in *missing.docx*) exit 134;; esac\nexit 0\n'
+        r = self.validate("ran,x,y,o,corpus/a.docx,corpus/b.docx\n"
+                          "missing,x,y,o,corpus/a.docx,corpus/b.docx\n", dotnet_body=crash)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("VALIDATOR NOT RUN", r.stdout)
+        self.assertNotIn("missing\tKnownError", r.stdout.split("VALIDATOR FIXED", 1)[1])
 
     def test_baselined_stem_absent_from_mapping_is_not_run(self):
         r = self.validate("ran,x,y,o,corpus/a.docx,corpus/b.docx\n")
