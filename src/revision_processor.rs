@@ -662,6 +662,35 @@ fn row_history_mark(name: &XName) -> bool {
     name.namespace_name() == W14::URI && matches!(name.local_name(), "conflictIns" | "conflictDel")
 }
 
+/// #1724: the cell was inserted, either on the live `w:tcPr` or on the
+/// `w:tcPr` a `w:tcPrChange` is about to put back. `CT_TcPrInner` can hold
+/// `w:cellIns`, so the restored mark is the cell's own insertion.
+fn inserted_cell(dom: &Dom, tc: NodeId) -> bool {
+    dom.elements(tc, Some(&W::tc_pr())).into_iter().any(|tcpr| {
+        dom.element(tcpr, &W::cell_ins()).is_some()
+            || dom
+                .element(tcpr, &W::tc_pr_change())
+                .and_then(|change| dom.element(change, &W::tc_pr()))
+                .is_some_and(|saved| dom.element(saved, &W::cell_ins()).is_some())
+    })
+}
+
+/// #1724 `c3`: a live `w:cellMerge` with `w:vMerge="rest"` and
+/// `w:vMergeOrig="cont"`. Word's Reject All of that one-row shape keeps
+/// the cell and removes its text. Read it here, before the transform
+/// drops the `w:cellMerge`.
+fn continued_merge_cell(dom: &Dom, tc: NodeId) -> bool {
+    let v_merge_orig = W::name("vMergeOrig");
+    dom.elements(tc, Some(&W::tc_pr())).into_iter().any(|tcpr| {
+        dom.elements(tcpr, Some(&W::cell_merge()))
+            .into_iter()
+            .any(|mark| {
+                dom.attribute(mark, &W::v_merge()) == Some("rest")
+                    && dom.attribute(mark, &v_merge_orig) == Some("cont")
+            })
+    })
+}
+
 /// Port of `RejectRevisionsForPartTransform` — revert the *non-invertible*
 /// revisions (property changes) and drop inserted structural markers. Returns
 /// `None` to drop the node.
@@ -805,26 +834,40 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
     if name == W::numbering_change() || name == W::cell_del() || name == W::cell_merge() {
         return None;
     }
-    // tc whose tcPr contains a cellIns → drop the inserted cell.
-    if name == W::tc() {
-        let has_cell_ins = dom
-            .elements(node, Some(&W::tc_pr()))
-            .into_iter()
-            .any(|tcpr| dom.element(tcpr, &W::cell_ins()).is_some());
-        if has_cell_ins {
-            return None;
-        }
+    // #1724: a cellIns on the live tcPr (c0, gb2) or on the tcPr the
+    // change restores (c1) drops the cell. A restored cellDel is not an
+    // insertion: the drop below removes the marker and the cell stays.
+    // Checking the rebuilt tcPr instead would keep gb2, whose saved copy
+    // has no cellIns.
+    if name == W::tc() && inserted_cell(dom, node) {
+        return None;
     }
+    // #1724 c3: decided on the live cellMerge, which the rebuild drops.
+    let clear_blocks = name == W::tc() && continued_merge_cell(dom, node);
 
     // Identity: rebuild with attributes + transformed children.
     let ne = dom.new_element(name);
     for (an, av) in dom.attributes(node) {
         dom.set_attribute_value(ne, &an, Some(&av));
     }
+    let mut kept_block = false;
     for c in dom.nodes(node) {
+        if clear_blocks && dom.name(c).is_some_and(|n| n == W::p() || n == W::tbl()) {
+            continue;
+        }
         if let Some(t) = reject_revisions_for_part_transform(dom, c) {
+            if clear_blocks && dom.name(t).is_some_and(|n| n == W::p() || n == W::tbl()) {
+                kept_block = true;
+            }
             dom.add(ne, t);
         }
+    }
+    // A cell has to hold a block. The continued merge's paragraphs and
+    // nested tables are gone, so the cell keeps an empty paragraph.
+    // Do not write w:vMerge: Word's c3 output has none.
+    if clear_blocks && !kept_block {
+        let empty = dom.new_element(W::p());
+        dom.add(ne, empty);
     }
     Some(ne)
 }

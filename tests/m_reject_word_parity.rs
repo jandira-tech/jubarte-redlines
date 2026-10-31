@@ -2231,3 +2231,161 @@ fn reject_1723_r1_keeps_a_conflict_deletion_as_a_deletion() {
     let rejected = reject_revisions(&docx(&rows_table(&[&conflict_row("conflictDel")]))).unwrap();
     assert_conflict_row_kept(&rejected, "del");
 }
+
+// =========================================================================
+// #1724: a cellIns restored from the saved tcPr removes the cell, and a
+// continued cellMerge loses its text. Word 16 (2026-10-24).
+// =========================================================================
+
+const TCW: &str = r#"<w:tcW w:w="2000" w:type="dxa"/>"#;
+const SHADE_RED: &str = r#"<w:shd w:val="clear" w:color="auto" w:fill="FF0000"/>"#;
+const SHADE_GREEN: &str = r#"<w:shd w:val="clear" w:color="auto" w:fill="00FF00"/>"#;
+
+/// One row, KEEP then the `TARGET` cell whose interior is `target`.
+fn target_table(target: &str) -> String {
+    format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr>{TCW}</w:tcPr><w:p><w:r><w:t>KEEP</w:t></w:r></w:p></w:tc><w:tc>{target}</w:tc></w:tr></w:tbl><w:p/>"#
+    )
+}
+
+fn target_paragraph() -> &'static str {
+    "<w:p><w:r><w:t>TARGET</w:t></w:r></w:p>"
+}
+
+fn tc_change(saved: &str) -> String {
+    format!(r#"<w:tcPrChange w:id="2" {REV}><w:tcPr>{saved}</w:tcPr></w:tcPrChange>"#)
+}
+
+/// Visible text of each `w:tc`, in order.
+fn cell_texts(pkg: &[u8]) -> Vec<String> {
+    let xml = part_string(pkg, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    dom.descendants(root, Some(&W::tc()))
+        .into_iter()
+        .map(|tc| {
+            dom.descendants(tc, Some(&W::t()))
+                .into_iter()
+                .map(|t| dom.value(t))
+                .collect()
+        })
+        .collect()
+}
+
+fn reject_target(target: &str) -> Vec<u8> {
+    let rejected = reject_revisions(&docx(&target_table(target))).unwrap();
+    assert_word_valid_package(&rejected);
+    rejected
+}
+
+/// #1724 `c0`: a live `w:cellIns`. Word removes the cell.
+#[test]
+fn reject_1724_c0_drops_a_cell_with_a_live_cell_insertion() {
+    let target = format!(
+        r#"<w:tcPr>{TCW}<w:cellIns w:id="1" {REV}/></w:tcPr>{}"#,
+        target_paragraph()
+    );
+    let rejected = reject_target(&target);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert_eq!(cell_texts(&rejected), ["KEEP"], "{xml}");
+    assert!(!xml.contains("cellIns"), "{xml}");
+}
+
+/// #1724 `c1`: `w:cellIns` only inside the saved `w:tcPr`. Word removes
+/// the cell. The grid stays two columns; Word's autofit is not this defect.
+#[test]
+fn reject_1724_c1_drops_a_cell_whose_saved_properties_carry_the_cell_insertion() {
+    let saved = format!(r#"<w:cellIns w:id="1" {REV}/>"#);
+    let target = format!(
+        r#"<w:tcPr>{TCW}{}</w:tcPr>{}"#,
+        tc_change(&saved),
+        target_paragraph()
+    );
+    let rejected = reject_target(&target);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert_eq!(cell_texts(&rejected), ["KEEP"], "{xml}");
+    assert!(
+        !xml.contains("cellIns") && !xml.contains("tcPrChange"),
+        "{xml}"
+    );
+    assert_eq!(xml.matches("<w:gridCol").count(), 2, "{xml}");
+}
+
+/// #1724 `c2`, `gb1`: a live `w:cellDel` plus a `w:tcPrChange`. Word keeps
+/// the cell and the saved shading.
+#[test]
+fn reject_1724_c2_gb1_keeps_a_deleted_cell_whose_properties_changed() {
+    let target = format!(
+        r#"<w:tcPr>{TCW}{SHADE_RED}<w:cellDel w:id="1" {REV}/>{}</w:tcPr>{}"#,
+        tc_change(&format!("{TCW}{SHADE_GREEN}")),
+        target_paragraph()
+    );
+    let rejected = reject_target(&target);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert_eq!(cell_texts(&rejected), ["KEEP", "TARGET"], "{xml}");
+    assert!(xml.contains(r#"w:fill="00FF00""#), "{xml}");
+    assert!(
+        !xml.contains("FF0000") && !xml.contains("cellDel") && !xml.contains("tcPrChange"),
+        "{xml}"
+    );
+}
+
+/// #1724 `gb2`: a live `w:cellIns` plus a `w:tcPrChange` whose saved copy
+/// has no insertion. Word still removes the cell.
+#[test]
+fn reject_1724_gb2_drops_an_inserted_cell_whose_properties_also_changed() {
+    let target = format!(
+        r#"<w:tcPr>{TCW}{SHADE_RED}<w:cellIns w:id="1" {REV}/>{}</w:tcPr>{}"#,
+        tc_change(&format!("{TCW}{SHADE_GREEN}")),
+        target_paragraph()
+    );
+    let rejected = reject_target(&target);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert_eq!(cell_texts(&rejected), ["KEEP"], "{xml}");
+    assert!(!xml.contains("cellIns") && !xml.contains("TARGET"), "{xml}");
+}
+
+/// #1724 `gb3`: a `w:cellMerge` with no `w:vMerge`, plus a `w:tcPrChange`.
+/// Word keeps the cell, its text and the saved shading.
+#[test]
+fn reject_1724_gb3_keeps_a_merged_cell_and_its_text_when_the_merge_has_no_vmerge() {
+    let target = format!(
+        r#"<w:tcPr>{TCW}{SHADE_RED}<w:cellMerge w:id="3" {REV}/>{}</w:tcPr>{}"#,
+        tc_change(&format!("{TCW}{SHADE_GREEN}")),
+        target_paragraph()
+    );
+    let rejected = reject_target(&target);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert_eq!(cell_texts(&rejected), ["KEEP", "TARGET"], "{xml}");
+    assert!(xml.contains(r#"w:fill="00FF00""#), "{xml}");
+    assert!(
+        !xml.contains("FF0000") && !xml.contains("cellMerge") && !xml.contains("tcPrChange"),
+        "{xml}"
+    );
+}
+
+/// #1724 `c3`: `w:cellMerge w:vMerge="rest" w:vMergeOrig="cont"` in a
+/// one-row table, plus a `w:tcPrChange`. Word keeps the cell, restores the
+/// saved shading and removes the text. It does not write a `w:vMerge`.
+#[test]
+fn reject_1724_c3_keeps_a_continued_merge_cell_and_drops_its_text() {
+    let merge = format!(r#"<w:cellMerge w:id="3" {REV} w:vMerge="rest" w:vMergeOrig="cont"/>"#);
+    let target = format!(
+        r#"<w:tcPr>{TCW}{SHADE_RED}{merge}{}</w:tcPr>{}"#,
+        tc_change(&format!("{TCW}{SHADE_GREEN}")),
+        target_paragraph()
+    );
+    let rejected = reject_target(&target);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert_eq!(cell_texts(&rejected), ["KEEP", ""], "{xml}");
+    assert!(xml.contains(r#"w:fill="00FF00""#), "{xml}");
+    assert!(
+        !xml.contains("TARGET")
+            && !xml.contains("cellMerge")
+            && !xml.contains("tcPrChange")
+            && !xml.contains("vMerge")
+            && !xml.contains("FF0000"),
+        "{xml}"
+    );
+}
