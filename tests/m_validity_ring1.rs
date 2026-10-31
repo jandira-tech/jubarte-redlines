@@ -3661,12 +3661,28 @@ fn non_finite_measure_findings(doc: &str) -> Vec<jubarte::validate::Finding> {
         .collect()
 }
 
-fn assert_non_finite_lead(finding: &jubarte::validate::Finding, token: &str, element: &str) {
+fn assert_non_finite_measure(
+    finding: &jubarte::validate::Finding,
+    token: &str,
+    element: &str,
+    word_fatal: bool,
+) {
     assert_eq!(finding.code, "NON_FINITE_MEASURE");
     assert_eq!(finding.set, "word");
     assert_eq!(finding.part, "word/document.xml");
-    assert_eq!(finding.severity, "warning");
-    assert!(!finding.word_fatal && !finding.repairable, "{finding:?}");
+    assert_eq!(
+        finding.word_fatal, word_fatal,
+        "{token} {element}: {finding:?}"
+    );
+    assert!(
+        !finding.repairable,
+        "{token} {element} stays unrepaired: {finding:?}"
+    );
+    assert_eq!(
+        finding.severity,
+        if word_fatal { "error" } else { "warning" },
+        "{finding:?}"
+    );
     assert_eq!(finding.r#ref, finding.location);
     assert!(
         finding.location.contains(element),
@@ -3677,17 +3693,19 @@ fn assert_non_finite_lead(finding: &jubarte::validate::Finding, token: &str, ele
         finding.message.contains(token) && finding.message.contains(element),
         "{finding:?}"
     );
+    // The code default is the gridCol refusal. tcW and tblW clear the flag.
     assert_eq!(
         jubarte::validate::traits("NON_FINITE_MEASURE"),
-        (false, false)
+        (true, false)
     );
 }
 
 /// `w:w` on `gridCol`, `tcW` and `tblW` that `f32` accepts and that is
-/// not finite. Word 16.115 refused the combined token; the attribute
-/// is still the isolated A/B, so the finding is a lead.
+/// not finite. Word 16.115 (2026-10-31) refused `gridcol-NaN`,
+/// `gridcol-inf` and `gridcol-1e40`, and opened `tcw-*`, `tblw-*` and
+/// `valid-control` cleanly. `repairable` stays false.
 #[test]
-fn probe_non_finite_table_measures_are_leads() {
+fn probe_non_finite_gridcol_is_word_fatal_and_other_measures_are_leads() {
     let tokens = [
         "NaN",
         "inf",
@@ -3700,32 +3718,39 @@ fn probe_non_finite_table_measures_are_leads() {
     for token in tokens {
         let grid = non_finite_measure_findings(&table_measure_doc(token, "2400", "4800"));
         assert_eq!(grid.len(), 1, "{token} gridCol: {grid:?}");
-        assert_non_finite_lead(&grid[0], token, "w:gridCol");
+        assert_non_finite_measure(&grid[0], token, "w:gridCol", true);
 
         let tc = non_finite_measure_findings(&table_measure_doc("2400", token, "4800"));
         assert_eq!(tc.len(), 1, "{token} tcW: {tc:?}");
-        assert_non_finite_lead(&tc[0], token, "w:tcW");
+        assert_non_finite_measure(&tc[0], token, "w:tcW", false);
 
         let tbl = non_finite_measure_findings(&table_measure_doc("2400", "2400", token));
         assert_eq!(tbl.len(), 1, "{token} tblW: {tbl:?}");
-        assert_non_finite_lead(&tbl[0], token, "w:tblW");
+        assert_non_finite_measure(&tbl[0], token, "w:tblW", false);
     }
 }
 
-/// The same token on `gridCol` and `tcW` is two findings. The combined
-/// Word probe could not tell them apart.
+/// The same token on `gridCol` and `tcW` is two findings. Only `gridCol`
+/// is Word-fatal.
 #[test]
 fn probe_non_finite_gridcol_and_tcw_are_both_reported() {
     let findings = non_finite_measure_findings(&table_measure_doc("NaN", "NaN", "4800"));
     assert_eq!(findings.len(), 2, "{findings:?}");
-    assert!(findings.iter().any(|f| f.location.contains("w:gridCol")));
-    assert!(findings.iter().any(|f| f.location.contains("w:tcW")));
-    assert!(findings.iter().all(|f| !f.word_fatal));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.location.contains("w:gridCol") && f.word_fatal && !f.repairable)
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.location.contains("w:tcW") && !f.word_fatal && !f.repairable)
+    );
 }
 
-/// A header table's `gridCol` is the same attribute.
+/// A header table's `gridCol` is the same element Word refused.
 #[test]
-fn probe_non_finite_header_gridcol_is_a_lead() {
+fn probe_non_finite_header_gridcol_is_word_fatal() {
     let hdr = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:tbl><w:tblGrid><w:gridCol w:w="NaN"/><w:gridCol w:w="2400"/></w:tblGrid>
@@ -3744,8 +3769,8 @@ fn probe_non_finite_header_gridcol_is_a_lead() {
     assert_eq!(finding.part, "word/header1.xml");
     assert!(finding.location.contains("w:gridCol"), "{finding:?}");
     assert!(finding.message.contains("NaN"), "{finding:?}");
-    assert!(!finding.word_fatal && !finding.repairable, "{finding:?}");
-    assert_eq!(finding.severity, "warning");
+    assert!(finding.word_fatal && !finding.repairable, "{finding:?}");
+    assert_eq!(finding.severity, "error");
 }
 
 /// A finite number stays quiet, including a finite exponent. A token

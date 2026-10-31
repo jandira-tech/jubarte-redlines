@@ -56,7 +56,7 @@
 //! | `CELL_FINAL_MARK_REVISION` | no: Word opens it, but Accept All or Reject All never returns (#1669, Word 16, 2026-10-23); error diagnostic | no |
 //! | `DELETED_SECTION_PAGE_FIELD` | no: Word 16.115 crashed opening 9 of 11 such redlines (#1833, 2026-10-25); warning | no |
 //! | `INSERTED_TEXT_BEFORE_DELETED_TABLE` | no: Word 16.115 crashed opening 6 of the 16 release-sample redlines with the paragraph right before the table (#1851, 2026-10-25); warning | no |
-//! | `NON_FINITE_MEASURE` | no: `word_fatal` is the Word A/B on isolated `gridCol`, `tcW` and `tblW` probes (#1737). Word 16.115 refused the combined token and has not named the attribute, so the flag is false | no |
+//! | `NON_FINITE_MEASURE` | yes for `gridCol` (Word 16.115, 2026-10-31: `gridcol-NaN`, `gridcol-inf`, `gridcol-1e40` unreadable); `tcW` and `tblW` open (`tcw-*`, `tblw-*`, `valid-control` clean, #1737) | no |
 //! | `UNTRACKED_EDIT`, `FOREIGN_AUTHOR`, `FOREIGN_COMMENT` | n/a | no |
 //!
 //! Revision ids are unique per OOXML record type within a part, as
@@ -204,24 +204,21 @@ pub fn traits(code: &str) -> (bool, bool) {
         | "ROW_WITHOUT_CELL"
         | "SECTPR_NOT_LAST"
         | "NESTED_TEXT_BOX"
-        | "NOTE_REFERENCE_DANGLING" => (true, false),
+        | "NOTE_REFERENCE_DANGLING"
+        // `gridCol` only. `tcW` and `tblW` clear `word_fatal` on the finding.
+        | "NON_FINITE_MEASURE" => (true, false),
         "DUPLICATE_REVISION_ID"
         | "DUPLICATE_DOCPR_ID"
         | "INSTR_TEXT_INSIDE_DELETION"
         | "PARA_ID_OUT_OF_RANGE"
         | "COMMENT_RANGE_ORPHAN" => (false, true),
-        // `NON_FINITE_MEASURE` is absent here on purpose. Its
-        // `word_fatal` flag is the Word A/B on the isolated `gridCol`,
-        // `tcW` and `tblW` probes (#1737). Word 16.115 refused the
-        // combined token and has not named the attribute, so the flag
-        // stays the default false.
         _ => (false, false),
     }
 }
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 35] = [
+const RING1_CODES: [&str; 36] = [
     "DATA_BINDING_WITHOUT_STORE",
     "MOVE_RANGE_COUNT_MISMATCH",
     "MOVE_RANGE_NAME_MISSING",
@@ -2340,10 +2337,11 @@ fn wordml_parts(pkg: &PartFs) -> Vec<String> {
 /// and plain garbage such as `abc` is not already a Ring-1 code, but
 /// folding it in would report that legal measure too.
 ///
-/// `word_fatal` is the Word A/B on the isolated probes (#1737). Word
-/// 16.115 refused a table that put the same token on both `gridCol` and
-/// `tcW` (`XMLParseError`, recover?). Which of `gridCol`, `tcW` and
-/// `tblW` it refuses has not been named, so the flag stays false.
+/// `word_fatal` follows the element. Word 16.115, 2026-10-31 (#1737):
+/// `gridcol-NaN`, `gridcol-inf` and `gridcol-1e40` were unreadable
+/// content. `tcw-NaN`, `tcw-inf`, `tcw-1e40`, `tblw-NaN`, `tblw-inf`,
+/// `tblw-1e40` and `valid-control` opened cleanly. No repair was
+/// verified, so `repairable` stays false.
 fn check_non_finite_measures(pkg: &PartFs, out: &mut Vec<Finding>) {
     for part in wordml_parts(pkg) {
         let Some((dom, root)) = parse_part(pkg, &part) else {
@@ -2365,12 +2363,20 @@ fn check_non_finite_measures(pkg: &PartFs, out: &mut Vec<Finding>) {
             if !f32_parses_non_finite(value) {
                 return;
             }
-            out.push(Finding::new(
+            let mut finding = Finding::new(
                 "NON_FINITE_MEASURE",
                 &part,
                 element_path(&dom, node),
                 format!("w:{local}/@w:w value '{value}' parses as f32 and is not finite"),
-            ));
+            );
+            // Word 16.115, 2026-10-31 (#1737): gridcol-NaN, gridcol-inf and
+            // gridcol-1e40 were unreadable content. tcw-* and tblw-* of
+            // those tokens, and valid-control, opened cleanly.
+            if local != "gridCol" {
+                finding.word_fatal = false;
+                finding.severity = "warning".to_string();
+            }
+            out.push(finding);
         });
     }
 }
