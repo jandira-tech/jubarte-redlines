@@ -54,7 +54,7 @@ binary when retention is needed.
 
 ```text
 $ jubarte-redlines --help
-jubarte-redlines 0.15.0
+jubarte-redlines 0.16.0
 Read, edit, compare and render Word documents
 
 Usage: jubarte-redlines [OPTIONS]
@@ -345,10 +345,9 @@ Read options:
           footnotes, endnotes and comments. Use --for-edit for header/footer/note
           paragraphs. No match prints nothing and reports it on stderr
 
-      --regex [<PATTERN>]
-          Search with a regular expression instead of literal text. Use --regex PATTERN,
-          or --find PATTERN --regex in the Markdown view. With --for-edit, give PATTERN
-          here and omit --find
+      --regex <PATTERN>
+          Search with a regular expression instead of literal text (view or --for-edit).
+          Give PATTERN here and omit --find
 
       --ignore-case
           Case-insensitive --find/--regex (view or --for-edit)
@@ -1074,10 +1073,9 @@ Read options:
           footnotes, endnotes and comments. Use --for-edit for header/footer/note
           paragraphs. No match prints nothing and reports it on stderr
 
-      --regex [<PATTERN>]
-          Search with a regular expression instead of literal text. Use --regex PATTERN,
-          or --find PATTERN --regex in the Markdown view. With --for-edit, give PATTERN
-          here and omit --find
+      --regex <PATTERN>
+          Search with a regular expression instead of literal text (view or --for-edit).
+          Give PATTERN here and omit --find
 
       --ignore-case
           Case-insensitive --find/--regex (view or --for-edit)
@@ -1132,7 +1130,11 @@ Options:
           --restore). Each -p starts an operation; the flags after it belong to it
 
       --anchor <TEXT>
-          Text inside WHERE the operation applies to (must occur once)
+          Text inside WHERE the operation applies to (must occur once, unless
+          --occurrence picks a match)
+
+      --occurrence <N>
+          Pick the Nth anchor match (1-based), after --anchor in this -p group
 
       --content <TEXT>
           New text: replaces the anchor; rewrites the paragraph without one; on c5, the
@@ -1198,6 +1200,14 @@ Options:
           The edits land directly: the file written is the result, and the view shows it
           with rev tags on the id lines
 
+  -q, --quiet
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print. `read`, `changes` and `comments` drop their stderr validity
+          status (JSON under `changes --json` and `comments --json`). `read --json` and
+          `read --for-edit` keep validity counts in their output, -q or not
+
       --existing-revisions <MODE>
           What to do when FILE already holds tracked changes: auto keeps them and tracks
           the new edits beside them; a clean file goes through the comparer
@@ -1210,14 +1220,6 @@ Options:
           - refuse: Refuse a file that has them
 
           [default: auto]
-
-  -q, --quiet
-          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
-          are still written; a reading task (`read`, `changes`, `compare` without -o,
-          `diff`, `capabilities`) still prints what it read, and warnings and errors
-          still print. `read`, `changes` and `comments` drop their stderr validity
-          status (JSON under `changes --json` and `comments --json`). `read --json` and
-          `read --for-edit` keep validity counts in their output, -q or not
 
   -o, --output <FILE.docx>
           The edited document, a .docx (default: `<FILE's
@@ -1341,7 +1343,11 @@ Options:
           starts an operation; the flags after it belong to it
 
       --anchor <TEXT>
-          Text inside WHERE to comment on (must occur once)
+          Text inside WHERE to comment on (must occur once, unless --occurrence picks a
+          match)
+
+      --occurrence <N>
+          Pick the Nth anchor match (1-based), after --anchor in this -p group
 
       --content <TEXT>
           The paragraph, comment or reply text
@@ -1734,7 +1740,7 @@ redaction therefore refuses with `REDACTION_LEAK` instead of accepting an
 incomplete scan. Comparer settings continue to supply their own limits.
 
 <!-- gen:python-api:start -->
-Reflects the `jubarte_redlines` package built from this source tree (`__version__` reports `0.15.0`).
+Reflects the `jubarte_redlines` package built from this source tree (`__version__` reports `0.16.0`).
 
 ### `JubarteError`
 
@@ -1743,7 +1749,7 @@ Raised when the jubarte-redlines engine cannot process a document.
 
 ### `__version__`
 
-`'0.15.0'`
+`'0.16.0'`
 
 ### `accept_revisions`
 

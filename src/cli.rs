@@ -173,11 +173,7 @@ pub struct ReadArgs {
     /// filters narrow together: a paragraph is selected only when every
     /// filter given matches it, and an empty result names the filters
     /// applied in `coverage.omissions`.
-    #[arg(
-        long,
-        conflicts_with_all = ["json", "tables", "track_changes"],
-        help_heading = "Read options"
-    )]
+    #[arg(long, conflicts_with = "track_changes", help_heading = "Read options")]
     pub for_edit: bool,
     /// --for-edit: the working view after accepting this revision
     /// (repeatable; it does not modify FILE).
@@ -226,19 +222,16 @@ pub struct ReadArgs {
     #[arg(
         long,
         value_name = "TEXT",
-        conflicts_with_all = ["json", "tables"],
+        conflicts_with = "regex",
         help_heading = "Read options"
     )]
     pub find: Option<String>,
-    /// Search with a regular expression instead of literal text. Use
-    /// --regex PATTERN, or --find PATTERN --regex in the Markdown view.
-    /// With --for-edit, give PATTERN here and omit --find.
+    /// Search with a regular expression instead of literal text (view or
+    /// --for-edit). Give PATTERN here and omit --find.
     #[arg(
         long,
         value_name = "PATTERN",
-        num_args = 0..=1,
-        default_missing_value = "",
-        conflicts_with_all = ["json", "tables"],
+        conflicts_with = "find",
         help_heading = "Read options"
     )]
     pub regex: Option<String>,
@@ -1455,7 +1448,7 @@ pub enum Command {
         consume: bool,
         /// Where: p12, header1, footer2.p1, t0.row1.cell2, or c5 for a reply.
         /// Each -p starts an operation; the flags after it belong to it.
-        #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append, required_unless_present = "plan")]
+        #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append, required_unless_present_any = ["plan", "anchor"])]
         location: Vec<String>,
         /// Text inside WHERE to comment on (must occur once, unless
         /// --occurrence picks a match).
@@ -3291,12 +3284,13 @@ fn validate_matches(
     if let Some(args) = read_args {
         let find = args.get_one::<String>("find");
         let regex = args.get_one::<String>("regex");
-        if find.is_some()
-            && regex.is_some_and(|pattern| !pattern.is_empty() || args.get_flag("for_edit"))
+        if !args.get_flag("for_edit")
+            && (find.is_some() || regex.is_some())
+            && (args.get_flag("json") || args.get_flag("tables"))
         {
             return Err(read_usage_error(
                 command,
-                "--find and --regex PATTERN conflict; use --find PATTERN --regex for the view"
+                "--find/--regex select the Markdown view; drop --json/--tables or use --for-edit"
                     .into(),
             ));
         }

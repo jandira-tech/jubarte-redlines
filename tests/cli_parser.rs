@@ -2793,3 +2793,53 @@ fn edit_takes_skip_failed_and_add_does_not() {
     );
     assert_ne!(result["exit_code"], 0, "{result}");
 }
+
+#[test]
+fn read_find_regex_requires_a_pattern_and_file() {
+    for args in [
+        vec!["read", "--regex", "contract.docx"],
+        vec!["read", "--regex"],
+        vec!["read", "contract.docx", "--regex"],
+        vec!["read", "contract.docx", "--for-edit", "--regex"],
+    ] {
+        let result = parse(&args, &[]);
+        assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+        let text = result["text"].as_str().unwrap();
+        assert!(text.contains("FILE") || text.contains("value"), "{text}");
+        assert!(Cli::try_parse_from([vec!["jubarte"], args].concat()).is_err());
+    }
+}
+
+#[test]
+fn read_find_preserves_for_edit_output_flag_combinations() {
+    for output in ["--json", "--tables"] {
+        for search in ["--find", "--regex"] {
+            for prefix in [vec!["read", "contract.docx"], vec!["contract.docx"]] {
+                let args = [prefix, vec!["--for-edit", search, "X", output]].concat();
+                let result = parse(&args, &[]);
+                assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+                assert!(Cli::try_parse_from([vec!["jubarte"], args].concat()).is_ok());
+            }
+        }
+    }
+}
+
+#[test]
+fn read_find_view_refuses_structured_outputs_and_combined_search_flags() {
+    for prefix in [vec!["read", "contract.docx"], vec!["contract.docx"]] {
+        for output in [vec!["--json"], vec!["--tables"], vec!["-o", "out.json"]] {
+            for search in ["--find", "--regex"] {
+                let args = [prefix.clone(), vec![search, "X"], output.clone()].concat();
+                let result = parse(&args, &[]);
+                assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+            }
+        }
+        for extra in [vec![], vec!["--for-edit"]] {
+            let args = [prefix.clone(), vec!["--find", "X", "--regex", "Y"], extra].concat();
+            let result = parse(&args, &[]);
+            assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+            let text = result["text"].as_str().unwrap();
+            assert!(!text.contains("use --find PATTERN --regex"), "{text}");
+        }
+    }
+}

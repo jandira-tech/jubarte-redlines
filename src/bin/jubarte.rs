@@ -1170,21 +1170,27 @@ fn agent_view(
         source,
     };
     if args.find.is_some() || args.regex.is_some() {
-        let regex = args.regex.as_deref().map(|pattern| {
-            if pattern.is_empty() {
-                args.find.as_deref().unwrap_or(pattern)
-            } else {
-                pattern
-            }
-        });
-        let find = if regex.is_some() {
-            None
-        } else {
-            args.find.as_deref()
-        };
+        let regex = args.regex.as_deref();
+        let find = args.find.as_deref();
         let mut matches =
             jubarte::edit::for_edit::matching_body_paragraphs(bytes, find, regex, args.ignore_case)
                 .map_err(|e| e.to_string())?;
+        if args.track_changes == Some(TrackChanges::Reject) {
+            let flag = if find.is_some() { "--find" } else { "--regex" };
+            eprintln!(
+                "note: {flag} searches the accepted text; --track-changes reject shows the original"
+            );
+        }
+        let total = matches.len();
+        let mut candidates = matches
+            .iter()
+            .take(3)
+            .map(|p| format!("p{p}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if total > 3 {
+            candidates.push_str(&format!(" and {} more", total - 3));
+        }
         if options.select.is_some() {
             // Preserve -p/head/tail/changed's view semantics, including tables.
             let selected = jubarte::markdown::read(bytes, &options)
@@ -1194,10 +1200,12 @@ fn agent_view(
             matches.retain(|p| selected.contains(p));
         }
         if matches.is_empty() {
-            eprintln!(
-                "no paragraph matches {:?}",
-                find.or(regex).unwrap_or_default()
-            );
+            let pattern = find.or(regex).unwrap_or_default();
+            if total == 0 {
+                eprintln!("no paragraph matches {pattern:?}");
+            } else {
+                eprintln!("{pattern:?} matches {candidates}, none in the selection");
+            }
             return Ok(jubarte::markdown::ReadView {
                 selected: Some(Vec::new()),
                 ..Default::default()

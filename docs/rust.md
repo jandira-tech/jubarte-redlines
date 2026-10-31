@@ -519,10 +519,9 @@ Read options:
           footnotes, endnotes and comments. Use --for-edit for header/footer/note
           paragraphs. No match prints nothing and reports it on stderr
 
-      --regex [<PATTERN>]
-          Search with a regular expression instead of literal text. Use --regex PATTERN,
-          or --find PATTERN --regex in the Markdown view. With --for-edit, give PATTERN
-          here and omit --find
+      --regex <PATTERN>
+          Search with a regular expression instead of literal text (view or --for-edit).
+          Give PATTERN here and omit --find
 
       --ignore-case
           Case-insensitive --find/--regex (view or --for-edit)
@@ -1248,10 +1247,9 @@ Read options:
           footnotes, endnotes and comments. Use --for-edit for header/footer/note
           paragraphs. No match prints nothing and reports it on stderr
 
-      --regex [<PATTERN>]
-          Search with a regular expression instead of literal text. Use --regex PATTERN,
-          or --find PATTERN --regex in the Markdown view. With --for-edit, give PATTERN
-          here and omit --find
+      --regex <PATTERN>
+          Search with a regular expression instead of literal text (view or --for-edit).
+          Give PATTERN here and omit --find
 
       --ignore-case
           Case-insensitive --find/--regex (view or --for-edit)

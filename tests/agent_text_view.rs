@@ -6308,7 +6308,7 @@ fn read_find_regex_uses_existing_pattern_syntax() {
 }
 
 #[test]
-fn read_find_regex_modifier_and_ignore_case() {
+fn read_find_regex_pattern_and_ignore_case() {
     let dir = tempfile::tempdir().unwrap();
     search_fixture(dir.path());
     assert_eq!(
@@ -6316,9 +6316,8 @@ fn read_find_regex_modifier_and_ignore_case() {
             &[
                 "read",
                 "search.docx",
-                "--find",
-                r"cap is [23]0\.",
                 "--regex",
+                r"cap is [23]0\.",
                 "--ignore-case"
             ],
             dir.path()
@@ -6514,4 +6513,103 @@ fn read_find_invalid_regex_is_diagnosed_by_shared_search() {
     assert!(out.stdout.is_empty());
     let err = String::from_utf8(out.stderr).unwrap();
     assert!(err.contains("--regex does not compile"), "{err}");
+}
+
+#[test]
+fn read_find_regex_word_boundary_in_view() {
+    let dir = tempfile::tempdir().unwrap();
+    search_fixture(dir.path());
+    assert_eq!(
+        ok(&["read", "search.docx", "--regex", r"Cap\b"], dir.path()),
+        ok(&["read", "search.docx", "-p", "p1,p2"], dir.path())
+    );
+}
+
+#[test]
+fn read_find_reports_matches_outside_each_selection() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut paragraphs = vec![para("Other"); 51];
+    paragraphs[1] = para("X");
+    std::fs::write(dir.path().join("search.docx"), docx(&paragraphs.concat())).unwrap();
+    for selection in [
+        vec!["-p", "p50"],
+        vec!["--head", "1"],
+        vec!["--tail", "1"],
+        vec!["--changed"],
+    ] {
+        let args = [vec!["read", "search.docx", "--find", "X"], selection].concat();
+        let (out, err) = ok_both(&args, dir.path());
+        assert!(out.is_empty(), "{args:?}: {out}");
+        assert!(
+            err.contains("\"X\" matches p1, none in the selection"),
+            "{args:?}: {err}"
+        );
+        assert!(!err.contains("no paragraph matches"), "{err}");
+    }
+}
+
+#[test]
+fn read_find_limits_outside_selection_candidates() {
+    let dir = tempfile::tempdir().unwrap();
+    let paragraphs = [
+        para("Other"),
+        para("X"),
+        para("X"),
+        para("X"),
+        para("X"),
+        para("X"),
+    ]
+    .concat();
+    std::fs::write(dir.path().join("search.docx"), docx(&paragraphs)).unwrap();
+    let (out, err) = ok_both(
+        &["read", "search.docx", "--find", "X", "-p", "p0"],
+        dir.path(),
+    );
+    assert!(out.is_empty());
+    assert!(
+        err.contains("\"X\" matches p1, p2, p3 and 2 more, none in the selection"),
+        "{err}"
+    );
+}
+
+#[test]
+fn read_find_reject_explains_accepted_text_search() {
+    let dir = tempfile::tempdir().unwrap();
+    let bytes = docx(&format!(
+        "<w:p>{}{}</w:p>",
+        del(1, "Ann", "Original"),
+        ins(2, "Ann", "Accepted")
+    ));
+    std::fs::write(dir.path().join("search.docx"), bytes).unwrap();
+    for search in ["--find", "--regex"] {
+        for mode in ["reject", "accept", "all"] {
+            let (out, err) = ok_both(
+                &[
+                    "read",
+                    "search.docx",
+                    search,
+                    "Accepted",
+                    "--track-changes",
+                    mode,
+                ],
+                dir.path(),
+            );
+            assert_eq!(err.contains(&format!("note: {search} searches the accepted text; --track-changes reject shows the original")), mode == "reject", "{err}");
+            if mode == "reject" {
+                assert!(body(&out).contains("Original"), "{out}");
+                assert!(!body(&out).contains("Accepted"), "{out}");
+            }
+        }
+    }
+}
+
+#[test]
+fn read_find_add_anchor_without_location_teaches_search() {
+    let out = jubarte(&["add", "missing.docx", "--anchor", "X"], Path::new("."));
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        err.contains("--anchor needs -p WHERE (find it with: jubarte read FILE --find TEXT)"),
+        "{err}"
+    );
 }
