@@ -128,6 +128,81 @@ def wheel_row_problems(row: dict) -> list[str]:
     return problems + runner_problems(row, WHEEL_OS[family], arch)
 
 
+# label, Rust target triple, GitHub runner, PyPI wheel platforms built on that runner.
+# The wheel tags are REQUIRED_WHEEL_TAGS, in that order, for the same OS and CPU.
+BINARY_MATRIX: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
+    ("linux-x86_64", "x86_64-unknown-linux-gnu", "ubuntu-latest",
+     ("manylinux_2_28_x86_64", "musllinux_1_2_x86_64")),
+    ("linux-aarch64", "aarch64-unknown-linux-gnu", "ubuntu-24.04-arm",
+     ("manylinux_2_28_aarch64", "musllinux_1_2_aarch64")),
+    ("macos-x86_64", "x86_64-apple-darwin", "macos-15-intel",
+     ("macosx_10_12_x86_64",)),
+    ("macos-aarch64", "aarch64-apple-darwin", "macos-latest",
+     ("macosx_11_0_arm64",)),
+    ("windows-x86_64", "x86_64-pc-windows-msvc", "windows-latest",
+     ("win_amd64",)),
+)
+
+
+def _wheel_tags_for_binary_row(row: dict, wheels_by_artifact: dict[str, dict]) -> tuple[str, ...]:
+    """PyPI tags whose wheels row is this binary row's runner and CPU."""
+    family, arch = label_platform(row["artifact"])
+    tags = []
+    for tag in REQUIRED_WHEEL_TAGS:
+        artifact = wheel_artifact(tag)
+        wheel = wheels_by_artifact.get(artifact)
+        if wheel is None or wheel.get("os") != row.get("os"):
+            continue
+        wheel_family, wheel_arch = label_platform(artifact)
+        if WHEEL_OS[wheel_family] == family and wheel_arch == arch:
+            tags.append(tag)
+    return tuple(tags)
+
+
+def observed_binary_mapping(text: str) -> list[tuple[str, str, str, tuple[str, ...]]]:
+    """Each binaries row of a release.yml text: label, triple, runner, wheel platforms."""
+    workflow = yaml.safe_load(text)
+    binaries = workflow["jobs"]["binaries"]["strategy"]["matrix"]["include"]
+    wheels = workflow["jobs"]["wheels"]["strategy"]["matrix"]["include"]
+    wheels_by_artifact = {row["artifact"]: row for row in wheels}
+    return [
+        (row["artifact"], row.get("target"), row.get("os"),
+         _wheel_tags_for_binary_row(row, wheels_by_artifact))
+        for row in binaries
+    ]
+
+
+def binary_matrix_problems(text: str) -> list[str]:
+    """Where `text` breaks BINARY_MATRIX. Empty when the workflow matches it."""
+    observed = observed_binary_mapping(text)
+    problems: list[str] = []
+    labels = [row[0] for row in observed]
+    if len(labels) != len(set(labels)):
+        problems.append("duplicate binary artifact label")
+    by_label = {row[0]: row for row in observed}
+    expected_labels = [row[0] for row in BINARY_MATRIX]
+    missing = [label for label in expected_labels if label not in by_label]
+    extra = [label for label in labels if label not in set(expected_labels)]
+    if missing:
+        problems.append("missing binary row " + ", ".join(missing))
+    if extra:
+        problems.append("unexpected binary row " + ", ".join(extra))
+    if not missing and not extra and labels != expected_labels:
+        problems.append(f"binary row order {labels}, not {expected_labels}")
+    for label, target, runner, wheels in BINARY_MATRIX:
+        row = by_label.get(label)
+        if row is None:
+            continue
+        _label, got_target, got_runner, got_wheels = row
+        if got_target != target:
+            problems.append(f"{label} target {got_target}, not {target}")
+        if got_runner != runner:
+            problems.append(f"{label} runner {got_runner}, not {runner}")
+        if got_wheels != wheels:
+            problems.append(f"{label} wheel platforms {got_wheels}, not {wheels}")
+    return problems
+
+
 def step_index(job: dict, predicate) -> int:
     for i, s in enumerate(job["steps"]):
         if predicate(s):
@@ -380,6 +455,48 @@ class Npm(unittest.TestCase):
                 self.assertIn(f"npm trust github {pkg} --file release.yml", script)
                 self.assertIn("--allow-publish", script)
                 self.assertIn("two days", script)
+
+
+class BinaryReleaseMatrix(unittest.TestCase):
+    """#1748: each binaries-matrix label names its triple, runner and wheels.
+
+    BINARY_MATRIX is that map. A copy of the workflow text whose linux-aarch64
+    target is the x86-64 triple fails it.
+    """
+
+    def test_every_binaries_row_maps_label_target_runner_and_wheel_platform(self) -> None:
+        text = WORKFLOW.read_text(encoding="utf-8")
+        observed = {
+            label: (target, runner, wheels)
+            for label, target, runner, wheels in observed_binary_mapping(text)
+        }
+        self.assertEqual([row[0] for row in observed_binary_mapping(text)],
+                         [label for label, *_rest in BINARY_MATRIX])
+        for label, target, runner, wheels in BINARY_MATRIX:
+            with self.subTest(artifact=label):
+                self.assertEqual(observed[label], (target, runner, wheels))
+        self.assertEqual(binary_matrix_problems(text), [])
+
+    def test_a_yaml_copy_with_the_arm64_row_targeted_at_x86_64_fails(self) -> None:
+        text = WORKFLOW.read_text(encoding="utf-8")
+        needle = (
+            "          - os: ubuntu-24.04-arm\n"
+            "            target: aarch64-unknown-linux-gnu\n"
+            "            artifact: linux-aarch64\n"
+        )
+        mutated = text.replace(
+            needle,
+            needle.replace("target: aarch64-unknown-linux-gnu", "target: x86_64-unknown-linux-gnu"),
+            1,
+        )
+        self.assertEqual(text.count(needle), 1)
+        self.assertNotEqual(mutated, text)
+        problems = binary_matrix_problems(mutated)
+        self.assertTrue(problems)
+        joined = " ".join(problems)
+        self.assertIn("linux-aarch64", joined)
+        self.assertIn("x86_64-unknown-linux-gnu", joined)
+        self.assertEqual(binary_matrix_problems(text), [])
 
 
 if __name__ == "__main__":

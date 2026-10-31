@@ -42,6 +42,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **The release matrix test rejects an x86-64 build in the ARM64 binary row** (#1748). `scripts/test_release_workflow.py` checks each binaries-matrix label (`linux-x86_64`, `linux-aarch64`, `macos-x86_64`, `macos-aarch64`, `windows-x86_64`) against its Rust target triple, GitHub runner and wheel platforms. A copy of `.github/workflows/release.yml` whose `linux-aarch64` target is `x86_64-unknown-linux-gnu` fails that check.
+
 - **Split deleted tables preserve stored grids for unprobed geometry** (#1913). Skip preferred-width resolution for row width or indent exceptions, tracked cell or row properties, horizontal or vertical merges, and any nonzero cell margins under percentage table widths. These are conservative guards, not new claims about Word behavior. Keep resolved totals wider than the section text area, as demonstrated by Word’s redline of `510bcf9432` (9,571 twips in a 9,358-twip text area).
 
 - **Split deleted tables resolve supported preferred cell widths** (#1913). Reconcile agreeing positive `dxa` cell widths in both autofit and fixed tables, including fitting stored grids; honor exact `dxa` expansion and percentage widths with explicit zero margins. Preserve live grids and cell preferences. Keep grids requiring content measurement, unknown margins, spacing, conflicting preferences or fractional allocation unchanged; full Word layout resolution remains open. Twelve constructed Word 16.115 probes establish the supported cases.
