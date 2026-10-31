@@ -5335,6 +5335,7 @@ pub fn accept_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
     admit_package(docx)?;
     let mut pkg = PartFs::open(docx)?;
     crate::revision_processor::accept_revisions_package(&mut pkg);
+    repair_resolved_package_validity(&mut pkg);
     pkg.to_zip()
 }
 
@@ -5358,6 +5359,7 @@ pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
     admit_package(docx)?;
     let mut pkg = PartFs::open(docx)?;
     crate::revision_processor::reject_revisions_package(&mut pkg);
+    repair_resolved_package_validity(&mut pkg);
     pkg.to_zip()
 }
 
@@ -8494,6 +8496,16 @@ fn compare_documents_impl(
     out.to_zip()
 }
 
+/// The inherited-shape repairs and schema-order pass every package we build
+/// gets (#1712, #1796): an identical compare's output and, since #1717, a
+/// standalone accept's or reject's.
+fn repair_resolved_package_validity(pkg: &mut PartFs) {
+    let main = pkg
+        .main_document_part()
+        .unwrap_or_else(|| "word/document.xml".to_string());
+    sweep_part_validity(pkg, &main, None);
+}
+
 /// Identical inputs need repairs, not the chrome of a newly produced redline.
 /// Work on the admitted package directly: serializing drawing repairs and then
 /// reopening them would incorrectly apply input limits to our expanded output.
@@ -8515,7 +8527,7 @@ fn finalize_identical_compare(
             "main document has no root element: {main}"
         )));
     }
-    sweep_part_validity(&mut out, &main, None);
+    repair_resolved_package_validity(&mut out);
     out.to_zip()
 }
 
