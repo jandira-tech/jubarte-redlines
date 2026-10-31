@@ -746,8 +746,12 @@ fn prepare_and_publish(
     }
     // The in-place document is the source, so only that role skips the
     // alias check. A plan, patch or report that names FILE still refuses.
-    // Replacing the existing input needs the same force the legacy edit uses.
-    let replace_existing = delivery.force || delivery.in_place;
+    // `--in-place` replaces the input only. A patch or report still needs
+    // `--force`.
+    let replaces = |path: &Path, role: MediaRole| {
+        delivery.force
+            || (delivery.in_place && role == MediaRole::Document && same_path(path, action.file()))
+    };
     for (i, (path, _, role)) in outputs.iter().enumerate() {
         let alias_inputs: Vec<(&Path, &str)> = if delivery.in_place
             && *role == MediaRole::Document
@@ -761,7 +765,7 @@ fn prepare_and_publish(
         } else {
             inputs.clone()
         };
-        writable(path, &alias_inputs, replace_existing)?;
+        writable(path, &alias_inputs, replaces(path, *role))?;
         for (other, _, _) in &outputs[..i] {
             if same_path(path, other) {
                 return Err(failure(
@@ -805,14 +809,19 @@ fn prepare_and_publish(
         })
         .map_err(publish_failure)?;
     } else {
-        let files: Vec<_> = outputs
+        let mut files: Vec<_> = outputs
             .iter()
             .map(|(path, bytes, _)| (path.clone(), bytes.as_slice()))
             .collect();
+        // The input is last, so a companion that cannot be committed leaves it.
+        if delivery.in_place {
+            files.sort_by_key(|(path, _)| same_path(path, action.file()));
+        }
         publish_files(
             &files,
             &Recheck {
-                force: replace_existing,
+                force: delivery.force,
+                replace_through: &|path| delivery.in_place && same_path(path, action.file()),
                 alias: &|path| {
                     let filtered: Vec<(&Path, &str)> =
                         if delivery.in_place && same_path(path, action.file()) {

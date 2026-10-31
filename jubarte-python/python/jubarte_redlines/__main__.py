@@ -204,6 +204,13 @@ def _replace(path: Path, data: bytes | str) -> int:
     return len(raw)
 
 
+def _replace_inplace(path: Path, data: bytes | str) -> int:
+    """``--in-place`` follows a symlink: the link stays, and the target keeps
+    its mode. Any other path is replaced as ``_replace`` replaces it."""
+    target = path.resolve() if path.is_symlink() else path
+    return _replace(target, data)
+
+
 def _refuse_alias_output(args: argparse.Namespace) -> None:
     """Refuses a ``read --tables -o`` that names its input — the same
     path, or the same file through a hard or symbolic link — before any
@@ -960,14 +967,26 @@ def _write_edited(
     outputs: list[tuple[Path, bytes]] = [(path, document)]
     pdf, png = bool(getattr(args, "pdf", False)), bool(getattr(args, "png", False))
     # FILE itself (X_modified.docx edited again, or -o FILE) exists, so it is
-    # replaced only with --force (D15). --in-place is that same replacement
-    # of the input. The PNG names wait for the page count.
+    # replaced only with --force (D15). --in-place authorizes the input only.
+    # The PNG names wait for the page count.
     in_place = bool(getattr(args, "in_place", False))
-    replace = bool(args.force) or in_place
-    for taken in [path] + ([path.with_suffix(".pdf")] if pdf else []):
-        if taken.exists() and not replace:
-            _error(f"output '{taken}' already exists (use --force to overwrite)", EXIT_USAGE)
+    force = bool(args.force)
+
+    def may_replace(taken: Path) -> bool:
+        # ``--in-place`` authorizes the input only. A PDF or a PNG that
+        # already exists still needs ``--force``.
+        return force or (in_place and taken == path)
+
+    def refuse_taken(taken: Path) -> None:
+        if taken.exists() and not may_replace(taken):
+            _error(
+                f"OUTPUT_EXISTS: output '{taken}' already exists (use --force to overwrite)",
+                EXIT_USAGE,
+            )
             raise SystemExit(EXIT_USAGE)
+
+    for taken in [path] + ([path.with_suffix(".pdf")] if pdf else []):
+        refuse_taken(taken)
     pages, png_count = None, 0
     if pdf or png:
         # Render before writing, so a failed render writes nothing.
@@ -981,14 +1000,25 @@ def _write_edited(
             outputs.append((path.with_name(_png_name(path.stem, i, png_count)), image))
     # The PNG names are known only now: nothing is written over a file.
     for taken, _ in outputs:
-        if taken.exists() and not replace:
-            _error(f"output '{taken}' already exists (use --force to overwrite)", EXIT_USAGE)
-            raise SystemExit(EXIT_USAGE)
+        refuse_taken(taken)
+    # Companions first. A failure there leaves the input byte-identical.
+    if in_place and len(outputs) > 1:
+        outputs = [item for item in outputs if item[0] != path] + [item for item in outputs if item[0] == path]
     # Hash the input before the rename. ``source`` is the bytes just read.
     original = source if source is not None else (path.read_bytes() if path.is_file() else b"")
     for output, data in outputs:
-        # --in-place renames a staged file over the input. A crash keeps it.
-        if in_place:
+        # --in-place renames a staged file over the input, through a symlink.
+        # A crash keeps the previous bytes. Companions use the same rename
+        # and still replace a link entry; only the input is followed.
+        if in_place and output == path:
+            if source is not None and path.read_bytes() != source:
+                _error(
+                    f"SOURCE_CHANGED: '{_spelled(args, 'file')}' changed since the edit was prepared; nothing was published",
+                    EXIT_PLAN_REFUSED,
+                )
+                return EXIT_PLAN_REFUSED
+            _replace_inplace(output, data)
+        elif in_place:
             _replace(output, data)
         else:
             _write(output, data)
@@ -1006,7 +1036,7 @@ def _write_edited(
     else:
         print(f"wrote {path} (docx, {len(document)} bytes)", file=sys.stderr)
     if pages is not None:
-        pdf_path, pdf_bytes = outputs[1]
+        pdf_path, pdf_bytes = next(item for item in outputs if item[0].suffix == ".pdf")
         print(
             f"wrote {pdf_path} (pdf, {len(pdf_bytes)} bytes, {pages} page{'' if pages == 1 else 's'})", file=sys.stderr
         )
@@ -1379,7 +1409,15 @@ def _resolution(args: argparse.Namespace, accept: bool) -> int:
     except _native.JubarteError as exc:
         raise CliError(f"{'accept' if accept else 'reject'} failed: {exc}") from exc
     if in_place:
-        _replace(args.file, result.to_bytes())
+        # The bytes just read, not a second load. A change after accept or
+        # reject was prepared refuses; the receipt hashes those same bytes.
+        if args.file.read_bytes() != original:
+            _error(
+                f"SOURCE_CHANGED: '{_spelled(args, 'file')}' changed since the edit was prepared; nothing was published",
+                EXIT_PLAN_REFUSED,
+            )
+            return EXIT_PLAN_REFUSED
+        _replace_inplace(args.file, result.to_bytes())
         if not args.quiet:
             sys.stdout.flush()
             print(_in_place_line(_spelled(args, "file"), original, None), file=sys.stderr)

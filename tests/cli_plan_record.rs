@@ -2910,6 +2910,71 @@ fn audit_d13_plan_precommit_error_preserves_io_kind() {
     assert!(!dir.path().join("missing").exists());
 }
 
+/// #1888: recording into a plan refuses `--in-place`; it is applied later.
+#[test]
+fn recording_refuses_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir, "letter.docx", "Sections 1(g), 2(e), 3 survive.");
+    let before = std::fs::read(dir.join("letter.docx")).unwrap();
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "letter.docx",
+            "--plan",
+            "plan.json",
+            "-p",
+            "p2",
+            "--content",
+            "New.",
+            "--in-place",
+        ],
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("--in-place takes effect when the plan is applied"),
+        "{err}"
+    );
+    assert!(!dir.join("plan.json").exists());
+    assert_eq!(std::fs::read(dir.join("letter.docx")).unwrap(), before);
+}
+
+/// #1888: typed `--in-place` overwrites FILE only. A patch still needs `--force`.
+#[test]
+fn typed_in_place_does_not_clobber_a_patch_without_force() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    let file = letter(dir, "letter.docx", "fee");
+    let before = std::fs::read(&file).unwrap();
+    std::fs::write(dir.join("letter.diff"), b"keep-diff").unwrap();
+    let (code, out, err) = run(
+        dir,
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "cost",
+            "--in-place",
+            "--emit",
+            "patch",
+        ],
+    );
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(
+        err.contains("OUTPUT_EXISTS") && err.contains("letter.diff"),
+        "{out}{err}"
+    );
+    assert_eq!(std::fs::read(&file).unwrap(), before);
+    assert_eq!(
+        std::fs::read(dir.join("letter.diff")).unwrap(),
+        b"keep-diff"
+    );
+}
+
 /// #1888: typed one-shots replace FILE through the same atomic write as `-o`.
 #[test]
 fn typed_in_place_replace_rewrites_the_input_and_names_the_replaced_hash() {

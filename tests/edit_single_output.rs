@@ -2499,5 +2499,352 @@ fn parse_json_in_place_names_the_input() {
     let accept: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(accept["exit_code"], 0, "{json}");
     assert_eq!(accept["args"]["in_place"], true, "{json}");
+    assert_eq!(accept["args"]["output"], "contract.docx", "{json}");
     assert_eq!(accept["args"]["output_format"], "docx", "{json}");
+
+    // A DOCX whose name is not .docx is still a DOCX when replaced in place.
+    let json = jubarte::cli::parse_json(
+        &["accept".into(), "contract.json".into(), "--in-place".into()],
+        "jubarte",
+        &["accept".into(), "reject".into()],
+    );
+    let named: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(named["exit_code"], 0, "{json}");
+    assert_eq!(named["args"]["output"], "contract.json", "{json}");
+    assert_eq!(named["args"]["output_format"], "docx", "{json}");
+    let json = jubarte::cli::parse_json(
+        &["reject".into(), "notes.md".into(), "--in-place".into()],
+        "jubarte",
+        &["reject".into()],
+    );
+    let markdown: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(markdown["args"]["output"], "notes.md", "{json}");
+    assert_eq!(markdown["args"]["output_format"], "docx", "{json}");
+}
+
+/// #1888: `accept`/`reject --in-place` always write a DOCX, whatever the name.
+#[test]
+fn in_place_resolution_of_a_misnamed_docx_stays_a_docx() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    let packed = redline(dir);
+    for (name, cmd) in [("contract.json", "accept"), ("contract.md", "reject")] {
+        std::fs::write(dir.join(name), &packed).unwrap();
+        let prefix = sha8(&packed);
+        let (code, _, err) = run(dir, &[cmd, name, "--in-place"]);
+        assert_eq!(code, 0, "{name}: {err}");
+        let bytes = std::fs::read(dir.join(name)).unwrap();
+        assert!(
+            bytes.starts_with(b"PK\x03\x04"),
+            "{name} was overwritten as text: {}",
+            String::from_utf8_lossy(&bytes[..bytes.len().min(24)])
+        );
+        assert!(
+            wrote_any(&err).starts_with(&format!(
+                "wrote {name} in place (replaced sha256 {prefix}\u{2026})"
+            )),
+            "{err}"
+        );
+        assert!(!err.contains("(json") && !err.contains("(md,"), "{err}");
+    }
+}
+
+/// #1888: `--in-place` overwrites only the input. A PDF, a PNG page and a
+/// failed-op plan that already exist still need `--force`.
+#[test]
+fn in_place_does_not_clobber_companions_without_force() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    let before = contract(dir);
+    std::fs::write(dir.join("contract.pdf"), b"keep-pdf").unwrap();
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "contract.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty",
+            "--in-place",
+            "--pdf",
+        ],
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("OUTPUT_EXISTS") && err.contains("contract.pdf"),
+        "{err}"
+    );
+    assert_eq!(std::fs::read(dir.join("contract.docx")).unwrap(), before);
+    assert_eq!(
+        std::fs::read(dir.join("contract.pdf")).unwrap(),
+        b"keep-pdf"
+    );
+
+    std::fs::write(dir.join("contract-page-01.png"), b"keep-png").unwrap();
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "contract.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty",
+            "--in-place",
+            "--png",
+        ],
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("OUTPUT_EXISTS") && err.contains("contract-page-01.png"),
+        "{err}"
+    );
+    assert_eq!(std::fs::read(dir.join("contract.docx")).unwrap(), before);
+    assert_eq!(
+        std::fs::read(dir.join("contract-page-01.png")).unwrap(),
+        b"keep-png"
+    );
+
+    let plan = r#"{"schema_version":1,"author":"GiantCo","operations":[{"kind":"replace","paragraph":"p1","find":"thirty","replacement":"forty"},{"kind":"replace","paragraph":"p1","find":"no-such-anchor","replacement":"x"}]}"#;
+    std::fs::write(dir.join("plan.json"), plan).unwrap();
+    std::fs::write(dir.join("plan.failed.json"), b"keep-plan").unwrap();
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "contract.docx",
+            "--plan",
+            "plan.json",
+            "--skip-failed",
+            "--in-place",
+        ],
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("OUTPUT_EXISTS") && err.contains("plan.failed.json"),
+        "{err}"
+    );
+    assert_eq!(std::fs::read(dir.join("contract.docx")).unwrap(), before);
+    assert_eq!(
+        std::fs::read(dir.join("plan.failed.json")).unwrap(),
+        b"keep-plan"
+    );
+
+    std::fs::remove_file(dir.join("contract.pdf")).unwrap();
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "contract.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty",
+            "-a",
+            "GiantCo",
+            "--in-place",
+            "--pdf",
+            "--force",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert_ne!(std::fs::read(dir.join("contract.docx")).unwrap(), before);
+    assert_ne!(
+        std::fs::read(dir.join("contract.pdf")).unwrap(),
+        b"keep-pdf"
+    );
+    assert!(
+        wrote_any(&err).contains("in place (replaced sha256 "),
+        "{err}"
+    );
+}
+
+/// #1888: a companion that cannot be committed does not leave the input replaced.
+#[cfg(unix)]
+#[test]
+fn in_place_unwritable_companion_leaves_the_input() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    let before = contract(dir);
+    let args: Vec<std::ffi::OsString> = [
+        "edit",
+        "contract.docx",
+        "-p",
+        "p1",
+        "--anchor",
+        "thirty",
+        "--content",
+        "forty",
+        "--in-place",
+        "--pdf",
+    ]
+    .iter()
+    .map(std::ffi::OsString::from)
+    .collect();
+    let mut blocked = false;
+    let out = publication_hook(dir, &args, |phase, _| {
+        // After the existence check, at the first commit. Making the PDF a
+        // directory here fails that commit; the input must still be uncommitted.
+        if phase == "checked" && !blocked {
+            let pdf = dir.join("contract.pdf");
+            std::fs::create_dir(&pdf).unwrap();
+            std::fs::write(pdf.join("blocked"), b"x").unwrap();
+            blocked = true;
+        }
+    });
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(blocked, "the companion was made unwritable: {err}");
+    assert_ne!(out.status.code(), Some(0), "{err}");
+    assert_eq!(
+        std::fs::read(dir.join("contract.docx")).unwrap(),
+        before,
+        "{err}"
+    );
+}
+
+/// #1888: accept/reject recheck the source at the commit boundary.
+#[cfg(unix)]
+#[test]
+fn in_place_accept_rechecks_the_source_before_replacing() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    let packed = redline(dir);
+    std::fs::write(dir.join("contract.docx"), &packed).unwrap();
+    let replacement = docx(&para("A different named source."));
+    let args: Vec<std::ffi::OsString> = ["accept", "contract.docx", "--in-place"]
+        .iter()
+        .map(std::ffi::OsString::from)
+        .collect();
+    let mut injected = false;
+    let out = publication_hook(dir, &args, |phase, _| {
+        if phase == "staged" {
+            std::fs::write(dir.join("contract.docx"), &replacement).unwrap();
+            injected = true;
+        }
+    });
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(injected, "the source mutation ran: {err}");
+    assert_eq!(out.status.code(), Some(3), "{err}");
+    assert!(err.contains("SOURCE_CHANGED:"), "{err}");
+    assert!(
+        err.contains("contract.docx") && err.contains("nothing was published"),
+        "{err}"
+    );
+    assert_eq!(
+        std::fs::read(dir.join("contract.docx")).unwrap(),
+        replacement
+    );
+    assert!(!err.contains("in place"), "{err}");
+}
+
+/// #1888: `--in-place` replaces the symlink's target and keeps its mode.
+#[cfg(unix)]
+#[test]
+fn in_place_follows_a_symlink_and_keeps_its_mode() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    let before = contract(dir);
+    let real = dir.join("real.docx");
+    std::fs::rename(dir.join("contract.docx"), &real).unwrap();
+    std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o640)).unwrap();
+    symlink("real.docx", dir.join("contract.docx")).unwrap();
+    let prefix = sha8(&before);
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "contract.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty",
+            "-a",
+            "GiantCo",
+            "--in-place",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let link = dir.join("contract.docx");
+    assert!(
+        link.symlink_metadata().unwrap().file_type().is_symlink(),
+        "the link was replaced by a regular file: {err}"
+    );
+    assert_eq!(std::fs::read_link(&link).unwrap(), Path::new("real.docx"));
+    let mode = std::fs::metadata(&real).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o640, "mode {mode:o}");
+    assert_ne!(std::fs::read(&real).unwrap(), before);
+    assert!(
+        wrote_any(&err).starts_with(&format!(
+            "wrote contract.docx in place (replaced sha256 {prefix}\u{2026})"
+        )),
+        "{err}"
+    );
+
+    // `redline()` always writes `contract.docx`. That name is the symlink
+    // this test already published, so the accept fixture uses another name.
+    letter(dir);
+    std::fs::rename(dir.join("a.docx"), dir.join("source.docx")).unwrap();
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "source.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty",
+            "-a",
+            "GiantCo",
+            "-o",
+            "packed.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let packed = std::fs::read(dir.join("packed.docx")).unwrap();
+    let accept_real = dir.join("accept-real.docx");
+    std::fs::write(&accept_real, &packed).unwrap();
+    std::fs::set_permissions(&accept_real, std::fs::Permissions::from_mode(0o604)).unwrap();
+    symlink("accept-real.docx", dir.join("accept.docx")).unwrap();
+    let accept_prefix = sha8(&packed);
+    let (code, _, err) = run(dir, &["accept", "accept.docx", "--in-place"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        dir.join("accept.docx")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "{err}"
+    );
+    let mode = std::fs::metadata(&accept_real)
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o604, "mode {mode:o}");
+    assert!(
+        std::fs::read(&accept_real)
+            .unwrap()
+            .starts_with(b"PK\x03\x04"),
+        "target is not a docx"
+    );
+    assert_ne!(std::fs::read(&accept_real).unwrap(), packed);
+    assert!(
+        wrote_any(&err).starts_with(&format!(
+            "wrote accept.docx in place (replaced sha256 {accept_prefix}\u{2026})"
+        )),
+        "{err}"
+    );
 }

@@ -1872,3 +1872,143 @@ test("read --tables -o replaces a link, never writing through it (#1698)", () =>
   assert.deepEqual(fs.readFileSync(source), before, "the input keeps its bytes");
   assert.deepEqual(fs.readFileSync(hard), before, "the hard link keeps the input's bytes");
 });
+
+// The checked-in npm wasm predates this checkout's parser, so `accept
+// FILE --in-place` is an unknown flag there. The runner still honours
+// `args.in_place` once the parser reports it. Until `jubarte-wasm/build-npm.sh`
+// rebuilds npm/ from a clean tree, these tests drive that runner through a
+// parseCli shim, the same way `--tables -o` does. The real bin's refusal is
+// its own test.
+const inPlaceParsed = parses(["accept", "a.docx", "--in-place"]);
+
+function inPlaceBin() {
+  const host = path.join(tmp, "in-place-host");
+  const script = path.join(host, "jubarte-redlines.mjs");
+  if (fs.existsSync(script)) return script;
+  const modules = path.join(host, "node_modules", "jubarte-wasm");
+  fs.mkdirSync(modules, { recursive: true });
+  fs.writeFileSync(script, fs.readFileSync(bin));
+  fs.writeFileSync(path.join(modules, "package.json"), JSON.stringify({ name: "jubarte-wasm", main: "index.js" }));
+  fs.writeFileSync(path.join(modules, "index.js"), [
+    `const real = require(${JSON.stringify(path.join(cliDir, "..", "npm"))});`,
+    `const fs = require("node:fs");`,
+    "const parse = real.parseCli;",
+    "module.exports = {",
+    "  ...real,",
+    "  parseCli(argv, ...rest) {",
+    "    const args = JSON.parse(argv);",
+    "    const direct = JSON.parse(parse(argv, ...rest));",
+    "    if (!(direct.exit_code && direct.exit_code !== 0)) return JSON.stringify(direct);",
+    "    const at = args.indexOf('--in-place');",
+    "    if (at === -1) return JSON.stringify(direct);",
+    "    const stripped = args.filter((_, i) => i !== at);",
+    "    if ((stripped[0] === 'accept' || stripped[0] === 'reject') && !stripped.includes('-o') && !stripped.includes('--output')) {",
+    "      stripped.splice(1, 0, '-o', stripped[1]);",
+    "    }",
+    "    const parsed = JSON.parse(parse(JSON.stringify(stripped), ...rest));",
+    "    if (parsed.exit_code && parsed.exit_code !== 0) return JSON.stringify(parsed);",
+    "    parsed.args.in_place = true;",
+    "    if (parsed.args.author_given == null) parsed.args.author_given = args.includes('-a') || args.includes('--author');",
+    "    if (parsed.command === 'accept' || parsed.command === 'reject') {",
+    "      parsed.args.output = parsed.args.file;",
+    "      parsed.args.output_format = 'docx';",
+    "    } else if (parsed.command === 'edit' || parsed.command === 'add') {",
+    "      parsed.args.output = parsed.args.file;",
+    "    }",
+    "    return JSON.stringify(parsed);",
+    "  },",
+    "  acceptChanges(docx, filter) {",
+    "    if (process.env.JUBARTE_IN_PLACE_POISON) fs.writeFileSync(process.env.JUBARTE_IN_PLACE_POISON, 'poisoned-source');",
+    "    return real.acceptChanges(docx, filter);",
+    "  },",
+    "};",
+  ].join("\n"));
+  return script;
+}
+
+function runInPlace(env, ...args) {
+  const r = spawnSync(process.execPath, [inPlaceBin(), ...args], {
+    encoding: "utf8",
+    cwd: tmp,
+    env: { ...process.env, ...env },
+  });
+  return { code: r.status, out: r.stdout, err: r.stderr };
+}
+
+function editAnchor() {
+  const para = JSON.parse(run("read", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
+  return { index: para.index, word: para.text.split(" ")[0] };
+}
+
+test("the checked-in parser refuses --in-place until npm/ is rebuilt", { skip: inPlaceParsed && "this npm build already parses --in-place" }, () => {
+  const refused = run("accept", "a.docx", "--in-place");
+  assert.equal(refused.code, 2, refused.err);
+  assert.match(refused.err, /--in-place/);
+  assert.doesNotMatch(refused.err, /in place \(replaced sha256/);
+});
+
+test("accept --in-place of a misnamed docx stays a docx (#1888)", () => {
+  for (const name of ["contract.json", "notes.md"]) {
+    const file = copy(tracked, name);
+    const before = fs.readFileSync(file);
+    const accepted = runInPlace({}, "accept", file, "--in-place");
+    assert.equal(accepted.code, 0, accepted.err);
+    assert.ok(fs.readFileSync(file).subarray(0, 4).equals(Buffer.from("PK\x03\x04")), name);
+    assert.ok(!fs.readFileSync(file).equals(before), name);
+    assert.ok(accepted.err.includes(`wrote ${file} in place (replaced sha256 `), accepted.err);
+    assert.match(accepted.err, /replaced sha256 [0-9a-f]{8}\u2026/);
+    assert.doesNotMatch(accepted.err, /\{"schema_version"/);
+  }
+});
+
+test("edit --in-place does not clobber a pdf, and a failed companion leaves the input (#1888)", () => {
+  const { index, word } = editAnchor();
+  const file = copy(untracked, "pdf-in.docx");
+  const pdf = path.join(tmp, "pdf-in.pdf");
+  fs.writeFileSync(pdf, "keep-pdf");
+  const before = fs.readFileSync(file);
+  const refused = runInPlace({}, "edit", file, "-p", `p${index}`, "--anchor", word, "--content", "Changed", "--in-place", "--pdf");
+  assert.equal(refused.code, 2, refused.err);
+  assert.match(refused.err, /OUTPUT_EXISTS/);
+  assert.match(refused.err, /pdf-in\.pdf/);
+  assert.deepEqual(fs.readFileSync(file), before);
+  assert.equal(fs.readFileSync(pdf, "utf8"), "keep-pdf");
+
+  const companion = copy(untracked, "comp.docx");
+  const blocked = path.join(tmp, "comp.pdf");
+  fs.mkdirSync(blocked);
+  fs.writeFileSync(path.join(blocked, "keep"), "keep");
+  const held = fs.readFileSync(companion);
+  const failed = runInPlace({}, "edit", companion, "-p", `p${index}`, "--anchor", word, "--content", "Changed", "--in-place", "--pdf", "--force");
+  assert.notEqual(failed.code, 0, failed.err);
+  assert.deepEqual(fs.readFileSync(companion), held, failed.err);
+  assert.equal(fs.readFileSync(path.join(blocked, "keep"), "utf8"), "keep");
+});
+
+test("edit --in-place follows a symlink and keeps its mode (#1888)", () => {
+  const { index, word } = editAnchor();
+  const real = path.join(tmp, "real.docx");
+  fs.copyFileSync(untracked, real);
+  fs.chmodSync(real, 0o640);
+  const link = path.join(tmp, "link.docx");
+  fs.symlinkSync("real.docx", link);
+  const before = fs.readFileSync(real);
+  const edited = runInPlace({}, "edit", link, "-p", `p${index}`, "--anchor", word, "--content", "Changed", "-a", "GiantCo", "--in-place");
+  assert.equal(edited.code, 0, edited.err);
+  assert.ok(fs.lstatSync(link).isSymbolicLink(), edited.err);
+  assert.equal(fs.readlinkSync(link), "real.docx");
+  assert.equal(fs.statSync(real).mode & 0o777, 0o640);
+  assert.ok(!fs.readFileSync(real).equals(before));
+  assert.match(edited.err, /wrote .*link\.docx in place \(replaced sha256 [0-9a-f]{8}\u2026\); \d+ changes? by "GiantCo"/);
+  assert.doesNotMatch(edited.err, /no -a given/);
+});
+
+test("accept --in-place rechecks the source before replacing (#1888)", () => {
+  const file = copy(tracked, "poison.docx");
+  const poisoned = runInPlace({ JUBARTE_IN_PLACE_POISON: file }, "accept", file, "--in-place");
+  assert.equal(poisoned.code, 3, poisoned.err);
+  assert.match(poisoned.err, /SOURCE_CHANGED:/);
+  assert.match(poisoned.err, /nothing was published/);
+  assert.equal(fs.readFileSync(file, "utf8"), "poisoned-source");
+  assert.doesNotMatch(poisoned.err, /in place \(replaced sha256/);
+});

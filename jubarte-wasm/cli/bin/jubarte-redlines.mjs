@@ -182,6 +182,45 @@ function write(file, data) {
   }
 }
 
+/** `--in-place` follows a symlink: the link stays, and the target keeps its
+ * mode. `write` on any other path still replaces the directory entry. */
+function writeThrough(file, data) {
+  let target = file;
+  try {
+    if (fs.lstatSync(file).isSymbolicLink()) target = fs.realpathSync(file);
+  } catch (e) {
+    if (e.code !== "ENOENT") throw new CliError(`resolving ${file}: ${osError(e)}`);
+  }
+  write(target, data);
+}
+
+/** `wrote FILE in place (replaced sha256 <8 hex>…)`, plus the markup detail. */
+function inPlaceLine(file, bytes, detail) {
+  const prefix = wasm.sourceSha256(bytes).slice(0, 8);
+  const extra = detail ? `; ${detail}` : "";
+  return `wrote ${file} in place (replaced sha256 ${prefix}\u2026)${extra}`;
+}
+
+/** The `; 1 change by "GiantCo"` fragment. Null when the write added no markup. */
+function markupDetail(result, o) {
+  let report;
+  try {
+    report = JSON.parse(result.json);
+  } catch {
+    return null;
+  }
+  const editing = Boolean(o.editing_mode);
+  const changes = editing ? 0 : (report.revisions?.total ?? 0);
+  const comments = editing ? 0 : (report.comments_added ?? 0);
+  if (!changes && !comments) return null;
+  const parts = [];
+  if (changes) parts.push(`${changes} change${changes === 1 ? "" : "s"}`);
+  if (comments) parts.push(`${comments} comment${comments === 1 ? "" : "s"}`);
+  let detail = `${parts.join(", ")} by "${report.author}"`;
+  if (!o.author_given) detail += ": no -a given";
+  return detail;
+}
+
 /** A value with every object's keys sorted, as the binary's JSON prints them. */
 function sortedKeys(value) {
   if (Array.isArray(value)) return value.map(sortedKeys);
@@ -807,19 +846,43 @@ function writeEdited(output, result, notes, o, docx, plan) {
   const editing = Boolean(o.editing_mode);
   const document = editing ? result.clean : result.redline;
   // FILE itself (X_modified.docx edited again, or -o FILE) exists, so it is
-  // replaced only with --force (D15).
+  // replaced only with --force (D15). `--in-place` authorizes the input
+  // only; a PDF that already exists still needs `--force`.
   const pdfPath = o.pdf ? `${output.slice(0, output.length - path.extname(output).length)}.pdf` : null;
+  const replaces = (taken) => Boolean(o.force) || (Boolean(o.in_place) && taken === output);
   for (const taken of [output, pdfPath]) {
-    if (taken != null && fs.existsSync(taken) && !o.force) {
+    if (taken != null && fs.existsSync(taken) && !replaces(taken)) {
       throw new UsageError(`OUTPUT_EXISTS: output '${taken}' already exists (use --force to overwrite)`);
     }
   }
   // Render before writing, so a failed render writes nothing.
   const rendered = o.pdf ? editPdf(document, o) : null;
-  write(output, document);
-  if (rendered) write(pdfPath, rendered.pdf);
+  const outputs = [[output, document]];
+  if (rendered) outputs.push([pdfPath, rendered.pdf]);
+  // Companions first. A failure there leaves the input byte-identical.
+  if (o.in_place && outputs.length > 1) {
+    outputs.push(outputs.shift());
+  }
+  for (const [file, data] of outputs) {
+    if (o.in_place && file === output) {
+      if (docx != null && !fs.readFileSync(file).equals(docx)) {
+        throw new RefusalError(`SOURCE_CHANGED: '${file}' changed since the edit was prepared; nothing was published`);
+      }
+      writeThrough(file, data);
+    } else {
+      write(file, data);
+    }
+  }
   if (o.quiet) return;
-  console.error(`wrote ${output} (docx, ${document.length} bytes)`);
+  if (o.in_place) {
+    const detail = markupDetail(result, o);
+    console.error(inPlaceLine(output, docx ?? document, detail));
+    if (detail && !o.author_given) {
+      console.error(`warning: no -a given; the new markup is signed "${JSON.parse(result.json).author}"`);
+    }
+  } else {
+    console.error(`wrote ${output} (docx, ${document.length} bytes)`);
+  }
   if (rendered) console.error(wasm.wroteLine(pdfPath, "pdf", rendered.pdf.length, rendered.page_count));
   for (const note of editNotes(notes, result)) console.error(note);
   if (docx != null && plan != null) {
@@ -857,8 +920,11 @@ function resolution(accept) {
       } catch (e) {
         throw new UsageError(messageOf(e));
       }
-      ensureWritable(o.output, o.force);
-      const docx = read(file);
+      // A DOCX keeps that name or not. `--in-place` always writes the
+      // package, so a `.json` or `.md` name is not an output format.
+      // Sniff the bytes: the name's declared kind would refuse the package.
+      const docx = o.in_place ? read(file, null) : read(file);
+      if (!o.in_place) ensureWritable(o.output, o.force);
       let out;
       try {
         out = (accept ? wasm.acceptChanges : wasm.rejectChanges)(docx, JSON.stringify(filter));
@@ -867,6 +933,16 @@ function resolution(accept) {
         const message = messageOf(e);
         if (/^\S+ names \d+ changes/.test(message)) throw new UsageError(message);
         throw new CliError(`${name} failed: ${message}`);
+      }
+      if (o.in_place) {
+        const current = fs.readFileSync(file);
+        if (!current.equals(docx)) {
+          throw new RefusalError(`SOURCE_CHANGED: '${file}' changed since the edit was prepared; nothing was published`);
+        }
+        const target = o.output ?? file;
+        writeThrough(target, out);
+        if (!o.quiet) console.error(inPlaceLine(target, docx, null));
+        return;
       }
       writeResult(o, out, notWritten(o.output));
     },

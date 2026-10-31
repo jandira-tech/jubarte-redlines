@@ -4253,36 +4253,54 @@ fn parse_subcommand_json(
             output,
             in_place,
             ..
-        } => Some((
-            Task::Accept,
+        } => {
             if *in_place {
-                Some(file.as_path())
-            } else {
-                output.as_deref()
-            },
-        )),
+                value["args"]["output"] = serde_json::Value::String(slash_path(file));
+            }
+            Some((
+                Task::Accept,
+                if *in_place {
+                    Some(file.as_path())
+                } else {
+                    output.as_deref()
+                },
+            ))
+        }
         Command::Reject {
             file,
             output,
             in_place,
             ..
-        } => Some((
-            Task::Reject,
+        } => {
             if *in_place {
-                Some(file.as_path())
-            } else {
-                output.as_deref()
-            },
-        )),
+                value["args"]["output"] = serde_json::Value::String(slash_path(file));
+            }
+            Some((
+                Task::Reject,
+                if *in_place {
+                    Some(file.as_path())
+                } else {
+                    output.as_deref()
+                },
+            ))
+        }
         Command::Append { output, .. } => Some((Task::Append, Some(output.as_path()))),
         Command::Scrub { output, .. } => Some((Task::Scrub, Some(output.as_path()))),
         Command::Read { output, .. } => Some((Task::Read, output.as_deref())),
         _ => None,
     };
     if let Some((writer, output)) = written {
-        value["args"]["output_format"] =
-            serde_json::to_value(output_format(writer, output, None).ok().flatten())
-                .expect("format");
+        // `--in-place` always publishes a DOCX, even when FILE is named
+        // `contract.json` or `notes.md`. The extension is not the format.
+        let format = if matches!(
+            &task,
+            Command::Accept { in_place: true, .. } | Command::Reject { in_place: true, .. }
+        ) {
+            Some(Format::Docx)
+        } else {
+            output_format(writer, output, None).ok().flatten()
+        };
+        value["args"]["output_format"] = serde_json::to_value(format).expect("format");
     }
     value["exit_code"] = 0.into();
     Ok(value)

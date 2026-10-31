@@ -12,6 +12,7 @@ import importlib.metadata
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import zipfile
@@ -20,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+import jubarte_redlines.__main__ as cli
+import jubarte_redlines.document as document
 from jubarte_redlines.__main__ import main
 
 from docx_fixture import docx, para
@@ -1103,6 +1106,130 @@ def test_in_place_conflicts_with_output(letter: Path, tmp_path: Path, capsys: py
     assert "cannot be used with" in err and "--in-place" in err
     assert letter.read_bytes() == before
     assert not (tmp_path / "out.docx").exists()
+
+
+def test_in_place_does_not_clobber_a_pdf_without_force(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    before = letter.read_bytes()
+    pdf = tmp_path / "letter.pdf"
+    pdf.write_bytes(b"keep-pdf")
+    code, _out, err = _cli(
+        [
+            "edit",
+            str(letter),
+            "-p",
+            "p1",
+            "--anchor",
+            "his or her",
+            "--content",
+            "their",
+            "--in-place",
+            "--pdf",
+        ],
+        capsys,
+    )
+    assert code == 2, err
+    assert "OUTPUT_EXISTS" in err and "letter.pdf" in err, err
+    assert letter.read_bytes() == before
+    assert pdf.read_bytes() == b"keep-pdf"
+
+
+def test_in_place_companion_failure_leaves_the_input(
+    letter: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    before = letter.read_bytes()
+    real = cli._replace
+
+    def fail_pdf(path: Path, data: bytes | str) -> int:
+        if str(path).endswith(".pdf"):
+            raise cli.CliError(f"writing {path}: blocked")
+        return real(path, data)
+
+    monkeypatch.setattr(cli, "_replace", fail_pdf)
+    # main() catches CliError and returns the exit code. The input must
+    # still be the bytes from before the command.
+    code, _out, err = _cli(
+        [
+            "edit",
+            str(letter),
+            "-p",
+            "p1",
+            "--anchor",
+            "his or her",
+            "--content",
+            "their",
+            "--in-place",
+            "--pdf",
+            "-q",
+        ],
+        capsys,
+    )
+    assert code != 0, err
+    assert "blocked" in err, err
+    assert letter.read_bytes() == before
+
+
+def test_in_place_follows_a_symlink_and_keeps_its_mode(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    before = letter.read_bytes()
+    real = tmp_path / "real.docx"
+    letter.rename(real)
+    real.chmod(0o640)
+    link = tmp_path / "letter.docx"
+    link.symlink_to("real.docx")
+    prefix = _sha8(before)
+    code, _out, err = _cli(
+        [
+            "edit",
+            str(link),
+            "-p",
+            "p1",
+            "--anchor",
+            "his or her",
+            "--content",
+            "their",
+            "-a",
+            "GiantCo",
+            "--in-place",
+        ],
+        capsys,
+    )
+    assert code == 0, err
+    assert link.is_symlink()
+    assert link.readlink() == Path("real.docx")
+    assert stat.S_IMODE(real.stat().st_mode) == 0o640
+    assert real.read_bytes() != before
+    assert err.splitlines()[0].startswith(f"wrote {link} in place (replaced sha256 {prefix}\u2026)")
+
+
+def test_in_place_accept_rechecks_the_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    original = tmp_path / "a.docx"
+    modified = tmp_path / "b.docx"
+    original.write_bytes(docx(para("alpha beta")))
+    modified.write_bytes(docx(para("alpha gamma")))
+    redline = tmp_path / "redline.docx"
+    assert main(["compare", str(original), str(modified), "-o", str(redline), "-q"]) == 0
+    capsys.readouterr()
+    target = tmp_path / "accept.docx"
+    packed = redline.read_bytes()
+    target.write_bytes(packed)
+    other = docx(para("A different named source."))
+    real = document.Document.accept
+
+    def accept(self: document.Document, **kwargs: object) -> document.Document:
+        target.write_bytes(other)
+        return real(self, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(document.Document, "accept", accept)
+    code, _out, err = _cli(["accept", str(target), "--in-place"], capsys)
+    assert code == 3, err
+    assert "SOURCE_CHANGED:" in err and "nothing was published" in err, err
+    assert target.read_bytes() == other
+    assert "in place" not in err
 
 
 def test_accept_same_file_force_warns_it_is_deprecated(

@@ -191,6 +191,7 @@ fn generate(
         &outputs,
         &Recheck {
             force: options.force,
+            replace_through: &|_| false,
             alias: &|path| refuse_output_alias(path, &[(options.file.as_path(), "the source")]),
             source: &|| recheck_edit_source(&options.file, source),
         },
