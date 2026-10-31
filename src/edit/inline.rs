@@ -234,7 +234,10 @@ pub fn compile(
                                 })
                                 .collect::<Vec<_>>()
                                 .join(", ");
-                            message.push_str(&format!(": {shown}; pick one with --at pN"));
+                            message.push_str(&format!(
+                                ": {shown}; pick one with --at pN or --occurrence 1..={}",
+                                hits.len()
+                            ));
                         }
                         return Err(with_near(refusal(
                             if hits.is_empty() {

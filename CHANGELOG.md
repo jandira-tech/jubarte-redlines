@@ -21,7 +21,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
-- One-shot `edit` and `add` accept `--occurrence N` after `--anchor` in each `-p` group. Ambiguous anchors show numbered context windows and flag-based guidance; plans retain their released wording. `edit replace --find` lists matching paragraphs with their match counts and suggests `--at` (#1894).
+- One-shot `edit` and `add` accept `--occurrence N` after `--anchor` in each `-p` group. Ambiguous anchors show numbered context windows and flag-based guidance; plans retain their released wording. `edit replace --find` lists matching paragraphs with their match counts and suggests `--at` or `--occurrence` (#1894).
 
 - `validate` checks every relationships part, including `_rels/.rels`, for missing internal targets (`MISSING_REL_TARGET`, #1938). An unused relationship produces a non-fatal warning, which `--repair` does not fix: Word has not been probed for this case. A relationship used by markup retains its Word-fatal error and is reported once even when used repeatedly.
 
