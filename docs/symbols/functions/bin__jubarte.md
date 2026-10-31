@@ -191,7 +191,7 @@
 #### `comment_changes_note`  (L443-452)
 `fn comment_changes_note(left: usize) -> String`
 
-- **Does:** The note a selection prints when it leaves tracked changes inside comment bodies, which no `--id` can name (#1223).
+- **Does:** The note a selection prints when it leaves tracked changes inside comment bodies. They are `comments.rN`; this selection did not name them.
 - **Macros:** `format!`
 - **Called by:** `run_resolution` (bin/jubarte.rs:458); `tests::comment_changes_note_agrees_with_its_count` (bin/jubarte.rs:4539)
 
