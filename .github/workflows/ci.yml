@@ -79,6 +79,11 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: clippy jubarte-wasm (wasm32-unknown-unknown)
         working-directory: jubarte-wasm
+        # `-- -D warnings` reaches only the top crate. RUSTFLAGS also denies
+        # the warnings of the engine it builds for wasm32 (#1700); crates.io
+        # dependencies stay capped.
+        env:
+          RUSTFLAGS: -D warnings
         run: cargo clippy --all-features --target wasm32-unknown-unknown -- -D warnings
       # The desktop app is its own repository (arthrod/jubarte-app): its CI
       # lints, tests and builds it against this engine.

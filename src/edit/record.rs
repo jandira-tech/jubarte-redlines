@@ -134,7 +134,9 @@ impl Recorded {
 }
 
 /// Where a recording is written: the file a symbolic link names (the link
-/// stays a link), else `plan` itself.
+/// stays a link), else `plan` itself. Only the native publish path calls
+/// it; wasm32 writes no files.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn plan_target(plan: &Path) -> PathBuf {
     if let Ok(real) = std::fs::canonicalize(plan) {
         return real;
