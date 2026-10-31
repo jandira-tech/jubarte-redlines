@@ -10557,6 +10557,10 @@ fn insert_tblpr_child_in_order(dom: &mut Dom, tblpr: NodeId, child: NodeId, rank
 /// in the original C# port; the equivalent pre-pass now lives at
 /// `WmlOrderElementsPerStandard` (WmlComparer.cs:2434).
 pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
+    order_property_elements(dom, root, true);
+}
+
+fn order_property_elements(dom: &mut Dom, root: NodeId, comparison: bool) {
     // Rank tables (PtOpenXmlUtil.cs:1273-1439). The W14 entries are C#'s
     // literal `w14:wShadow` etc. — a PowerTools quirk kept verbatim (real
     // markup uses w14:shadow, so they never match; unknowns rank 999 anyway).
@@ -10723,15 +10727,29 @@ pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
         let local = name.local_name().to_string();
         if sortable.contains(&local.as_str()) {
             for n in dom.nodes(el) {
-                if !dom.is_element(n) {
+                if !dom.is_element(n)
+                    && (comparison || (dom.is_text(n) && !dom.value(n).trim().is_empty()))
+                {
                     dom.remove(n);
                 }
             }
             let mut kids: Vec<(i32, usize, NodeId)> = dom
                 .elements(el, None)
                 .into_iter()
+                // Ignorable extensions do not participate in the schema's
+                // sequence. Their position cannot invalidate that sequence.
+                .filter(|&c| comparison || rank(dom, &local, c) != 999)
                 .enumerate()
-                .map(|(i, c)| (rank(dom, &local, c), i, c))
+                .map(|(i, c)| {
+                    // EG_RPrBase is a choice: b/i/font order is not a
+                    // schema error. Only its following rPrChange must be last.
+                    let order = if !comparison && local == "rPr" {
+                        i32::from(dom.name_is(c, &W::r_pr_change()))
+                    } else {
+                        rank(dom, &local, c)
+                    };
+                    (order, i, c)
+                })
                 .collect();
             if kids.is_sorted_by_key(|(r, i, _)| (*r, *i)) {
                 continue;
@@ -10744,7 +10762,9 @@ pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
         } else if local == "p" || local == "r" {
             let props = if local == "p" { W::p_pr() } else { W::r_pr() };
             for n in dom.nodes(el) {
-                if !dom.is_element(n) {
+                if !dom.is_element(n)
+                    && (comparison || (dom.is_text(n) && !dom.value(n).trim().is_empty()))
+                {
                     dom.remove(n);
                 }
             }
@@ -10753,9 +10773,11 @@ pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
                 .iter()
                 .position(|&c| dom.name_is(c, &props.clone()))
                 .is_some_and(|first_props| {
-                    kids[..first_props]
-                        .iter()
-                        .any(|&c| !dom.name_is(c, &props.clone()))
+                    kids[..first_props].iter().any(|&c| {
+                        !dom.name_is(c, &props)
+                            && (comparison
+                                || dom.name(c).is_some_and(|n| n.namespace_name() == W::URI))
+                    })
                 });
             if needs_move {
                 let (front, back): (Vec<NodeId>, Vec<NodeId>) = kids
@@ -10787,7 +10809,17 @@ pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
 /// `w:rPr` landed before the parent `w:sectPr` or nested inside
 /// `w:pPrChange`. Passes through every part root once.
 pub fn enforce_part_schema_order(dom: &mut Dom, root: NodeId) {
-    wml_order_elements_per_standard(dom, root);
+    part_schema_order(dom, root, true);
+}
+
+/// Repair ordering errors without sorting schema choices or deleting valid
+/// comments and whitespace as the comparison's canonicalizer does.
+pub(crate) fn repair_part_schema_order(dom: &mut Dom, root: NodeId) {
+    part_schema_order(dom, root, false);
+}
+
+fn part_schema_order(dom: &mut Dom, root: NodeId, comparison: bool) {
+    order_property_elements(dom, root, comparison);
     let not_base = [W::r_pr(), W::sect_pr(), W::p_pr_change()];
     for chg in dom.descendants(root, Some(&W::p_pr_change())) {
         for ppr in dom.elements(chg, Some(&W::p_pr())) {
@@ -11372,6 +11404,16 @@ pub fn synthesize_table_cell_margins(
 /// encountering; Word regenerates its own on save and never emits
 /// out-of-range ids.
 pub fn fix_strict_validity_artifacts(dom: &mut Dom, root: NodeId) {
+    strict_validity_artifacts(dom, root, true);
+}
+
+/// Only validity repairs, retaining valid Transitional start/end alignment
+/// and DrawingML percentage spellings on an identical compare (#1796).
+pub(crate) fn repair_strict_validity_artifacts(dom: &mut Dom, root: NodeId) {
+    strict_validity_artifacts(dom, root, false);
+}
+
+fn strict_validity_artifacts(dom: &mut Dom, root: NodeId, comparison: bool) {
     const CNF_FLAGS: [&str; 12] = [
         "firstRow",
         "lastRow",
@@ -11477,9 +11519,14 @@ pub fn fix_strict_validity_artifacts(dom: &mut Dom, root: NodeId) {
             dom.set_name(e, W::txbx_content());
         }
     }
-    // Strict jc enumeration values on w:jc / w:lvlJc: "start"/"end" are
-    // Strict-only (Transitional ST_Jc has left/right); Word never writes them
-    // in Transitional packages (strict01 numbering evidence, 7× lvlJc).
+    // ISO 29500 Transitional also admits start/end and percentage spellings.
+    // The historical full comparison canonicalizes them for rendering parity;
+    // an identical exit must not rewrite these valid source values.
+    if !comparison {
+        return;
+    }
+    // Comparison canonicalization of start/end to the left/right spellings
+    // Word uses in its Transitional redlines (strict01 numbering, 7× lvlJc).
     for local in ["jc", "lvlJc"] {
         for e in dom.descendants(root, Some(&W::name(local))) {
             match dom.attribute(e, &W::val()) {
@@ -11492,8 +11539,8 @@ pub fn fix_strict_validity_artifacts(dom: &mut Dom, root: NodeId) {
     // Strict DrawingML percent attributes ("0%" on a:scrgbClr r/g/b, "65%" on
     // a:lumMod, "0%" defRPr baseline etc.): Transitional DrawingML types are
     // per-thousand ints across the board, so any percent-suffixed attribute on
-    // a drawingml-family element is a Strict leftover (strict01's diagram and
-    // chart parts evidence). w:-namespace attrs are NOT touched — Transitional
+    // a drawingml-family element is canonicalized for comparison rendering
+    // (strict01's diagram and chart parts). w:-namespace attrs stay — Transitional
     // WML legitimately uses "50%" (tblW type="pct").
     const DRAWING_NS: [&str; 4] = [
         "http://schemas.openxmlformats.org/drawingml/2006/main",
@@ -11536,7 +11583,7 @@ pub fn fix_strict_validity_artifacts(dom: &mut Dom, root: NodeId) {
 /// attributes (`w:sz`, …) are never touched (LO mis-paginates the
 /// `strict01` pairs).
 pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
-    normalize_measures(dom, root, true);
+    normalize_measures(dom, root, true, false);
 }
 
 /// [`normalize_universal_measures`] without the fractional-plain-value
@@ -11544,10 +11591,23 @@ pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
 /// render diagnostic reports a plain value (gdocs-style `1440.4`) as the
 /// file spells it — a diagnostic does not repair what it describes.
 pub fn normalize_unit_measures(dom: &mut Dom, root: NodeId) {
-    normalize_measures(dom, root, false);
+    normalize_measures(dom, root, false, false);
 }
 
-fn normalize_measures(dom: &mut Dom, root: NodeId, round_plain_fractional: bool) {
+/// Repair fractional integer measures without canonicalizing valid unit-bearing
+/// forms. Both Strict and Transitional twips types admit universal measures;
+/// CT_TblWidth additionally admits plain decimals (ST_MeasurementOrPercent).
+/// Inputs reach this pass after Strict-to-Transitional translation.
+pub(crate) fn repair_invalid_measures(dom: &mut Dom, root: NodeId) {
+    normalize_measures(dom, root, true, true);
+}
+
+fn normalize_measures(
+    dom: &mut Dom,
+    root: NodeId,
+    round_plain_fractional: bool,
+    validity_only: bool,
+) {
     // Cell-margin children (w:tcMar / w:tblCellMar) carry @w:w in twips; the
     // like-named border elements carry @w:sz (eighth-points) and never @w:w,
     // so keying on (element local, attr) stays safe.
@@ -11621,12 +11681,31 @@ fn normalize_measures(dom: &mut Dom, root: NodeId, round_plain_fractional: bool)
         else {
             continue;
         };
+        // CT_TblWidth permits both unit-bearing and decimal spellings.
+        if validity_only
+            && matches!(
+                name.local_name(),
+                "tblW"
+                    | "tcW"
+                    | "tblInd"
+                    | "tblCellSpacing"
+                    | "top"
+                    | "bottom"
+                    | "left"
+                    | "right"
+                    | "start"
+                    | "end"
+            )
+        {
+            continue;
+        }
         for a in attrs {
             let an = W::name(a);
             // and_then keeps this allocation-free for the common untouched
             // case — the i64 releases the dom borrow before the mutation
             if let Some(tw) = dom
                 .attribute(el, &an)
+                .filter(|v| !validity_only || crate::util::universal_measure_twips(v).is_none())
                 .and_then(|v| to_twips(v, round_plain_fractional))
             {
                 dom.set_attribute_value(el, &an, Some(&tw.to_string()));

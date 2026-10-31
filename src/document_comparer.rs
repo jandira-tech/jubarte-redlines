@@ -8341,7 +8341,15 @@ fn compare_documents_impl(
             out.set_part(&part, n.into_bytes());
         }
     }
-    sweep_part_validity(&mut out, &pkg1, &main1, settings, ladder_sources.as_ref());
+    sweep_part_validity(
+        &mut out,
+        &main1,
+        Some(&ComparisonSweep {
+            original: &pkg1,
+            settings,
+            ladder_sources: ladder_sources.as_ref(),
+        }),
+    );
     // Final package-level notes↔settings coherence (after the validity sweep
     // re-serialized those parts). Dangling special-note ids in settings are a
     // package bug, not a document.xml bug.
@@ -8387,35 +8395,41 @@ fn compare_documents_impl(
     out.to_zip()
 }
 
-/// Complete either identical-input exit with the same per-part validity pass
-/// as the full comparison (#1796), retaining its drawing-id repair first.
+/// Identical inputs need repairs, not the chrome of a newly produced redline.
+/// Work on the admitted package directly: serializing drawing repairs and then
+/// reopening them would incorrectly apply input limits to our expanded output.
 fn finalize_identical_compare(
     bytes: &[u8],
     settings: &WmlComparerSettings,
 ) -> Result<Vec<u8>, OpcError> {
-    let fixed = crate::comparer::fixups::fix_up_drawing_ids_in_package_within(
-        bytes,
-        settings.input_limits,
-        settings.preserve_untouched,
-    )?;
-    let original = PartFs::open_within(bytes, settings.input_limits)?;
-    let mut out = PartFs::open_within(&fixed, settings.input_limits)?;
+    let mut out = PartFs::open_within(bytes, settings.input_limits)?;
     let main = out
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
-    sweep_part_validity(&mut out, &original, &main, settings, None);
+    let xml = out
+        .part_string(&main)
+        .ok_or_else(|| OpcError::PartNotFound(format!("main document missing: {main}")))?;
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    if dom.root(doc).is_none() {
+        return Err(OpcError::PartNotFound(format!(
+            "main document has no root element: {main}"
+        )));
+    }
+    sweep_part_validity(&mut out, &main, None);
     out.to_zip()
 }
 
-/// Shared by all successful comparison exits. Source context is read-only;
-/// the full path also supplies its pre-accept sources for ladder alignment.
-fn sweep_part_validity(
-    out: &mut PartFs,
-    original: &PartFs,
-    main: &str,
-    settings: &WmlComparerSettings,
-    ladder_sources: Option<&(String, String)>,
-) {
+/// Context available only when comparison has actually produced a redline.
+struct ComparisonSweep<'a> {
+    original: &'a PartFs,
+    settings: &'a WmlComparerSettings,
+    ladder_sources: Option<&'a (String, String)>,
+}
+
+/// Repairs run at every successful exit. Comparison cleanup is interleaved
+/// only on the full path, in exactly its original order (#1796).
+fn sweep_part_validity(out: &mut PartFs, main: &str, comparison: Option<&ComparisonSweep<'_>>) {
     // Word-validity normalization on every validity-swept content part — NOT
     // document.xml alone. Word opens the package (headers/footers/notes/
     // settings/styles/rels/content-types); a clean body with a corrupt notes
@@ -8468,91 +8482,26 @@ fn sweep_part_validity(
             let mut vd = Dom::new();
             let doc = vd.parse_xdocument(&x);
             if let Some(vr) = vd.root(doc) {
-                // A comments part the sweep leaves as it was keeps its bytes:
-                // Word carries B's comments part byte for byte (m35_comments).
-                let carried = (part == "word/comments.xml").then(|| vd.serialize_element(vr));
-                crate::comparer::finalize::normalize_universal_measures(&mut vd, vr);
-                crate::comparer::finalize::fix_strict_validity_artifacts(&mut vd, vr);
-                // Invalidity we inherit rather than create: a source whose own
-                // styles/numbering Word already rejects would otherwise ship inside
-                // our redline and be blamed on us.
-                crate::comparer::finalize::repair_inherited_invalidity(&mut vd, vr);
-                // Headers and footers deleted wholesale never pass through the body
-                // finalize pipeline, so this is where their w:del/w:hyperlink
-                // inversion gets fixed.
-                crate::comparer::finalize::hoist_hyperlinks_out_of_revisions(&mut vd, vr);
-                crate::comparer::finalize::enforce_deleted_text_kinds(&mut vd, vr);
-                crate::comparer::finalize::remove_powertools_scratch_markup(&mut vd, vr);
-                // Produce strips an empty pPr shell, then later package steps
-                // (style cascade, spacing restore) can take the live children
-                // back off and leave the shell. Word's redline of the short
-                // title mixes has neither the shell nor the children.
-                if part == main {
-                    crate::comparer::finalize::strip_propertyless_ppr(&mut vd, vr);
-                    // Word-visual chrome. Faithful mode runs none of these;
-                    // the body path already gates them the same way, and an
-                    // edit keeps the source's markup and the plan's links.
-                    if settings.merge_replaced_paragraphs && !settings.preserve_untouched {
-                        // Package steps can put a default nextPage back into the
-                        // recorded sectPr, or leave line=276 on a deleted mark.
-                        let original_line = original
-                            .part_string("word/styles.xml")
-                            .map(|x| default_paragraph_line(&x));
-                        crate::comparer::finalize::strip_unrecorded_word_defaults(
-                            &mut vd,
-                            vr,
-                            original_line.as_deref(),
-                        );
-                        let id_to_target: std::collections::HashMap<String, String> = out
-                            .read_rels_for(main)
-                            .map(|rels| {
-                                rels.items
-                                    .iter()
-                                    .filter(|r| r.rel_type.ends_with("/hyperlink"))
-                                    .map(|r| (r.id.clone(), r.target.clone()))
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let base_targets: std::collections::HashSet<String> = original
-                            .read_rels_for(main)
-                            .map(|rels| {
-                                rels.items
-                                    .iter()
-                                    .filter(|r| r.rel_type.ends_with("/hyperlink"))
-                                    .map(|r| r.target.clone())
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        crate::comparer::finalize::rewrite_inserted_external_hyperlinks(
-                            &mut vd,
-                            vr,
-                            &id_to_target,
-                            &base_targets,
-                        );
-                        crate::comparer::finalize::align_word_table_and_comment_chrome(&mut vd, vr);
-                    }
-                    if let Some((original_xml, revised_xml)) = ladder_sources {
-                        crate::comparer::finalize::align_remaining_ladder_rungs(
-                            &mut vd,
-                            vr,
-                            &crate::comparer::finalize::LadderSources {
-                                original_xml,
-                                revised_xml,
-                                settings,
-                            },
-                        );
-                    }
+                // Preserve every untouched part byte-for-byte on an identical
+                // exit; the full path historically does this for comments only.
+                let carried = (comparison.is_none() || part == "word/comments.xml")
+                    .then(|| vd.serialize_element(vr));
+                if comparison.is_none() && part == main {
+                    // Unique DrawingML ids are valid; VML duplicates are too.
+                    // Only missing/invalid or duplicate docPr ids need repair.
+                    crate::comparer::fixups::rename_repeated_doc_pr_ids(&mut vd, vr);
                 }
-                // A cell's final mark carries no revision its row does not
-                // (#1669, #1684), in every story: the body (its text boxes
-                // too), the notes, the headers and footers. After every pass
-                // that writes marks.
-                if sweeps_final_marks(&part, main) {
-                    crate::comparer::final_marks::settle_cell_final_marks(&mut vd, vr);
+                repair_part_validity(&mut vd, vr, comparison.is_some());
+                if let Some(context) = comparison {
+                    sweep_comparison_chrome(out, &part, main, &mut vd, vr, context);
                 }
                 // Last: every pass above may append properties out of order.
-                crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
-                crate::comparer::finalize::declare_extension_namespaces_ignorable(&mut vd, vr);
+                if comparison.is_some() {
+                    crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
+                    crate::comparer::finalize::declare_extension_namespaces_ignorable(&mut vd, vr);
+                } else {
+                    crate::comparer::finalize::repair_part_schema_order(&mut vd, vr);
+                }
                 crate::comparer::finalize::bind_compatibility_prefixes(&mut vd, vr);
                 let swept = vd.serialize_element(vr);
                 if carried.as_deref() == Some(swept.as_str()) {
@@ -8561,6 +8510,10 @@ fn sweep_part_validity(
                 out.set_part(&part, swept.into_bytes());
             }
         }
+    }
+    // Settling final marks is comparison chrome, including renamed stories.
+    if comparison.is_none() {
+        return;
     }
     // A story part under a name of its own (a header at `word/chrome.xml`)
     // is not swept above, but its cells' final marks settle too (codex on
@@ -8613,6 +8566,106 @@ fn sweep_part_validity(
             crate::comparer::finalize::bind_compatibility_prefixes(&mut vd, vr);
             out.set_part(&part, vd.serialize_element(vr).into_bytes());
         }
+    }
+}
+
+/// Schema/structural validity repairs shared by the two sweep modes.
+fn repair_part_validity(dom: &mut Dom, root: NodeId, comparison: bool) {
+    if comparison {
+        crate::comparer::finalize::normalize_universal_measures(dom, root);
+        crate::comparer::finalize::fix_strict_validity_artifacts(dom, root);
+    } else {
+        crate::comparer::finalize::repair_invalid_measures(dom, root);
+        crate::comparer::finalize::repair_strict_validity_artifacts(dom, root);
+    }
+    crate::comparer::finalize::repair_inherited_invalidity(dom, root);
+    // CT_RunTrackChange excludes hyperlink and fldSimple wrappers. Hoist
+    // only those illegal immediate children, preserving revision ownership.
+    crate::comparer::finalize::hoist_hyperlinks_out_of_revisions(dom, root);
+    crate::comparer::finalize::enforce_deleted_text_kinds(dom, root);
+}
+
+/// Formatting/default removal belongs to a comparison, never an identical exit.
+fn sweep_comparison_chrome(
+    out: &PartFs,
+    part: &str,
+    main: &str,
+    vd: &mut Dom,
+    root: NodeId,
+    context: &ComparisonSweep<'_>,
+) {
+    let ComparisonSweep {
+        original,
+        settings,
+        ladder_sources,
+    } = context;
+    crate::comparer::finalize::remove_powertools_scratch_markup(vd, root);
+    // Produce strips an empty pPr shell, then later package steps
+    // (style cascade, spacing restore) can take the live children
+    // back off and leave the shell. Word's redline of the short
+    // title mixes has neither the shell nor the children.
+    if part == main {
+        crate::comparer::finalize::strip_propertyless_ppr(vd, root);
+        // Word-visual chrome. Faithful mode runs none of these;
+        // the body path already gates them the same way, and an
+        // edit keeps the source's markup and the plan's links.
+        if settings.merge_replaced_paragraphs && !settings.preserve_untouched {
+            // Package steps can put a default nextPage back into the
+            // recorded sectPr, or leave line=276 on a deleted mark.
+            let original_line = original
+                .part_string("word/styles.xml")
+                .map(|x| default_paragraph_line(&x));
+            crate::comparer::finalize::strip_unrecorded_word_defaults(
+                vd,
+                root,
+                original_line.as_deref(),
+            );
+            let id_to_target: std::collections::HashMap<String, String> = out
+                .read_rels_for(main)
+                .map(|rels| {
+                    rels.items
+                        .iter()
+                        .filter(|r| r.rel_type.ends_with("/hyperlink"))
+                        .map(|r| (r.id.clone(), r.target.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let base_targets: std::collections::HashSet<String> = original
+                .read_rels_for(main)
+                .map(|rels| {
+                    rels.items
+                        .iter()
+                        .filter(|r| r.rel_type.ends_with("/hyperlink"))
+                        .map(|r| r.target.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            crate::comparer::finalize::rewrite_inserted_external_hyperlinks(
+                vd,
+                root,
+                &id_to_target,
+                &base_targets,
+            );
+            crate::comparer::finalize::align_word_table_and_comment_chrome(vd, root);
+        }
+        if let Some((original_xml, revised_xml)) = ladder_sources {
+            crate::comparer::finalize::align_remaining_ladder_rungs(
+                vd,
+                root,
+                &crate::comparer::finalize::LadderSources {
+                    original_xml,
+                    revised_xml,
+                    settings,
+                },
+            );
+        }
+    }
+    // A cell's final mark carries no revision its row does not
+    // (#1669, #1684), in every story: the body (its text boxes
+    // too), the notes, the headers and footers. After every pass
+    // that writes marks.
+    if sweeps_final_marks(part, main) {
+        crate::comparer::final_marks::settle_cell_final_marks(vd, root);
     }
 }
 
