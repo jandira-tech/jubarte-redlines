@@ -148,6 +148,85 @@ class LaneValidity(unittest.TestCase):
         self.assertNotIn("OWN k1", r.stdout)
         self.assertIn("OWN k2", r.stdout)
 
+    def test_an_unreadable_output_is_own_beside_unreadable_references(self) -> None:
+        # the redline's own OPEN_FAILED is never a reference's fault
+        self.pair("k1", redline="FAIL\n", word="FAIL\n")
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("OWN k1", r.stdout)
+        self.assertIn("OPEN_FAILED", r.stdout)
+        self.assertNotIn("WORD", r.stdout)
+
+    def test_a_missing_redline_is_own_beside_an_unreadable_word(self) -> None:
+        self.pair("k1", redline=None, word="FAIL\n")
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("OWN k1", r.stdout)
+        self.assertIn("ABSENT", r.stdout)
+        self.assertIn("UNREADABLE SOURCE k1", r.stdout)
+        self.assertNotIn("WORD", r.stdout)
+
+    def test_a_validator_crash_on_everything_still_owns_the_redline(self) -> None:
+        # EXIT of the jubarte output is OWN even when every reference failed too
+        self.validator.write_text("#!/bin/sh\nexit 2\n")
+        self.pair("k1", word="FAIL\n")
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("OWN k1", r.stdout)
+        self.assertIn("EXIT", r.stdout)
+        self.assertNotIn("WORD", r.stdout)
+
+    def test_quoted_ins_and_del_values_are_no_revision_elements(self) -> None:
+        # 'ins'/'del' as an attribute value or attribute name is no element
+        msg = ("The attribute 'val' has invalid value '{0}'. "
+               "The string '{0}' is not a valid 'Boolean' value.")
+        self.pair("k1",
+                  redline="Sch_Attr@/word/document.xml|" + msg.format("del")
+                  + "|/w:document/w:body/w:p/w:r/w:b\n",
+                  word="Sch_Attr@/word/document.xml|" + msg.format("ins")
+                  + "|/w:document/w:body/w:p/w:r/w:b\n")
+        self.pair("k2",
+                  redline="Sch_Undeclared@/word/document.xml|The attribute 'del' is not declared"
+                  "|/w:document/w:body\n",
+                  word="Sch_Undeclared@/word/document.xml|The attribute 'ins' is not declared"
+                  "|/w:document/w:body\n")
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("OWN k1", r.stdout)
+        self.assertIn("OWN k2", r.stdout)
+        self.assertNotIn("WORD", r.stdout)
+
+    def test_a_bare_ins_del_element_name_still_folds(self) -> None:
+        # an element named ins/del — "element 'ins'", an xpath step — is a revision
+        self.pair("k1",
+                  redline="Sch_Bad@/word/document.xml|The element 'ins' has unexpected content"
+                  "|/w:document/w:body/ins\n",
+                  word="Sch_Bad@/word/document.xml|The element 'del' has unexpected content"
+                  "|/w:document/w:body/del\n")
+        r = self.check()
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("WORD k1", r.stdout)
+        self.assertNotIn("OWN k1", r.stdout)
+
+    def test_a_clean_redline_still_reports_an_unreadable_source(self) -> None:
+        # a clean output does not skip validating the references
+        self.pair("k1", redline="", word="FAIL\n")
+        self.pair("k2", base="FAIL\n", redline="")
+        r = self.check()
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("2 with an unreadable source", r.stdout)
+        self.assertIn("UNREADABLE SOURCE k1 corpus/k1-word.docx", r.stdout)
+        self.assertIn("UNREADABLE SOURCE k2 corpus/k2-base.docx", r.stdout)
+
+    def test_a_word_signature_prints_the_count_on_both_sides(self) -> None:
+        # the exemption is per kind; extra occurrences stay visible
+        self.pair("k1", redline="Sch_Bad@/word/document.xml\n" * 5,
+                  word="Sch_Bad@/word/document.xml\n")
+        r = self.check()
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("WORD k1", r.stdout)
+        self.assertIn("ours 5 / word 1", r.stdout)
+
     def test_a_named_word_redline_missing_is_refused(self) -> None:
         self.pair("k1", word="")
         (self.root / "corpus/k1-word.docx").unlink()

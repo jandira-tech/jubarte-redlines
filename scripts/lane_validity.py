@@ -12,19 +12,27 @@ as scripts/redline-sweep.sh writes them), both of its sources (the
 sample's base and next, relative to the bench root) and the sample's own
 Word redline (its docx column) with tools/validate-docx, the
 OpenXmlValidator CLI. An error signature is (error id, part family,
-description with w:ins/w:del folded to w:rev, element at the xpath's end);
-the part family strips a leading `redline[AB]_` and the digits before the
-extension, so a renamed part still meets its source (jubarte writes
-redlineB_header3.xml where a source had header3.xml).
+description with revision element names folded — w:ins/w:del become
+w:rev, and a bare ins/del that names an element in a "The element 'ins'"
+phrase, a `<ins>` tag or an xpath step becomes rev; a quoted 'ins'/'del'
+attribute name or value is no element and stays itself — element at the
+xpath's end); the part family strips a leading `redline[AB]_` and the
+digits before the extension, so a renamed part still meets its source
+(jubarte writes redlineB_header3.xml where a source had header3.xml).
 
 The redline's signatures minus those either source already has are its
 candidates. A candidate the sample's Word redline shares is WORD: Word's
-own writing produced the same shape. What remains is OWN: jubarte wrote
-it. The tool prints the redlines with a WORD or OWN signature and a table
-of the OWN ones; a redline whose source or Word redline the validator
-cannot open is listed as UNREADABLE SOURCE and is never counted clean or
-OWN (checklist before#24, #1757, #1798; it replaces the 0.11.2 tool that
-lived outside any repository).
+own writing produced the same shape. The exemption is per kind, not per
+occurrence — the counts print beside it (`ours N / word M`) so extra
+occurrences stay visible. What remains is OWN: jubarte wrote it. A
+redline the validator cannot produce or open (ABSENT, OPEN_FAILED, EXIT)
+is always OWN and never WORD, whatever the references say. The tool
+prints the redlines with a WORD or OWN signature and a table of the OWN
+ones; a source or Word redline the validator cannot open is listed as
+UNREADABLE SOURCE — the references are validated even when the redline
+is clean, so the unreadable count is true — and is never counted clean
+or OWN beyond a broken output (checklist before#24, #1757, #1798; it
+replaces the 0.11.2 tool that lived outside any repository).
 
 Exit 0 when no redline has an OWN signature; 1 when one has, or a redline
 is missing (a sweep pointed at the wrong folder validates nothing); 2 when
@@ -52,8 +60,11 @@ Signature = tuple[str, str, str, str]  # error id, part family, description, xpa
 # a word/ header or footer a compare wrote can be renamed redline[AB]_N, and
 # part numbers differ between a source and its redline: the family drops both
 FAMILY = re.compile(r"(?:^|(?<=/))redline[AB]_|\d+(?=[.])")
-# w:ins and w:del are the same revision shape to the validator message and path
-FOLD = re.compile(r"(?<=[w:}'/> ])(?:ins|del)\b")
+# ins/del are the same revision shape only as element names: prefixed
+# (w:ins), in a tag (<ins>), an xpath step (/ins) or an "element 'ins'"
+# phrase. A quoted 'ins'/'del' attribute name or value stays itself.
+FOLD_NAME = re.compile(r"\b([A-Za-z][\w.-]*):(?:ins|del)\b")
+FOLD_BARE = re.compile(r"(?:(?<=<)|(?<=</)|(?<=/)|(?<=element '))(?:ins|del)\b")
 # pseudo-signatures kinds() gives a file it could not validate
 PSEUDO = {"ABSENT", "OPEN_FAILED", "EXIT"}
 
@@ -62,8 +73,15 @@ def signature(err: str, msg: str, part: str, xpath: str) -> Signature:
     """The comparison key one validator line stands for (#1798)."""
     family = FAMILY.sub("", part)
     tail = xpath.rsplit("/", 1)[-1] if xpath else ""
-    tail = FOLD.sub("rev", re.sub(r"\[\d+\]", "", tail))
-    return err, family, FOLD.sub("rev", msg), tail
+    tail = fold(re.sub(r"\[\d+\]", "", tail))
+    # a bare ins/del tail is itself the element name, not a value
+    tail = "rev" if tail in ("ins", "del") else tail
+    return err, family, fold(msg), tail
+
+
+def fold(text: str) -> str:
+    """Fold revision element names to rev, leave other tokens alone."""
+    return FOLD_BARE.sub("rev", FOLD_NAME.sub(r"\1:rev", text))
 
 
 def kinds(validator: Path, path: Path) -> Kinds:
@@ -112,10 +130,8 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
-    def one(r: dict) -> tuple[str, Kinds, Kinds, Kinds, list[str]]:
+    def one(r: dict) -> tuple[str, Kinds, Kinds, dict[Signature, tuple[int, int]], list[str]]:
         mine = kinds(args.validator, args.redlines / f"{r['key']}.docx")
-        if not mine:
-            return r["key"], mine, mine, mine, []
         inputs: dict[str, Kinds] = {c: kinds(args.validator, args.root / r[c]) for c in ("base", "next")}
         if r.get("docx"):
             inputs["docx"] = kinds(args.validator, args.root / r["docx"])
@@ -123,12 +139,18 @@ def main() -> int:
         dead = [r[c] for c, k in inputs.items() if unreadable(k)]
         if r.get("docx") and unreadable(word):
             dead.append(r["docx"])
+        if not mine:
+            return r["key"], mine, mine, {}, dead
+        # a redline-side pseudo signature (ABSENT, OPEN_FAILED, EXIT) is
+        # always its own failure — never WORD, never excused by a dead input
+        broke = Kinds({s: n for s, n in mine.items() if s[0] in PSEUDO})
         sources = set().union(*inputs.values()) if inputs else set()
-        # a redline-side pseudo signature (ABSENT, OPEN_FAILED, EXIT) is always flagged
-        left = Kinds({s: n for s, n in mine.items() if s[0] in PSEUDO or s not in sources})
-        shared = Kinds({s: n for s, n in left.items() if s in word})
+        left = Kinds({s: n for s, n in mine.items() if s[0] not in PSEUDO and s not in sources})
+        # the WORD exemption is per kind; keep both counts so extra
+        # occurrences stay visible
+        shared = {s: (n, word[s]) for s, n in left.items() if s in word}
         # an unreadable input proves nothing: list the redline, report no OWN
-        own = Kinds() if dead else Kinds({s: n for s, n in left.items() if s not in shared})
+        own = broke + (Kinds() if dead else Kinds({s: n for s, n in left.items() if s not in shared}))
         return r["key"], mine, own, shared, dead
 
     with ThreadPoolExecutor(max(1, args.jobs)) as pool:
@@ -146,7 +168,7 @@ def main() -> int:
         print(f"  {n:4} redlines  {err}  {family}  {tail}  {msg[:80]}")
     for key, _, new, shared, dead in done:
         if shared:
-            print("WORD", key, dict(shared))
+            print("WORD", key, {s: f"ours {o} / word {w}" for s, (o, w) in shared.items()})
         if new:
             print("OWN", key, dict(new))
         for name in dead:
