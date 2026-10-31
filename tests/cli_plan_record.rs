@@ -2909,3 +2909,283 @@ fn audit_d13_plan_precommit_error_preserves_io_kind() {
     assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
     assert!(!dir.path().join("missing").exists());
 }
+
+/// #1888: typed one-shots replace FILE through the same atomic write as `-o`.
+#[test]
+fn typed_in_place_replace_rewrites_the_input_and_names_the_replaced_hash() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    let file = letter(dir, "letter.docx", "fee");
+    let before = std::fs::read(&file).unwrap();
+    let prefix = &source_sha256(&before)[..8];
+    let (code, out, err) = run(
+        dir,
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "cost",
+            "--in-place",
+        ],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let author = typed_default_author();
+    let wrote = slash_path(&file.canonicalize().unwrap());
+    let summary = format!(
+        "edit replace: changed; wrote {wrote} in place (replaced sha256 {prefix}\u{2026}); 1 change by \"{author}\": no -a given\n"
+    );
+    assert!(out.starts_with(&summary), "{out}");
+    assert!(
+        err.contains(&format!(
+            r#"warning: no -a given; the new markup is signed "{author}""#
+        )),
+        "{err}"
+    );
+    assert_ne!(std::fs::read(&file).unwrap(), before);
+    assert!(!dir.join("letter_modified.docx").exists());
+    assert!(!out.contains("(docx,"), "{out}");
+
+    let (code, out, err) = run(
+        dir,
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "cost",
+            "--text",
+            "price",
+            "--in-place",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let path = value["artifacts"][0]["path"].as_str().unwrap();
+    assert!(path.ends_with("letter.docx"), "{path}");
+    assert!(!path.contains("in place"), "{out}");
+}
+
+/// #1888: a spelled `-a` drops the default-author warning from the receipt.
+#[test]
+fn typed_in_place_with_author_omits_the_warning() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    let file = letter(dir, "letter.docx", "fee");
+    let before = std::fs::read(&file).unwrap();
+    let prefix = &source_sha256(&before)[..8];
+    let (code, out, err) = run(
+        dir,
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "cost",
+            "-a",
+            "GiantCo",
+            "--in-place",
+        ],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let wrote = slash_path(&file.canonicalize().unwrap());
+    let summary = format!(
+        "edit replace: changed; wrote {wrote} in place (replaced sha256 {prefix}\u{2026}); 1 change by \"GiantCo\"\n"
+    );
+    assert!(out.starts_with(&summary), "{out}");
+    assert!(!out.contains("no -a given"), "{out}");
+    assert!(!err.contains("no -a given"), "{err}");
+}
+
+/// #1888: a refused typed edit leaves FILE byte-identical.
+#[test]
+fn typed_in_place_refusal_leaves_the_input_byte_identical() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    let file = letter(dir, "letter.docx", "fee");
+    let before = std::fs::read(&file).unwrap();
+    let (code, out, err) = run(
+        dir,
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "not-there",
+            "--text",
+            "x",
+            "--in-place",
+        ],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(err.contains("ANCHOR_NOT_FOUND"), "{err}");
+    assert_eq!(std::fs::read(&file).unwrap(), before);
+    let names: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["letter.docx"]);
+}
+
+/// #1888: `--in-place` conflicts with `-o`, `--out-dir`, `--dry-run` and `--save-plan`.
+#[test]
+fn typed_in_place_conflicts_with_output_and_out_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    let file = letter(dir, "letter.docx", "fee");
+    let before = std::fs::read(&file).unwrap();
+    let cases: &[&[&str]] = &[
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "x",
+            "--in-place",
+            "-o",
+            "out.docx",
+        ],
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "x",
+            "--in-place",
+            "--out-dir",
+            "bundle",
+        ],
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "x",
+            "--in-place",
+            "--dry-run",
+        ],
+        &[
+            "edit",
+            "rewrite",
+            "letter.docx",
+            "--at",
+            "p2",
+            "--text",
+            "x",
+            "--in-place",
+            "--save-plan",
+            "plan.json",
+        ],
+    ];
+    for args in cases {
+        let (code, _, err) = run(dir, args);
+        assert_eq!(code, 2, "{args:?}\n{err}");
+        assert!(
+            err.contains("cannot be used with") && err.contains("--in-place"),
+            "{args:?}\n{err}"
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+    }
+    assert!(!dir.join("out.docx").exists());
+    assert!(!dir.join("plan.json").exists());
+}
+
+/// #1888: delete and apply use the same in-place receipt. Apply's author is the plan's.
+#[test]
+fn typed_in_place_delete_and_apply() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    let file = letter(dir, "letter.docx", "fee");
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "rewrite",
+            "letter.docx",
+            "--at",
+            "p2",
+            "--text",
+            "cost",
+            "--save-plan",
+            "v2.json",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let before = std::fs::read(&file).unwrap();
+    let (code, out, err) = run(
+        dir,
+        &[
+            "edit",
+            "delete",
+            "letter.docx",
+            "--at",
+            "p2",
+            "--whole-block",
+            "--in-place",
+        ],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let prefix = &source_sha256(&before)[..8];
+    let wrote = slash_path(&file.canonicalize().unwrap());
+    assert!(
+        out.starts_with(&format!(
+            "edit delete: changed; wrote {wrote} in place (replaced sha256 {prefix}\u{2026});"
+        )),
+        "{out}"
+    );
+    assert_ne!(std::fs::read(&file).unwrap(), before);
+
+    std::fs::write(&file, &before).unwrap();
+    let before_apply = std::fs::read(&file).unwrap();
+    let apply_prefix = &source_sha256(&before_apply)[..8];
+    let (code, out, err) = run(
+        dir,
+        &[
+            "edit",
+            "apply",
+            "letter.docx",
+            "--plan",
+            "v2.json",
+            "--in-place",
+        ],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let wrote = slash_path(&file.canonicalize().unwrap());
+    let author = typed_default_author();
+    let summary = format!(
+        "edit apply: changed; wrote {wrote} in place (replaced sha256 {apply_prefix}\u{2026}); 1 change by \"{author}\"\n"
+    );
+    assert!(out.starts_with(&summary), "{out}");
+    assert!(!out.contains(": no -a given"), "{out}");
+    assert!(!err.contains("no -a given"), "{err}");
+    assert_ne!(std::fs::read(&file).unwrap(), before_apply);
+}
+
+/// #1888: every typed edit help page advertises `--in-place` beside `-o`.
+#[test]
+fn typed_in_place_help_names_the_flag_before_output() {
+    let dir = tempfile::tempdir().unwrap();
+    for action in ["replace", "rewrite", "insert", "delete", "apply"] {
+        let (code, out, err) = run(dir.path(), &["edit", action, "--help"]);
+        assert_eq!(code, 0, "{action}: {out}{err}");
+        assert!(out.contains("--in-place"), "{action}: {out}");
+        assert!(out.contains("Not with -o"), "{action}: {out}");
+        let in_place = out.find("--in-place").unwrap();
+        let output = out.find("--output").expect("output flag");
+        assert!(
+            in_place < output,
+            "{action}: --in-place should precede -o\n{out}"
+        );
+    }
+}

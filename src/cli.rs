@@ -4243,6 +4243,9 @@ fn parse_subcommand_json(
         value["args"]["plan"] = slashed(plan.as_ref());
         value["args"]["output"] = slashed(output.as_ref());
         value["args"]["out_dir"] = slashed(out_dir.as_ref());
+        // `author_given` is skipped by serde. The Python executor needs it
+        // for the same `#1891` "no -a given" detail the binary prints.
+        value["args"]["author_given"] = serde_json::Value::Bool(options.author_given);
     }
     let written = match &task {
         Command::Accept {

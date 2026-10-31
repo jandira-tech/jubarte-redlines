@@ -83,14 +83,15 @@ Replace exact literal text; without --at, search one declared story
 | `--existing-revisions` |  | <EXISTING_REVISIONS> | keep | keep, accept, reject, refuse |  | Policy for history remaining after explicit selected decisions |
 | `--accept-change` |  | <ACCEPT_CHANGE> |  |  | append | Original-source revision ID to accept; repeat to select a set |
 | `--reject-change` |  | <REJECT_CHANGE> |  |  | append | Original-source revision ID to reject; repeat to select a set |
-| `--save-plan` |  | <FILE> |  |  | conflicts --dry-run --emit --expect --out-dir --output --report | Save a source-bound PlanV2 without applying. Freezes targets, policy and time |
-| `-o, --output` |  | <FILE> |  |  | conflicts --dry-run --out-dir --save-plan | Primary edited DOCX; required unless saving, bundling or dry-running |
-| `--out-dir` |  | <NEW_DIR> |  |  | conflicts --dry-run --output --save-plan | Publish a new bundle directory (document.docx, changes.diff, report.json) |
+| `--save-plan` |  | <FILE> |  |  | conflicts --dry-run --emit --expect --in-place --out-dir --output --report | Save a source-bound PlanV2 without applying. Freezes targets, policy and time |
+| `--in-place` |  |  | false |  | conflicts --dry-run --out-dir --output --save-plan | Replace FILE through the same atomic write as -o. A refused edit leaves FILE unchanged. Not with -o or --out-dir |
+| `-o, --output` |  | <FILE> |  |  | conflicts --dry-run --in-place --out-dir --save-plan | Primary edited DOCX; required unless saving, bundling, replacing FILE or dry-running |
+| `--out-dir` |  | <NEW_DIR> |  |  | conflicts --dry-run --in-place --output --save-plan | Publish a new bundle directory (document.docx, changes.diff, report.json) |
 | `--report` |  | <FILE> |  |  | conflicts --save-plan | JSON receipt, irrespective of filename suffix |
 | `--emit` |  | <EMIT> |  | document, patch, report | append; conflicts --save-plan | Bundle roles: document,patch,report (primary document always included) |
 | `--expect` |  | <FILE> |  |  | conflicts --save-plan | Optional expectation contract, evaluated on the prepared primary before publication (PlanV2 requests only; use `jubarte check` for a standalone pass over a published output) |
 | `--expect-sha256` |  | <HASH> |  |  |  | Redundant source digest must agree with a plan's embedded digest |
-| `--dry-run` |  |  | false |  | conflicts --out-dir --output --save-plan | Prepare and validate the actual candidate; write no files |
+| `--dry-run` |  |  | false |  | conflicts --in-place --out-dir --output --save-plan | Prepare and validate the actual candidate; write no files |
 | `--require-change` |  |  | false |  |  | Require a primary document change, independently of derived artifacts |
 | `--force` |  |  | false |  |  | Replace an explicitly named existing output; never overwrite an input |
 | `--keep-others` |  |  | false |  |  | Refuse to accept or reject another author's tracked change, and to delete, resolve, reopen or reword their comment. Restore, strike, a comment and a reply stay allowed. JUBARTE_KEEP_OTHERS=1 sets the same guard. Another author is anyone other than --author (Jubarte when --author is left out) |
@@ -120,14 +121,15 @@ Set exact desired paragraph text; an empty value retains the paragraph
 | `--existing-revisions` |  | <EXISTING_REVISIONS> | keep | keep, accept, reject, refuse |  | Policy for history remaining after explicit selected decisions |
 | `--accept-change` |  | <ACCEPT_CHANGE> |  |  | append | Original-source revision ID to accept; repeat to select a set |
 | `--reject-change` |  | <REJECT_CHANGE> |  |  | append | Original-source revision ID to reject; repeat to select a set |
-| `--save-plan` |  | <FILE> |  |  | conflicts --dry-run --emit --expect --out-dir --output --report | Save a source-bound PlanV2 without applying. Freezes targets, policy and time |
-| `-o, --output` |  | <FILE> |  |  | conflicts --dry-run --out-dir --save-plan | Primary edited DOCX; required unless saving, bundling or dry-running |
-| `--out-dir` |  | <NEW_DIR> |  |  | conflicts --dry-run --output --save-plan | Publish a new bundle directory (document.docx, changes.diff, report.json) |
+| `--save-plan` |  | <FILE> |  |  | conflicts --dry-run --emit --expect --in-place --out-dir --output --report | Save a source-bound PlanV2 without applying. Freezes targets, policy and time |
+| `--in-place` |  |  | false |  | conflicts --dry-run --out-dir --output --save-plan | Replace FILE through the same atomic write as -o. A refused edit leaves FILE unchanged. Not with -o or --out-dir |
+| `-o, --output` |  | <FILE> |  |  | conflicts --dry-run --in-place --out-dir --save-plan | Primary edited DOCX; required unless saving, bundling, replacing FILE or dry-running |
+| `--out-dir` |  | <NEW_DIR> |  |  | conflicts --dry-run --in-place --output --save-plan | Publish a new bundle directory (document.docx, changes.diff, report.json) |
 | `--report` |  | <FILE> |  |  | conflicts --save-plan | JSON receipt, irrespective of filename suffix |
 | `--emit` |  | <EMIT> |  | document, patch, report | append; conflicts --save-plan | Bundle roles: document,patch,report (primary document always included) |
 | `--expect` |  | <FILE> |  |  | conflicts --save-plan | Optional expectation contract, evaluated on the prepared primary before publication (PlanV2 requests only; use `jubarte check` for a standalone pass over a published output) |
 | `--expect-sha256` |  | <HASH> |  |  |  | Redundant source digest must agree with a plan's embedded digest |
-| `--dry-run` |  |  | false |  | conflicts --out-dir --output --save-plan | Prepare and validate the actual candidate; write no files |
+| `--dry-run` |  |  | false |  | conflicts --in-place --out-dir --output --save-plan | Prepare and validate the actual candidate; write no files |
 | `--require-change` |  |  | false |  |  | Require a primary document change, independently of derived artifacts |
 | `--force` |  |  | false |  |  | Replace an explicitly named existing output; never overwrite an input |
 | `--keep-others` |  |  | false |  |  | Refuse to accept or reject another author's tracked change, and to delete, resolve, reopen or reword their comment. Restore, strike, a comment and a reply stay allowed. JUBARTE_KEEP_OTHERS=1 sets the same guard. Another author is anyone other than --author (Jubarte when --author is left out) |
@@ -152,14 +154,15 @@ Insert an explicitly typed text or paragraph payload
 | `--existing-revisions` |  | <EXISTING_REVISIONS> | keep | keep, accept, reject, refuse |  | Policy for history remaining after explicit selected decisions |
 | `--accept-change` |  | <ACCEPT_CHANGE> |  |  | append | Original-source revision ID to accept; repeat to select a set |
 | `--reject-change` |  | <REJECT_CHANGE> |  |  | append | Original-source revision ID to reject; repeat to select a set |
-| `--save-plan` |  | <FILE> |  |  | conflicts --dry-run --emit --expect --out-dir --output --report | Save a source-bound PlanV2 without applying. Freezes targets, policy and time |
-| `-o, --output` |  | <FILE> |  |  | conflicts --dry-run --out-dir --save-plan | Primary edited DOCX; required unless saving, bundling or dry-running |
-| `--out-dir` |  | <NEW_DIR> |  |  | conflicts --dry-run --output --save-plan | Publish a new bundle directory (document.docx, changes.diff, report.json) |
+| `--save-plan` |  | <FILE> |  |  | conflicts --dry-run --emit --expect --in-place --out-dir --output --report | Save a source-bound PlanV2 without applying. Freezes targets, policy and time |
+| `--in-place` |  |  | false |  | conflicts --dry-run --out-dir --output --save-plan | Replace FILE through the same atomic write as -o. A refused edit leaves FILE unchanged. Not with -o or --out-dir |
+| `-o, --output` |  | <FILE> |  |  | conflicts --dry-run --in-place --out-dir --save-plan | Primary edited DOCX; required unless saving, bundling, replacing FILE or dry-running |
+| `--out-dir` |  | <NEW_DIR> |  |  | conflicts --dry-run --in-place --output --save-plan | Publish a new bundle directory (document.docx, changes.diff, report.json) |
 | `--report` |  | <FILE> |  |  | conflicts --save-plan | JSON receipt, irrespective of filename suffix |
 | `--emit` |  | <EMIT> |  | document, patch, report | append; conflicts --save-plan | Bundle roles: document,patch,report (primary document always included) |
 | `--expect` |  | <FILE> |  |  | conflicts --save-plan | Optional expectation contract, evaluated on the prepared primary before publication (PlanV2 requests only; use `jubarte check` for a standalone pass over a published output) |
 | `--expect-sha256` |  | <HASH> |  |  |  | Redundant source digest must agree with a plan's embedded digest |
-| `--dry-run` |  |  | false |  | conflicts --out-dir --output --save-plan | Prepare and validate the actual candidate; write no files |
+| `--dry-run` |  |  | false |  | conflicts --in-place --out-dir --output --save-plan | Prepare and validate the actual candidate; write no files |
 | `--require-change` |  |  | false |  |  | Require a primary document change, independently of derived artifacts |
 | `--force` |  |  | false |  |  | Replace an explicitly named existing output; never overwrite an input |
 | `--keep-others` |  |  | false |  |  | Refuse to accept or reject another author's tracked change, and to delete, resolve, reopen or reword their comment. Restore, strike, a comment and a reply stay allowed. JUBARTE_KEEP_OTHERS=1 sets the same guard. Another author is anyone other than --author (Jubarte when --author is left out) |
@@ -190,14 +193,15 @@ Delete one exact range, or explicitly delete a whole paragraph
 | `--existing-revisions` |  | <EXISTING_REVISIONS> | keep | keep, accept, reject, refuse |  | Policy for history remaining after explicit selected decisions |
 | `--accept-change` |  | <ACCEPT_CHANGE> |  |  | append | Original-source revision ID to accept; repeat to select a set |
 | `--reject-change` |  | <REJECT_CHANGE> |  |  | append | Original-source revision ID to reject; repeat to select a set |
-| `--save-plan` |  | <FILE> |  |  | conflicts --dry-run --emit --expect --out-dir --output --report | Save a source-bound PlanV2 without applying. Freezes targets, policy and time |
-| `-o, --output` |  | <FILE> |  |  | conflicts --dry-run --out-dir --save-plan | Primary edited DOCX; required unless saving, bundling or dry-running |
-| `--out-dir` |  | <NEW_DIR> |  |  | conflicts --dry-run --output --save-plan | Publish a new bundle directory (document.docx, changes.diff, report.json) |
+| `--save-plan` |  | <FILE> |  |  | conflicts --dry-run --emit --expect --in-place --out-dir --output --report | Save a source-bound PlanV2 without applying. Freezes targets, policy and time |
+| `--in-place` |  |  | false |  | conflicts --dry-run --out-dir --output --save-plan | Replace FILE through the same atomic write as -o. A refused edit leaves FILE unchanged. Not with -o or --out-dir |
+| `-o, --output` |  | <FILE> |  |  | conflicts --dry-run --in-place --out-dir --save-plan | Primary edited DOCX; required unless saving, bundling, replacing FILE or dry-running |
+| `--out-dir` |  | <NEW_DIR> |  |  | conflicts --dry-run --in-place --output --save-plan | Publish a new bundle directory (document.docx, changes.diff, report.json) |
 | `--report` |  | <FILE> |  |  | conflicts --save-plan | JSON receipt, irrespective of filename suffix |
 | `--emit` |  | <EMIT> |  | document, patch, report | append; conflicts --save-plan | Bundle roles: document,patch,report (primary document always included) |
 | `--expect` |  | <FILE> |  |  | conflicts --save-plan | Optional expectation contract, evaluated on the prepared primary before publication (PlanV2 requests only; use `jubarte check` for a standalone pass over a published output) |
 | `--expect-sha256` |  | <HASH> |  |  |  | Redundant source digest must agree with a plan's embedded digest |
-| `--dry-run` |  |  | false |  | conflicts --out-dir --output --save-plan | Prepare and validate the actual candidate; write no files |
+| `--dry-run` |  |  | false |  | conflicts --in-place --out-dir --output --save-plan | Prepare and validate the actual candidate; write no files |
 | `--require-change` |  |  | false |  |  | Require a primary document change, independently of derived artifacts |
 | `--force` |  |  | false |  |  | Replace an explicitly named existing output; never overwrite an input |
 | `--keep-others` |  |  | false |  |  | Refuse to accept or reject another author's tracked change, and to delete, resolve, reopen or reword their comment. Restore, strike, a comment and a reply stay allowed. JUBARTE_KEEP_OTHERS=1 sets the same guard. Another author is anyone other than --author (Jubarte when --author is left out) |
@@ -218,18 +222,19 @@ Apply only: never record into, consume, or rewrite the plan
 | `<FILE>` |  | <FILE> |  |  | required | Immutable source document |
 | `--plan` |  | <FILE> |  |  | required | Input plan; v2 policy and attribution belong exclusively to it |
 | `--allow-unbound-plan` |  |  | false |  |  | Advanced v1-only waiver when neither plan nor CLI supplies a hash |
-| `--out-dir` |  | <NEW_DIR> |  |  | conflicts --dry-run --output | Publish a new bundle directory (document.docx, changes.diff, report.json) |
+| `--in-place` |  |  | false |  | conflicts --dry-run --out-dir --output | Replace FILE through the same atomic write as -o. A refused edit leaves FILE unchanged. Not with -o or --out-dir |
+| `--out-dir` |  | <NEW_DIR> |  |  | conflicts --dry-run --in-place --output | Publish a new bundle directory (document.docx, changes.diff, report.json) |
 | `--report` |  | <FILE> |  |  |  | JSON receipt, irrespective of filename suffix |
 | `--emit` |  | <EMIT> |  | document, patch, report | append | Bundle roles: document,patch,report (primary document always included) |
 | `--expect` |  | <FILE> |  |  |  | Optional expectation contract, evaluated on the prepared primary before publication (PlanV2 requests only; use `jubarte check` for a standalone pass over a published output) |
 | `--expect-sha256` |  | <HASH> |  |  |  | Redundant source digest must agree with a plan's embedded digest |
-| `--dry-run` |  |  | false |  | conflicts --out-dir --output | Prepare and validate the actual candidate; write no files |
+| `--dry-run` |  |  | false |  | conflicts --in-place --out-dir --output | Prepare and validate the actual candidate; write no files |
 | `--require-change` |  |  | false |  |  | Require a primary document change, independently of derived artifacts |
 | `--force` |  |  | false |  |  | Replace an explicitly named existing output; never overwrite an input |
 | `--keep-others` |  |  | false |  |  | Refuse to accept or reject another author's tracked change, and to delete, resolve, reopen or reword their comment. Restore, strike, a comment and a reply stay allowed. JUBARTE_KEEP_OTHERS=1 sets the same guard. Another author is anyone other than --author (Jubarte when --author is left out) |
 | `--json` |  |  | false |  | conflicts --jsonl | One result envelope, including empty results and refusals |
 | `--jsonl` |  |  | false |  | conflicts --json | Header and exactly one terminal result |
-| `-o, --output` |  | <FILE> |  |  | conflicts --dry-run --out-dir | Primary edited DOCX; required unless bundling or dry-running |
+| `-o, --output` |  | <FILE> |  |  | conflicts --dry-run --in-place --out-dir | Primary edited DOCX; required unless bundling, replacing FILE or dry-running |
 | `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte __edit-template (hidden task)
@@ -766,7 +771,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--head` | (shorthand), compare, read | `<N> default= values=` |
 | `--id` | accept, reject | `<ID> default= values=` |
 | `--ignore-case` | (shorthand), __edit-template template, compare, read | `default=false values=` |
-| `--in-place` | accept, reject, edit, add | `default=false values=` |
+| `--in-place` | __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert, __edit-v2 delete, __edit-v2 apply, accept, reject, edit, add | `default=false values=` |
 | `--json` | (shorthand), __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert, __edit-v2 delete, __edit-v2 apply, __edit-template template, compare, changes, read, capabilities, visual-diff, comments, validate, check | `default=false values=` |
 | `--jsonl` | __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert, __edit-v2 delete, __edit-v2 apply, __edit-template template | `default=false values=` |
 | `--keep-nested-comment` | accept, reject, convert | `default=false values=` |
