@@ -54,7 +54,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 - `scripts/release.sh` step 12 accepts a `--version` that carries the build commit (`jubarte 0.16.0+00b32d2`, #1924), and still refuses a `.dirty` build (#1954).
 
-- `scripts/gen_docs.sh` rebuilds the Python package whenever the venv's interpreter cannot `import jubarte_redlines`, not only when the interpreter itself is missing, so a venv left by a failed `maturin develop` no longer skips the build. Its `python -m jubarte_redlines` fallback runner now reaches `gen_cli_docs.py`: `--runner` takes one shell command line (shlex-split inside the script) instead of an argv list that argparse's `nargs="+"` ended at `-m` (#1810).
+- `scripts/gen_docs.sh` rebuilds the Python package whenever the venv's interpreter cannot find `jubarte_redlines` (`importlib.util.find_spec`, which does not execute the package, so an installed copy whose import raises is left for the runner to fail on, not rebuilt), not only when the interpreter itself is missing. Its `python -m jubarte_redlines` fallback runner now reaches `gen_cli_docs.py`: `--runner` repeats once per argv word (`--runner=WORD`) instead of an argv list that argparse's `nargs="+"` ended at `-m`, and each word reaches the subprocess verbatim — paths with spaces, tabs or backslashes need no quoting (#1810).
 
 ## [0.16.0] - 2026-10-31
 

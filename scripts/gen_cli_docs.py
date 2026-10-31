@@ -22,7 +22,6 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import shlex
 import subprocess
 
 START = "<!-- gen:{marker}:start -->"
@@ -217,10 +216,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--runner",
+        action="append",
         required=True,
-        help="one shell command line that launches the CLI "
-        "(e.g. `target/debug/jubarte` or `'py -m jubarte_redlines'`); "
-        "it is shlex-split, so an argv with dashes stays intact",
+        metavar="WORD",
+        help="one argv word that launches the CLI; repeat once per word "
+        "(e.g. `--runner=target/debug/jubarte` or "
+        "`--runner=py --runner=-m --runner=jubarte_redlines`). "
+        "Use the `=` form for a word that starts with a dash; "
+        "`--runner PATH` stays accepted for a one-word runner",
     )
     parser.add_argument("--display", required=True, help="command name to show")
     parser.add_argument("--file", required=True, help="markdown file to update")
@@ -237,10 +240,7 @@ def main() -> None:
         help="write a one-row-per-command table instead of every --help",
     )
     args = parser.parse_args()
-    # nargs="+" cannot carry a runner whose argv starts a dash (`-m pkg`):
-    # argparse ends the option list there (#1810). One shell command line
-    # does, and shlex.split restores the argv.
-    runner = shlex.split(args.runner)
+    runner = [word for word in args.runner if word]
     if not runner:
         parser.error("--runner must name a command")
 
