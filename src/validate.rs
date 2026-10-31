@@ -30,6 +30,7 @@
 //! | `PICTURE_BULLET_UNDEFINED` | yes | no |
 //! | `DUPLICATE_REVISION_ID` | no: Word opens same-kind duplicates (102 probes, 2026-10-18, #1137); the OOXML validator refuses them (`Sem_UniqueAttributeValue`); error diagnostic | yes: renumbered |
 //! | `DUPLICATE_DOCPR_ID` | no (lead) | yes: renumbered |
+//! | `DUPLICATE_VML_ID` | no: ambiguous VML ids, not probed in Word (#1800); warning | no |
 //! | `PARA_ID_OUT_OF_RANGE` | no: Word opens it; the schema forbids it | yes: renumbered |
 //! | `TEXT_INSIDE_DELETION`, `DELTEXT_OUTSIDE_DELETION`, `MOVEFROM_WITH_DELTEXT` | yes | yes: `w:t` and `w:delText` swapped |
 //! | `INSTR_TEXT_INSIDE_DELETION` | no (not probed in Word) | yes |
@@ -209,7 +210,7 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 33] = [
+const RING1_CODES: [&str; 34] = [
     "DATA_BINDING_WITHOUT_STORE",
     "MOVE_RANGE_COUNT_MISMATCH",
     "MOVE_RANGE_NAME_MISSING",
@@ -225,6 +226,7 @@ const RING1_CODES: [&str; 33] = [
     "PICTURE_BULLET_UNDEFINED",
     "DUPLICATE_REVISION_ID",
     "DUPLICATE_DOCPR_ID",
+    "DUPLICATE_VML_ID",
     "PARA_ID_OUT_OF_RANGE",
     "TEXT_INSIDE_DELETION",
     "INSTR_TEXT_INSIDE_DELETION",
@@ -2548,6 +2550,23 @@ fn check_revision_and_drawing_ids(pkg: &PartFs, out: &mut Vec<Finding>) {
         let mut rev_ids: HashSet<String> = HashSet::new();
         let mut docpr_ids: HashSet<String> = HashSet::new();
         collect_ids(&dom, root, &mut rev_ids, &mut docpr_ids, out, &name);
+        let mut vml_ids = HashSet::new();
+        let id_attr = XName::get("id", "");
+        for node in dom.descendants(root, None) {
+            if dom
+                .name(node)
+                .is_some_and(|n| n.namespace_name() == VML::URI)
+                && let Some(id) = dom.attribute(node, &id_attr)
+                && !vml_ids.insert(id.to_string())
+            {
+                out.push(Finding::new(
+                    "DUPLICATE_VML_ID",
+                    &name,
+                    element_path(&dom, node),
+                    format!("duplicate VML id '{id}' in '{name}'; shape and shapetype ids share one space"),
+                ));
+            }
+        }
     }
 }
 

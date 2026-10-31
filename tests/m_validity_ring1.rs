@@ -3553,3 +3553,30 @@ fn inserted_text_no_deleted_table_separates_passes() {
         assert_word_valid_package(&bytes);
     }
 }
+
+/// #1800 is an ambiguous VML id, not evidence of Word refusing a file.
+#[test]
+fn duplicate_vml_ids_are_part_scoped_warnings() {
+    let xml = r##"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml"><w:body><w:p><w:r><w:pict><v:shapetype id="1"/><v:shape id="1" type="#1"/><v:rect id="1"/></w:pict></w:r></w:p></w:body></w:document>"##;
+    let bytes = zip_with_parts(&[("word/document.xml", xml)]);
+    let findings: Vec<_> = jubarte::validate::ring1(&PartFs::open(&bytes).unwrap())
+        .into_iter()
+        .filter(|f| f.code == "DUPLICATE_VML_ID")
+        .collect();
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    for finding in findings {
+        assert_eq!(finding.severity, "warning");
+        assert!(!finding.word_fatal && !finding.repairable);
+        assert_eq!(finding.part, "word/document.xml");
+        assert!(!finding.location.is_empty());
+    }
+    let clean = xml
+        .replace("<v:shape id=\"1\"", "<v:shape id=\"2\"")
+        .replace("<v:rect id=\"1\"", "<v:rect id=\"3\"");
+    let bytes = zip_with_parts(&[("word/document.xml", &clean), ("word/header1.xml", &clean)]);
+    assert!(
+        jubarte::validate::ring1(&PartFs::open(&bytes).unwrap())
+            .iter()
+            .all(|f| f.code != "DUPLICATE_VML_ID")
+    );
+}

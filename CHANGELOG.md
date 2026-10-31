@@ -42,6 +42,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- Comparisons preserve unique source VML ids and rename collisions in one shared space across shapes, shapetypes and other VML elements, keeping shapetype and OLE references linked. `validate` reports duplicate VML ids as a non-fatal warning (#1800).
+
 - **Split-off deleted tables use their own rows' grid** (#1913, step 1). In Word-mode comparisons, the deleted runs split out by #1912 coalesce unused column edges and rewrite cell spans and row omissions, preserving retained cell widths. Trailing columns every row explicitly omits are dropped, as in Word's saved redlines. Layout-resolved widths (step 2) remain open pending a Word probe.
 
 - Anchor-not-found candidates use retryable source paragraph IDs after revision settlement, show the matched text in grapheme-safe excerpts, and stay out of comment-text scope errors. Repeated failures reuse candidate scans, and literal/plain anchor successes skip normalized searches (#1889).

@@ -4,6 +4,8 @@
 
 //! M4.F.6 — FixUp*Ids tests.
 
+mod common;
+
 use jubarte::comparer::fixups::{
     fix_up_doc_pr_ids, fix_up_drawing_ids, fix_up_group_ids, fix_up_shape_ids,
     fix_up_shape_type_ids,
@@ -41,14 +43,16 @@ fn m4_f6_shape_ids_relink_ole() {
     d.set_attribute_value(shape, &id(), Some("_x0000_s1026"));
     let ole = d.new_element(O::name("OLEObject"));
     d.set_attribute_value(ole, &XName::get("ShapeID", ""), Some("_x0000_s1026"));
+    let reserved = vml(&mut d, "rect", &[("id", "_x0000_s1026")]);
+    d.add(pict, reserved);
     d.add(pict, shape);
     d.add(pict, ole);
     fix_up_shape_ids(&mut d, pict);
     let new_shape_id = d.attribute(shape, &id()).unwrap().to_string();
-    assert_eq!(new_shape_id, "1");
+    assert_eq!(new_shape_id, "_x0000_s1026_1");
     assert_eq!(
         d.attribute(ole, &XName::get("ShapeID", "")).unwrap(),
-        "1",
+        "_x0000_s1026_1",
         "OLEObject ShapeID relinked"
     );
 }
@@ -61,13 +65,15 @@ fn m4_f6_shapetype_relink() {
     d.set_attribute_value(st, &id(), Some("t75"));
     let shape = d.new_element(VML::name("shape"));
     d.set_attribute_value(shape, &XName::get("type", ""), Some("#t75"));
+    let reserved = vml(&mut d, "rect", &[("id", "t75")]);
+    d.add(pict, reserved);
     d.add(pict, st);
     d.add(pict, shape);
     fix_up_shape_type_ids(&mut d, pict);
-    assert_eq!(d.attribute(st, &id()).unwrap(), "1");
+    assert_eq!(d.attribute(st, &id()).unwrap(), "t75_1");
     assert_eq!(
         d.attribute(shape, &XName::get("type", "")).unwrap(),
-        "#1",
+        "#t75_1",
         "shape type relinked"
     );
 }
@@ -106,17 +112,17 @@ fn m4_f6_shapetype_relink_reaches_later_shapes() {
     pict_of(&mut d, body, &[st2, c]);
     fix_up_shape_type_ids(&mut d, body);
     let ty = XName::get("type", "");
-    assert_eq!(d.attribute(st1, &id()), Some("1"));
-    assert_eq!(d.attribute(st2, &id()), Some("2"));
-    assert_eq!(d.attribute(a, &ty), Some("#1"));
+    assert_eq!(d.attribute(st1, &id()), Some("_x0000_t3"));
+    assert_eq!(d.attribute(st2, &id()), Some("_x0000_t3_1"));
+    assert_eq!(d.attribute(a, &ty), Some("#_x0000_t3"));
     assert_eq!(
         d.attribute(b, &ty),
-        Some("#1"),
+        Some("#_x0000_t3"),
         "a later pict's shape relinked"
     );
     assert_eq!(
         d.attribute(c, &ty),
-        Some("2"),
+        Some("_x0000_t3_1"),
         "the bare form, after the second shapetype"
     );
 }
@@ -248,4 +254,116 @@ fn m4_f6_docpr_ids_unique_after_full_compare() {
         dups.is_empty(),
         "duplicate wp:docPr/@id after compare: {dups:?} (all={ids:?})"
     );
+}
+
+/// #1800: even a single source shape/type pair used to become id="1" twice.
+#[test]
+fn m4_f6_vml_ids_unique_through_compare() {
+    use common::docx::{docx, para, part_string};
+    use jubarte::document_comparer::compare_documents;
+
+    let drawing = |text: &str| {
+        format!(
+            r##"<w:p><w:r><w:pict xmlns:v="urn:schemas-microsoft-com:vml"><v:shapetype id="_x0000_t202" coordsize="21600,21600"/><v:shape id="Text Box 2" type="#_x0000_t202" style="width:100pt;height:30pt"><v:textbox><w:txbxContent><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"##
+        )
+    };
+    let a = docx(&drawing("Original box"));
+    let b = docx(&drawing("Changed box"));
+    let empty = docx(&para("No drawing"));
+    for (label, before, after) in [
+        ("single source", &empty, &a),
+        ("two sources", &a, &b),
+        ("identical input", &a, &a),
+    ] {
+        let result = compare_documents(before, after, "Test").unwrap();
+        let xml = part_string(&result, "word/document.xml").unwrap();
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom.root(doc).unwrap();
+        let nodes = dom.descendants(root, None);
+        let mut ids = std::collections::HashSet::new();
+        let mut types = std::collections::HashSet::new();
+        for &node in &nodes {
+            if dom
+                .name(node)
+                .is_some_and(|n| n.namespace_name() == VML::URI)
+                && let Some(value) = dom.attribute(node, &id())
+            {
+                assert!(
+                    ids.insert(value.to_string()),
+                    "{label}: duplicate VML id {value:?}: {xml}"
+                );
+                if dom.name_is(node, &VML::shapetype()) {
+                    types.insert(value.to_string());
+                }
+            }
+        }
+        assert!(!types.is_empty(), "{label}: missing shapetype: {xml}");
+        for node in dom.descendants(root, Some(&VML::shape())) {
+            let named = dom.attribute(node, &XName::get("type", "")).unwrap();
+            assert!(
+                types.contains(named.trim_start_matches('#')),
+                "{label}: missing shapetype for {named}: {xml}"
+            );
+        }
+        if label != "two sources" {
+            assert!(ids.contains("_x0000_t202"), "source shapetype id preserved");
+            assert!(ids.contains("Text Box 2"), "source shape id preserved");
+        }
+    }
+}
+
+/// All VML kinds share an id space; existing suffixes must be reserved before
+/// allocating new ids. References before and after repeated definitions bind
+/// to the first following or latest preceding definition, respectively.
+#[test]
+fn m4_f6_vml_collision_space_and_references() {
+    for preserve in [false, true] {
+        let mut d = Dom::new();
+        let body = d.new_element(W::body());
+        let reserved = vml(&mut d, "rect", &[("id", "shared_1")]);
+        let early = vml(&mut d, "shape", &[("id", "early"), ("type", "#shared")]);
+        let rect = vml(&mut d, "rect", &[("id", "shared")]);
+        let t1 = vml(&mut d, "shapetype", &[("id", "shared")]);
+        let s1 = vml(&mut d, "shape", &[("id", "shared"), ("type", "#shared")]);
+        let t2 = vml(&mut d, "shapetype", &[("id", "shared")]);
+        let s2 = vml(&mut d, "shape", &[("id", "shared"), ("type", "shared")]);
+        let oval = vml(&mut d, "oval", &[("id", "shared"), ("type", "#shared")]);
+        let group = vml(&mut d, "group", &[("id", "shared")]);
+        let ole = d.new_element(O::ole_object());
+        d.set_attribute_value(ole, &XName::get("ShapeID", ""), Some("shared"));
+        pict_of(&mut d, body, &[reserved, early, rect, t1, s1]);
+        pict_of(&mut d, body, &[t2, s2, ole, oval, group]);
+        fix_up_drawing_ids(&mut d, body, preserve);
+        let nodes = [reserved, early, rect, t1, s1, t2, s2, oval, group];
+        let ids: std::collections::HashSet<_> = nodes
+            .iter()
+            .map(|&n| d.attribute(n, &id()).unwrap())
+            .collect();
+        assert_eq!(
+            ids.len(),
+            nodes.len(),
+            "all VML kinds share one id space: {ids:?}"
+        );
+        assert_eq!(d.attribute(reserved, &id()), Some("shared_1"));
+        assert_eq!(d.attribute(early, &id()), Some("early"));
+        for (node, target, hash) in [
+            (early, t1, "#"),
+            (s1, t1, "#"),
+            (s2, t2, ""),
+            (oval, t2, "#"),
+        ] {
+            assert_eq!(
+                d.attribute(node, &XName::get("type", "")).unwrap(),
+                format!("{hash}{}", d.attribute(target, &id()).unwrap())
+            );
+        }
+        assert_eq!(
+            d.attribute(ole, &XName::get("ShapeID", "")),
+            d.attribute(s2, &id())
+        );
+        let once = d.serialize_element(body);
+        fix_up_drawing_ids(&mut d, body, preserve);
+        assert_eq!(d.serialize_element(body), once, "fixup is idempotent");
+    }
 }
