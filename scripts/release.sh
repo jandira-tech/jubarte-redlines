@@ -103,7 +103,7 @@
 #      takes changes only through a pull request, scripts/push_main.sh opens
 #      one for the release commits and merges it at once), cancel the CI
 #      runs in flight so release.yml gets the runners, push the tag; release.yml
-#      builds the five CLI binaries + seven PyPI wheels + sdist and creates
+#      builds the seven CLI binaries + seven PyPI wheels + sdist and creates
 #      the `jubarte vX.Y.Z` GitHub release itself
 #   9. crates.io — release.yml's `publish crates.io` job publishes through
 #      OIDC trusted publishing (#1642), after proving the summary is inside
@@ -212,7 +212,7 @@ before|you|bench hygiene while scoring: one scoring job at a time; Word only thr
 9|auto|crates.io: the packaged manifest carries the crates summary before the publish|tar -xzOf target/package/jubarte-redlines-@V@.crate jubarte-redlines-@V@/Cargo.toml
 10|auto|npm: jubarte-wasm first, then the jubarte-redlines CLI (it depends on jubarte-wasm ^@V@); a one-time password is passed when set|npm view jubarte-wasm@@V@ version
 10|you|When a publish job of release.yml fails, read its log: a refused token is a trusted publisher that does not match; npm's E404 on PUT with no provenance line is a configuration that does not allow npm publish, or one that expired before its first publish; fix it and rerun the job, or publish from here with --local-publish (then each npm publish may need the owner's browser approval or a fresh one-time password — codes live about 30 s)|gh run view <run-id> --log-failed; gh run rerun <run-id> --failed; NPM_OTP=<code> scripts/release.sh @V@ <summaries> --skip-gates --local-publish (the resume skips what is live)
-11|auto|release.yml attached the five CLI binaries and the seven wheels; a partial wheel set never reaches PyPI under a final version|python3 scripts/check_release_artifacts.py dist/pypi --version @V@
+11|auto|release.yml attached the seven CLI binaries and the seven wheels; a partial wheel set never reaches PyPI under a final version|python3 scripts/check_release_artifacts.py dist/pypi --version @V@
 11|you|When a wheel job fails: fix the release jobs and rerun the workflow on the tag (a run that lost a wheel never becomes a public release), or consent explicitly with --local-publish --no-wait to the partial set|gh run rerun <run-id> --failed; scripts/release.sh @V@ <summaries> --local-publish --no-wait
 12|auto|Verify: every registry answers with the new version AND its summary|scripts/release.sh step 12 checks (crates.io, npm x2, PyPI, GitHub)
 12|auto|Each channel installs the way a user installs it: this machine's archive matches SHA256SUMS.txt and answers jubarte @V@; pip install jubarte-redlines==@V@ in a fresh uv environment reports engine @V@; npx -y jubarte-redlines@@V@ --version answers @V@; npm i jubarte-wasm@@V@ then require() loads — 0.13.0 never reached npm and no step said so; docs.rs only warns, since it lags|scripts/release.sh step 12 (archive_runs, pip_installs, npx_runs, npm_requires, docsrs_built)

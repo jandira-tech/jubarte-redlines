@@ -133,6 +133,9 @@ jobs:
         run: |
           set -euo pipefail
           bin="target/${TARGET}/release/jubarte"
+          # Captured first: a readelf that fails stops the gate under set -e.
+          dynamic=$(readelf -d "$bin")
+          needed=$(grep NEEDED <<< "$dynamic" | sed -E 's/.*\[(.*)\]/\1/' | sort -u || true)
           old_and_new=(
             ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214
             debian:10@sha256:58ce6f1271ae1c8a2006ff7d3e54e9874d839f573d8009c20154ad0f2fb0a225
@@ -140,17 +143,24 @@ jobs:
           )
           case "$TARGET" in
             *-linux-gnu)
-              need=$(objdump -T "$bin" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sort -uV | tail -1)
+              symbols=$(objdump -T "$bin")
+              need=$(grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' <<< "$symbols" | sort -uV | tail -1)
               echo "highest glibc symbol version: $need"
               if [ "$(printf '%s\n' "$need" GLIBC_2.28 | sort -V | tail -1)" != GLIBC_2.28 ]; then
                 echo "::error::$bin needs $need; the Linux archives promise glibc 2.28"
                 exit 1
               fi
+              # Only glibc itself: a libstdc++ or libssl link would pass the
+              # symbol floor and still fail on a minimal host.
+              extra=$(grep -vE '^(libc|libm|libdl|librt|libpthread|libgcc_s)\.so\.[0-9]+$|^ld-linux[-a-z0-9_]*\.so\.[0-9]+$' <<< "$needed" || true)
+              if [ -n "$extra" ]; then
+                echo "::error::$bin links more than glibc: $extra"
+                exit 1
+              fi
               images=("${old_and_new[@]}") ;;
             *-linux-musl)
-              if readelf -d "$bin" | grep -q NEEDED; then
-                echo "::error::$bin links shared libraries; the -musl archive is static:"
-                readelf -d "$bin" | grep NEEDED
+              if [ -n "$needed" ]; then
+                echo "::error::$bin links shared libraries; the musl archive is static: $needed"
                 exit 1
               fi
               images=(alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f "${old_and_new[@]}") ;;
