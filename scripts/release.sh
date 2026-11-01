@@ -193,6 +193,7 @@ before|you|Ring-2 validity ratchet: no NEW OpenXML validator keys vs tools/valid
 before|you|Ring-3 Word open probe, the macOS release gate before any crates.io publish: every redline the release ships opens in real Word — probe_fail=0; paths never under /tmp, stage them under parity/_scratch. A failure that Word's own redline of the pair shares (probe.log says which) is still a failure: only the owner waives it, and the summaries disclose it|NEUROTIC_DOCX_BENCH=../neurotic_docx_bench JUBARTE_BIN=<release binary> scripts/redline-sweep.sh release_info/sample_redline_@V@_*.csv ../neurotic_docx_bench parity/_scratch/sweep_<date> --probe (Word only through the bench's word_pdf.py under its word_watchdog.sh, one Word job machine-wide; each failure is opened again alone, then Word's own redline of that pair; sweep.log names the binary; no pair generated is a failure)
 before|you|lane validity: every validator error signature in the redlines the release ships already exists in one of its two sources or in Word's own redline of the pair; the tool reports WORD, OWN and UNREADABLE SOURCE, and only an OWN signature fails the gate — it is read, then fixed|python3 scripts/lane_validity.py release_info/sample_redline_@V@_*.csv --root ../neurotic_docx_bench --redlines parity/_scratch/sweep_<date> (the Ring-3 sweep's folder)
 before|you|bench hygiene while scoring: one scoring job at a time; Word only through the bench scripts (--timeout 300, WD_MAX=300); probe documents pass tools/validate-docx first; nothing in /tmp|pgrep -fl '[w]ord_pdf.py'; pgrep -fl '[w]ord_redline.py'; pgrep -fl '[j]ubarte_release_info' (each empty before a scoring job starts)
+0|auto|mbx auto-gc is paused for the whole run and turned back on when it exits, failed or not (0.17.0: a collection mid-run pruned the binding crates' targets)|scripts/release.sh step 0 (pause_mbx_gc; trap resume_mbx_gc EXIT)
 0|auto|Preflight: main branch, clean tree, tools, gh credentials; crates.io + npm credentials and UV_PUBLISH_TOKEN only with --local-publish|scripts/release.sh step 0 (its die lines)
 0|auto|The release tree is never the canonical checkout (~/T/jubarte-redlines through any link, or JUBARTE_CANONICAL_CHECKOUT); HEAD's check runs that did not pass are printed as a CHECK NOW for the releaser to triage, and so is a HEAD with no check run or none that succeeded (#1763); the run goes on (#1751)|scripts/release.sh step 0 (canonical_checkout, head_ci_report)
 0|auto|The app's step can run: its checkout (jubarte-app/ or JUBARTE_APP_DIR) carries scripts/release-engine.sh, a CHANGELOG section naming jubarte-redlines @V@, and is on main, in sync, clean, with the site's release script and its tools — proved before anything is published, not found out at step 13|jubarte-app/scripts/release-engine.sh @V@ --engine-dir "$PWD" --preflight
@@ -762,6 +763,21 @@ cancel_queued_ci() {
              -q '.[] | select(.status != "completed") | "\(.databaseId) \(.name)"' -R jandira-tech/jubarte-redlines </dev/null 2>/dev/null)
   step "cancelled $n CI run(s) in flight so release.yml gets the runners"
 }
+# mbx auto-gc collects whenever its cache passes the budget, and a collection
+# in the middle of the run pruned the binding crates' targets (0.17.0:
+# maturin "File exists"). The run pauses it and turns it back on at exit; an
+# owner who turned it off keeps it off.
+MBX_GC_PAUSED=0
+pause_mbx_gc() {
+  command -v mbx >/dev/null || return 0
+  [ "$(mbx settings get gc.auto 2>/dev/null)" = true ] || return 0
+  mbx settings set gc.auto false >/dev/null && MBX_GC_PAUSED=1
+  step "mbx auto-gc paused for the run (turned back on at exit)"
+}
+resume_mbx_gc() {
+  [ "${MBX_GC_PAUSED:-0}" = 1 ] || return 0
+  mbx settings set gc.auto true >/dev/null && MBX_GC_PAUSED=0
+}
 # crates.io takes at most five keywords (ASCII, a letter first, then letters,
 # digits, _, - or +, at most 20 characters) and five categories; one more
 # fails the publish itself, after the point of no return.
@@ -842,6 +858,9 @@ git fetch --quiet origin main
   || die "working tree is dirty — commit or stash first:
 $(git status --porcelain | sed 's/^/       /')"
 head_ci_report
+
+trap resume_mbx_gc EXIT
+pause_mbx_gc
 
 for t in cargo cargo-deny cargo-semver-checks gitleaks bun npm gh wasm-pack node uv uvx; do
   command -v "$t" >/dev/null || die "missing tool: $t"

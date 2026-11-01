@@ -649,7 +649,7 @@ class AppGate(unittest.TestCase):
         rows = [line.split("|") for line in checklist_block().splitlines()
                 if line.count("|") == 3 and "cargo test" in line]
         self.assertEqual(len(rows), 1, rows)
-        phase, mark, item, _proof = rows[0]
+        _phase, mark, item, _proof = rows[0]
         self.assertEqual(mark, "auto")
         self.assertIn("app-at-main", item)
         self.assertIn("src-tauri", item)
@@ -2185,6 +2185,67 @@ class CiCancel(unittest.TestCase):
         self.assertLess(tail.index("push_main "), tail.index("cancel_queued_ci"))
         self.assertLess(tail.index("cancel_queued_ci"), tail.index('git push origin "$TAG"'))
 
+
+
+MBX_STUB = """#!/bin/sh
+echo "$*" >> "$CALLS"
+case "$*" in
+  "settings get gc.auto") cat "$GC" ;;
+  "settings set gc.auto "*) echo "$4" > "$GC" ;;
+esac
+"""
+
+
+class MbxGcPause(unittest.TestCase):
+    """0.17.0: mbx auto-gc (a 60 GiB budget) pruned the binding crates' target
+    directories in the middle of the run, and maturin failed with "File
+    exists". The run pauses auto-gc and turns it back on when it exits."""
+
+    def run_script(self, gc: str | None, body: str) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
+        tmp = Path(tempfile.mkdtemp(prefix="mbxgc-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        state, calls = tmp / "gc", tmp / "calls"
+        bindir = tmp / "bin"
+        bindir.mkdir()
+        if gc is not None:
+            state.write_text(gc + "\n")
+            (bindir / "mbx").write_text(MBX_STUB)
+            (bindir / "mbx").chmod(0o755)
+        functions = shell_functions("pause_mbx_gc", "resume_mbx_gc")
+        script = f'set -euo pipefail\nstep() {{ echo "  - $*"; }}\n{functions}\n{body}\n'
+        path = f"{bindir}:/usr/bin:/bin"
+        r = subprocess.run(["bash", "-c", script], env=dict(os.environ, PATH=path, CALLS=str(calls), GC=str(state)),
+                           capture_output=True, text=True, timeout=30)
+        return r, state, calls
+
+    def test_auto_gc_is_off_during_the_run_and_back_on_after_it(self) -> None:
+        r, state, _ = self.run_script("true", 'trap resume_mbx_gc EXIT\npause_mbx_gc\necho "during $(cat "$GC")"')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("during false", r.stdout)
+        self.assertEqual(state.read_text().strip(), "true")
+
+    def test_a_failing_run_still_turns_it_back_on(self) -> None:
+        r, state, _ = self.run_script("true", "trap resume_mbx_gc EXIT\npause_mbx_gc\nfalse")
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(state.read_text().strip(), "true")
+
+    def test_an_owner_who_turned_it_off_keeps_it_off(self) -> None:
+        r, state, calls = self.run_script("false", "trap resume_mbx_gc EXIT\npause_mbx_gc")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(state.read_text().strip(), "false")
+        self.assertNotIn("settings set", calls.read_text())
+
+    def test_without_mbx_nothing_happens(self) -> None:
+        r, _, calls = self.run_script(None, "trap resume_mbx_gc EXIT\npause_mbx_gc")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(calls.exists())
+
+    def test_step_0_pauses_it_before_any_build(self) -> None:
+        text = RELEASE_SH.read_text()
+        start = text.index('say "0. Preflight"')
+        pause = text.index("pause_mbx_gc\n", start)
+        self.assertLess(text.index("trap resume_mbx_gc EXIT", start), pause)
+        self.assertLess(pause, text.index('say "1. ', start))
 
 GH_ATTEST_STUB = "#!/bin/sh\n" + GH_BOUND + """echo "$*" >> "$CALLS"
 case "$1 $2" in

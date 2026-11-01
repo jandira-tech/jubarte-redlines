@@ -166,6 +166,7 @@ Topical documents: [Markdown pipeline](docs/MARKDOWN.md) ·
 [comment balloons](docs/WORD_COMMENT_BALLOONS.md) ·
 [self-update](docs/SELF_UPDATE.md) ·
 [benchmark classes](docs/bench_classes.md) ·
+[hostile packages](docs/bomb_prevention.md) ·
 [per-release API snapshots](docs/api/README.md).
 
 ## Install
