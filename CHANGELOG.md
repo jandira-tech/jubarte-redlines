@@ -15,6 +15,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-01
+
 ### Added
 
 - Regression coverage for a caption followed by a 60×30pt inline picture in a narrow fixed or autofit table cell, with a narrow body paragraph as control (#1734). The run-order fix in #1980 already keeps the caption above the wrapped picture; both Word and conventional revision styles are covered.
@@ -4950,6 +4952,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.17.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.17.0
 [0.16.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.16.0
 [0.15.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.15.0
 [0.14.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.14.0
