@@ -193,6 +193,7 @@ before|you|Ring-2 validity ratchet: no NEW OpenXML validator keys vs tools/valid
 before|you|Ring-3 Word open probe, the macOS release gate before any crates.io publish: every redline the release ships opens in real Word — probe_fail=0; paths never under /tmp, stage them under parity/_scratch. A failure that Word's own redline of the pair shares (probe.log says which) is still a failure: only the owner waives it, and the summaries disclose it|NEUROTIC_DOCX_BENCH=../neurotic_docx_bench JUBARTE_BIN=<release binary> scripts/redline-sweep.sh release_info/sample_redline_@V@_*.csv ../neurotic_docx_bench parity/_scratch/sweep_<date> --probe (Word only through the bench's word_pdf.py under its word_watchdog.sh, one Word job machine-wide; each failure is opened again alone, then Word's own redline of that pair; sweep.log names the binary; no pair generated is a failure)
 before|you|lane validity: every validator error signature in the redlines the release ships already exists in one of its two sources or in Word's own redline of the pair; the tool reports WORD, OWN and UNREADABLE SOURCE, and only an OWN signature fails the gate — it is read, then fixed|python3 scripts/lane_validity.py release_info/sample_redline_@V@_*.csv --root ../neurotic_docx_bench --redlines parity/_scratch/sweep_<date> (the Ring-3 sweep's folder)
 before|you|bench hygiene while scoring: one scoring job at a time; Word only through the bench scripts (--timeout 300, WD_MAX=300); probe documents pass tools/validate-docx first; nothing in /tmp|pgrep -fl '[w]ord_pdf.py'; pgrep -fl '[w]ord_redline.py'; pgrep -fl '[j]ubarte_release_info' (each empty before a scoring job starts)
+0|auto|mbx auto-gc is paused for the whole run and turned back on when it exits, failed or not (0.17.0: a collection mid-run pruned the binding crates' targets)|scripts/release.sh step 0 (pause_mbx_gc; trap resume_mbx_gc EXIT)
 0|auto|Preflight: main branch, clean tree, tools, gh credentials; crates.io + npm credentials and UV_PUBLISH_TOKEN only with --local-publish|scripts/release.sh step 0 (its die lines)
 0|auto|The release tree is never the canonical checkout (~/T/jubarte-redlines through any link, or JUBARTE_CANONICAL_CHECKOUT); HEAD's check runs that did not pass are printed as a CHECK NOW for the releaser to triage, and so is a HEAD with no check run or none that succeeded (#1763); the run goes on (#1751)|scripts/release.sh step 0 (canonical_checkout, head_ci_report)
 0|auto|The app's step can run: its checkout (jubarte-app/ or JUBARTE_APP_DIR) carries scripts/release-engine.sh, a CHANGELOG section naming jubarte-redlines @V@, and is on main, in sync, clean, with the site's release script and its tools — proved before anything is published, not found out at step 13|jubarte-app/scripts/release-engine.sh @V@ --engine-dir "$PWD" --preflight
@@ -228,8 +229,7 @@ after|you|App Store, all of MAC_APP_STORE_RELEASE.md: upload the pkg, wait for V
 after|you|notarize: Developer ID sign inside-out (nested bundles deepest first, then bare dylibs, then every Mach-O), notarize, staple, validate each artifact — the DMG lands at src-tauri/target/release/bundle/dmg/Jubarte_@V@_aarch64.dmg|ENTITLEMENTS=<entitlements-direct.plist> jubarte-app/scripts/notarize-direct.sh @V@ <app dir> (keychain profile notarytool-cicero)
 after|you|benchmark lane upload: after the full-corpus run, the site fixtures restage uploads to the Hugging Face dataset, pins fixtures.lock to the @V@ lane and deploys — the release's own figures are on jubarte.pro since step 13; the pages this second deploy rewrites are read again (the use-cases strips now come from the @V@ lane, the full-corpus tables moved)|(cd jubarte-app/jubarte-site && scripts/release.sh bench @V@ --redline-tool jubarte-@V@) — its fixtures stage uploads and pins
 after|you|RESULTS.md: the full-corpus run that feeds the bench RESULTS.md still runs for @V@|(cd ../neurotic_docx_bench && uv run scripts/release_jubarte.py @V@)
-after|you|bench rerun: the same release-info flow re-runs WITHOUT --binary, on the release's own binary, now that the GitHub release exists|(cd ../neurotic_docx_bench && uv run python -m neurotic_docx_bench.jubarte_release_info @V@ --engine-dir <engine>)
-after|you|reproduces: the released binary (downloaded from the GitHub release) reproduces the candidate's outputs on the release samples|python3 scripts/identity.py <released binary> <candidate> <out dir> release_info/sample_*_@V@_*.csv --root ../neurotic_docx_bench
+after|you|reproduces: the released binary (downloaded from the GitHub release) reproduces the candidate's outputs on the release samples; this is the post-release proof, the release-info flow is not re-run on the released binary (outputs identical to the scored candidate's score the same)|python3 scripts/identity.py <released binary> <candidate> <out dir> release_info/sample_*_@V@_*.csv --root ../neurotic_docx_bench
 after|you|self-update serves the release: jubarte self-update --version @V@ installs the archive, verifies it against the release's SHA256SUMS.txt (and its signature once keys/ holds a public key), and the replaced binary answers @V@ — the path every prebuilt user takes|jubarte self-update --version @V@ --yes; jubarte --version
 after|you|the public pages of @V@ are read once, human eyes: docs.rs built the release's docs (step 12 warns while it has not), and each registry page shows the README cut for v@V@ with its note where the channel accepts one|open https://docs.rs/jubarte-redlines/@V@ https://crates.io/crates/jubarte-redlines/@V@ https://pypi.org/project/jubarte-redlines/@V@/ https://www.npmjs.com/package/jubarte-wasm/v/@V@ https://www.npmjs.com/package/jubarte-redlines/v/@V@
 after|you|handoff: the release's running log and handoff notes are written down — nothing a releaser must remember lives only in a head or a chat|the release work folder's STATE.md, kept current to the end
@@ -762,6 +762,21 @@ cancel_queued_ci() {
              -q '.[] | select(.status != "completed") | "\(.databaseId) \(.name)"' -R jandira-tech/jubarte-redlines </dev/null 2>/dev/null)
   step "cancelled $n CI run(s) in flight so release.yml gets the runners"
 }
+# mbx auto-gc collects whenever its cache passes the budget, and a collection
+# in the middle of the run pruned the binding crates' targets (0.17.0:
+# maturin "File exists"). The run pauses it and turns it back on at exit; an
+# owner who turned it off keeps it off.
+MBX_GC_PAUSED=0
+pause_mbx_gc() {
+  command -v mbx >/dev/null || return 0
+  [ "$(mbx settings get gc.auto 2>/dev/null)" = true ] || return 0
+  mbx settings set gc.auto false >/dev/null && MBX_GC_PAUSED=1
+  step "mbx auto-gc paused for the run (turned back on at exit)"
+}
+resume_mbx_gc() {
+  [ "${MBX_GC_PAUSED:-0}" = 1 ] || return 0
+  mbx settings set gc.auto true >/dev/null && MBX_GC_PAUSED=0
+}
 # crates.io takes at most five keywords (ASCII, a letter first, then letters,
 # digits, _, - or +, at most 20 characters) and five categories; one more
 # fails the publish itself, after the point of no return.
@@ -842,6 +857,9 @@ git fetch --quiet origin main
   || die "working tree is dirty — commit or stash first:
 $(git status --porcelain | sed 's/^/       /')"
 head_ci_report
+
+trap resume_mbx_gc EXIT
+pause_mbx_gc
 
 for t in cargo cargo-deny cargo-semver-checks gitleaks bun npm gh wasm-pack node uv uvx; do
   command -v "$t" >/dev/null || die "missing tool: $t"

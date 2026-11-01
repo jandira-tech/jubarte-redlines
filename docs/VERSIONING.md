@@ -209,8 +209,9 @@ binary the evidence names"):
 (cd ../neurotic_docx_bench && uv run python -m neurotic_docx_bench.jubarte_release_info 0.11.2 --engine-dir "$(cd .. && pwd)/jubarte-redlines" --binary target/release/jubarte --plan)
 ```
 
-After the GitHub release exists, the same command without `--binary` re-runs
-it on the release's own binary. `scripts/check_release_info.py` is the gate
+After the GitHub release exists, the command is not re-run on the released
+binary: `scripts/identity.py` proves that binary reproduces the candidate's
+outputs on the release samples. `scripts/check_release_info.py` is the gate
 (step 3) and prints the aggregates; with a bench checkout at hand
 (`$NEUROTIC_DOCX_BENCH` or `../neurotic_docx_bench`) it also passes
 `--bench-root` and verifies every sha256 column against the real file —
