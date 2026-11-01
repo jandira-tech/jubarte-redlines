@@ -586,9 +586,7 @@ fn coalesce_recurse(dom: &mut Dom, atoms: &[ComparisonUnitAtom], level: usize) -
                 dom.name(a.content_element).unwrap()
             });
             let p = dom.new_element(W::p());
-            for (an, av) in dom.attributes(ancestor) {
-                dom.set_attribute_value(p, &an, Some(&av));
-            }
+            dom.copy_attributes(ancestor, p);
             // pPr group(s) first (the paragraph mark), then child runs.
             for (cname, gc) in &by_name {
                 if *cname == W::p_pr() {
@@ -645,9 +643,7 @@ fn coalesce_recurse(dom: &mut Dom, atoms: &[ComparisonUnitAtom], level: usize) -
 
         // generic ancestor: rebuild with attributes + recurse deeper
         let ne = dom.new_element(aname);
-        for (an, av) in dom.attributes(ancestor) {
-            dom.set_attribute_value(ne, &an, Some(&av));
-        }
+        dom.copy_attributes(ancestor, ne);
         let children = coalesce_recurse(dom, &group, level + 1);
         for c in children {
             dom.add(ne, c);

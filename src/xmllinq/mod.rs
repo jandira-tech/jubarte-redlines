@@ -970,7 +970,32 @@ impl Dom {
         }
     }
 
-    /// ⚡ Bolt: Sorts attributes in-place to avoid heavy allocations during canonicalization.
+
+    /// ⚡ Bolt: Fast path for copying attributes from one node to another without allocating
+    /// intermediate Vec<(XName, String)> pairs.
+    pub fn copy_attributes(&mut self, src: NodeId, dest: NodeId) {
+        if src == dest {
+            return;
+        }
+        let src_attrs = self.data(src).attrs.clone();
+        if src_attrs.is_empty() {
+            return;
+        }
+        let dest_data = self.data_mut(dest);
+        if dest_data.attrs.is_empty() {
+            dest_data.attrs = src_attrs;
+        } else {
+            for attr in src_attrs {
+                if let Some(a) = dest_data.attrs.iter_mut().find(|a| a.name == attr.name) {
+                    a.value = attr.value;
+                } else {
+                    dest_data.attrs.push(attr);
+                }
+            }
+        }
+    }
+
+/// ⚡ Bolt: Sorts attributes in-place to avoid heavy allocations during canonicalization.
     pub fn sort_attributes(&mut self, id: NodeId) {
         let attrs = &mut self.data_mut(id).attrs;
         if attrs.len() < 2 {
