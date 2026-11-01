@@ -253,9 +253,14 @@ def test_edit_writes_bundle_and_refuses_existing_dir(
     assert lines[-1] == {**lines[-1], "ev": "summary", "status": "ok"}
     stdout = capsys.readouterr().out
     assert '"ev":"summary"' in stdout or '"ev": "summary"' in stdout
-    # Existing directory refused without --force, accepted with it.
-    assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(out_dir)]) == 1
-    assert "already exists" in capsys.readouterr().err
+    # Existing directory refused without --force, as the binary words it;
+    # accepted with it (#1692).
+    with pytest.raises(SystemExit) as refusal:
+        main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(out_dir)])
+    assert refusal.value.code == 2
+    assert capsys.readouterr().err.splitlines() == [
+        f"error: OUTPUT_EXISTS: output '{out_dir}' already exists (use --force to overwrite)"
+    ]
     assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(out_dir), "--force"]) == 0
 
 
@@ -329,10 +334,13 @@ def test_convert_checks_every_png_path_before_writing_one(
 ) -> None:
     (tmp_path / "letter-page-01.png").write_bytes(b"keep")
     report = tmp_path / "pages.json"
-    assert (
-        main(["convert", str(letter), "-o", str(tmp_path / "letter.png"), "--dpi", "24", "--report", str(report)]) == 1
+    with pytest.raises(SystemExit) as refusal:
+        main(["convert", str(letter), "-o", str(tmp_path / "letter.png"), "--dpi", "24", "--report", str(report)])
+    assert refusal.value.code == 2
+    err = capsys.readouterr().err.splitlines()
+    assert err[-1] == (
+        f"error: OUTPUT_EXISTS: output '{tmp_path / 'letter-page-01.png'}' already exists (use --force to overwrite)"
     )
-    assert "letter-page-01.png" in capsys.readouterr().err
     assert not report.exists(), "a refused PNG leaves no partial bundle"
     assert (tmp_path / "letter-page-01.png").read_bytes() == b"keep"
     # One output names one format: the retired --pdf and --png together name two.
@@ -351,8 +359,12 @@ def test_convert_pdf_png_and_report(letter: Path, tmp_path: Path, capsys: pytest
     assert data["page_count"] == 1 and "Heading" in data["pages"][0]["text"]
     assert main(["convert", str(letter)]) == 0
     assert (tmp_path / "letter.pdf").is_file()
-    assert main(["convert", str(letter)]) == 1, "no clobber without --force"
-    assert "already exists" in capsys.readouterr().err
+    with pytest.raises(SystemExit) as refusal:
+        main(["convert", str(letter)])
+    assert refusal.value.code == 2, "no clobber without --force"
+    assert capsys.readouterr().err.splitlines()[-1] == (
+        f"error: OUTPUT_EXISTS: output '{tmp_path / 'letter.pdf'}' already exists (use --force to overwrite)"
+    )
     assert main(["convert", str(letter), "--force", "-o", str(tmp_path / "out.pdf")]) == 0
     assert (tmp_path / "out.pdf").is_file()
 
@@ -416,7 +428,9 @@ def test_compare_revisions_accept_reject_round_trip(tmp_path: Path, capsys: pyte
     assert main(["reject", str(redline), "-o", str(base)]) == 0
     assert main(["text", str(base)]) == 0
     assert "alpha beta" in capsys.readouterr().out
-    assert main(["accept", str(redline), "-o", str(clean)]) == 1, "no clobber"
+    with pytest.raises(SystemExit) as refusal:
+        main(["accept", str(redline), "-o", str(clean)])
+    assert refusal.value.code == 2, "no clobber"
 
 
 def test_capabilities_and_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -493,6 +507,52 @@ def test_convert_refuses_a_side_file_that_names_the_input_another_way(letter, tm
     assert f"error: {flag} '{side}' is the same file as the input" in capsys.readouterr().err.splitlines()
     assert letter.read_bytes() == original
     assert not output.exists()
+
+
+def test_an_existing_output_is_a_usage_refusal_on_every_task(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Every task that writes refuses an existing output as the binary
+    does: exit 2, the ``OUTPUT_EXISTS`` code, the file untouched (#1692;
+    the twin exited 1 with no code)."""
+    a, b = tmp_path / "a.docx", tmp_path / "b.docx"
+    a.write_bytes(docx(para("Alice pays Bob.")))
+    b.write_bytes(docx(para("Alice pays Carol Diaz.")))
+    redline = tmp_path / "redline.docx"
+    assert main(["compare", str(a), str(b), "-o", str(redline)]) == 0
+    capsys.readouterr()
+    view, doc, pdf = tmp_path / "taken.md", tmp_path / "taken.docx", tmp_path / "taken.pdf"
+    for out, argv in (
+        (view, ["read", str(letter), "-o", str(view)]),
+        (doc, ["accept", str(redline), "-o", str(doc)]),
+        (doc, ["reject", str(redline), "-o", str(doc)]),
+        (doc, ["compare", str(a), str(b), "-o", str(doc)]),
+        (pdf, ["convert", str(letter), "-o", str(pdf)]),
+        (view, ["diff", str(a), str(b), "-o", str(view)]),
+    ):
+        for taken in (view, doc, pdf):
+            taken.write_bytes(b"keep me\n")
+        with pytest.raises(SystemExit) as refusal:
+            main([*argv])
+        assert refusal.value.code == 2, argv
+        assert capsys.readouterr().err.splitlines() == [
+            f"error: OUTPUT_EXISTS: output '{out}' already exists (use --force to overwrite)"
+        ], argv
+        assert view.read_bytes() == doc.read_bytes() == pdf.read_bytes() == b"keep me\n", argv
+    # The `/` spelling on every OS, as the binary's messages spell it (#568):
+    # a name that holds a backslash is shown with a slash.
+    odd = tmp_path / "odd\\name.md"
+    odd.write_bytes(b"keep me\n")
+    with pytest.raises(SystemExit) as refusal:
+        main(["read", str(letter), "-o", str(odd)])
+    assert refusal.value.code == 2
+    assert capsys.readouterr().err.splitlines() == [
+        f"error: OUTPUT_EXISTS: output '{tmp_path / 'odd/name.md'}' already exists (use --force to overwrite)"
+    ]
+    assert odd.read_bytes() == b"keep me\n"
+    # --force is what authorizes the replacement.
+    assert main(["read", str(letter), "-o", str(view), "--force"]) == 0
+    assert view.read_bytes() != b"keep me\n"
 
 
 def test_invalid_png_dpi_leaves_no_partial_outputs(letter, tmp_path, capsys):
@@ -1548,8 +1608,12 @@ def test_shorthand_view_preserves_existing_output(
     # compare prints the same view; only -o writes, and never over a file.
     assert main(["compare", str(old), str(new), "-d", "1970-01-01T00:00:00Z"]) == 0
     assert capsys.readouterr().out.startswith(f"---\nsource: {output} (not written; -o keeps it)\n")
-    assert main(["compare", str(old), str(new), "-o", str(output)]) == 1
-    assert "already exists" in capsys.readouterr().err
+    with pytest.raises(SystemExit) as refusal:
+        main(["compare", str(old), str(new), "-o", str(output)])
+    assert refusal.value.code == 2
+    assert capsys.readouterr().err.splitlines() == [
+        f"error: OUTPUT_EXISTS: output '{output}' already exists (use --force to overwrite)"
+    ]
     assert output.read_bytes() == sentinel
     # Two Markdown documents written to a .md are CriticMarkup, which view
     # options cannot shape; the host reads that from the bytes, as natively.
@@ -1933,3 +1997,60 @@ def test_replace_creates_new_outputs_owner_only(tmp_path: Path) -> None:
         finally:
             os.umask(old)
         assert out.stat().st_mode & 0o777 == 0o600, oct(mask)
+
+
+def test_read_output_through_a_hard_link_leaves_the_input_alone(letter: Path, tmp_path: Path) -> None:
+    """``-o`` publishes over the path, as the binary does: a hard link to
+    the input is broken, never written through, and no staged file is left
+    (#1691)."""
+    alias = tmp_path / "alias.md"
+    os.link(letter, alias)
+    before = letter.read_bytes()
+    assert main(["read", str(letter), "-o", str(alias), "--force"]) == 0
+    assert letter.read_bytes() == before, "the input keeps its bytes"
+    assert alias.read_bytes() != before and alias.stat().st_size > 0
+    assert alias.stat().st_ino != letter.stat().st_ino, "the link was broken"
+    assert [p.name for p in tmp_path.iterdir() if ".jubarte-" in p.name] == []
+
+
+def test_read_output_through_a_symbolic_link_replaces_the_link(letter: Path, tmp_path: Path) -> None:
+    """The link's own directory entry is replaced: the referent keeps its
+    bytes and the output path becomes a regular file (#1691)."""
+    referent = tmp_path / "referent.md"
+    referent.write_text("keep me\n", encoding="utf-8")
+    alias = tmp_path / "alias.md"
+    alias.symlink_to(referent)
+    assert main(["read", str(letter), "-o", str(alias), "--force"]) == 0
+    assert referent.read_text(encoding="utf-8") == "keep me\n"
+    assert not alias.is_symlink() and alias.is_file()
+    assert alias.read_bytes() != b"keep me\n"
+
+
+def test_convert_output_through_a_hard_link_leaves_the_input_alone(letter: Path, tmp_path: Path) -> None:
+    """The render path publishes the same way: a hard-linked ``-o`` never
+    writes the PDF into the input's inode (#1691)."""
+    alias = tmp_path / "alias.pdf"
+    os.link(letter, alias)
+    before = letter.read_bytes()
+    assert main(["convert", str(letter), "-o", str(alias), "--force"]) == 0
+    assert letter.read_bytes() == before and zipfile.is_zipfile(letter)
+    assert alias.read_bytes().startswith(b"%PDF")
+    assert alias.stat().st_ino != letter.stat().st_ino
+
+
+def test_a_failed_publication_leaves_the_output_and_no_partial(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed rename is a plain error: the previous output keeps its
+    bytes and the staged file is removed (#1691)."""
+    out = tmp_path / "view.md"
+    out.write_bytes(b"keep me\n")
+
+    def refuse(src: str, dst: str) -> None:
+        raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr(os, "replace", refuse)
+    assert main(["read", str(letter), "-o", str(out), "--force"]) == 1
+    assert capsys.readouterr().err.splitlines()[-1] == (f"error: writing {out}: Permission denied (os error 13)")
+    assert out.read_bytes() == b"keep me\n"
+    assert [p.name for p in tmp_path.iterdir() if ".jubarte-" in p.name] == []

@@ -1076,7 +1076,10 @@ The npm CLI parses with the native CLI's own parser and has its tasks
 `add` and `capabilities`; `visual-diff`, `comments`, `append`, `validate` and
 `scrub` need the Python or Rust build. Messages and exit codes match the
 Python wheel and the Rust binary (0 success, 1 error, 2 usage, 3 edit plan
-refused). A flag the npm CLI cannot honour exits 2 naming it: PNG output,
+refused). An existing output without `--force` is that usage refusal, on
+every task that writes: `error: OUTPUT_EXISTS: output '…' already exists
+(use --force to overwrite)`, the path spelled with `/` on every OS (#1692).
+A flag the npm CLI cannot honour exits 2 naming it: PNG output,
 `--pages`, `--dpi`, `--update-fields`, `--report`, `--font-report`,
 `--timeout`, `--fail-on-substitution`, `convert --from`, `--resource-path`
 and Markdown output (`-t md`; `read` prints the agent view), `edit

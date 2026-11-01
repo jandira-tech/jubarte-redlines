@@ -558,6 +558,31 @@ test("a replaced output keeps its mode, as the binary's does (#1698)", () => {
   assert.deepEqual(fs.readdirSync(tmp).filter((n) => n.endsWith(".partial")), []);
 });
 
+test("read -o publishes over the path: a hard link to the input keeps its bytes (#1691)", () => {
+  const file = copy(untracked, "hard-link-input.docx");
+  const alias = path.join(tmp, "hard-link-view.md");
+  fs.linkSync(file, alias);
+  const before = fs.readFileSync(file);
+  const r = run("read", file, "-o", alias, "--force");
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(fs.readFileSync(file), before, "the input keeps its bytes");
+  assert.notEqual(fs.statSync(file).ino, fs.statSync(alias).ino, "the link was broken");
+  assert.ok(fs.statSync(alias).size > 0);
+  assert.deepEqual(fs.readdirSync(tmp).filter((n) => n.endsWith(".partial")), []);
+});
+
+test("read -o replaces a symlinked output, never its referent (#1691)", () => {
+  const referent = path.join(tmp, "symlink-referent.md");
+  fs.writeFileSync(referent, "keep me\n");
+  const alias = path.join(tmp, "symlink-view.md");
+  fs.symlinkSync(referent, alias);
+  const r = run("read", untracked, "-o", alias, "--force");
+  assert.equal(r.code, 0, r.err);
+  assert.equal(fs.readFileSync(referent, "utf8"), "keep me\n");
+  assert.ok(!fs.lstatSync(alias).isSymbolicLink(), "the link entry was replaced");
+  assert.ok(fs.statSync(alias).size > 0);
+});
+
 test("convert --move-comments and --changed-only", () => {
   const pages = (r) => {
     assert.equal(r.code, 0, r.err);
@@ -1795,10 +1820,10 @@ test("read --tables -o writes the grids it prints, as the binary (#1690)", { ski
   assert.equal(wrote.out, "");
   assert.equal(fs.readFileSync(out, "utf8"), grids.out);
   assert.match(wrote.err, new RegExp(`wrote ${out.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(tables, ${fs.statSync(out).size} bytes\\)\n$`));
-  // Refused; the exit status differs from the binary's 2 (#1692).
+  // Refused as the binary refuses it: exit 2 with the OUTPUT_EXISTS code (#1692).
   const again = run("read", untracked, "--tables", "-o", out);
-  assert.notEqual(again.code, 0, again.err);
-  assert.match(again.err, /already exists/);
+  assert.equal(again.code, 2, again.err);
+  assert.equal(again.err, `error: OUTPUT_EXISTS: output '${out}' already exists (use --force to overwrite)\n`);
   const json = run("read", untracked, "--tables", "-o", path.join(tmp, "grids.json"));
   assert.equal(json.code, 2, json.err);
   assert.match(json.err, /--tables writes the grids as text/);
@@ -1829,6 +1854,14 @@ test("an existing output is a usage refusal with the OUTPUT_EXISTS code (#1698)"
   const forced = run("accept", tracked, "-o", docx, "--force");
   assert.equal(forced.code, 0, forced.err);
   assert.deepEqual(fs.readFileSync(docx).subarray(0, 2), Buffer.from("PK"));
+  // The `/` spelling on every OS, as the binary's messages (#568, #1692):
+  // a name that holds a backslash is shown with a slash.
+  const odd = path.join(tmp, "odd\\name.md");
+  fs.writeFileSync(odd, "keep me\n");
+  const backslash = run("convert", tracked, "-o", odd);
+  assert.equal(backslash.code, 2, backslash.err);
+  assert.equal(backslash.err, `error: OUTPUT_EXISTS: output '${odd.replaceAll("\\", "/")}' already exists (use --force to overwrite)\n`);
+  assert.equal(fs.readFileSync(odd, "utf8"), "keep me\n");
 });
 
 test("read refuses an existing output before it reads the input (#1698)", () => {

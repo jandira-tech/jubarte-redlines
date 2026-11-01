@@ -100,7 +100,9 @@ def test_cli_convert_writes_markdown_as_a_docx_beside_it(tmp_path: Path, capsys:
     assert 'w:author="Legal"' in document_xml(data)
 
     # An existing output is refused without --force.
-    assert main(["convert", str(source)]) == 1
+    with pytest.raises(SystemExit) as refusal:
+        main(["convert", str(source)])
+    assert refusal.value.code == 2
     assert "already exists" in capsys.readouterr().err
 
 

@@ -89,7 +89,9 @@ def test_convert_update_fields_writes_the_refreshed_docx_and_its_report(tmp_path
     assert json.loads(report.read_text())["fields"][0]["new"] == "2"
     assert "2" in texts(jubarte.Document.read(out))
     # The output is never clobbered without --force; Markdown in is refused.
-    assert main(["convert", str(source), "-o", str(out), "--update-fields"]) == 1
+    with pytest.raises(SystemExit) as refusal:
+        main(["convert", str(source), "-o", str(out), "--update-fields"])
+    assert refusal.value.code == 2
     note = tmp_path / "note.md"
     note.write_text("# Note\n")
     assert main(["convert", str(note), "-o", str(tmp_path / "note.docx"), "--update-fields"]) == 1
@@ -119,7 +121,9 @@ def test_convert_update_fields_refuses_a_report_on_the_input_or_the_output(tmp_p
     # An existing report is kept without --force, and replaced with it.
     report = tmp_path / "fields.json"
     report.write_text("keep")
-    assert main([*update, "--report", str(report)]) == 1
+    with pytest.raises(SystemExit) as refusal:
+        main([*update, "--report", str(report)])
+    assert refusal.value.code == 2
     assert "already exists" in capsys.readouterr().err
     assert report.read_text() == "keep" and not out.exists()
     assert main([*update, "--report", str(report), "--force"]) == 0
