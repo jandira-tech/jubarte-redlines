@@ -3227,6 +3227,506 @@ pub fn merged_closing_carrier_takes_source_properties(
     }
 }
 
+/// One direct body paragraph, read before atomize hoists the final
+/// `w:sectPr` into the last paragraph. `section` is that paragraph's own
+/// break; `properties` is the layout a `w:pPrChange` would record, which
+/// never includes the break.
+pub(crate) struct BodyParagraphSnapshot {
+    text: String,
+    section: Option<String>,
+    properties: NodeId,
+}
+
+/// Direct `w:body/w:p` children of `body`, in order.
+///
+/// Called before atomize. A break the revision adds is still on the
+/// paragraph that owns it, and the original paragraph's layout is what
+/// the deleted boundary has to carry (#1718).
+pub(crate) fn snapshot_body_paragraphs(dom: &mut Dom, body: NodeId) -> Vec<BodyParagraphSnapshot> {
+    dom.elements(body, Some(&W::p()))
+        .into_iter()
+        .map(|paragraph| {
+            let properties = match dom.element(paragraph, &W::p_pr()) {
+                Some(ppr) => formatchg::project_para_properties_for_change(dom, ppr),
+                None => dom.new_element(W::p_pr()),
+            };
+            let section = dom
+                .element(paragraph, &W::p_pr())
+                .and_then(|ppr| dom.element(ppr, &W::sect_pr()))
+                .map(|section| sectpr_identity(dom, section));
+            BodyParagraphSnapshot {
+                text: concatenated_paragraph_text(dom, paragraph, false),
+                section,
+                properties,
+            }
+        })
+        .collect()
+}
+
+/// Word's Compare of a section break the revision adds, plus the genuine
+/// break final-mark pairing copies onto the deleted paragraph after it.
+///
+/// Runs in Word-visual mode, after the destructive peels and before
+/// [`closing_mark_takes_revised_properties`]. The closing paragraph is
+/// that helper's job; this pass owns a break between two paragraphs and
+/// the genuine owner a copied break has to return to (#1718).
+pub(crate) fn track_added_section_breaks(
+    dom: &mut Dom,
+    root: NodeId,
+    original: &[BodyParagraphSnapshot],
+    revised: &[BodyParagraphSnapshot],
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    restore_genuine_section_owner(dom, root, original, settings, id_gen);
+    if settings.detect_format_changes {
+        track_added_mid_body_section_breaks(dom, root, original, revised, settings, id_gen);
+    }
+}
+
+fn concatenated_paragraph_text(dom: &Dom, paragraph: NodeId, include_deleted: bool) -> String {
+    let mut text = String::new();
+    for node in dom.descendants(paragraph, None) {
+        if dom.name_is(node, &W::t()) || (include_deleted && dom.name_is(node, &W::del_text())) {
+            text.push_str(&dom.value(node));
+        }
+    }
+    text
+}
+
+fn paragraph_mark_is_revised(dom: &Dom, paragraph: NodeId) -> bool {
+    let Some(mark) = dom
+        .element(paragraph, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+    else {
+        return false;
+    };
+    [W::ins(), W::del(), W::move_from(), W::move_to()]
+        .into_iter()
+        .any(|name| dom.element(mark, &name).is_some())
+}
+
+fn direct_section_identity(dom: &mut Dom, paragraph: NodeId) -> Option<String> {
+    dom.element(paragraph, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::sect_pr()))
+        .map(|section| sectpr_identity(dom, section))
+}
+
+/// `w:pPr/w:rPr/(w:ins|w:del)`, leading the mark. A mark that already
+/// carries a revision is left alone, so a second pass does not mint.
+fn mark_paragraph_mark(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    revision: XName,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let ppr = match dom.element(paragraph, &W::p_pr()) {
+        Some(ppr) => ppr,
+        None => {
+            let ppr = dom.new_element(W::p_pr());
+            dom.add_first(paragraph, ppr);
+            ppr
+        }
+    };
+    let rpr = match dom.element(ppr, &W::r_pr()) {
+        Some(rpr) => rpr,
+        None => {
+            let rpr = dom.new_element(W::r_pr());
+            match dom.elements(ppr, None).into_iter().find(|&child| {
+                dom.name_is(child, &W::sect_pr()) || dom.name_is(child, &W::p_pr_change())
+            }) {
+                Some(tail) => dom.add_before_self(tail, rpr),
+                None => dom.add(ppr, rpr),
+            }
+            rpr
+        }
+    };
+    if [W::ins(), W::del(), W::move_from(), W::move_to()]
+        .into_iter()
+        .any(|name| dom.element(rpr, &name).is_some())
+    {
+        return;
+    }
+    let mark = rev_el(dom, revision, settings, id_gen);
+    dom.add_first(rpr, mark);
+}
+
+fn clear_deleted_paragraph_mark(dom: &mut Dom, paragraph: NodeId) {
+    let Some(rpr) = dom
+        .element(paragraph, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+    else {
+        return;
+    };
+    if let Some(mark) = dom.element(rpr, &W::del()) {
+        dom.remove(mark);
+    }
+    let bare = dom.elements(rpr, None).is_empty()
+        && dom
+            .attributes(rpr)
+            .iter()
+            .all(|(name, _)| dom.is_namespace_declaration(name));
+    if bare {
+        dom.remove(rpr);
+    }
+}
+
+fn replace_live_paragraph_properties(dom: &mut Dom, ppr: NodeId, revised: NodeId) {
+    let keep: Vec<NodeId> = [W::r_pr(), W::sect_pr()]
+        .iter()
+        .filter_map(|name| dom.element(ppr, name))
+        .collect();
+    for child in dom.elements(ppr, None) {
+        dom.remove(child);
+    }
+    let fresh = formatchg::project_para_properties_for_change(dom, revised);
+    for child in dom.elements(fresh, None) {
+        dom.remove(child);
+        dom.add(ppr, child);
+    }
+    for child in keep {
+        dom.add(ppr, child);
+    }
+}
+
+/// The second call sees the empty closing paragraph this split just
+/// added. Its previous sibling owns the inserted break. Returning here,
+/// before mark formatting, keeps that call from minting another id.
+fn added_closing_section_already_split(dom: &Dom, body: NodeId, paragraph: NodeId) -> bool {
+    if dom
+        .element(paragraph, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::sect_pr()))
+        .is_some()
+    {
+        return false;
+    }
+    let children = dom.elements(body, None);
+    let Some(index) = children.iter().position(|&child| child == paragraph) else {
+        return false;
+    };
+    if index == 0 {
+        return false;
+    }
+    let previous = children[index - 1];
+    if !dom.name_is(previous, &W::p()) {
+        return false;
+    }
+    let Some(ppr) = dom.element(previous, &W::p_pr()) else {
+        return false;
+    };
+    dom.element(ppr, &W::sect_pr()).is_some()
+        && dom
+            .element(ppr, &W::r_pr())
+            .and_then(|mark| dom.element(mark, &W::ins()))
+            .is_some()
+}
+
+struct AddedSectionBreak {
+    text: String,
+    section: String,
+    original_properties: NodeId,
+}
+
+fn align_body_paragraphs(
+    original: &[BodyParagraphSnapshot],
+    revised: &[BodyParagraphSnapshot],
+) -> Vec<(usize, usize)> {
+    let rows = original.len();
+    let cols = revised.len();
+    if rows == 0 || cols == 0 {
+        return Vec::new();
+    }
+    // A million cells is a few thousand paragraphs. Past that, pair equal
+    // texts in order instead of allocating the full table.
+    if rows.saturating_mul(cols) > 1_000_000 {
+        return zip_equal_body_paragraphs(original, revised);
+    }
+    let mut lengths = vec![vec![0usize; cols + 1]; rows + 1];
+    for (i, before) in original.iter().enumerate() {
+        for (j, after) in revised.iter().enumerate() {
+            lengths[i + 1][j + 1] = if before.text == after.text {
+                lengths[i][j] + 1
+            } else {
+                lengths[i + 1][j].max(lengths[i][j + 1])
+            };
+        }
+    }
+    let mut pairs = Vec::new();
+    let (mut i, mut j) = (rows, cols);
+    while i > 0 && j > 0 {
+        if original[i - 1].text == revised[j - 1].text {
+            pairs.push((i - 1, j - 1));
+            i -= 1;
+            j -= 1;
+        } else if lengths[i][j - 1] >= lengths[i - 1][j] {
+            j -= 1;
+        } else {
+            i -= 1;
+        }
+    }
+    pairs.reverse();
+    pairs
+}
+
+fn zip_equal_body_paragraphs(
+    original: &[BodyParagraphSnapshot],
+    revised: &[BodyParagraphSnapshot],
+) -> Vec<(usize, usize)> {
+    let mut pairs = Vec::new();
+    let (mut left, mut right) = (0, 0);
+    while left < original.len() && right < revised.len() {
+        if original[left].text == revised[right].text {
+            pairs.push((left, right));
+            left += 1;
+            right += 1;
+        } else if original.len() - left > revised.len() - right {
+            left += 1;
+        } else {
+            right += 1;
+        }
+    }
+    pairs
+}
+
+fn added_section_breaks(
+    original: &[BodyParagraphSnapshot],
+    revised: &[BodyParagraphSnapshot],
+) -> Vec<AddedSectionBreak> {
+    align_body_paragraphs(original, revised)
+        .into_iter()
+        .filter_map(|(from, to)| {
+            let before = &original[from];
+            let after = &revised[to];
+            match (&before.section, &after.section) {
+                (None, Some(section)) => Some(AddedSectionBreak {
+                    text: after.text.clone(),
+                    section: section.clone(),
+                    original_properties: before.properties,
+                }),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+fn last_body_paragraph(dom: &Dom, body: NodeId) -> Option<NodeId> {
+    let last = dom
+        .elements(body, None)
+        .into_iter()
+        .rev()
+        .find(|&child| !dom.name_is(child, &W::sect_pr()))?;
+    dom.name_is(last, &W::p()).then_some(last)
+}
+
+fn next_body_element(dom: &Dom, body: NodeId, node: NodeId) -> Option<NodeId> {
+    let children = dom.elements(body, None);
+    let index = children.iter().position(|&child| child == node)?;
+    children.get(index + 1).copied()
+}
+
+fn is_deleted_section_boundary(dom: &Dom, paragraph: NodeId) -> bool {
+    para_has_no_text(dom, paragraph)
+        && para_mark_revision(dom, paragraph, &W::del())
+        && direct_section_child(dom, paragraph).is_none()
+}
+
+fn direct_section_child(dom: &Dom, paragraph: NodeId) -> Option<NodeId> {
+    dom.element(paragraph, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::sect_pr()))
+}
+
+fn deleted_boundary_paragraph(
+    dom: &mut Dom,
+    properties: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) -> NodeId {
+    let paragraph = dom.new_element(W::p());
+    let ppr = dom.new_element(W::p_pr());
+    dom.add(paragraph, ppr);
+    for child in dom.elements(properties, None) {
+        let child = dom.clone_subtree(child);
+        dom.add(ppr, child);
+    }
+    mark_paragraph_mark(dom, paragraph, W::del(), settings, id_gen);
+    paragraph
+}
+
+fn track_added_mid_body_section_breaks(
+    dom: &mut Dom,
+    root: NodeId,
+    original: &[BodyParagraphSnapshot],
+    revised: &[BodyParagraphSnapshot],
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let added = added_section_breaks(original, revised);
+    if added.is_empty() {
+        return;
+    }
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let mut start_after: Option<NodeId> = None;
+    for record in &added {
+        let paragraphs = dom.elements(body, Some(&W::p()));
+        let last = last_body_paragraph(dom, body);
+        let mut ready = start_after.is_none();
+        let mut found: Option<NodeId> = None;
+        for paragraph in paragraphs {
+            if !ready {
+                if start_after == Some(paragraph) {
+                    ready = true;
+                }
+                continue;
+            }
+            if Some(paragraph) == last {
+                continue;
+            }
+            if concatenated_paragraph_text(dom, paragraph, false) != record.text {
+                continue;
+            }
+            let Some(section) = direct_section_identity(dom, paragraph) else {
+                continue;
+            };
+            if section != record.section {
+                continue;
+            }
+            if next_body_element(dom, body, paragraph).is_some_and(|next| {
+                dom.name_is(next, &W::p()) && is_deleted_section_boundary(dom, next)
+            }) {
+                start_after = next_body_element(dom, body, paragraph);
+                found = None;
+                break;
+            }
+            if paragraph_mark_is_revised(dom, paragraph) {
+                continue;
+            }
+            found = Some(paragraph);
+            break;
+        }
+        let Some(paragraph) = found else {
+            continue;
+        };
+        mark_paragraph_mark(dom, paragraph, W::ins(), settings, id_gen);
+        let boundary =
+            deleted_boundary_paragraph(dom, record.original_properties, settings, id_gen);
+        dom.add_after_self(paragraph, boundary);
+        start_after = Some(boundary);
+    }
+}
+
+/// Final-mark pairing leaves the genuine break on ONE's deleted mark and
+/// copies it onto the deleted paragraph that follows. That copy is not an
+/// added section: ONE authored it. Clearing ONE's mark and deleting the
+/// follower's mark makes Accept drop the follower and Reject restore it
+/// without a section (#1718).
+fn restore_genuine_section_owner(
+    dom: &mut Dom,
+    root: NodeId,
+    original: &[BodyParagraphSnapshot],
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let children = dom.elements(body, None);
+    for pair in children.windows(2) {
+        let (left, right) = (pair[0], pair[1]);
+        if !dom.name_is(left, &W::p()) || !dom.name_is(right, &W::p()) {
+            continue;
+        }
+        if !para_mark_revision(dom, left, &W::del()) {
+            continue;
+        }
+        let left_text = concatenated_paragraph_text(dom, left, false);
+        if left_text.is_empty() || !concatenated_paragraph_text(dom, right, false).is_empty() {
+            continue;
+        }
+        let right_text = concatenated_paragraph_text(dom, right, true);
+        if right_text.is_empty() {
+            continue;
+        }
+        let Some(left_section) = direct_section_identity(dom, left) else {
+            continue;
+        };
+        let Some(right_section) = direct_section_identity(dom, right) else {
+            continue;
+        };
+        if left_section != right_section {
+            continue;
+        }
+        let left_owned = original.iter().any(|paragraph| {
+            paragraph.text == left_text
+                && paragraph.section.as_deref() == Some(left_section.as_str())
+        });
+        if !left_owned || !text_never_owned_section(original, &right_text, &left_section) {
+            continue;
+        }
+        if let Some(section) = direct_section_child(dom, right) {
+            dom.remove(section);
+        }
+        // The copied break made an earlier pass record this paragraph's
+        // own spacing as a closing-section history. The spacing is the
+        // paragraph's, and a genuine break is not that history.
+        release_paragraph_property_history(dom, right);
+        clear_deleted_paragraph_mark(dom, left);
+        if !paragraph_mark_is_revised(dom, right) {
+            mark_paragraph_mark(dom, right, W::del(), settings, id_gen);
+        }
+    }
+}
+
+fn release_paragraph_property_history(dom: &mut Dom, paragraph: NodeId) {
+    let Some(ppr) = dom.element(paragraph, &W::p_pr()) else {
+        return;
+    };
+    while let Some(change) = dom.element(ppr, &W::p_pr_change()) {
+        if let Some(saved) = dom.element(change, &W::p_pr()) {
+            for child in dom.elements(saved, None) {
+                if dom.name_is(child, &W::sect_pr())
+                    || dom.name_is(child, &W::r_pr())
+                    || dom.name_is(child, &W::p_pr_change())
+                {
+                    continue;
+                }
+                let Some(name) = dom.name(child) else {
+                    continue;
+                };
+                if dom.element(ppr, &name).is_some() {
+                    continue;
+                }
+                let cloned = dom.clone_subtree(child);
+                match dom.elements(ppr, None).into_iter().find(|&sibling| {
+                    dom.name_is(sibling, &W::r_pr())
+                        || dom.name_is(sibling, &W::sect_pr())
+                        || dom.name_is(sibling, &W::p_pr_change())
+                }) {
+                    Some(tail) => dom.add_before_self(tail, cloned),
+                    None => dom.add(ppr, cloned),
+                }
+            }
+        }
+        dom.remove(change);
+    }
+}
+
+fn text_never_owned_section(original: &[BodyParagraphSnapshot], text: &str, section: &str) -> bool {
+    let mut saw = false;
+    for paragraph in original {
+        if paragraph.text != text {
+            continue;
+        }
+        saw = true;
+        if paragraph.section.as_deref() == Some(section) {
+            return false;
+        }
+    }
+    saw
+}
+
 /// The story's closing mark is never revised: accepted, it closes the
 /// revision; rejected, the original. Word writes the revision's closing
 /// paragraph properties live on it and records the original's in a
@@ -3236,6 +3736,10 @@ pub fn merged_closing_carrier_takes_source_properties(
 /// dropped the revision's style and alignment.
 /// Word-visual ending (after every peel): the closing mark carries the
 /// revised layout live and the original layout in `w:pPrChange`.
+/// A section break the revision adds on that same paragraph is the
+/// exception Word tracks as an inserted mark: the new break stays on the
+/// paragraph, and a new empty paragraph carries the original properties
+/// in `w:pPrChange` (#1718).
 ///
 /// Reads the cloned `pPr`s from [`closing_paragraph_properties`] and
 /// applies them to the story's last paragraph mark. Mints a fresh
@@ -3282,6 +3786,11 @@ pub fn closing_mark_takes_revised_properties(
     if !dom.name_is(last, &W::p()) {
         return;
     }
+    // The empty paragraph added for an inserted closing break. A second
+    // call must not format that paragraph or mint another id.
+    if added_closing_section_already_split(dom, body, last) {
+        return;
+    }
     let ppr = match dom.element(last, &W::p_pr()) {
         Some(p) => p,
         None => {
@@ -3290,12 +3799,7 @@ pub fn closing_mark_takes_revised_properties(
             p
         }
     };
-    let mark = dom.element(ppr, &W::r_pr());
-    if mark.is_some_and(|m| {
-        ["ins", "del", "moveFrom", "moveTo"]
-            .iter()
-            .any(|k| dom.element(m, &W::name(k)).is_some())
-    }) {
+    if paragraph_mark_is_revised(dom, last) {
         return;
     }
     // Revised text on the closing paragraph is the revision's own paragraph
@@ -3328,28 +3832,36 @@ pub fn closing_mark_takes_revised_properties(
                 sectpr_identity(dom, live_section) == sectpr_identity(dom, section)
             })
         });
-    if live == new
-        && (old_sig == new || history_matches)
-        && (!added_authored_section || history_matches)
-    {
+    if added_authored_section {
+        // The history already on this paragraph moves onto the new closing
+        // paragraph. Replacing the live properties first would drop it.
+        let existing = dom.element(ppr, &W::p_pr_change());
+        if let Some(existing) = existing {
+            dom.remove(existing);
+        }
+        if old_sig != new {
+            replace_live_paragraph_properties(dom, ppr, revised);
+        }
+        mark_paragraph_mark(dom, last, W::ins(), settings, id_gen);
+        let close = dom.new_element(W::p());
+        let close_ppr = dom.new_element(W::p_pr());
+        dom.add(close, close_ppr);
+        if let Some(existing) = existing {
+            dom.add(close_ppr, existing);
+        } else {
+            let change = rev_el(dom, W::p_pr_change(), settings, id_gen);
+            dom.add(change, old);
+            dom.add(close_ppr, change);
+        }
+        dom.add_after_self(last, close);
+        normalize_universal_measures(dom, ppr);
         return;
     }
-    let keep: Vec<NodeId> = [W::r_pr(), W::sect_pr()]
-        .iter()
-        .filter_map(|n| dom.element(ppr, n))
-        .collect();
-    for c in dom.elements(ppr, None) {
-        dom.remove(c);
+    if live == new && (old_sig == new || history_matches) {
+        return;
     }
-    let fresh = formatchg::project_para_properties_for_change(dom, revised);
-    for c in dom.elements(fresh, None) {
-        dom.remove(c);
-        dom.add(ppr, c);
-    }
-    for c in keep {
-        dom.add(ppr, c);
-    }
-    if old_sig != new || added_authored_section {
+    replace_live_paragraph_properties(dom, ppr, revised);
+    if old_sig != new {
         let chg = dom.new_element(W::p_pr_change());
         dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
         *id_gen += 1;
@@ -29526,17 +30038,37 @@ mod closing_authored_section_boundary_tests {
                 &mut next_id,
             );
             let histories = dom.descendants(root, Some(&W::p_pr_change()));
+            // An added closing break is an inserted mark plus one history on
+            // the new empty closing paragraph, so it mints two ids.
+            let minted = if needs_history { 2 } else { 0 };
             assert_eq!(
                 histories.len(),
                 usize::from(needs_history),
                 "old={old_section:?},new={new_section:?},live={live_section:?},tracking={tracking}"
             );
-            assert_eq!(next_id, 70 + u32::from(needs_history));
+            assert_eq!(next_id, 70 + minted);
             assert_eq!(canonical(&dom, original), original_snapshot);
             assert_eq!(canonical(&dom, revised), revised_snapshot);
             if needs_history {
-                let history = histories[0];
-                assert_eq!(dom.attribute(history, &W::id()), Some("70"));
+                let paragraphs = dom.descendants(root, Some(&W::p()));
+                assert_eq!(paragraphs.len(), 2, "ONE and the empty closing paragraph");
+                let one = dom.element(paragraphs[0], &W::p_pr()).unwrap();
+                let inserted = dom
+                    .element(one, &W::r_pr())
+                    .expect("added section owns a revised pilcrow");
+                assert!(dom.element(inserted, &W::ins()).is_some());
+                assert_eq!(
+                    dom.attribute(dom.element(inserted, &W::ins()).unwrap(), &W::id()),
+                    Some("70")
+                );
+                assert!(dom.element(one, &W::sect_pr()).is_some());
+                assert!(dom.element(one, &W::p_pr_change()).is_none());
+                let closing = dom.element(paragraphs[1], &W::p_pr()).unwrap();
+                assert!(dom.element(closing, &W::r_pr()).is_none());
+                assert!(dom.element(closing, &W::sect_pr()).is_none());
+                let history = dom.element(closing, &W::p_pr_change()).unwrap();
+                assert_eq!(histories.len(), 1);
+                assert_eq!(dom.attribute(history, &W::id()), Some("71"));
                 assert_eq!(dom.attribute(history, &W::author()), Some("Closing editor"));
                 assert_eq!(
                     dom.attribute(history, &W::date()),
@@ -29551,23 +30083,27 @@ mod closing_authored_section_boundary_tests {
                 let rejected = dom.clone_subtree(root);
                 let rejected =
                     crate::revision_processor::reject_revisions_document(&mut dom, rejected);
-                let accepted_paragraph = dom.descendants(accepted, Some(&W::p()))[0];
-                let rejected_paragraph = dom.descendants(rejected, Some(&W::p()))[0];
+                let accepted_paragraphs = dom.descendants(accepted, Some(&W::p()));
+                let rejected_paragraphs = dom.descendants(rejected, Some(&W::p()));
+                assert_eq!(accepted_paragraphs.len(), 2);
+                assert_eq!(rejected_paragraphs.len(), 1);
                 assert_eq!(
-                    dom.descendants(accepted_paragraph, Some(&W::sect_pr()))
+                    dom.descendants(accepted_paragraphs[0], Some(&W::sect_pr()))
                         .len(),
                     1
                 );
-                // The saved pPr cannot hold a section break, so Reject keeps
-                // the live one, as Word's Reject All does (#1708). An added
-                // break should be an inserted paragraph mark instead (#1718).
-                assert_eq!(
-                    dom.descendants(rejected_paragraph, Some(&W::sect_pr()))
-                        .len(),
-                    1
+                assert!(
+                    dom.descendants(accepted_paragraphs[1], Some(&W::t()))
+                        .is_empty()
                 );
-                assert_eq!(dom.value(accepted_paragraph), "ONE");
-                assert_eq!(dom.value(rejected_paragraph), "ONE");
+                // Reject joins ONE into the closing paragraph and drops the
+                // inserted break, restoring the original's one section.
+                assert!(
+                    dom.descendants(rejected_paragraphs[0], Some(&W::sect_pr()))
+                        .is_empty()
+                );
+                assert_eq!(dom.value(accepted_paragraphs[0]), "ONE");
+                assert_eq!(dom.value(rejected_paragraphs[0]), "ONE");
             } else {
                 assert_eq!(canonical(&dom, root), before);
             }
@@ -29582,7 +30118,7 @@ mod closing_authored_section_boundary_tests {
                 &mut next_id,
             );
             assert_eq!(canonical(&dom, root), once);
-            assert_eq!(next_id, 70 + u32::from(needs_history));
+            assert_eq!(next_id, 70 + minted);
         }
     }
 
@@ -29612,23 +30148,30 @@ mod closing_authored_section_boundary_tests {
                 section(12240)
             ),
         );
-        let before = canonical(&dom, root);
         let mut next_id = 70;
-        for _ in 0..2 {
-            closing_mark_takes_revised_properties(
-                &mut dom,
-                root,
-                Some(original),
-                Some(revised),
-                (None, None),
-                &WmlComparerSettings::default(),
-                &mut next_id,
-            );
-            assert_eq!(canonical(&dom, root), before);
-            assert_eq!(next_id, 70);
-        }
+        closing_mark_takes_revised_properties(
+            &mut dom,
+            root,
+            Some(original),
+            Some(revised),
+            (None, None),
+            &WmlComparerSettings::default(),
+            &mut next_id,
+        );
+        assert_eq!(next_id, 71, "the inserted mark takes one fresh id");
+        let paragraphs = dom.descendants(root, Some(&W::p()));
+        assert_eq!(paragraphs.len(), 2);
+        let one = dom.element(paragraphs[0], &W::p_pr()).unwrap();
+        assert!(
+            dom.element(dom.element(one, &W::r_pr()).unwrap(), &W::ins())
+                .is_some()
+        );
+        assert!(dom.element(one, &W::sect_pr()).is_some());
+        assert!(dom.element(one, &W::p_pr_change()).is_none());
+        let closing = dom.element(paragraphs[1], &W::p_pr()).unwrap();
         let history = dom.descendants(root, Some(&W::p_pr_change()));
         assert_eq!(history.len(), 1);
+        assert_eq!(history[0], dom.element(closing, &W::p_pr_change()).unwrap());
         assert_eq!(dom.attribute(history[0], &W::id()), Some("55"));
         assert_eq!(
             dom.attribute(history[0], &W::author()),
@@ -29638,6 +30181,18 @@ mod closing_authored_section_boundary_tests {
             dom.attribute(history[0], &W::date()),
             Some("2025-11-12T00:00:00Z")
         );
+        let once = canonical(&dom, root);
+        closing_mark_takes_revised_properties(
+            &mut dom,
+            root,
+            Some(original),
+            Some(revised),
+            (None, None),
+            &WmlComparerSettings::default(),
+            &mut next_id,
+        );
+        assert_eq!(canonical(&dom, root), once);
+        assert_eq!(next_id, 71);
         let accepted = dom.clone_subtree(root);
         let accepted = crate::revision_processor::accept_revisions_document(&mut dom, accepted);
         let rejected = dom.clone_subtree(root);
@@ -29648,12 +30203,10 @@ mod closing_authored_section_boundary_tests {
             canonical(&dom, dom.element(ap, &W::p_pr()).unwrap()),
             canonical(&dom, revised)
         );
-        // Reject keeps the live section break, as Word's Reject All does
-        // (#1708, #1718). The saved and revised spacing are the same here,
-        // so the reverted pPr is the revised one.
+        // Reject drops the inserted break and restores the original spacing.
         assert_eq!(
             canonical(&dom, dom.element(rp, &W::p_pr()).unwrap()),
-            canonical(&dom, revised)
+            canonical(&dom, original)
         );
     }
 
@@ -29668,13 +30221,25 @@ mod closing_authored_section_boundary_tests {
         ] {
             let mut dom = Dom::new();
             let roots=[original_section,revised_section].map(|has_section|parse(&mut dom,&format!("<w:document xmlns:w='{}'><w:body><w:p>{}<w:r><w:rPr><w:b/><w:color w:val='123456'/></w:rPr><w:t>ONE</w:t></w:r></w:p>{}</w:body></w:document>",W::URI,props(has_section.then_some(12240)),section(12240))));
-            // An added break is tracked as a pPr change, whose saved pPr
-            // cannot hold it, so Reject keeps it, as Word's Reject All does:
-            // the revised body with the original spacing, which here is the
-            // same (#1708). Word's Compare inserts the paragraph mark (#1718).
-            let added = !original_section && revised_section;
-            let expected_original = projection(&mut dom, roots[usize::from(added)], false);
-            let expected_revised = projection(&mut dom, roots[1], true);
+            // Word's Compare of a break added on the closing paragraph keeps
+            // an empty closing paragraph after Accept All. Reject All is the
+            // original body: one paragraph, no embedded break (#1718).
+            let added = !original_section && revised_section && word;
+            let expected_original = projection(&mut dom, roots[0], false);
+            let accepted_oracle = if added {
+                parse(
+                    &mut dom,
+                    &format!(
+                        "<w:document xmlns:w='{}'><w:body><w:p>{}<w:r><w:rPr><w:b/><w:color w:val='123456'/></w:rPr><w:t>ONE</w:t></w:r></w:p><w:p/>{}</w:body></w:document>",
+                        W::URI,
+                        props(Some(12240)),
+                        section(12240)
+                    ),
+                )
+            } else {
+                roots[1]
+            };
+            let expected_revised = projection(&mut dom, accepted_oracle, true);
             let bodies = roots.map(|root| dom.element(root, &W::body()).unwrap());
             let settings = if word {
                 WmlComparerSettings::default()

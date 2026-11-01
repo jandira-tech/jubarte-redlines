@@ -478,6 +478,24 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
             dom.add(ne, tn);
         }
     }
+    // An inserted paragraph mark is w:pPr/w:rPr/w:ins and nothing else.
+    // Accepting it unwraps the ins and leaves an empty rPr the revised
+    // paragraph never had (#1718). A deleted mark is resolved earlier,
+    // with the join, and is not this shape.
+    let inserted_mark_only = dom.elements(node, None).len() == 1
+        && dom.element(node, &W::ins()).is_some()
+        && dom
+            .parent(node)
+            .is_some_and(|parent| dom.name_is(parent, &W::p_pr()));
+    if inserted_mark_only
+        && dom.nodes(ne).is_empty()
+        && dom
+            .attributes(ne)
+            .iter()
+            .all(|(attr, _)| dom.is_namespace_declaration(attr))
+    {
+        return vec![];
+    }
     vec![ne]
 }
 

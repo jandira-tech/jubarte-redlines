@@ -255,6 +255,15 @@ pub fn try_compare_bodies_faithful_with_notes(
         finalize::closing_paragraph_properties(dom, body1),
         finalize::closing_paragraph_properties(dom, body2),
     );
+    // An added section break is still on its paragraph here. Atomize
+    // hoists the final body sectPr, so the snapshot has to be taken first
+    // (#1718).
+    let body_paragraphs = settings.merge_replaced_paragraphs.then(|| {
+        (
+            finalize::snapshot_body_paragraphs(dom, body1),
+            finalize::snapshot_body_paragraphs(dom, body2),
+        )
+    });
     // M454 guard: the original's aligned paragraphs, read before the compare
     // consumes body1.
     let original_alignment = finalize::paragraph_alignments(dom, body1);
@@ -1287,6 +1296,16 @@ pub fn try_compare_bodies_faithful_with_notes(
             default_line(dom, source_root1),
             default_line(dom, source_root2),
         );
+        if let Some((original_paragraphs, revised_paragraphs)) = &body_paragraphs {
+            finalize::track_added_section_breaks(
+                dom,
+                root,
+                original_paragraphs,
+                revised_paragraphs,
+                settings,
+                &mut id,
+            );
+        }
         finalize::closing_mark_takes_revised_properties(
             dom,
             root,
@@ -1864,15 +1883,7 @@ mod body_section_source_ownership_tests {
             let revised_section = dom.element(revised_body, &W::sect_pr()).unwrap();
             let revised_size = dom.element(revised_section, &W::name("pgSz")).unwrap();
             dom.set_attribute_value(revised_size, &W::w(), Some("14400"));
-            let mut expected_original = source_view(&mut dom, original, false);
-            if genuine {
-                // The closing carrier `a` takes the break as a pPr change,
-                // whose saved pPr cannot hold it, so Reject keeps it on `a`
-                // too, as Word's Reject All does (#1708): three sections where
-                // the original has two. What Word's Compare writes for this
-                // case is still to be measured (#1718).
-                expected_original[1].1 = expected_original[0].1.clone();
-            }
+            let expected_original = source_view(&mut dom, original, false);
             let expected_revised = source_view(&mut dom, revised, true);
             let settings = WmlComparerSettings {
                 author_for_revisions: "Section editor".into(),
@@ -1890,7 +1901,8 @@ mod body_section_source_ownership_tests {
             assert_eq!(
                 source_view(&mut dom, compared, false),
                 expected_original,
-                "original authored section owner, genuine={genuine}"
+                "original authored section owner, genuine={genuine}; redline {}",
+                dom.serialize_element(dom.element(compared, &W::body()).unwrap())
             );
             assert_eq!(
                 source_view(&mut dom, compared, true),
@@ -1941,11 +1953,10 @@ mod body_section_source_ownership_tests {
                 .filter(|&ppr| dom.ancestors(ppr, Some(&W::p_pr_change())).is_empty())
                 .flat_map(|ppr| dom.elements(ppr, Some(&W::sect_pr())))
                 .collect::<Vec<_>>();
-            // The original ONE paragraph's deleted boundary and revised
-            // closing carrier both retain their authored break in tracked XML.
-            // Accept keeps exactly the source-owned break; Reject keeps both
-            // (#1718).
-            assert_eq!(embedded.len(), 2 * usize::from(genuine));
+            // The break the original authored stays on ONE. Copying it onto
+            // the revised closing carrier gave Reject All a section the
+            // original does not have (#1718).
+            assert_eq!(embedded.len(), usize::from(genuine));
             for section in embedded {
                 let size = dom.element(section, &W::name("pgSz")).unwrap();
                 assert_eq!(dom.attribute(size, &W::w()), Some("12240"));
@@ -1954,8 +1965,8 @@ mod body_section_source_ownership_tests {
             let paragraph_histories = dom.descendants(compared, Some(&W::p_pr_change()));
             assert_eq!(
                 paragraph_histories.len(),
-                usize::from(genuine),
-                "only addition of the revised closing break needs paragraph-property restoration"
+                0,
+                "a genuine break is not an added closing section, genuine={genuine}"
             );
             for change in paragraph_histories {
                 // CT_PPrBase cannot own sectPr. The original closing paragraph
@@ -2000,6 +2011,98 @@ mod body_section_source_ownership_tests {
             }
         }
     }
+
+    /// Word's Compare of a section break added between two paragraphs
+    /// (`two` in #1718): the paragraph that gains `w:sectPr` carries an
+    /// inserted mark, and an empty paragraph with a deleted mark keeps the
+    /// original boundary. Reject All is the original; Accept All is the
+    /// revision.
+    #[test]
+    fn mid_body_added_section_tracks_pilcrow_and_preserves_original_paragraph_boundary() {
+        let mut dom = Dom::new();
+        let section = "<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>";
+        let paragraph = |text: &str, with_section: bool| {
+            format!(
+                "<w:p><w:pPr><w:spacing w:before='120' w:after='80'/>{}</w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>",
+                if with_section { section } else { "" }
+            )
+        };
+        let document = |first_section: bool| {
+            format!(
+                "<w:document xmlns:w='{}'><w:body>{}{}{}</w:body></w:document>",
+                W::URI,
+                paragraph("ONE", first_section),
+                paragraph("TWO", false),
+                section
+            )
+        };
+        let original_doc = dom.parse_xdocument(&document(false));
+        let original = dom.root(original_doc).unwrap();
+        let revised_doc = dom.parse_xdocument(&document(true));
+        let revised = dom.root(revised_doc).unwrap();
+        let expected_original = source_view(&mut dom, original, false);
+        let expected_revised = source_view(&mut dom, revised, true);
+        let settings = WmlComparerSettings {
+            author_for_revisions: "Comparison".into(),
+            date_time_for_revisions: "2026-10-24T07:02:00Z".into(),
+            ..WmlComparerSettings::default()
+        };
+        let original_body = dom.element(original, &W::body()).unwrap();
+        let revised_body = dom.element(revised, &W::body()).unwrap();
+        let compared = compare_bodies_faithful(
+            &mut dom,
+            original,
+            revised,
+            original_body,
+            revised_body,
+            &settings,
+        );
+        let body = dom.element(compared, &W::body()).unwrap();
+        let paragraphs = dom.elements(body, Some(&W::p()));
+        assert_eq!(
+            paragraphs.len(),
+            3,
+            "ONE, the deleted original boundary, and TWO"
+        );
+        let one = dom.element(paragraphs[0], &W::p_pr()).unwrap();
+        let inserted = dom
+            .element(one, &W::r_pr())
+            .expect("added section owns a revised pilcrow");
+        assert!(
+            dom.element(inserted, &W::ins()).is_some(),
+            "the new section break is an inserted paragraph mark"
+        );
+        assert!(dom.element(one, &W::sect_pr()).is_some());
+        assert!(
+            dom.element(one, &W::p_pr_change()).is_none(),
+            "equal formatting records no pPrChange"
+        );
+        let boundary = dom.element(paragraphs[1], &W::p_pr()).unwrap();
+        let deleted = dom
+            .element(boundary, &W::r_pr())
+            .expect("the original paragraph boundary is a deleted mark");
+        assert!(dom.element(deleted, &W::del()).is_some());
+        assert!(dom.element(boundary, &W::sect_pr()).is_none());
+        assert!(dom.element(boundary, &W::p_pr_change()).is_none());
+        assert!(
+            dom.descendants(paragraphs[1], Some(&W::t())).is_empty(),
+            "the compensating paragraph is empty"
+        );
+        let two = dom.element(paragraphs[2], &W::p_pr()).unwrap();
+        assert!(dom.element(two, &W::r_pr()).is_none());
+        assert!(dom.element(two, &W::sect_pr()).is_none());
+        assert_eq!(
+            source_view(&mut dom, compared, false),
+            expected_original,
+            "reject restores the original's one section and both paragraphs"
+        );
+        assert_eq!(
+            source_view(&mut dom, compared, true),
+            expected_revised,
+            "accept keeps the revision's section break and both paragraphs"
+        );
+    }
+
     #[test]
     fn authored_body_paragraph_section_before_an_ending_table_is_never_the_final_body_owner() {
         let mut dom = Dom::new();
