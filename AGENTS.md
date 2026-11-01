@@ -238,8 +238,10 @@ hand (`--bench-root`, which release.sh passes when it finds one); without
 one they are format-checked only, and the release says so.
 
 - Run the flow before releasing, against a release-candidate binary built
-  from this checkout (`--binary`); the GitHub release binary is the default
-  only after the release exists.
+  from this checkout (`--binary`). After the release, do not re-run it on
+  the published binary: `scripts/identity.py` proves that binary reproduces
+  the candidate's outputs on the release samples, in minutes and without
+  Word.
 - One scoring job at a time: the flow never runs two scorers concurrently.
 - Do not edit the files by hand — a number in them is always the bench's.
   Redraw the sample or rerun the flow instead.
