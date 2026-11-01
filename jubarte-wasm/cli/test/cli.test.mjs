@@ -1937,10 +1937,14 @@ test("read --tables -o replaces a link, never writing through it (#1698)", () =>
 // its own test.
 const inPlaceParsed = parses(["accept", "a.docx", "--in-place"]);
 
+// Built once per run. A memo, not an existsSync check, so nothing is written
+// to a path between checking it and using it (CodeQL js/file-system-race).
+let inPlaceScript = null;
+
 function inPlaceBin() {
+  if (inPlaceScript) return inPlaceScript;
   const host = path.join(tmp, "in-place-host");
   const script = path.join(host, "jubarte-redlines.mjs");
-  if (fs.existsSync(script)) return script;
   const modules = path.join(host, "node_modules", "jubarte-wasm");
   fs.mkdirSync(modules, { recursive: true });
   fs.writeFileSync(script, fs.readFileSync(bin));
@@ -1979,6 +1983,7 @@ function inPlaceBin() {
     "  },",
     "};",
   ].join("\n"));
+  inPlaceScript = script;
   return script;
 }
 
@@ -2053,8 +2058,15 @@ test("edit --in-place follows a symlink and keeps its mode (#1888)", () => {
   assert.equal(edited.code, 0, edited.err);
   assert.ok(fs.lstatSync(link).isSymbolicLink(), edited.err);
   assert.equal(fs.readlinkSync(link), "real.docx");
-  assert.equal(fs.statSync(real).mode & 0o777, 0o640);
-  assert.ok(!fs.readFileSync(real).equals(before));
+  // One descriptor for the mode and the bytes: both describe the same file
+  // (CodeQL js/file-system-race).
+  const fd = fs.openSync(real, "r");
+  try {
+    assert.equal(fs.fstatSync(fd).mode & 0o777, 0o640);
+    assert.ok(!fs.readFileSync(fd).equals(before));
+  } finally {
+    fs.closeSync(fd);
+  }
   assert.match(edited.err, /wrote .*link\.docx in place \(replaced sha256 [0-9a-f]{8}\u2026\); \d+ changes? by "GiantCo"/);
   assert.doesNotMatch(edited.err, /no -a given/);
 });
