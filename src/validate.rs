@@ -1213,7 +1213,7 @@ fn tier(pass: usize, key: &FindingKey) -> Option<([&str; 5], [Option<&str>; 5])>
 /// of the report must not stop on them, #1893), then `new: none` or
 /// `new: N` and the new findings ([`findings_text`]'s lines), then
 /// `already in the input: N (not yours)` (or `none`), then the author
-/// summary ([`markup_text`]), and last the verdict ([`verdict_text`]).
+/// summary (`markup_text`), and last the verdict (`verdict_text`).
 /// The verdict states what the run checked: without an author, no
 /// authorship was checked, and the line says so (#1893).
 pub fn baselined_text(split: &Baselined, strict: bool) -> String {
@@ -4818,7 +4818,7 @@ fn foreign_finding(group: &ForeignGroup<'_>, state: &str) -> Finding {
 
 /// The `FOREIGN_AUTHOR` finding of change `id` — one mark, or the
 /// composite id `changes` prints for the marks of one logical change
-/// (`r10+11`) — by `author`, in `state` (one of the [`FOREIGN_*`]
+/// (`r10+11`) — by `author`, in `state` (one of the `FOREIGN_*`
 /// states).
 fn foreign_message(part: &str, id: &str, author: &str, state: &str) -> Finding {
     let message = if state == FOREIGN_GONE {

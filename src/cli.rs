@@ -887,6 +887,34 @@ fn env_author_fill(author: &mut String, given: &mut bool) -> Result<(), String> 
     Ok(())
 }
 
+/// `JUBARTE_TIMEOUT`, set and non-empty: a wall-clock bound, in seconds,
+/// on any task, as `convert --timeout` bounds `convert` (#2016). An invalid
+/// value is a usage error naming the variable.
+///
+/// # Errors
+///
+/// `JUBARTE_TIMEOUT: …` when the value is not a finite number of seconds
+/// above 0.
+pub fn env_timeout() -> Result<Option<std::time::Duration>, String> {
+    // A value that is not Unicode is refused, never read as unset: a host
+    // that set the variable expects a bound.
+    let Some(value) = std::env::var_os("JUBARTE_TIMEOUT") else {
+        return Ok(None);
+    };
+    let value = value.into_string().map_err(|raw| {
+        format!(
+            "JUBARTE_TIMEOUT: '{}' is not a number of seconds",
+            raw.to_string_lossy()
+        )
+    })?;
+    if value.is_empty() {
+        return Ok(None);
+    }
+    parse_timeout(&value)
+        .map(Some)
+        .map_err(|m| format!("JUBARTE_TIMEOUT: {m}"))
+}
+
 /// Inputs and settings shared by explicit and shorthand comparisons.
 #[derive(clap::Args, Debug, Serialize)]
 #[group(id = "compare_options", multiple = true)]

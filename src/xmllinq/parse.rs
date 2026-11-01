@@ -604,7 +604,9 @@ impl<'a> Parser<'a> {
                     continue;
                 }
                 if self.starts_with("<!") {
-                    self.pos = self.index_of(">", self.pos).map_or(len, |e| e + 1);
+                    // As `parse_document` skips it: whole, internal subset
+                    // and all (#2015).
+                    self.pos = self.declaration_end(len);
                     continue;
                 }
                 if self.cur() != '<' {
@@ -691,9 +693,11 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if self.starts_with("<!") {
-                // DOCTYPE — skip
-                let end = self.index_of(">", self.pos);
-                self.pos = end.map(|e| e + 1).unwrap_or(len);
+                // DOCTYPE — skip it whole: its internal subset can hold a
+                // `>` inside a quoted entity value or between its brackets,
+                // and ending at the first `>` would read the rest of the
+                // subset as content (#2015).
+                self.pos = self.declaration_end(len);
                 continue;
             }
             if self.cur() == '<' {
@@ -704,6 +708,29 @@ impl<'a> Parser<'a> {
             break;
         }
         doc
+    }
+
+    /// Index just past the `<!…>` declaration at `self.pos`: the first
+    /// `>` outside quotes and outside the `[…]` internal subset, or `len`
+    /// when it never closes.
+    fn declaration_end(&self, len: usize) -> usize {
+        let mut quote = None;
+        let mut subset = 0usize;
+        let mut at = self.pos + 2;
+        while at < len {
+            let c = self.c[at];
+            match (quote, c) {
+                (Some(q), _) if c == q => quote = None,
+                (Some(_), _) => {}
+                (None, '"' | '\'') => quote = Some(c),
+                (None, '[') => subset += 1,
+                (None, ']') => subset = subset.saturating_sub(1),
+                (None, '>') if subset == 0 => return at + 1,
+                (None, _) => {}
+            }
+            at += 1;
+        }
+        len
     }
 
     fn parse_element(&mut self, scope: &mut NsScope) -> NodeId {
@@ -1192,7 +1219,7 @@ mod depth_scan_tests {
 #[cfg(test)]
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod checked_xml_tests {
-    use super::{Dom, parse_xdocument, validate_xml};
+    use super::{Dom, nests_deeper, parse_xdocument, validate_xml};
 
     #[test]
     fn truncated_attribute_input_terminates_in_legacy_parser() {
@@ -1209,6 +1236,38 @@ mod checked_xml_tests {
             assert!(dom.root(document).is_some(), "{xml}");
             assert!(validate_xml(xml).is_err(), "{xml}");
         }
+    }
+
+    /// The permissive parser skips a DOCTYPE whole, its internal subset
+    /// included, even where the subset holds a `>` inside a quoted entity
+    /// value or between its brackets: ending at the first `>` read the rest
+    /// of the subset as content (#2015).
+    #[test]
+    fn a_doctype_is_skipped_whole_whatever_its_subset_holds() {
+        for xml in [
+            "<!DOCTYPE d><root/>",
+            r#"<!DOCTYPE d [<!ENTITY a "<w:p><w:t>SMUGGLED</w:t></w:p>">]><root/>"#,
+            "<!DOCTYPE d [<!ENTITY a '>'><!ENTITY b \"]>\">]><root/>",
+            "<!DOCTYPE d [<!ELEMENT root ANY><!ATTLIST root x CDATA '>'>]><root/>",
+            r#"<?xml version="1.0"?><!DOCTYPE d SYSTEM "x>y.dtd"><root/>"#,
+        ] {
+            let mut dom = Dom::new();
+            let document = parse_xdocument(&mut dom, xml);
+            let root = dom.root(document).expect(xml);
+            assert!(
+                dom.name_is(root, &crate::xmllinq::XName::get("root", "")),
+                "{xml}"
+            );
+            assert!(dom.descendants(root, None).is_empty(), "{xml}");
+        }
+        // The depth scan ends the declaration where the parser does: tags
+        // inside an entity value are no nesting.
+        let deep_value = format!(
+            r#"<!DOCTYPE d [<!ENTITY a "{}">]><root/>"#,
+            "<x>".repeat(10)
+        );
+        assert!(!nests_deeper(&deep_value, 3), "{deep_value}");
+        assert!(nests_deeper("<a><b><c><d></d></c></b></a>", 3));
     }
 
     /// Package admission tolerates unquoted and valueless attributes so the

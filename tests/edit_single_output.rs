@@ -4,6 +4,7 @@
 
 //! `edit` and `add` write one document, `FILE_modified.docx` beside FILE
 //! (`-o` names another); `--out-dir` writes the review bundle instead.
+#![cfg(feature = "cli")]
 
 mod common;
 

@@ -319,6 +319,16 @@ pub struct InputBudget {
     pub max_uncompressed_bytes: u64,
     /// Maximum element nesting depth in any XML part.
     pub max_xml_depth: usize,
+    /// Maximum XML element start tags across all the package's parts
+    /// (#2014). `None` in a manifest written before 0.17.0, whose engine
+    /// had no element limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_xml_elements: Option<u64>,
+    /// Maximum characters of text plus elements in one compared side
+    /// (#2024). `None` in a manifest written before 0.17.0, whose comparer
+    /// had no such limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_story_units: Option<u64>,
 }
 
 impl From<crate::admission::InputLimits> for InputBudget {
@@ -331,6 +341,8 @@ impl From<crate::admission::InputLimits> for InputBudget {
             max_part_bytes: l.max_part_bytes,
             max_uncompressed_bytes: l.max_uncompressed_bytes,
             max_xml_depth: l.max_xml_depth,
+            max_xml_elements: Some(l.max_xml_elements),
+            max_story_units: Some(l.max_story_units),
         }
     }
 }
@@ -509,7 +521,7 @@ pub fn capabilities_text(c: &Capabilities) -> String {
     out.push_str(&format!(
         "limits: plain text runs {}, refuses opaque ranges {}, reads legacy .doc {}, \
          {} bytes compressed, {} entries, {} bytes per part, {} bytes uncompressed, \
-         XML depth {}\n",
+         XML depth {}, {}, {}\n",
         yes(c.limits.plain_text_runs),
         yes(c.limits.refuses_opaque_ranges),
         yes(c.limits.reads_legacy_doc),
@@ -517,7 +529,15 @@ pub fn capabilities_text(c: &Capabilities) -> String {
         input.max_entries,
         input.max_part_bytes,
         input.max_uncompressed_bytes,
-        input.max_xml_depth
+        input.max_xml_depth,
+        input.max_xml_elements.map_or_else(
+            || "no XML element limit".to_string(),
+            |n| format!("{n} XML elements")
+        ),
+        input.max_story_units.map_or_else(
+            || "no story unit limit".to_string(),
+            |n| format!("{n} story units per compared side")
+        )
     ));
     let rules: Vec<String> = c
         .validate_rules
@@ -568,6 +588,26 @@ pub fn capabilities_json(runtime: &str) -> String {
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
+
+    /// A manifest from before the element budget (#2014) reads as having
+    /// none, not as a budget of 0; today's carries the default's.
+    #[test]
+    fn an_older_manifest_has_no_element_limit() {
+        let older: InputBudget = serde_json::from_str(
+            r#"{"max_compressed_bytes":1,"max_entries":2,"max_part_bytes":3,"max_uncompressed_bytes":4,"max_xml_depth":5}"#,
+        )
+        .unwrap();
+        assert_eq!(older.max_xml_elements, None);
+        assert_eq!(older.max_story_units, None);
+        assert!(
+            !serde_json::to_string(&older)
+                .unwrap()
+                .contains("max_xml_elements")
+        );
+        let today = InputBudget::from(crate::admission::InputLimits::default());
+        assert_eq!(today.max_xml_elements, Some(2_000_000));
+        assert_eq!(today.max_story_units, Some(2_000_000));
+    }
 
     #[test]
     fn manifest_reports_the_crate_version_and_every_edit_kind() {

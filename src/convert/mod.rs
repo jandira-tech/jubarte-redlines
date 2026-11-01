@@ -29028,7 +29028,7 @@ impl<'a> Layout<'a> {
 
     /// A flow picture with text before it joins that text's first line at
     /// the painted piece that starts at `at_chars` (7eb842c8's icon after
-    /// "1.<tab>"). The line deepens by the same `(height - drop)` the lead
+    /// "1.`<tab>`"). The line deepens by the same `(height - drop)` the lead
     /// and trailing joins use, and the words after the picture move past
     /// it. A picture that does not fit the remainder wraps to the next
     /// line with those words. Only left and justified lines, the same gate

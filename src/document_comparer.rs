@@ -36,6 +36,29 @@ impl std::fmt::Display for StoryDiffError {
 
 impl std::error::Error for StoryDiffError {}
 
+/// A story holds markup the comparer cannot flatten into atoms: a
+/// `w:subDoc`, `w:altChunk`, `w:contentPart` or custom XML markup.
+/// Carried inside [`OpcError::Io`]; callers can downcast its `get_ref()`.
+#[derive(Debug)]
+pub struct UnsupportedContentError {
+    /// The story and the element, such as
+    /// `original document: Document contains subDoc`.
+    pub message: String,
+}
+
+impl std::fmt::Display for UnsupportedContentError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", Self::CODE, self.message)
+    }
+}
+
+impl std::error::Error for UnsupportedContentError {}
+
+impl UnsupportedContentError {
+    /// The stable error code agents and bindings see.
+    pub const CODE: &'static str = "UNSUPPORTED_CONTENT";
+}
+
 fn story_diff_error(part: &str, reason: &'static str) -> OpcError {
     crate::opc::refused(StoryDiffError {
         part: part.to_string(),
@@ -5269,8 +5292,76 @@ fn pre_process(
 /// Markup the engine refuses (C# throws DocxodusException): an `Err` the
 /// caller can handle, never a panic, which would abort a WASM instance.
 /// `InvalidData` is std's kind for well-formed-but-unacceptable input.
-fn invalid_content(msg: String) -> OpcError {
-    OpcError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, msg))
+fn invalid_content(message: String) -> OpcError {
+    crate::opc::refused(UnsupportedContentError { message })
+}
+
+/// A story's weight under [`crate::admission::InputLimits::max_story_units`]:
+/// its elements plus the characters of its text, about the atoms the
+/// comparer makes of it.
+fn story_units(dom: &Dom, root: NodeId) -> u64 {
+    let text = [W::t(), W::del_text(), W::instr_text(), W::del_instr_text()];
+    let mut units = 1u64;
+    dom.for_each_descendant_element(root, None, |e| {
+        units = units.saturating_add(1);
+        if text.iter().any(|name| dom.name_is(e, name)) {
+            let chars = u64::try_from(dom.value(e).chars().count()).unwrap_or(u64::MAX);
+            units = units.saturating_add(chars);
+        }
+    });
+    units
+}
+
+/// Refuse `story` when `units` pass the budget, before any atom is made:
+/// the comparer's memory follows the atoms (word_exp B1, 2026-10-31).
+fn refuse_past_story_budget(
+    units: u64,
+    story: &str,
+    limits: crate::admission::InputLimits,
+) -> Result<(), OpcError> {
+    if units <= limits.max_story_units {
+        return Ok(());
+    }
+    Err(crate::opc::refused(crate::admission::AdmissionError {
+        kind: crate::admission::AdmissionErrorKind::InputLimit,
+        message: format!(
+            "{story} holds {units} story units (characters and elements); the limit is {} story units",
+            limits.max_story_units
+        ),
+    }))
+}
+
+/// Refuse a story the atomizer cannot flatten, in one walk: a subdocument,
+/// an altChunk, a content part or custom XML markup (word_exp N4 panicked
+/// the atomizer, 2026-10-31), or an element with two direct `w:sectPr`
+/// (the atomizer's last-sectPr move expects one). `story` names the part or
+/// side in the error.
+fn refuse_unatomizable(dom: &Dom, root: NodeId, story: &str) -> Result<(), OpcError> {
+    let content_part = W::name("contentPart");
+    let sect_pr = W::sect_pr();
+    let mut sect_parents = std::collections::HashSet::new();
+    let mut bad = None;
+    dom.find_descendant_element(root, None, |e| {
+        if dom.name_is(e, &sect_pr) {
+            if let Some(parent) = dom.parent(e)
+                && !sect_parents.insert(parent)
+            {
+                bad = Some("Document contains two sectPr in one story element".to_string());
+            }
+        } else if dom.name_is(e, &content_part)
+            || dom
+                .name(e)
+                .is_some_and(|name| crate::comparer::tables::INVALID_ELEMENTS.contains(&name))
+        {
+            let name = dom
+                .name(e)
+                .map(|n| n.local_name().to_string())
+                .unwrap_or_default();
+            bad = Some(format!("Document contains {name}"));
+        }
+        bad.is_some()
+    });
+    bad.map_or(Ok(()), |e| Err(invalid_content(format!("{story}: {e}"))))
 }
 
 /// Admit one compare input under `limits`. A refusal keeps the typed
@@ -6731,7 +6822,7 @@ pub fn get_revisions(
 
     // C# :3948–:3949 — TestForInvalidContent (throws) +
     // RemoveExistingPowerToolsMarkup on main and both notes parts.
-    preprocess::test_for_invalid_content(&dom, root).map_err(invalid_content)?;
+    refuse_unatomizable(&dom, root, "input document")?;
     preprocess::remove_existing_powertools_markup(&mut dom, root);
     let mut note_roots: Vec<(NodeId, &str, crate::xmllinq::XName)> = Vec::new();
     let (fn_part, en_part) = notes_part_names(&pkg);
@@ -6742,11 +6833,18 @@ pub fn get_revisions(
         if let Some(x) = pkg.part_string(part) {
             let nd = dom.parse_xdocument(&x);
             if let Some(r) = dom.root(nd) {
+                refuse_unatomizable(&dom, r, part)?;
                 preprocess::remove_existing_powertools_markup(&mut dom, r);
                 note_roots.push((r, part, def));
             }
         }
     }
+    let units = note_roots
+        .iter()
+        .fold(story_units(&dom, root), |sum, (r, _, _)| {
+            sum.saturating_add(story_units(&dom, *r))
+        });
+    refuse_past_story_budget(units, "input document", settings.input_limits)?;
 
     let body = dom
         .element(root, &W::body())
@@ -7079,6 +7177,8 @@ fn compare_documents_impl(
         .ok_or_else(|| OpcError::PartNotFound("original has no w:body".into()))?;
     let body2 = merged_body(&mut dom, root2)
         .ok_or_else(|| OpcError::PartNotFound("modified has no w:body".into()))?;
+    refuse_unatomizable(&dom, root1, "original document")?;
+    refuse_unatomizable(&dom, root2, "modified document")?;
 
     // #531: canonicalize measure spellings on BOTH inputs before the diff —
     // here, where Strict is translated. The diff's property signatures
@@ -7125,6 +7225,36 @@ fn compare_documents_impl(
     .flatten()
     {
         crate::comparer::finalize::normalize_universal_measures(&mut dom, root);
+    }
+    for (root, part) in [
+        (notes_ctx.fn_before, &fn1),
+        (notes_ctx.fn_after, &fn2),
+        (notes_ctx.en_before, &en1),
+        (notes_ctx.en_after, &en2),
+    ] {
+        if let Some(root) = root {
+            refuse_unatomizable(&dom, root, part)?;
+        }
+    }
+    for (side, main, notes) in [
+        (
+            "original document",
+            root1,
+            [notes_ctx.fn_before, notes_ctx.en_before],
+        ),
+        (
+            "modified document",
+            root2,
+            [notes_ctx.fn_after, notes_ctx.en_after],
+        ),
+    ] {
+        let units = notes
+            .into_iter()
+            .flatten()
+            .fold(story_units(&dom, main), |sum, root| {
+                sum.saturating_add(story_units(&dom, root))
+            });
+        refuse_past_story_budget(units, side, settings.input_limits)?;
     }
 
     // Word mode: each side's unstyled-paragraph line pitch, for the
@@ -8344,6 +8474,8 @@ fn compare_documents_impl(
                     if !hd.name_is(root, &container_name) {
                         return Err(story_diff_error(part, "unexpected story root element"));
                     }
+                    refuse_unatomizable(&hd, root, part)?;
+                    refuse_past_story_budget(story_units(&hd, root), part, settings.input_limits)?;
                 }
                 {
                     let text_of = |d: &Dom, n: crate::xmllinq::NodeId| -> String {
@@ -8806,6 +8938,32 @@ mod tests {
     //! child sequence — so the synthesized records must use a free id and land
     //! in their schema slot.
     use super::*;
+
+    /// One unit per element and per character of `w:t`, `w:delText`,
+    /// `w:instrText` and `w:delInstrText`; other text costs nothing.
+    #[test]
+    fn story_units_count_elements_and_the_characters_of_text() {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            "<w:body xmlns:w=\"{}\"><w:p><w:r><w:t>ab\u{e9}</w:t><w:delText>cd</w:delText><w:instrText> P </w:instrText><w:delInstrText>e</w:delInstrText><w:tab/></w:r></w:p><w:p/></w:body>",
+            W::URI
+        ));
+        let root = dom.root(doc).unwrap();
+        // 9 elements (body, 2 p, r, 4 text, tab) + 3 + 2 + 3 + 1 characters.
+        assert_eq!(story_units(&dom, root), 9 + 9);
+        let limits = crate::admission::InputLimits {
+            max_story_units: 18,
+            ..crate::admission::InputLimits::compare()
+        };
+        assert!(refuse_past_story_budget(18, "s", limits).is_ok());
+        let err = refuse_past_story_budget(19, "s", limits)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("s holds 19 story units") && err.contains("limit is 18"),
+            "{err}"
+        );
+    }
 
     fn parse(dom: &mut Dom, xml: &str) -> (NodeId, NodeId) {
         let doc = dom.parse_xdocument(xml);

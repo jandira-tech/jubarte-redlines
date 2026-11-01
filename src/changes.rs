@@ -571,6 +571,60 @@ pub(crate) struct Recorded {
 /// story keeps every record, in document order.
 pub(crate) type Records = HashMap<String, Vec<Recorded>>;
 
+/// The comments of a package's comments part: each comment's `w:id`, and
+/// for each comment-body change (`comments.r9`, as [`list_changes`] names
+/// it) the `w:id` of the comment that holds it, `None` when the change's
+/// id repeats in two comments. A comment an edit removes takes its body's
+/// changes with it (#1706).
+#[derive(Debug, Default)]
+pub(crate) struct CommentBodies {
+    pub comments: HashSet<String>,
+    pub owners: HashMap<String, Option<String>>,
+}
+
+/// [`CommentBodies`] of `docx`; empty when it has no comments part.
+pub(crate) fn comment_bodies(docx: &[u8]) -> Result<CommentBodies, ChangeError> {
+    let pkg = open(docx)?;
+    let mut bodies = CommentBodies::default();
+    let Some(part) = crate::revision_processor::comments_part(&pkg) else {
+        return Ok(bodies);
+    };
+    let story = story_id(&main_part(&pkg), &part);
+    let comment = W::name("comment");
+    let id = W::id();
+    for_each_story(&pkg, |dom, root, name| {
+        if name != story {
+            return;
+        }
+        bodies.comments.extend(
+            dom.descendants(root, Some(&comment))
+                .into_iter()
+                .filter_map(|c| dom.attribute(c, &id).map(str::to_string)),
+        );
+        for carrier in carriers(dom, root, name) {
+            let Some(change) = carrier.change else {
+                continue;
+            };
+            let holder = dom
+                .ancestors(carrier.node, Some(&comment))
+                .into_iter()
+                .find_map(|c| dom.attribute(c, &id).map(str::to_string));
+            if let Some(holder) = holder {
+                bodies
+                    .owners
+                    .entry(change.id)
+                    .and_modify(|owner| {
+                        if owner.as_ref() != Some(&holder) {
+                            *owner = None;
+                        }
+                    })
+                    .or_insert(Some(holder));
+            }
+        }
+    });
+    Ok(bodies)
+}
+
 /// [`list_changes`] and its formatting changes' [`Records`], from one
 /// parse of each story. The content of a change `skip` names, and the
 /// paragraph mark it inserts, count for nothing in the characters.
@@ -1507,7 +1561,7 @@ fn final_marks_of_row(dom: &Dom, carrier: NodeId) -> Vec<NodeId> {
 }
 
 /// The listed changes of the comments part only (empty when the package
-/// has none). The same changes are in [`changes_in`] as `comments.rN`.
+/// has none). The same changes are in `changes_in` as `comments.rN`.
 pub fn comment_changes_in(pkg: &PartFs) -> Vec<Change> {
     let Some(part) = crate::revision_processor::comments_part(pkg) else {
         return Vec::new();

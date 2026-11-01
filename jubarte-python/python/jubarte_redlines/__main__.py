@@ -32,8 +32,12 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import math
 import os
+import re
+import signal
 import stat
+import subprocess
 import sys
 import uuid
 from dataclasses import asdict
@@ -51,6 +55,7 @@ EXIT_USAGE = 2
 EXIT_PLAN_REFUSED = 3
 EXIT_PAGES_DIFFER = 5
 EXIT_FINDINGS = 2
+EXIT_TIMEOUT = 124
 
 # Whether the command line asks for JSON (`_native.wants_json`): an error
 # then prints its JSON line on stdout too, as the binary's does (#1255).
@@ -1659,8 +1664,81 @@ def build_parser() -> SharedParser:
     return SharedParser()
 
 
+#: A number of seconds as Rust's ``f64`` parse reads one (the binary's
+#: ``JUBARTE_TIMEOUT``): no white space, underscores or hex.
+_SECONDS = re.compile(r"[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+#: The words Rust's parse reads as infinity or NaN, refused as not finite.
+_NOT_FINITE = re.compile(r"[+-]?(?:inf|infinity|nan)", re.IGNORECASE)
+
+
+def _env_timeout() -> float | None:
+    """``JUBARTE_TIMEOUT`` in seconds, as the binary reads it (#2016): unset
+    or empty is no bound; anything but a finite number above 0 is a usage
+    error naming the variable, in the binary's words."""
+    value = os.environ.get("JUBARTE_TIMEOUT", "")
+    if not value:
+        return None
+    finite = _SECONDS.fullmatch(value) is not None
+    if not finite and _NOT_FINITE.fullmatch(value) is None:
+        _error(f"JUBARTE_TIMEOUT: '{value}' is not a number of seconds", EXIT_USAGE)
+        raise SystemExit(EXIT_USAGE)
+    seconds = float(value) if finite else math.nan
+    if not (math.isfinite(seconds) and seconds > 0):
+        _error(
+            f"JUBARTE_TIMEOUT: '{value}': the timeout must be a finite number of seconds above 0",
+            EXIT_USAGE,
+        )
+        raise SystemExit(EXIT_USAGE)
+    return seconds
+
+
+def _seconds_text(seconds: float) -> str:
+    """``seconds`` as the binary prints it: ``2`` for 2.0, ``0.5``."""
+    return str(int(seconds)) if seconds.is_integer() else repr(seconds)
+
+
+def _run_bounded(argv: Sequence[str], seconds: float) -> int:
+    """The task in a child process killed after ``seconds``: the engine call
+    holds the interpreter while it lays out or compares, so no in-process
+    timer could interrupt it. Exits 124 with the binary's message (#2016).
+
+    The child inherits stdin, stdout and stderr; its exit code is the
+    parent's, and one ended by a signal is ``128 + signal`` as a shell
+    reports it. A SIGTERM or SIGHUP to the parent is passed on, so the child
+    never outlives it.
+    """
+    env = {k: v for k, v in os.environ.items() if k != "JUBARTE_TIMEOUT"}
+    child = subprocess.Popen([sys.executable, "-m", "jubarte_redlines", *argv], env=env)
+    forwarded = [sig for sig in ("SIGTERM", "SIGHUP") if hasattr(signal, sig)]
+    previous = {}
+    for name in forwarded:
+        number = getattr(signal, name)
+        previous[number] = signal.signal(number, lambda sig, _frame: child.send_signal(sig))
+    try:
+        code = child.wait(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.wait()
+        print(
+            f"error: DEADLINE_EXCEEDED: timed out after {_seconds_text(seconds)}s (JUBARTE_TIMEOUT)",
+            file=sys.stderr,
+        )
+        return EXIT_TIMEOUT
+    except BaseException:
+        child.kill()
+        child.wait()
+        raise
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+    return 128 - code if code < 0 else code
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI; returns the exit code (``SystemExit`` only for usage errors)."""
+    seconds = _env_timeout()
+    if seconds is not None:
+        return _run_bounded(list(sys.argv[1:] if argv is None else argv), seconds)
     args = build_parser().parse_args(argv)
     try:
         return int(args.func(args))
