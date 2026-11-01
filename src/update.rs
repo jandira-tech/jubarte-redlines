@@ -88,19 +88,26 @@ pub enum Plan {
 
 /// The release archive suffix this binary will look up (`macos-aarch64`,
 /// `linux-x86_64`, …), matching the names `release.yml` publishes. `None`
-/// for an OS / arch pair no archive is built for.
+/// for an OS / arch pair no archive is built for. A static musl build looks
+/// up the `-musl` archive, so it never replaces itself with the glibc one.
 #[must_use]
 pub fn asset_target() -> Option<&'static str> {
-    asset_target_for(std::env::consts::OS, std::env::consts::ARCH)
+    asset_target_for(
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        cfg!(target_env = "musl"),
+    )
 }
 
-fn asset_target_for(os: &str, arch: &str) -> Option<&'static str> {
-    Some(match (os, arch) {
-        ("macos", "aarch64") => "macos-aarch64",
-        ("macos", "x86_64") => "macos-x86_64",
-        ("linux", "aarch64") => "linux-aarch64",
-        ("linux", "x86_64") => "linux-x86_64",
-        ("windows", "x86_64") => "windows-x86_64",
+fn asset_target_for(os: &str, arch: &str, musl: bool) -> Option<&'static str> {
+    Some(match (os, arch, musl) {
+        ("macos", "aarch64", false) => "macos-aarch64",
+        ("macos", "x86_64", false) => "macos-x86_64",
+        ("linux", "aarch64", false) => "linux-aarch64",
+        ("linux", "x86_64", false) => "linux-x86_64",
+        ("linux", "aarch64", true) => "linux-musl-aarch64",
+        ("linux", "x86_64", true) => "linux-musl-x86_64",
+        ("windows", "x86_64", false) => "windows-x86_64",
         _ => return None,
     })
 }
@@ -367,18 +374,66 @@ mod tests {
 
     #[test]
     fn asset_targets_match_the_release_workflow_archives() {
-        assert_eq!(asset_target_for("macos", "aarch64"), Some("macos-aarch64"));
-        assert_eq!(asset_target_for("macos", "x86_64"), Some("macos-x86_64"));
-        assert_eq!(asset_target_for("linux", "aarch64"), Some("linux-aarch64"));
-        assert_eq!(asset_target_for("linux", "x86_64"), Some("linux-x86_64"));
         assert_eq!(
-            asset_target_for("windows", "x86_64"),
+            asset_target_for("macos", "aarch64", false),
+            Some("macos-aarch64")
+        );
+        assert_eq!(
+            asset_target_for("macos", "x86_64", false),
+            Some("macos-x86_64")
+        );
+        assert_eq!(
+            asset_target_for("linux", "aarch64", false),
+            Some("linux-aarch64")
+        );
+        assert_eq!(
+            asset_target_for("linux", "x86_64", false),
+            Some("linux-x86_64")
+        );
+        assert_eq!(
+            asset_target_for("windows", "x86_64", false),
             Some("windows-x86_64")
         );
+        // #2030: a static musl build updates to the musl archive, never the
+        // glibc one, which would not start on Alpine.
+        assert_eq!(
+            asset_target_for("linux", "aarch64", true),
+            Some("linux-musl-aarch64")
+        );
+        assert_eq!(
+            asset_target_for("linux", "x86_64", true),
+            Some("linux-musl-x86_64")
+        );
         // No archive is published for these: refuse rather than pick a wrong one.
-        assert_eq!(asset_target_for("windows", "aarch64"), None);
-        assert_eq!(asset_target_for("freebsd", "x86_64"), None);
+        assert_eq!(asset_target_for("windows", "aarch64", false), None);
+        assert_eq!(asset_target_for("freebsd", "x86_64", false), None);
+        assert_eq!(asset_target_for("macos", "aarch64", true), None);
         assert!(asset_target().is_some(), "every CI host has an archive");
+    }
+
+    #[test]
+    fn no_archive_name_holds_another_target() {
+        // self_update takes the first asset whose name contains the target,
+        // so no target may be a substring of another target's archive name.
+        let targets: Vec<&str> = [
+            ("macos", "aarch64"),
+            ("macos", "x86_64"),
+            ("linux", "aarch64"),
+            ("linux", "x86_64"),
+            ("windows", "x86_64"),
+        ]
+        .iter()
+        .flat_map(|&(os, arch)| [false, true].map(|musl| asset_target_for(os, arch, musl)))
+        .flatten()
+        .collect();
+        for target in &targets {
+            for other in &targets {
+                if target != other {
+                    let archive = format!("jubarte-9.9.9-{other}.tar.gz");
+                    assert!(!archive.contains(target), "{target} matches {archive}");
+                }
+            }
+        }
     }
 
     #[test]

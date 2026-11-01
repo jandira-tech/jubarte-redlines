@@ -75,6 +75,12 @@ RUNNERS = {
     "windows-latest": ("windows", "x86_64"),
 }
 TRIPLE_OS = {"linux": "unknown-linux-gnu", "macos": "apple-darwin", "windows": "pc-windows-msvc"}
+# A `-musl` label is the static Linux build (#2030): its triple's libc part.
+MUSL_TRIPLE = "unknown-linux-musl"
+# The glibc Linux archives build in the wheels' manylinux_2_28 image (#2030),
+# pinned by digest, so the binary needs no glibc newer than 2.28.
+GLIBC_FLOOR = "2.28"
+MANYLINUX_IMAGE = re.compile(r"^quay\.io/pypa/manylinux_2_28_(x86_64|aarch64)@sha256:[0-9a-f]{64}$")
 ARCHS = {"x86_64": "x86_64", "x64": "x86_64", "aarch64": "aarch64", "arm64": "aarch64"}
 WHEEL_OS = {"manylinux": "linux", "musllinux": "linux", "macos": "macos", "windows": "windows"}
 # the wheels job's `manylinux` value per family (none on macOS and Windows)
@@ -82,9 +88,16 @@ MANYLINUX = {"manylinux": "2_28", "musllinux": "musllinux_1_2"}
 
 
 def label_platform(artifact: str) -> tuple[str, str]:
-    """`linux-aarch64` -> ("linux", "aarch64"): what an artifact's name promises."""
-    family, arch = artifact.split("-", 1)
+    """`linux-aarch64` -> ("linux", "aarch64"): what an artifact's name promises.
+
+    `linux-musl-aarch64` promises the same OS and CPU; label_is_musl tells it apart.
+    """
+    family, arch = artifact.replace("linux-musl-", "linux-", 1).split("-", 1)
     return family, ARCHS[arch]
+
+
+def label_is_musl(artifact: str) -> bool:
+    return artifact.startswith("linux-musl-")
 
 
 def wheel_platform(artifact: str) -> tuple[str, str]:
@@ -114,8 +127,17 @@ def runner_problems(row: dict, family: str, arch: str) -> list[str]:
 
 def binary_row_problems(row: dict) -> list[str]:
     family, arch = label_platform(row["artifact"])
-    want = f"{arch}-{TRIPLE_OS[family]}"
+    want = f"{arch}-{MUSL_TRIPLE if label_is_musl(row['artifact']) else TRIPLE_OS[family]}"
     problems = [] if row["target"] == want else [f"target {row['target']}, not {want}"]
+    image = row.get("image")
+    if row["target"].endswith("-linux-gnu"):
+        m = MANYLINUX_IMAGE.match(image or "")
+        if m is None:
+            problems.append(f"image {image}, not quay.io/pypa/manylinux_2_28_{arch}@sha256:<digest>")
+        elif m.group(1) != arch:
+            problems.append(f"image {image} builds {m.group(1)}, not {arch}")
+    elif image is not None:
+        problems.append(f"image {image} on a {row['target']} row: only the glibc Linux rows build in a container")
     return problems + runner_problems(row, family, arch)
 
 
@@ -134,6 +156,10 @@ BINARY_MATRIX: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
     ("linux-x86_64", "x86_64-unknown-linux-gnu", "ubuntu-latest",
      ("manylinux_2_28_x86_64", "musllinux_1_2_x86_64")),
     ("linux-aarch64", "aarch64-unknown-linux-gnu", "ubuntu-24.04-arm",
+     ("manylinux_2_28_aarch64", "musllinux_1_2_aarch64")),
+    ("linux-musl-x86_64", "x86_64-unknown-linux-musl", "ubuntu-latest",
+     ("manylinux_2_28_x86_64", "musllinux_1_2_x86_64")),
+    ("linux-musl-aarch64", "aarch64-unknown-linux-musl", "ubuntu-24.04-arm",
      ("manylinux_2_28_aarch64", "musllinux_1_2_aarch64")),
     ("macos-x86_64", "x86_64-apple-darwin", "macos-15-intel",
      ("macosx_10_12_x86_64",)),
@@ -336,6 +362,25 @@ class RowMutations(unittest.TestCase):
         row = {"os": "ubuntu-latest", "target": "aarch64-unknown-linux-gnu", "artifact": "linux-aarch64"}
         self.assertTrue(binary_row_problems(row))
 
+    def test_a_glibc_row_built_on_the_host_is_caught(self) -> None:
+        # #2030: ubuntu-latest's own glibc (2.43 in 0.16.0) is what the binary needs.
+        row = {"os": "ubuntu-latest", "target": "x86_64-unknown-linux-gnu", "artifact": "linux-x86_64"}
+        self.assertTrue(binary_row_problems(row))
+
+    def test_a_glibc_row_in_an_unpinned_or_newer_image_is_caught(self) -> None:
+        for image in ("quay.io/pypa/manylinux_2_28_x86_64:latest",
+                      "quay.io/pypa/manylinux_2_34_x86_64@sha256:" + "a" * 64,
+                      "quay.io/pypa/manylinux_2_28_aarch64@sha256:" + "a" * 64):
+            with self.subTest(image=image):
+                row = {"os": "ubuntu-latest", "target": "x86_64-unknown-linux-gnu",
+                       "artifact": "linux-x86_64", "image": image}
+                self.assertTrue(binary_row_problems(row))
+
+    def test_a_musl_label_with_a_glibc_target_is_caught(self) -> None:
+        row = {"os": "ubuntu-latest", "target": "x86_64-unknown-linux-gnu", "artifact": "linux-musl-x86_64",
+               "image": "quay.io/pypa/manylinux_2_28_x86_64@sha256:" + "a" * 64}
+        self.assertTrue(binary_row_problems(row))
+
     def test_an_unknown_runner_is_caught(self) -> None:
         row = {"os": "ubuntu-26.04-riscv", "target": "x86_64-unknown-linux-gnu", "artifact": "linux-x86_64"}
         self.assertTrue(binary_row_problems(row))
@@ -497,6 +542,70 @@ class BinaryReleaseMatrix(unittest.TestCase):
         self.assertIn("linux-aarch64", joined)
         self.assertIn("x86_64-unknown-linux-gnu", joined)
         self.assertEqual(binary_matrix_problems(text), [])
+
+
+class LinuxPortability(unittest.TestCase):
+    """#2030: the Linux CLI archives run on every supported distribution.
+
+    0.16.0's linux-x86_64 binary needed GLIBC_2.43 (ubuntu-latest's own), so
+    it failed on Ubuntu 24.04 (2.39), Debian 12 and RHEL 9, and on Alpine.
+    """
+
+    def setUp(self) -> None:
+        self.job = load()["jobs"]["binaries"]
+        self.steps = self.job["steps"]
+
+    def step(self, needle: str) -> int:
+        return step_index(self.job, lambda s: needle in s.get("run", ""))
+
+    def test_no_archive_name_holds_another_label(self) -> None:
+        # self_update picks the first asset whose name contains the binary's
+        # target (asset_for), so a `linux-x86_64-musl` archive would be what
+        # every installed glibc binary updates to (#2030 review).
+        labels = matrix_artifacts(self.job)
+        for label in labels:
+            for other in labels:
+                if other != label:
+                    with self.subTest(label=label, other=other):
+                        self.assertNotIn(label, f"jubarte-9.9.9-{other}.tar.gz")
+
+    def test_the_glibc_rows_build_in_their_manylinux_image(self) -> None:
+        i = self.step('"$IMAGE"')
+        build = self.steps[i]
+        self.assertEqual(build.get("if"), "matrix.image")
+        self.assertEqual(build["env"]["IMAGE"], "${{ matrix.image }}")
+        self.assertIn("docker run", build["run"])
+        self.assertIn("cargo build --release --locked --bin jubarte", build["run"])
+
+    def test_the_host_build_skips_the_container_rows(self) -> None:
+        hosts = [s for s in self.steps
+                 if "cargo build --release --locked --bin jubarte" in s.get("run", "")
+                 and "docker run" not in s["run"]]
+        self.assertEqual(len(hosts), 1)
+        self.assertEqual(hosts[0].get("if"), "${{ !matrix.image }}")
+
+    def test_the_musl_rows_get_musl_tools(self) -> None:
+        i = self.step("musl-tools")
+        self.assertEqual(self.steps[i].get("if"), "endsWith(matrix.target, '-musl')")
+        self.assertLess(i, self.step("cargo build --release --locked --bin jubarte"))
+
+    def test_a_gate_holds_each_linux_binary_to_its_floor_before_upload(self) -> None:
+        i = self.step("GLIBC_" + GLIBC_FLOOR)
+        gate = self.steps[i]
+        self.assertEqual(gate.get("if"), "runner.os == 'Linux'")
+        script = gate["run"]
+        self.assertIn("objdump -T", script)
+        self.assertIn("NEEDED", script)  # the musl build links nothing
+        upload = step_index(self.job, lambda s: s.get("uses", "").startswith("actions/upload-artifact@"))
+        self.assertLess(i, upload)
+
+    def test_the_gate_runs_each_binary_in_old_and_new_distributions(self) -> None:
+        script = self.steps[self.step("GLIBC_" + GLIBC_FLOOR)]["run"]
+        for image in ("ubuntu:20.04", "debian:10", "ubuntu:24.04", "alpine:3.22"):
+            with self.subTest(image=image):
+                self.assertRegex(script, re.escape(image) + r"@sha256:[0-9a-f]{64}")
+        self.assertIn("--version", script)
+        self.assertIn("compare", script)
 
 
 if __name__ == "__main__":

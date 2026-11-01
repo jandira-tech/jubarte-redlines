@@ -25,7 +25,8 @@ jubarte self-update --version 0.10.0 # install that release (also a downgrade)
 2. Picks the archive for this machine:
    `jubarte-<version>-<os>-<arch>.tar.gz` (`.zip` on Windows), where
    `<os>` is `macos`, `linux` or `windows` and `<arch>` is `aarch64` or
-   `x86_64`.
+   `x86_64`. A static musl build picks `linux-musl-<arch>`, never the
+   glibc archive, which would not start on Alpine.
 3. Downloads it and checks its SHA-256 against the release's
    `SHA256SUMS.txt`. A release without that file, or an archive whose hash
    differs, is refused and nothing is written.
