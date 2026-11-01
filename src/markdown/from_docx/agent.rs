@@ -1105,9 +1105,7 @@ pub(crate) struct LineFacts<'a> {
 /// runs of their own.
 pub(crate) fn own_size(p: &Element, hidden: &HashSet<String>) -> Option<u32> {
     fn half_points(value: &str) -> Option<u32> {
-        let half = value
-            .parse::<f64>()
-            .ok()
+        let half = crate::util::parse_finite_f64(value)
             .or_else(|| crate::util::universal_measure_half_points(value))?
             .round();
         // `as` cannot truncate: the range is checked first.
@@ -1588,10 +1586,8 @@ pub(crate) fn indent_clauses(ind: &Element) -> Vec<(&'static str, String)> {
     .into_iter()
     .filter_map(|(attrs, name)| {
         let v = attrs.iter().find_map(|attr| ind.attr(attr))?;
-        let twips = v
-            .parse::<f64>()
-            .ok()
-            .or_else(|| crate::util::universal_measure_twips(v))?;
+        let twips =
+            crate::util::parse_finite_f64(v).or_else(|| crate::util::universal_measure_twips(v))?;
         Some((name, inches(twips)))
     })
     .collect()
@@ -1606,8 +1602,7 @@ pub(crate) fn indent_clauses(ind: &Element) -> Vec<(&'static str, String)> {
 pub(crate) fn spacing_clauses(spacing: &Element) -> Vec<String> {
     let twips = |attr: &str| {
         let v = spacing.attr(attr)?;
-        v.parse::<f64>()
-            .ok()
+        crate::util::parse_finite_f64(v)
             .or_else(|| crate::util::universal_measure_twips(v))
             .filter(|t| t.is_finite() && *t >= 0.0)
     };
@@ -2290,8 +2285,7 @@ pub(crate) fn geometry_clauses(tbl: &Element, text_width: u32) -> Vec<String> {
     const MOST_PERCENT: f64 = 600.0;
     let twips = |e: &Element, attr: &str| -> Option<f64> {
         let v = e.attr(attr)?;
-        v.parse::<f64>()
-            .ok()
+        crate::util::parse_finite_f64(v)
             .or_else(|| crate::util::universal_measure_twips(v))
             .filter(|t| t.is_finite())
     };
@@ -2322,8 +2316,8 @@ pub(crate) fn geometry_clauses(tbl: &Element, text_width: u32) -> Vec<String> {
                 width
                     .and_then(|w| w.attr("w"))
                     .and_then(|v| match v.strip_suffix('%') {
-                        Some(percent) => percent.parse::<f64>().ok().map(|p| p * 50.0),
-                        None => v.parse::<f64>().ok(),
+                        Some(percent) => crate::util::parse_finite_f64(percent).map(|p| p * 50.0),
+                        None => crate::util::parse_finite_f64(v),
                     });
             // No width, or 0, is no preference: Word lays the table out
             // as auto. Past 600% the reader refuses the clause, so the

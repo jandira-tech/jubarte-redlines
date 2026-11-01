@@ -173,11 +173,7 @@ pub struct ReadArgs {
     /// filters narrow together: a paragraph is selected only when every
     /// filter given matches it, and an empty result names the filters
     /// applied in `coverage.omissions`.
-    #[arg(
-        long,
-        conflicts_with_all = ["json", "tables", "track_changes"],
-        help_heading = "Read options"
-    )]
+    #[arg(long, conflicts_with = "track_changes", help_heading = "Read options")]
     pub for_edit: bool,
     /// --for-edit: the working view after accepting this revision
     /// (repeatable; it does not modify FILE).
@@ -217,28 +213,30 @@ pub struct ReadArgs {
         help_heading = "Read options"
     )]
     pub track: Option<TrackArg>,
-    /// --for-edit: literal search of the original final text. Combined
-    /// filters narrow: a paragraph must match every filter given, and an
-    /// empty result names the filters applied.
+    /// Print matching body paragraphs only, with the same Markdown and id
+    /// lines as -p. Searches original final logical text, as --for-edit does;
+    /// combined filters narrow. Like -p, the view cannot select paragraphs in
+    /// headers, footers, footnotes, endnotes and comments. Use --for-edit for
+    /// header/footer/note paragraphs. No match prints nothing and reports it
+    /// on stderr.
     #[arg(
         long,
         value_name = "TEXT",
-        requires = "for_edit",
         conflicts_with = "regex",
         help_heading = "Read options"
     )]
     pub find: Option<String>,
-    /// --for-edit: regex search of the original final text; conflicts
-    /// with --find.
+    /// Search with a regular expression instead of literal text (view or
+    /// --for-edit). Give PATTERN here and omit --find.
     #[arg(
         long,
         value_name = "PATTERN",
-        requires = "for_edit",
+        conflicts_with = "find",
         help_heading = "Read options"
     )]
     pub regex: Option<String>,
-    /// --for-edit: case-insensitive --find/--regex.
-    #[arg(long, requires = "for_edit", help_heading = "Read options")]
+    /// Case-insensitive --find/--regex (view or --for-edit).
+    #[arg(long, help_heading = "Read options")]
     pub ignore_case: bool,
     /// --for-edit: this many read-only original-source neighbours around
     /// each row.
@@ -358,9 +356,16 @@ impl TrackArg {
 #[derive(clap::Args, Debug, Serialize)]
 pub struct EditOptions {
     /// Author of the changes and comments (operation flags; a plan names
-    /// its own).
+    /// its own). A write that adds markup needs it spelled here or in
+    /// JUBARTE_AUTHOR.
     #[arg(short = 'a', long, value_name = "NAME", default_value = "Jubarte")]
     pub author: String,
+    /// Whether `-a`/`--author` was spelled on the command line (set after
+    /// parsing). One-shot writes use this to say when the default signed
+    /// the new markup (#1891).
+    #[arg(skip)]
+    #[serde(skip)]
+    pub author_given: bool,
     /// Revision timestamp (ISO 8601) [default: now, UTC]; pin it for
     /// reproducible output.
     #[arg(short = 'd', long = "datetime", value_name = "ISO8601", value_parser = parse_datetime)]
@@ -378,6 +383,10 @@ pub struct EditOptions {
     /// comparer.
     #[arg(long, value_enum, value_name = "MODE", default_value_t = ExistingArg::Auto)]
     pub existing_revisions: ExistingArg,
+    /// Replace FILE through the same atomic write as -o. A refused edit or a
+    /// failed check leaves FILE unchanged. Not with -o or --out-dir.
+    #[arg(long, conflicts_with_all = ["output", "out_dir"])]
+    pub in_place: bool,
     /// The edited document, a .docx (default: `<FILE's
     /// directory>/<stem>_modified.docx`). Any other extension is written as
     /// a .docx too; .md, .json, .pdf and .png name the task that writes them.
@@ -408,10 +417,14 @@ pub enum EditTarget {
 }
 
 impl EditOptions {
-    /// Where `edit FILE` (or `add FILE`) writes: `--out-dir [DIR]`'s
-    /// bundle, else `-o`, else `<FILE's dir>/<stem>_modified.docx`. A FILE
-    /// whose stem already ends in `_modified` keeps its name. Pure.
+    /// Where `edit FILE` (or `add FILE`) writes: `--in-place` replaces
+    /// FILE, else `--out-dir [DIR]`'s bundle, else `-o`, else `<FILE's
+    /// dir>/<stem>_modified.docx`. A FILE whose stem already ends in
+    /// `_modified` keeps its name. Pure.
     pub fn target(&self, file: &Path) -> EditTarget {
+        if self.in_place {
+            return EditTarget::Single(file.to_path_buf());
+        }
         let beside = |name: String| match file.parent().filter(|p| !p.as_os_str().is_empty()) {
             Some(dir) => dir.join(name),
             None => PathBuf::from(name),
@@ -479,6 +492,9 @@ impl ExistingArg {
 /// Groups the operation flags of an `edit` or `add` invocation by their
 /// `-p`, in command-line order. `matches` is the subcommand's.
 pub fn flag_operations(matches: &clap::ArgMatches) -> Result<Vec<FlagOp>, String> {
+    if matches.contains_id("anchor") && !matches.contains_id("location") {
+        return Err("--anchor needs -p WHERE (find it with: jubarte read FILE --find TEXT)".into());
+    }
     let mut tokens: Vec<(usize, &str, Option<String>)> = Vec::new();
     for name in ["location", "anchor", "content", "reply", "style"] {
         if let (Some(indices), Some(values)) =
@@ -486,6 +502,16 @@ pub fn flag_operations(matches: &clap::ArgMatches) -> Result<Vec<FlagOp>, String
         {
             tokens.extend(indices.zip(values).map(|(i, v)| (i, name, Some(v.clone()))));
         }
+    }
+    if let (Some(indices), Some(values)) = (
+        matches.indices_of("occurrence"),
+        matches.get_many::<usize>("occurrence"),
+    ) {
+        tokens.extend(
+            indices
+                .zip(values)
+                .map(|(i, v)| (i, "occurrence", Some(v.to_string()))),
+        );
     }
     for name in [
         "delete", "resolve", "before", "comment", "accept", "reject", "strike", "restore",
@@ -518,6 +544,16 @@ pub fn flag_operations(matches: &clap::ArgMatches) -> Result<Vec<FlagOp>, String
         match name {
             "anchor" if op.anchor.is_some() => return twice("anchor"),
             "anchor" => op.anchor = value,
+            "occurrence" if op.occurrence.is_some() => return twice("occurrence"),
+            "occurrence" if op.anchor.is_none() => {
+                return Err(format!(
+                    "-p {}: --occurrence must come after --anchor",
+                    op.at
+                ));
+            }
+            "occurrence" => {
+                op.occurrence = value.and_then(|v| v.parse().ok());
+            }
             "content" if op.content.is_some() => return twice("content"),
             "content" => op.content = value,
             "reply" if op.reply.is_some() => return twice("reply"),
@@ -809,9 +845,17 @@ fn fill_flag_operations(
     matches: &clap::ArgMatches,
     model: &mut clap::Command,
 ) -> Result<(), clap::Error> {
-    let (name, operations) = match task {
-        Command::Edit { operations, .. } => ("edit", operations),
-        Command::Add { operations, .. } => ("add", operations),
+    let (name, operations, options) = match task {
+        Command::Edit {
+            operations,
+            options,
+            ..
+        } => ("edit", operations, options),
+        Command::Add {
+            operations,
+            options,
+            ..
+        } => ("add", operations, options),
         _ => return Ok(()),
     };
     let Some(sub) = matches.subcommand_matches(name) else {
@@ -819,7 +863,56 @@ fn fill_flag_operations(
     };
     *operations = flag_operations(sub)
         .map_err(|m| model.error(clap::error::ErrorKind::ArgumentConflict, m))?;
+    options.author_given =
+        sub.value_source("author") == Some(clap::parser::ValueSource::CommandLine);
+    env_author_fill(&mut options.author, &mut options.author_given)
+        .map_err(|m| model.error(clap::error::ErrorKind::ValueValidation, m))?;
     Ok(())
+}
+
+/// `JUBARTE_AUTHOR`, set and non-empty, signs the way a spelled `-a` does
+/// (#1997). An invalid one is a usage error naming the variable.
+fn env_author_fill(author: &mut String, given: &mut bool) -> Result<(), String> {
+    if *given {
+        return Ok(());
+    }
+    let Some(name) = std::env::var("JUBARTE_AUTHOR")
+        .ok()
+        .filter(|name| !name.is_empty())
+    else {
+        return Ok(());
+    };
+    *author = parse_author(&name).map_err(|m| format!("JUBARTE_AUTHOR: {m}"))?;
+    *given = true;
+    Ok(())
+}
+
+/// `JUBARTE_TIMEOUT`, set and non-empty: a wall-clock bound, in seconds,
+/// on any task, as `convert --timeout` bounds `convert` (#2016). An invalid
+/// value is a usage error naming the variable.
+///
+/// # Errors
+///
+/// `JUBARTE_TIMEOUT: …` when the value is not a finite number of seconds
+/// above 0.
+pub fn env_timeout() -> Result<Option<std::time::Duration>, String> {
+    // A value that is not Unicode is refused, never read as unset: a host
+    // that set the variable expects a bound.
+    let Some(value) = std::env::var_os("JUBARTE_TIMEOUT") else {
+        return Ok(None);
+    };
+    let value = value.into_string().map_err(|raw| {
+        format!(
+            "JUBARTE_TIMEOUT: '{}' is not a number of seconds",
+            raw.to_string_lossy()
+        )
+    })?;
+    if value.is_empty() {
+        return Ok(None);
+    }
+    parse_timeout(&value)
+        .map(Some)
+        .map_err(|m| format!("JUBARTE_TIMEOUT: {m}"))
 }
 
 /// Inputs and settings shared by explicit and shorthand comparisons.
@@ -970,7 +1063,7 @@ pub enum Command {
     ///
     /// One line per logical change: the marks Word wrote for one edit are
     /// one change with a joined id (`r7+8+9+10`), its text followed by
-    /// `(N elements)`.
+    /// `(N elements)`. A revision inside a comment body is `comments.r9`.
     Changes {
         /// The document (.docx).
         #[arg(value_name = "FILE")]
@@ -980,25 +1073,33 @@ pub enum Command {
         #[arg(long)]
         json: bool,
         /// Only listed changes by this author (exact match); repeat for several.
-        /// Comment-body revisions are not listed, even without this filter.
         #[arg(long, value_name = "NAME", action = clap::ArgAction::Append)]
         author: Vec<String>,
     },
     /// Accept all tracked changes, or select by ID, author or kind.
     ///
     /// Every part counts: the body, headers, footers, notes and comment
-    /// bodies. An author or kind selection reaches comment bodies too, but
-    /// no ID names a comment-body change, so an ID selection leaves those
-    /// tracked.
+    /// bodies. A comment-body revision is `comments.r9`, the id `changes`
+    /// lists, and an id, author or kind selection settles it.
     Accept {
         /// The document (.docx) whose revisions to accept.
         #[arg(value_name = "FILE")]
         file: PathBuf,
+        /// Replace FILE through the same atomic write as -o. A refused
+        /// resolution leaves FILE unchanged. Not with -o.
+        #[arg(long)]
+        in_place: bool,
         /// Output path; its extension picks the format: .docx (also any
         /// other), .md (the agent view), .pdf, .png (one file per page) or
         /// .json (the snapshot).
-        #[arg(short = 'o', long, value_name = "FILE")]
-        output: PathBuf,
+        #[arg(
+            short = 'o',
+            long,
+            value_name = "FILE",
+            required_unless_present = "in_place",
+            conflicts_with = "in_place"
+        )]
+        output: Option<PathBuf>,
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
@@ -1017,18 +1118,27 @@ pub enum Command {
     /// Reject all tracked changes, or select by ID, author or kind.
     ///
     /// Every part counts: the body, headers, footers, notes and comment
-    /// bodies. An author or kind selection reaches comment bodies too, but
-    /// no ID names a comment-body change, so an ID selection leaves those
-    /// tracked.
+    /// bodies. A comment-body revision is `comments.r9`, the id `changes`
+    /// lists, and an id, author or kind selection settles it.
     Reject {
         /// The document (.docx) whose revisions to reject.
         #[arg(value_name = "FILE")]
         file: PathBuf,
+        /// Replace FILE through the same atomic write as -o. A refused
+        /// resolution leaves FILE unchanged. Not with -o.
+        #[arg(long)]
+        in_place: bool,
         /// Output path; its extension picks the format: .docx (also any
         /// other), .md (the agent view), .pdf, .png (one file per page) or
         /// .json (the snapshot).
-        #[arg(short = 'o', long, value_name = "FILE")]
-        output: PathBuf,
+        #[arg(
+            short = 'o',
+            long,
+            value_name = "FILE",
+            required_unless_present = "in_place",
+            conflicts_with = "in_place"
+        )]
+        output: Option<PathBuf>,
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
@@ -1224,19 +1334,19 @@ pub enum Command {
     /// Edit a document: -p WHERE with --anchor, --content, --delete,
     /// --resolve, --reply, --accept, --reject, --strike, --restore or --style
     /// (several -p per command), or a JSON plan. Writes FILE_modified.docx
-    /// (--out-dir: the bundle), then prints SUCCESS and a fenced before/after
-    /// diff of the full agent views (refusal: exit 3).
+    /// (--in-place replaces FILE; --out-dir: the bundle), then prints SUCCESS
+    /// and a fenced before/after diff of the full agent views (refusal: exit 3).
     #[command(after_help = "Examples:\n  \
-        jubarte edit a.docx -p p12 --anchor \"thirty days\" --content \"forty-five days\"\n  \
-        jubarte edit a.docx -p p12 --anchor thirty --content \"thirty (30)\"   an insertion\n  \
-        jubarte edit a.docx -p p7 --anchor \"at its sole discretion\" --delete -p p9 --delete\n  \
-        jubarte edit a.docx -p p3 --content \"The parties agree as follows.\"    rewrite\n  \
-        jubarte edit a.docx -p p4 --anchor Fees --style bold -p p5 --style Heading2\n  \
-        jubarte edit a.docx -p c5 --content \"Agreed.\" -p c7 --resolve\n  \
-        jubarte edit a.docx -p c5 --reply \"Agreed, will fix.\"\n  \
-        jubarte edit a.docx -p c5.text --content \"net 30\"   the text c5 covers\n  \
+        jubarte edit a.docx -p p12 --anchor \"thirty days\" --content \"forty-five days\" -a NAME\n  \
+        jubarte edit a.docx -p p12 --anchor thirty --content \"thirty (30)\" -a NAME   an insertion\n  \
+        jubarte edit a.docx -p p7 --anchor \"at its sole discretion\" --delete -p p9 --delete -a NAME\n  \
+        jubarte edit a.docx -p p3 --content \"The parties agree as follows.\" -a NAME    rewrite\n  \
+        jubarte edit a.docx -p p4 --anchor Fees --style bold -p p5 --style Heading2 -a NAME\n  \
+        jubarte edit a.docx -p c5 --content \"Agreed.\" -p c7 --resolve -a NAME\n  \
+        jubarte edit a.docx -p c5 --reply \"Agreed, will fix.\" -a NAME\n  \
+        jubarte edit a.docx -p c5.text --content \"net 30\" -a NAME   the text c5 covers\n  \
         jubarte edit a.docx -p r3 --accept -p header1.r1 --reject\n  \
-        jubarte edit a.docx -p p3 --delete -o b.docx --pdf   b.docx and b.pdf\n  \
+        jubarte edit a.docx -p p3 --delete -o b.docx --pdf -a NAME   b.docx and b.pdf\n  \
         jubarte edit a.docx --plan plan.json --out-dir review   the bundle in review/\n  \
         jubarte edit a.docx --plan plan.json -p p3 --content \"New.\"   record into plan.json\n  \
         jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it\n\n\
@@ -1255,7 +1365,7 @@ pub enum Command {
         jubarte edit apply FILE --plan edits.json -o OUTPUT.docx        tracked changes for the difference\n\n\
         Typed actions: jubarte edit replace|rewrite|insert|delete FILE [OPTIONS]\n  Inline --save-plan FILE saves without applying; writes require -o or --out-dir.\n  Run jubarte edit ACTION --help for its grammar.\nRouting: valid legacy calls, including `edit replace -p p0 --content TEXT`,\n  retain v1 semantics. Use ./replace (or ./rewrite, ./insert, ./delete, ./apply)\n  to explicitly name a legacy input whose name equals an action.")]
     Edit {
-        /// The source document (.docx). Never modified.
+        /// The source document (.docx). Left unchanged unless --in-place.
         #[arg(value_name = "FILE")]
         file: PathBuf,
         /// Edit plan JSON: a list of operations of any kind (see
@@ -1263,7 +1373,7 @@ pub enum Command {
         /// operation flags, they are recorded into it (created on first use)
         /// and FILE is left as it is. Without a value: FILE_plan.json beside
         /// FILE.
-        #[arg(long, value_name = "PLAN.json", num_args = 0..=1, default_missing_value = "", value_parser = plan_path(), required_unless_present = "location")]
+        #[arg(long, value_name = "PLAN.json", num_args = 0..=1, default_missing_value = "", value_parser = plan_path(), required_unless_present_any = ["location", "anchor"])]
         plan: Option<PathBuf>,
         /// `--plan` was given without a value (D16): the summary says so.
         #[arg(skip)]
@@ -1279,9 +1389,13 @@ pub enum Command {
         /// flags after it belong to it.
         #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append)]
         location: Vec<String>,
-        /// Text inside WHERE the operation applies to (must occur once).
+        /// Text inside WHERE the operation applies to (must occur once,
+        /// unless --occurrence picks a match).
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
         anchor: Vec<String>,
+        /// Pick the Nth anchor match (1-based), after --anchor in this -p group.
+        #[arg(long, value_name = "N", action = clap::ArgAction::Append, value_parser = edit_actions::positive)]
+        occurrence: Vec<usize>,
         /// New text: replaces the anchor; rewrites the paragraph without
         /// one; on c5, the comment's new text.
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
@@ -1295,13 +1409,18 @@ pub enum Command {
         /// Reply to comment c5 (with -p c5), as `add -p c5 --content`.
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
         reply: Vec<String>,
-        /// Let `-p c5 --content`, `--delete` and `--resolve` change a comment
-        /// another author wrote (a reworded one keeps their name), and
-        /// `--delete` take their reply with your thread. Without it that is
-        /// refused (COMMENT_NOT_YOURS): one author answers another with
-        /// --reply.
-        #[arg(long)]
+        /// Accepted and ignored. Deleting, resolving or rewording another
+        /// author's comment is allowed unless --keep-others is set. Kept so
+        /// older scripts still parse.
+        #[arg(long, hide = true)]
         rewrite_others_comments: bool,
+        /// Refuse to accept or reject another author's tracked change, and
+        /// to delete, resolve, reopen or reword their comment. Restore,
+        /// strike, a comment and a reply stay allowed. JUBARTE_KEEP_OTHERS=1
+        /// sets the same guard. Another author is anyone other than
+        /// --author (Jubarte when --author is left out).
+        #[arg(long)]
+        keep_others: bool,
         /// Accept revision r12 (with -p r12; r1+2 for several); prints the
         /// resolved change (`accepted r1+2 in p3: "from" > "to"`).
         #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
@@ -1373,18 +1492,19 @@ pub enum Command {
         operations: Vec<FlagOp>,
     },
     /// Add a paragraph, a comment or a reply: -p WHERE --content TEXT
-    /// (several -p per command). Writes FILE_modified.docx, as edit does,
-    /// and prints SUCCESS and a fenced before/after diff of the full agent views.
+    /// (several -p per command). Writes FILE_modified.docx, as edit does
+    /// (--in-place replaces FILE), and prints SUCCESS and a fenced
+    /// before/after diff of the full agent views.
     #[command(after_help = "Examples:\n  \
-        jubarte add a.docx -p p12 --content \"Time is of the essence.\"   new paragraph after p12\n  \
-        jubarte add a.docx -p p12 --content Recitals --before --style Heading2\n  \
-        jubarte add a.docx -p p5 --anchor \"monthly fee\" --content \"Net of taxes?\"   a comment\n  \
-        jubarte add a.docx -p p5 --comment --content \"Whole clause needs a cap.\"\n  \
-        jubarte add a.docx -p c5 --content \"Agreed, will fix.\"           a reply\n  \
-        jubarte add a.docx -p c5 --reply \"Agreed, will fix.\"             the same reply\n  \
+        jubarte add a.docx -p p12 --content \"Time is of the essence.\" -a NAME   new paragraph after p12\n  \
+        jubarte add a.docx -p p12 --content Recitals --before --style Heading2 -a NAME\n  \
+        jubarte add a.docx -p p5 --anchor \"monthly fee\" --content \"Net of taxes?\" -a NAME   a comment\n  \
+        jubarte add a.docx -p p5 --comment --content \"Whole clause needs a cap.\" -a NAME\n  \
+        jubarte add a.docx -p c5 --content \"Agreed, will fix.\" -a NAME           a reply\n  \
+        jubarte add a.docx -p c5 --reply \"Agreed, will fix.\" -a NAME             the same reply\n  \
         jubarte add a.docx --plan plan.json -p p5 --comment --content \"Cap?\"   record into plan.json")]
     Add {
-        /// The source document (.docx). Never modified.
+        /// The source document (.docx). Left unchanged unless --in-place.
         #[arg(value_name = "FILE")]
         file: PathBuf,
         /// Edit plan JSON. With operation flags, they are recorded into it
@@ -1402,17 +1522,29 @@ pub enum Command {
         consume: bool,
         /// Where: p12, header1, footer2.p1, t0.row1.cell2, or c5 for a reply.
         /// Each -p starts an operation; the flags after it belong to it.
-        #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append, required_unless_present = "plan")]
+        #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append, required_unless_present_any = ["plan", "anchor"])]
         location: Vec<String>,
-        /// Text inside WHERE to comment on (must occur once).
+        /// Text inside WHERE to comment on (must occur once, unless
+        /// --occurrence picks a match).
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
         anchor: Vec<String>,
+        /// Pick the Nth anchor match (1-based), after --anchor in this -p group.
+        #[arg(long, value_name = "N", action = clap::ArgAction::Append, value_parser = edit_actions::positive)]
+        occurrence: Vec<usize>,
         /// The paragraph, comment or reply text.
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
         content: Vec<String>,
         /// Reply to comment c5 (with -p c5); the same as --content there.
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
         reply: Vec<String>,
+        /// Refuse to accept or reject another author's tracked change, and
+        /// to delete, resolve, reopen or reword their comment, when this
+        /// command applies or records a plan. Restore, strike, a comment
+        /// and a reply stay allowed. JUBARTE_KEEP_OTHERS=1 sets the same
+        /// guard. Another author is anyone other than --author (Jubarte
+        /// when --author is left out).
+        #[arg(long)]
+        keep_others: bool,
         /// A new paragraph before WHERE instead of after it.
         #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
         before: Vec<bool>,
@@ -2183,12 +2315,59 @@ pub fn refused_package(path: &Path, bytes: &[u8]) -> Option<String> {
 /// The line a writing task prints on stderr for the file it wrote:
 /// `wrote r.pdf (pdf, 48213 bytes, 3 pages)`; `pages` is a PDF's.
 pub fn wrote_line(path: &Path, format: Format, bytes: usize, pages: Option<usize>) -> String {
-    let pages = pages.map_or_else(String::new, |n| format!(", {}", count(n, "page")));
+    wrote_line_with(path, format, bytes, pages, None)
+}
+
+/// `wrote contract.docx in place (replaced sha256 4eb2e9c3…)`, plus the
+/// optional `; 1 change by "GiantCo"` detail (#1888, #1891).
+#[must_use]
+pub fn wrote_in_place_line(path: &Path, replaced_sha256: &str, detail: Option<&str>) -> String {
+    let prefix = replaced_sha256.get(..8).unwrap_or(replaced_sha256);
+    let extra = detail.map_or_else(String::new, |detail| format!("; {detail}"));
     format!(
-        "wrote {} ({}, {bytes} bytes{pages})",
+        "wrote {} in place (replaced sha256 {prefix}\u{2026}){extra}",
+        path.display()
+    )
+}
+
+/// [`wrote_line`] with an optional `; 1 change by "GiantCo"` suffix (#1891).
+pub fn wrote_line_with(
+    path: &Path,
+    format: Format,
+    bytes: usize,
+    pages: Option<usize>,
+    detail: Option<&str>,
+) -> String {
+    let pages = pages.map_or_else(String::new, |n| format!(", {}", count(n, "page")));
+    let extra = detail.map_or_else(String::new, |s| format!("; {s}"));
+    format!(
+        "wrote {} ({}, {bytes} bytes{pages}{extra})",
         path.display(),
         format.name()
     )
+}
+
+/// The `; 1 change by "GiantCo"` fragment of a one-shot edit/add `wrote`
+/// line (#1891). `None` when the write added no markup. A markup write
+/// without a spelled author refuses (#1997), so the name is always the
+/// one the caller gave.
+#[must_use]
+pub fn wrote_markup_detail(changes: usize, comments: usize, author: &str) -> Option<String> {
+    if changes == 0 && comments == 0 {
+        return None;
+    }
+    let mut detail = String::new();
+    if changes > 0 {
+        detail.push_str(&count(changes, "change"));
+    }
+    if comments > 0 {
+        if !detail.is_empty() {
+            detail.push_str(", ");
+        }
+        detail.push_str(&count(comments, "comment"));
+    }
+    detail.push_str(&format!(" by \"{author}\""));
+    Some(detail)
 }
 
 /// Confirmation of the published document, comparing the two agent views.
@@ -2860,8 +3039,7 @@ pub enum Revisions {
 /// Filters selecting individual tracked changes.
 pub struct Selection {
     /// Only this change: `r12` (as the view and `jubarte changes` print
-    /// it), `header1.r1`, or `r1+2` (both). Repeatable. Comment-body
-    /// changes have no ids and stay tracked.
+    /// it), `header1.r1`, `comments.r9`, or `r1+2` (both). Repeatable.
     #[arg(long = "id", value_name = "ID")]
     pub ids: Vec<String>,
     /// Only changes by this author. Repeatable.
@@ -3051,7 +3229,7 @@ fn serialize_paragraph_spec<S: serde::Serializer>(
 }
 
 /// The ids of [`ReadArgs`], as the top-level shorthand declares them.
-const READ_OPTION_IDS: [&str; 11] = [
+const READ_OPTION_IDS: [&str; 14] = [
     "track_changes",
     "comments",
     "dates",
@@ -3063,6 +3241,9 @@ const READ_OPTION_IDS: [&str; 11] = [
     "by",
     "json",
     "tables",
+    "find",
+    "regex",
+    "ignore_case",
 ];
 
 /// `diff` writes no JSON snapshot: its `-o x.json` and `--to json` are
@@ -3144,6 +3325,12 @@ fn read_output(output: &Path, given: &dyn Fn(&str) -> bool) -> Result<Format, St
     if given("for_edit") && kind != Format::Json {
         return Err("--for-edit prints JSON: name the file FILE.json or drop -o".to_string());
     }
+    if kind == Format::Json && !given("for_edit") && (given("find") || given("regex")) {
+        return Err(
+            "--find/--regex select the Markdown view: name the file FILE.md or use --for-edit"
+                .into(),
+        );
+    }
     if given("json") && kind != Format::Json {
         return Err("--json writes the snapshot: name the file FILE.json".to_string());
     }
@@ -3168,6 +3355,35 @@ fn validate_matches(
     command: &mut clap::Command,
 ) -> Result<(), clap::Error> {
     use clap::{error::ErrorKind, parser::ValueSource};
+    let read_args = match matches.subcommand() {
+        Some(("read" | "compare", args)) => Some(args),
+        None => Some(matches),
+        _ => None,
+    };
+    if let Some(args) = read_args {
+        let find = args.get_one::<String>("find");
+        let regex = args.get_one::<String>("regex");
+        if !args.get_flag("for_edit")
+            && (find.is_some() || regex.is_some())
+            && (args.get_flag("json") || args.get_flag("tables"))
+        {
+            return Err(read_usage_error(
+                command,
+                "--find/--regex select the Markdown view; drop --json/--tables or use --for-edit"
+                    .into(),
+            ));
+        }
+        if find.is_none()
+            && regex.is_none()
+            && args.get_flag("ignore_case")
+            && !args.get_flag("for_edit")
+        {
+            return Err(read_usage_error(
+                command,
+                "--ignore-case needs --find TEXT or --regex PATTERN".into(),
+            ));
+        }
+    }
     let Some((name, args)) = matches.subcommand() else {
         let given = |id: &str| {
             matches.try_contains_id(id).unwrap_or(false)
@@ -3704,11 +3920,36 @@ impl Cli {
             (Some(Command::Compare(compare)), Some((_, args))) => {
                 compare.view_given = view_given(args);
             }
+            (Some(Command::TypedEdit(typed)), Some((_, args))) => {
+                mark_typed_author(typed, args, &mut command)?;
+            }
             (None, _) => cli.compare.view_given = view_given(&matches),
             _ => {}
         }
         Ok(cli)
     }
+}
+
+/// `-a` on a typed edit is explicit only when the command line spelled it;
+/// `JUBARTE_AUTHOR` counts the same (#1997). The default `"Jubarte"` is
+/// not. `edit apply` has no author flag.
+fn mark_typed_author(
+    typed: &mut edit_actions::TypedEdit,
+    args: &clap::ArgMatches,
+    command: &mut clap::Command,
+) -> Result<(), clap::Error> {
+    let Some((_, action)) = args.subcommand() else {
+        return Ok(());
+    };
+    let given = action.try_contains_id("author").unwrap_or(false)
+        && action.value_source("author") == Some(clap::parser::ValueSource::CommandLine);
+    let Some(inline) = typed.action.inline_mut() else {
+        return Ok(());
+    };
+    inline.author_given = given;
+    env_author_fill(&mut inline.author, &mut inline.author_given)
+        .map_err(|m| command.error(clap::error::ErrorKind::ValueValidation, m))?;
+    Ok(())
 }
 
 /// Whether `matches` spells out any of `read`'s options.
@@ -4049,19 +4290,64 @@ fn parse_subcommand_json(
         value["args"]["plan"] = slashed(plan.as_ref());
         value["args"]["output"] = slashed(output.as_ref());
         value["args"]["out_dir"] = slashed(out_dir.as_ref());
+        // `author_given` is skipped by serde. The Python executor needs it
+        // for the same `#1997` AUTHOR_REQUIRED refusal the binary makes.
+        value["args"]["author_given"] = serde_json::Value::Bool(options.author_given);
     }
     let written = match &task {
-        Command::Accept { output, .. } => Some((Task::Accept, Some(output.as_path()))),
-        Command::Reject { output, .. } => Some((Task::Reject, Some(output.as_path()))),
+        Command::Accept {
+            file,
+            output,
+            in_place,
+            ..
+        } => {
+            if *in_place {
+                value["args"]["output"] = serde_json::Value::String(slash_path(file));
+            }
+            Some((
+                Task::Accept,
+                if *in_place {
+                    Some(file.as_path())
+                } else {
+                    output.as_deref()
+                },
+            ))
+        }
+        Command::Reject {
+            file,
+            output,
+            in_place,
+            ..
+        } => {
+            if *in_place {
+                value["args"]["output"] = serde_json::Value::String(slash_path(file));
+            }
+            Some((
+                Task::Reject,
+                if *in_place {
+                    Some(file.as_path())
+                } else {
+                    output.as_deref()
+                },
+            ))
+        }
         Command::Append { output, .. } => Some((Task::Append, Some(output.as_path()))),
         Command::Scrub { output, .. } => Some((Task::Scrub, Some(output.as_path()))),
         Command::Read { output, .. } => Some((Task::Read, output.as_deref())),
         _ => None,
     };
     if let Some((writer, output)) = written {
-        value["args"]["output_format"] =
-            serde_json::to_value(output_format(writer, output, None).ok().flatten())
-                .expect("format");
+        // `--in-place` always publishes a DOCX, even when FILE is named
+        // `contract.json` or `notes.md`. The extension is not the format.
+        let format = if matches!(
+            &task,
+            Command::Accept { in_place: true, .. } | Command::Reject { in_place: true, .. }
+        ) {
+            Some(Format::Docx)
+        } else {
+            output_format(writer, output, None).ok().flatten()
+        };
+        value["args"]["output_format"] = serde_json::to_value(format).expect("format");
     }
     value["exit_code"] = 0.into();
     Ok(value)

@@ -597,10 +597,9 @@ fn prepare_once(
     #[cfg(test)]
     tests::PREPARATIONS.with(|count| count.set(count.get() + 1));
     check_update_fields(plan)?;
-    let lowered = super::visible::lower(source, plan)?;
+    let lowered = super::visible::lower(source, plan, options.syntax)?;
     let plan = lowered.as_ref().unwrap_or(plan);
-    let mut tx = Transaction::start(source, plan)?;
-    tx.syntax = options.syntax;
+    let mut tx = Transaction::start_quoting(source, plan, options.syntax)?;
     tx.resolve()?;
     tracked::check(&tx)?;
     let emit = tx.emits_directly()?;
@@ -2034,6 +2033,7 @@ pub(crate) mod tests {
             anchor_given: None,
             anchor_read_as: None,
             near: None,
+            candidates: Vec::new(),
             code: None,
             message: None,
         };

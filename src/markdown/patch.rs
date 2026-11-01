@@ -184,6 +184,7 @@ pub fn apply_markdown(docx: &[u8], markdown: &str) -> Result<Patched, MarkdownEr
             operations,
             update_fields: false,
             rewrite_others_comments: false,
+            others: crate::edit::Others::Allow,
         };
         match apply_plan(docx, &plan) {
             Ok(result) => {

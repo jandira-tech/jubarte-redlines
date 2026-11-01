@@ -17,7 +17,7 @@ npx jubarte-redlines accept redline.docx -o clean.docx --kind formatting
 npx jubarte-redlines reject redline.docx -o original-again.docx --id r12
 npx jubarte-redlines convert redline.docx --revisions word
 npx jubarte-redlines read contract.docx
-npx jubarte-redlines edit contract.docx -p p12 --anchor "thirty" --content "sixty"
+npx jubarte-redlines edit contract.docx -p p12 --anchor "thirty" --content "sixty" -a NAME
 npx jubarte-redlines edit contract.docx --plan plan.json --out-dir review
 npx jubarte-redlines --help
 ```

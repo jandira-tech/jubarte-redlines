@@ -18,6 +18,112 @@ use crate::namespaces::{R, W, W14};
 use crate::opc::{OpcError, PartFs};
 use crate::xmllinq::{Dom, NodeId, XName};
 
+/// A header/footer comparison that cannot produce a faithful redline.
+/// Carried inside [`OpcError::Io`]; callers can downcast its `get_ref()`.
+#[derive(Debug)]
+pub struct StoryDiffError {
+    /// Package part whose comparison failed.
+    pub part: String,
+    /// The failed operation or output invariant.
+    pub reason: &'static str,
+}
+
+impl std::fmt::Display for StoryDiffError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "STORY_DIFF_FAILED: {}: {}", self.part, self.reason)
+    }
+}
+
+impl std::error::Error for StoryDiffError {}
+
+/// A story holds markup the comparer cannot flatten into atoms: a
+/// `w:subDoc`, `w:altChunk`, `w:contentPart` or custom XML markup.
+/// Carried inside [`OpcError::Io`]; callers can downcast its `get_ref()`.
+#[derive(Debug)]
+pub struct UnsupportedContentError {
+    /// The story and the element, such as
+    /// `original document: Document contains subDoc`.
+    pub message: String,
+}
+
+impl std::fmt::Display for UnsupportedContentError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", Self::CODE, self.message)
+    }
+}
+
+impl std::error::Error for UnsupportedContentError {}
+
+impl UnsupportedContentError {
+    /// The stable error code agents and bindings see.
+    pub const CODE: &'static str = "UNSUPPORTED_CONTENT";
+}
+
+fn story_diff_error(part: &str, reason: &'static str) -> OpcError {
+    crate::opc::refused(StoryDiffError {
+        part: part.to_string(),
+        reason,
+    })
+}
+
+fn ensure_story_text_tracked(
+    part: &str,
+    original: &str,
+    revised: &str,
+    redlined: &str,
+    has_revisions: bool,
+) -> Result<(), OpcError> {
+    if !has_revisions && (original != revised || redlined != original) {
+        return Err(story_diff_error(
+            part,
+            "story text changed without revision marks",
+        ));
+    }
+    Ok(())
+}
+
+/// An unresolved reference has no meaning in its source story. Neutralize
+/// each side against its OWN rels before comparing, even when the other side
+/// happens to resolve the same spelling. Keep valid references for the carry
+/// step, which must fail explicitly if their type cannot be carried.
+fn neutralize_story_relationships(pkg: &PartFs, part: &str, xml: &str) -> Result<String, OpcError> {
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(xml);
+    let root = dom
+        .root(doc)
+        .ok_or_else(|| story_diff_error(part, "story has no root element"))?;
+    let mut changed = false;
+    for el in dom.descendants_and_self(root, None) {
+        for (name, rid) in dom.attributes(el) {
+            if !crate::comparer::tables::S_RELATIONSHIP_ATTRIBUTE_NAMES.contains(&name) {
+                continue;
+            }
+            let resolves = pkg.read_rels_for(part).is_some_and(|rels| {
+                rels.items.iter().any(|r| {
+                    r.id == rid
+                        && (r.target_mode.as_deref() == Some("External")
+                            || crate::comparer::parts::is_external_relationship(
+                                &r.rel_type,
+                                &r.target,
+                            )
+                            || pkg
+                                .part_bytes(&pkg.resolve_rel_target(part, &r.target))
+                                .is_some())
+                })
+            });
+            if !resolves {
+                dom.set_attribute_value(el, &name, None);
+                changed = true;
+            }
+        }
+    }
+    Ok(if changed {
+        dom.serialize_document(doc)
+    } else {
+        xml.to_string()
+    })
+}
+
 /// `xml` (part `part_b` of `pkg2`) with each relationship it references
 /// carried onto `part_a` of `out` under a fresh id (an image with A's bytes
 /// reuses A's relationship), so B's content means what it meant in B once
@@ -253,7 +359,94 @@ fn parts_only_deleted_breaks_reference(
         .collect()
 }
 
-/// Word mode: a header or footer that holds a page number leaves the
+/// Unmerged comparisons retain A's section stories. This cleanup deliberately
+/// follows the flag, not a preset: faithful mode, `--no-paragraph-merge`, and
+/// custom settings all need the same Accept All semantics and Word-crash fix.
+fn needs_unmerged_section_story_cleanup(settings: &WmlComparerSettings) -> bool {
+    !settings.merge_replaced_paragraphs
+}
+
+/// A story slot includes both its kind and its default/first/even type.
+fn has_header_footer_slot(refs: &[(String, String, String)], kind: &str, ty: &str) -> bool {
+    refs.iter().any(|(k, t, _)| k == kind && t == ty)
+}
+
+/// Whole-story deletion must not touch a part shared with any slot B keeps.
+fn a_only_header_footer_parts(
+    original: &PartFs,
+    revised: &PartFs,
+) -> std::collections::HashSet<String> {
+    let a_refs = header_footer_refs(original);
+    let b_refs = header_footer_refs(revised);
+    let shared: std::collections::HashSet<&String> = a_refs
+        .iter()
+        .filter(|(kind, ty, _)| has_header_footer_slot(&b_refs, kind, ty))
+        .map(|(_, _, part)| part)
+        .collect();
+    a_refs
+        .iter()
+        .filter(|(_, _, part)| !shared.contains(part))
+        .map(|(_, _, part)| part.clone())
+        .collect()
+}
+
+/// PowerTools drops the original's section breaks altogether. We preserve
+/// them for Reject All, but must not promote their A-only stories onto the
+/// live final section (#1837). Leave shared slots and live earlier sections
+/// alone; their treatment remains the faithful preset's existing behavior.
+fn strip_final_a_only_deleted_break_stories(
+    dom: &mut Dom,
+    root: NodeId,
+    out: &PartFs,
+    revised: &PartFs,
+    main: &str,
+) {
+    let Some(final_sect) = dom
+        .element(root, &W::body())
+        .and_then(|body| dom.element(body, &W::sect_pr()))
+    else {
+        return;
+    };
+    let mut sections = section_story_parts(dom, root, out, main);
+    sections.pop(); // The direct body child is the final section.
+    let live: std::collections::HashSet<&String> = sections
+        .iter()
+        .filter(|(deleted, _)| !deleted)
+        .flat_map(|(_, parts)| parts)
+        .collect();
+    let dead: std::collections::HashSet<&String> = sections
+        .iter()
+        .filter(|(deleted, _)| *deleted)
+        .flat_map(|(_, parts)| parts)
+        .filter(|part| !live.contains(part))
+        .collect();
+    let b_refs = header_footer_refs(revised);
+    let Some(rels) = out.read_rels_for(main) else {
+        return;
+    };
+    for reference in dom.elements(final_sect, None) {
+        let kind = if dom.name_is(reference, &W::header_reference()) {
+            "header"
+        } else if dom.name_is(reference, &W::footer_reference()) {
+            "footer"
+        } else {
+            continue;
+        };
+        let ty = dom.attribute(reference, &W::type_()).unwrap_or("default");
+        if has_header_footer_slot(&b_refs, kind, ty) {
+            continue;
+        }
+        let target = dom
+            .attribute(reference, &R::id())
+            .and_then(|id| rels.items.iter().find(|r| r.id == id).map(|r| &r.target));
+        if target.is_some_and(|t| dead.contains(&referenced_part(out, main, t))) {
+            // Reject cannot restore this reference; an earlier live section may supply a different story.
+            dom.remove(reference);
+        }
+    }
+}
+
+/// A header or footer that holds a page number leaves the
 /// deleted section breaks of the redline `root` for its final section.
 /// For each (kind, `w:type`) slot the body's own `w:sectPr` does not set,
 /// the story it inherits from the nearest earlier section moves when that
@@ -273,7 +466,13 @@ fn parts_only_deleted_breaks_reference(
 /// show that section's footer instead, so the reference stays. Stories
 /// that stay keep their breaks, and `jubarte validate` reports them
 /// (`DELETED_SECTION_PAGE_FIELD`).
-fn move_page_story_to_final_section(dom: &mut Dom, root: NodeId, pkg: &PartFs, main: &str) {
+fn move_page_story_to_final_section(
+    dom: &mut Dom,
+    root: NodeId,
+    pkg: &PartFs,
+    main: &str,
+    eligible: &std::collections::HashSet<String>,
+) {
     let Some(rels) = pkg.read_rels_for(main) else {
         return;
     };
@@ -366,7 +565,8 @@ fn move_page_story_to_final_section(dom: &mut Dom, root: NodeId, pkg: &PartFs, m
             let first_unshown = slot.1 == "first"
                 && earlier[at..].iter().any(|&s| title_page(dom, s))
                 && !title_page(dom, last);
-            !(set.contains(slot)
+            !(!eligible.contains(part)
+                || set.contains(slot)
                 || shadowed
                 || first_unshown
                 || !deleted(dom, *sect)
@@ -5092,8 +5292,76 @@ fn pre_process(
 /// Markup the engine refuses (C# throws DocxodusException): an `Err` the
 /// caller can handle, never a panic, which would abort a WASM instance.
 /// `InvalidData` is std's kind for well-formed-but-unacceptable input.
-fn invalid_content(msg: String) -> OpcError {
-    OpcError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, msg))
+fn invalid_content(message: String) -> OpcError {
+    crate::opc::refused(UnsupportedContentError { message })
+}
+
+/// A story's weight under [`crate::admission::InputLimits::max_story_units`]:
+/// its elements plus the characters of its text, about the atoms the
+/// comparer makes of it.
+fn story_units(dom: &Dom, root: NodeId) -> u64 {
+    let text = [W::t(), W::del_text(), W::instr_text(), W::del_instr_text()];
+    let mut units = 1u64;
+    dom.for_each_descendant_element(root, None, |e| {
+        units = units.saturating_add(1);
+        if text.iter().any(|name| dom.name_is(e, name)) {
+            let chars = u64::try_from(dom.value(e).chars().count()).unwrap_or(u64::MAX);
+            units = units.saturating_add(chars);
+        }
+    });
+    units
+}
+
+/// Refuse `story` when `units` pass the budget, before any atom is made:
+/// the comparer's memory follows the atoms (word_exp B1, 2026-10-31).
+fn refuse_past_story_budget(
+    units: u64,
+    story: &str,
+    limits: crate::admission::InputLimits,
+) -> Result<(), OpcError> {
+    if units <= limits.max_story_units {
+        return Ok(());
+    }
+    Err(crate::opc::refused(crate::admission::AdmissionError {
+        kind: crate::admission::AdmissionErrorKind::InputLimit,
+        message: format!(
+            "{story} holds {units} story units (characters and elements); the limit is {} story units",
+            limits.max_story_units
+        ),
+    }))
+}
+
+/// Refuse a story the atomizer cannot flatten, in one walk: a subdocument,
+/// an altChunk, a content part or custom XML markup (word_exp N4 panicked
+/// the atomizer, 2026-10-31), or an element with two direct `w:sectPr`
+/// (the atomizer's last-sectPr move expects one). `story` names the part or
+/// side in the error.
+fn refuse_unatomizable(dom: &Dom, root: NodeId, story: &str) -> Result<(), OpcError> {
+    let content_part = W::name("contentPart");
+    let sect_pr = W::sect_pr();
+    let mut sect_parents = std::collections::HashSet::new();
+    let mut bad = None;
+    dom.find_descendant_element(root, None, |e| {
+        if dom.name_is(e, &sect_pr) {
+            if let Some(parent) = dom.parent(e)
+                && !sect_parents.insert(parent)
+            {
+                bad = Some("Document contains two sectPr in one story element".to_string());
+            }
+        } else if dom.name_is(e, &content_part)
+            || dom
+                .name(e)
+                .is_some_and(|name| crate::comparer::tables::INVALID_ELEMENTS.contains(&name))
+        {
+            let name = dom
+                .name(e)
+                .map(|n| n.local_name().to_string())
+                .unwrap_or_default();
+            bad = Some(format!("Document contains {name}"));
+        }
+        bad.is_some()
+    });
+    bad.map_or(Ok(()), |e| Err(invalid_content(format!("{story}: {e}"))))
 }
 
 /// Admit one compare input under `limits`. A refusal keeps the typed
@@ -5158,6 +5426,7 @@ pub fn accept_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
     admit_package(docx)?;
     let mut pkg = PartFs::open(docx)?;
     crate::revision_processor::accept_revisions_package(&mut pkg);
+    repair_resolved_package_validity(&mut pkg);
     pkg.to_zip()
 }
 
@@ -5181,6 +5450,7 @@ pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
     admit_package(docx)?;
     let mut pkg = PartFs::open(docx)?;
     crate::revision_processor::reject_revisions_package(&mut pkg);
+    repair_resolved_package_validity(&mut pkg);
     pkg.to_zip()
 }
 
@@ -5786,8 +6056,8 @@ fn mark_adopted_hf_content_as_inserted(
 /// M383 — when the revised document has **no** headers/footers but the original
 /// does, Word marks all original HF content pure-D. Eng left A HF live (−45 on
 /// h_f_normal_odd_even_firstpg×basic_footnotes). Inverse of M378. The rule
-/// holds per kind: a revision that keeps its headers but has no footer drops
-/// the original's footers too (bc0135eaa1). A part in `dead_only` (only
+/// holds per (kind, type) slot: a first-page footer does not preserve A's
+/// default footer (#1837). A part in `dead_only` (only
 /// deleted section breaks reference it) goes as a whole story (#1833).
 fn mark_a_only_hf_content_as_deleted(
     out: &mut PartFs,
@@ -5796,16 +6066,24 @@ fn mark_a_only_hf_content_as_deleted(
     dead_only: &std::collections::HashSet<String>,
     settings: &WmlComparerSettings,
 ) {
-    let b_refs = header_footer_refs(pkg2);
+    let a_only = a_only_header_footer_parts(pkg1, pkg2);
     let mut seen = std::collections::HashSet::new();
-    for (kind, _, part) in header_footer_refs(pkg1) {
-        // B references this kind: the slot-level content diff owns the markup.
-        if b_refs.iter().any(|(k, _, _)| *k == kind) || !seen.insert(part.clone()) {
+    let (section_count, a_refs) = header_footer_refs_by_section(pkg1);
+    for (_, _, _, part) in &a_refs {
+        // A shared slot's content diff owns the markup for its entire part.
+        if !a_only.contains(part) || !seen.insert(part.clone()) {
             continue;
         }
         // Part may be stored under the same name in out (A-based package).
-        let whole_story = dead_only.contains(&part);
-        mark_hf_part_content_as_deleted(out, &part, settings, whole_story);
+        let whole_story = dead_only.contains(part);
+        let final_only = a_refs
+            .iter()
+            .filter(|(_, _, _, p)| p == part)
+            .all(|(section, _, _, _)| section + 1 == section_count);
+        if needs_unmerged_section_story_cleanup(settings) && !whole_story && !final_only {
+            continue;
+        }
+        mark_hf_part_content_as_deleted(out, part, settings, whole_story);
     }
 }
 
@@ -6544,7 +6822,7 @@ pub fn get_revisions(
 
     // C# :3948–:3949 — TestForInvalidContent (throws) +
     // RemoveExistingPowerToolsMarkup on main and both notes parts.
-    preprocess::test_for_invalid_content(&dom, root).map_err(invalid_content)?;
+    refuse_unatomizable(&dom, root, "input document")?;
     preprocess::remove_existing_powertools_markup(&mut dom, root);
     let mut note_roots: Vec<(NodeId, &str, crate::xmllinq::XName)> = Vec::new();
     let (fn_part, en_part) = notes_part_names(&pkg);
@@ -6555,11 +6833,18 @@ pub fn get_revisions(
         if let Some(x) = pkg.part_string(part) {
             let nd = dom.parse_xdocument(&x);
             if let Some(r) = dom.root(nd) {
+                refuse_unatomizable(&dom, r, part)?;
                 preprocess::remove_existing_powertools_markup(&mut dom, r);
                 note_roots.push((r, part, def));
             }
         }
     }
+    let units = note_roots
+        .iter()
+        .fold(story_units(&dom, root), |sum, (r, _, _)| {
+            sum.saturating_add(story_units(&dom, *r))
+        });
+    refuse_past_story_budget(units, "input document", settings.input_limits)?;
 
     let body = dom
         .element(root, &W::body())
@@ -6770,15 +7055,7 @@ fn compare_documents_impl(
         {
             owned = accept_source_revisions(&owned, settings.input_limits)?;
         }
-        // IDENTICAL-INPUT still runs drawing/shape id fixups: source packages
-        // may carry colliding wp:docPr/@id (strict01 corpus) that the full
-        // produce path renumbers; skipping left S-dup-docpr-id regressions.
-        owned = crate::comparer::fixups::fix_up_drawing_ids_in_package_within(
-            &owned,
-            settings.input_limits,
-            settings.preserve_untouched,
-        )?;
-        return Ok(owned);
+        return finalize_identical_compare(&owned, settings);
     }
 
     // M8: normalize ISO/IEC 29500 "Strict" inputs to "Transitional" before any
@@ -6831,11 +7108,7 @@ fn compare_documents_impl(
 
     // After prep, packages may still be byte-identical (rare non-self paths).
     if original_owned == modified_owned {
-        return crate::comparer::fixups::fix_up_drawing_ids_in_package_within(
-            &original_owned,
-            settings.input_limits,
-            settings.preserve_untouched,
-        );
+        return finalize_identical_compare(&original_owned, settings);
     }
 
     let original: &[u8] = &original_owned;
@@ -6904,6 +7177,8 @@ fn compare_documents_impl(
         .ok_or_else(|| OpcError::PartNotFound("original has no w:body".into()))?;
     let body2 = merged_body(&mut dom, root2)
         .ok_or_else(|| OpcError::PartNotFound("modified has no w:body".into()))?;
+    refuse_unatomizable(&dom, root1, "original document")?;
+    refuse_unatomizable(&dom, root2, "modified document")?;
 
     // #531: canonicalize measure spellings on BOTH inputs before the diff —
     // here, where Strict is translated. The diff's property signatures
@@ -6950,6 +7225,36 @@ fn compare_documents_impl(
     .flatten()
     {
         crate::comparer::finalize::normalize_universal_measures(&mut dom, root);
+    }
+    for (root, part) in [
+        (notes_ctx.fn_before, &fn1),
+        (notes_ctx.fn_after, &fn2),
+        (notes_ctx.en_before, &en1),
+        (notes_ctx.en_after, &en2),
+    ] {
+        if let Some(root) = root {
+            refuse_unatomizable(&dom, root, part)?;
+        }
+    }
+    for (side, main, notes) in [
+        (
+            "original document",
+            root1,
+            [notes_ctx.fn_before, notes_ctx.en_before],
+        ),
+        (
+            "modified document",
+            root2,
+            [notes_ctx.fn_after, notes_ctx.en_after],
+        ),
+    ] {
+        let units = notes
+            .into_iter()
+            .flatten()
+            .fold(story_units(&dom, main), |sum, root| {
+                sum.saturating_add(story_units(&dom, root))
+            });
+        refuse_past_story_budget(units, side, settings.input_limits)?;
     }
 
     // Word mode: each side's unstyled-paragraph line pitch, for the
@@ -7021,11 +7326,19 @@ fn compare_documents_impl(
             result_root,
             &final_header_footer_slots(&pkg2),
         );
-        // M383: A-only HF (B has no headers/footers) → pure-D (Word).
-        let dead_only = parts_only_deleted_breaks_reference(&dom, result_root, &out, &main1);
-        mark_a_only_hf_content_as_deleted(&mut out, &pkg1, &pkg2, &dead_only, settings);
-        move_page_story_to_final_section(&mut dom, result_root, &out, &main1);
     }
+    if needs_unmerged_section_story_cleanup(settings) {
+        strip_final_a_only_deleted_break_stories(&mut dom, result_root, &out, &pkg2, &main1);
+    }
+    // A-only stories on deleted breaks or solely on the final section must
+    // disappear on Accept All, including when paragraph merging is disabled.
+    let mut dead_only = parts_only_deleted_breaks_reference(&dom, result_root, &out, &main1);
+    if needs_unmerged_section_story_cleanup(settings) {
+        let a_only = a_only_header_footer_parts(&pkg1, &pkg2);
+        dead_only.retain(|part| a_only.contains(part));
+    }
+    mark_a_only_hf_content_as_deleted(&mut out, &pkg1, &pkg2, &dead_only, settings);
+    move_page_story_to_final_section(&mut dom, result_root, &out, &main1, &dead_only);
 
     // M35: comments carryover is a package-validity invariant, not a
     // Word-visual formatting pass. Both supported comparer presets must union
@@ -8088,8 +8401,9 @@ fn compare_documents_impl(
     // M4.H.x: header/footer CONTENT diff (Word redlines header/footer changes; we
     // previously only copied the original's). Match A's parts to B's by reference
     // (kind,type), diff the content and write the redline into the output's
-    // (original's) part. That part keeps A's rels, so a part whose B references
-    // (a logo, a hyperlink) would resolve to something else there is skipped.
+    // (original's) part. Neutralize dangling references on both sides and
+    // carry B's valid references into A's rels before diffing. A failed story
+    // comparison must refuse the package, never silently retain A (#1709).
     {
         let (sections_a, refs_a) = header_footer_refs_by_section(&pkg1);
         let (sections_b, refs_b) = header_footer_refs_by_section(&pkg2);
@@ -8127,22 +8441,43 @@ fn compare_documents_impl(
                 continue;
             };
             let part_b = &part_b;
-            if let (Some(xa), Some(xb)) = (pkg1.part_string(&part_a), pkg2.part_string(part_b)) {
+            {
+                let xa = pkg1.part_string(&part_a).ok_or_else(|| {
+                    story_diff_error(&part_a, "original story XML is unavailable")
+                })?;
+                let xb = pkg2
+                    .part_string(part_b)
+                    .ok_or_else(|| story_diff_error(part_b, "revised story XML is unavailable"))?;
+                let xa = neutralize_story_relationships(&pkg1, &part_a, &xa)?;
+                let xb = neutralize_story_relationships(&pkg2, part_b, &xb)?;
                 // B's references that mean something else in A's part (both
                 // headers picture their own logo as rId1) move to fresh ids.
                 let xb = if part_rels_agree((&pkg1, &part_a), (&pkg2, part_b), &xb) {
                     xb
                 } else {
-                    match carry_revised_part_relationships(&mut out, &part_a, (&pkg2, part_b), &xb)
-                    {
-                        Some(x) => x,
-                        None => continue,
-                    }
+                    carry_revised_part_relationships(&mut out, &part_a, (&pkg2, part_b), &xb)
+                        .ok_or_else(|| {
+                            story_diff_error(part_b, "cannot carry revised story relationships")
+                        })?
                 };
                 let mut hd = Dom::new();
                 let da = hd.parse_xdocument(&xa);
                 let db = hd.parse_xdocument(&xb);
-                if let (Some(ra), Some(rb)) = (hd.root(da), hd.root(db)) {
+                let ra = hd.root(da).ok_or_else(|| {
+                    story_diff_error(&part_a, "original story has no root element")
+                })?;
+                let rb = hd
+                    .root(db)
+                    .ok_or_else(|| story_diff_error(part_b, "revised story has no root element"))?;
+                let container_name = if kind == "header" { W::hdr() } else { W::ftr() };
+                for (root, part) in [(ra, part_a.as_str()), (rb, part_b.as_str())] {
+                    if !hd.name_is(root, &container_name) {
+                        return Err(story_diff_error(part, "unexpected story root element"));
+                    }
+                    refuse_unatomizable(&hd, root, part)?;
+                    refuse_past_story_budget(story_units(&hd, root), part, settings.input_limits)?;
+                }
+                {
                     let text_of = |d: &Dom, n: crate::xmllinq::NodeId| -> String {
                         d.descendants(n, Some(&W::t()))
                             .into_iter()
@@ -8151,6 +8486,7 @@ fn compare_documents_impl(
                     };
                     // capture BEFORE the compare mutates the arena
                     let a_text = text_of(&hd, ra);
+                    let b_text = text_of(&hd, rb);
                     let b_ends_with_table = hd
                         .elements(rb, None)
                         .last()
@@ -8162,10 +8498,9 @@ fn compare_documents_impl(
                     // hdr/ftr under that wrapper is dead (PR #81 / kilo): re-wrap
                     // the body children as the original container type so the
                     // redlined part stays a valid header/footer part.
-                    let container_name = if kind == "header" { W::hdr() } else { W::ftr() };
-                    let Some(out_body) = hd.element(res, &W::body()) else {
-                        continue;
-                    };
+                    let out_body = hd.element(res, &W::body()).ok_or_else(|| {
+                        story_diff_error(&part_a, "story comparison produced no body")
+                    })?;
                     let container = hd.new_element(container_name);
                     // Preserve source-root namespace decls (w already on body
                     // children; copy any extras from A's original root).
@@ -8198,24 +8533,20 @@ fn compare_documents_impl(
                             &settings.author_for_revisions,
                         );
                     }
-                    // M-PAG mech 1 guard: the diff must never leave a slot A
-                    // populates with B's wholesale content. When B's matched
-                    // part is effectively empty (run-less paragraphs) the
-                    // "diff" degenerates to B's paragraphs with no revision
-                    // markup, silently blanking A's footer (sd-2517 vs
-                    // sectpr-headerref: all 19 footers blanked, −3 rendered
-                    // pages). Word RETAINS A's content for slots A populates
-                    // (GT-verified), so accept the diff only when it carries
-                    // revision markup or still reads as A's text; otherwise
-                    // keep A's part untouched.
+                    // A changed story with no revision marks is not a redline.
+                    // The old M-PAG guard silently kept A when this failed;
+                    // refuse instead, including when the diff lost B's text.
                     let redlined = hd.serialize_element(container);
-                    let has_revisions = redlined.contains("<w:ins")
-                        || redlined.contains("<w:del")
-                        || redlined.contains("pPrChange")
-                        || redlined.contains("rPrChange");
-                    if has_revisions || text_of(&hd, container) == a_text {
-                        out.set_part(&part_a, redlined.into_bytes());
-                    }
+                    let has_revisions =
+                        crate::revision_processor::xml_has_tracked_revisions(&redlined);
+                    ensure_story_text_tracked(
+                        &part_a,
+                        &a_text,
+                        &b_text,
+                        &text_of(&hd, container),
+                        has_revisions,
+                    )?;
+                    out.set_part(&part_a, redlined.into_bytes());
                 }
             }
         }
@@ -8243,204 +8574,15 @@ fn compare_documents_impl(
             out.set_part(&part, n.into_bytes());
         }
     }
-    // Word-validity normalization on every validity-swept content part — NOT
-    // document.xml alone. Word opens the package (headers/footers/notes/
-    // settings/styles/rels/content-types); a clean body with a corrupt notes
-    // or settings part still raises "unreadable content".
-    //
-    // (validator sweep: 146/166 outputs carried schema errors Word's own
-    // redlines don't): canonicalize universal measures / fractional ints,
-    // fix Strict artifacts (cnfStyle bitmask, wp14 percents, out-of-range
-    // paraIds), and strip pt:* scratch so headers/notes don't ship Unids.
-    // Scope notes: `word/charts/` (DrawingML) and `word/theme/` are included
-    // ON PURPOSE — the Strict percent→per-thousand rewrite covers drawingml
-    // namespaces; `word/media/*.xml` is vacuous for binary payloads.
-    // Custom XML data holds the application's own XML whatever its name
-    // (`word/headerData.xml`), so no sweep below touches it (codex on #1680).
-    let custom_data = {
-        let parts = out.parts();
-        crate::opc::custom_xml_data(std::iter::once(("", out.package_relationships())).chain(
-            parts.iter().filter_map(|source| {
-                out.read_rels_for(source)
-                    .map(|rels| (source.as_str(), rels))
-            }),
-        ))
-    };
-    // Comment bodies are a story the comparison writes, and can hold a table
-    // (#1712). The glossary is no story and stays as it came (#1680).
-    for part in out.parts() {
-        if custom_data
-            .iter()
-            .any(|data| data.eq_ignore_ascii_case(&part))
-        {
-            continue;
-        }
-        let is_swept = part == main1
-            || part == "word/styles.xml"
-            || part == "word/numbering.xml"
-            || part == "word/footnotes.xml"
-            || part == "word/endnotes.xml"
-            || part == "word/comments.xml"
-            || part == "word/settings.xml"
-            || (part.starts_with("word/header") && part.ends_with(".xml"))
-            || (part.starts_with("word/footer") && part.ends_with(".xml"))
-            || (part.starts_with("word/diagrams/") && part.ends_with(".xml"))
-            || (part.starts_with("word/charts/") && part.ends_with(".xml"))
-            || (part.starts_with("word/theme/") && part.ends_with(".xml"))
-            || (part.starts_with("word/media/") && part.ends_with(".xml"));
-        if !is_swept {
-            continue;
-        }
-        if let Some(x) = out.part_string(&part) {
-            let mut vd = Dom::new();
-            let doc = vd.parse_xdocument(&x);
-            if let Some(vr) = vd.root(doc) {
-                // A comments part the sweep leaves as it was keeps its bytes:
-                // Word carries B's comments part byte for byte (m35_comments).
-                let carried = (part == "word/comments.xml").then(|| vd.serialize_element(vr));
-                crate::comparer::finalize::normalize_universal_measures(&mut vd, vr);
-                crate::comparer::finalize::fix_strict_validity_artifacts(&mut vd, vr);
-                // Invalidity we inherit rather than create: a source whose own
-                // styles/numbering Word already rejects would otherwise ship inside
-                // our redline and be blamed on us.
-                crate::comparer::finalize::repair_inherited_invalidity(&mut vd, vr);
-                // Headers and footers deleted wholesale never pass through the body
-                // finalize pipeline, so this is where their w:del/w:hyperlink
-                // inversion gets fixed.
-                crate::comparer::finalize::hoist_hyperlinks_out_of_revisions(&mut vd, vr);
-                crate::comparer::finalize::enforce_deleted_text_kinds(&mut vd, vr);
-                crate::comparer::finalize::remove_powertools_scratch_markup(&mut vd, vr);
-                // Produce strips an empty pPr shell, then later package steps
-                // (style cascade, spacing restore) can take the live children
-                // back off and leave the shell. Word's redline of the short
-                // title mixes has neither the shell nor the children.
-                if part == main1 {
-                    crate::comparer::finalize::strip_propertyless_ppr(&mut vd, vr);
-                    // Word-visual chrome. Faithful mode runs none of these;
-                    // the body path already gates them the same way, and an
-                    // edit keeps the source's markup and the plan's links.
-                    if settings.merge_replaced_paragraphs && !settings.preserve_untouched {
-                        // Package steps can put a default nextPage back into the
-                        // recorded sectPr, or leave line=276 on a deleted mark.
-                        let original_line = pkg1
-                            .part_string("word/styles.xml")
-                            .map(|x| default_paragraph_line(&x));
-                        crate::comparer::finalize::strip_unrecorded_word_defaults(
-                            &mut vd,
-                            vr,
-                            original_line.as_deref(),
-                        );
-                        let id_to_target: std::collections::HashMap<String, String> = out
-                            .read_rels_for(&main1)
-                            .map(|rels| {
-                                rels.items
-                                    .iter()
-                                    .filter(|r| r.rel_type.ends_with("/hyperlink"))
-                                    .map(|r| (r.id.clone(), r.target.clone()))
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let base_targets: std::collections::HashSet<String> = pkg1
-                            .read_rels_for(&main1)
-                            .map(|rels| {
-                                rels.items
-                                    .iter()
-                                    .filter(|r| r.rel_type.ends_with("/hyperlink"))
-                                    .map(|r| r.target.clone())
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        crate::comparer::finalize::rewrite_inserted_external_hyperlinks(
-                            &mut vd,
-                            vr,
-                            &id_to_target,
-                            &base_targets,
-                        );
-                        crate::comparer::finalize::align_word_table_and_comment_chrome(&mut vd, vr);
-                    }
-                    if let Some((original_xml, revised_xml)) = ladder_sources.as_ref() {
-                        crate::comparer::finalize::align_remaining_ladder_rungs(
-                            &mut vd,
-                            vr,
-                            &crate::comparer::finalize::LadderSources {
-                                original_xml,
-                                revised_xml,
-                                settings,
-                            },
-                        );
-                    }
-                }
-                // A cell's final mark carries no revision its row does not
-                // (#1669, #1684), in every story: the body (its text boxes
-                // too), the notes, the headers and footers. After every pass
-                // that writes marks.
-                if sweeps_final_marks(&part, &main1) {
-                    crate::comparer::final_marks::settle_cell_final_marks(&mut vd, vr);
-                }
-                // Last: every pass above may append properties out of order.
-                crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
-                crate::comparer::finalize::declare_extension_namespaces_ignorable(&mut vd, vr);
-                crate::comparer::finalize::bind_compatibility_prefixes(&mut vd, vr);
-                let swept = vd.serialize_element(vr);
-                if carried.as_deref() == Some(swept.as_str()) {
-                    continue;
-                }
-                out.set_part(&part, swept.into_bytes());
-            }
-        }
-    }
-    // A story part under a name of its own (a header at `word/chrome.xml`)
-    // is not swept above, but its cells' final marks settle too (codex on
-    // #1680, round 10). Stories are known by the main document's
-    // relationships to them: a custom XML data item or the glossary holds
-    // cells too, but the comparison wrote neither and they stay as they
-    // were (minimax on #1680, round 11).
-    let stories: Vec<String> = out
-        .read_rels_for(&main1)
-        .map(|rels| {
-            rels.items
-                .iter()
-                .filter(|r| {
-                    r.target_mode.as_deref() != Some("External")
-                        && ["/header", "/footer", "/footnotes", "/endnotes", "/comments"]
-                            .iter()
-                            .any(|kind| r.rel_type.ends_with(kind))
-                })
-                .map(|r| out.resolve_rel_target(&main1, &r.target))
-                .collect()
-        })
-        .unwrap_or_default();
-    for part in stories {
-        // Settled above already. One predicate for both sweeps, so a story
-        // part cannot fall between them (`word/headerA.dat`, CodeRabbit on
-        // #1680, round 12).
-        if sweeps_final_marks(&part, &main1) {
-            continue;
-        }
-        let Some(x) = out.part_string(&part).filter(|x| x.contains("tc")) else {
-            continue;
-        };
-        let mut vd = Dom::new();
-        let doc = vd.parse_xdocument(&x);
-        let Some(vr) = vd.root(doc) else {
-            continue;
-        };
-        let unsettled = vd.name(vr).is_some_and(|n| n.namespace_name() == W::URI)
-            && vd
-                .descendants(vr, Some(&W::tc()))
-                .into_iter()
-                .any(|cell| !crate::validate::uncovered_final_marks(&vd, cell).is_empty());
-        if unsettled {
-            crate::comparer::final_marks::settle_cell_final_marks(&mut vd, vr);
-            // The finalizers the sweep above runs, so a renamed story keeps
-            // its extension namespaces declared and ignorable (CodeRabbit on
-            // #1680).
-            crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
-            crate::comparer::finalize::declare_extension_namespaces_ignorable(&mut vd, vr);
-            crate::comparer::finalize::bind_compatibility_prefixes(&mut vd, vr);
-            out.set_part(&part, vd.serialize_element(vr).into_bytes());
-        }
-    }
+    sweep_part_validity(
+        &mut out,
+        &main1,
+        Some(&ComparisonSweep {
+            original: &pkg1,
+            settings,
+            ladder_sources: ladder_sources.as_ref(),
+        }),
+    );
     // Final package-level notes↔settings coherence (after the validity sweep
     // re-serialized those parts). Dangling special-note ids in settings are a
     // package bug, not a document.xml bug.
@@ -8486,6 +8628,292 @@ fn compare_documents_impl(
     out.to_zip()
 }
 
+/// The inherited-shape repairs and schema-order pass every package we build
+/// gets (#1712, #1796): an identical compare's output and, since #1717, a
+/// standalone accept's or reject's.
+fn repair_resolved_package_validity(pkg: &mut PartFs) {
+    let main = pkg
+        .main_document_part()
+        .unwrap_or_else(|| "word/document.xml".to_string());
+    sweep_part_validity(pkg, &main, None);
+}
+
+/// Identical inputs need repairs, not the chrome of a newly produced redline.
+/// Work on the admitted package directly: serializing drawing repairs and then
+/// reopening them would incorrectly apply input limits to our expanded output.
+fn finalize_identical_compare(
+    bytes: &[u8],
+    settings: &WmlComparerSettings,
+) -> Result<Vec<u8>, OpcError> {
+    let mut out = PartFs::open_within(bytes, settings.input_limits)?;
+    let main = out
+        .main_document_part()
+        .unwrap_or_else(|| "word/document.xml".to_string());
+    let xml = out
+        .part_string(&main)
+        .ok_or_else(|| OpcError::PartNotFound(format!("main document missing: {main}")))?;
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    if dom.root(doc).is_none() {
+        return Err(OpcError::PartNotFound(format!(
+            "main document has no root element: {main}"
+        )));
+    }
+    repair_resolved_package_validity(&mut out);
+    out.to_zip()
+}
+
+/// Context available only when comparison has actually produced a redline.
+struct ComparisonSweep<'a> {
+    original: &'a PartFs,
+    settings: &'a WmlComparerSettings,
+    ladder_sources: Option<&'a (String, String)>,
+}
+
+/// Repairs run at every successful exit. Comparison cleanup is interleaved
+/// only on the full path, in exactly its original order (#1796).
+fn sweep_part_validity(out: &mut PartFs, main: &str, comparison: Option<&ComparisonSweep<'_>>) {
+    // Word-validity normalization on every validity-swept content part — NOT
+    // document.xml alone. Word opens the package (headers/footers/notes/
+    // settings/styles/rels/content-types); a clean body with a corrupt notes
+    // or settings part still raises "unreadable content".
+    //
+    // (validator sweep: 146/166 outputs carried schema errors Word's own
+    // redlines don't): canonicalize universal measures / fractional ints,
+    // fix Strict artifacts (cnfStyle bitmask, wp14 percents, out-of-range
+    // paraIds), and strip pt:* scratch so headers/notes don't ship Unids.
+    // Scope notes: `word/charts/` (DrawingML) and `word/theme/` are included
+    // ON PURPOSE — the Strict percent→per-thousand rewrite covers drawingml
+    // namespaces; `word/media/*.xml` is vacuous for binary payloads.
+    // Custom XML data holds the application's own XML whatever its name
+    // (`word/headerData.xml`), so no sweep below touches it (codex on #1680).
+    let custom_data = {
+        let parts = out.parts();
+        crate::opc::custom_xml_data(std::iter::once(("", out.package_relationships())).chain(
+            parts.iter().filter_map(|source| {
+                out.read_rels_for(source)
+                    .map(|rels| (source.as_str(), rels))
+            }),
+        ))
+    };
+    // Comment bodies are a story the comparison writes, and can hold a table
+    // (#1712). The glossary is no story and stays as it came (#1680).
+    for part in out.parts() {
+        if custom_data
+            .iter()
+            .any(|data| data.eq_ignore_ascii_case(&part))
+        {
+            continue;
+        }
+        let is_swept = part == main
+            || part == "word/styles.xml"
+            || part == "word/numbering.xml"
+            || part == "word/footnotes.xml"
+            || part == "word/endnotes.xml"
+            || part == "word/comments.xml"
+            || part == "word/settings.xml"
+            || (part.starts_with("word/header") && part.ends_with(".xml"))
+            || (part.starts_with("word/footer") && part.ends_with(".xml"))
+            || (part.starts_with("word/diagrams/") && part.ends_with(".xml"))
+            || (part.starts_with("word/charts/") && part.ends_with(".xml"))
+            || (part.starts_with("word/theme/") && part.ends_with(".xml"))
+            || (part.starts_with("word/media/") && part.ends_with(".xml"));
+        if !is_swept {
+            continue;
+        }
+        if let Some(x) = out.part_string(&part) {
+            let mut vd = Dom::new();
+            let doc = vd.parse_xdocument(&x);
+            if let Some(vr) = vd.root(doc) {
+                // Preserve every untouched part byte-for-byte on an identical
+                // exit; the full path historically does this for comments only.
+                let carried = (comparison.is_none() || part == "word/comments.xml")
+                    .then(|| vd.serialize_element(vr));
+                if comparison.is_none() && part == main {
+                    // Unique DrawingML ids are valid; VML duplicates are too.
+                    // Only missing/invalid or duplicate docPr ids need repair.
+                    crate::comparer::fixups::rename_repeated_doc_pr_ids(&mut vd, vr);
+                }
+                repair_part_validity(&mut vd, vr, comparison.is_some());
+                if let Some(context) = comparison {
+                    sweep_comparison_chrome(out, &part, main, &mut vd, vr, context);
+                }
+                // Last: every pass above may append properties out of order.
+                if comparison.is_some() {
+                    crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
+                    crate::comparer::finalize::declare_extension_namespaces_ignorable(&mut vd, vr);
+                } else {
+                    crate::comparer::finalize::repair_part_schema_order(&mut vd, vr);
+                }
+                crate::comparer::finalize::bind_compatibility_prefixes(&mut vd, vr);
+                let swept = vd.serialize_element(vr);
+                if carried.as_deref() == Some(swept.as_str()) {
+                    continue;
+                }
+                out.set_part(&part, swept.into_bytes());
+            }
+        }
+    }
+    // Settling final marks is comparison chrome, including renamed stories.
+    if comparison.is_none() {
+        return;
+    }
+    // A story part under a name of its own (a header at `word/chrome.xml`)
+    // is not swept above, but its cells' final marks settle too (codex on
+    // #1680, round 10). Stories are known by the main document's
+    // relationships to them: a custom XML data item or the glossary holds
+    // cells too, but the comparison wrote neither and they stay as they
+    // were (minimax on #1680, round 11).
+    let stories: Vec<String> = out
+        .read_rels_for(main)
+        .map(|rels| {
+            rels.items
+                .iter()
+                .filter(|r| {
+                    r.target_mode.as_deref() != Some("External")
+                        && ["/header", "/footer", "/footnotes", "/endnotes", "/comments"]
+                            .iter()
+                            .any(|kind| r.rel_type.ends_with(kind))
+                })
+                .map(|r| out.resolve_rel_target(main, &r.target))
+                .collect()
+        })
+        .unwrap_or_default();
+    for part in stories {
+        // Settled above already. One predicate for both sweeps, so a story
+        // part cannot fall between them (`word/headerA.dat`, CodeRabbit on
+        // #1680, round 12).
+        if sweeps_final_marks(&part, main) {
+            continue;
+        }
+        let Some(x) = out.part_string(&part).filter(|x| x.contains("tc")) else {
+            continue;
+        };
+        let mut vd = Dom::new();
+        let doc = vd.parse_xdocument(&x);
+        let Some(vr) = vd.root(doc) else {
+            continue;
+        };
+        let unsettled = vd.name(vr).is_some_and(|n| n.namespace_name() == W::URI)
+            && vd
+                .descendants(vr, Some(&W::tc()))
+                .into_iter()
+                .any(|cell| !crate::validate::uncovered_final_marks(&vd, cell).is_empty());
+        if unsettled {
+            crate::comparer::final_marks::settle_cell_final_marks(&mut vd, vr);
+            // The finalizers the sweep above runs, so a renamed story keeps
+            // its extension namespaces declared and ignorable (CodeRabbit on
+            // #1680).
+            crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
+            crate::comparer::finalize::declare_extension_namespaces_ignorable(&mut vd, vr);
+            crate::comparer::finalize::bind_compatibility_prefixes(&mut vd, vr);
+            out.set_part(&part, vd.serialize_element(vr).into_bytes());
+        }
+    }
+}
+
+/// Schema/structural validity repairs shared by the two sweep modes.
+fn repair_part_validity(dom: &mut Dom, root: NodeId, comparison: bool) {
+    if comparison {
+        crate::comparer::finalize::normalize_universal_measures(dom, root);
+        crate::comparer::finalize::fix_strict_validity_artifacts(dom, root);
+    } else {
+        crate::comparer::finalize::repair_invalid_measures(dom, root);
+        crate::comparer::finalize::repair_strict_validity_artifacts(dom, root);
+    }
+    crate::comparer::finalize::repair_inherited_invalidity(dom, root);
+    // CT_RunTrackChange excludes hyperlink and fldSimple wrappers. Hoist
+    // only those illegal immediate children, preserving revision ownership.
+    crate::comparer::finalize::hoist_hyperlinks_out_of_revisions(dom, root);
+    if comparison {
+        crate::comparer::finalize::enforce_deleted_text_kinds(dom, root);
+    }
+}
+
+/// Formatting/default removal belongs to a comparison, never an identical exit.
+fn sweep_comparison_chrome(
+    out: &PartFs,
+    part: &str,
+    main: &str,
+    vd: &mut Dom,
+    root: NodeId,
+    context: &ComparisonSweep<'_>,
+) {
+    let ComparisonSweep {
+        original,
+        settings,
+        ladder_sources,
+    } = context;
+    crate::comparer::finalize::remove_powertools_scratch_markup(vd, root);
+    // Produce strips an empty pPr shell, then later package steps
+    // (style cascade, spacing restore) can take the live children
+    // back off and leave the shell. Word's redline of the short
+    // title mixes has neither the shell nor the children.
+    if part == main {
+        crate::comparer::finalize::strip_propertyless_ppr(vd, root);
+        // Word-visual chrome. Faithful mode runs none of these;
+        // the body path already gates them the same way, and an
+        // edit keeps the source's markup and the plan's links.
+        if settings.merge_replaced_paragraphs && !settings.preserve_untouched {
+            // Package steps can put a default nextPage back into the
+            // recorded sectPr, or leave line=276 on a deleted mark.
+            let original_line = original
+                .part_string("word/styles.xml")
+                .map(|x| default_paragraph_line(&x));
+            crate::comparer::finalize::strip_unrecorded_word_defaults(
+                vd,
+                root,
+                original_line.as_deref(),
+            );
+            let id_to_target: std::collections::HashMap<String, String> = out
+                .read_rels_for(main)
+                .map(|rels| {
+                    rels.items
+                        .iter()
+                        .filter(|r| r.rel_type.ends_with("/hyperlink"))
+                        .map(|r| (r.id.clone(), r.target.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let base_targets: std::collections::HashSet<String> = original
+                .read_rels_for(main)
+                .map(|rels| {
+                    rels.items
+                        .iter()
+                        .filter(|r| r.rel_type.ends_with("/hyperlink"))
+                        .map(|r| r.target.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            crate::comparer::finalize::rewrite_inserted_external_hyperlinks(
+                vd,
+                root,
+                &id_to_target,
+                &base_targets,
+            );
+            crate::comparer::finalize::align_word_table_and_comment_chrome(vd, root);
+        }
+        if let Some((original_xml, revised_xml)) = ladder_sources {
+            crate::comparer::finalize::align_remaining_ladder_rungs(
+                vd,
+                root,
+                &crate::comparer::finalize::LadderSources {
+                    original_xml,
+                    revised_xml,
+                    settings,
+                },
+            );
+        }
+    }
+    // A cell's final mark carries no revision its row does not
+    // (#1669, #1684), in every story: the body (its text boxes
+    // too), the notes, the headers and footers. After every pass
+    // that writes marks.
+    if sweeps_final_marks(part, main) {
+        crate::comparer::final_marks::settle_cell_final_marks(vd, root);
+    }
+}
+
 /// The parts the validity sweep settles cells' final marks in, by name: the
 /// main part, the notes, and `word/header*.xml` / `word/footer*.xml`. The
 /// story sweep after it settles every other story part.
@@ -8510,6 +8938,32 @@ mod tests {
     //! child sequence — so the synthesized records must use a free id and land
     //! in their schema slot.
     use super::*;
+
+    /// One unit per element and per character of `w:t`, `w:delText`,
+    /// `w:instrText` and `w:delInstrText`; other text costs nothing.
+    #[test]
+    fn story_units_count_elements_and_the_characters_of_text() {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            "<w:body xmlns:w=\"{}\"><w:p><w:r><w:t>ab\u{e9}</w:t><w:delText>cd</w:delText><w:instrText> P </w:instrText><w:delInstrText>e</w:delInstrText><w:tab/></w:r></w:p><w:p/></w:body>",
+            W::URI
+        ));
+        let root = dom.root(doc).unwrap();
+        // 9 elements (body, 2 p, r, 4 text, tab) + 3 + 2 + 3 + 1 characters.
+        assert_eq!(story_units(&dom, root), 9 + 9);
+        let limits = crate::admission::InputLimits {
+            max_story_units: 18,
+            ..crate::admission::InputLimits::compare()
+        };
+        assert!(refuse_past_story_budget(18, "s", limits).is_ok());
+        let err = refuse_past_story_budget(19, "s", limits)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("s holds 19 story units") && err.contains("limit is 18"),
+            "{err}"
+        );
+    }
 
     fn parse(dom: &mut Dom, xml: &str) -> (NodeId, NodeId) {
         let doc = dom.parse_xdocument(xml);
@@ -9977,12 +10431,14 @@ mod coverage_boundary_tests {
         // No deleted row: the references stay on the deleted break.
         let mut dom = Dom::new();
         let top = root(&mut dom, &xml("document", &shape("")));
-        move_page_story_to_final_section(&mut dom, top, &pkg, MAIN);
+        let eligible = parts_only_deleted_breaks_reference(&dom, top, &pkg, MAIN);
+        move_page_story_to_final_section(&mut dom, top, &pkg, MAIN, &eligible);
         assert_eq!(references(&dom, top), unmoved);
 
         let mut dom = Dom::new();
         let top = root(&mut dom, &xml("document", &shape(row)));
-        move_page_story_to_final_section(&mut dom, top, &pkg, MAIN);
+        let eligible = parts_only_deleted_breaks_reference(&dom, top, &pkg, MAIN);
+        move_page_story_to_final_section(&mut dom, top, &pkg, MAIN, &eligible);
         assert_eq!(
             references(&dom, top),
             [
@@ -10013,7 +10469,8 @@ mod coverage_boundary_tests {
         );
         let mut dom = Dom::new();
         let top = root(&mut dom, &xml("document", &body));
-        move_page_story_to_final_section(&mut dom, top, &pkg, MAIN);
+        let eligible = parts_only_deleted_breaks_reference(&dom, top, &pkg, MAIN);
+        move_page_story_to_final_section(&mut dom, top, &pkg, MAIN, &eligible);
         assert_eq!(
             references(&dom, top),
             [
@@ -10035,7 +10492,8 @@ mod coverage_boundary_tests {
         );
         let mut dom = Dom::new();
         let top = root(&mut dom, &xml("document", &body));
-        move_page_story_to_final_section(&mut dom, top, &pkg, MAIN);
+        let eligible = parts_only_deleted_breaks_reference(&dom, top, &pkg, MAIN);
+        move_page_story_to_final_section(&mut dom, top, &pkg, MAIN, &eligible);
         assert_eq!(
             references(&dom, top),
             [
@@ -10049,7 +10507,8 @@ mod coverage_boundary_tests {
         // without sections, a body whose last section is a paragraph's.
         let mut dom = Dom::new();
         let top = root(&mut dom, &xml("document", &shape(row)));
-        move_page_story_to_final_section(&mut dom, top, &pkg, "word/other.xml");
+        let eligible = parts_only_deleted_breaks_reference(&dom, top, &pkg, "word/other.xml");
+        move_page_story_to_final_section(&mut dom, top, &pkg, "word/other.xml", &eligible);
         assert_eq!(references(&dom, top), unmoved);
         for body in [
             format!("<w:body>{row}<w:p/></w:body>"),
@@ -10060,7 +10519,8 @@ mod coverage_boundary_tests {
             let mut dom = Dom::new();
             let top = root(&mut dom, &xml("document", &body));
             let before = references(&dom, top);
-            move_page_story_to_final_section(&mut dom, top, &pkg, MAIN);
+            let eligible = parts_only_deleted_breaks_reference(&dom, top, &pkg, MAIN);
+            move_page_story_to_final_section(&mut dom, top, &pkg, MAIN, &eligible);
             assert_eq!(references(&dom, top), before, "{body}");
         }
     }
@@ -10112,7 +10572,8 @@ mod coverage_boundary_tests {
     fn moved(pkg: &PartFs, body: &str) -> Vec<Vec<(String, String, String)>> {
         let mut dom = Dom::new();
         let top = root(&mut dom, &xml("document", body));
-        move_page_story_to_final_section(&mut dom, top, pkg, MAIN);
+        let eligible = parts_only_deleted_breaks_reference(&dom, top, pkg, MAIN);
+        move_page_story_to_final_section(&mut dom, top, pkg, MAIN, &eligible);
         story_references(&dom, top)
     }
 
@@ -14007,5 +14468,68 @@ mod public_numbering_definition_source_owner_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod story_diff_failure_tests {
+    use super::*;
+
+    #[test]
+    fn neutralization_preserves_resolved_internal_references_and_source_package() {
+        let mut pkg =
+            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let part = "word/header1.xml";
+        pkg.set_part("word/media/owned.bin", vec![1, 2, 3]);
+        let rid =
+            pkg.add_document_relationship(part, &format!("{}/image", R::URI), "media/owned.bin");
+        let valid = format!(
+            "<w:hdr xmlns:w='{}' xmlns:r='{}'><w:p r:embed='{rid}'/></w:hdr>",
+            W::URI,
+            R::URI,
+        );
+        assert_eq!(
+            neutralize_story_relationships(&pkg, part, &valid).unwrap(),
+            valid
+        );
+        let mixed = valid.replace("<w:p ", "<w:p r:link='missing' ");
+        let before = pkg.to_zip().unwrap();
+        let neutralized = neutralize_story_relationships(&pkg, part, &mixed).unwrap();
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&neutralized);
+        let p = dom.element(dom.root(doc).unwrap(), &W::p()).unwrap();
+        assert_eq!(dom.attribute(p, &R::name("embed")), Some(rid.as_str()));
+        assert_eq!(dom.attribute(p, &R::name("link")), None);
+        assert_eq!(pkg.to_zip().unwrap(), before);
+    }
+
+    #[test]
+    fn unmarked_story_loss_is_a_typed_refusal() {
+        for (a, b, redline) in [("A", "B", "A"), ("A", "B", "B"), ("A", "A", "")] {
+            let err = ensure_story_text_tracked("word/header1.xml", a, b, redline, false)
+                .expect_err("neither silently keeping A nor replacing it with B is a redline");
+            let OpcError::Io(io) = err else {
+                panic!("expected a typed refusal");
+            };
+            let typed = io
+                .get_ref()
+                .unwrap()
+                .downcast_ref::<StoryDiffError>()
+                .unwrap();
+            assert_eq!(typed.part, "word/header1.xml");
+            assert_eq!(typed.reason, "story text changed without revision marks");
+        }
+        ensure_story_text_tracked("word/header1.xml", "A", "A", "A", false).unwrap();
+        ensure_story_text_tracked("word/header1.xml", "A", "B", "AB", true).unwrap();
+    }
+
+    #[test]
+    fn rootless_story_cannot_be_neutralized_into_a_silent_copy() {
+        let pkg = PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let err = neutralize_story_relationships(&pkg, "word/footer1.xml", "").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("STORY_DIFF_FAILED: word/footer1.xml")
+        );
     }
 }

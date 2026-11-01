@@ -31,14 +31,8 @@ pub(super) fn decisions(
         return Ok((Vec::new(), Vec::new()));
     }
     let opened = Opened::open(source).map_err(|e| refusal("INVALID_DOCUMENT", e.to_string()))?;
-    // Comment-body revisions carry no selectable id (#1223), so the
-    // comments part stays out of the inventory.
-    let comments = crate::revision_processor::comments_part(&opened.pkg);
     let mut inventory = Vec::new();
     for (part, _) in crate::revision_processor::revision_bearing_parts(&opened.pkg) {
-        if Some(&part) == comments.as_ref() {
-            continue;
-        }
         let Some(xml) = opened.pkg.part_string(&part) else {
             continue;
         };

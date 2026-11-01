@@ -291,6 +291,8 @@ struct Output<'a> {
     source: String,
     /// How a `.pdf` or `.png` output is drawn.
     render: &'a RenderArgs,
+    /// SHA-256 of the bytes `--in-place` replaces, set once they are read.
+    replaced_sha256: Option<String>,
 }
 
 impl<'a> Output<'a> {
@@ -316,6 +318,7 @@ impl<'a> Output<'a> {
             // An identifier agents read back: `/` on every OS (#568).
             source: format!("{} (not written)", slash_path(&path.with_extension("docx"))),
             render,
+            replaced_sha256: None,
         }
     }
 }
@@ -374,9 +377,27 @@ fn write_output(out: &Output<'_>, produced: Produced<'_>) -> Result<(), ConvertF
             ensure_writable(out.path, out.force)?;
             let before =
                 (!out.quiet).then(|| input_confirmation_view(out.input, out.markdown_input));
-            publish_file(out.path, bytes, out.force)?;
+            if let Some(expected) = out.replaced_sha256.clone() {
+                // `--in-place`: recheck the hash, then replace only this path.
+                // A symlink is followed inside `publish_files`.
+                let path = out.path.to_path_buf();
+                publish_files(
+                    &[(path.clone(), bytes)],
+                    &Recheck {
+                        force: false,
+                        replace_through: &|candidate| candidate == path,
+                        alias: &|_| Ok(()),
+                        source: &|| recheck_source_sha256(&path, &expected),
+                    },
+                )?;
+            } else {
+                publish_file(out.path, bytes, out.force)?;
+            }
             if !out.quiet {
-                eprintln!("{}", wrote_line(out.path, Format::Docx, bytes.len(), None));
+                match out.replaced_sha256.as_deref() {
+                    Some(sha) => eprintln!("{}", wrote_in_place_line(out.path, sha, None)),
+                    None => eprintln!("{}", wrote_line(out.path, Format::Docx, bytes.len(), None)),
+                }
             }
             if let Some(before) = before {
                 print_success(out.input, before, out.path, bytes)?;
@@ -439,7 +460,7 @@ fn check_side_file(
 }
 
 /// The note a selection prints when it leaves tracked changes inside
-/// comment bodies, which no `--id` can name (#1223).
+/// comment bodies. They are `comments.rN`; this selection did not name them.
 fn comment_changes_note(left: usize) -> String {
     let (s, were, them) = if left == 1 {
         ("", "was", "it")
@@ -447,26 +468,61 @@ fn comment_changes_note(left: usize) -> String {
         ("s", "were", "them")
     };
     format!(
-        "note: {left} tracked change{s} inside comments {were} left; accept or reject all to settle {them}"
+        "note: {left} tracked change{s} inside comments {were} left; accept or reject {them} by id (comments.r…) or all"
     )
+}
+
+/// The `-o` of `accept` / `reject`, or FILE when `--in-place` names it.
+/// `-o` naming the input is a usage refusal pointing to `--in-place`
+/// (#1998): the 0.16.0 deprecation of `-o INPUT --force` is over.
+fn resolution_output<'a>(
+    task: Task,
+    file: &'a Path,
+    output: &'a Option<PathBuf>,
+    in_place: bool,
+    force: bool,
+    render: &'a RenderArgs,
+    quiet: bool,
+) -> Result<Output<'a>, (u8, String)> {
+    let destination = output.as_deref().unwrap_or(file);
+    if !in_place && output.is_some() && same_path(destination, file) {
+        return Err((
+            EXIT_USAGE,
+            format!(
+                "OUTPUT_ALIAS: the output '{}' is the same file as the input '{}'; use --in-place",
+                slash_path(destination),
+                slash_path(file)
+            ),
+        ));
+    }
+    let mut out = task_output(task, destination, file, render, force || in_place, quiet)
+        .map_err(|e| (1, e))?;
+    // The input is a DOCX whatever its name. `.json` and `.md` would
+    // otherwise be inferred from the path and overwrite the package.
+    if in_place {
+        out.kind = Format::Docx;
+    }
+    Ok(out)
 }
 
 /// Shared body for `accept` / `reject`: read the redline, apply the package-wide
 /// resolution, and write the result under the compare path's no-clobber
 /// contract. Generic over the resolver's error so neither `OpcError`'s path nor
-/// the two arms' bodies are duplicated.
+/// the two arms' bodies are duplicated. `--in-place` records the hash of the
+/// bytes just read, then publishes through the same writer as `-o`.
 fn run_resolution(
     file: &Path,
-    out: &Output<'_>,
+    out: &mut Output<'_>,
     filter: &jubarte::changes::ChangeFilter,
     apply: fn(
         &[u8],
         &jubarte::changes::ChangeFilter,
     ) -> Result<jubarte::changes::ResolvedChanges, jubarte::changes::ChangeError>,
     what: &str,
+    in_place: bool,
 ) -> ExitCode {
     use jubarte::changes::ChangeError;
-    let run = || -> Result<(), (ExitCode, String)> {
+    let mut run = || -> Result<(), (ExitCode, String)> {
         let failed = |e: String| (ExitCode::FAILURE, e);
         // An id that is not a change id, or names two changes, is a usage
         // error: exit 2, as clap's own.
@@ -475,10 +531,20 @@ fn run_resolution(
             .map_err(|e| (ExitCode::from(2), e.to_string()))?;
         check_output(out).map_err(|f| (ExitCode::from(f.code), f.message))?;
         let bytes = read_word(file).map_err(failed)?;
+        if in_place {
+            out.replaced_sha256 = Some(jubarte::inspect::source_sha256(&bytes));
+        }
         let resolved = apply(&bytes, &filter).map_err(|e| match e {
-            ChangeError::Ambiguous { .. }
-            | ChangeError::InvalidId(_)
-            | ChangeError::PartOfChange { .. } => (ExitCode::from(2), e.to_string()),
+            ChangeError::PartOfChange { named, whole, .. } => (
+                ExitCode::from(2),
+                format!(
+                    "{named} is part of {whole}; name the whole change: --id {}",
+                    jubarte::cli::shell_word(&whole)
+                ),
+            ),
+            ChangeError::Ambiguous { .. } | ChangeError::InvalidId(_) => {
+                (ExitCode::from(2), e.to_string())
+            }
             e => failed(format!("{what} failed: {e}")),
         })?;
         write_output(out, Produced::Docx(&resolved.document))
@@ -499,8 +565,8 @@ fn run_resolution(
         ) {
             eprintln!("note: {note}");
         }
-        // #1223: --id cannot name a comment-body change, so a selection can
-        // leave some; say how many (an empty selection resolves them all).
+        // A selection can leave comment-body revisions (`comments.rN`); say
+        // how many. An empty selection resolves them all.
         if resolved.comment_changes_left > 0 {
             eprintln!("{}", comment_changes_note(resolved.comment_changes_left));
         }
@@ -605,11 +671,12 @@ const EXIT_TIMEOUT: i32 = 124;
 
 /// Exit [`EXIT_TIMEOUT`] once `limit` has passed, whatever the main thread
 /// is doing (layout of a pathological document cannot be interrupted).
-fn arm_timeout(limit: std::time::Duration) {
+/// `source` names what set the bound (`--timeout`, `JUBARTE_TIMEOUT`).
+fn arm_timeout(limit: std::time::Duration, source: &'static str) {
     std::thread::spawn(move || {
         std::thread::sleep(limit);
         eprintln!(
-            "error: timed out after {}s (--timeout)",
+            "error: DEADLINE_EXCEEDED: timed out after {}s ({source})",
             limit.as_secs_f64()
         );
         std::process::exit(EXIT_TIMEOUT);
@@ -956,6 +1023,7 @@ fn run_read_tables(
         view: args,
         source: String::new(),
         render: &render,
+        replaced_sha256: None,
     });
     if let Some(out) = &out {
         refuse_output_alias(out.path, &[(file, "the input")])
@@ -1075,6 +1143,7 @@ fn run_text(
             view: args,
             source: source.unwrap_or_default(),
             render: &render,
+            replaced_sha256: None,
         };
         check_output(&out)?;
         if kind == Format::Json {
@@ -1154,19 +1223,67 @@ fn agent_view(
     source: Option<String>,
     args: &ReadArgs,
 ) -> Result<jubarte::markdown::ReadView, String> {
-    let select = selection(args)?;
-    let view = jubarte::markdown::read(
-        bytes,
-        &jubarte::markdown::ReadOptions {
-            track_changes: args.track_changes.unwrap_or(TrackChanges::All).into(),
-            comments: args.comments == CommentsArg::Inline,
-            dates: args.dates,
-            page_markers: !args.no_page_markers,
-            select,
-            source,
-        },
-    )
-    .map_err(|e| e.to_string())?;
+    let mut options = jubarte::markdown::ReadOptions {
+        track_changes: args.track_changes.unwrap_or(TrackChanges::All).into(),
+        comments: args.comments == CommentsArg::Inline,
+        dates: args.dates,
+        page_markers: !args.no_page_markers,
+        select: selection(args)?,
+        source,
+    };
+    if args.find.is_some() || args.regex.is_some() {
+        let regex = args.regex.as_deref();
+        let find = args.find.as_deref();
+        let mut matches =
+            jubarte::edit::for_edit::matching_body_paragraphs(bytes, find, regex, args.ignore_case)
+                .map_err(|e| e.to_string())?;
+        if args.track_changes == Some(TrackChanges::Reject) {
+            let flag = if find.is_some() { "--find" } else { "--regex" };
+            eprintln!(
+                "note: {flag} searches the accepted text; --track-changes reject shows the original"
+            );
+        }
+        let total = matches.len();
+        let mut candidates = matches
+            .iter()
+            .take(3)
+            .map(|p| format!("p{p}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if total > 3 {
+            candidates.push_str(&format!(" and {} more", total - 3));
+        }
+        if options.select.is_some() {
+            // Preserve -p/head/tail/changed's view semantics, including tables.
+            let selected = jubarte::markdown::read(bytes, &options)
+                .map_err(|e| e.to_string())?
+                .selected
+                .unwrap_or_default();
+            matches.retain(|p| selected.contains(p));
+        }
+        if matches.is_empty() {
+            let pattern = find.or(regex).unwrap_or_default();
+            if total == 0 {
+                eprintln!("no paragraph matches {pattern:?}");
+            } else {
+                eprintln!("{pattern:?} matches {candidates}, none in the selection");
+            }
+            return Ok(jubarte::markdown::ReadView {
+                selected: Some(Vec::new()),
+                ..Default::default()
+            });
+        }
+        options.select = Some(jubarte::markdown::Select::Picks(
+            matches
+                .into_iter()
+                .map(|p| jubarte::markdown::Pick::Paragraphs {
+                    from: p,
+                    to: Some(p),
+                })
+                .collect(),
+        ));
+    }
+    let view = jubarte::markdown::read(bytes, &options).map_err(|e| e.to_string())?;
     for warning in &view.warnings {
         eprintln!("warning: {warning}");
     }
@@ -1293,11 +1410,51 @@ struct EditJob<'a> {
     dpi: f32,
     revisions: jubarte::convert::RevisionStyle,
     quiet: bool,
+    /// `-a`/`--author` was given, or a plan names the author (#1891).
+    author_given: bool,
+    /// `--in-place`: publish over FILE and say which bytes were replaced.
+    in_place: bool,
 }
 
 /// Exit 3: the plan was refused (stale source, ambiguous anchor, ...); the
 /// per-operation report is on stdout and nothing was written.
 const EXIT_PLAN_REFUSED: u8 = 3;
+
+/// `sign the new markup with -a NAME` (#1997), naming the authors the
+/// document's markup already carries when there are any. The callers add
+/// the `AUTHOR_REQUIRED` code where their error shape prints it.
+fn author_required_message(source: &[u8]) -> String {
+    let mut message = "sign the new markup with -a NAME".to_string();
+    let authors = markup_authors(source);
+    if !authors.is_empty() {
+        let quoted = authors
+            .iter()
+            .map(|name| format!("\"{name}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        message.push_str(&format!(" (this document has markup by {quoted})"));
+    }
+    message
+}
+
+/// The distinct authors the document's tracked changes and comments name,
+/// sorted; an unsigned mark reads `<no author>`.
+fn markup_authors(source: &[u8]) -> Vec<String> {
+    let mut authors: Vec<String> = jubarte::changes::list_logical_changes(source)
+        .map(|changes| {
+            changes
+                .into_iter()
+                .map(|change| change.author.unwrap_or_else(|| "<no author>".to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Ok(comments) = jubarte::comments::list_comments(source) {
+        authors.extend(comments.iter().map(|comment| comment.author.clone()));
+    }
+    authors.sort();
+    authors.dedup();
+    authors
+}
 
 /// Exit 2: the operation flags do not describe an operation.
 const EXIT_USAGE: u8 = 2;
@@ -1402,6 +1559,11 @@ fn run_edit(
             let output = default_output.as_deref();
             match taken_edit_output(job) {
                 Some(Taken::Blocked(why)) => edit_status(format_args!("note: {why}")),
+                // `--in-place` already authorizes replacing the input, so the
+                // next command does not grow a `--force`.
+                Some(Taken::Replaceable(_)) if job.in_place => {
+                    edit_status(format_args!("next: {}", next_command(false, output)));
+                }
                 Some(Taken::Replaceable(_)) if in_place && !job.force => {
                     edit_status(format_args!(
                         "note: the next command updates {} in place (--force)",
@@ -1453,6 +1615,15 @@ fn publish_edit(
         Mode::Editing => &result.clean,
     };
     let digest = jubarte::inspect::source_sha256(primary);
+    // #1997: a write that signs markup needs a spelled -a (or
+    // JUBARTE_AUTHOR). It refuses before anything is written, so the
+    // input and every output stay as they were.
+    if published_markup(job, &result, primary).is_some() && !job.author_given {
+        return Err((
+            EXIT_USAGE,
+            format!("AUTHOR_REQUIRED: {}", author_required_message(source)),
+        ));
+    }
     result.report.output_sha256 = Some(digest.clone());
     // The failed operations, as a plan bound to the document written:
     // under suggesting mode that is a redline, whose tracked changes are
@@ -1659,17 +1830,28 @@ fn publish_edit(
         write_stdout(format!("{summary}\n")).map_err(committed)?;
     }
     let names: Vec<&str> = outputs.iter().map(|(name, _)| name.as_str()).collect();
-    // The status lines on stderr (D6); the summary and the view are data.
-    edit_status(format_args!(
-        "wrote {} ({} files: {})",
-        out_dir.display(),
-        names.len(),
-        names.join(", ")
-    ));
     let primary = match job.mode {
         Mode::Suggesting => &result.redline,
         Mode::Editing => &result.clean,
     };
+    // The status lines on stderr (D6); the summary and the view are data.
+    // The author detail counts the bytes this bundle publishes (#1891).
+    let markup = published_markup(job, &result, primary);
+    let listed = names.join(", ");
+    match markup.as_deref() {
+        Some(detail) => edit_status(format_args!(
+            "wrote {} ({} files: {}; {detail})",
+            out_dir.display(),
+            names.len(),
+            listed
+        )),
+        None => edit_status(format_args!(
+            "wrote {} ({} files: {})",
+            out_dir.display(),
+            names.len(),
+            listed
+        )),
+    }
     written_status(&result, failed);
     for note in edit_notes(notes, &result, primary, source) {
         edit_status(format_args!("{note}"));
@@ -1698,7 +1880,7 @@ fn edit_envelope_exit(receipt: &jubarte::result::Envelope) -> u8 {
     if receipt
         .error
         .as_ref()
-        .is_some_and(|error| error.code == "OUTPUT_EXISTS")
+        .is_some_and(|error| matches!(error.code.as_str(), "OUTPUT_EXISTS" | "AUTHOR_REQUIRED"))
     {
         EXIT_USAGE
     } else {
@@ -1766,9 +1948,15 @@ fn refuse_edit_output_alias(job: &EditJob<'_>, output: &Path) -> Result<(), (u8,
 /// Compare the exact preparation bytes with a fresh read of the named
 /// source. Never replace the preparation bytes with this second read.
 fn recheck_edit_source(file: &Path, source: &[u8]) -> Result<(), (u8, String)> {
+    recheck_source_sha256(file, &jubarte::inspect::source_sha256(source))
+}
+
+/// The same refusal as [`recheck_edit_source`], against a hash already
+/// taken: `accept` and `reject --in-place` keep the hash, not the bytes.
+fn recheck_source_sha256(file: &Path, expected: &str) -> Result<(), (u8, String)> {
     let current =
         std::fs::read(file).map_err(|e| (1, format!("rechecking {}: {e}", file.display())))?;
-    if jubarte::inspect::source_sha256(source) != jubarte::inspect::source_sha256(&current) {
+    if expected != jubarte::inspect::source_sha256(&current) {
         return Err((
             EXIT_PLAN_REFUSED,
             format!(
@@ -1778,6 +1966,18 @@ fn recheck_edit_source(file: &Path, source: &[u8]) -> Result<(), (u8, String)> {
         ));
     }
     Ok(())
+}
+
+/// The file `--in-place` replaces. A symlink's target is that file, so the
+/// link stays and the target keeps its mode. Any other path is itself.
+fn in_place_target(path: &Path) -> Result<PathBuf, (u8, String)> {
+    match path.symlink_metadata() {
+        Ok(meta) if meta.file_type().is_symlink() => std::fs::canonicalize(path)
+            .map_err(|e| (1, format!("resolving {}: {e}", slash_path(path)))),
+        Ok(_) => Ok(path.to_path_buf()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(path.to_path_buf()),
+        Err(e) => Err((1, format!("reading {}: {e}", path.display()))),
+    }
 }
 
 /// No two roles of a publication may resolve to the same output file.
@@ -1876,6 +2076,8 @@ fn publication_test_hook(_phase: &str) -> Result<(), String> {
 struct Recheck<'a> {
     /// `--force`: replace an existing destination instead of refusing it.
     force: bool,
+    /// `--in-place` may replace this path without `--force`. Only the input.
+    replace_through: &'a dyn Fn(&Path) -> bool,
     /// Refuse an output that now resolves to one of the command's inputs.
     alias: &'a dyn Fn(&Path) -> Refused,
     /// Refuse when the source changed since it was read.
@@ -1898,8 +2100,17 @@ fn publish_files(
     let publish = |staged: &mut Vec<(jubarte::publication::StagedFile, PathBuf)>,
                    committed: &mut Vec<PathBuf>| {
         for (path, bytes) in outputs {
-            let held = jubarte::publication::StagedFile::prepare(path, bytes, recheck.force)
-                .map_err(|e| (1, format!("writing {}: {e}", path.display())))?;
+            let through = (recheck.replace_through)(path);
+            // Follow a symlink only for the in-place input. Every other
+            // output still replaces the directory entry it was given.
+            let dest = if through {
+                in_place_target(path)?
+            } else {
+                path.clone()
+            };
+            let held =
+                jubarte::publication::StagedFile::prepare(&dest, bytes, recheck.force || through)
+                    .map_err(|e| (1, format!("writing {}: {e}", path.display())))?;
             staged.push((held, path.clone()));
         }
         publication_test_hook("staged").map_err(|e| (1, e))?;
@@ -1913,16 +2124,16 @@ fn publish_files(
                 .map(|(path, _)| path.clone())
                 .collect::<Vec<_>>(),
         )?;
-        if !recheck.force
-            && let Some((path, _)) = outputs
-                .iter()
-                .find(|(path, _)| path.symlink_metadata().is_ok())
-        {
+        if let Some((path, _)) = outputs.iter().find(|(path, _)| {
+            !recheck.force && !(recheck.replace_through)(path) && path.symlink_metadata().is_ok()
+        }) {
             return Err(taken_output(path));
         }
         for (held, path) in staged.drain(..) {
             (recheck.alias)(&path)?;
-            if committed.is_empty() {
+            // Companions may already be committed. The in-place input is
+            // still checked, and it is committed last.
+            if committed.is_empty() || (recheck.replace_through)(&path) {
                 (recheck.source)()?;
             }
             publication_test_hook("checked").map_err(|e| (1, e))?;
@@ -2267,6 +2478,19 @@ fn edit_notes(
     lines
 }
 
+/// The default `<stem>_modified.docx` sibling leaves FILE untouched (#1888).
+/// Absent for `-o`, `--out-dir`, `--in-place`, and an input that already is
+/// that default (its stem ends `_modified`, so the write is the file itself).
+fn default_output_unchanged_note(job: &EditJob<'_>, path: &Path) -> Option<String> {
+    if job.in_place || job.explicit_output || path == job.file {
+        return None;
+    }
+    Some(format!(
+        "; {} is unchanged (--in-place updates it)",
+        slash_path(job.file)
+    ))
+}
+
 /// A pure revision resolution keeps its existing absence of a bundle summary.
 fn is_pure_resolution(plan: &jubarte::edit::EditPlan, result: &jubarte::edit::EditResult) -> bool {
     plan.operations.is_empty()
@@ -2346,10 +2570,20 @@ fn write_edited(
             .collect::<Vec<_>>(),
     )?;
     // The PNG names are known only now: nothing is written over a file.
-    if !job.force
-        && let Some((taken, _)) = outputs.iter().find(|(p, _)| p.symlink_metadata().is_ok())
-    {
+    // `--in-place` authorizes the input only. A PDF, a PNG page or a
+    // failed-op plan that already exists still needs `--force`.
+    if let Some((taken, _)) = outputs.iter().find(|(output, _)| {
+        !job.force && !(job.in_place && output == job.file) && output.symlink_metadata().is_ok()
+    }) {
         return Err(taken_output(taken));
+    }
+    // Companions commit first. A failure there leaves the input untouched.
+    if job.in_place
+        && outputs.len() > 1
+        && let Some(index) = outputs.iter().position(|(output, _)| output == job.file)
+    {
+        let primary = outputs.remove(index);
+        outputs.push(primary);
     }
     // Stage beside each destination, then commit without clobbering unless
     // --force was requested; a precommit failure leaves nothing behind.
@@ -2357,19 +2591,30 @@ fn write_edited(
         &outputs,
         &Recheck {
             force: job.force,
+            replace_through: &|output| job.in_place && output == job.file,
             alias: &|path| refuse_edit_output_alias(job, path),
             source: &|| recheck_edit_source(job.file, source),
         },
     )?;
     let failed = failed.map(|f| (f.path.as_path(), f.notes.as_slice()));
+    let markup = published_markup(job, result, document);
     if job.quiet {
         skipped_status(result, failed);
         return Ok(());
     }
-    edit_status(format_args!(
-        "{}",
-        wrote_line(path, Format::Docx, document.len(), None)
-    ));
+    let mut line = if job.in_place {
+        wrote_in_place_line(
+            path,
+            &jubarte::inspect::source_sha256(source),
+            markup.as_deref(),
+        )
+    } else {
+        wrote_line_with(path, Format::Docx, document.len(), None, markup.as_deref())
+    };
+    if let Some(note) = default_output_unchanged_note(job, path) {
+        line.push_str(&note);
+    }
+    edit_status(format_args!("{line}"));
     if let Some(pages) = pdf_pages {
         let pdf = path.with_extension("pdf");
         let bytes = outputs
@@ -2565,9 +2810,18 @@ struct EditFlags<'a> {
     dpi: f32,
     revisions: jubarte::convert::RevisionStyle,
     /// `--rewrite-others-comments` (`edit` only; `add` passes false).
+    /// Accepted and ignored: it does not turn the guard off.
     rewrite_others_comments: bool,
+    /// `--keep-others` (`edit` and `add`).
+    keep_others: bool,
     /// The global `-q`.
     quiet: bool,
+}
+
+/// `JUBARTE_KEEP_OTHERS=1` in the CLI only. Any other value, including an
+/// empty one, leaves the guard off. The library does not read it.
+fn env_keep_others() -> bool {
+    std::env::var("JUBARTE_KEEP_OTHERS").ok().as_deref() == Some("1")
 }
 
 fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
@@ -2620,6 +2874,9 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         &source,
     )?;
     plan.rewrite_others_comments |= flags.rewrite_others_comments;
+    if flags.keep_others || env_keep_others() {
+        plan.others = jubarte::edit::Others::Keep;
+    }
     if flags.options.editing_mode
         && let Some(message) = jubarte::edit::flags::editing_mode_conflict(&plan, &source)
     {
@@ -2647,6 +2904,8 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         dpi: flags.dpi,
         revisions: flags.revisions,
         quiet: flags.quiet,
+        author_given: flags.options.author_given || flags.plan.is_some(),
+        in_place: flags.options.in_place,
     };
     let skipped = run_edit(&job, &plan, &source, &notes, &plan_notes)?;
     if let Some((path, _)) = consumed.as_ref().filter(|_| skipped > 0) {
@@ -2706,6 +2965,9 @@ fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), 
         RecordError::Plan(m) => (EXIT_PLAN_REFUSED, format!("{}: {m}", path.display())),
     })?;
     recorded.plan.rewrite_others_comments |= flags.rewrite_others_comments;
+    if flags.keep_others || env_keep_others() {
+        recorded.plan.others = jubarte::edit::Others::Keep;
+    }
     jubarte::edit::check_plan_quoting(source, &recorded.plan, jubarte::edit::PlanSyntax::Flags)
         .map_err(|e| {
             refused(
@@ -2741,8 +3003,50 @@ fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), 
                 flags.dry_run
             )
         );
+        // The default is baked into the plan, and a later apply treats that
+        // author as explicit (#1891). Say so when the command line did not.
+        if !options.author_given {
+            edit_status(format_args!(
+                "warning: no -a given; the plan signs its markup \"{}\"",
+                recorded.plan.author
+            ));
+        }
     }
     Ok(())
+}
+
+/// Markup the write actually publishes (#1891). Suggesting mode publishes
+/// the redline, so the report's counts are the line. Editing mode publishes
+/// the clean copy: no tracked change, and a comment only when that copy
+/// still holds it.
+fn published_markup(
+    job: &EditJob<'_>,
+    result: &jubarte::edit::EditResult,
+    published: &[u8],
+) -> Option<String> {
+    let (changes, comments) = match job.mode {
+        Mode::Suggesting => (result.report.revisions.total, result.report.comments_added),
+        Mode::Editing => (0, comments_in_published(published, result)),
+    };
+    jubarte::cli::wrote_markup_detail(changes, comments, &result.report.author)
+}
+
+/// Comments this edit wrote that `published` still holds. A deletion's
+/// comment is written only into the redline, so the clean copy does not
+/// count it.
+fn comments_in_published(published: &[u8], result: &jubarte::edit::EditResult) -> usize {
+    let wanted: std::collections::BTreeSet<u32> = result
+        .report
+        .operations
+        .iter()
+        .filter_map(|op| op.comment_id)
+        .collect();
+    if wanted.is_empty() {
+        return 0;
+    }
+    jubarte::comments::list_comments(published)
+        .map(|rows| rows.iter().filter(|row| wanted.contains(&row.id)).count())
+        .unwrap_or(0)
 }
 
 fn edit_exit(result: Result<(), (u8, String)>) -> ExitCode {
@@ -2772,6 +3076,12 @@ fn refused(e: &jubarte::edit::EditError, file: &Path, source: &[u8]) -> (u8, Str
             }
             if let Some(near) = &o.near {
                 m.insert("near".into(), serde_json::to_value(near).expect("near serializes"));
+            }
+            if !o.candidates.is_empty() {
+                m.insert(
+                    "candidates".into(),
+                    serde_json::to_value(&o.candidates).expect("candidates serialize"),
+                );
             }
             if let Some(c) = &o.code {
                 m.insert("code".into(), c.clone().into());
@@ -2938,6 +3248,7 @@ fn run(job: &Job) -> Result<(), ConvertFailure> {
         view: &job.read,
         source: source.clone(),
         render: &job.render,
+        replaced_sha256: None,
     });
     let original = read_document(&job.original)?;
     let modified = read_document(&job.modified)?;
@@ -4073,9 +4384,9 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
         )
         .map_err(|e| e.to_string())?;
         if job.json {
-            write_stdout(baselined_json(&split).map_err(|e| e.to_string())?)?;
+            write_stdout(baselined_json(&split, job.strict).map_err(|e| e.to_string())?)?;
         } else {
-            write_stdout(baselined_text(&split))?;
+            write_stdout(baselined_text(&split, job.strict))?;
         }
         return Ok(fails(&split.new, job.strict));
     }
@@ -4163,6 +4474,15 @@ fn main() -> ExitCode {
 }
 
 fn cli_main() -> ExitCode {
+    // A host's bound on any task, a hostile input's included (#2016).
+    match jubarte::cli::env_timeout() {
+        Ok(Some(limit)) => arm_timeout(limit, "JUBARTE_TIMEOUT"),
+        Ok(None) => {}
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(EXIT_USAGE);
+        }
+    }
     let argv: Vec<String> = std::env::args_os()
         .skip(1)
         .map(|a| a.to_string_lossy().into_owned())
@@ -4251,40 +4571,78 @@ fn cli_main() -> ExitCode {
         Some(Command::Accept {
             file,
             output,
+            in_place,
             force,
             keep_nested_comment,
             selection,
             render,
         }) => {
-            let out = match task_output(Task::Accept, &output, &file, &render, force, quiet) {
+            let mut out = match resolution_output(
+                Task::Accept,
+                &file,
+                &output,
+                in_place,
+                force,
+                &render,
+                quiet,
+            ) {
                 Ok(out) => out,
-                Err(e) => return exit_code(Err(e)),
+                Err((code, e)) => {
+                    say_error(&e, code);
+                    return ExitCode::from(code);
+                }
             };
             let apply = if keep_nested_comment {
                 jubarte::changes::accept_changes_keeping_comments
             } else {
                 jubarte::changes::accept_changes_with_report
             };
-            return run_resolution(&file, &out, &selection.filter(), apply, "accept");
+            return run_resolution(
+                &file,
+                &mut out,
+                &selection.filter(),
+                apply,
+                "accept",
+                in_place,
+            );
         }
         Some(Command::Reject {
             file,
             output,
+            in_place,
             force,
             keep_nested_comment,
             selection,
             render,
         }) => {
-            let out = match task_output(Task::Reject, &output, &file, &render, force, quiet) {
+            let mut out = match resolution_output(
+                Task::Reject,
+                &file,
+                &output,
+                in_place,
+                force,
+                &render,
+                quiet,
+            ) {
                 Ok(out) => out,
-                Err(e) => return exit_code(Err(e)),
+                Err((code, e)) => {
+                    say_error(&e, code);
+                    return ExitCode::from(code);
+                }
             };
             let apply = if keep_nested_comment {
                 jubarte::changes::reject_changes_keeping_comments
             } else {
                 jubarte::changes::reject_changes_with_report
             };
-            return run_resolution(&file, &out, &selection.filter(), apply, "reject");
+            return run_resolution(
+                &file,
+                &mut out,
+                &selection.filter(),
+                apply,
+                "reject",
+                in_place,
+            );
         }
         Some(Command::Convert {
             file,
@@ -4302,7 +4660,7 @@ fn cli_main() -> ExitCode {
             timeout,
         }) => {
             if let Some(limit) = timeout {
-                arm_timeout(limit);
+                arm_timeout(limit, "--timeout");
             }
             let options = match pdf_options(&render, compress) {
                 Ok(options) => options,
@@ -4410,6 +4768,7 @@ fn cli_main() -> ExitCode {
             revisions,
             revision_palette,
             rewrite_others_comments,
+            keep_others,
             operations,
             ..
         }) => {
@@ -4433,6 +4792,7 @@ fn cli_main() -> ExitCode {
                 dpi,
                 revisions: style,
                 rewrite_others_comments,
+                keep_others,
                 quiet,
             };
             return edit_exit(run_flags(&flags));
@@ -4443,6 +4803,7 @@ fn cli_main() -> ExitCode {
             plan_default,
             consume,
             options,
+            keep_others,
             operations,
             ..
         }) => {
@@ -4462,6 +4823,7 @@ fn cli_main() -> ExitCode {
                 dpi: 96.0,
                 revisions: jubarte::convert::RevisionStyle::Conventional,
                 rewrite_others_comments: false,
+                keep_others,
                 quiet,
             };
             return edit_exit(run_flags(&flags));
@@ -4769,11 +5131,11 @@ mod tests {
     fn comment_changes_note_agrees_with_its_count() {
         assert_eq!(
             comment_changes_note(1),
-            "note: 1 tracked change inside comments was left; accept or reject all to settle it"
+            "note: 1 tracked change inside comments was left; accept or reject it by id (comments.r…) or all"
         );
         assert_eq!(
             comment_changes_note(2),
-            "note: 2 tracked changes inside comments were left; accept or reject all to settle them"
+            "note: 2 tracked changes inside comments were left; accept or reject them by id (comments.r…) or all"
         );
     }
 
@@ -5223,7 +5585,7 @@ mod tests {
                     jubarte::changes::ChangeFilter::default()
                 );
                 assert_eq!(file, PathBuf::from("rl.docx"));
-                assert_eq!(output, PathBuf::from("out.docx"));
+                assert_eq!(output.as_deref(), Some(Path::new("out.docx")));
                 assert!(force);
             }
             other => panic!("expected accept subcommand, got {other:?}"),
@@ -5287,7 +5649,7 @@ mod tests {
                     jubarte::changes::ChangeFilter::default()
                 );
                 assert_eq!(file, PathBuf::from("rl.docx"));
-                assert_eq!(output, PathBuf::from("out.docx"));
+                assert_eq!(output.as_deref(), Some(Path::new("out.docx")));
                 assert!(!force);
             }
             other => panic!("expected reject subcommand, got {other:?}"),

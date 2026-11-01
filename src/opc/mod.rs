@@ -407,6 +407,7 @@ fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<P
     let mut parts = HashMap::new();
     let mut source_order = HashMap::new();
     let mut total = 0u64;
+    let mut elements = 0u64;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index)?;
         // zip 8's name decode (bit 11/CP437, 0x7075 override): the same one
@@ -458,6 +459,11 @@ fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<P
         if directory {
             continue;
         }
+        // Every command opens the package here, `read`'s tolerant view
+        // included, so the element budget and the DOCTYPE refusal hold
+        // before any part is parsed (#2014, #2015).
+        crate::admission::tally_xml_elements(&mut elements, &name, &data, &limits)
+            .map_err(refused)?;
         let lower = name.to_ascii_lowercase();
         if lower == "[content_types].xml" || lower.ends_with(".rels") {
             check_opc_attributes(&data)?;

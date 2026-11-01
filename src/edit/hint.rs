@@ -29,6 +29,76 @@ impl PlanSyntax {
     /// Every syntax, for the tests that check each one's fragments.
     pub const ALL: [Self; 4] = [Self::V1, Self::Flags, Self::V2, Self::Typed];
 
+    /// A partial change selection, with the whole-change retry in the
+    /// caller's flags. Plans retain their released wording (#1895).
+    pub(super) fn incomplete_change(
+        self,
+        error: &crate::changes::ChangeError,
+        verb: &str,
+    ) -> String {
+        if let (
+            Self::Flags | Self::Typed,
+            crate::changes::ChangeError::PartOfChange { named, whole, .. },
+        ) = (self, error)
+        {
+            format!(
+                "{named} is part of {whole}; name the whole change: {}",
+                settle_revision(self, verb, whole, "")
+            )
+        } else {
+            format!("resolve_revisions: {error}")
+        }
+    }
+
+    /// Selection errors quote plan fields only for a plan caller.
+    pub(super) fn selection_message(self, message: impl std::fmt::Display) -> String {
+        match self {
+            Self::V1 | Self::V2 => format!("resolve_revisions: {message}"),
+            Self::Flags | Self::Typed => message.to_string(),
+        }
+    }
+
+    /// Quote the occurrence selector in the caller's grammar. Plans retain
+    /// #1013's released wording; one-shot flags also show every candidate.
+    pub(super) fn ambiguous_anchor(
+        self,
+        text: &str,
+        anchor: &str,
+        hits: &[(usize, usize)],
+    ) -> String {
+        let shown = super::anchor::shown(anchor);
+        let n = hits.len();
+        let selector = match self {
+            Self::Flags | Self::Typed => format!("set --occurrence 1..={n}"),
+            Self::V1 | Self::V2 => format!("set \"occurrence\" to 1..={n}"),
+        };
+        let mut message = format!("{shown} occurs {n} times in the paragraph; {selector}");
+        if self == Self::Flags {
+            for (i, &(start, end)) in hits.iter().enumerate() {
+                let before = if text[..start].chars().nth_back(20).is_some() {
+                    "…"
+                } else {
+                    ""
+                };
+                let after = if text[end..].chars().nth(20).is_some() {
+                    "…"
+                } else {
+                    ""
+                };
+                let window = super::context(text, start, end, &text[start..end]);
+                message.push_str(&format!(
+                    "\n  {}: {}",
+                    i + 1,
+                    super::anchor::shown(&format!("{before}{window}{after}"))
+                ));
+            }
+            message.push_str(
+                "\nlengthen --anchor to the words around the one you mean, or pass --occurrence",
+            );
+        }
+        message
+    }
+
     /// The same choice as a refusal's data records it.
     pub(super) const fn revision(self) -> super::refusal::RevisionSyntax {
         use super::refusal::RevisionSyntax;
@@ -79,6 +149,16 @@ impl Held {
         }
     }
 
+    /// The noun a cost names: `erases "Bob"'s deletion`.
+    fn noun(self) -> &'static str {
+        match self {
+            Self::Inserted => "insertion",
+            Self::Deleted => "deletion",
+            Self::MovedHere | Self::MovedAway => "move",
+            Self::Formatted => "formatting",
+        }
+    }
+
     /// The accept and reject routes, each with what it costs.
     fn settles(self) -> [(&'static str, &'static str); 2] {
         match self {
@@ -122,6 +202,11 @@ pub(super) struct Holder<'a> {
     /// The revision's long id, which a v2 plan's target carries.
     pub(super) long_id: &'a str,
     pub(super) author: &'a str,
+    /// The plan's author. Equal to `author` when the revision is your own.
+    pub(super) actor: &'a str,
+    /// [`super::Others::Keep`]: accept and reject are not offered for a
+    /// revision that is not your own.
+    pub(super) keep_others: bool,
     /// The revision's text; empty for a paragraph mark.
     pub(super) text: &'a str,
     /// The printed id of the paragraph that holds it (`p160`).
@@ -202,24 +287,73 @@ const QUOTED: usize = 60;
 
 /// The refusal for an edit on text `holder` holds: what holds it, then
 /// accept, reject and a comment, each a fragment the caller can paste.
+///
+/// Another author's revision names what accepting or rejecting erases.
+/// With the guard on, those two routes are left out: a deletion offers
+/// restore, an insertion offers strike where the syntax has it, and a
+/// move or a formatting change says plainly that settling would erase it.
 pub(super) fn settle_hint(holder: &Holder<'_>, syntax: PlanSyntax) -> String {
     let mut lines = vec![format!("{}.", named(holder))];
+    let foreign = holder.author != holder.actor;
+    let guard = holder.keep_others && foreign;
+    let noun = holder.held.noun();
     let [accept, reject] = holder.held.settles();
-    let visible = restore(syntax, holder).map(|quote| {
-        (
-            "put it back visibly",
-            quote,
-            Some("their deletion stays, your insertion shows"),
-        )
-    });
-    let routes: Vec<_> = visible
-        .into_iter()
-        .chain([
-            (accept.0, settle(syntax, "accept", holder), Some(accept.1)),
-            (reject.0, settle(syntax, "reject", holder), Some(reject.1)),
-            ("or comment on it", comment(syntax, holder.paragraph), None),
-        ])
-        .collect();
+    let mut routes: Vec<(String, String, Option<&str>)> = Vec::new();
+    if guard {
+        if holder.held == Held::Inserted {
+            if let Some(quote) = strike(syntax, holder) {
+                routes.push((
+                    "strike it".to_string(),
+                    quote,
+                    Some("their insertion stays, your deletion shows"),
+                ));
+            }
+        } else if let Some(quote) = restore(syntax, holder) {
+            routes.push((
+                "put it back visibly".to_string(),
+                quote,
+                Some("their deletion stays, your insertion shows"),
+            ));
+        }
+    } else {
+        // Guard off, an insertion still offers the keeping move first,
+        // where this syntax can spell a strike. Accept and reject stay,
+        // and say what each one erases.
+        if holder.held == Held::Inserted
+            && foreign
+            && let Some(quote) = strike(syntax, holder)
+        {
+            routes.push((
+                "strike it".to_string(),
+                quote,
+                Some("their insertion stays, your deletion shows"),
+            ));
+        }
+        if let Some(quote) = restore(syntax, holder) {
+            routes.push((
+                "put it back visibly".to_string(),
+                quote,
+                Some("their deletion stays, your insertion shows"),
+            ));
+        }
+        routes.push((
+            route_name(accept.0, holder, noun),
+            settle(syntax, "accept", holder),
+            Some(accept.1),
+        ));
+        routes.push((
+            route_name(reject.0, holder, noun),
+            settle(syntax, "reject", holder),
+            Some(reject.1),
+        ));
+    }
+    // No restore and no strike: say so, without a colon, so it is not a route.
+    let bare = guard && routes.is_empty();
+    routes.push((
+        "or comment on it".to_string(),
+        comment(syntax, holder.paragraph),
+        None,
+    ));
     let width = routes.iter().map(|r| r.0.len()).max().unwrap_or(0) + 1;
     let fragment = routes
         .iter()
@@ -227,6 +361,9 @@ pub(super) fn settle_hint(holder: &Holder<'_>, syntax: PlanSyntax) -> String {
         .map(|r| r.1.chars().count())
         .max()
         .unwrap_or(0);
+    if bare {
+        lines.push("  accepting or rejecting would erase their change.".to_string());
+    }
     for (name, quote, cost) in routes {
         let name = format!("{name}:");
         lines.push(match cost {
@@ -238,6 +375,16 @@ pub(super) fn settle_hint(holder: &Holder<'_>, syntax: PlanSyntax) -> String {
         });
     }
     lines.join("\n")
+}
+
+/// `base` as the route's name. Another author's revision says whose
+/// markup accepting or rejecting erases; your own keeps `base`.
+fn route_name(base: &str, holder: &Holder<'_>, noun: &str) -> String {
+    if holder.author == holder.actor {
+        base.to_string()
+    } else {
+        format!(r#"{base} (erases {:?}'s {noun})"#, holder.author)
+    }
 }
 
 /// The refusal of an edit inside a deletion the same command restores:
@@ -272,6 +419,22 @@ pub(super) const OPERATION_TARGET: &str = r#"{"short_id":"…","long_id":"…"}"
 /// `text` as a JSON string, quotes and backslashes escaped.
 fn json(text: &str) -> String {
     serde_json::Value::from(text).to_string()
+}
+
+/// The strike of an insertion, as `syntax` spells it. A v2 plan and the
+/// typed commands have no strike yet.
+fn strike(syntax: PlanSyntax, holder: &Holder<'_>) -> Option<String> {
+    if holder.held != Held::Inserted {
+        return None;
+    }
+    match syntax {
+        PlanSyntax::V1 => Some(format!(
+            r#"{{"kind":"strike","revision":{}}}"#,
+            json(holder.id)
+        )),
+        PlanSyntax::Flags => Some(format!("-p {} --strike", shell_word(holder.id))),
+        PlanSyntax::V2 | PlanSyntax::Typed => None,
+    }
 }
 
 /// The restore of the revision, as `syntax` spells it: offered for a
@@ -309,7 +472,10 @@ fn shell_word(id: &str) -> std::borrow::Cow<'_, str> {
 
 /// `verb` (`accept` or `reject`) of the revision, as `syntax` spells it.
 fn settle(syntax: PlanSyntax, verb: &str, holder: &Holder<'_>) -> String {
-    let id = holder.id;
+    settle_revision(syntax, verb, holder.id, holder.long_id)
+}
+
+fn settle_revision(syntax: PlanSyntax, verb: &str, id: &str, long_id: &str) -> String {
     match syntax {
         PlanSyntax::V1 => format!(
             r#""resolve_revisions":{{"{verb}":{{"ids":[{}]}}}}"#,
@@ -323,7 +489,7 @@ fn settle(syntax: PlanSyntax, verb: &str, holder: &Holder<'_>) -> String {
             let target = format!(
                 r#"[{{"short_id":{},"long_id":{}}}]"#,
                 json(id),
-                json(holder.long_id)
+                json(long_id)
             );
             let (accept, reject) = if verb == "accept" {
                 (target.as_str(), "[]")
@@ -378,6 +544,8 @@ mod tests {
             id: "r12",
             long_id: "document.w:del.w:id.12",
             author: "Bob Lee",
+            actor: "Bob Lee",
+            keep_others: false,
             text: "the bankers",
             paragraph: "p3",
             lead: "the text is inside",
@@ -634,5 +802,171 @@ mod tests {
             hint.contains(&format!("\"{}\"…", "x".repeat(QUOTED))),
             "{hint}"
         );
+    }
+
+    /// Another author's revision: the plan author is not Bob Lee.
+    fn foreign(held: Held) -> Holder<'static> {
+        Holder {
+            author: "Trainer 1 - AgentCo",
+            actor: "Jubarte",
+            keep_others: false,
+            ..holder(held)
+        }
+    }
+
+    #[test]
+    fn hint_names_the_cost_of_erasing_another_authors_deletion_in_every_syntax() {
+        for syntax in PlanSyntax::ALL {
+            let hint = settle_hint(&foreign(Held::Deleted), syntax);
+            assert!(
+                hint.contains(r#"let it go (erases "Trainer 1 - AgentCo"'s deletion):"#),
+                "{syntax:?}\n{hint}"
+            );
+            assert!(
+                hint.contains(r#"put it back silently (erases "Trainer 1 - AgentCo"'s deletion):"#),
+                "{syntax:?}\n{hint}"
+            );
+        }
+    }
+
+    #[test]
+    fn hint_names_the_cost_of_erasing_another_authors_insertion_move_and_formatting() {
+        for (held, first, noun) in [
+            (Held::Inserted, "keep it", "insertion"),
+            (Held::MovedHere, "keep the move", "move"),
+            (Held::MovedAway, "undo it silently", "move"),
+            (Held::Formatted, "keep their formatting", "formatting"),
+        ] {
+            let hint = settle_hint(&foreign(held), PlanSyntax::V1);
+            let label = format!(r#"{first} (erases "Trainer 1 - AgentCo"'s {noun}):"#);
+            assert!(hint.contains(&label), "{hint}");
+        }
+    }
+
+    #[test]
+    fn hint_guard_on_drops_accept_and_reject_for_another_author_in_every_syntax() {
+        for syntax in PlanSyntax::ALL {
+            let guarded = Holder {
+                keep_others: true,
+                ..foreign(Held::Deleted)
+            };
+            let hint = settle_hint(&guarded, syntax);
+            assert!(
+                !hint.contains("--accept")
+                    && !hint.contains("\"accept\"")
+                    && !hint.contains("--reject")
+                    && !hint.contains("\"reject\"")
+                    && !hint.contains("--accept-change")
+                    && !hint.contains("--reject-change"),
+                "{syntax:?}\n{hint}"
+            );
+            match syntax {
+                PlanSyntax::V1 | PlanSyntax::Flags => {
+                    assert!(hint.contains("restore"), "{syntax:?}\n{hint}");
+                }
+                PlanSyntax::V2 | PlanSyntax::Typed => {
+                    assert!(
+                        hint.contains("accepting or rejecting would erase their change"),
+                        "{syntax:?}\n{hint}"
+                    );
+                    assert!(!hint.contains("restore"), "{syntax:?}\n{hint}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hint_guard_off_offers_strike_first_for_another_authors_insertion() {
+        for syntax in [PlanSyntax::V1, PlanSyntax::Flags] {
+            let hint = settle_hint(&foreign(Held::Inserted), syntax);
+            let routes: Vec<&str> = hint.lines().skip(1).collect();
+            assert!(
+                routes[0].contains("strike it")
+                    && routes[0].contains("their insertion stays, your deletion shows"),
+                "{syntax:?}\n{hint}"
+            );
+            assert!(
+                hint.contains(r#"keep it (erases "Trainer 1 - AgentCo"'s insertion):"#),
+                "{syntax:?}\n{hint}"
+            );
+            assert!(
+                hint.contains(
+                    r#"take it out silently (erases "Trainer 1 - AgentCo"'s insertion):"#
+                ),
+                "{syntax:?}\n{hint}"
+            );
+        }
+        for syntax in [PlanSyntax::V2, PlanSyntax::Typed] {
+            let hint = settle_hint(&foreign(Held::Inserted), syntax);
+            assert!(
+                !hint.lines().nth(1).unwrap().contains("strike"),
+                "{syntax:?}\n{hint}"
+            );
+            assert!(
+                hint.contains(r#"keep it (erases "Trainer 1 - AgentCo"'s insertion):"#),
+                "{syntax:?}\n{hint}"
+            );
+        }
+        let own = settle_hint(&holder(Held::Inserted), PlanSyntax::V1);
+        assert!(!own.contains("strike"), "{own}");
+    }
+
+    #[test]
+    fn hint_guard_on_strikes_an_insertion_where_the_syntax_has_strike() {
+        let guarded = Holder {
+            keep_others: true,
+            ..foreign(Held::Inserted)
+        };
+        let v1 = settle_hint(&guarded, PlanSyntax::V1);
+        assert!(v1.contains(r#"{"kind":"strike","revision":"r12"}"#), "{v1}");
+        assert!(!v1.contains("resolve_revisions"), "{v1}");
+        let flags = settle_hint(&guarded, PlanSyntax::Flags);
+        assert!(flags.contains("-p r12 --strike"), "{flags}");
+        assert!(
+            !flags.contains("--accept") && !flags.contains("--reject"),
+            "{flags}"
+        );
+        for syntax in [PlanSyntax::V2, PlanSyntax::Typed] {
+            let hint = settle_hint(&guarded, syntax);
+            assert!(
+                hint.contains("accepting or rejecting would erase their change"),
+                "{syntax:?}\n{hint}"
+            );
+            assert!(!hint.contains("strike"), "{syntax:?}\n{hint}");
+            assert!(!hint.contains("resolve_revisions"), "{syntax:?}\n{hint}");
+        }
+    }
+
+    #[test]
+    fn hint_guard_on_offers_only_a_comment_for_another_authors_move() {
+        let guarded = Holder {
+            keep_others: true,
+            ..foreign(Held::MovedHere)
+        };
+        for syntax in PlanSyntax::ALL {
+            let hint = settle_hint(&guarded, syntax);
+            assert!(
+                hint.contains("accepting or rejecting would erase their change"),
+                "{syntax:?}\n{hint}"
+            );
+            assert!(
+                !hint.contains("resolve_revisions")
+                    && !hint.contains("--accept")
+                    && !hint.contains("--reject-change"),
+                "{syntax:?}\n{hint}"
+            );
+        }
+    }
+
+    #[test]
+    fn hint_guard_on_keeps_the_four_routes_for_your_own_deletion() {
+        let own = Holder {
+            keep_others: true,
+            ..holder(Held::Deleted)
+        };
+        let hint = settle_hint(&own, PlanSyntax::V1);
+        assert!(hint.contains("  let it go:"), "{hint}");
+        assert!(hint.contains("  put it back silently:"), "{hint}");
+        assert!(!hint.contains("erases"), "{hint}");
     }
 }

@@ -13,10 +13,13 @@
 // combination, an existing output), 3 edit plan refused (its per-operation
 // report is on stdout; nothing was written).
 
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const wasm = require("jubarte-wasm");
@@ -26,6 +29,7 @@ const EXIT_OK = 0;
 const EXIT_ERROR = 1;
 const EXIT_USAGE = 2;
 const EXIT_PLAN_REFUSED = 3;
+const EXIT_TIMEOUT = 124;
 
 /** A user-facing failure; printed as `error: ...`, exit 1. */
 class CliError extends Error {}
@@ -96,9 +100,15 @@ function readInput(file, o, json = false) {
 
 /** The no-clobber refusal, as the binary words and codes it: a usage
  * refusal (exit 2) with the OUTPUT_EXISTS code. */
+/** A path as the binary spells it in messages: `/` on every OS, even when
+ * the argument or the file name holds a backslash (#568). */
+function slashPath(file) {
+  return String(file).replaceAll("\\", "/");
+}
+
 function ensureWritable(file, force) {
   if (fs.existsSync(file) && !force) {
-    throw new UsageError(`OUTPUT_EXISTS: output '${file}' already exists (use --force to overwrite)`);
+    throw new UsageError(`OUTPUT_EXISTS: output '${slashPath(file)}' already exists (use --force to overwrite)`);
   }
 }
 
@@ -180,6 +190,80 @@ function write(file, data) {
     }
     throw new CliError(`writing ${file}: ${osError(e)}`);
   }
+}
+
+/** `--in-place` follows a symlink: the link stays, and the target keeps its
+ * mode. `write` on any other path still replaces the directory entry. */
+function writeThrough(file, data) {
+  let target = file;
+  try {
+    if (fs.lstatSync(file).isSymbolicLink()) target = fs.realpathSync(file);
+  } catch (e) {
+    if (e.code !== "ENOENT") throw new CliError(`resolving ${file}: ${osError(e)}`);
+  }
+  write(target, data);
+}
+
+/** `wrote FILE in place (replaced sha256 <8 hex>…)`, plus the markup detail. */
+function inPlaceLine(file, bytes, detail) {
+  const prefix = wasm.sourceSha256(bytes).slice(0, 8);
+  const extra = detail ? `; ${detail}` : "";
+  return `wrote ${file} in place (replaced sha256 ${prefix}\u2026)${extra}`;
+}
+
+/** Comments this edit wrote that `published` still holds. A deletion's
+ * comment is written only into the redline, so the clean copy does not
+ * count it. */
+function commentsStillPublished(published, result) {
+  let report;
+  try {
+    report = JSON.parse(result.json);
+  } catch {
+    return 0;
+  }
+  const wanted = new Set((report.operations ?? []).map((op) => op.comment_id).filter((id) => id != null));
+  if (!wanted.size) return 0;
+  let rows;
+  try {
+    rows = JSON.parse(wasm.listComments(published, null, false));
+  } catch {
+    return 0;
+  }
+  return rows.filter((row) => wanted.has(row.id)).length;
+}
+
+/** The `; 1 change by "GiantCo"` fragment. Null when the write added no
+ * markup. A markup write without a spelled author refuses (#1997), so the
+ * name is always the one the caller gave. */
+function markupDetail(result, o) {
+  let report;
+  try {
+    report = JSON.parse(result.json);
+  } catch {
+    return null;
+  }
+  const editing = Boolean(o.editing_mode);
+  const published = editing ? result.clean : result.redline;
+  const changes = editing ? 0 : (report.revisions?.total ?? 0);
+  const comments = editing ? commentsStillPublished(published, result) : (report.comments_added ?? 0);
+  if (!changes && !comments) return null;
+  const parts = [];
+  if (changes) parts.push(`${changes} change${changes === 1 ? "" : "s"}`);
+  if (comments) parts.push(`${comments} comment${comments === 1 ? "" : "s"}`);
+  return `${parts.join(", ")} by "${report.author}"`;
+}
+
+/** The distinct authors the document's tracked changes and comments name,
+ * sorted; an unsigned mark reads `<no author>`. */
+function markupAuthors(docx) {
+  const authors = new Set();
+  try {
+    for (const change of JSON.parse(wasm.listChanges(docx, null))) authors.add(change.author ?? "<no author>");
+  } catch {}
+  try {
+    for (const comment of JSON.parse(wasm.listComments(docx, null, false))) authors.add(comment.author ?? "<no author>");
+  } catch {}
+  return [...authors].sort();
 }
 
 /** A value with every object's keys sorted, as the binary's JSON prints them. */
@@ -503,11 +587,20 @@ function readPlanText(plan, missing = false) {
   }
 }
 
+/** The guard is on: `--keep-others`, or exactly `JUBARTE_KEEP_OTHERS=1`.
+ * Read here, in the CLI, and nowhere in the library. */
+function keepOthers(o) {
+  return Boolean(o.keep_others) || process.env.JUBARTE_KEEP_OTHERS === "1";
+}
+
 /** `--plan`'s text, or the plan the operation flags describe, and its
- * notes; `--rewrite-others-comments` sets the plan's field. */
+ * notes. `--rewrite-others-comments` still sets its field (a no-op).
+ * `--keep-others` and `JUBARTE_KEEP_OTHERS=1` set `"others": "keep"`. */
 function editPlan(verb, docx, o) {
   const given = editPlanAsGiven(verb, docx, o);
-  if (!o.rewrite_others_comments) return given;
+  const rewrite = Boolean(o.rewrite_others_comments);
+  const keep = keepOthers(o);
+  if (!rewrite && !keep) return given;
   let parsed;
   try {
     parsed = JSON.parse(given.plan);
@@ -515,7 +608,8 @@ function editPlan(verb, docx, o) {
     return given; // reported as INVALID_PLAN when applied
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return given;
-  parsed.rewrite_others_comments = true;
+  if (rewrite) parsed.rewrite_others_comments = true;
+  if (keep) parsed.others = "keep";
   return { plan: JSON.stringify(parsed), notes: given.notes };
 }
 
@@ -556,6 +650,8 @@ function recordPlan(verb, file, docx, o) {
     file, plan: o.plan, defaultPlan: Boolean(o.plan_default), dryRun: Boolean(o.dry_run),
     rewriteOthersComments: Boolean(o.rewrite_others_comments),
   };
+  // Only when set: an engine that predates the field rejects an unknown key.
+  if (keepOthers(o)) options.keepOthers = true;
   const answer = JSON.parse(wasm.recordPlan(verb, JSON.stringify(o.operations), docx, JSON.stringify(options), held));
   if (!answer.ok) {
     if (answer.usage) throw new UsageError(answer.message);
@@ -601,6 +697,21 @@ function planIdentityMatches(fd, name) {
 }
 
 function runEdit(verb, file, o) {
+  // JUBARTE_AUTHOR, set and non-empty, signs the way a spelled -a does
+  // (#1997). The shared parser cannot see it: wasm has no environment.
+  const envAuthor = process.env.JUBARTE_AUTHOR;
+  if (!o.author_given && envAuthor) {
+    // The binary's parse_author: trimmed, a leading '@' stripped, and not
+    // empty (nor a second '@'). An invalid one is a usage error naming the
+      // variable.
+    const name = envAuthor.trim();
+    const handle = name.startsWith("@") ? name.slice(1) : name;
+    if (!handle || handle.startsWith("@")) {
+      throw new UsageError("JUBARTE_AUTHOR: needs an author: a handle such as AC, or the full name");
+    }
+    o.author = name;
+    o.author_given = true;
+  }
   const docx = read(file);
   if (o.plan != null && o.operations?.length) return recordPlan(verb, file, docx, o);
   // What --consume deletes once the edit is written: the plan file as it
@@ -675,12 +786,20 @@ function applyEdit(verb, file, docx, o) {
   if (!result.ok) return printRefusal(result);
   const report = wasm.editReportJsonl(result.json);
   if (o.dry_run) return void process.stdout.write(report);
+  // #1997: a write that signs markup needs a spelled -a (or
+  // JUBARTE_AUTHOR). It refuses before anything is written. Applying a
+  // plan signs with the plan's own author, as a spelled -a does.
+  if (markupDetail(result, o) != null && !o.author_given && o.plan == null) {
+    const authors = markupAuthors(docx);
+    const named = authors.length ? ` (this document has markup by ${authors.map((a) => JSON.stringify(a)).join(", ")})` : "";
+    throw new UsageError(`AUTHOR_REQUIRED: sign the new markup with -a NAME${named}`);
+  }
   // The shared parser resolved the target: `output` for the one document
   // (FILE_modified.docx by default), `out_dir` for the bundle.
   const outDir = o.out_dir;
   if (outDir == null) return writeEdited(o.output, result, notes, o, docx, plan);
   if (fs.existsSync(outDir) && !o.force) {
-    throw new UsageError(`OUTPUT_EXISTS: output '${outDir}' already exists (use --force to overwrite)`);
+    throw new UsageError(`OUTPUT_EXISTS: output '${slashPath(outDir)}' already exists (use --force to overwrite)`);
   }
   if (path.resolve(outDir) === path.dirname(path.resolve(file))) {
     throw new CliError("--out-dir must not be the input's own directory");
@@ -795,19 +914,40 @@ function writeEdited(output, result, notes, o, docx, plan) {
   const editing = Boolean(o.editing_mode);
   const document = editing ? result.clean : result.redline;
   // FILE itself (X_modified.docx edited again, or -o FILE) exists, so it is
-  // replaced only with --force (D15).
+  // replaced only with --force (D15). `--in-place` authorizes the input
+  // only; a PDF that already exists still needs `--force`.
   const pdfPath = o.pdf ? `${output.slice(0, output.length - path.extname(output).length)}.pdf` : null;
+  const replaces = (taken) => Boolean(o.force) || (Boolean(o.in_place) && taken === output);
   for (const taken of [output, pdfPath]) {
-    if (taken != null && fs.existsSync(taken) && !o.force) {
-      throw new UsageError(`OUTPUT_EXISTS: output '${taken}' already exists (use --force to overwrite)`);
+    if (taken != null && fs.existsSync(taken) && !replaces(taken)) {
+      throw new UsageError(`OUTPUT_EXISTS: output '${slashPath(taken)}' already exists (use --force to overwrite)`);
     }
   }
   // Render before writing, so a failed render writes nothing.
   const rendered = o.pdf ? editPdf(document, o) : null;
-  write(output, document);
-  if (rendered) write(pdfPath, rendered.pdf);
+  const outputs = [[output, document]];
+  if (rendered) outputs.push([pdfPath, rendered.pdf]);
+  // Companions first. A failure there leaves the input byte-identical.
+  if (o.in_place && outputs.length > 1) {
+    outputs.push(outputs.shift());
+  }
+  for (const [file, data] of outputs) {
+    if (o.in_place && file === output) {
+      if (docx != null && !fs.readFileSync(file).equals(docx)) {
+        throw new RefusalError(`SOURCE_CHANGED: '${file}' changed since the edit was prepared; nothing was published`);
+      }
+      writeThrough(file, data);
+    } else {
+      write(file, data);
+    }
+  }
   if (o.quiet) return;
-  console.error(`wrote ${output} (docx, ${document.length} bytes)`);
+  if (o.in_place) {
+    const detail = markupDetail(result, o);
+    console.error(inPlaceLine(output, docx ?? document, detail));
+  } else {
+    console.error(`wrote ${output} (docx, ${document.length} bytes)`);
+  }
   if (rendered) console.error(wasm.wroteLine(pdfPath, "pdf", rendered.pdf.length, rendered.page_count));
   for (const note of editNotes(notes, result)) console.error(note);
   if (docx != null && plan != null) {
@@ -845,8 +985,17 @@ function resolution(accept) {
       } catch (e) {
         throw new UsageError(messageOf(e));
       }
-      ensureWritable(o.output, o.force);
-      const docx = read(file);
+      // A DOCX keeps that name or not. `--in-place` always writes the
+      // package, so a `.json` or `.md` name is not an output format.
+      // Sniff the bytes: the name's declared kind would refuse the package.
+      // `-o` naming the input is a usage refusal pointing to `--in-place`
+      // (#1998); the 0.16.0 deprecation is over. It fires before the read,
+      // as the binary's does.
+      if (!o.in_place && o.output != null && sameFile(o.output, file)) {
+        throw new UsageError(`OUTPUT_ALIAS: the output '${o.output}' is the same file as the input '${file}'; use --in-place`);
+      }
+      const docx = o.in_place ? read(file, null) : read(file);
+      if (!o.in_place) ensureWritable(o.output, o.force);
       let out;
       try {
         out = (accept ? wasm.acceptChanges : wasm.rejectChanges)(docx, JSON.stringify(filter));
@@ -855,6 +1004,16 @@ function resolution(accept) {
         const message = messageOf(e);
         if (/^\S+ names \d+ changes/.test(message)) throw new UsageError(message);
         throw new CliError(`${name} failed: ${message}`);
+      }
+      if (o.in_place) {
+        const current = fs.readFileSync(file);
+        if (!current.equals(docx)) {
+          throw new RefusalError(`SOURCE_CHANGED: '${file}' changed since the edit was prepared; nothing was published`);
+        }
+        const target = o.output ?? file;
+        writeThrough(target, out);
+        if (!o.quiet) console.error(inPlaceLine(target, docx, null));
+        return;
       }
       writeResult(o, out, notWritten(o.output));
     },
@@ -941,4 +1100,83 @@ function main(argv) {
   }
 }
 
-process.exitCode = main(process.argv.slice(2));
+/** A number of seconds as Rust's f64 parse reads one: no white space or hex. */
+const SECONDS = /^[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/;
+/** The words Rust's parse reads as infinity or NaN, refused as not finite. */
+const NOT_FINITE = /^[+-]?(?:inf|infinity|nan)$/i;
+/** The longest delay a Node timer holds (2^31 - 1 ms, about 24.8 days). */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/**
+ * JUBARTE_TIMEOUT in seconds, as the binary reads it: `null` when unset or
+ * empty, else the seconds, or a usage error in the binary's words.
+ */
+function envTimeout(value) {
+  if (value === undefined || value === "") return null;
+  const finite = SECONDS.test(value);
+  if (!finite && !NOT_FINITE.test(value)) {
+    return { error: `JUBARTE_TIMEOUT: '${value}' is not a number of seconds` };
+  }
+  const seconds = finite ? Number(value) : Number.NaN;
+  if (!(Number.isFinite(seconds) && seconds > 0)) {
+    return { error: `JUBARTE_TIMEOUT: '${value}': the timeout must be a finite number of seconds above 0` };
+  }
+  return { seconds };
+}
+
+/**
+ * JUBARTE_TIMEOUT (seconds), as the binary reads it (#2016): the task runs
+ * in a child killed at the deadline, since a synchronous wasm call cannot
+ * be interrupted on its own thread. Exits 124 with the binary's message.
+ * The child inherits stdio; its exit code is ours, one ended by a signal
+ * is 128 + the signal's number, and a SIGTERM, SIGINT or SIGHUP sent to
+ * this process is passed on, so the child never outlives it.
+ */
+function boundedMain(argv) {
+  const parsed = envTimeout(process.env.JUBARTE_TIMEOUT);
+  if (parsed === null) {
+    process.exitCode = main(argv);
+    return;
+  }
+  if (parsed.error) {
+    console.error(`error: ${parsed.error}`);
+    process.exitCode = EXIT_USAGE;
+    return;
+  }
+  const { seconds } = parsed;
+  const env = { ...process.env };
+  delete env.JUBARTE_TIMEOUT;
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), ...argv], { stdio: "inherit", env });
+  const forward = (signal) => child.kill(signal);
+  const forwarded = ["SIGTERM", "SIGINT", "SIGHUP"];
+  for (const signal of forwarded) process.on(signal, forward);
+  let timedOut = false;
+  // A deadline past what a Node timer holds is no deadline a run reaches.
+  const ms = seconds * 1000;
+  const timer =
+    ms <= MAX_TIMER_MS
+      ? setTimeout(() => {
+          timedOut = true;
+          child.kill("SIGKILL");
+        }, ms)
+      : null;
+  child.on("error", (error) => {
+    if (timer) clearTimeout(timer);
+    console.error(`error: ${messageOf(error)}`);
+    process.exitCode = EXIT_ERROR;
+  });
+  child.on("exit", (code, signal) => {
+    if (timer) clearTimeout(timer);
+    for (const name of forwarded) process.off(name, forward);
+    if (timedOut) {
+      console.error(`error: DEADLINE_EXCEEDED: timed out after ${seconds}s (JUBARTE_TIMEOUT)`);
+      process.exitCode = EXIT_TIMEOUT;
+    } else if (signal) {
+      process.exitCode = 128 + (os.constants.signals[signal] ?? 0);
+    } else {
+      process.exitCode = code ?? EXIT_ERROR;
+    }
+  });
+}
+
+boundedMain(process.argv.slice(2));

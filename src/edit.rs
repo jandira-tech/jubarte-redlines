@@ -27,8 +27,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+use unicode_segmentation::UnicodeSegmentation;
 
-use crate::changes::{Change, ChangeError, ChangeFilter, ChangeKind};
+use crate::changes::{Change, ChangeError, ChangeFilter, ChangeKind, MoveSide};
 
 use crate::inspect::{
     BODY_STORY, Opened, Piece, Projection, SCHEMA_VERSION, project_paragraph, source_sha256,
@@ -139,13 +140,44 @@ pub struct EditPlan {
     /// before the redline is compared.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub update_fields: bool,
-    /// Let `edit_comment`, `delete_comment` and `resolve_comment` change a
-    /// comment another author wrote (a reworded one keeps its author), and
-    /// a delete take another author's reply with its thread; the report
-    /// notes each one. Without it such an operation is refused
-    /// (`COMMENT_NOT_YOURS`): a reply is how one author answers another.
+    /// Accepted and ignored. Deleting, resolving or rewording another
+    /// author's comment is allowed unless [`Others::Keep`] is set. The
+    /// field stays so a plan that still names it parses.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub rewrite_others_comments: bool,
+    /// When `keep`, refuse to erase another author's change
+    /// (`CHANGE_NOT_YOURS`) or comment (`COMMENT_NOT_YOURS`). The default
+    /// `allow` permits both. Restore, strike, a comment and a reply stay
+    /// allowed either way.
+    #[serde(default, skip_serializing_if = "Others::is_allow")]
+    pub others: Others,
+}
+
+/// Whether a plan may erase markup another author wrote.
+///
+/// Another author is anyone other than the plan's `author` (the CLI's
+/// `--author`, `Jubarte` when that is left out). A change or comment that
+/// names no author is not the plan's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Others {
+    /// Accepting, rejecting, deleting and resolving another author's
+    /// markup is allowed.
+    #[default]
+    Allow,
+    /// Refuse those. Restore, strike, a comment and a reply stay allowed.
+    Keep,
+}
+
+impl Others {
+    /// The guard is on: do not erase another author's markup.
+    pub(crate) fn keeps(self) -> bool {
+        self == Self::Keep
+    }
+
+    fn is_allow(&self) -> bool {
+        *self == Self::Allow
+    }
 }
 
 /// Treatment of comment anchors removed by a plan's revision settlement.
@@ -1085,6 +1117,18 @@ impl RunSpec {
     }
 }
 
+/// A paragraph an anchor does occur in, named by the `ANCHOR_NOT_FOUND`
+/// that refused it elsewhere (#1889): the id the views print and a
+/// bounded excerpt of the paragraph's text. A suggestion to read and
+/// re-address, never a retarget (#957).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnchorCandidate {
+    /// Paragraph id as the views print it (`p53`, `header1.p1`).
+    pub at: String,
+    /// A grapheme-safe excerpt around the match, with ellipses at cuts.
+    pub ctx: String,
+}
+
 /// Outcome of one operation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditOutcome {
@@ -1118,6 +1162,10 @@ pub struct EditOutcome {
     /// Report-only whitespace occurrences when the literal anchor was refused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub near: Option<NearMatches>,
+    /// Paragraphs the anchor does occur in when the named paragraph does
+    /// not hold it (#1889); empty on every other outcome.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidates: Vec<AnchorCandidate>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Error code when failed.
     pub code: Option<String>,
@@ -1307,6 +1355,12 @@ impl EditReport {
                     serde_json::to_value(near).expect("near serializes"),
                 );
             }
+            if !op.candidates.is_empty() {
+                map.insert(
+                    "candidates".into(),
+                    serde_json::to_value(&op.candidates).expect("candidates serialize"),
+                );
+            }
             if let Some(c) = &op.code {
                 map.insert("code".into(), c.clone().into());
             }
@@ -1427,23 +1481,23 @@ fn open_error(error: crate::inspect::InspectError) -> EditError {
 }
 
 /// A [`ChangeError`] of a `resolve_revisions` selection as the plan's error.
-fn selection_error(e: ChangeError) -> EditError {
+fn selection_error(e: ChangeError, syntax: PlanSyntax, verb: &str) -> EditError {
     match e {
         ChangeError::UnknownChange(id) => err(
             "UNKNOWN_CHANGE",
             None,
-            format!("resolve_revisions: no tracked change {id}"),
+            syntax.selection_message(format_args!("no tracked change {id}")),
         ),
         ChangeError::InvalidId(m) => err("INVALID_PLAN", None, format!("resolve_revisions: {m}")),
         ambiguous @ ChangeError::Ambiguous { .. } => err(
             "AMBIGUOUS_CHANGE",
             None,
-            format!("resolve_revisions: {ambiguous}"),
+            syntax.selection_message(ambiguous),
         ),
         part @ ChangeError::PartOfChange { .. } => err(
             "INCOMPLETE_CHANGE",
             None,
-            format!("resolve_revisions: {part}"),
+            syntax.incomplete_change(&part, verb),
         ),
         ChangeError::Package(m) => err("INVALID_DOCUMENT", None, m),
     }
@@ -1454,10 +1508,12 @@ fn selection_error(e: ChangeError) -> EditError {
 fn selected_ids(
     listed: &[Change],
     filter: Option<&ChangeFilter>,
+    syntax: PlanSyntax,
 ) -> Result<Vec<String>, EditError> {
     let Some(filter) = filter else {
         return Ok(Vec::new());
     };
+    let selection_error = |e| selection_error(e, syntax, "");
     let filter = &filter.normalized().map_err(selection_error)?;
     filter.check(listed).map_err(selection_error)?;
     let hit: Vec<&Change> = listed.iter().filter(|c| filter.matches(c)).collect();
@@ -1490,28 +1546,32 @@ fn resolve_selected(
     source: &[u8],
     selection: Option<&ResolveRevisions>,
     policy: RemovedAnchorComments,
+    syntax: PlanSyntax,
 ) -> Result<(Option<Vec<u8>>, ResolvedRevisions, AnchorChanges), EditError> {
     let mut comments = AnchorChanges::default();
     let mut resolved = ResolvedRevisions::default();
     let Some(selection) = selection else {
         return Ok((None, resolved, comments));
     };
-    let change_err = selection_error;
+    let change_err = |e| selection_error(e, syntax, "");
     // Each side names whole changes, checked on the source: an accept can
     // join what is left (#1261).
-    for side in [selection.accept.as_ref(), selection.reject.as_ref()]
-        .into_iter()
-        .flatten()
-    {
-        crate::changes::check_whole_changes(source, side).map_err(change_err)?;
+    for (side, verb) in [
+        (selection.accept.as_ref(), "accept"),
+        (selection.reject.as_ref(), "reject"),
+    ] {
+        if let Some(side) = side {
+            crate::changes::check_whole_changes(source, side)
+                .map_err(|e| selection_error(e, syntax, verb))?;
+        }
     }
     let listed = crate::changes::list_changes(source).map_err(change_err)?;
-    let accept = selected_ids(&listed, selection.accept.as_ref())?;
+    let accept = selected_ids(&listed, selection.accept.as_ref(), syntax)?;
     // A visible reject settles nothing: it is lowered to operations.
     let reject = if selection.reject_visible {
         Vec::new()
     } else {
-        selected_ids(&listed, selection.reject.as_ref())?
+        selected_ids(&listed, selection.reject.as_ref(), syntax)?
     };
     if let Some(both) = accept.iter().find(|id| reject.contains(id)) {
         return Err(err(
@@ -1531,7 +1591,7 @@ fn resolve_selected(
             crate::revision_processor::Resolution::Accept,
             policy == RemovedAnchorComments::Keep,
         )
-        .map_err(change_err)?;
+        .map_err(|e| selection_error(e, syntax, "accept"))?;
         comments.extend(
             removed,
             kept,
@@ -1554,7 +1614,7 @@ fn resolve_selected(
             crate::revision_processor::Resolution::Reject,
             policy == RemovedAnchorComments::Keep,
         )
-        .map_err(change_err)?;
+        .map_err(|e| selection_error(e, syntax, "reject"))?;
         comments.extend(
             removed,
             kept,
@@ -1571,6 +1631,13 @@ fn resolve_selected(
 /// a style's recorded formatting does not make the text tracked (#1885).
 const STYLES_STORY: &str = "styles.";
 
+/// What an `EXISTING_REVISIONS` refusal, and a guard that would erase
+/// every tracked change, tells the caller to write instead.
+pub(crate) const KEEP_REVISIONS: &str = concat!(
+    r#"add "existing_revisions": "keep" to the plan "#,
+    "(it keeps every tracked change, yours and theirs; accept and reject resolve them all first)"
+);
+
 /// Whether `source` still carries a tracked change of its text (body,
 /// headers, footers, notes; a style's recorded formatting is not one) once
 /// `plan`'s `resolve_revisions` has accepted and rejected what it selects.
@@ -1581,6 +1648,7 @@ pub(crate) fn revisions_left(source: &[u8], plan: &EditPlan) -> bool {
         source,
         plan.resolve_revisions.as_ref(),
         plan.removed_anchor_comments,
+        PlanSyntax::V1,
     )
     .ok()
     .and_then(|(bytes, _, _)| bytes);
@@ -1594,7 +1662,7 @@ pub(crate) fn revisions_left(source: &[u8], plan: &EditPlan) -> bool {
 /// edit, the paragraph and the thread are gone and the reply lands nowhere.
 /// A plan that does not resolve names none here: running it reports why.
 pub fn replies_on_deleted_paragraphs(source: &[u8], plan: &EditPlan) -> Vec<(u32, Option<String>)> {
-    let Ok(lowered) = visible::lower(source, plan) else {
+    let Ok(lowered) = visible::lower(source, plan, PlanSyntax::V1) else {
         return Vec::new();
     };
     let plan = lowered.as_ref().unwrap_or(plan);
@@ -1619,14 +1687,318 @@ struct Settled {
     changed: bool,
 }
 
+/// Whether `author` is the plan's author. A missing or empty author is not.
+fn owns_change(author: Option<&str>, actor: &str) -> bool {
+    author.is_some_and(|name| !name.is_empty() && name == actor)
+}
+
+/// One sentence for a change the guard will not accept or reject.
+fn change_not_yours(change: &Change) -> String {
+    let whose = match change.author.as_deref() {
+        Some(name) if !name.is_empty() => format!("{} is by {name:?}", change.id),
+        _ => format!("{} names no author", change.id),
+    };
+    let answer = match change.kind {
+        ChangeKind::Deletion => {
+            format!(
+                "answer it visibly (-p {} --restore), or comment on it",
+                change.id
+            )
+        }
+        ChangeKind::Insertion => {
+            format!("strike it (-p {} --strike), or comment on it", change.id)
+        }
+        _ => "comment on it (accepting or rejecting would erase their change)".to_string(),
+    };
+    format!("{whose}; {answer}")
+}
+
+/// `authors` in document order, then a nameless change, as one English list.
+fn join_authors(authors: &[String], nameless: bool) -> String {
+    let mut parts: Vec<String> = authors.iter().map(|name| format!("{name:?}")).collect();
+    if nameless {
+        parts.push("one that names no author".to_string());
+    }
+    match parts.as_slice() {
+        [] => String::new(),
+        [one] => one.clone(),
+        [first, second] => format!("{first} and {second}"),
+        _ => {
+            let (last, rest) = parts.split_last().expect("at least three");
+            format!("{} and {last}", rest.join(", "))
+        }
+    }
+}
+
+/// Whether settling `change` this way removes its content, and with it
+/// every revision and comment anchor that content holds. Accepting a
+/// deletion or a move-from, or rejecting an insertion or a move-to, does.
+/// Accepting an insertion keeps the text, so a revision nested in it stays.
+fn removes_content(change: &Change, accept: bool) -> bool {
+    matches!(
+        (accept, change.kind, change.move_side),
+        (true, ChangeKind::Deletion, _)
+            | (false, ChangeKind::Insertion, _)
+            | (true, ChangeKind::Move, Some(MoveSide::From))
+            | (false, ChangeKind::Move, Some(MoveSide::To))
+    )
+}
+
+/// The listed changes whose `inside` chain reaches `root`: settling `root`
+/// so its content goes takes them along. A style record is not one.
+fn taken_along<'a>(listed: &'a [Change], root: &Change) -> Vec<&'a Change> {
+    let by_id: HashMap<&str, &Change> = listed.iter().map(|c| (c.id.as_str(), c)).collect();
+    let roots: HashSet<&str> = root.element_ids().collect();
+    listed
+        .iter()
+        .filter(|change| {
+            if roots.contains(change.id.as_str()) || change.id.starts_with(STYLES_STORY) {
+                return false;
+            }
+            let mut cursor = change.inside.as_deref();
+            let mut seen = HashSet::new();
+            while let Some(id) = cursor {
+                if !seen.insert(id) {
+                    return false;
+                }
+                if roots.contains(id) {
+                    return true;
+                }
+                cursor = by_id.get(id).and_then(|holder| holder.inside.as_deref());
+            }
+            false
+        })
+        .collect()
+}
+
+/// One sentence for a comment a content-removing decision would delete.
+fn comment_not_yours(verb: &str, change_id: &str, comment_id: &str, author: &str) -> String {
+    let whose = if author.is_empty() {
+        format!("{comment_id}, which names no author")
+    } else {
+        format!("{comment_id}, which is by {author:?}")
+    };
+    format!("{verb} {change_id} would delete {whose}")
+}
+
+/// Whether `author` wrote the comment. An empty author is not the plan's.
+fn owns_comment(author: &str, actor: &str) -> bool {
+    !author.is_empty() && author == actor
+}
+
+/// `record` replies to `root`, walking `parent` and stopping on a cycle.
+fn replies_to(
+    record: &crate::comments::CommentRecord,
+    root: u32,
+    by_id: &HashMap<u32, &crate::comments::CommentRecord>,
+) -> bool {
+    let mut cursor = record.parent;
+    let mut seen = HashSet::new();
+    while let Some(id) = cursor {
+        if !seen.insert(id) {
+            return false;
+        }
+        if id == root {
+            return true;
+        }
+        cursor = by_id.get(&id).and_then(|comment| comment.parent);
+    }
+    false
+}
+
+/// Refuse when a content-removing decision would delete a comment the plan's
+/// author does not own, the comment itself or a reply in its thread. The
+/// anchor's removal deletes the thread.
+fn guard_removed_comments(
+    source: &[u8],
+    actor: &str,
+    removals: &[(&Change, bool, Vec<&Change>)],
+) -> Result<(), EditError> {
+    let mut held: Vec<(&str, &str, bool)> = Vec::new();
+    for (change, accepting, nested) in removals {
+        for id in change
+            .holds_comments
+            .iter()
+            .chain(nested.iter().flat_map(|inner| inner.holds_comments.iter()))
+        {
+            if held.iter().any(|(_, have, _)| *have == id) {
+                continue;
+            }
+            held.push((change.id.as_str(), id.as_str(), *accepting));
+        }
+    }
+    if held.is_empty() {
+        return Ok(());
+    }
+    let records = crate::comments::list_comments(source)
+        .map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))?;
+    let by_id: HashMap<u32, &crate::comments::CommentRecord> =
+        records.iter().map(|record| (record.id, record)).collect();
+    for (change_id, comment_id, accepting) in held {
+        let Some(root) = records.iter().find(|record| record.r#ref == comment_id) else {
+            continue;
+        };
+        let verb = if accepting { "accepting" } else { "rejecting" };
+        if !owns_comment(&root.author, actor) {
+            return Err(err(
+                "COMMENT_NOT_YOURS",
+                None,
+                comment_not_yours(verb, change_id, comment_id, &root.author),
+            ));
+        }
+        for reply in &records {
+            if reply.id == root.id || !replies_to(reply, root.id, &by_id) {
+                continue;
+            }
+            if owns_comment(&reply.author, actor) {
+                continue;
+            }
+            return Err(err(
+                "COMMENT_NOT_YOURS",
+                None,
+                comment_not_yours(verb, change_id, &reply.r#ref, &reply.author),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// An author the wholesale settlement would erase, in first-seen order.
+fn note_foreign(change: &Change, actor: &str, authors: &mut Vec<String>, nameless: &mut bool) {
+    if change.id.starts_with(STYLES_STORY) || owns_change(change.author.as_deref(), actor) {
+        return;
+    }
+    match change.author.as_deref() {
+        Some(name) if !name.is_empty() => {
+            if !authors.iter().any(|have: &String| have == name) {
+                authors.push(name.to_string());
+            }
+        }
+        _ => *nameless = true,
+    }
+}
+
+/// Refuse to erase another author's tracked change when the plan keeps
+/// others' markup (`CHANGE_NOT_YOURS`). A style's recorded formatting is
+/// not one (#1885). A visible reject settles nothing, so it is not one
+/// either. `wholesale` is `"accept"` or `"reject"` when `existing_revisions`
+/// would resolve every change the selection leaves.
+///
+/// A decision that removes content is also refused when a revision nested
+/// inside it, or a comment anchor it holds, belongs to someone else
+/// (`COMMENT_NOT_YOURS` for the comment). Comment-body revisions are listed
+/// as `comments.rN` (#1706), so a comment-only file holds tracked changes.
+/// `settle_comment_bodies` still loads that part when a settlement resolves
+/// it and the listing has no other text change.
+pub(crate) fn guard_keep_others(
+    source: &[u8],
+    author: &str,
+    selection: Option<&ResolveRevisions>,
+    wholesale: Option<&str>,
+    settle_comment_bodies: bool,
+    syntax: PlanSyntax,
+) -> Result<(), EditError> {
+    if selection.is_none() && wholesale.is_none() {
+        return Ok(());
+    }
+    let listed =
+        crate::changes::list_changes(source).map_err(|e| selection_error(e, syntax, ""))?;
+    if let Some(selection) = selection {
+        let accept = selected_ids(&listed, selection.accept.as_ref(), syntax)?;
+        let reject = if selection.reject_visible {
+            Vec::new()
+        } else {
+            selected_ids(&listed, selection.reject.as_ref(), syntax)?
+        };
+        let mut removals = Vec::new();
+        for (id, accepting) in accept
+            .iter()
+            .map(|id| (id, true))
+            .chain(reject.iter().map(|id| (id, false)))
+        {
+            let Some(change) = listed.iter().find(|c| &c.id == id) else {
+                continue;
+            };
+            if change.id.starts_with(STYLES_STORY) {
+                continue;
+            }
+            if !owns_change(change.author.as_deref(), author) {
+                return Err(err("CHANGE_NOT_YOURS", None, change_not_yours(change)));
+            }
+            if !removes_content(change, accepting) {
+                continue;
+            }
+            let nested = taken_along(&listed, change);
+            if let Some(foreign) = nested
+                .iter()
+                .find(|inner| !owns_change(inner.author.as_deref(), author))
+            {
+                return Err(err("CHANGE_NOT_YOURS", None, change_not_yours(foreign)));
+            }
+            removals.push((change, accepting, nested));
+        }
+        guard_removed_comments(source, author, &removals)?;
+    }
+    let Some(policy) = wholesale else {
+        return Ok(());
+    };
+    // Comment-body revisions are in `listed` as `comments.rN` (#1706).
+    // Also count the comments part when this settlement resolves it and
+    // the listing has not already got a text change (a style-only file).
+    let comment_changes =
+        if settle_comment_bodies || listed.iter().any(|c| !c.id.starts_with(STYLES_STORY)) {
+            let opened = Opened::open(source).map_err(open_error)?;
+            crate::changes::comment_changes_in(&opened.pkg)
+        } else {
+            Vec::new()
+        };
+    let mut authors = Vec::new();
+    let mut nameless = false;
+    for change in listed.iter().chain(&comment_changes) {
+        note_foreign(change, author, &mut authors, &mut nameless);
+    }
+    if authors.is_empty() && !nameless {
+        return Ok(());
+    }
+    Err(err(
+        "CHANGE_NOT_YOURS",
+        None,
+        format!(
+            r#""existing_revisions": "{policy}" would erase changes by {}; {KEEP_REVISIONS}"#,
+            join_authors(&authors, nameless)
+        ),
+    ))
+}
+
 /// Settle `source` (opened as `probe`) as `plan` asks: accept and reject
 /// what `resolve_revisions` selects, then apply `existing_revisions` to the
 /// changes left.
-fn settle(source: &[u8], plan: &EditPlan, probe: Opened) -> Result<Settled, EditError> {
+fn settle(
+    source: &[u8],
+    plan: &EditPlan,
+    probe: Opened,
+    syntax: PlanSyntax,
+) -> Result<Settled, EditError> {
+    if plan.others.keeps() {
+        let wholesale = match plan.existing_revisions {
+            ExistingRevisions::Accept => Some("accept"),
+            ExistingRevisions::Reject => Some("reject"),
+            ExistingRevisions::Keep | ExistingRevisions::Refuse => None,
+        };
+        guard_keep_others(
+            source,
+            &plan.author,
+            plan.resolve_revisions.as_ref(),
+            wholesale,
+            false,
+            syntax,
+        )?;
+    }
     let (resolved_source, resolved_revisions, mut comment_changes) = resolve_selected(
         source,
         plan.resolve_revisions.as_ref(),
         plan.removed_anchor_comments,
+        syntax,
     )?;
     let (source, probe) = match &resolved_source {
         Some(bytes) => (bytes.as_slice(), Opened::open(bytes).map_err(open_error)?),
@@ -1643,7 +2015,7 @@ fn settle(source: &[u8], plan: &EditPlan, probe: Opened) -> Result<Settled, Edit
             return Err(err(
                 "EXISTING_REVISIONS",
                 None,
-                "the document already holds tracked changes; set existing_revisions to keep, accept or reject",
+                format!("the document already holds tracked changes; {KEEP_REVISIONS}"),
             ));
         }
         (true, policy) => {
@@ -1954,6 +2326,7 @@ const PLAN_FIELDS: &[&str] = &[
     "existing_revisions",
     "initials",
     "operations",
+    "others",
     "removed_anchor_comments",
     "resolve_revisions",
     "rewrite_others_comments",
@@ -2359,7 +2732,7 @@ pub fn check_plan_quoting(
     plan: &EditPlan,
     syntax: PlanSyntax,
 ) -> Result<(), EditError> {
-    let lowered = visible::lower(source, plan)?;
+    let lowered = visible::lower(source, plan, syntax)?;
     resolved(source, lowered.as_ref().unwrap_or(plan), syntax).map(|_| ())
 }
 
@@ -2369,8 +2742,7 @@ fn resolved<'a>(
     syntax: PlanSyntax,
 ) -> Result<Transaction<'a>, EditError> {
     check_update_fields(plan)?;
-    let mut tx = Transaction::start(source, plan)?;
-    tx.syntax = syntax;
+    let mut tx = Transaction::start_quoting(source, plan, syntax)?;
     tx.resolve()?;
     tracked::check(&tx)?;
     tx.emits_directly()?;
@@ -2588,9 +2960,9 @@ impl ThreadOp {
     }
 }
 
-/// A comment of another author a thread operation changes: refused
-/// without `rewrite_others_comments` (`COMMENT_NOT_YOURS`), noted with it
-/// (#1264, #1846).
+/// A comment of another author a thread operation changes. With
+/// [`Others::Keep`] it is refused (`COMMENT_NOT_YOURS`); otherwise the
+/// report notes it (#1264, #1846, #1892).
 #[derive(Clone, Debug)]
 struct OthersComment {
     /// The comment changed.
@@ -2611,39 +2983,25 @@ enum OthersChange {
 }
 
 impl OthersComment {
-    /// The refusal: what to do instead (`reply` / `resolve` spelled for
-    /// the plan's syntax), or the opt-in `rewrite` that allows it.
-    fn refusal(&self, reply: &str, resolve: &str, rewrite: &str) -> String {
+    /// The refusal: reply, or resolve your own thread when a delete would
+    /// take their reply. `reply` and `resolve` are spelled for the plan's
+    /// syntax. Accepting the rewrite flag does not change this.
+    fn refusal(&self, reply: &str, resolve: &str) -> String {
         let (comment, author) = (self.comment, &self.author);
-        let named = !author.is_empty();
-        let (verb, theirs) = match self.change {
-            OthersChange::DeletedWith(root) => {
-                let (whose, that) = if named {
-                    (format!("a reply by {author:?}"), "their")
-                } else {
-                    ("a reply that names no author".to_string(), "that")
-                };
-                return format!(
-                    "deleting c{root} deletes c{comment}, {whose}; resolve c{root} instead ({resolve}), or pass {rewrite} to delete {that} reply with it"
-                );
-            }
-            OthersChange::Reword => ("change", "their words under their name"),
-            OthersChange::Delete => ("delete", "their comment"),
-            OthersChange::Resolve => ("resolve", "their comment"),
-            OthersChange::Reopen => ("reopen", "their comment"),
-        };
-        let what = match (self.change, named) {
-            (_, true) => format!("{verb} {theirs}"),
-            (OthersChange::Reword, false) => "change its words".to_string(),
-            (_, false) => format!("{verb} it"),
-        };
-        format!(
-            "{}; reply instead ({reply}), or pass {rewrite} to {what}",
-            self.whose()
-        )
+        if let OthersChange::DeletedWith(root) = self.change {
+            let whose = if author.is_empty() {
+                "a reply that names no author".to_string()
+            } else {
+                format!("a reply by {author:?}")
+            };
+            return format!(
+                "deleting c{root} deletes c{comment}, {whose}; resolve c{root} instead ({resolve})"
+            );
+        }
+        format!("{}; reply instead ({reply})", self.whose())
     }
 
-    /// The report's note when `rewrite_others_comments` let it through.
+    /// The report's note when the operation changed another author's comment.
     fn note(&self) -> String {
         let named = !self.author.is_empty();
         let what = match (self.change, named) {
@@ -2714,6 +3072,10 @@ struct Transaction<'p> {
     /// `(story, index in that story)` per entry of `paragraph_nodes`.
     paragraph_story: Vec<(usize, usize)>,
     projections: Vec<Projection>,
+    /// Candidate lookup uses the fixed v1 normalization ladder against these
+    /// immutable projections. Within a transaction the anchor therefore keys
+    /// both the search text and its normalization, including empty results.
+    anchor_candidate_cache: std::cell::RefCell<HashMap<String, (Vec<AnchorCandidate>, usize)>>,
     /// The source's paragraphs and where they went, when settling
     /// revisions rewrote the document.
     origin: Option<origin::Origin>,
@@ -2747,8 +3109,9 @@ struct Transaction<'p> {
     family: Option<crate::comments::CommentFamily>,
     /// Comment replied to, by the reply's new id.
     reply_parents: BTreeMap<u32, u32>,
-    /// Another author's comments a thread operation changes under
-    /// `rewrite_others_comments`, by outcome index.
+    /// Another author's comments a thread operation changes, by outcome
+    /// index. The report notes each one. `rewrite_others_comments` does
+    /// not decide that.
     rewritten: Vec<(usize, OthersComment)>,
     /// The plan's watermark, written into the default headers at finish.
     watermark: Option<watermark::Spec>,
@@ -2784,6 +3147,14 @@ struct StoryPart {
 
 impl<'p> Transaction<'p> {
     fn start(source: &[u8], plan: &'p EditPlan) -> Result<Self, EditError> {
+        Self::start_quoting(source, plan, PlanSyntax::V1)
+    }
+
+    fn start_quoting(
+        source: &[u8],
+        plan: &'p EditPlan,
+        syntax: PlanSyntax,
+    ) -> Result<Self, EditError> {
         if plan.schema_version != SCHEMA_VERSION {
             return Err(err(
                 "UNSUPPORTED_SCHEMA",
@@ -2827,7 +3198,7 @@ impl<'p> Transaction<'p> {
             resolved_revisions,
             comment_changes,
             changed,
-        } = settle(source, plan, probe)?;
+        } = settle(source, plan, probe, syntax)?;
         let mut renumbered = false;
         if let Some(normalized) = ranges::normalize_permission_ids(&base)? {
             base = normalized;
@@ -2898,12 +3269,13 @@ impl<'p> Transaction<'p> {
             paragraph_nodes,
             paragraph_story,
             projections,
+            anchor_candidate_cache: std::cell::RefCell::new(HashMap::new()),
             origin,
             outcomes: Vec::new(),
             resolved: Vec::new(),
             claims: BTreeMap::new(),
             anchor_window: std::cell::Cell::new(None),
-            syntax: PlanSyntax::default(),
+            syntax,
             comments: Vec::new(),
             deletion_comments: Vec::new(),
             preset_comment_ids: Vec::new(),
@@ -3359,9 +3731,9 @@ impl<'p> Transaction<'p> {
         Ok(())
     }
 
-    /// One note per comment of another author a thread operation changed
-    /// under `rewrite_others_comments`: rewording keeps their name on our
-    /// words; deleting, resolving or reopening speaks for them.
+    /// One note per comment of another author a thread operation changed:
+    /// rewording keeps their name on our words; deleting, resolving or
+    /// reopening speaks for them.
     fn rewrite_notes(&self) -> Vec<String> {
         self.rewritten
             .iter()
@@ -3504,6 +3876,7 @@ impl<'p> Transaction<'p> {
                         anchor_given: None,
                         anchor_read_as: None,
                         near: None,
+                        candidates: Vec::new(),
                     };
                     match self.resolve_page_setup(
                         *section,
@@ -3683,6 +4056,9 @@ impl<'p> Transaction<'p> {
                     anchor_given: None,
                     anchor_read_as: None,
                     near: None,
+                    // #1889's candidates name paragraphs by the text they
+                    // hold: for a redaction that says where to find it.
+                    candidates: Vec::new(),
                     code: None,
                     message: None,
                 };
@@ -3744,6 +4120,7 @@ impl<'p> Transaction<'p> {
             anchor_given: None,
             anchor_read_as: None,
             near: None,
+            candidates: Vec::new(),
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -3821,7 +4198,21 @@ impl<'p> Transaction<'p> {
             Ok(p) => p,
             Err((code, msg, matches)) => {
                 outcome.matches = matches;
-                return Err(fail(&code, msg, outcome));
+                // #1889: a positional miss (the paragraph does not exist)
+                // names the paragraphs the operation's anchor does occur
+                // in. A text selector's miss is about the selector's own
+                // text, so it gains nothing.
+                let note = match (code.as_str(), selector, anchor_of(kind)) {
+                    (
+                        "ANCHOR_NOT_FOUND",
+                        Selector::Name(_) | Selector::Id { .. } | Selector::Index { .. },
+                        Some(anchor),
+                    ) if comment_text_of(selector).is_none() => {
+                        self.candidates_note(anchor, &mut outcome)
+                    }
+                    _ => String::new(),
+                };
+                return Err(fail(&code, format!("{msg}{note}"), outcome));
             }
         };
         outcome.paragraph = Some(self.paragraph_id(para));
@@ -4117,14 +4508,30 @@ impl<'p> Transaction<'p> {
                 // A comment edits nothing: its range may cross a tab, a
                 // symbol, a hyperlink, a field or a revision.
                 let (start, end) = match find {
-                    Some(find) => locate(
-                        projection,
-                        find,
-                        *occurrence,
-                        &mut outcome,
-                        self.anchor_window.get(),
-                    )
-                    .map_err(|(c, m)| fail(&c, m, outcome.clone()))?,
+                    Some(find) => {
+                        let found = locate(
+                            projection,
+                            find,
+                            *occurrence,
+                            &mut outcome,
+                            self.anchor_window.get(),
+                            self.syntax,
+                        );
+                        match found {
+                            // #1889: the anchor names text the paragraph
+                            // does not hold; say where it does. Under a
+                            // comment's window the paragraph is right and
+                            // the window is wrong.
+                            Err((code, message))
+                                if code == "ANCHOR_NOT_FOUND"
+                                    && self.anchor_window.get().is_none() =>
+                            {
+                                let note = self.candidates_note(find, &mut outcome);
+                                return Err(fail(&code, format!("{message}{note}"), outcome));
+                            }
+                            other => other.map_err(|(c, m)| fail(&c, m, outcome.clone()))?,
+                        }
+                    }
                     None => {
                         outcome.matches = 1;
                         self.anchor_window
@@ -4544,10 +4951,11 @@ impl<'p> Transaction<'p> {
     /// properties are discarded, so it may not carry a section break.
     /// `reply_comment`, `resolve_comment`, `edit_comment`, `delete_comment`:
     /// the comment must exist (`UNKNOWN_COMMENT`); a reply needs the
-    /// comment's reference to anchor on; `edit_comment`, `delete_comment`
-    /// and `resolve_comment` on another author's comment, or a delete
-    /// whose thread holds another author's reply, need
-    /// `rewrite_others_comments` (`COMMENT_NOT_YOURS`).
+    /// comment's reference to anchor on. With [`Others::Keep`],
+    /// `edit_comment`, `delete_comment` and `resolve_comment` on another
+    /// author's comment, or a delete whose thread holds another author's
+    /// reply, are refused (`COMMENT_NOT_YOURS`). The default allows them
+    /// and notes each one.
     fn resolve_thread(&self, id: &str, kind: &OperationKind) -> Resolution<Resolved> {
         let mut outcome = EditOutcome {
             id: id.to_string(),
@@ -4562,6 +4970,7 @@ impl<'p> Transaction<'p> {
             anchor_given: None,
             anchor_read_as: None,
             near: None,
+            candidates: Vec::new(),
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -4617,25 +5026,23 @@ impl<'p> Transaction<'p> {
         if let ThreadOp::Reply { text, .. } | ThreadOp::Edit { text, .. } = &op {
             check_comment(text).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
         }
-        // A comment speaks for its author: another author answers it, and
-        // only its author rewords, deletes, resolves or reopens it. Deleting
-        // one's own comment deletes the replies in its thread too.
-        if !self.plan.rewrite_others_comments
+        // With the guard on, another author answers a comment, and only its
+        // author rewords, deletes, resolves or reopens it. Deleting one's
+        // own comment deletes the replies in its thread too. The default
+        // allows the operation and the report notes it.
+        if self.plan.others.keeps()
             && let Some(others) = self.others_comments(family, &op).first()
         {
-            let (reply, resolve, rewrite) = match self.syntax {
+            let (reply, resolve) = match self.syntax {
                 PlanSyntax::Flags | PlanSyntax::Typed => (
                     format!("-p c{target} --reply TEXT"),
                     format!("-p c{target} --resolve"),
-                    "--rewrite-others-comments",
                 ),
-                PlanSyntax::V1 | PlanSyntax::V2 => (
-                    "reply_comment".to_string(),
-                    "resolve_comment".to_string(),
-                    r#""rewrite_others_comments": true"#,
-                ),
+                PlanSyntax::V1 | PlanSyntax::V2 => {
+                    ("reply_comment".to_string(), "resolve_comment".to_string())
+                }
             };
-            let message = others.refusal(&reply, &resolve, rewrite);
+            let message = others.refusal(&reply, &resolve);
             return Err(fail("COMMENT_NOT_YOURS", message, outcome));
         }
         let ids = match &op {
@@ -4812,6 +5219,7 @@ impl<'p> Transaction<'p> {
             anchor_given: None,
             anchor_read_as: None,
             near: None,
+            candidates: Vec::new(),
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -4960,6 +5368,7 @@ impl<'p> Transaction<'p> {
             anchor_given: None,
             anchor_read_as: None,
             near: None,
+            candidates: Vec::new(),
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -5336,6 +5745,83 @@ impl<'p> Transaction<'p> {
         (self.opened.body, "the body")
     }
 
+    /// Paragraphs whose text `anchor` would match ([`anchor_readings`]'s
+    /// ladder, the one `locate` uses), as [`AnchorCandidate`]s in document
+    /// order: what an `ANCHOR_NOT_FOUND` names so its reader sees where
+    /// the anchor lives (#1889). At most [`NAMED_ANCHOR_CANDIDATES`] come
+    /// back; the second return counts the rest.
+    fn anchor_candidates(&self, anchor: &str) -> (Vec<AnchorCandidate>, usize) {
+        if let Some(cached) = self.anchor_candidate_cache.borrow().get(anchor) {
+            return cached.clone();
+        }
+        #[cfg(test)]
+        CANDIDATE_SCANS.with(|calls| calls.set(calls.get() + 1));
+        // Selectors are read against the source, not the settled projection.
+        // Invert the same fates the views and `select` follow, choosing one
+        // source per working paragraph. Anchored edits can follow merges.
+        let sources = self.origin.as_ref().map(|origin| {
+            let ids = origin.ids();
+            let mut sources = vec![None; self.paragraph_nodes.len()];
+            for source in 0..ids.paragraph_nodes.len() {
+                if let origin::Fate::Kept(post) | origin::Fate::Merged(post) = origin.fate(source) {
+                    sources[post].get_or_insert_with(|| ids.id(source));
+                }
+            }
+            sources
+        });
+        let mut found: Vec<AnchorCandidate> = Vec::new();
+        let mut more = 0;
+        for g in 0..self.paragraph_nodes.len() {
+            // A paragraph without a surviving source cannot be retried by id.
+            let source_id = match &sources {
+                Some(sources) => match &sources[g] {
+                    Some(id) => Some(id),
+                    None => continue,
+                },
+                None => None,
+            };
+            let text = &self.projections[g].text;
+            let Some(span) = anchor_readings(text, anchor).find_map(|hits| hits.first().copied())
+            else {
+                continue;
+            };
+            if found.len() == NAMED_ANCHOR_CANDIDATES {
+                more += 1;
+            } else {
+                found.push(AnchorCandidate {
+                    at: source_id.cloned().unwrap_or_else(|| self.paragraph_id(g)),
+                    ctx: anchor_candidate_excerpt(text, span),
+                });
+            }
+        }
+        self.anchor_candidate_cache
+            .borrow_mut()
+            .insert(anchor.to_string(), (found.clone(), more));
+        (found, more)
+    }
+
+    /// The `; it occurs in …` half of an anchor refusal (#1889): empty
+    /// when the anchor occurs nowhere, so #1013's released message stands
+    /// alone. Fills `outcome.candidates` for the JSON `op` event. A
+    /// suggestion only — the edit stays refused, nothing is retargeted
+    /// (#957).
+    fn candidates_note(&self, anchor: &str, outcome: &mut EditOutcome) -> String {
+        let (candidates, more) = self.anchor_candidates(anchor);
+        if candidates.is_empty() {
+            return String::new();
+        }
+        let named: Vec<String> = candidates
+            .iter()
+            .map(|c| format!("{} (\"{}\")", c.at, c.ctx))
+            .collect();
+        let mut note = format!("; it occurs in {}", named.join(", "));
+        if more > 0 {
+            note.push_str(&format!(", and {more} more"));
+        }
+        outcome.candidates = candidates;
+        note
+    }
+
     /// The unique occurrence of `find`, or its `occurrence`-th hit (1-based)
     /// when given (overlapping occurrences count), checked to lie within
     /// editable direct text.
@@ -5352,11 +5838,19 @@ impl<'p> Transaction<'p> {
             occurrence,
             outcome,
             self.anchor_window.get(),
+            self.syntax,
         ) {
             Err((code, message)) if code == "ANCHOR_NOT_FOUND" => {
                 return Err(match self.removed_anchor(projection, find) {
                     Some(hint) => ("UNSUPPORTED_STRUCTURE".into(), hint),
-                    None => (code, message),
+                    // #1889: under a comment's window the paragraph is the
+                    // right one and the window is wrong, so there is no
+                    // elsewhere to name.
+                    None if self.anchor_window.get().is_some() => (code, message),
+                    None => {
+                        let note = self.candidates_note(find, outcome);
+                        (code, format!("{message}{note}"))
+                    }
                 });
             }
             found => found?,
@@ -5531,6 +6025,8 @@ impl<'p> Transaction<'p> {
             id: &id,
             long_id: &long_id,
             author,
+            actor: self.plan.author.as_str(),
+            keep_others: self.plan.others.keeps(),
             text: &text,
             paragraph: &paragraph,
             lead,
@@ -6153,6 +6649,7 @@ impl<'p> Transaction<'p> {
             anchor_given: None,
             anchor_read_as: None,
             near: None,
+            candidates: Vec::new(),
         };
         let fail = |code: &str, msg: &str, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -7046,6 +7543,7 @@ impl<'p> Transaction<'p> {
             operations,
             update_fields: false,
             rewrite_others_comments: self.plan.rewrite_others_comments,
+            others: self.plan.others,
         };
         let mut tx = Transaction::start(&self.base, &plan)?;
         tx.preset_comment_ids = self
@@ -7510,6 +8008,21 @@ fn finds_text(kind: &OperationKind) -> bool {
     }
 }
 
+/// The text anchor an operation carries — `find`, or an insertion's
+/// `after`/`before` — when it has one (#1889).
+fn anchor_of(kind: &OperationKind) -> Option<&str> {
+    match kind {
+        OperationKind::Replace { find, .. }
+        | OperationKind::Delete { find, .. }
+        | OperationKind::FormatRun { find, .. }
+        | OperationKind::Redact { find, .. }
+        | OperationKind::InsertFootnote { after: find, .. } => Some(find),
+        OperationKind::Insert { after, before, .. } => after.as_deref().or(before.as_deref()),
+        OperationKind::Comment { find, .. } => find.as_deref(),
+        _ => None,
+    }
+}
+
 /// Plain text only: no control characters (tabs and breaks are not run text).
 fn check_text(text: &str) -> Result<(), String> {
     if text
@@ -7663,6 +8176,39 @@ fn new_position(edits: &[ScheduledEdit], pos: usize, inclusive: bool, own: Optio
     (pos as i64 + delta).max(0) as usize
 }
 
+/// Every way `find` reads in `text`, in the order an edit tries them
+/// (#1894): the literal first, then the anchor without its Markdown
+/// marks, then each as the text reads (a space for a non-breaking one,
+/// straight quotes for curly ones). A paragraph the same anchor would
+/// match is exactly one with a hit on some rung of this ladder (#1889).
+fn anchor_readings<'a>(
+    text: &'a str,
+    find: &'a str,
+) -> impl Iterator<Item = Vec<(usize, usize)>> + 'a {
+    let exact = move |needle: &str| -> Vec<(usize, usize)> {
+        text.char_indices()
+            .map(|(i, _)| i)
+            .filter(|&i| text[i..].starts_with(needle))
+            .map(|i| (i, i + needle.len()))
+            .collect()
+    };
+    let mut plain = None;
+    // Each rung is computed only when requested. In particular, a literal
+    // hit allocates neither a plain anchor nor normalized offset maps.
+    (0..4).filter_map(move |rung| match rung {
+        0 => Some(exact(find)),
+        1 => {
+            let stripped = crate::markdown::plain_anchor(find);
+            plain = (!stripped.is_empty() && stripped != find).then_some(stripped);
+            plain.as_deref().map(exact)
+        }
+        2 => Some(anchor::reading_hits(text, find)),
+        _ => plain
+            .as_deref()
+            .map(|plain| anchor::reading_hits(text, plain)),
+    })
+}
+
 /// The unique occurrence of `find` in the paragraph, or its
 /// `occurrence`-th hit (1-based) when given (overlapping occurrences
 /// count), whatever structure it crosses.
@@ -7672,17 +8218,12 @@ fn locate(
     occurrence: Option<usize>,
     outcome: &mut EditOutcome,
     window: Option<(u32, usize, usize)>,
+    syntax: PlanSyntax,
 ) -> Result<(usize, usize), (String, String)> {
     if find.is_empty() {
         return Err(("INVALID_EDIT".into(), "find must be nonempty".into()));
     }
     let text = &projection.text;
-    let hits_of = |needle: &str| -> Vec<usize> {
-        text.char_indices()
-            .map(|(i, _)| i)
-            .filter(|&i| text[i..].starts_with(needle))
-            .collect()
-    };
     // Under `cN.text`, only hits inside the text the comment covers count.
     let outside = std::cell::Cell::new(false);
     let inside = |hits: Vec<(usize, usize)>| -> Vec<(usize, usize)> {
@@ -7699,39 +8240,23 @@ fn locate(
         }
         kept
     };
-    let exact = |needle: &str| -> Vec<(usize, usize)> {
-        inside(
-            hits_of(needle)
-                .into_iter()
-                .map(|i| (i, i + needle.len()))
-                .collect(),
-        )
-    };
-    let mut hits = exact(find);
     // An anchor copied out of the agent view can carry Markdown marks
     // (`# `, `**`, CriticMarkup notes) that are not document text, and
     // one typed by hand a space where the paragraph has a non-breaking
     // one, or a straight quote for a curly one: the literal is tried
-    // first, then the text without marks, then each as it reads.
-    if hits.is_empty() {
-        let plain = crate::markdown::plain_anchor(find);
-        let plain = (!plain.is_empty() && plain != find).then_some(plain);
-        let mut tries = Vec::new();
-        if let Some(plain) = &plain {
-            tries.push(exact(plain));
+    // first, then the text without marks, then each as it reads
+    // ([`anchor_readings`]).
+    let mut readings = anchor_readings(text, find);
+    let mut hits = inside(readings.next().expect("the literal is the first try"));
+    if hits.is_empty()
+        && let Some(found) = readings.map(inside).find(|t| !t.is_empty())
+    {
+        let read_as: String = text[found[0].0..found[0].1].to_string();
+        if read_as != find {
+            outcome.anchor_given = Some(find.to_string());
+            outcome.anchor_read_as = Some(read_as);
         }
-        tries.push(inside(anchor::reading_hits(text, find)));
-        if let Some(plain) = &plain {
-            tries.push(inside(anchor::reading_hits(text, plain)));
-        }
-        if let Some(found) = tries.into_iter().find(|t| !t.is_empty()) {
-            let read_as: String = text[found[0].0..found[0].1].to_string();
-            if read_as != find {
-                outcome.anchor_given = Some(find.to_string());
-                outcome.anchor_read_as = Some(read_as);
-            }
-            hits = found;
-        }
+        hits = found;
     }
     outcome.matches = hits.len();
     let shown = anchor::shown(find);
@@ -7756,10 +8281,9 @@ fn locate(
         }
         ([one], None) => *one,
         (many, None) => {
-            let n = many.len();
             return Err((
                 "AMBIGUOUS_ANCHOR".into(),
-                format!("{shown} occurs {n} times in the paragraph; set \"occurrence\" to 1..={n}"),
+                syntax.ambiguous_anchor(text, find, many),
             ));
         }
         (many, Some(k)) if k <= many.len() => many[k - 1],
@@ -7833,6 +8357,46 @@ fn attach_segment(
 /// How many characters of a paragraph's text a suggested `contains`
 /// selector quotes at most.
 const SELECTOR_CHARS: usize = 60;
+
+/// How many paragraphs an `ANCHOR_NOT_FOUND` names before "and N more"
+/// (#1889).
+const NAMED_ANCHOR_CANDIDATES: usize = 3;
+
+/// How many graphemes of a candidate paragraph's text an
+/// `ANCHOR_NOT_FOUND` quotes (#1889): the issue's own example,
+/// `p53 ("10.2. Liability Cap. To the maximum extent…")`, is 42.
+const ANCHOR_CANDIDATE_CHARS: usize = 42;
+
+/// A bounded window centred on the matched span, shifted inward at either
+/// paragraph edge. Even a match inside a cluster includes the whole cluster;
+/// a match longer than the budget shows its middle. Never split a grapheme.
+fn anchor_candidate_excerpt(text: &str, (start, end): (usize, usize)) -> String {
+    let boundaries: Vec<usize> = text
+        .grapheme_indices(true)
+        .map(|(i, _)| i)
+        .chain(std::iter::once(text.len()))
+        .collect();
+    let count = boundaries.len() - 1;
+    let first = boundaries
+        .partition_point(|&i| i <= start)
+        .saturating_sub(1);
+    let last = boundaries.partition_point(|&i| i < end);
+    let width = ANCHOR_CANDIDATE_CHARS.min(count);
+    let matched = last - first;
+    let from = if matched <= width {
+        first.saturating_sub((width - matched) / 2)
+    } else {
+        first + (matched - width) / 2
+    }
+    .min(count - width);
+    let to = from + width;
+    format!(
+        "{}{}{}",
+        if from > 0 { "…" } else { "" },
+        &text[boundaries[from]..boundaries[to]],
+        if to < count { "…" } else { "" }
+    )
+}
 
 /// The byte span of the words of `text` that `[start, end)` touches: out
 /// to the nearest whitespace or comparer word separator on each side, so
@@ -9454,7 +10018,7 @@ mod tests {
     use super::*;
 
     /// Every change to another author's comment, named or not, refuses
-    /// and notes in its own words (#1846).
+    /// under the guard and notes in its own words (#1846, #1892).
     #[test]
     fn others_comment_wording_covers_every_change() {
         let others = |change, author: &str| OthersComment {
@@ -9465,41 +10029,33 @@ mod tests {
         let cases = [
             (
                 OthersChange::Reword,
-                "change their words under their name",
-                "change its words",
                 "their words were changed under their name",
                 "its words were changed",
             ),
             (
                 OthersChange::Delete,
-                "delete their comment",
-                "delete it",
                 "their comment was deleted",
                 "it was deleted",
             ),
             (
                 OthersChange::Resolve,
-                "resolve their comment",
-                "resolve it",
                 "their comment was resolved",
                 "it was resolved",
             ),
             (
                 OthersChange::Reopen,
-                "reopen their comment",
-                "reopen it",
                 "their comment was reopened",
                 "it was reopened",
             ),
         ];
-        for (change, named_to, unnamed_to, named_note, unnamed_note) in cases {
+        for (change, named_note, unnamed_note) in cases {
             assert_eq!(
-                others(change, "Bob").refusal("R", "S", "O"),
-                format!(r#"c1 is by "Bob"; reply instead (R), or pass O to {named_to}"#)
+                others(change, "Bob").refusal("R", "S"),
+                r#"c1 is by "Bob"; reply instead (R)"#
             );
             assert_eq!(
-                others(change, "").refusal("R", "S", "O"),
-                format!("c1 names no author; reply instead (R), or pass O to {unnamed_to}")
+                others(change, "").refusal("R", "S"),
+                "c1 names no author; reply instead (R)"
             );
             assert_eq!(
                 others(change, "Bob").note(),
@@ -9512,12 +10068,12 @@ mod tests {
         }
         let with = OthersChange::DeletedWith(0);
         assert_eq!(
-            others(with, "Bob").refusal("R", "S", "O"),
-            r#"deleting c0 deletes c1, a reply by "Bob"; resolve c0 instead (S), or pass O to delete their reply with it"#
+            others(with, "Bob").refusal("R", "S"),
+            r#"deleting c0 deletes c1, a reply by "Bob"; resolve c0 instead (S)"#
         );
         assert_eq!(
-            others(with, "").refusal("R", "S", "O"),
-            "deleting c0 deletes c1, a reply that names no author; resolve c0 instead (S), or pass O to delete that reply with it"
+            others(with, "").refusal("R", "S"),
+            "deleting c0 deletes c1, a reply that names no author; resolve c0 instead (S)"
         );
         assert_eq!(
             others(with, "Bob").note(),
@@ -9617,6 +10173,7 @@ mod tests {
             operations: Vec::new(),
             update_fields: true,
             rewrite_others_comments: true,
+            others: Others::Keep,
         };
         let value = serde_json::to_value(&plan).unwrap();
         let written: Vec<&str> = value
@@ -9735,6 +10292,11 @@ mod tests {
         assert_eq!(e.to_string(), "X: why");
     }
 }
+#[cfg(test)]
+thread_local! {
+    static CANDIDATE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 // Reuse the repository's existing, entirely in-memory package fixture.
 #[cfg(test)]
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
@@ -9751,6 +10313,50 @@ mod deeper_boundary_tests {
         EditPlan::from_json(&format!(
             r#"{{"schema_version":1,"author":"Boundary","date":"2026-01-01T00:00:00Z","operations":{operations}}}"#
         )).unwrap()
+    }
+
+    #[test]
+    fn anchor_candidate_literal_success_skips_normalized_searches() {
+        for find in ["Liability Cap", "**Liability Cap**"] {
+            let source = docx(&para("Liability Cap"));
+            let plan = plan(
+                &serde_json::json!([{
+                    "kind":"replace", "paragraph":"p0", "find":find, "replacement":"Cap"
+                }])
+                .to_string(),
+            );
+            let mut tx = Transaction::start(&source, &plan).unwrap();
+            anchor::READING_CALLS.with(|calls| calls.set(0));
+            tx.resolve().unwrap();
+            assert_eq!(
+                anchor::READING_CALLS.with(std::cell::Cell::get),
+                0,
+                "literal/plain success must not allocate normalized offset maps"
+            );
+        }
+    }
+
+    #[test]
+    fn anchor_candidate_repeated_failures_scan_once_per_anchor() {
+        let source = docx(&format!("{}{}", para("Other."), para("Liability Cap")));
+        let operations = serde_json::json!([
+            {"kind":"replace", "paragraph":"p0", "find":"Liability Cap", "replacement":"Cap"},
+            {"kind":"replace", "paragraph":"p0", "find":"Liability Cap", "replacement":"Cap"},
+            {"kind":"replace", "paragraph":"p0", "find":"absent", "replacement":"Cap"},
+            {"kind":"replace", "paragraph":"p0", "find":"absent", "replacement":"Cap"}
+        ]);
+        let plan = plan(&operations.to_string());
+        let mut tx = Transaction::start(&source, &plan).unwrap();
+        CANDIDATE_SCANS.with(|calls| calls.set(0));
+        let error = tx.resolve().unwrap_err();
+        assert_eq!(error.outcomes.len(), 4);
+        assert_eq!(error.outcomes[0].candidates, error.outcomes[1].candidates);
+        assert!(error.outcomes[2].candidates.is_empty());
+        assert_eq!(
+            CANDIDATE_SCANS.with(std::cell::Cell::get),
+            2,
+            "repeated failures must reuse both found and empty candidate results"
+        );
     }
 
     fn dom(xml: &str) -> (Dom, NodeId) {
@@ -9784,6 +10390,7 @@ mod deeper_boundary_tests {
             anchor_given: None,
             anchor_read_as: None,
             near: None,
+            candidates: Vec::new(),
         }
     }
 
@@ -9901,7 +10508,13 @@ mod deeper_boundary_tests {
             },
         ] {
             assert_eq!(
-                resolve_selected(&source, Some(&selection), RemovedAnchorComments::Remove).unwrap(),
+                resolve_selected(
+                    &source,
+                    Some(&selection),
+                    RemovedAnchorComments::Remove,
+                    PlanSyntax::V1
+                )
+                .unwrap(),
                 (None, ResolvedRevisions::default(), AnchorChanges::default())
             );
         }
@@ -9910,8 +10523,13 @@ mod deeper_boundary_tests {
             reject: Some(ChangeFilter::ids(["r1"])),
             reject_visible: false,
         };
-        let (bytes, resolved, _) =
-            resolve_selected(&source, Some(&selection), RemovedAnchorComments::Remove).unwrap();
+        let (bytes, resolved, _) = resolve_selected(
+            &source,
+            Some(&selection),
+            RemovedAnchorComments::Remove,
+            PlanSyntax::V1,
+        )
+        .unwrap();
         assert_eq!(
             resolved,
             ResolvedRevisions {

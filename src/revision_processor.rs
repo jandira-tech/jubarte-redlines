@@ -32,8 +32,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use crate::markup_simplifier::remove_rsid_transform;
-use crate::namespaces::{M, PT, W};
-use crate::xmllinq::{Dom, NodeId, XName};
+use crate::namespaces::{M, PT, W, W14};
+use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 /// Local names of `RevisionProcessor.TrackedRevisionsElements` (W namespace).
 const TRACKED_REVISION_LOCALS: &[&str] = &[
@@ -646,6 +646,51 @@ fn rebuild_named(dom: &mut Dom, new_name: XName, src: NodeId, keep_attrs: bool) 
     ne
 }
 
+/// `ins` / `del` / `moveFrom` / `moveTo`, the paragraph-mark revisions
+/// `CT_ParaRPr` puts first.
+fn paragraph_mark_revision(name: &XName) -> bool {
+    name.namespace_name() == W::URI
+        && matches!(name.local_name(), "ins" | "del" | "moveFrom" | "moveTo")
+}
+
+/// A row-history mark `CT_TrPr` allows and the saved `CT_TrPrBase` does
+/// not: `w:ins`, `w:del`, then `w14:conflictIns`, `w14:conflictDel`.
+fn row_history_mark(name: &XName) -> bool {
+    if name.namespace_name() == W::URI {
+        return matches!(name.local_name(), "ins" | "del");
+    }
+    name.namespace_name() == W14::URI && matches!(name.local_name(), "conflictIns" | "conflictDel")
+}
+
+/// #1724: the cell was inserted, either on the live `w:tcPr` or on the
+/// `w:tcPr` a `w:tcPrChange` is about to put back. `CT_TcPrInner` can hold
+/// `w:cellIns`, so the restored mark is the cell's own insertion.
+fn inserted_cell(dom: &Dom, tc: NodeId) -> bool {
+    dom.elements(tc, Some(&W::tc_pr())).into_iter().any(|tcpr| {
+        dom.element(tcpr, &W::cell_ins()).is_some()
+            || dom
+                .element(tcpr, &W::tc_pr_change())
+                .and_then(|change| dom.element(change, &W::tc_pr()))
+                .is_some_and(|saved| dom.element(saved, &W::cell_ins()).is_some())
+    })
+}
+
+/// #1724 `c3`: a live `w:cellMerge` with `w:vMerge="rest"` and
+/// `w:vMergeOrig="cont"`. Word's Reject All of that one-row shape keeps
+/// the cell and removes its text. Read it here, before the transform
+/// drops the `w:cellMerge`.
+fn continued_merge_cell(dom: &Dom, tc: NodeId) -> bool {
+    let v_merge_orig = W::name("vMergeOrig");
+    dom.elements(tc, Some(&W::tc_pr())).into_iter().any(|tcpr| {
+        dom.elements(tcpr, Some(&W::cell_merge()))
+            .into_iter()
+            .any(|mark| {
+                dom.attribute(mark, &W::v_merge()) == Some("rest")
+                    && dom.attribute(mark, &v_merge_orig) == Some("cont")
+            })
+    })
+}
+
 /// Port of `RejectRevisionsForPartTransform` — revert the *non-invertible*
 /// revisions (property changes) and drop inserted structural markers. Returns
 /// `None` to drop the node.
@@ -708,17 +753,21 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
         // deletion. The live w:ins/w:del stay, so the reversal below still
         // finds the row's own revision and Reject All removes an inserted
         // row whose properties also changed.
+        // #1723: that base type also has no w14:conflictIns/conflictDel.
+        // They follow w:ins/w:del, which is where CT_TrPr puts them. A
+        // saved copy of either is dropped: two of one kind is invalid, and
+        // the live mark is the one Word keeps. Renaming them to w:ins/w:del
+        // waits until after accept (demote_row_conflict_marks): a w:ins in
+        // trPr would reverse into a w:del and Reject All would delete the
+        // row.
         if name == W::tr_pr() {
             for e in dom.elements(new_prop, None) {
-                if dom.name(e).is_some_and(|n| n == W::ins() || n == W::del()) {
+                if dom.name(e).is_some_and(|n| row_history_mark(&n)) {
                     dom.remove(e);
                 }
             }
             for mark in dom.elements(node, None) {
-                if dom
-                    .name(mark)
-                    .is_some_and(|n| n == W::ins() || n == W::del())
-                {
+                if dom.name(mark).is_some_and(|n| row_history_mark(&n)) {
                     let mark_clone = dom.clone_subtree(mark);
                     dom.add(new_prop, mark_clone);
                 }
@@ -748,11 +797,36 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
     if name == W::r_pr()
         && let Some(chg) = dom.element(node, &W::r_pr_change())
     {
+        // Identify a paragraph mark (`w:pPr/w:rPr`) while `node` is still
+        // parented. A run's `w:rPr` is not one.
+        let paragraph_mark = dom.parent(node).is_some_and(|p| dom.name_is(p, &W::p_pr()));
         let saved = dom.element(chg, &W::r_pr());
         let new_rpr = match saved {
             Some(sp) => dom.clone_subtree(sp),
             None => dom.new_element(W::r_pr()),
         };
+        // #1722: the reversal below joins on the live ins/del/moveFrom/moveTo.
+        // `CT_ParaRPrOriginal` can hold the same four, so a saved copy of one
+        // is removed and the live mark is put back, first, in that order. Two
+        // of one kind is invalid, and a saved insertion would join after a
+        // selective freeze had already kept the live mark. A run's `rPr` is
+        // left as the snapshot wrote it.
+        if paragraph_mark {
+            for e in dom.elements(new_rpr, None) {
+                if dom.name(e).is_some_and(|n| paragraph_mark_revision(&n)) {
+                    dom.remove(e);
+                }
+            }
+            let live: Vec<NodeId> = dom
+                .elements(node, None)
+                .into_iter()
+                .filter(|&e| dom.name(e).is_some_and(|n| paragraph_mark_revision(&n)))
+                .collect();
+            for mark in live.into_iter().rev() {
+                let cloned = dom.clone_subtree(mark);
+                dom.add_first(new_rpr, cloned);
+            }
+        }
         carry_kept_revisions(dom, node, new_rpr, true);
         return reject_revisions_for_part_transform(dom, new_rpr);
     }
@@ -760,26 +834,40 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
     if name == W::numbering_change() || name == W::cell_del() || name == W::cell_merge() {
         return None;
     }
-    // tc whose tcPr contains a cellIns → drop the inserted cell.
-    if name == W::tc() {
-        let has_cell_ins = dom
-            .elements(node, Some(&W::tc_pr()))
-            .into_iter()
-            .any(|tcpr| dom.element(tcpr, &W::cell_ins()).is_some());
-        if has_cell_ins {
-            return None;
-        }
+    // #1724: a cellIns on the live tcPr (c0, gb2) or on the tcPr the
+    // change restores (c1) drops the cell. A restored cellDel is not an
+    // insertion: the drop below removes the marker and the cell stays.
+    // Checking the rebuilt tcPr instead would keep gb2, whose saved copy
+    // has no cellIns.
+    if name == W::tc() && inserted_cell(dom, node) {
+        return None;
     }
+    // #1724 c3: decided on the live cellMerge, which the rebuild drops.
+    let clear_blocks = name == W::tc() && continued_merge_cell(dom, node);
 
     // Identity: rebuild with attributes + transformed children.
     let ne = dom.new_element(name);
     for (an, av) in dom.attributes(node) {
         dom.set_attribute_value(ne, &an, Some(&av));
     }
+    let mut kept_block = false;
     for c in dom.nodes(node) {
+        if clear_blocks && dom.name(c).is_some_and(|n| n == W::p() || n == W::tbl()) {
+            continue;
+        }
         if let Some(t) = reject_revisions_for_part_transform(dom, c) {
+            if clear_blocks && dom.name(t).is_some_and(|n| n == W::p() || n == W::tbl()) {
+                kept_block = true;
+            }
             dom.add(ne, t);
         }
+    }
+    // A cell has to hold a block. The continued merge's paragraphs and
+    // nested tables are gone, so the cell keeps an empty paragraph.
+    // Do not write w:vMerge: Word's c3 output has none.
+    if clear_blocks && !kept_block {
+        let empty = dom.new_element(W::p());
+        dom.add(ne, empty);
     }
     Some(ne)
 }
@@ -819,7 +907,37 @@ fn reject_content(
     let reverted = normalize_orphan_moves(dom, reverted, OrphanMovePass::RejectMoveToMarkers);
     let reversed = reverse_revisions_transform(dom, reverted);
     let derssid = remove_rsid_transform(dom, reversed).expect("reject: root not dropped by rsid");
-    accept_content(dom, derssid, keep_comments, kept)
+    let accepted = accept_content(dom, derssid, keep_comments, kept);
+    // #1723: only now. The short-circuit above (no w: revision at all)
+    // never reaches here, so a bare conflict mark is left as Word wrote it.
+    demote_row_conflict_marks(dom, accepted);
+    accepted
+}
+
+/// Word's Reject All of a row writes `w14:conflictIns` / `w14:conflictDel`
+/// back as a plain `w:ins` / `w:del` on that row. The mark keeps its own
+/// id, author and date. A conflict mark on a run or a paragraph mark is
+/// not this case.
+fn demote_row_conflict_marks(dom: &mut Dom, root: NodeId) {
+    let conflict_ins = W14::name("conflictIns");
+    let conflict_del = W14::name("conflictDel");
+    let marks: Vec<(NodeId, bool)> = dom
+        .descendants(root, None)
+        .into_iter()
+        .filter_map(|mark| {
+            let ins = dom.name_is(mark, &conflict_ins);
+            if !ins && !dom.name_is(mark, &conflict_del) {
+                return None;
+            }
+            let in_row = dom
+                .parent(mark)
+                .is_some_and(|parent| dom.name_is(parent, &W::tr_pr()));
+            in_row.then_some((mark, ins))
+        })
+        .collect();
+    for (mark, ins) in marks {
+        dom.set_name(mark, if ins { W::ins() } else { W::del() });
+    }
 }
 
 // ───────────────────────────── A.0 — part-pipeline walkers ──────────────────
@@ -1889,7 +2007,8 @@ fn accept_deleted_and_moved_from_content_controls_transform(
 // ─────────────── A.5a — deleted / moved-from paragraph marks ────────────────
 
 /// A.5a — `IsRunContent` (:2356): `Some(true)` = run-level content,
-/// `Some(false)` = marker/non-content, `None` = unknown (C# throws).
+/// `Some(false)` = marker/non-content, `None` = unknown. Unknown children
+/// conservatively keep the paragraph; they are not evidence of deletion.
 fn is_run_content(name: &XName) -> Option<bool> {
     // An authored compatibility wrapper carries its complete presentation
     // alternatives, like math or a field wrapper. Capability selection belongs
@@ -1935,36 +2054,52 @@ fn is_run_content(name: &XName) -> Option<bool> {
     }
 }
 
-/// A.5a — `CollapseTransform` (:2331): splice `w:dir`/`w:bdr`/`w:ins`/
-/// `w:moveTo`/`w:smartTag` to their element children and `w:sdt` to its
-/// `sdtContent` element children — ONE level, un-recursed, exactly like the
-/// C# (`return element.Elements()`); drop `w:pPr`; rebuild everything else
-/// recursively. (Yes, `w:bdr` — the C# comment says `bdo` but the code tests
-/// `W.bdr`; reproduced as written.)
+/// A.5a — `CollapseTransform` (:2331): recursively look through run wrappers
+/// and `sdtContent`, dropping properties in this disposable content probe.
+/// Like Docxodus #281, recurse when splicing: wrappers can nest around an
+/// insertion or move destination (#1704). Keep deletions opaque so their
+/// runs do not count as surviving content. The output tree retains its
+/// authored wrappers; only the paragraph-deletion probe is flattened here.
 fn collapse_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
     if !dom.is_element(node) {
         return vec![dom.clone_subtree(node)];
     }
     let name = dom.name(node).unwrap();
+    // An authored field can have no cached result yet; its instruction is
+    // still content. Only see through the field when resolving its revisions.
+    if name == W::fld_simple() && !element_has_tracked_revisions(dom, node) {
+        return vec![dom.clone_subtree(node)];
+    }
     if name.namespace_name() == W::URI
         && matches!(
             name.local_name(),
-            "dir" | "bdr" | "ins" | "moveTo" | "smartTag"
+            "dir"
+                | "bdo"
+                | "bdr"
+                | "ins"
+                | "moveTo"
+                | "smartTag"
+                | "customXml"
+                | "fldSimple"
+                | "hyperlink"
         )
     {
-        let kids = dom.elements(node, None);
-        return kids.into_iter().map(|e| dom.clone_subtree(e)).collect();
+        let mut out = Vec::new();
+        for child in dom.nodes(node) {
+            out.extend(collapse_transform(dom, child));
+        }
+        return out;
     }
     if name == W::sdt() {
         let mut out = Vec::new();
         for sc in dom.elements(node, Some(&W::sdt_content())) {
-            for e in dom.elements(sc, None) {
-                out.push(dom.clone_subtree(e));
+            for child in dom.nodes(sc) {
+                out.extend(collapse_transform(dom, child));
             }
         }
         return out;
     }
-    if name == W::p_pr() {
+    if name == W::p_pr() || name == W::name("smartTagPr") || name == W::name("customXmlPr") {
         return vec![];
     }
     let ne = dom.new_element(name);
@@ -1982,9 +2117,9 @@ fn collapse_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
 /// A.5a — `AllParaContentIsDeleted` (:2310): after collapsing wrappers, does
 /// the paragraph hold NO run-level content?
 ///
-/// # Panics
-/// Like the C# ("Internal error 20"), on a child element `IsRunContent`
-/// cannot classify.
+/// An unrecognized child (including malformed paragraph-level ruby, #1711)
+/// keeps its content rather than panicking or silently deleting it. This is
+/// not a schema repair: `validate` diagnoses known malformed shapes.
 fn all_para_content_is_deleted(dom: &mut Dom, p: NodeId) -> bool {
     let collapsed = collapse_transform(dom, p);
     debug_assert_eq!(collapsed.len(), 1, "w:p rebuilds to a single element");
@@ -2001,15 +2136,11 @@ fn all_para_content_is_deleted(dom: &mut Dom, p: NodeId) -> bool {
             return accept_all_other_revisions_transform(dom, ce)
                 .into_iter()
                 .any(|node| {
-                    dom.name(node).is_some_and(|name| {
-                        is_run_content(&name).unwrap_or_else(|| {
-                            panic!("Internal error 20, found element {}", name.clark())
-                        })
-                    })
+                    dom.name(node)
+                        .is_some_and(|name| is_run_content(&name).unwrap_or(true))
                 });
         }
-        is_run_content(&n)
-            .unwrap_or_else(|| panic!("Internal error 20, found element {}", n.clark()))
+        is_run_content(&n).unwrap_or(true)
     })
 }
 
@@ -2551,6 +2682,13 @@ fn add_content_controls_with_owners(
         }
     }
 
+    // Document order of the new document's nodes; wrapping keeps it.
+    let order: HashMap<NodeId, usize> = dom
+        .descendants(new_document, None)
+        .into_iter()
+        .enumerate()
+        .map(|(i, n)| (n, i))
+        .collect();
     let mut paragraph_by_id: HashMap<String, NodeId> = HashMap::new();
     for p in dom.descendants(new_document, Some(&W::p())) {
         if let Some(id) = dom.attribute(p, &unique_id) {
@@ -2834,6 +2972,38 @@ fn add_content_controls_with_owners(
             runs_in_new_document = anchors;
         }
 
+        // A paragraph made only of this control's paragraphs belongs inside
+        // it, runs or not: a runless blank, an equation (`m:r`, no `w:r`).
+        // Word keeps both in the control (#2006).
+        if let Some(paragraph_owners) = paragraph_owners
+            && !runs_in_new_document.is_empty()
+            && !owned_paragraphs.is_empty()
+        {
+            let mut joined: Vec<NodeId> = paragraph_owners
+                .iter()
+                .filter(|(joined, owners)| {
+                    !owners.is_empty()
+                        && owners.iter().all(|o| owned_paragraphs.contains(o))
+                        && !runs_in_new_document.contains(joined)
+                        && order.contains_key(joined)
+                        && std::iter::successors(dom.parent(**joined), |&a| dom.parent(a))
+                            .any(|a| a == new_document)
+                })
+                .map(|(&joined, _)| joined)
+                .collect();
+            if !joined.is_empty() {
+                // An anchor inside a joined paragraph (one of its runs) is
+                // covered by the paragraph itself.
+                runs_in_new_document.retain(|&anchor| {
+                    !dom.ancestors(anchor, None)
+                        .iter()
+                        .any(|a| joined.contains(a))
+                });
+                runs_in_new_document.append(&mut joined);
+                runs_in_new_document.sort_by_key(|n| order.get(n).copied().unwrap_or(usize::MAX));
+            }
+        }
+
         // deepest common ancestor of all the runs (nearest-first intersection)
         let Some(first_run) = runs_in_new_document.first().copied() else {
             continue;
@@ -2939,19 +3109,16 @@ fn add_content_controls_with_owners(
     new_document
 }
 
-/// Does `paragraph` (a source paragraph, before the mark merge) leave nothing
-/// once its marks go: no run with content outside a deletion or a move away,
-/// nothing else but its properties and markers? The markers are bookmarks,
-/// proofing marks, a comment's range and its reference run, and permission
-/// ranges. Anything not known to be empty brings something (#1694: only
-/// these shapes were checked against Word, rounds 1 to 9).
-fn brings_nothing(dom: &Dom, paragraph: NodeId) -> bool {
+/// `brings_nothing` with the revision containers still live: a `w:del`,
+/// `w:ins`, `w:moveFrom` or `w:moveTo` in the paragraph counts as content,
+/// so `emptied` answers "nothing authored here at all". With `emptied`
+/// true those containers count as nothing — the paragraph's words all go.
+fn paragraph_empties(dom: &Dom, paragraph: NodeId, emptied: bool) -> bool {
     let reference = W::comment_reference();
     dom.elements(paragraph, None).into_iter().all(|child| {
         dom.name(child).is_none_or(|name| {
             name == W::p_pr()
-                || name == W::del()
-                || name == W::move_from()
+                || (emptied && (name == W::del() || name == W::move_from()))
                 || name == W::bookmark_start()
                 || name == W::bookmark_end()
                 || name == W::proof_err()
@@ -2966,6 +3133,16 @@ fn brings_nothing(dom: &Dom, paragraph: NodeId) -> bool {
                         .all(|e| dom.name_is(e, &W::r_pr()) || dom.name_is(e, &reference)))
         })
     })
+}
+
+/// Does `paragraph` (a source paragraph, before the mark merge) leave nothing
+/// once its marks go: no run with content outside a deletion or a move away,
+/// nothing else but its properties and markers? The markers are bookmarks,
+/// proofing marks, a comment's range and its reference run, and permission
+/// ranges. Anything not known to be empty brings something (#1694: only
+/// these shapes were checked against Word, rounds 1 to 9).
+fn brings_nothing(dom: &Dom, paragraph: NodeId) -> bool {
+    paragraph_empties(dom, paragraph, true)
 }
 
 /// Does Word keep the deleted mark of paragraph `a` before `b`? It does
@@ -3779,6 +3956,116 @@ fn collect_empty_table_cells(
     }
 }
 
+/// The content of a control (`w:sdt`) holds nothing a resolution left
+/// behind: no children at all, or paragraphs that all bring nothing. A
+/// nested `w:sdt`, a `w:tbl` or a surviving run counts as content, so only
+/// the innermost of nested emptied controls qualifies (Word 16, hn30).
+/// `emptied` selects the paragraph test: live revision containers still
+/// count as content before the transforms (`authored`), as nothing after
+/// them (`resolved`).
+fn emptied_content(dom: &Dom, content: NodeId, resolved: bool) -> bool {
+    dom.elements(content, None)
+        .into_iter()
+        .all(|child| dom.name_is(child, &W::p()) && paragraph_empties(dom, child, resolved))
+}
+
+/// Stamp on a control that was already empty before the transforms ran,
+/// so [`mark_emptied_controls`] marks only controls this resolution
+/// emptied. Lives and dies inside `accept_content`; never serialized.
+fn authored_empty(dom: &Dom, control: NodeId) -> bool {
+    dom.element(control, &W::sdt_content())
+        .is_some_and(|content| emptied_content(dom, content, false))
+}
+
+/// Where the `w:` children of `w:sdtPr` that precede `w:showingPlcHdr` in
+/// `CT_SdtPr` end: before `dataBinding`, `label`, `tabIndex`, the type
+/// child and every extension-namespace child.
+fn before_showing_plc_hdr(dom: &Dom, sdt_pr: NodeId) -> Option<NodeId> {
+    const BEFORE: &[&str] = &[
+        "rPr",
+        "alias",
+        "tag",
+        "id",
+        "lock",
+        "placeholder",
+        "temporary",
+    ];
+    dom.elements(sdt_pr, None).into_iter().find(|&e| {
+        dom.name(e)
+            .is_some_and(|n| n.namespace_name() != W::URI || !BEFORE.contains(&n.local_name()))
+    })
+}
+
+/// Word's answer to an emptied content control, Accept All and Reject All
+/// alike (#1703, the #1694 A/B): `w:showingPlcHdr` in the control's
+/// `w:sdtPr` and a bare run of five spaces —
+/// `<w:r><w:t xml:space="preserve">     </w:t></w:r>` — inside the
+/// control's paragraph for a block control, directly in `w:sdtContent`
+/// for an inline one. A `pt:AuthoredEmpty` stamp tells a control emptied
+/// by this resolution from one authored empty, and gallery controls
+/// (`w:docPartObj`/`w:docPartList`) and controls naming a
+/// `w:placeholder/w:docPart` stay as the resolution left them — Word
+/// marks neither.
+fn mark_emptied_controls(dom: &mut Dom, root: NodeId) {
+    let authored = PT::name("AuthoredEmpty");
+    for control in dom.descendants(root, Some(&W::sdt())) {
+        let already = dom.attribute(control, &authored).is_some();
+        dom.set_attribute_value(control, &authored, None);
+        if already {
+            continue;
+        }
+        let Some(content) = dom.element(control, &W::sdt_content()) else {
+            continue;
+        };
+        if !emptied_content(dom, content, true) {
+            continue;
+        }
+        // Word's controls carry a `w:sdtPr` (the A/B's were empty); one
+        // without is a compare artifact, not a control Word authored, and
+        // stays as the resolution left it.
+        let Some(sdt_pr) = dom.element(control, &W::sdt_pr()) else {
+            continue;
+        };
+        // Word leaves a gallery control (w:docPartObj/w:docPartList)
+        // alone: its accepted "Page Numbers (Bottom of Page)" footer
+        // control keeps an empty paragraph, no placeholder (the Word
+        // corpus, b4cd671041). A control naming a w:placeholder/w:docPart
+        // shows that part's text, not five spaces (#1703 open questions).
+        if dom.elements(sdt_pr, None).iter().any(|&e| {
+            dom.name(e).is_some_and(|n| {
+                n.namespace_name() == W::URI
+                    && (matches!(n.local_name(), "docPartObj" | "docPartList")
+                        || (n.local_name() == "placeholder"
+                            && dom.element(e, &W::name("docPart")).is_some()))
+            })
+        }) {
+            continue;
+        }
+        if dom.element(sdt_pr, &W::name("showingPlcHdr")).is_none() {
+            let showing = dom.new_element(W::name("showingPlcHdr"));
+            match before_showing_plc_hdr(dom, sdt_pr) {
+                Some(later) => dom.add_before_self(later, showing),
+                None => dom.add(sdt_pr, showing),
+            }
+        }
+        let run = dom.new_element(W::r());
+        let t = dom.new_element(W::t());
+        dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+        dom.add_text(t, "     ");
+        dom.add(run, t);
+        let block = dom.elements(content, Some(&W::p())).first().copied();
+        match block {
+            Some(paragraph) => dom.add(paragraph, run),
+            None if dom.ancestors(control, Some(&W::p())).is_empty() => {
+                let paragraph = dom.new_element(W::p());
+                dom.add(content, paragraph);
+                dom.add(paragraph, run);
+            }
+            None => dom.add(content, run),
+        }
+    }
+}
+
 // ─────────────── A.10 — the full AcceptRevisionsForPart pipeline ────────────
 
 /// A.10 — `AcceptRevisionsForPart` (:1314) at content scope: the exact
@@ -3803,6 +4090,14 @@ fn accept_content(
     let has_rev = element_has_tracked_revisions(dom, root);
     let e = remove_rsid_transform(dom, root).expect("root not dropped by rsid removal");
     let e = if has_rev {
+        // #1703: flag the controls empty already; the post-pass cannot tell
+        // them from the ones the transforms below empty.
+        let authored = PT::name("AuthoredEmpty");
+        for control in dom.descendants(e, Some(&W::sdt())) {
+            if authored_empty(dom, control) {
+                dom.set_attribute_value(control, &authored, Some("1"));
+            }
+        }
         // O.0: normalize orphan move elements first — the comment/bookmark
         // prepasses and A.2/A.4 all treat matched moveFrom-range content as
         // deleted, so orphan `moveTo`/`moveFrom` elements must be `w:ins`/
@@ -3841,6 +4136,8 @@ fn accept_content(
         let e = accept_deleted_cells_transform(dom, e);
         let e = merge_adjacent_tables_transform(dom, e);
         bookmarks::drop_unpaired_bookmarks(dom, e);
+        // #1703: a control the resolution emptied shows Word's placeholder.
+        mark_emptied_controls(dom, e);
         e
     } else {
         e
@@ -3990,8 +4287,8 @@ fn numbering_part(pkg: &crate::opc::PartFs) -> Option<String> {
 }
 
 /// The main document's comments part (`word/comments.xml`), when it has
-/// one. Its revisions resolve like every other part's, but they are not
-/// listed, so `changes` skips this part.
+/// one. Its revisions resolve like every other part's and are listed as
+/// `comments.rN` (#1706).
 pub(crate) fn comments_part(pkg: &crate::opc::PartFs) -> Option<String> {
     related_part(pkg, "comments")
 }

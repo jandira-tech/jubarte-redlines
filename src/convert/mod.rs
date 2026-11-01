@@ -7,8 +7,11 @@
 //!
 //! Layout aims at LibreOffice visual parity: the Carlito / Liberation
 //! faces (the same metric-compatible substitutes soffice embeds),
-//! Word's `docDefaults` (Calibri 11 / line 276 / after 200 twips) and
-//! `sectPr` page geometry. A page-by-page visual diff against a Word PDF
+//! Word's `docDefaults` (Calibri 11 / line 276 / after 200 twips while
+//! the file states them, Word 16's built-ins — Aptos 12 / line 278 /
+//! after 160 twips — when the styles part or its pPrDefault /
+//! rPrDefault are absent) and `sectPr` page geometry. A page-by-page
+//! visual diff against a Word PDF
 //! is the `diff_render` family; per-page font resolutions and the page
 //! text are in `RenderReport`.
 //!
@@ -51,6 +54,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::namespaces::{A, M, MC, R, W, W14, W15, WNE, WP};
 use crate::opc::PartFs;
+use crate::util::{narrow_finite_f32, parse_finite_f32, parse_finite_f64};
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 use font::{Face, FaceId, FaceRef, Fonts, NO_BREAK_HYPHEN};
@@ -928,7 +932,7 @@ fn with_layout<T>(
             if settings_flag(&pkg, "balanceSingleByteDoubleByteWidth")
                 && east_asian_layout(&pkg, &sheet, &fonts)
             {
-                balance_spaces(&mut blocks, &fonts);
+                balance_spaces(&mut blocks, &fonts, sheet.defaults.run.family_ea.as_deref());
             }
             squeeze_bracket_pairs(&mut blocks);
             if settings_flag(&pkg, "adjustLineHeightInTable") {
@@ -1814,6 +1818,29 @@ impl Defaults {
             normal_ind_jc: (false, false),
         }
     }
+
+    /// Word 16's built-in paragraph defaults — what a missing
+    /// `pPrDefault` (or no styles part at all) lays out on: after 160
+    /// twips, line 278 auto.
+    fn word_stock_para(&mut self) {
+        self.para.after = 8.0;
+        self.para.line_mult = 278.0 / 240.0;
+    }
+
+    /// Word 16's built-in run defaults — what a missing `rPrDefault` (or
+    /// no styles part at all) lays out on: Aptos 12pt, kern 1pt.
+    fn word_stock_run(&mut self) {
+        self.run.size = 12.0;
+        self.run.kern_half = 2;
+        self.run.family = "Aptos".into();
+        for slot in [
+            &mut self.run.family_hansi,
+            &mut self.run.family_ea,
+            &mut self.run.family_cs,
+        ] {
+            *slot = Some("Aptos".into());
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1928,6 +1955,13 @@ struct TextRun {
     /// A laid-out bar fraction, radical, or delimiter. Glyphs and rules
     /// are positioned from the run's baseline. `None` for every other run.
     math: Option<math_layout::MathBox>,
+    /// An inline picture standing on this run's baseline. Width and height
+    /// come from the image; the line breaker treats it as one unbreakable
+    /// box, the way it treats `math`. `None` for every other run.
+    pic: Option<Rc<LaidImage>>,
+    /// Blip [`NodeId`] of a picture placeholder not yet bound to its
+    /// `LaidImage`. Cleared by [`bind_flow_pictures`].
+    pic_src: Option<u32>,
 }
 
 impl TextRun {
@@ -1963,6 +1997,8 @@ impl TextRun {
             strut: false,
             math_ascii: false,
             math: None,
+            pic: None,
+            pic_src: None,
         }
     }
 
@@ -1970,9 +2006,11 @@ impl TextRun {
         let mut run = self.clone();
         run.text = text.into();
         // A split keeps the letters and drops the box. Painting the whole
-        // equation on a substring would draw it twice.
+        // equation, or the picture, on a substring would draw it twice.
         if run.text != self.text {
             run.math = None;
+            run.pic = None;
+            run.pic_src = None;
         }
         run
     }
@@ -2430,7 +2468,13 @@ struct LaidImage {
     /// Spaces and tabs before the paragraph's first inline picture, as
     /// characters of its runs: they push the picture along the line
     /// (0081ba58's logo sits after 36 spaces and three tabs).
+    /// `usize::MAX` when non-whitespace text precedes the picture.
     lead_chars: usize,
+    /// Characters of the paragraph before this picture, tabs included.
+    /// 0 when the picture is uncounted (a group member, a broken blip) or
+    /// is the paragraph's first content. A flow picture with text before
+    /// it joins that text's line at the painted piece that starts here.
+    at_chars: usize,
     /// The picture follows its paragraph's text with only whitespace and
     /// pictures after it: Word sets it at the end of the last text line.
     after_text: bool,
@@ -2443,6 +2487,10 @@ struct LaidImage {
     /// gives it a line of its run's font, 13.8pt of Times 12 there, and
     /// strokes it on that line.
     chrome_flat_run: Option<RunStyle>,
+    /// Blip node id when this is a body inline picture spliced into the
+    /// run stream. 0 for floats, groups, VML, bullets, and anything the
+    /// line breaker does not own.
+    src: u32,
 }
 
 /// The last painted body line: its ops start at `ops_start` on page
@@ -3131,9 +3179,11 @@ fn text_box_image(b: LaidTextBox, effect: [f32; 4]) -> LaidImage {
         outline: None,
         gap_before: 0.0,
         lead_chars: 0,
+        at_chars: 0,
         after_text: false,
         under: None,
         chrome_flat_run: None,
+        src: 0,
     }
 }
 
@@ -3144,7 +3194,7 @@ fn twip(v: f32) -> f32 {
 /// Word Save-as-PDF A4 is 595.2×841.92 pt for `pgSz` 11906×16838 twips
 /// (plan.md Step 10 I). Linear twip/20 is 595.3×841.9.
 fn word_pgsz_pt(raw: &str, pt: f32) -> f32 {
-    let Ok(twips) = raw.trim().parse::<f32>() else {
+    let Some(twips) = parse_finite_f32(raw.trim()) else {
         return pt;
     };
     if (twips - 11906.0).abs() < 0.5 {
@@ -3229,7 +3279,7 @@ fn apply_tab_stops(stops: &mut Vec<TabStop>, dom: &Dom, ppr: NodeId) {
     let same = |a: f32, b: f32| (a - b).abs() < 0.05;
     for tab in dom.elements(tabs, Some(&W::name("tab"))) {
         if attr_any(dom, tab, "val") == Some("clear")
-            && let Some(pos) = attr_any(dom, tab, "pos").and_then(|s| s.parse::<f32>().ok())
+            && let Some(pos) = attr_any(dom, tab, "pos").and_then(parse_finite_f32)
         {
             stops.retain(|s| !same(s.pos, twip(pos)));
         }
@@ -3252,7 +3302,7 @@ fn parse_tab_stops(dom: &Dom, ppr: NodeId) -> Vec<TabStop> {
         if val == "clear" {
             continue;
         }
-        if let Some(pos) = attr_any(dom, tab, "pos").and_then(|s| s.parse::<f32>().ok()) {
+        if let Some(pos) = attr_any(dom, tab, "pos").and_then(parse_finite_f32) {
             let align = match val {
                 // ISO Strict ST_TabJc: end/start are LTR right/left
                 // (Strict01 TOC val=end leader=dot pos=9350).
@@ -3299,19 +3349,21 @@ fn merge_tab_stops(into: &mut Vec<TabStop>, extra: &[TabStop]) {
 }
 
 /// OOXML length: bare number is twips; `pt` / `in` / `cm` / `mm` are already units.
+/// A non-finite operand, or a conversion that overflows (`1e38in`), is absent.
 fn parse_len(s: &str) -> Option<f32> {
     let t = s.trim();
-    if let Some(rest) = t.strip_suffix("pt") {
-        rest.trim().parse().ok()
+    let points = if let Some(rest) = t.strip_suffix("pt") {
+        parse_finite_f32(rest.trim())?
     } else if let Some(rest) = t.strip_suffix("in") {
-        rest.trim().parse::<f32>().ok().map(|v| v * 72.0)
+        parse_finite_f32(rest.trim())? * 72.0
     } else if let Some(rest) = t.strip_suffix("cm") {
-        rest.trim().parse::<f32>().ok().map(|v| v * 72.0 / 2.54)
+        parse_finite_f32(rest.trim())? * 72.0 / 2.54
     } else if let Some(rest) = t.strip_suffix("mm") {
-        rest.trim().parse::<f32>().ok().map(|v| v * 72.0 / 25.4)
+        parse_finite_f32(rest.trim())? * 72.0 / 25.4
     } else {
-        t.parse().ok().map(twip)
-    }
+        twip(parse_finite_f32(t)?)
+    };
+    points.is_finite().then_some(points)
 }
 
 fn load_theme(pkg: &PartFs) -> ThemeFonts {
@@ -3440,8 +3492,10 @@ fn parse_fmt_scheme(dom: &Dom, root: NodeId, probe: &ThemeFonts) -> FmtScheme {
             if i >= 3 {
                 break;
             }
-            if let Some(w) = attr_any(dom, child, "w").and_then(|s| s.parse::<f64>().ok()) {
-                widths[i] = Some(((w / 12700.0) as f32).clamp(0.4, 4.0));
+            if let Some(w) = attr_any(dom, child, "w").and_then(parse_finite_f64)
+                && let Some(pt) = narrow_finite_f32(w / 12700.0)
+            {
+                widths[i] = Some(pt.clamp(0.4, 4.0));
             }
             lines[i] = scheme_color(dom, child, probe);
             i += 1;
@@ -3490,6 +3544,11 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     defaults.para.sum_spacing = settings_flag(pkg, "doNotUseHTMLParagraphAutoSpacing");
     let mut raw: std::collections::HashMap<String, RawStyle> = std::collections::HashMap::new();
     let Some(xml) = pkg.part_string(&main_rel_part(pkg, "styles", "word/styles.xml")) else {
+        // No styles part at all: Word 16 lays the package out on the same
+        // stock defaults a styles part without pPrDefault / rPrDefault
+        // takes below — after=160 line=278, Aptos 12pt kern 1pt (#1725).
+        defaults.word_stock_para();
+        defaults.word_stock_run();
         return StyleSheet {
             defaults,
             by_id: HashMap::new(),
@@ -3541,20 +3600,10 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     // those; `<w:docDefaults/>` lays out the same. Present but empty, they
     // mean the OOXML ones: single-spaced Times New Roman.
     if !has("pPrDefault") {
-        defaults.para.after = 8.0;
-        defaults.para.line_mult = 278.0 / 240.0;
+        defaults.word_stock_para();
     }
     if !has("rPrDefault") {
-        defaults.run.size = 12.0;
-        defaults.run.kern_half = 2;
-        defaults.run.family = "Aptos".into();
-        for slot in [
-            &mut defaults.run.family_hansi,
-            &mut defaults.run.family_ea,
-            &mut defaults.run.family_cs,
-        ] {
-            *slot = Some("Aptos".into());
-        }
+        defaults.word_stock_run();
     }
     let doc_defaults = dom
         .descendants(root, Some(&W::name("docDefaults")))
@@ -3596,7 +3645,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
         .and_then(|dd| first_named(&dom, dd, "rPr"))
         .and_then(|rpr| first_named(&dom, rpr, "sz"))
         .and_then(|sz| attr_any(&dom, sz, "val"))
-        .and_then(|v| v.parse::<f32>().ok())
+        .and_then(parse_finite_f32)
         .map(|half| half / 2.0);
     let mut tables = HashMap::new();
     let mut implicit_para: Option<String> = None;
@@ -3894,7 +3943,7 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults, theme: &ThemeF
         .element(style, &W::r_pr())
         .and_then(|rpr| first_named(dom, rpr, "sz"))
         .and_then(|sz| attr_any(dom, sz, "val"))
-        .and_then(|v| v.parse::<f32>().ok())
+        .and_then(parse_finite_f32)
         .map(|half| half / 2.0);
     let run_family = dom
         .element(style, &W::r_pr())
@@ -4016,7 +4065,7 @@ fn parse_border_edge(dom: &Dom, el: NodeId) -> Option<([f32; 3], f32)> {
         return None;
     }
     let sz = attr_any(dom, el, "sz")
-        .and_then(|s| s.parse::<f32>().ok())
+        .and_then(parse_finite_f32)
         .unwrap_or(8.0);
     if sz <= 0.0 {
         return None;
@@ -4103,7 +4152,7 @@ fn row_exception_cell_borders(
 type TcEdge = Option<Option<([f32; 3], f32)>>;
 
 fn parse_tc_border_spec(dom: &Dom, cell: NodeId) -> Option<[TcEdge; 4]> {
-    let pr = first_named(dom, cell, "tcPr")?;
+    let pr = cell_pr(dom, cell)?;
     let borders = direct_named(dom, pr, "tcBorders")?;
     let edge = |name: &str| border_el(dom, borders, name).map(|el| parse_border_edge(dom, el));
     Some([edge("top"), edge("bottom"), edge("left"), edge("right")])
@@ -4622,13 +4671,13 @@ fn paint_family<'a>(style: &'a RunStyle, text: &str) -> &'a str {
 fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
     if let Some(sz) = first_named(dom, rpr, "sz")
         && let Some(val) = dom.attribute(sz, &W::val())
-        && let Ok(half) = val.parse::<f32>()
+        && let Some(half) = parse_finite_f32(val)
     {
         style.size = half / 2.0;
     }
     if let Some(sz) = first_named(dom, rpr, "szCs")
         && let Some(val) = dom.attribute(sz, &W::val())
-        && let Ok(half) = val.parse::<f32>()
+        && let Some(half) = parse_finite_f32(val)
     {
         style.size_cs = Some(half / 2.0);
     }
@@ -4744,7 +4793,7 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
         && let Some(val) = attr_any(dom, w, "val")
         // ST_TextScale is a whole number or, in strict and newer files,
         // a percentage string (docxide case24: "150%").
-        && let Ok(pct) = val.trim().trim_end_matches('%').parse::<f32>()
+        && let Some(pct) = parse_finite_f32(val.trim().trim_end_matches('%'))
         && pct > 0.0
     {
         style.scale = pct / 100.0;
@@ -4762,7 +4811,7 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
     }
     if let Some(pos) = first_named(dom, rpr, "position")
         && let Some(val) = attr_any(dom, pos, "val")
-        && let Ok(half) = val.parse::<f32>()
+        && let Some(half) = parse_finite_f32(val)
     {
         style.offset = half / 2.0;
     }
@@ -4844,7 +4893,7 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
             // Each lineRule owns the whole line model: a later layer (child
             // style, direct pPr) must clear whatever an earlier one set.
             let unit = line.chars().any(|c| c.is_ascii_alphabetic());
-            let bare = if unit { None } else { line.parse::<f32>().ok() };
+            let bare = if unit { None } else { parse_finite_f32(line) };
             let spec = if unit {
                 parse_len(line)
             } else {
@@ -5237,7 +5286,7 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
             // 4096ths of a point (ECMA-376 17.6.5), not twips: 0016d88a's
             // -4301 is Word's 10.5 → 9.45pt CJK pitch, not -215pt a glyph.
             page.grid_char = attr_any(dom, grid, "charSpace")
-                .and_then(|v| v.parse::<f32>().ok())
+                .and_then(parse_finite_f32)
                 .map_or(0.0, |v| v / 4096.0);
         }
     }
@@ -5302,14 +5351,14 @@ fn parse_pg_borders(dom: &Dom, pb: NodeId) -> PageBorders {
             .and_then(parse_hex_color)
             .unwrap_or([0.0, 0.0, 0.0]);
         let width = attr_any(dom, el, "sz")
-            .and_then(|s| s.parse::<f32>().ok())
+            .and_then(parse_finite_f32)
             .map(|eighths| {
                 let pt = eighths / 8.0;
                 if pt < 0.5 { 0.24 } else { pt }
             })
             .unwrap_or(0.6);
         let space = attr_any(dom, el, "space")
-            .and_then(|s| s.parse::<f32>().ok())
+            .and_then(parse_finite_f32)
             .unwrap_or(24.0);
         let line = match val {
             "double" => BorderLine::Double,
@@ -6846,7 +6895,7 @@ fn lvl_marker_rpr(dom: &Dom, lvl: NodeId) -> (Option<f32>, bool, bool, bool) {
     };
     let size = first_named(dom, rpr, "sz")
         .and_then(|n| attr_any(dom, n, "val"))
-        .and_then(|s| s.parse::<f32>().ok())
+        .and_then(parse_finite_f32)
         .map(|half| half / 2.0);
     let underline = first_named(dom, rpr, "u").is_some_and(|n| {
         !val_is_false(dom, Some(n))
@@ -6992,7 +7041,12 @@ fn mark_ideograph_words(blocks: &mut [Block], fonts: &Fonts, compat_mode: u8) {
 /// at a run's edge; Word's PDF of ee79137dd5 keeps those at Calibri's width.
 /// Each stretch becomes a run of its own carrying the width
 /// (`RunStyle::fixed_advance`).
-fn balance_spaces(blocks: &mut [Block], fonts: &Fonts) {
+///
+/// `default_ea` is the document default eastAsia face: a run that names
+/// none inherits it, and an inherited Latin name (Word 16's stock Aptos,
+/// #1725) is no eastAsia font at all — Word balances such a run on the
+/// Latin average, where an authored absent name borrows a loaded one.
+fn balance_spaces(blocks: &mut [Block], fonts: &Fonts, default_ea: Option<&str>) {
     let mut loaded = Vec::new();
     for_each_block_runs(blocks, &mut |runs| {
         for run in runs.iter() {
@@ -7011,7 +7065,9 @@ fn balance_spaces(blocks: &mut [Block], fonts: &Fonts) {
             }
         }
     });
-    for_each_block_runs(blocks, &mut |runs| balance_run_spaces(runs, fonts, &loaded));
+    for_each_block_runs(blocks, &mut |runs| {
+        balance_run_spaces(runs, fonts, &loaded, default_ea);
+    });
 }
 
 /// Whether Word runs its East Asian layout code, which balances spaces:
@@ -7056,7 +7112,12 @@ fn for_each_block_runs(blocks: &mut [Block], f: &mut dyn FnMut(&mut Vec<TextRun>
     }
 }
 
-fn balance_run_spaces(runs: &mut Vec<TextRun>, fonts: &Fonts, loaded: &[(f32, bool, f32)]) {
+fn balance_run_spaces(
+    runs: &mut Vec<TextRun>,
+    fonts: &Fonts,
+    loaded: &[(f32, bool, f32)],
+    default_ea: Option<&str>,
+) {
     let is_space = |c: char| matches!(c, ' ' | '\u{a0}');
     let flat: Vec<char> = runs.iter().flat_map(|r| r.text.chars()).collect();
     let marks: Vec<bool> = (0..flat.len())
@@ -7074,6 +7135,11 @@ fn balance_run_spaces(runs: &mut Vec<TextRun>, fonts: &Fonts, loaded: &[(f32, bo
         let latin = fonts.get(ink_face(fonts, &run.style, " "));
         let em = match run.style.family_ea.as_deref() {
             Some(family) if family.eq_ignore_ascii_case(&run.style.family) => None,
+            // The inherited default: a non-East-Asian one is Word's
+            // unset eastAsia slot, which balances on the Latin average.
+            Some(family) if default_ea == Some(family) && !fonts.family_is_east_asian(family) => {
+                None
+            }
             Some(family) => fonts
                 .family_is_east_asian(family)
                 .then(|| fonts.east_asia_avg_em(family))
@@ -9369,7 +9435,7 @@ fn frame_box(
     let fp = para_frame_attrs(dom, first, ctx.sheet)?;
     let tw = |n: &str| {
         frame_attr(&fp, n)
-            .and_then(|v| v.parse::<f32>().ok())
+            .and_then(parse_finite_f32)
             .map(|v| v / 20.0)
     };
     // No x puts the frame on its anchor's edge (the key admits that only
@@ -9830,6 +9896,15 @@ fn ink_face(fonts: &Fonts, style: &RunStyle, text: &str) -> FaceRef {
     }
 }
 
+/// How an inline picture changes the line it stands on. `only` is a line
+/// of pictures and spaces: it advances like `emit_inline_pictures`.
+struct PicLine {
+    only: bool,
+    h: f32,
+    under: f32,
+    extra: f32,
+}
+
 fn line_fit_need(natural: f32, ascent: f32, style: &ParaStyle, line_box: f32) -> f32 {
     // An exact line is its box: Word clips the glyph tops of a short one
     // rather than moving it (001a915a's 4pt closing paragraph).
@@ -10098,6 +10173,16 @@ fn para_content_extent(fonts: &Fonts, para: &CellPara) -> (f32, f32) {
         let mark = (run.style.strike, run.style.underline);
         if marks.replace(mark).is_some_and(|prev| prev != mark) {
             carry = 0.0;
+        }
+        if let Some(pic) = &run.pic {
+            // An inline box is an independent unbreakable unit. Autofit
+            // must reserve its real width, not the U+FFFC glyph's advance.
+            let width = pic.w.max(1.0);
+            min = min.max(width + indent);
+            line += width;
+            trailing = 0.0;
+            carry = 0.0;
+            continue;
         }
         let face = fonts.get(ink_face(fonts, &run.style, &run.text));
         let size = run.style.layout_size();
@@ -10643,7 +10728,24 @@ fn cell_line_metrics(fonts: &Fonts, para: &CellPara, line: &[TextRun]) -> (f32, 
 
 fn cell_runs_line_box(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle) -> (f32, f32) {
     let (size, box_h) = cell_font_line_box(fonts, runs, style);
-    (size, line_box_for_math(fonts, runs, size, box_h, style))
+    let box_h = line_box_for_math(fonts, runs, size, box_h, style);
+    let pic_h = runs
+        .iter()
+        .filter_map(|r| r.pic.as_ref().map(|p| p.h))
+        .fold(0.0_f32, f32::max);
+    let drop = runs
+        .iter()
+        .filter_map(|r| r.math.as_ref().map(|m| m.ascent))
+        .fold(
+            fonts.get(cell_runs_face(fonts, runs).1).ascent_pt(size),
+            f32::max,
+        );
+    let extra = if style.line_exact.is_some() {
+        0.0
+    } else {
+        (pic_h - drop).max(0.0)
+    };
+    (size, box_h + extra)
 }
 
 /// A math box is taller than its font. The cell line holds the ascent
@@ -10689,7 +10791,12 @@ fn cell_baseline_drop(
     }
     let math_up = line
         .iter()
-        .filter_map(|run| run.math.as_ref().map(|math| math.ascent))
+        .filter_map(|run| {
+            run.math
+                .as_ref()
+                .map(|math| math.ascent)
+                .or_else(|| run.pic.as_ref().map(|p| p.h))
+        })
         .fold(0.0_f32, f32::max);
     // The equation's own ascent. A grid pad on top of it drops the
     // radical out of the row.
@@ -11411,6 +11518,10 @@ fn keep_next_follow_pt(
                 .filter(|img| matches!(img.slot, ImageSlot::Flow))
                 .map(|img| img.h)
                 .chain(
+                    runs.iter()
+                        .filter_map(|r| r.pic.as_deref().map(|img| img.h)),
+                )
+                .chain(
                     boxes
                         .iter()
                         .filter(|b| matches!(b.slot, ImageSlot::Flow))
@@ -11817,7 +11928,7 @@ fn para_hrule(dom: &Dom, para: NodeId) -> Option<HRule> {
         .and_then(|st| vml_style_pt(st, "height"))
         .unwrap_or(1.5);
     let pct = o_attr(dom, rect, "hrpct")
-        .and_then(|v| v.parse::<f32>().ok())
+        .and_then(parse_finite_f32)
         .unwrap_or(0.0);
     let fill = attr_any(dom, rect, "fillcolor")
         .and_then(vml_color)
@@ -11845,6 +11956,39 @@ fn para_hrule(dom: &Dom, para: NodeId) -> Option<HRule> {
         color,
         align,
     })
+}
+
+/// Attach each spliced picture placeholder to its `LaidImage` and drop
+/// that image from the paragraph, so the line breaker paints it once.
+/// A placeholder whose blip was not collected (a group, a float, a text
+/// box) is dropped rather than painted as a missing glyph.
+fn bind_flow_pictures(runs: &mut Vec<TextRun>, images: &mut Vec<LaidImage>) {
+    if runs.iter().all(|r| r.pic_src.is_none()) {
+        return;
+    }
+    let mut by_src: HashMap<u32, Rc<LaidImage>> = HashMap::new();
+    for img in images.iter() {
+        if img.src != 0 {
+            by_src
+                .entry(img.src)
+                .or_insert_with(|| Rc::new(img.clone()));
+        }
+    }
+    let mut used = HashSet::new();
+    let mut kept = Vec::with_capacity(runs.len());
+    for mut run in runs.drain(..) {
+        if let Some(src) = run.pic_src.take() {
+            if let Some(img) = by_src.get(&src) {
+                run.pic = Some(Rc::clone(img));
+                used.insert(src);
+                kept.push(run);
+            }
+        } else {
+            kept.push(run);
+        }
+    }
+    *runs = kept;
+    images.retain(|img| img.src == 0 || !used.contains(&img.src));
 }
 
 fn paragraph_block(
@@ -11878,7 +12022,7 @@ fn paragraph_block(
                     names
                         .iter()
                         .find_map(|n| attr_any(dom, ind, n))
-                        .and_then(|v| v.parse::<f32>().ok())
+                        .and_then(parse_finite_f32)
                         .map(|v| v / 20.0)
                 })
             };
@@ -11910,6 +12054,7 @@ fn paragraph_block(
             in_table,
             toc: is_toc_style(&pstyle),
             open: Some(&ctx.open_comments),
+            flow_pics: true,
         },
     );
     if marker.is_empty()
@@ -11974,12 +12119,15 @@ fn paragraph_block(
                 outline: None,
                 gap_before: 0.0,
                 lead_chars: 0,
+                at_chars: 0,
                 after_text: false,
                 under: None,
                 chrome_flat_run: None,
+                src: 0,
             },
         );
     }
+    bind_flow_pictures(&mut runs, &mut images);
     let boxes = collect_textboxes_styled(
         Some((ctx.pkg, ctx.main)),
         dom,
@@ -12010,9 +12158,12 @@ fn paragraph_block(
         });
     // A floating picture takes no line space: its paragraph is still a
     // line of its mark (0004c94c's emblem paragraph is Arial 9, 10.35pt).
-    let floats_only = images
-        .iter()
-        .all(|img| !matches!(img.slot, ImageSlot::Flow));
+    // A picture spliced into the runs is a line of its own too.
+    let run_flow = runs.iter().any(|r| r.pic.is_some());
+    let floats_only = !run_flow
+        && images
+            .iter()
+            .all(|img| !matches!(img.slot, ImageSlot::Flow));
     // Floating text boxes take no line space either (00bf6b4c's org chart
     // hangs its boxes off empty 20pt paragraphs).
     let boxes_float = boxes.iter().all(|b| !matches!(b.slot, ImageSlot::Flow));
@@ -12024,7 +12175,9 @@ fn paragraph_block(
         || boxes
             .iter()
             .any(|b| matches!(b.slot, ImageSlot::Flow) && !b.diag_shapes.is_empty()))
-        && runs.iter().all(|r| r.text.trim().is_empty())
+        && runs
+            .iter()
+            .all(|r| r.pic.is_some() || r.text.trim().is_empty())
     {
         // An inline picture's line takes its multiple's extra from the
         // paragraph's own run style even when the mark sets nothing
@@ -12323,6 +12476,10 @@ fn apply_field_results(
             }
             if run.field == FieldKind::NumWords {
                 out.text = words.to_string();
+            }
+            if out.text != run.text {
+                out.pic = None;
+                out.pic_src = None;
             }
             out
         })
@@ -13396,10 +13553,7 @@ fn table_block(
             // gridCol's `w:type` says nothing: Word keeps the grid of a
             // table whose every cell has a tcW, with or without it (#1720
             // probes b1, b2).
-            let width = dom
-                .attribute(col, &w)
-                .and_then(|s| s.parse::<f32>().ok())
-                .filter(|v| v.is_finite());
+            let width = dom.attribute(col, &w).and_then(parse_finite_f32);
             foreign_grid |= width.is_none();
             cols.push(width.map(twip).unwrap_or(80.0));
         }
@@ -13603,17 +13757,19 @@ fn table_block(
                         in_table: true,
                         toc: false,
                         open: None,
+                        flow_pics: media.is_some(),
                     },
                 );
                 // An empty cell paragraph is a Word line like any other
                 // (fixtures_500 0126ebd8 menu rows are 27.6pt apart, not
                 // 13.8), sized from its mark's pPr/rPr.
-                let images: Vec<LaidImage> = media
+                let mut images: Vec<LaidImage> = media
                     .map(|(pkg, part)| collect_images(pkg, part, dom, child, &|_| None))
                     .unwrap_or_default()
                     .into_iter()
                     .filter(cell_holds_image)
                     .collect();
+                bind_flow_pictures(&mut runs, &mut images);
                 let boxes: Vec<std::rc::Rc<LaidTextBox>> = collect_textboxes_styled(
                     media,
                     dom,
@@ -13710,6 +13866,7 @@ fn table_block(
                         in_table: true,
                         toc: false,
                         open: None,
+                        flow_pics: false,
                     },
                 );
                 cell_paras.push(CellPara {
@@ -13800,7 +13957,7 @@ fn table_block(
             // 5pt + its 4pt margin in from the table edge.
             let (pad_t, pad_b) = (pad_t + tbl_spacing, pad_b + tbl_spacing);
             let pad_l = pad_l + 2.0 * tbl_spacing;
-            let hide_mark = first_named(dom, cell, "tcPr")
+            let hide_mark = cell_pr(dom, cell)
                 .and_then(|pr| direct_named(dom, pr, "hideMark"))
                 .is_some_and(|n| !val_is_false(dom, Some(n)));
             // Below a table's first row, a hideMark cell whose text ends in
@@ -13843,7 +14000,7 @@ fn table_block(
                 colspan,
                 vmerge,
                 fill: cell_fill(dom, cell),
-                fill_explicit: first_named(dom, cell, "tcPr")
+                fill_explicit: cell_pr(dom, cell)
                     .and_then(|pr| first_named(dom, pr, "shd"))
                     .is_some(),
                 valign_center: cell_valign_is(dom, cell, "center"),
@@ -14230,6 +14387,17 @@ fn table_pr(dom: &Dom, table: NodeId) -> Option<NodeId> {
     direct_named(dom, table, "tblPr")
 }
 
+/// The cell's own `w:tcPr` (a direct child). A descendant search would
+/// return the first nested cell's properties when this cell has none of
+/// its own (#1729): a tcPr-less cell holding a nested table borrowed the
+/// nested first cell's span, merge, borders, fill, margins, noWrap,
+/// direction, alignment and hideMark. A `w:tcPrChange` sits inside the
+/// cell's own tcPr, so lookups within `pr` keep their prior-change
+/// filters.
+fn cell_pr(dom: &Dom, cell: NodeId) -> Option<NodeId> {
+    direct_named(dom, cell, "tcPr")
+}
+
 fn table_ind(dom: &Dom, table: NodeId) -> f32 {
     let Some(pr) = table_pr(dom, table) else {
         return 0.0;
@@ -14253,7 +14421,7 @@ fn table_pref_width(dom: &Dom, table: NodeId) -> TblWidth {
     match attr_any(dom, tw, "type").unwrap_or("auto") {
         "pct" => {
             let fiftieths = attr_any(dom, tw, "w")
-                .and_then(|s| s.parse::<f32>().ok())
+                .and_then(parse_finite_f32)
                 .unwrap_or(5000.0);
             TblWidth::Pct(fiftieths / 5000.0)
         }
@@ -14489,7 +14657,7 @@ fn row_cell_mar(dom: &Dom, row: NodeId, table: [f32; 4]) -> [f32; 4] {
 fn cell_pad_h(dom: &Dom, cell: NodeId, table_l: f32, table_r: f32) -> (f32, f32) {
     // Word: tcMar on the cell wins over tblCellMar (file_146 code
     // listing is left=200 / 10pt while the table pad is 10 twips).
-    let Some(pr) = first_named(dom, cell, "tcPr") else {
+    let Some(pr) = cell_pr(dom, cell) else {
         return (table_l, table_r);
     };
     let Some(mar) = direct_named(dom, pr, "tcMar") else {
@@ -14523,7 +14691,7 @@ fn table_pad_v(dom: &Dom, table: NodeId) -> f32 {
 fn cell_pad_tb(dom: &Dom, cell: NodeId, table_t: f32, table_b: f32) -> (f32, f32) {
     // Word: tcMar top/bottom wins over tblCellMar (file_146 npm is
     // 100+100 while the table has no tblCellMar).
-    let Some(pr) = first_named(dom, cell, "tcPr") else {
+    let Some(pr) = cell_pr(dom, cell) else {
         return (table_t, table_b);
     };
     let Some(mar) = direct_named(dom, pr, "tcMar") else {
@@ -14577,7 +14745,7 @@ fn stretch_stale_spans(rows: &mut [Vec<RawCell>], cols: &[f32]) {
 }
 
 fn cell_span(dom: &Dom, cell: NodeId) -> (usize, VMerge) {
-    let Some(pr) = first_named(dom, cell, "tcPr") else {
+    let Some(pr) = cell_pr(dom, cell) else {
         return (1, VMerge::None);
     };
     // Direct child only. first_named walks into tcPrChange (addition_removal
@@ -14602,7 +14770,7 @@ fn cell_pref_width(dom: &Dom, cell: NodeId) -> PrefWidth {
     // The cell's own tcPr: a cell without one is no wider for the first
     // cell of the table nested in it (#1716 probe m2's tcW-less cell took
     // its nested table's 2000-twip tcW).
-    let Some(pr) = direct_named(dom, cell, "tcPr") else {
+    let Some(pr) = cell_pr(dom, cell) else {
         return PrefWidth::Auto;
     };
     let Some(tw) = direct_named(dom, pr, "tcW") else {
@@ -14611,7 +14779,7 @@ fn cell_pref_width(dom: &Dom, cell: NodeId) -> PrefWidth {
     match attr_any(dom, tw, "type").unwrap_or("auto") {
         "pct" => {
             let fiftieths = attr_any(dom, tw, "w")
-                .and_then(|s| s.parse::<f32>().ok())
+                .and_then(parse_finite_f32)
                 .unwrap_or(0.0);
             if fiftieths > 0.0 {
                 PrefWidth::Pct(fiftieths / 5000.0)
@@ -14638,8 +14806,7 @@ fn cell_pref_width(dom: &Dom, cell: NodeId) -> PrefWidth {
 /// or a nil one (o2), and splits a table of zero pct ones evenly (o4,
 /// #1731); [`cell_pref_width`] reads all three as auto.
 fn cell_without_width(dom: &Dom, cell: NodeId) -> bool {
-    let Some(tw) = direct_named(dom, cell, "tcPr").and_then(|pr| direct_named(dom, pr, "tcW"))
-    else {
+    let Some(tw) = cell_pr(dom, cell).and_then(|pr| direct_named(dom, pr, "tcW")) else {
         return true;
     };
     match attr_any(dom, tw, "type") {
@@ -14726,7 +14893,7 @@ fn row_is_revised(dom: &Dom, row: NodeId) -> bool {
 }
 
 pub(crate) fn cell_is_deleted(dom: &Dom, cell: NodeId) -> bool {
-    let Some(pr) = first_named(dom, cell, "tcPr") else {
+    let Some(pr) = cell_pr(dom, cell) else {
         return false;
     };
     // Direct child only. tcPrChange also stores cellDel.
@@ -14854,7 +15021,7 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
 }
 
 fn cell_valign_is(dom: &Dom, cell: NodeId, want: &str) -> bool {
-    let Some(pr) = first_named(dom, cell, "tcPr") else {
+    let Some(pr) = cell_pr(dom, cell) else {
         return false;
     };
     first_named(dom, pr, "vAlign")
@@ -14864,17 +15031,17 @@ fn cell_valign_is(dom: &Dom, cell: NodeId, want: &str) -> bool {
 
 /// A cell whose text runs up or down it (`w:textDirection` btLr, tbRl).
 fn cell_vertical(dom: &Dom, cell: NodeId) -> bool {
-    first_named(dom, cell, "tcPr")
+    cell_pr(dom, cell)
         .and_then(|pr| direct_named(dom, pr, "textDirection"))
         .and_then(|n| attr_any(dom, n, "val"))
         .is_some_and(|v| matches!(v, "btLr" | "tbRl" | "tbRlV" | "tbLrV"))
 }
 
 fn cell_nowrap(dom: &Dom, cell: NodeId) -> bool {
-    let Some(pr) = first_named(dom, cell, "tcPr") else {
+    let Some(pr) = cell_pr(dom, cell) else {
         return false;
     };
-    // Direct child only — do not steal nested-table noWrap.
+    // Direct child only — do not steal a nested tcPrChange's noWrap.
     direct_named(dom, pr, "noWrap").is_some_and(|n| !val_is_false(dom, Some(n)))
 }
 
@@ -14930,7 +15097,7 @@ fn cell_wrap_width(cell: &TableCell, avail: f32) -> f32 {
 }
 
 fn cell_fill(dom: &Dom, cell: NodeId) -> Option<[f32; 3]> {
-    let pr = first_named(dom, cell, "tcPr")?;
+    let pr = cell_pr(dom, cell)?;
     shd_paint(dom, first_named(dom, pr, "shd")?)
 }
 
@@ -14962,7 +15129,7 @@ fn shd_paint(dom: &Dom, shd: NodeId) -> Option<[f32; 3]> {
     if val == "solid" {
         return Some(hex("color").unwrap_or([0.0; 3]));
     }
-    let Some(pct) = val.strip_prefix("pct").and_then(|n| n.parse::<f32>().ok()) else {
+    let Some(pct) = val.strip_prefix("pct").and_then(parse_finite_f32) else {
         return fill;
     };
     let share = (pct / 100.0).clamp(0.0, 1.0);
@@ -14999,12 +15166,17 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
         let mut col = 0usize;
         for raw in row {
             let span = raw.colspan.max(1);
-            if raw.vmerge == VMerge::Continue {
-                if let Some(&(_, or, oi)) = open.get(col).and_then(|s| s.as_ref())
-                    && let Some(origin) = origins.get_mut(or).and_then(|r| r.get_mut(oi))
-                {
-                    origin.rowspan += 1;
-                }
+            // A continuation under an open restart joins its origin and
+            // its own text stays hidden. One with no open restart in its
+            // grid column (python-docx, PHPWord, HTML converters write
+            // these) falls through and lays out as a cell of its own:
+            // Word 16 paints its text (issue #1993), and later
+            // continuations merge into it as if it were the restart.
+            if raw.vmerge == VMerge::Continue
+                && let Some(&(_, or, oi)) = open.get(col).and_then(|s| s.as_ref())
+                && let Some(origin) = origins.get_mut(or).and_then(|r| r.get_mut(oi))
+            {
+                origin.rowspan += 1;
                 col += span;
                 continue;
             }
@@ -15035,7 +15207,7 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
             if open.len() < col + span {
                 open.resize(col + span, None);
             }
-            let mark = (raw.vmerge == VMerge::Restart).then_some((col, ri, idx));
+            let mark = (raw.vmerge != VMerge::None).then_some((col, ri, idx));
             for slot in open.iter_mut().skip(col).take(span) {
                 *slot = mark;
             }
@@ -15059,6 +15231,7 @@ fn collect_runs(dom: &Dom, node: NodeId, base: &RunStyle, theme: &ThemeFonts) ->
             in_table: false,
             toc: false,
             open: None,
+            flow_pics: false,
         },
     );
     strip_page_marks(runs)
@@ -15135,6 +15308,9 @@ struct RunCollect<'a> {
     /// Body without pBdr stays collapsed (mini 401). Courier New body
     /// pads (file_69 code) stay collapsed too (mini 520 ITT-neg).
     keep_xml_space: bool,
+    /// Body paragraphs splice simple inline pictures into the run stream.
+    /// Cells, headers and footers leave them on `LaidImage`.
+    flow_pics: bool,
 }
 
 struct RunBag<'a> {
@@ -15145,6 +15321,8 @@ struct RunBag<'a> {
     /// The comment ranges open where this paragraph starts, written back
     /// with those still open at its end.
     open: Option<&'a RefCell<Vec<String>>>,
+    /// Splice simple inline pictures into runs when their owner can bind them.
+    flow_pics: bool,
 }
 
 fn collect_runs_in(
@@ -15181,6 +15359,7 @@ fn collect_runs_in(
         math_upright: Some(false),
         math_display: false,
         keep_xml_space: para_keeps_xml_space(dom, node),
+        flow_pics: bag.flow_pics,
     };
     collect_runs_rec(&mut ctx, node, RevMark::None, "", &mut runs);
     flush_pending_comments(&mut ctx, &mut runs);
@@ -15270,6 +15449,10 @@ fn split_hansi_runs(runs: Vec<TextRun>) -> Vec<TextRun> {
     }
     let mut out = Vec::with_capacity(runs.len());
     for run in runs {
+        if run.pic.is_some() || run.pic_src.is_some() {
+            out.push(run);
+            continue;
+        }
         let Some(hansi) = run.style.family_hansi.clone() else {
             out.push(run);
             continue;
@@ -15898,6 +16081,27 @@ fn collect_runs_rec(
             run.endnote_id = endnote_id;
             runs.push(run);
             return;
+        }
+        if ctx.flow_pics && !matches!(mark, RevMark::Del | RevMark::MoveFrom) {
+            let breaks = if ctx.in_table {
+                BreakText::Drop
+            } else {
+                BreakText::Mark
+            };
+            if emit_flow_pictures(
+                ctx,
+                node,
+                FlowRunEmit {
+                    mark,
+                    style: &mut style,
+                    unmarked: &unmarked,
+                    char_style: &char_style,
+                    breaks,
+                },
+                runs,
+            ) {
+                return;
+            }
         }
         let raw = {
             let mut out = String::new();
@@ -16528,6 +16732,11 @@ enum BreakText {
 /// carries it.
 const PAGE_BREAK_MARK: char = '\u{FDD0}';
 
+/// Placeholder text of an inline picture spliced into the run stream.
+/// One character, so the line breaker keeps it one unbreakable box, and
+/// not a glyph `paint_run` would draw.
+const INLINE_PIC: char = '\u{FFFC}';
+
 /// A body run's column break, split like `PAGE_BREAK_MARK`: the text after
 /// it opens the next column (live Word, 019d92d9's continuous columns).
 const COLUMN_BREAK_MARK: char = '\u{FDD1}';
@@ -16571,7 +16780,7 @@ fn form_checkbox(dom: &Dom, run: NodeId) -> Option<(Option<f32>, bool)> {
     let cb = first_named(dom, fld, "ffData").and_then(|ff| first_named(dom, ff, "checkBox"))?;
     let size = first_named(dom, cb, "size")
         .and_then(|n| attr_any(dom, n, "val"))
-        .and_then(|v| v.parse::<f32>().ok())
+        .and_then(parse_finite_f32)
         .map(|half| half / 2.0);
     let on = |name: &str| {
         first_named(dom, cb, name)
@@ -16649,6 +16858,256 @@ fn collect_visible_marked(
     for idx in 0..dom.child_count(node) {
         collect_visible_marked(dom, dom.child_at(node, idx), out, in_del, breaks);
     }
+}
+
+enum FlowPiece {
+    Text(String),
+    Pic(u32),
+}
+
+/// Blip ids of a simple inline picture: no group, no anchor, no nested
+/// text-box picture. Empty when the drawing stays on the `LaidImage` path.
+fn flow_blip_ids(dom: &Dom, drawing: NodeId) -> Vec<u32> {
+    if drawing_group(dom, drawing).is_some()
+        || !matches!(drawing_slot(dom, drawing), ImageSlot::Flow)
+    {
+        return Vec::new();
+    }
+    dom.descendants(drawing, Some(&A::name("blip")))
+        .into_iter()
+        .filter(|b| !nested_in_text(dom, *b, drawing) && attr_any(dom, *b, "embed").is_some())
+        .map(|b| b.0)
+        .collect()
+}
+
+/// Text and picture pieces of `run` in document order. `None` when the run
+/// holds no simple inline picture, so the caller keeps the ordinary path.
+fn flow_run_pieces(dom: &Dom, run: NodeId, breaks: BreakText) -> Option<Vec<FlowPiece>> {
+    let mut pieces = Vec::new();
+    let mut buf = String::new();
+    let mut saw = false;
+    walk_flow_run(dom, run, false, breaks, &mut buf, &mut pieces, &mut saw);
+    if !buf.is_empty() {
+        pieces.push(FlowPiece::Text(buf));
+    }
+    saw.then_some(pieces)
+}
+
+fn walk_flow_run(
+    dom: &Dom,
+    node: NodeId,
+    in_del: bool,
+    breaks: BreakText,
+    buf: &mut String,
+    pieces: &mut Vec<FlowPiece>,
+    saw: &mut bool,
+) {
+    if dom.name_is(node, &W::drawing()) {
+        if !in_del {
+            let ids = flow_blip_ids(dom, node);
+            if !ids.is_empty() {
+                if !buf.is_empty() {
+                    pieces.push(FlowPiece::Text(std::mem::take(buf)));
+                }
+                for id in ids {
+                    pieces.push(FlowPiece::Pic(id));
+                }
+                *saw = true;
+            }
+        }
+        return;
+    }
+    if skip_non_text(dom, node) {
+        return;
+    }
+    if dom.name_is(node, &W::del()) || dom.name_is(node, &W::move_from()) {
+        for idx in 0..dom.child_count(node) {
+            walk_flow_run(dom, dom.child_at(node, idx), true, breaks, buf, pieces, saw);
+        }
+        return;
+    }
+    if let Some(text) = dom.text_value(node) {
+        if !in_del && is_run_text(dom, node, text) {
+            buf.extend(
+                text.chars()
+                    .map(|c| if matches!(c, '\n' | '\r') { ' ' } else { c }),
+            );
+        }
+        return;
+    }
+    if !in_del && dom.name_is(node, &W::name("cr")) {
+        buf.push('\n');
+        return;
+    }
+    if !in_del && dom.name_is(node, &W::name("noBreakHyphen")) {
+        buf.push(NO_BREAK_HYPHEN);
+        return;
+    }
+    if !in_del && dom.name_is(node, &W::name("ptab")) {
+        buf.push('\t');
+        return;
+    }
+    if !in_del && (dom.name_is(node, &W::name("tab")) || dom.name_is(node, &W::name("br"))) {
+        if dom.name_is(node, &W::name("br")) {
+            let kind = dom.attribute(node, &W::type_());
+            let page = kind.is_some_and(|k| k == "page" || k == "oddPage" || k == "evenPage");
+            let column = kind == Some("column");
+            match breaks {
+                BreakText::Mark if page => buf.push(PAGE_BREAK_MARK),
+                BreakText::Mark if column => buf.push(COLUMN_BREAK_MARK),
+                BreakText::Drop if page || column => {}
+                _ => buf.push('\n'),
+            }
+        } else {
+            buf.push('\t');
+        }
+        return;
+    }
+    for idx in 0..dom.child_count(node) {
+        walk_flow_run(
+            dom,
+            dom.child_at(node, idx),
+            in_del,
+            breaks,
+            buf,
+            pieces,
+            saw,
+        );
+    }
+}
+
+/// The run-local arguments of `emit_flow_pictures`. One value, so the
+/// function stays under clippy's argument limit.
+struct FlowRunEmit<'a> {
+    mark: RevMark,
+    style: &'a mut RunStyle,
+    unmarked: &'a RunStyle,
+    char_style: &'a Option<std::rc::Rc<str>>,
+    breaks: BreakText,
+}
+
+/// Splice `node`'s simple inline pictures into `runs`. False when it has
+/// none, and the ordinary text path must run instead.
+fn emit_flow_pictures(
+    ctx: &mut RunCollect<'_>,
+    node: NodeId,
+    emit: FlowRunEmit<'_>,
+    runs: &mut Vec<TextRun>,
+) -> bool {
+    let FlowRunEmit {
+        mark,
+        style,
+        unmarked,
+        char_style,
+        breaks,
+    } = emit;
+    let Some(pieces) = flow_run_pieces(ctx.dom, node, breaks) else {
+        return false;
+    };
+    let pending_ids = std::mem::take(&mut ctx.pending);
+    let mut pending = if pending_ids.is_empty() {
+        Vec::new()
+    } else {
+        notes_for(ctx, &pending_ids)
+    };
+    let preserve = ctx.in_table || ctx.keep_xml_space || run_preserves_space(ctx.dom, node);
+    for piece in pieces {
+        let (text, pic_src) = match piece {
+            FlowPiece::Pic(id) => (INLINE_PIC.to_string(), Some(id)),
+            FlowPiece::Text(raw) => {
+                let mut text = rev_text(&raw, mark, preserve);
+                if style.caps && !style.small_caps {
+                    text = text.to_uppercase();
+                }
+                if text.is_empty() {
+                    continue;
+                }
+                (text, None)
+            }
+        };
+        if let Some(cs) = style.size_cs
+            && (style.rtl || text.chars().any(is_rtl_char))
+        {
+            style.size = cs;
+        }
+        let is_pic = pic_src.is_some();
+        let pageref = if !is_pic && ctx.field_result {
+            ctx.pageref.clone()
+        } else {
+            None
+        };
+        let ref_name = if !is_pic && ctx.field_result {
+            ctx.ref_name.clone()
+        } else {
+            None
+        };
+        let ref_copy_text = ref_name.is_some() && ref_copies_bookmark_text(&ctx.field_instr);
+        let styleref = if !is_pic && ctx.field_result {
+            ctx.styleref.clone()
+        } else {
+            None
+        };
+        if ctx.field_result {
+            ctx.field_emitted = true;
+        }
+        let rev = mark != RevMark::None;
+        let numwords = !is_pic && is_numwords_field(&ctx.field_instr);
+        let page_field = !is_pic && ctx.field_result && is_page_field(&ctx.field_instr);
+        let recomputed = !is_pic
+            && mark == RevMark::Ins
+            && ctx.field_result
+            && word_recomputes_field(&ctx.field_instr);
+        if rev && (page_field || numwords || recomputed) {
+            unmark_field_number(style, unmarked, mark);
+        }
+        let notes = std::mem::take(&mut pending);
+        let tint = open_tint(ctx);
+        let tint_id = ctx.open.first().cloned();
+        if is_pic || !style.small_caps {
+            let mut run = TextRun::new(text, style.clone());
+            run.style.tint = tint;
+            run.style.tint_id = tint_id;
+            run.rev = rev;
+            run.pageref = pageref;
+            run.ref_name = ref_name;
+            run.styleref = styleref;
+            run.char_style.clone_from(char_style);
+            run.ref_copy_text = ref_copy_text;
+            run.pic_src = pic_src;
+            if numwords {
+                run.field = FieldKind::NumWords;
+            } else if page_field {
+                run.field = FieldKind::Page;
+            }
+            run.comments = notes;
+            runs.push(run);
+        } else {
+            let mut notes = notes;
+            let mut first = true;
+            for (piece, st) in small_caps_pieces(&text, style) {
+                let mut run = TextRun::new(piece, st);
+                run.rev = rev;
+                run.pageref.clone_from(&pageref);
+                run.ref_name.clone_from(&ref_name);
+                run.styleref.clone_from(&styleref);
+                run.char_style.clone_from(char_style);
+                run.ref_copy_text = ref_copy_text;
+                if numwords {
+                    run.field = FieldKind::NumWords;
+                } else if page_field {
+                    run.field = FieldKind::Page;
+                }
+                if first {
+                    run.comments = std::mem::take(&mut notes);
+                    first = false;
+                }
+                run.style.tint = tint;
+                run.style.tint_id.clone_from(&tint_id);
+                runs.push(run);
+            }
+        }
+    }
+    true
 }
 
 fn collapse_ws(text: &str) -> String {
@@ -17000,30 +17459,32 @@ fn collect_textboxes_styled(
         let vml_unstroked = descendants_local(dom, shape, "shape").into_iter().any(|s| {
             attr_any(dom, s, "stroked").is_some_and(|v| v == "f" || v.eq_ignore_ascii_case("false"))
         });
+        let wps = !descendants_local(dom, shape, "wsp").is_empty();
         out.push(LaidTextBox {
             w,
             h,
             runs,
             slot,
             chart,
-            // VML unstroked (image_out) and DrawingML a:ln noFill
-            // (Strict01 Rectangle 467 tx2 fill; Text Box 465 unfilled
-            // Author) must not grow a 0.6pt hairline. Unfilled txbx
-            // without a:ln/noFill still stroke (mcdoc / Datum plane).
-            // Distinct from mini 511 a:ln/@w width (still 0.6 when stroking).
-            // Chart-bearing boxes still stroke 0.6 black (mini 568):
-            // skipping it dropped RL clones −0.03 to −0.07.
-            stroke: !(diagram
-                || (vml_slot.is_some() && vml_unstroked)
-                || shape_ln_is_nofill(dom, shape))
-                && (vml_slot.is_some() || !(fill.is_some() && line.is_none())),
+            // WPS has no implicit outline: Word 16.115 paints the unstyled
+            // 1975-textbox without one (#1979). mcdoc's outline comes from
+            // its explicit a:ln, not a rendering default. Preserve the VML
+            // default and the separate ChartSpace frame (mini 568).
+            stroke: if wps {
+                !shape_ln_is_nofill(dom, shape)
+                    && (!descendants_local(dom, shape, "ln").is_empty()
+                        || ln_ref_idx(dom, shape).is_some_and(|idx| idx > 0))
+            } else {
+                !(diagram
+                    || (vml_slot.is_some() && vml_unstroked)
+                    || shape_ln_is_nofill(dom, shape))
+                    && (vml_slot.is_some() || !(fill.is_some() && line.is_none()))
+            },
             fill,
-            // A text-bearing preset polygon still outlines in its own line
-            // colour. A rectangle does too when its a:ln names a fill: Word
-            // strokes 5fb9cedf's form boxes 3pt in their accent blue. One
-            // with only a style reference keeps the tuned 0.6 black path.
-            line: line.filter(|_| geom_is_preset_polygon(geom) || explicit_ln),
-            line_width: if explicit_ln {
+            // WPS style references supply their colour just like explicit
+            // a:ln fills (5fb9cedf's form boxes use 3pt accent blue).
+            line: line.filter(|_| wps || geom_is_preset_polygon(geom) || explicit_ln),
+            line_width: if wps || explicit_ln {
                 shape_line_width(dom, shape, theme)
             } else {
                 1.0
@@ -17129,7 +17590,7 @@ fn drawing_group(dom: &Dom, drawing: NodeId) -> Option<(NodeId, Option<[f64; 2]>
     let ext = descendants_local(dom, drawing, "extent")
         .into_iter()
         .next()?;
-    let num = |k: &str| attr_any(dom, ext, k).and_then(|v| v.parse::<f64>().ok());
+    let num = |k: &str| attr_any(dom, ext, k).and_then(parse_finite_f64);
     Some((wpc, Some([num("cx")?, num("cy")?])))
 }
 
@@ -17212,7 +17673,7 @@ struct GroupText<'a> {
 fn xfrm_box(dom: &Dom, xfrm: NodeId) -> Option<[f64; 4]> {
     let num = |node: Option<NodeId>, key: &str| {
         node.and_then(|n| attr_any(dom, n, key))
-            .and_then(|v| v.parse::<f64>().ok())
+            .and_then(parse_finite_f64)
     };
     let off = descendants_local(dom, xfrm, "off").into_iter().next();
     let ext = descendants_local(dom, xfrm, "ext").into_iter().next();
@@ -17273,7 +17734,7 @@ fn collect_group(
     let num = |local: &str, key: &str| {
         xfrm.and_then(|x| descendants_local(dom, x, local).into_iter().next())
             .and_then(|n| attr_any(dom, n, key))
-            .and_then(|v| v.parse::<f64>().ok())
+            .and_then(parse_finite_f64)
     };
     let Some(ext) = xfrm
         .and_then(|x| xfrm_box(dom, x))
@@ -17291,10 +17752,12 @@ fn collect_group(
         return;
     }
     let place = |b: [f64; 4]| -> [f32; 4] {
-        let fx = ((b[0] - cox) / cex) as f32;
-        let fy = ((b[1] - coy) / cey) as f32;
-        let fw = (b[2] / cex) as f32;
-        let fh = (b[3] / cey) as f32;
+        // A ratio that does not fit in f32 is no offset: the child stays put.
+        let px = |v: f64| narrow_finite_f32(v).unwrap_or(0.0);
+        let fx = px((b[0] - cox) / cex);
+        let fy = px((b[1] - coy) / cey);
+        let fw = px(b[2] / cex);
+        let fh = px(b[3] / cey);
         [
             frac[0] + fx * frac[2],
             frac[1] + fy * frac[3],
@@ -17343,8 +17806,8 @@ fn collect_group(
             let polygon = geom_is_preset_polygon(geom) || custom.is_some();
             let (flip_h, flip_v) = shape_flip(dom, child);
             let mut shape = group_box(
-                (b[2] / 12700.0) as f32,
-                (b[3] / 12700.0) as f32,
+                narrow_finite_f32(b[2] / 12700.0).unwrap_or(0.0),
+                narrow_finite_f32(b[3] / 12700.0).unwrap_or(0.0),
                 ImageSlot::Flow,
                 geom,
                 false,
@@ -17433,7 +17896,7 @@ fn cust_geom(dom: &Dom, shape: NodeId) -> Option<preset_geom::CustomGeom> {
         .find(|e| attr_any(dom, *e, "cx").is_some());
     let extent = |key: &str| {
         ext.and_then(|e| attr_any(dom, e, key))
-            .and_then(|v| v.parse::<f64>().ok())
+            .and_then(parse_finite_f64)
             .unwrap_or(0.0)
     };
     let mut paths = Vec::new();
@@ -17443,7 +17906,7 @@ fn cust_geom(dom: &Dom, shape: NodeId) -> Option<preset_geom::CustomGeom> {
     {
         let num = |key: &str| {
             attr_any(dom, path, key)
-                .and_then(|v| v.parse::<f64>().ok())
+                .and_then(parse_finite_f64)
                 .unwrap_or(0.0)
         };
         let fill = match attr_any(dom, path, "fill").unwrap_or("norm") {
@@ -17600,7 +18063,30 @@ fn txbx_paragraphs(
         .into_iter()
         .map(|p| {
             let (mut style, run) = para_base(dom, p, sheet, None);
-            let mut runs = collect_runs(dom, p, &run, theme);
+            let mut runs = if let Some((pkg, part)) = media {
+                let mut runs = collect_runs_in(
+                    dom,
+                    p,
+                    &run,
+                    theme,
+                    None,
+                    &mut RunBag {
+                        authors: &mut AuthorColors::default(),
+                        comments: &HashMap::new(),
+                        in_table: false,
+                        toc: false,
+                        open: None,
+                        flow_pics: true,
+                    },
+                );
+                let mut images = collect_images(pkg, part, dom, p, &|drawing| {
+                    picture_run_style(dom, drawing, &run, theme, &sheet.by_id)
+                });
+                bind_flow_pictures(&mut runs, &mut images);
+                strip_page_marks(runs)
+            } else {
+                collect_runs(dom, p, &run, theme)
+            };
             // An empty paragraph is a line of its mark (010300e3's 8pt
             // blank between "Dear Ms. Smith:" and the letter), and so is
             // one of only spaces: a fitted box grows by the mark's line
@@ -17673,7 +18159,7 @@ fn run_raise_pt(dom: &Dom, node: NodeId) -> f32 {
                 .element(n, &W::r_pr())
                 .and_then(|pr| first_named(dom, pr, "position"))
                 .and_then(|pos| attr_any(dom, pos, "val"))
-                .and_then(|v| v.parse::<f32>().ok())
+                .and_then(parse_finite_f32)
                 .map_or(0.0, |half| half / 2.0);
         }
         at = dom.parent(n);
@@ -17732,7 +18218,7 @@ fn textbox_insets(dom: &Dom, shape: NodeId) -> [f32; 4] {
     let mut ins = TXBX_INSETS;
     if let Some(body) = descendants_local(dom, shape, "bodyPr").first().copied() {
         for (i, key) in ["lIns", "tIns", "rIns", "bIns"].iter().enumerate() {
-            if let Some(v) = attr_any(dom, body, key).and_then(|v| v.parse::<f32>().ok()) {
+            if let Some(v) = attr_any(dom, body, key).and_then(parse_finite_f32) {
                 ins[i] = v / 12700.0;
             }
         }
@@ -17749,12 +18235,13 @@ fn textbox_insets(dom: &Dom, shape: NodeId) -> [f32; 4] {
 }
 
 /// A VML length (`0.1in`, `7.2pt`, `2mm`, `0.5cm`, bare EMU) in points.
+/// A non-finite operand, or a conversion that overflows, is absent.
 fn vml_len_pt(raw: &str) -> Option<f32> {
     let (num, unit) = raw
         .find(|c: char| c.is_ascii_alphabetic())
         .map_or((raw, ""), |i| raw.split_at(i));
-    let v: f32 = num.trim().parse().ok()?;
-    Some(match unit {
+    let v = parse_finite_f32(num.trim())?;
+    let points = match unit {
         "in" => v * 72.0,
         "pt" => v,
         "cm" => v * 72.0 / 2.54,
@@ -17762,7 +18249,8 @@ fn vml_len_pt(raw: &str) -> Option<f32> {
         "px" => v * 0.75,
         "" => v / 12700.0,
         _ => return None,
-    })
+    };
+    points.is_finite().then_some(points)
 }
 
 /// Word 2008+ can park textbox paragraphs in `word/txbxN.xml` and leave
@@ -17988,8 +18476,8 @@ fn diag_ln_stroke(dom: &Dom, sp: NodeId, theme: &ThemeFonts) -> Option<([f32; 3]
         return None;
     }
     let width = attr_any(dom, ln, "w")
-        .and_then(|s| s.parse::<f64>().ok())
-        .map(|emu| (emu / 12700.0) as f32)
+        .and_then(parse_finite_f64)
+        .and_then(|emu| narrow_finite_f32(emu / 12700.0))
         .unwrap_or(1.0)
         .clamp(0.4, 4.0);
     Some((color, width))
@@ -17997,8 +18485,8 @@ fn diag_ln_stroke(dom: &Dom, sp: NodeId, theme: &ThemeFonts) -> Option<([f32; 3]
 
 fn emu_attr(dom: &Dom, node: NodeId, name: &str) -> f32 {
     attr_any(dom, node, name)
-        .and_then(|s| s.parse::<f64>().ok())
-        .map(|v| (v / 12700.0) as f32)
+        .and_then(parse_finite_f64)
+        .and_then(|v| narrow_finite_f32(v / 12700.0))
         .unwrap_or(0.0)
 }
 
@@ -18135,7 +18623,7 @@ fn chart_pts_indexed(dom: &Dom, node: NodeId) -> (Vec<(usize, f32)>, usize) {
             .and_then(|s| s.parse().ok())
             .unwrap_or(pos);
         if let Some(v) = descendants_local(dom, pt, "v").into_iter().next()
-            && let Ok(n) = element_text(dom, v).trim().parse::<f32>()
+            && let Some(n) = parse_finite_f32(element_text(dom, v).trim())
         {
             pts.push((idx, n));
         }
@@ -18168,7 +18656,7 @@ fn chart_val_ax_scaling(dom: &Dom, root: NodeId) -> AxisScaling {
                 .next()
                 .and_then(|sc| descendants_local(dom, sc, local).into_iter().next())
                 .and_then(|n| attr_any(dom, n, "val"))
-                .and_then(|s| s.parse::<f32>().ok())
+                .and_then(parse_finite_f32)
         };
         let b = (bound("min"), bound("max"));
         if matches!(pos, "b" | "t") {
@@ -18333,7 +18821,7 @@ fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
         if let Some(val) = val {
             let nums: Vec<f32> = chart_pts(&dom, val)
                 .iter()
-                .filter_map(|s| s.parse().ok())
+                .filter_map(|s| parse_finite_f32(s))
                 .collect();
             if !nums.is_empty() {
                 names.push(chart_ser_name(&dom, ser, idx));
@@ -18529,6 +19017,68 @@ fn lead_chars_before(dom: &Dom, para: NodeId, drawing: NodeId) -> usize {
     0
 }
 
+/// Characters of `para` before `drawing`: the same `w:t` / tab / break
+/// leaves `collect_runs` paints, so a picture can join the glyph run that
+/// starts at this offset. Other drawings, text boxes and deleted runs
+/// contribute nothing. Uncollapsed whitespace can disagree with the painted
+/// runs; the join then finds no piece and leaves the picture on its own row.
+fn chars_before_drawing(dom: &Dom, para: NodeId, drawing: NodeId) -> usize {
+    fn skip_subtree(dom: &Dom, node: NodeId) -> bool {
+        skip_non_text(dom, node)
+            || local_name_is(dom, node, "txbxContent")
+            || dom.name_is(node, &W::del())
+            || dom.name_is(node, &W::move_from())
+    }
+    fn consume_leaf(dom: &Dom, node: NodeId, n: &mut usize) -> bool {
+        if dom.name_is(node, &W::t()) {
+            *n += element_text(dom, node).chars().count();
+            return true;
+        }
+        if dom.name_is(node, &W::name("tab"))
+            && dom.ancestors(node, Some(&W::name("tabs"))).is_empty()
+        {
+            *n += 1;
+            return true;
+        }
+        if dom.name_is(node, &W::name("ptab"))
+            || dom.name_is(node, &W::name("cr"))
+            || dom.name_is(node, &W::name("noBreakHyphen"))
+            || dom.name_is(node, &W::name("br"))
+        {
+            *n += 1;
+            return true;
+        }
+        false
+    }
+    // (node, next child, first visit). Iterative so a deep paragraph does
+    // not recurse with the DOM.
+    let mut n = 0usize;
+    let mut stack = vec![(para, 0usize, true)];
+    while let Some((node, next, first)) = stack.pop() {
+        if first {
+            if node == drawing {
+                return n;
+            }
+            if node != para
+                && (!dom.is_element(node)
+                    || skip_subtree(dom, node)
+                    || consume_leaf(dom, node, &mut n))
+            {
+                continue;
+            }
+            stack.push((node, 0, false));
+            continue;
+        }
+        if next >= dom.child_count(node) {
+            continue;
+        }
+        let child = dom.child_at(node, next);
+        stack.push((node, next + 1, false));
+        stack.push((child, 0, true));
+    }
+    n
+}
+
 /// Text before `drawing` in its paragraph and none after it: the picture
 /// ends the paragraph's last line.
 fn trails_text(dom: &Dom, para: NodeId, drawing: NodeId) -> bool {
@@ -18587,7 +19137,7 @@ fn space_before_drawing(dom: &Dom, drawing: NodeId) -> f32 {
             .element(*sib, &W::r_pr())
             .and_then(|pr| first_named(dom, pr, "sz"))
             .and_then(|n| dom.attribute(n, &W::val()))
-            .and_then(|v| v.parse::<f32>().ok())
+            .and_then(parse_finite_f32)
             .map_or(11.0, |half| half / 2.0);
         gap += text.chars().count() as f32 * size * 0.25;
     }
@@ -18603,7 +19153,7 @@ fn inline_effect_pt(dom: &Dom, drawing: NodeId) -> [f32; 4] {
     };
     let side = |name: &str| {
         attr_any(dom, effect, name)
-            .and_then(|v| v.parse::<f32>().ok())
+            .and_then(parse_finite_f32)
             .map_or(0.0, |emu| (emu / 12700.0).max(0.0))
     };
     [side("l"), side("t"), side("r"), side("b")]
@@ -18733,9 +19283,11 @@ fn collect_images(
                     outline: None,
                     gap_before: 0.0,
                     lead_chars: 0,
+                    at_chars: 0,
                     after_text: false,
                     under: None,
                     chrome_flat_run: None,
+                    src: 0,
                 });
             }
             let child_slot = |slot: ImageSlot| match slot {
@@ -18793,9 +19345,11 @@ fn collect_images(
                     outline: None,
                     gap_before: 0.0,
                     lead_chars: 0,
+                    at_chars: 0,
                     after_text: false,
                     under: None,
                     chrome_flat_run: None,
+                    src: 0,
                 });
             }
             continue;
@@ -18860,6 +19414,7 @@ fn collect_images(
                         outline: picture_outline(dom, drawing),
                         gap_before: space_before_drawing(dom, drawing),
                         lead_chars: lead_chars_before(dom, para, drawing),
+                        at_chars: chars_before_drawing(dom, para, drawing),
                         after_text: trails_text(dom, para, drawing),
                         under: if matches!(slot, ImageSlot::Flow) {
                             run_style(drawing).filter(|run| run.underline)
@@ -18867,6 +19422,11 @@ fn collect_images(
                             None
                         },
                         chrome_flat_run: None,
+                        src: if matches!(slot, ImageSlot::Flow) {
+                            blip.0
+                        } else {
+                            0
+                        },
                     });
                 } else {
                     out.push(LaidImage {
@@ -18898,9 +19458,15 @@ fn collect_images(
                         outline: None,
                         gap_before: 0.0,
                         lead_chars: 0,
+                        at_chars: 0,
                         after_text: false,
                         under: None,
                         chrome_flat_run: None,
+                        src: if matches!(slot, ImageSlot::Flow) {
+                            blip.0
+                        } else {
+                            0
+                        },
                     });
                 }
             }
@@ -18977,9 +19543,11 @@ fn collect_images(
                         outline: None,
                         gap_before: 0.0,
                         lead_chars: 0,
+                        at_chars: 0,
                         after_text: false,
                         under: None,
                         chrome_flat_run: None,
+                        src: 0,
                     });
                     continue;
                 };
@@ -19023,6 +19591,7 @@ fn collect_images(
                     outline: None,
                     gap_before: 0.0,
                     lead_chars: 0,
+                    at_chars: 0,
                     after_text: false,
                     // An inserted or underlined w:pict / w:object keeps its
                     // run's descent under it, as a DrawingML picture does
@@ -19033,6 +19602,7 @@ fn collect_images(
                         None
                     },
                     chrome_flat_run: None,
+                    src: 0,
                 });
             }
             for line in descendants_local(dom, root, "line") {
@@ -19083,7 +19653,7 @@ fn vml_line_image(dom: &Dom, line: NodeId, root: NodeId) -> Option<LaidImage> {
         let style = attr_any(dom, g, "style")?;
         let w = vml_style_pt(style, "width")?;
         let h = vml_style_pt(style, "height").unwrap_or(0.0);
-        let num = |v: &str| v.parse::<f32>().ok();
+        let num = |v: &str| parse_finite_f32(v);
         let size = attr_any(dom, g, "coordsize")
             .and_then(|c| pair(c, &num))
             .unwrap_or([1000.0, 1000.0]);
@@ -19105,7 +19675,7 @@ fn vml_line_image(dom: &Dom, line: NodeId, root: NodeId) -> Option<LaidImage> {
             if v.chars().any(|c| c.is_ascii_alphabetic()) {
                 vml_len_pt(v)
             } else {
-                v.parse::<f32>().ok().map(|px| px * 0.75)
+                parse_finite_f32(v).map(|px| px * 0.75)
             }
         };
         let p = pair(from, &len)?;
@@ -19203,9 +19773,11 @@ fn vml_line_image(dom: &Dom, line: NodeId, root: NodeId) -> Option<LaidImage> {
         outline: None,
         gap_before: 0.0,
         lead_chars: 0,
+        at_chars: 0,
         after_text: false,
         under: None,
         chrome_flat_run: None,
+        src: 0,
     })
 }
 
@@ -19289,9 +19861,11 @@ fn vml_rect_image(
         outline: None,
         gap_before: 0.0,
         lead_chars: lead_chars_before(dom, para, root),
+        at_chars: chars_before_drawing(dom, para, root),
         after_text: trails_text(dom, para, root),
         under: None,
         chrome_flat_run: None,
+        src: 0,
     })
 }
 
@@ -19305,7 +19879,7 @@ fn picture_outline(dom: &Dom, drawing: NodeId) -> Option<([f32; 3], f32)> {
     }
     let color = scheme_color(dom, ln, &ThemeFonts::default())?;
     let width = attr_any(dom, ln, "w")
-        .and_then(|w| w.parse::<f32>().ok())
+        .and_then(parse_finite_f32)
         .map_or(0.75, |w| w / 12700.0);
     Some((color, width))
 }
@@ -19316,7 +19890,7 @@ fn src_rect_frac(dom: &Dom, drawing: NodeId) -> Option<[f32; 4]> {
     let n = first_named_any(dom, drawing, "srcRect")?;
     let p = |k: &str| {
         attr_any(dom, n, k)
-            .and_then(|s| s.parse::<f32>().ok())
+            .and_then(parse_finite_f32)
             .unwrap_or(0.0)
             / 100_000.0
     };
@@ -19341,8 +19915,8 @@ fn vml_crop(dom: &Dom, imagedata: NodeId) -> Option<[f32; 4]> {
     let p = |k: &str| {
         let v = attr_any(dom, imagedata, k)?.trim();
         let frac = match v.strip_suffix('f') {
-            Some(n) => n.trim().parse::<f32>().ok()? / 65_536.0,
-            None => v.parse::<f32>().ok()?,
+            Some(n) => parse_finite_f32(n.trim())? / 65_536.0,
+            None => parse_finite_f32(v)?,
         };
         frac.is_finite().then(|| frac.clamp(-1.0, 1.0))
     };
@@ -19368,7 +19942,7 @@ fn picture_is_oval(dom: &Dom, drawing: NodeId) -> bool {
 fn drawing_rotate_deg(dom: &Dom, drawing: NodeId) -> f32 {
     for xfrm in descendants_local(dom, drawing, "xfrm") {
         if let Some(rot) = attr_any(dom, xfrm, "rot")
-            && let Ok(emu) = rot.parse::<f32>()
+            && let Some(emu) = parse_finite_f32(rot)
         {
             return emu / 60_000.0;
         }
@@ -19386,12 +19960,15 @@ fn drawing_extent_pt(dom: &Dom, drawing: NodeId) -> (f32, f32) {
         return (200.0, 120.0);
     };
     let cx = attr_any(dom, ext, "cx")
-        .and_then(|s| s.parse::<f64>().ok())
+        .and_then(parse_finite_f64)
         .unwrap_or(200.0 * 12700.0);
     let cy = attr_any(dom, ext, "cy")
-        .and_then(|s| s.parse::<f64>().ok())
+        .and_then(parse_finite_f64)
         .unwrap_or(120.0 * 12700.0);
-    ((cx / 12700.0) as f32, (cy / 12700.0) as f32)
+    (
+        narrow_finite_f32(cx / 12700.0).unwrap_or(200.0),
+        narrow_finite_f32(cy / 12700.0).unwrap_or(120.0),
+    )
 }
 
 fn local_text(dom: &Dom, node: NodeId) -> String {
@@ -19449,7 +20026,7 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
     let emu_pt = |name: &str| {
         anchor
             .and_then(|n| attr_any(dom, n, name))
-            .and_then(|s| s.parse::<f32>().ok())
+            .and_then(parse_finite_f32)
             .map(|emu| emu / 12700.0)
             .unwrap_or(0.0)
     };
@@ -19460,7 +20037,7 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
     let effect_pt = |name: &str| {
         effect
             .and_then(|n| attr_any(dom, n, name))
-            .and_then(|s| s.parse::<f32>().ok())
+            .and_then(parse_finite_f32)
             .map(|emu| emu / 12700.0)
             .unwrap_or(0.0)
     };
@@ -19514,13 +20091,13 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
 
 fn parse_pct_value(raw: &str) -> Option<f32> {
     let trimmed = raw.trim();
-    let n: f32 = trimmed.trim_end_matches('%').trim().parse().ok()?;
+    let n = parse_finite_f32(trimmed.trim_end_matches('%').trim())?;
     let frac = if trimmed.ends_with('%') || n.abs() <= 100.0 {
         n / 100.0
     } else {
         n / 100_000.0
     };
-    Some(frac.clamp(0.0, 10.0))
+    frac.is_finite().then_some(frac.clamp(0.0, 10.0))
 }
 
 fn parse_pct_offset(dom: &Dom, parent: NodeId, local: &str) -> Option<f32> {
@@ -19715,7 +20292,7 @@ fn vml_group_box(dom: &Dom, shape: NodeId, root: NodeId) -> Option<(NodeId, [f32
     if local_name_is(dom, shape, "group") {
         return None;
     }
-    let num = |v: &str| v.trim().parse::<f32>().ok();
+    let num = |v: &str| parse_finite_f32(v.trim());
     let pair = |node: NodeId, key: &str, dflt: [f32; 2]| {
         attr_any(dom, node, key)
             .and_then(|raw| {
@@ -20113,12 +20690,12 @@ fn apply_hsl_lum_mod(color: &mut [f32; 3], lum_mod: f32) {
 fn apply_lum(dom: &Dom, node: NodeId, color: &mut [f32; 3]) {
     let lum_mod = descendants_local(dom, node, "lumMod")
         .into_iter()
-        .find_map(|n| attr_any(dom, n, "val").and_then(|s| s.parse::<f32>().ok()))
+        .find_map(|n| attr_any(dom, n, "val").and_then(parse_finite_f32))
         .unwrap_or(100_000.0)
         / 100_000.0;
     let lum_off = descendants_local(dom, node, "lumOff")
         .into_iter()
-        .find_map(|n| attr_any(dom, n, "val").and_then(|s| s.parse::<f32>().ok()))
+        .find_map(|n| attr_any(dom, n, "val").and_then(parse_finite_f32))
         .unwrap_or(0.0)
         / 100_000.0;
     if lum_off.abs() < 1e-6 && (lum_mod - 1.0).abs() > 1e-6 {
@@ -20130,7 +20707,7 @@ fn apply_lum(dom: &Dom, node: NodeId, color: &mut [f32; 3]) {
     }
     let Some(shade) = descendants_local(dom, node, "shade")
         .into_iter()
-        .find_map(|n| attr_any(dom, n, "val").and_then(|s| s.parse::<f32>().ok()))
+        .find_map(|n| attr_any(dom, n, "val").and_then(parse_finite_f32))
         .map(|v| (v / 100_000.0).clamp(0.0, 1.0))
     else {
         return;
@@ -20179,8 +20756,8 @@ fn shape_has_picture_fill(dom: &Dom, shape: NodeId) -> bool {
 }
 
 fn shape_ln_is_nofill(dom: &Dom, shape: NodeId) -> bool {
-    // Explicit `a:ln/a:noFill` (Strict01 Text Box 465 Author). Distinct
-    // from no `a:ln` at all (unfilled txbx still hairline: mcdoc).
+    // Explicit `a:ln/a:noFill` overrides even a style-supplied outline
+    // (Strict01 Text Box 465 Author).
     descendants_local(dom, shape, "ln")
         .into_iter()
         .any(|ln| !descendants_local(dom, ln, "noFill").is_empty())
@@ -20204,10 +20781,11 @@ fn shape_line_width(dom: &Dom, shape: NodeId, theme: &ThemeFonts) -> f32 {
         if !descendants_local(dom, ln, "noFill").is_empty() {
             continue;
         }
-        if let Some(w) = attr_any(dom, ln, "w").and_then(|s| s.parse::<f64>().ok()) {
+        if let Some(w) = attr_any(dom, ln, "w").and_then(parse_finite_f64)
+            && let Some(pt) = narrow_finite_f32(w / 12700.0)
+        {
             // Word strokes the width as written (1f3856c4's 3175 EMU
             // arrows are 0.25pt in its PDF); w=0 keeps a visible hairline.
-            let pt = (w / 12700.0) as f32;
             return if pt > 0.0 { pt.min(4.0) } else { 0.4 };
         }
     }
@@ -20275,11 +20853,7 @@ fn preset_adjustments(dom: &Dom, shape: NodeId) -> Vec<(String, f64)> {
         .into_iter()
         .filter_map(|gd| {
             let name = attr_any(dom, gd, "name")?;
-            let v = attr_any(dom, gd, "fmla")?
-                .strip_prefix("val ")?
-                .trim()
-                .parse()
-                .ok()?;
+            let v = parse_finite_f64(attr_any(dom, gd, "fmla")?.strip_prefix("val ")?.trim())?;
             Some((name.to_string(), v))
         })
         .collect()
@@ -20367,10 +20941,8 @@ fn shape_line_color(dom: &Dom, shape: NodeId, theme: &ThemeFonts) -> Option<[f32
 fn pos_offset_pt(dom: &Dom, node: Option<NodeId>) -> Option<f32> {
     let parent = node?;
     let off = first_named_any(dom, parent, "posOffset")?;
-    local_text(dom, off)
-        .parse::<f64>()
-        .ok()
-        .map(|emu| (emu / 12700.0) as f32)
+    let emu = parse_finite_f64(local_text(dom, off).trim())?;
+    narrow_finite_f32(emu / 12700.0)
 }
 
 /// `wp:wrapPolygon`'s lowest vertex as a fraction of the extent (21600
@@ -20382,7 +20954,7 @@ fn wrap_polygon_bottom(dom: &Dom, drawing: NodeId) -> f32 {
     let lowest = ["start", "lineTo"]
         .iter()
         .flat_map(|local| dom.descendants(poly, Some(&WP::name(local))))
-        .filter_map(|pt| attr_any(dom, pt, "y")?.parse::<f32>().ok())
+        .filter_map(|pt| attr_any(dom, pt, "y").and_then(parse_finite_f32))
         .fold(f32::MIN, f32::max);
     if lowest > 0.0 {
         (lowest / 21600.0).min(1.0)
@@ -20462,8 +21034,8 @@ fn cell_left_rule(cell: &TableCell, borders: Option<TblBorders>) -> f32 {
 /// A VML fixed-point fraction (`19661f` = 19661/65536) or plain number.
 fn vml_fraction(value: &str) -> Option<f32> {
     match value.strip_suffix('f') {
-        Some(fixed) => fixed.trim().parse::<f32>().ok().map(|v| v / 65536.0),
-        None => value.trim().parse().ok(),
+        Some(fixed) => parse_finite_f32(fixed.trim()).map(|v| v / 65536.0),
+        None => parse_finite_f32(value.trim()),
     }
 }
 
@@ -20525,7 +21097,7 @@ fn washed_out(kind: ImageKind) -> ImageKind {
 fn soft_edge_pt(dom: &Dom, drawing: NodeId) -> Option<f32> {
     let pic = descendants_local(dom, drawing, "spPr").into_iter().next()?;
     let edge = descendants_local(dom, pic, "softEdge").into_iter().next()?;
-    let rad = attr_any(dom, edge, "rad")?.parse::<f32>().ok()? / 12_700.0;
+    let rad = parse_finite_f32(attr_any(dom, edge, "rad")?)? / 12_700.0;
     (rad > 0.0).then_some(rad)
 }
 
@@ -20593,7 +21165,7 @@ fn duotone_color(dom: &Dom, node: NodeId, pkg: &PartFs) -> Option<[f32; 3]> {
     apply_lum(dom, node, &mut color);
     if let Some(sat) = descendants_local(dom, node, "satMod")
         .into_iter()
-        .find_map(|n| attr_any(dom, n, "val").and_then(|s| s.parse::<f32>().ok()))
+        .find_map(|n| attr_any(dom, n, "val").and_then(parse_finite_f32))
     {
         let (h, s, l) = rgb_to_hsl(color[0], color[1], color[2]);
         let rgb = hsl_to_rgb(h, (s * sat / 100_000.0).clamp(0.0, 1.0), l);
@@ -20944,18 +21516,19 @@ struct ChromeTable {
 
 fn hf_table_width_pt(dom: &Dom, table: NodeId) -> f32 {
     match table_pref_width(dom, table) {
-        TblWidth::Dxa(w) if w > 1.0 => w,
+        TblWidth::Dxa(w) if w.is_finite() && w > 1.0 => w,
         _ => {
             let mut w = 0.0;
             if let Some(grid) = direct_named(dom, table, "tblGrid") {
                 for col in dom.elements(grid, Some(&W::grid_col())) {
+                    // A non-finite column is no width, same as an unparsable one.
                     w += attr_any(dom, col, "w")
-                        .and_then(|s| s.parse::<f32>().ok())
+                        .and_then(parse_finite_f32)
                         .map(twip)
                         .unwrap_or(0.0);
                 }
             }
-            if w > 1.0 { w } else { 144.0 }
+            if w.is_finite() && w > 1.0 { w } else { 144.0 }
         }
     }
 }
@@ -21211,7 +21784,11 @@ fn chrome_part_xml(
     let Some(root) = part_dom.root(doc) else {
         return empty_chrome();
     };
-    let runs = collect_hf_runs(&part_dom, root, sheet, text_w);
+    let runs = collect_hf_runs(&part_dom, root, sheet, text_w, Some((pkg, path)));
+    let spliced: HashSet<u32> = runs
+        .iter()
+        .filter_map(|r| r.pic.as_ref().map(|p| p.src))
+        .collect();
     let mut images = Vec::new();
     let mut boxes = Vec::new();
     let watermark = parse_header_watermark(&part_dom, root);
@@ -21293,7 +21870,7 @@ fn chrome_part_xml(
             // note bar 0.75pt under its line top). A stroked or filled
             // shape without text is a box too (e0fe3a82eb's connector).
             let effects: Vec<([f32; 4], RunStyle)> = part_dom
-                .descendants(para, Some(&WP::name("inline")))
+                .descendants(para, Some(&WP::inline()))
                 .into_iter()
                 .filter(|inl| {
                     (!descendants_local(&part_dom, *inl, "txbx").is_empty()
@@ -21339,7 +21916,7 @@ fn chrome_part_xml(
                 .descendants(para, Some(&W::name("sz")))
                 .into_iter()
                 .filter(|n| part_dom.ancestors(*n, Some(&W::txbx_content())).is_empty())
-                .filter_map(|n| attr_any(&part_dom, n, "val").and_then(|v| v.parse::<f32>().ok()))
+                .filter_map(|n| attr_any(&part_dom, n, "val").and_then(parse_finite_f32))
                 .map(|half| half / 2.0)
                 .fold(prun.size, f32::max);
             let line = pstyle
@@ -21422,7 +21999,7 @@ fn chrome_part_xml(
         let flow = (no_text || hf_pic_owns_line(&part_dom, para, sheet, text_w))
             && (vml_inline
                 || part_dom
-                    .descendants(para, Some(&WP::name("inline")))
+                    .descendants(para, Some(&WP::inline()))
                     .into_iter()
                     .any(|inl| part_dom.ancestors(inl, Some(&W::txbx_content())).is_empty()));
         // A picture paragraph with no text or bare line after it in the
@@ -21472,7 +22049,7 @@ fn chrome_part_xml(
             .map(|fp| {
                 let at = |name: &str| {
                     attr_any(&part_dom, fp, name)
-                        .and_then(|v| v.parse::<f32>().ok())
+                        .and_then(parse_finite_f32)
                         .map_or(0.0, |tw| tw / 20.0)
                 };
                 (at("x"), at("y"), at("w"))
@@ -21485,6 +22062,7 @@ fn chrome_part_xml(
             collect_images(pkg, path, &part_dom, para, &|_| None)
                 .into_iter()
                 .chain(flow_boxes)
+                .filter(|img| img.src == 0 || !spliced.contains(&img.src))
                 .filter(|img| !(table_owned && cell_holds_image(img)))
                 .map(|mut img| {
                     img.chrome_align = jc;
@@ -21834,7 +22412,7 @@ fn parse_header_watermark(dom: &Dom, root: NodeId) -> Option<Watermark> {
             {
                 if let Some(sz) = first_named(dom, rpr, "sz")
                     .and_then(|n| attr_any(dom, n, "val"))
-                    .and_then(|v| v.parse::<f32>().ok())
+                    .and_then(parse_finite_f32)
                 {
                     size = sz / 2.0;
                 }
@@ -21871,14 +22449,14 @@ fn parse_header_watermark(dom: &Dom, root: NodeId) -> Option<Watermark> {
                 .chars()
                 .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
                 .collect();
-            if let Ok(deg) = num.parse::<f32>() {
+            if let Some(deg) = parse_finite_f32(&num) {
                 rotate_deg = deg;
             }
         }
     }
     for xfrm in descendants_local(dom, root, "xfrm") {
         if let Some(rot) = attr_any(dom, xfrm, "rot")
-            && let Ok(emu) = rot.parse::<f32>()
+            && let Some(emu) = parse_finite_f32(rot)
         {
             rotate_deg = emu / 60_000.0;
         }
@@ -21987,7 +22565,7 @@ fn pbdr_edge(dom: &Dom, ppr: NodeId, edge: &str) -> Option<([f32; 3], f32, f32)>
         .and_then(parse_hex_color)
         .unwrap_or([0.0, 0.0, 0.0]);
     let width = attr_any(dom, el, "sz")
-        .and_then(|s| s.parse::<f32>().ok())
+        .and_then(parse_finite_f32)
         .map(|eighths| {
             let pt = eighths / 8.0;
             // file_146 / sample_iter2 heading pBdr sz=3 is Word 0.24pt
@@ -21998,7 +22576,7 @@ fn pbdr_edge(dom: &Dom, ppr: NodeId, edge: &str) -> Option<([f32; 3], f32, f32)>
         .unwrap_or(0.6);
     // Word ST_Pts; omitted space is 0 (ECMA-376 17.3.1.24).
     let space = attr_any(dom, el, "space")
-        .and_then(|s| s.parse::<f32>().ok())
+        .and_then(parse_finite_f32)
         .unwrap_or(0.0);
     Some((color, width, space))
 }
@@ -22025,7 +22603,13 @@ fn hf_para_is_shape_text(dom: &Dom, para: NodeId) -> bool {
     false
 }
 
-fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet, text_w: f32) -> Vec<TextRun> {
+fn collect_hf_runs(
+    dom: &Dom,
+    node: NodeId,
+    sheet: &StyleSheet,
+    text_w: f32,
+    media: Option<(&PartFs, &str)>,
+) -> Vec<TextRun> {
     let header = dom.name_is(node, &W::hdr());
     // One footer/header <w:p> is one painted line. Flattening sd_2517's
     // "Smith Family Trust" + PAGE into one run list produced Trust106.
@@ -22087,9 +22671,29 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet, text_w: f32) -> 
             pstyle.tab_stops = ptabs;
         }
         let pstyle = std::rc::Rc::new(pstyle);
-        let mut scan = FieldScan::default();
+        // Picture-only chrome keeps its dedicated band/row placement:
+        // page frames, square floats and trailing tabs size that band.
+        // Text/field paragraphs instead wrap their pictures with the ink.
+        let flow_pics = media.is_some()
+            && (!para_shown_text(dom, para).trim().is_empty()
+                || [W::fld_simple(), W::fld_char()].iter().any(|name| {
+                    dom.descendants(para, Some(name))
+                        .into_iter()
+                        .any(|field| dom.ancestors(field, Some(&W::txbx_content())).is_empty())
+                }));
+        let mut scan = FieldScan {
+            flow_pics,
+            ..FieldScan::default()
+        };
         let mut line = Vec::new();
         collect_hf_rec(dom, para, &prun, sheet, &mut scan, &mut line);
+        if let Some((pkg, part)) = media {
+            let mut images = collect_images(pkg, part, dom, para, &|drawing| {
+                picture_run_style(dom, drawing, &prun, &sheet.theme, &sheet.by_id)
+            });
+            bind_flow_pictures(&mut line, &mut images);
+        }
+        let spliced = line.iter().any(|r| r.pic.is_some());
         // A right or centre ptab relative to the margin stretches an
         // auto-width frame to the margins, so it prints as the unframed
         // line (54f4bb7's centred footer frame: "Metadata" at the left
@@ -22173,8 +22777,17 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet, text_w: f32) -> 
         }
         // Text under a line-filling picture is a line of its own; one after
         // the text wraps to a line of its own under it (PR #247 review).
-        let trails = hf_pic_trails_line(dom, para, sheet, text_w);
-        let pic_h = if trails || hf_pic_owns_line(dom, para, sheet, text_w) {
+        let trails = !spliced && hf_pic_trails_line(dom, para, sheet, text_w);
+        let pic_h = if spliced {
+            // Bound pictures size their own wrapped lines. Other drawings
+            // (e.g. deleted runs and numeric-field caches) still paint on
+            // the chrome image path and must keep their reservation.
+            let bound: HashSet<_> = line
+                .iter()
+                .filter_map(|r| r.pic.as_ref().map(|p| p.src))
+                .collect();
+            hf_unbound_inline_pic_h(dom, para, &bound)
+        } else if trails || hf_pic_owns_line(dom, para, sheet, text_w) {
             0.0
         } else {
             hf_inline_pic_h(dom, para)
@@ -22280,11 +22893,19 @@ fn hf_border_pad(above: Option<&ParaStyle>, para: &ParaStyle) -> f32 {
 /// The tallest inline picture directly in a chrome paragraph (text-box
 /// pictures excluded), from its `wp:extent`.
 fn hf_inline_pic_h(dom: &Dom, para: NodeId) -> f32 {
-    dom.descendants(para, Some(&WP::name("inline")))
+    hf_unbound_inline_pic_h(dom, para, &HashSet::new())
+}
+
+fn hf_unbound_inline_pic_h(dom: &Dom, para: NodeId, bound: &HashSet<u32>) -> f32 {
+    dom.descendants(para, Some(&WP::inline()))
         .into_iter()
         .filter(|inl| dom.ancestors(*inl, Some(&W::txbx_content())).is_empty())
+        .filter(|inl| {
+            let blips = dom.descendants(*inl, Some(&A::name("blip")));
+            blips.is_empty() || blips.iter().any(|b| !bound.contains(&b.0))
+        })
         .filter_map(|inl| first_named_any(dom, inl, "extent"))
-        .filter_map(|ext| attr_any(dom, ext, "cy").and_then(|v| v.parse::<f32>().ok()))
+        .filter_map(|ext| attr_any(dom, ext, "cy").and_then(parse_finite_f32))
         .map(|cy| cy / 12700.0)
         .fold(0.0_f32, f32::max)
 }
@@ -22302,7 +22923,7 @@ fn hf_flat_pic_run(
         return None;
     }
     let inl = dom
-        .descendants(para, Some(&WP::name("inline")))
+        .descendants(para, Some(&WP::inline()))
         .into_iter()
         .find(|inl| dom.ancestors(*inl, Some(&W::txbx_content())).is_empty())?;
     let mut run = prun.clone();
@@ -22333,10 +22954,10 @@ fn hf_pic_owns_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) ->
         {
             break;
         }
-        if dom.name_is(n, &WP::name("inline"))
+        if dom.name_is(n, &WP::inline())
             && let Some(cx) = first_named_any(dom, n, "extent")
                 .and_then(|ext| attr_any(dom, ext, "cx"))
-                .and_then(|v| v.parse::<f32>().ok())
+                .and_then(parse_finite_f32)
         {
             pics_w += cx / 12700.0;
         }
@@ -22372,12 +22993,12 @@ fn hf_pic_trails_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) 
             seen_text = true;
             text.push_str(&element_text(dom, n));
         } else if seen_text
-            && dom.name_is(n, &WP::name("inline"))
+            && dom.name_is(n, &WP::inline())
             && let Some(ext) = first_named_any(dom, n, "extent")
-            && let Some(cx) = attr_any(dom, ext, "cx").and_then(|v| v.parse::<f32>().ok())
+            && let Some(cx) = attr_any(dom, ext, "cx").and_then(parse_finite_f32)
         {
             pics_w += cx / 12700.0;
-            let cy = attr_any(dom, ext, "cy").and_then(|v| v.parse::<f32>().ok());
+            let cy = attr_any(dom, ext, "cy").and_then(parse_finite_f32);
             pics_h = pics_h.max(cy.unwrap_or(0.0) / 12700.0);
         }
     }
@@ -22434,7 +23055,7 @@ fn hf_para_is_bare_line(dom: &Dom, root: NodeId, para: NodeId) -> bool {
                 (dom.name_is(d, &W::pict()) && para_hrule(dom, d).is_none()
                     || (dom.name_is(d, &W::drawing())
                         && dom
-                            .descendants(d, Some(&WP::name("inline")))
+                            .descendants(d, Some(&WP::inline()))
                             .into_iter()
                             .any(|i| !inside_text_box(dom, i, d))))
                     && !dom.ancestors(d, None).iter().any(|a| {
@@ -22506,7 +23127,9 @@ fn hf_line_chars(fonts: &Fonts, line: &[TextRun]) -> Vec<(usize, char, f32)> {
             let face = fonts.get(ink_face(fonts, &run.style, &run.text));
             let size = run.style.layout_size();
             run.text.chars().map(move |ch| {
-                let w = if ch == '\t' {
+                let w = if let Some(pic) = &run.pic {
+                    pic.w.max(1.0)
+                } else if ch == '\t' {
                     0.0
                 } else {
                     face.width_pt(ch.encode_utf8(&mut [0; 4]), size) * run.style.hscale()
@@ -22740,6 +23363,8 @@ fn hf_paragraph_lines(runs: &[TextRun]) -> Vec<(Vec<TextRun>, f32)> {
 
 #[derive(Default)]
 struct FieldScan {
+    /// The owning story can resolve and bind inline picture placeholders.
+    flow_pics: bool,
     kind: Option<FieldKind>,
     result: bool,
     emitted: bool,
@@ -22795,6 +23420,7 @@ fn collect_hf_rev(
     let start = runs.len();
     if dom.name_is(node, &W::fld_simple()) {
         let outer = std::mem::take(scan);
+        scan.flow_pics = outer.flow_pics;
         let instr = attr_any(dom, node, "instr").unwrap_or("");
         scan.result = true;
         scan.kind = numeric_field_kind(instr);
@@ -22857,7 +23483,12 @@ fn collect_hf_rev_runs(
     }
     if dom.name_is(node, &W::fld_char()) {
         match attr_any(dom, node, "fldCharType").unwrap_or("") {
-            "begin" => *scan = FieldScan::default(),
+            "begin" => {
+                *scan = FieldScan {
+                    flow_pics: scan.flow_pics,
+                    ..FieldScan::default()
+                };
+            }
             "separate" => {
                 scan.result = true;
                 scan.styleref =
@@ -22875,7 +23506,10 @@ fn collect_hf_rev_runs(
                 } else if !scan.emitted && is_datetime_field(&scan.instr) {
                     runs.push(field_run(datetime_field_text(&scan.instr), base));
                 }
-                *scan = FieldScan::default();
+                *scan = FieldScan {
+                    flow_pics: scan.flow_pics,
+                    ..FieldScan::default()
+                };
             }
             _ => {}
         }
@@ -22960,6 +23594,40 @@ fn collect_hf_rev_runs(
                     if scan.result {
                         scan.emitted = true;
                     }
+                }
+            }
+            return;
+        }
+        // Use the same atomic pieces as body flow without changing chrome fields.
+        if scan.flow_pics
+            && !matches!(mark, RevMark::Del | RevMark::MoveFrom)
+            && let Some(pieces) = flow_run_pieces(dom, node, BreakText::Line)
+        {
+            for piece in pieces {
+                let mut run = match piece {
+                    FlowPiece::Pic(src) => {
+                        let mut run = TextRun::new(INLINE_PIC, style.clone());
+                        run.pic_src = Some(src);
+                        run
+                    }
+                    FlowPiece::Text(raw) => TextRun::new(
+                        rev_text(&raw, mark, run_preserves_space(dom, node)),
+                        style.clone(),
+                    ),
+                };
+                if run.text.is_empty() {
+                    continue;
+                }
+                if run.text == "\n" && !line_has_content(runs) {
+                    let mut blank = TextRun::new("", style.clone());
+                    blank.ends_line = true;
+                    blank.rev = mark != RevMark::None;
+                    runs.push(blank);
+                }
+                run.rev = mark != RevMark::None;
+                runs.push(run);
+                if scan.result {
+                    scan.emitted = true;
                 }
             }
             return;
@@ -23131,6 +23799,8 @@ struct Layout<'a> {
     /// github underline ran ~46pt past the table when xml:space
     /// padding on an underlined hyperlink was kept).
     clip_right: Option<f32>,
+    /// Text-box overflow hides a whole line, including its picture and marks.
+    textbox_floor: Option<f32>,
     /// Last emitted paragraph style. Empty `w:br type=page` after
     /// TextHeading* with leftover under ~23pt skips a blank (sd_2517
     /// 1-4). Table leftover must not (file_78 / file_196).
@@ -23387,7 +24057,10 @@ fn chrome_line_metrics(fonts: &Fonts, line: &[TextRun]) -> (f32, f32) {
         ascent
     };
     // An inline picture sharing the line stands on its baseline.
-    let pic = line.iter().map(|r| r.hf_pic_h).fold(0.0_f32, f32::max);
+    let pic = line
+        .iter()
+        .map(|r| r.hf_pic_h.max(r.pic.as_ref().map_or(0.0, |p| p.h)))
+        .fold(0.0_f32, f32::max);
     if pic > drop && para.is_none_or(|p| p.line_exact.is_none()) {
         return (pic, line_box + pic - drop);
     }
@@ -23650,6 +24323,7 @@ impl<'a> Layout<'a> {
             margin_r0: page.margin_r,
             placed_comments: HashSet::new(),
             clip_right: None,
+            textbox_floor: None,
             last_style_id: String::new(),
             nested_depth: 0,
             side_float: None,
@@ -24330,6 +25004,43 @@ impl<'a> Layout<'a> {
         line_box_from_natural(own, style) + (natural - own).max(0.0)
     }
 
+    fn pic_line(&self, line: &[TextRun], style: &ParaStyle) -> PicLine {
+        let mut h = 0.0_f32;
+        let mut under = 0.0_f32;
+        for run in line {
+            let Some(img) = run.pic.as_deref() else {
+                continue;
+            };
+            h = h.max(img.h.max(1.0));
+            if let Some(u) = img.under.as_ref() {
+                let face = self
+                    .fonts
+                    .get(self.fonts.resolve(&u.family, u.bold, u.italic));
+                under = under.max(face.line_descent_pt(u.layout_size()));
+            }
+        }
+        // A break marker on the picture's line is the line break, not
+        // text. The empty line it opens is the mark's line
+        // (66cfa52b0c: picture, w:br, 7pt mark). A strut is the empty
+        // carrier of an inline shape that was not spliced (212a1c9d's
+        // group after the logo): it carries no words, and counting it
+        // stacked the group under the picture.
+        let text = line.iter().any(|r| {
+            r.pic.is_none() && (r.list_marker || r.note_rule || !r.text.trim().is_empty())
+        });
+        let only = h > 0.0 && !text;
+        PicLine {
+            only,
+            h,
+            under: if only { under } else { 0.0 },
+            extra: if only {
+                self.picture_line_extra(style, style.mark_run.as_deref())
+            } else {
+                0.0
+            },
+        }
+    }
+
     fn line_face_metrics(&self, line: &[TextRun], marker: Option<&TextRun>) -> (f32, f32) {
         // Whitespace-only runs do not size the line: a trailing Calibri
         // space (002919b3) or an Aptos tab between Times TOC text keeps
@@ -24338,7 +25049,7 @@ impl<'a> Layout<'a> {
         let inked: Vec<&TextRun> = line
             .iter()
             .chain(marker)
-            .filter(|r| !r.text.trim().is_empty() || r.strut)
+            .filter(|r| r.pic.is_none() && (!r.text.trim().is_empty() || r.strut))
             .collect();
         // A break alone on its line sizes it (00accd5b's second, 13.5pt
         // break); a whitespace-only line is sized next to its mark: the
@@ -24349,7 +25060,12 @@ impl<'a> Layout<'a> {
         } else if !breaks.is_empty() {
             breaks
         } else {
-            line.last().or(marker).into_iter().collect()
+            line.iter()
+                .rev()
+                .find(|r| r.pic.is_none())
+                .or(marker)
+                .into_iter()
+                .collect()
         };
         // Word's line is the taller of its tallest single line and the
         // tallest part above the baseline (list marker included) over the
@@ -24389,6 +25105,11 @@ impl<'a> Layout<'a> {
                 down = down.max(math.descent);
                 single = single.max(math.ascent + math.descent);
                 ascent = ascent.max(math.ascent);
+                continue;
+            }
+            // A picture's height is applied after the text line is sized.
+            // Folding it into `natural` would multiply it by the line spacing.
+            if run.pic.is_some() {
                 continue;
             }
             // 000f4c0b's all-lowercase small-caps line is a 12pt line.
@@ -25627,17 +26348,70 @@ impl<'a> Layout<'a> {
                 continue;
             }
             let grid = para_grid_pitch(style, self.page.grid_pitch);
-            let line_box = if grid > 0.5 {
+            let text_box = if grid > 0.5 {
                 grid_line_box(natural, style, grid)
             } else {
                 self.lifted_line_box(line, marker.filter(|_| line_i == 0), natural, style)
             };
+            // Picture height is added after the text formulas. Growing the
+            // box first would change rise, shrink and the grid pad, and the
+            // line would deepen twice.
+            let pic = self.pic_line(line, style);
             // On a docGrid the text sits centred in its snapped box: 00d2ca27's
             // TNR 12 double lines on a 15.6pt grid start 8.7pt down.
-            let grid_pad = if grid > 0.5 {
-                ((line_box - natural) / 2.0).max(0.0)
+            let grid_pad = if pic.only {
+                0.0
+            } else if grid > 0.5 {
+                ((text_box - natural) / 2.0).max(0.0)
             } else {
                 0.0
+            };
+            let rise = if !pic.only && style.line_at_least.is_some() && grid_pad == 0.0 {
+                (text_box - natural).max(0.0)
+            } else {
+                0.0
+            };
+            // An auto multiple under single takes its cut off the top: the
+            // text rises into the line above and the lines step by the box
+            // (live Word: Trebuchet 11 at line=182 steps 9.6pt, its first
+            // line 2.7pt above the margin; we stepped ascent + 1).
+            let shrink = if !pic.only
+                && style.line_exact.is_none()
+                && style.line_at_least.is_none()
+                && grid <= 0.5
+                && text_box < natural
+            {
+                natural - text_box
+            } else {
+                0.0
+            };
+            let drop0 = if pic.only {
+                pic.h
+            } else if style.line_exact.is_some() {
+                exact_baseline(text_box)
+            } else {
+                ascent + rise - shrink
+            };
+            let (line_box, drop, fit_natural, fit_ascent) = if pic.only {
+                let pic_box = pic.h + pic.under + pic.extra;
+                (pic_box, pic.h, pic_box, pic.h)
+            } else if style.line_exact.is_some() && pic.h > text_box {
+                let pic_box = pic.h;
+                (pic_box, exact_baseline(pic_box), natural, ascent)
+            } else if pic.h > 0.0 && style.line_exact.is_none() {
+                let dy = (pic.h - drop0).max(0.0);
+                (
+                    text_box + dy,
+                    drop0 + dy,
+                    if dy > 0.0 {
+                        natural.max(pic.h)
+                    } else {
+                        natural
+                    },
+                    if dy > 0.0 { ascent.max(pic.h) } else { ascent },
+                )
+            } else {
+                (text_box, drop0, natural, ascent)
             };
             let fn_h = self.added_footnote_h(line);
             if fn_h > 0.0 {
@@ -25679,7 +26453,12 @@ impl<'a> Layout<'a> {
                     0.0
                 };
                 let after = self.after_over_notes(style, last);
-                self.ensure(line_fit_need(natural, ascent, style, line_box) + foot + after);
+                let need = if pic.only {
+                    line_box
+                } else {
+                    line_fit_need(fit_natural, fit_ascent, style, line_box)
+                };
+                self.ensure(need + foot + after);
             }
             // Lines moved to a new page box their borders there (probe
             // bd1001 b2: the rule under a moved line, not at the old y).
@@ -25687,6 +26466,8 @@ impl<'a> Layout<'a> {
                 box_page = self.pages.len();
                 box_top = self.y;
             }
+            let line_ops_start = self.current().ops.len();
+            let line_pagerefs = self.pageref_ops.len();
             if let Some(fill) = style.fill {
                 let mut fx = self.flow_left() + style.indent_left;
                 let mut fx2 =
@@ -25722,34 +26503,9 @@ impl<'a> Layout<'a> {
                     color: fill,
                 });
             }
-            // An exact line's baseline is 4/5 down its box whatever the
-            // face (00080142 Arial exact 12: 9.53; 000e618d Tahoma exact
-            // 14: 11.23; 0015b689 SimHei exact 25: 19.92).
-            // An atLeast box stacks its extra height above the text
-            // (00df97e7's Arial 8 under 16.5pt sits 7.3pt down).
-            let rise = if style.line_at_least.is_some() && grid_pad == 0.0 {
-                (line_box - natural).max(0.0)
-            } else {
-                0.0
-            };
-            // An auto multiple under single takes its cut off the top: the
-            // text rises into the line above and the lines step by the box
-            // (live Word: Trebuchet 11 at line=182 steps 9.6pt, its first
-            // line 2.7pt above the margin; we stepped ascent + 1).
-            let shrink = if style.line_exact.is_none()
-                && style.line_at_least.is_none()
-                && grid <= 0.5
-                && line_box < natural
-            {
-                natural - line_box
-            } else {
-                0.0
-            };
-            let drop = if style.line_exact.is_some() {
-                exact_baseline(line_box)
-            } else {
-                ascent + rise - shrink
-            };
+            // `drop` and `line_box` were fixed from the text box before the
+            // picture deepened them. An exact line's baseline is still 4/5
+            // down its box (00080142 Arial exact 12: 9.53).
             self.y -= grid_pad + drop;
             // With a label, line one starts on a custom stop inside the
             // gutter when the paragraph sets one (`marker_gutter_stop`).
@@ -25895,6 +26651,11 @@ impl<'a> Layout<'a> {
             }
             self.paint_line_number(baseline);
             self.close_line_frame(frame);
+            if self.textbox_floor.is_some_and(|floor| baseline < floor) {
+                self.current().ops.truncate(line_ops_start);
+                self.styleref_ops.truncate(frame);
+                self.pageref_ops.truncate(line_pagerefs);
+            }
             self.last_line_end = Some((x + line_w, baseline));
             self.last_line = Some(LastLine {
                 page: self.pages.len(),
@@ -25904,6 +26665,16 @@ impl<'a> Layout<'a> {
                 trail,
                 align: style.align,
             });
+            // The row an inline box shares. `last_line_end` includes a
+            // trailing tab; the box loop advances that tab itself.
+            if pic.only {
+                self.pic_row = Some((
+                    self.pages.len(),
+                    self.picture_row_end(line, x),
+                    baseline,
+                    pic.h,
+                ));
+            }
             if line_i == 0 {
                 self.first_line = self.last_line.map(|l| FirstLine {
                     line: l,
@@ -25919,8 +26690,12 @@ impl<'a> Layout<'a> {
                 });
             }
             // An exact line is exactly its pitch even under a taller face
-            // (0016d88a's exact 10.6pt lines of 10.5pt MS Mincho).
-            self.y -= if style.line_exact.is_some() {
+            // (0016d88a's exact 10.6pt lines of 10.5pt MS Mincho). A
+            // picture-only line advances by the picture, its descent and
+            // the multiple's extra, with no phantom point.
+            self.y -= if pic.only {
+                (line_box - drop).max(0.0)
+            } else if style.line_exact.is_some() {
                 line_box - drop
             } else {
                 (line_box - grid_pad - drop).max(1.0)
@@ -26736,6 +27511,18 @@ impl<'a> Layout<'a> {
         x - x0
     }
 
+    /// X after a picture-only line's pictures. A tab advances only when a
+    /// picture follows it; a trailing tab is the stop the next inline box
+    /// takes (212a1c9d's title bar beside its logo). Counting that tab here
+    /// and again in the box loop lands the box one stop too far.
+    fn picture_row_end(&self, line: &[TextRun], x0: f32) -> f32 {
+        let end = line
+            .iter()
+            .rposition(|r| r.pic.is_some())
+            .map_or(0, |i| i + 1);
+        x0 + self.tab_line_width(&line[..end], x0)
+    }
+
     fn line_width_pt(&self, line: &[TextRun]) -> f32 {
         let mut i = 0;
         let mut w = 0.0;
@@ -26836,6 +27623,11 @@ impl<'a> Layout<'a> {
             && text == run.text
         {
             return math.width;
+        }
+        if let Some(img) = &run.pic
+            && text == run.text
+        {
+            return img.w.max(1.0);
         }
         if let Some(pieces) = script_pieces(&run.style, text) {
             let gaps: f32 = pieces
@@ -27120,6 +27912,14 @@ impl<'a> Layout<'a> {
     fn paint_run(&mut self, run: &TextRun, x: f32, y: f32) -> f32 {
         if let Some(math) = &run.math {
             return self.paint_math_box(run, math, x, y);
+        }
+        if let Some(img) = &run.pic {
+            let w = img.w.max(1.0);
+            let h = img.h.max(1.0);
+            self.push_image(img, x, y, w, h);
+            self.decorate_run(x, y, w, &run.style);
+            self.place_run_comments(run, x, y, w);
+            return x + w;
         }
         // Word's separator is the run's strikeout line on the 300dpi grid
         // (Word 16 probes 2026-10-03: Calibri 11 0.72 thick with its top
@@ -27581,7 +28381,7 @@ impl<'a> Layout<'a> {
             // An equation is one box. Splitting it on its spaces paints
             // the letters at body size and drops the bar (inline-symbol-runs
             // is justified, so its superscript fraction became "p+14").
-            if run.math.is_some() {
+            if run.math.is_some() || run.pic.is_some() {
                 x = self.paint_run(run, x, y);
                 idx += run.text.len();
                 self.place_run_comments(run, start, y, x - start);
@@ -27959,12 +28759,34 @@ impl<'a> Layout<'a> {
                 if line.iter().all(|r| r.text.trim().is_empty()) {
                     return mark_h();
                 }
-                let (natural, _) = self.line_face_metrics(line, None);
+                let (natural, ascent) = self.line_face_metrics(line, None);
                 let grid = para_grid_pitch(style, self.page.grid_pitch);
-                if grid > 0.5 {
+                let text_box = if grid > 0.5 {
                     grid_line_box(natural, style, grid)
                 } else {
                     self.lifted_line_box(line, None, natural, style)
+                };
+                // Match emit_runs: apply picture height after text spacing,
+                // without multiplying the picture by the line multiplier.
+                let pic = self.pic_line(line, style);
+                if pic.h == 0.0 {
+                    text_box
+                } else if pic.only {
+                    pic.h + pic.under + pic.extra
+                } else if style.line_exact.is_some() {
+                    text_box.max(pic.h)
+                } else {
+                    let rise = if style.line_at_least.is_some() && grid <= 0.5 {
+                        (text_box - natural).max(0.0)
+                    } else {
+                        0.0
+                    };
+                    let shrink = if style.line_at_least.is_none() && grid <= 0.5 {
+                        (natural - text_box).max(0.0)
+                    } else {
+                        0.0
+                    };
+                    text_box + (pic.h - (ascent + rise - shrink)).max(0.0)
                 }
             };
             h += style.before + style.after;
@@ -28202,6 +29024,209 @@ impl<'a> Layout<'a> {
                 color,
             });
         }
+    }
+
+    /// A flow picture with text before it joins that text's first line at
+    /// the painted piece that starts at `at_chars` (7eb842c8's icon after
+    /// "1.`<tab>`"). The line deepens by the same `(height - drop)` the lead
+    /// and trailing joins use, and the words after the picture move past
+    /// it. A picture that does not fit the remainder wraps to the next
+    /// line with those words. Only left and justified lines, the same gate
+    /// as the lead join. Pictures this places are the returned pointers.
+    fn join_mid_pictures(
+        &mut self,
+        flow: &[&LaidImage],
+        style: &ParaStyle,
+        runs: &[TextRun],
+        line: FirstLine,
+        list: bool,
+    ) -> Vec<*const LaidImage> {
+        if !matches!(style.align, Align::Left | Align::Justify) || flow.is_empty() {
+            return Vec::new();
+        }
+        let start = line.line.ops_start;
+        let (pieces, chars) = {
+            let ops = &self.current().ops;
+            let end = line.ops_end.min(ops.len());
+            if start > end {
+                return Vec::new();
+            }
+            first_line_pieces(ops, start, end, runs)
+        };
+        let sizes: Vec<(f32, f32)> = flow.iter().map(|img| self.image_wh(img)).collect();
+        let mut clusters: Vec<MidCluster> = Vec::new();
+        for (i, img) in flow.iter().enumerate() {
+            if img.lead_chars != usize::MAX || img.after_text || img.at_chars == 0 {
+                continue;
+            }
+            if let Some(last) = clusters.last_mut()
+                && last.at == img.at_chars
+            {
+                last.idxs.push(i);
+                last.width += sizes[i].0;
+                last.height = last.height.max(sizes[i].1);
+                continue;
+            }
+            let Some(anchor) = pieces
+                .iter()
+                .find(|(at, _)| *at == img.at_chars)
+                .map(|(_, x)| *x)
+            else {
+                break;
+            };
+            clusters.push(MidCluster {
+                at: img.at_chars,
+                anchor,
+                width: sizes[i].0,
+                height: sizes[i].1,
+                idxs: vec![i],
+            });
+        }
+        if clusters.is_empty() {
+            return Vec::new();
+        }
+        let right = self.flow_left() + self.content_width() - style.indent_right + 0.5;
+        let mut fit: Vec<MidCluster> = Vec::new();
+        let mut wrap: Vec<MidCluster> = Vec::new();
+        let mut used = 0.0;
+        for cluster in clusters {
+            if wrap.is_empty() && cluster.anchor + used + cluster.width <= right {
+                used += cluster.width;
+                fit.push(cluster);
+            } else {
+                wrap.push(cluster);
+            }
+        }
+        let drop = line.line.drop;
+        let dy1 = (fit.iter().map(|c| c.height).fold(0.0, f32::max) - drop).max(0.0);
+        let dy_wrap = (wrap.iter().map(|c| c.height).fold(0.0, f32::max) - drop).max(0.0);
+        let step = if wrap.is_empty() {
+            0.0
+        } else {
+            self.line_step(style, runs, chars, drop)
+        };
+        let y_total = dy1 + if wrap.is_empty() { 0.0 } else { step + dy_wrap };
+        let wrap_anchor = wrap.first().map(|c| c.anchor);
+        let cont_x = {
+            let indent = style.indent_left + if list { 18.0 } else { 0.0 };
+            let x = self.flow_left() + indent;
+            let margin = self.page.margin_l;
+            x + ((margin / 0.24) + 0.5).floor() * 0.24 - margin
+        };
+        let fit_at = |x: f32| -> f32 {
+            fit.iter()
+                .filter(|c| c.anchor <= x + 0.25)
+                .map(|c| c.width)
+                .sum()
+        };
+        let wrap_at = |x: f32| -> f32 {
+            wrap.iter()
+                .filter(|c| c.anchor <= x + 0.25)
+                .map(|c| c.width)
+                .sum()
+        };
+        let single = self
+            .last_line
+            .is_some_and(|l| l.ops_start == line.line.ops_start);
+        {
+            let ops = &mut self.current().ops;
+            let end = line.ops_end.min(ops.len());
+            let lefts: Vec<Option<f32>> = ops[start..end].iter().map(op_left).collect();
+            for (op, left) in ops[start..end].iter_mut().zip(&lefts) {
+                if let Some(anchor) = wrap_anchor
+                    && let Some(x) = *left
+                    && x + 0.25 >= anchor
+                {
+                    shift_op_x(op, cont_x + (x - anchor) + wrap_at(x) - x);
+                    shift_op_y(op, -(dy1 + step + dy_wrap));
+                    continue;
+                }
+                if let Some(x) = left {
+                    let extra = fit_at(*x);
+                    if extra != 0.0 {
+                        shift_op_x(op, extra);
+                    }
+                }
+                if dy1 != 0.0 {
+                    shift_op_y(op, -dy1);
+                }
+            }
+            if y_total != 0.0 {
+                for op in &mut ops[end..] {
+                    shift_op_y(op, -y_total);
+                }
+            }
+        }
+        self.y -= y_total;
+        if let Some(end) = self.last_line_end.as_mut() {
+            if single && wrap_anchor.is_none() {
+                end.0 += fit_at(end.0);
+                end.1 -= dy1;
+            } else if single && let Some(anchor) = wrap_anchor {
+                let (ox, oy) = *end;
+                let nx = if ox + 0.25 >= anchor {
+                    cont_x + (ox - anchor) + wrap_at(ox)
+                } else {
+                    ox + fit_at(ox)
+                };
+                *end = (nx, oy - y_total);
+            } else {
+                end.1 -= y_total;
+            }
+        }
+        let mut placed = Vec::new();
+        let mut cursor = 0.0;
+        for cluster in &fit {
+            let mut x = cluster.anchor + cursor;
+            for &idx in &cluster.idxs {
+                let (w, h) = sizes[idx];
+                self.push_image(flow[idx], x, line.baseline - dy1, w, h);
+                placed.push(std::ptr::from_ref(flow[idx]));
+                x += w;
+            }
+            cursor += cluster.width;
+        }
+        if let Some(anchor) = wrap_anchor {
+            let mut cursor = 0.0;
+            let y = line.baseline - y_total;
+            for cluster in &wrap {
+                let mut x = cont_x + (cluster.anchor - anchor) + cursor;
+                for &idx in &cluster.idxs {
+                    let (w, h) = sizes[idx];
+                    self.push_image(flow[idx], x, y, w, h);
+                    placed.push(std::ptr::from_ref(flow[idx]));
+                    x += w;
+                }
+                cursor += cluster.width;
+            }
+        }
+        placed
+    }
+
+    /// Baseline-to-baseline step of the first line, matching
+    /// `emit_paragraph_runs`: an exact line steps by its box, and any
+    /// other line steps by `drop + (box - drop)`.
+    fn line_step(&self, style: &ParaStyle, runs: &[TextRun], chars: usize, drop: f32) -> f32 {
+        let prefix = prefix_runs(runs, chars);
+        let (marker, body) = split_hanging_marker(&prefix, style.indent_first < 0.0);
+        let (natural, _) = self.line_face_metrics(body, marker);
+        let grid = para_grid_pitch(style, self.page.grid_pitch);
+        let line_box = if grid > 0.5 {
+            grid_line_box(natural, style, grid)
+        } else {
+            self.lifted_line_box(body, marker, natural, style)
+        };
+        let grid_pad = if grid > 0.5 {
+            ((line_box - natural) / 2.0).max(0.0)
+        } else {
+            0.0
+        };
+        let after = if style.line_exact.is_some() {
+            line_box - drop
+        } else {
+            (line_box - grid_pad - drop).max(1.0)
+        };
+        after + grid_pad + drop
     }
 
     /// Lay a paragraph's inline pictures out in lines: left to right on a
@@ -29736,11 +30761,15 @@ impl<'a> Layout<'a> {
         // The host paragraph's anchors still read its own top and probe.
         let para_state = (
             self.para_top,
+            self.first_line,
             self.line_probe,
             self.pbdr_joins,
             self.last_line_end,
             self.para_space_above,
+            self.pic_row.take(),
+            self.textbox_floor,
         );
+        self.textbox_floor = Some(self.textbox_floor.map_or(y + bi, |outer| outer.max(y + bi)));
         self.page.margin_l = x + li;
         self.page.margin_r = self.page.width - (x + dw - ri);
         self.page.col_count = 1;
@@ -29788,10 +30817,13 @@ impl<'a> Layout<'a> {
         self.last_style_id = last_style;
         (
             self.para_top,
+            self.first_line,
             self.line_probe,
             self.pbdr_joins,
             self.last_line_end,
             self.para_space_above,
+            self.pic_row,
+            self.textbox_floor,
         ) = para_state;
         (
             self.y,
@@ -31082,6 +32114,9 @@ impl<'a> Layout<'a> {
                                 .iter()
                                 .enumerate()
                                 .map(|(ri, run)| {
+                                    if let Some(pic) = &run.pic {
+                                        return pic.w.max(1.0);
+                                    }
                                     let text = match ri.cmp(&ink_end) {
                                         std::cmp::Ordering::Less => run.text.as_str(),
                                         std::cmp::Ordering::Equal => run.text.trim_end(),
@@ -31754,6 +32789,9 @@ impl<'a> Layout<'a> {
             let w: f32 = frame
                 .iter()
                 .map(|r| {
+                    if r.pic.is_some() {
+                        return self.run_width_pt(r, &r.text);
+                    }
                     let f = self
                         .fonts
                         .resolve(&r.style.family, r.style.bold, r.style.italic);
@@ -31841,6 +32879,9 @@ impl<'a> Layout<'a> {
         let line_w: f32 = runs
             .iter()
             .map(|r| {
+                if r.pic.is_some() {
+                    return self.run_width_pt(r, &r.text);
+                }
                 // NUMPAGES is painted as @@N@@ then patched to the real
                 // count. Measuring the mark (~45pt) shoved I_am_sharing
                 // "Page 1 of 9" to x=470 vs Word 509. A tab in an aligned
@@ -31877,7 +32918,9 @@ impl<'a> Layout<'a> {
             if run.text.is_empty() {
                 continue;
             }
-            if run.style.track.abs() > 0.01 && chrome_measure_text(&run.text) == run.text {
+            if run.pic.is_some()
+                || (run.style.track.abs() > 0.01 && chrome_measure_text(&run.text) == run.text)
+            {
                 x = self.paint_run(run, x, y);
                 continue;
             }
@@ -33763,8 +34806,14 @@ fn wrap_runs_segment(
     let mut units: Vec<(Vec<WrapPiece<'_>>, bool)> = Vec::new();
     let mut open = false;
     for run in runs {
-        if let Some(math) = &run.math {
-            units.push((vec![(run, run.text.as_str(), math.width)], false));
+        if run.math.is_some() || run.pic.is_some() {
+            let w = run
+                .math
+                .as_ref()
+                .map(|math| math.width)
+                .or_else(|| run.pic.as_ref().map(|img| img.w.max(1.0)))
+                .unwrap_or(0.0);
+            units.push((vec![(run, run.text.as_str(), w)], false));
             open = false;
             continue;
         }
@@ -33944,7 +34993,9 @@ fn wrap_runs_segment(
         // (0129b302's "19.720.000") where it has room, so only a word
         // wider than its laid-out cell breaks; CJK text already breaks per
         // character where our fallback faces run wide (002c5410).
-        let math_unit = unit.iter().any(|(run, _, _)| run.math.is_some());
+        let math_unit = unit
+            .iter()
+            .any(|(run, _, _)| run.math.is_some() || run.pic.is_some());
         let cjk = unit
             .iter()
             .any(|(run, tok, _)| !run.style.ideograph_words && tok.chars().any(is_cjk));
@@ -34033,6 +35084,8 @@ fn wrap_runs_segment(
                 && !run.strut
                 && last.math.is_none()
                 && run.math.is_none()
+                && last.pic.is_none()
+                && run.pic.is_none()
                 // A run carrying comments stays its own run: its start is
                 // where the balloon connectors anchor, and the merge would
                 // drop its notes.
@@ -34178,12 +35231,21 @@ fn layout_with_facts(
                     // would take the follow (Word 16 probe kn 1001: a
                     // 250pt picture goes to the next page with its
                     // follower; PR #247 review).
-                    let pictures = !runs.iter().any(|r| !r.text.trim().is_empty());
+                    // A spliced picture is a run, not an image. Its object
+                    // character is not text, so a picture-only paragraph is
+                    // still as tall as the picture (kn 1001).
+                    let pictures = runs
+                        .iter()
+                        .all(|r| r.pic.is_some() || r.text.trim().is_empty());
                     let pic_h = if pictures {
                         images
                             .iter()
                             .filter(|im| matches!(im.slot, ImageSlot::Flow))
                             .map(|im| im.h)
+                            .chain(
+                                runs.iter()
+                                    .filter_map(|r| r.pic.as_deref().map(|img| img.h)),
+                            )
                             .chain(
                                 boxes
                                     .iter()
@@ -34310,6 +35372,7 @@ fn layout_with_facts(
                 // Heading2 next or not (docxide case15; fixtures_500
                 // 00189bfa's " " line 16.5pt over heading 8).
                 let mut lead_pictures_done = false;
+                let mut mid_joined: Vec<*const LaidImage> = Vec::new();
                 if has_ink || (images.is_empty() && boxes.is_empty()) || !skip_empty_line {
                     if lay.side_float.is_some_and(|sf| lay.y <= sf.bottom + 0.5) {
                         lay.side_float = None;
@@ -34416,17 +35479,19 @@ fn layout_with_facts(
                         // Inline pictures ahead of text that fit its first
                         // line open that line: it deepens to them and the
                         // text follows them (5fb9cedf's logo, then a centre
-                        // tab to its title).
-                        let first = lay.first_line.take().filter(|f| {
-                            f.line.page == lay.pages.len()
-                                && has_ink
-                                && !flow.is_empty()
-                                && flow.len() == images.len()
-                                && flow
-                                    .iter()
-                                    .all(|img| img.lead_chars != usize::MAX && !img.after_text)
-                        });
-                        if let Some(f) = first {
+                        // tab to its title). A picture after text on that
+                        // line joins it the same way (7eb842c8's icon).
+                        let saved = lay
+                            .first_line
+                            .take()
+                            .filter(|f| f.line.page == lay.pages.len() && has_ink);
+                        let lead_here = saved.is_some()
+                            && !flow.is_empty()
+                            && flow.len() == images.len()
+                            && flow
+                                .iter()
+                                .all(|img| img.lead_chars != usize::MAX && !img.after_text);
+                        if lead_here && let Some(f) = saved {
                             let sizes: Vec<(f32, f32)> =
                                 flow.iter().map(|img| lay.image_wh(img)).collect();
                             let pics_w: f32 = sizes.iter().map(|s| s.0).sum::<f32>()
@@ -34461,6 +35526,8 @@ fn layout_with_facts(
                                 }
                                 lead_pictures_done = true;
                             }
+                        } else if let Some(f) = saved {
+                            mid_joined = lay.join_mid_pictures(&flow, &style, runs, f, *list);
                         }
                     }
                     lay.paint_hrule(&style);
@@ -34477,7 +35544,13 @@ fn layout_with_facts(
                 // cover pictures sit side by side); floats place themselves.
                 let mut inline: Vec<&LaidImage> = images
                     .iter()
-                    .filter(|img| !lead_pictures_done && matches!(img.slot, ImageSlot::Flow))
+                    .filter(|img| {
+                        !lead_pictures_done
+                            && matches!(img.slot, ImageSlot::Flow)
+                            && !mid_joined
+                                .iter()
+                                .any(|p| std::ptr::eq(std::ptr::from_ref(*img), *p))
+                    })
                     .collect();
                 // One no taller than the text sits on the last line's
                 // baseline and adds no height (0005cabe's 0.24pt dot pushed
@@ -34535,7 +35608,14 @@ fn layout_with_facts(
                 let mark = (!has_ink)
                     .then(|| runs.first().map(|r| &r.style).or(style.mark_run.as_deref()))
                     .flatten();
+                // `emit_inline_pictures` clears the row even when it has
+                // nothing left to lay. A spliced picture already recorded
+                // one; leftover images still win when they paint their own.
+                let spliced_row = lay.pic_row.take();
                 lay.emit_inline_pictures(&inline, &style, mark, runs);
+                if lay.pic_row.is_none() {
+                    lay.pic_row = spliced_row;
+                }
                 if !has_ink && !inline.is_empty() {
                     lay.emit_picture_break_lines(&style, runs);
                 }
@@ -34562,14 +35642,22 @@ fn layout_with_facts(
                 if lay.pages.len() > pages_before {
                     lay.para_top = lay.page.height - lay.body_top;
                 }
+                // A spliced picture is a run, so the paragraph has ink, and
+                // it is still the picture row an inline box shares
+                // (212a1c9d). Text keeps the box on its own line. The exact
+                // and line-box fallbacks stay on a textless paragraph: a
+                // spliced line already took its height.
+                let pictures_only = runs
+                    .iter()
+                    .all(|r| r.pic.is_some() || r.text.trim().is_empty());
                 let mut row = lay
                     .pic_row
                     .take()
-                    .filter(|r| !has_ink && r.0 == lay.pages.len());
+                    .filter(|r| pictures_only && r.0 == lay.pages.len());
                 let line_box = para_first_line_pt(lay.fonts, runs, &style, lay.page.grid_pitch);
                 let mut box_x: Option<f32> = None;
                 for box_ in boxes {
-                    if !has_ink && matches!(box_.slot, ImageSlot::Flow) && !box_.reserve_only {
+                    if pictures_only && matches!(box_.slot, ImageSlot::Flow) && !box_.reserve_only {
                         // An inline box after the paragraph's pictures shares
                         // their line when it fits, past a tab to its stop
                         // (212a1c9d's title bar beside its logo).
@@ -34594,8 +35682,10 @@ fn layout_with_facts(
                         }
                         // An exact line holds its inline box on its baseline
                         // and grows by nothing (8aea3634's 0.5pt rule in a
-                        // 1pt paragraph).
-                        if images.is_empty()
+                        // 1pt paragraph). A spliced picture line already
+                        // took its height, so this stays on a textless one.
+                        if !has_ink
+                            && images.is_empty()
                             && let Some(e) = style.line_exact
                             && box_.h <= e + 0.01
                         {
@@ -34609,7 +35699,8 @@ fn layout_with_facts(
                         // text box under a 12.7pt line ends on the line's
                         // bottom (069252c3's logo letters; we laid a line,
                         // then each box under it).
-                        if images.is_empty()
+                        if !has_ink
+                            && images.is_empty()
                             && style.line_exact.is_none()
                             && box_.h <= line_box + 0.01
                         {
@@ -36724,6 +37815,166 @@ fn right_arrow_points(x: f32, y: f32, dw: f32, dh: f32) -> Vec<(f32, f32)> {
         (x + body_w, shaft_bot),
         (x, shaft_bot),
     ]
+}
+
+/// Pictures that share one painted piece on the first line.
+struct MidCluster {
+    at: usize,
+    anchor: f32,
+    width: f32,
+    height: f32,
+    idxs: Vec<usize>,
+}
+
+/// The first `n` characters of `runs`, split on a run boundary.
+fn prefix_runs(runs: &[TextRun], n: usize) -> Vec<TextRun> {
+    let mut left = n;
+    let mut out = Vec::new();
+    for run in runs {
+        if left == 0 {
+            break;
+        }
+        let count = run.text.chars().count();
+        if count <= left {
+            out.push(run.clone());
+            left -= count;
+        } else {
+            out.push(run.with_text(run.text.chars().take(left).collect::<String>()));
+            break;
+        }
+    }
+    out
+}
+
+/// Left edge of an op, for deciding which side of a picture it sits on.
+/// A watermark and a pin stay where they are.
+fn op_left(op: &Op) -> Option<f32> {
+    match op {
+        Op::Text { x, .. }
+        | Op::FillRect { x, .. }
+        | Op::StrokeRect { x, .. }
+        | Op::Jpeg { x, .. }
+        | Op::Rgb { x, .. } => Some(*x),
+        Op::Line { x1, x2, .. } => Some(x1.min(*x2)),
+        Op::FillPoly { points, .. } | Op::StrokePoly { points, .. } => {
+            points.iter().map(|p| p.0).min_by(f32::total_cmp)
+        }
+        Op::FillPath { contours, .. } => contours
+            .iter()
+            .flatten()
+            .map(|p| p.0)
+            .min_by(f32::total_cmp),
+        Op::StrokePath { subpaths, .. } => subpaths
+            .iter()
+            .flat_map(|(pts, _)| pts.iter())
+            .map(|p| p.0)
+            .min_by(f32::total_cmp),
+        Op::Cubic {
+            start, segments, ..
+        } => {
+            let mut x = start.0;
+            for seg in segments {
+                for p in seg {
+                    x = x.min(p.0);
+                }
+            }
+            Some(x)
+        }
+        Op::Watermark { .. } | Op::Pin(_) => None,
+    }
+}
+
+/// Glyphs of the first line, one character at a time. The first character
+/// of an op carries that op's x; a later character of the same op does not.
+struct GlyphCursor<'a> {
+    texts: &'a [(f32, &'a str)],
+    op_i: usize,
+    char_i: usize,
+}
+
+impl GlyphCursor<'_> {
+    fn peek(&self) -> Option<(char, Option<f32>)> {
+        let (x, text) = self.texts.get(self.op_i)?;
+        let ch = text.chars().nth(self.char_i)?;
+        Some((ch, (self.char_i == 0).then_some(*x)))
+    }
+
+    fn next(&mut self) -> Option<(char, Option<f32>)> {
+        let got = self.peek()?;
+        self.char_i += 1;
+        let (_, text) = self.texts[self.op_i];
+        if self.char_i >= text.chars().count() {
+            self.op_i += 1;
+            self.char_i = 0;
+        }
+        Some(got)
+    }
+}
+
+/// Painted piece starts on the first line: `(character offset, x)`.
+/// A piece starts at the first character, after a tab, or at a run
+/// boundary. A tab leader's dots are not text. A mismatch keeps the
+/// pieces already recorded, so a line number painted after the glyphs
+/// cannot throw the line away.
+fn first_line_pieces(
+    ops: &[Op],
+    start: usize,
+    end: usize,
+    runs: &[TextRun],
+) -> (Vec<(usize, f32)>, usize) {
+    let end = end.min(ops.len());
+    let texts: Vec<(f32, &str)> = ops[start..end]
+        .iter()
+        .filter_map(|op| match op {
+            Op::Text { x, text, .. } if !text.is_empty() => Some((*x, text.as_str())),
+            _ => None,
+        })
+        .collect();
+    let mut cursor = GlyphCursor {
+        texts: &texts,
+        op_i: 0,
+        char_i: 0,
+    };
+    let mut pieces = Vec::new();
+    let mut pos = 0usize;
+    let mut after_tab = false;
+    for run in runs {
+        let mut first_of_run = true;
+        for ch in run.text.chars() {
+            if ch == '\t' {
+                pos += 1;
+                after_tab = true;
+                first_of_run = false;
+                continue;
+            }
+            if ch == '\n' || is_break_mark(ch) {
+                return (pieces, pos);
+            }
+            if after_tab {
+                while let Some((got, _)) = cursor.peek() {
+                    if got == ch || !matches!(got, '.' | '-' | '_') {
+                        break;
+                    }
+                    cursor.next();
+                }
+            }
+            let Some((got, x)) = cursor.next() else {
+                return (pieces, pos);
+            };
+            if got != ch {
+                return (pieces, pos);
+            }
+            if (pos == 0 || after_tab || first_of_run)
+                && let Some(x) = x
+            {
+                pieces.push((pos, x));
+            }
+            pos += 1;
+            after_tab = false;
+            first_of_run = false;
+        }
+    }
+    (pieces, pos)
 }
 
 fn shift_op_y(op: &mut Op, dy: f32) {
@@ -45878,10 +47129,24 @@ mod comments_spacing_tests {
         let mut empty_boxes = 0usize;
         for block in &blocks {
             if let Block::Paragraph {
-                images: im, boxes, ..
+                images: im,
+                boxes,
+                runs,
+                ..
             } = block
             {
-                images += im.len();
+                // Inline pictures now belong to their text runs (#1975).
+                // Count raster payloads in both locations, not text-box
+                // reservations carried by the same run-picture interface.
+                images += im.len()
+                    + runs
+                        .iter()
+                        .filter(|run| {
+                            run.pic.as_ref().is_some_and(|pic| {
+                                matches!(pic.kind, ImageKind::Jpeg { .. } | ImageKind::Rgb { .. })
+                            })
+                        })
+                        .count();
                 empty_boxes += boxes
                     .iter()
                     .filter(|b| {
@@ -47283,11 +48548,34 @@ mod coverage_boundary_tests {
             ("25.4mm", 72.0),
             ("0pt", 0.0),
             ("-1in", -72.0),
+            // A finite exponent is still a number. Only a non-finite result is absent.
+            ("1e2", 5.0),
         ] {
             close(parse_len(input).expect(input), expected);
         }
         for input in [
-            "", "pt", "in", "cm", "mm", "xpt", "xin", "xcm", "xmm", "12px", "2PT",
+            "",
+            "pt",
+            "in",
+            "cm",
+            "mm",
+            "xpt",
+            "xin",
+            "xcm",
+            "xmm",
+            "12px",
+            "2PT",
+            "NaN",
+            "nan",
+            "inf",
+            "+inf",
+            "-inf",
+            "infinity",
+            "-infinity",
+            "1e40",
+            "1e40pt",
+            "1e38in",
+            "NaNin",
         ] {
             assert_eq!(parse_len(input), None, "{input}");
         }
@@ -49097,7 +50385,10 @@ mod coverage_round_two_tests {
     }
 
     #[test]
-    fn orphan_continuations_consume_columns_and_replacements_close_merges() {
+    fn a_replacement_closes_a_merge_and_an_orphan_continuation_opens_its_own() {
+        // Issue #1993: Word paints an orphan continuation (no open restart
+        // in its grid column) as an ordinary cell, and later continuations
+        // merge into it; a plain replacement cell still closes the merge.
         let mut orphan = raw("orphan", 20.0, 0);
         orphan.vmerge = VMerge::Continue;
         let mut origin = raw("old", 20.0, 1);
@@ -49110,8 +50401,13 @@ mod coverage_round_two_tests {
             vec![cont],
             vec![orphan, raw("survivor", 20.0, 1)],
         ]);
+        // The plain replacement closed the first merge: one row only.
         assert_eq!(rows[0][0].rowspan, 1);
-        assert!(rows[2].is_empty());
+        // The orphan continuation became a restart of its own: its cell
+        // stays (text painted) and row three's continuation merges in.
+        assert_eq!(rows[2].len(), 1);
+        assert_eq!(text(&rows[2][0].paras[0].runs), "ignored");
+        assert_eq!(rows[2][0].rowspan, 2);
         assert_eq!(rows[3][0].col, 1);
         assert_eq!(text(&rows[3][0].paras[0].runs), "survivor");
     }
@@ -49289,6 +50585,132 @@ mod coverage_round_two_tests {
         );
         assert!(cell.vertical && cell.valign_bottom && cell.fill_explicit);
         assert_eq!(text(&cell.paras[0].runs), "Rotated");
+    }
+
+    #[test]
+    fn tcpr_less_outer_cell_ignores_nested_properties() {
+        // #1729: a cell reads its tcPr as a direct child. A cell without
+        // one that holds a nested table must not borrow the nested first
+        // cell's tcPr — span, merge, borders, fill, noWrap, margins,
+        // direction, alignment, hideMark — while the nested cell keeps
+        // every property of its own.
+        let nested_pr = "<w:gridSpan w:val=\"2\"/><w:vMerge w:val=\"restart\"/>\
+            <w:tcBorders><w:top w:val=\"single\" w:sz=\"12\" w:color=\"00B050\"/></w:tcBorders>\
+            <w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"FF0000\"/><w:noWrap/>\
+            <w:tcMar><w:top w:w=\"720\" w:type=\"dxa\"/><w:left w:w=\"720\" w:type=\"dxa\"/>\
+            <w:bottom w:w=\"720\" w:type=\"dxa\"/><w:right w:w=\"720\" w:type=\"dxa\"/></w:tcMar>\
+            <w:textDirection w:val=\"btLr\"/><w:vAlign w:val=\"center\"/><w:hideMark/>";
+        let cell = |tcpr: &str| {
+            format!(
+                "<w:tc>{tcpr}<w:p><w:r><w:t>OUTER</w:t></w:r></w:p>\
+                 <w:tbl><w:tblPr><w:tblW w:w=\"2000\" w:type=\"dxa\"/></w:tblPr>\
+                 <w:tblGrid><w:gridCol w:w=\"1000\"/><w:gridCol w:w=\"1000\"/></w:tblGrid>\
+                 <w:tr><w:tc><w:tcPr>{nested_pr}</w:tcPr>\
+                 <w:p><w:r><w:t>SPAN</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/></w:tc>"
+            )
+        };
+        let block = table(&format!(
+            "<w:tbl><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/>\
+             <w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr>\
+             <w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>ONE</w:t></w:r></w:p></w:tc>{}\
+             <w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>THREE</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+            cell("")
+        ));
+        let Block::Table { rows, .. } = block else {
+            panic!("table")
+        };
+        assert_eq!(rows.len(), 1, "no merge consumed the row");
+        assert_eq!(
+            rows[0].len(),
+            3,
+            "three cells, no span: {:?}",
+            rows[0].len()
+        );
+        let (one, outer) = (&rows[0][0], &rows[0][1]);
+        assert_eq!(outer.colspan, 1, "no borrowed gridSpan");
+        assert_eq!(outer.rowspan, 1, "no borrowed vMerge");
+        assert_eq!(
+            (outer.pad_l, outer.pad_r, outer.pad_t, outer.pad_b),
+            (one.pad_l, one.pad_r, one.pad_t, one.pad_b),
+            "no borrowed tcMar"
+        );
+        assert_eq!(outer.fill, None, "no borrowed shd");
+        assert!(
+            !outer.fill_explicit,
+            "no borrowed shd to suppress a style fill"
+        );
+        assert!(
+            !outer.valign_center && !outer.valign_bottom,
+            "no borrowed vAlign"
+        );
+        assert!(!outer.vertical, "no borrowed textDirection");
+        assert!(!outer.nowrap, "no borrowed noWrap");
+        assert!(!outer.hide_mark, "no borrowed hideMark");
+        assert!(outer.borders.is_none(), "no borrowed tcBorders");
+        // The nested cell keeps everything its own tcPr names.
+        let Block::Table { rows: nested, .. } = &*outer.nested[0] else {
+            panic!("nested table")
+        };
+        let nested_cell = &nested[0][0];
+        assert_eq!(nested_cell.colspan, 2);
+        assert_eq!(nested_cell.fill, Some([1.0, 0.0, 0.0]));
+        assert!(nested_cell.fill_explicit);
+        assert!(nested_cell.valign_center && nested_cell.vertical);
+        assert!(nested_cell.hide_mark);
+        assert!(nested_cell.borders.is_some());
+        assert_eq!(nested_cell.pad_l, twip(720.0));
+        assert_eq!(text(&nested_cell.paras[0].runs), "SPAN");
+        // An own tcPr still wins over anything nested: the same cell
+        // with a shd of its own reads that shd, not the nested red one.
+        let Block::Table { rows, .. } = table(&format!(
+            "<w:tbl><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/>\
+             <w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr>{}\
+             <w:tc><w:p><w:r><w:t>ONE</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+            cell("<w:tcPr><w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"0000FF\"/></w:tcPr>")
+        )) else {
+            panic!("own table")
+        };
+        let outer = &rows[0][0];
+        assert_eq!(outer.colspan, 1);
+        assert_eq!(outer.fill, Some([0.0, 0.0, 1.0]), "the own shd wins");
+        assert!(outer.fill_explicit);
+    }
+
+    #[test]
+    fn tcpr_less_outer_row_is_not_deleted_for_a_nested_cell_deletion() {
+        // #1729 (cellDel reader): the nested first cell is deleted; the
+        // outer row that merely holds the table is not. All Markup
+        // appends the Deleted Cells stamp to the nested row only.
+        let cell = |tcpr: &str| {
+            format!(
+                "<w:tc>{tcpr}<w:p><w:r><w:t>OUTER</w:t></w:r></w:p>\
+                 <w:tbl><w:tblGrid><w:gridCol w:w=\"1000\"/></w:tblGrid>\
+                 <w:tr><w:tc><w:tcPr><w:cellDel w:id=\"7\" w:author=\"Red\" \
+                 w:date=\"2026-01-01T00:00:00Z\"/></w:tcPr>\
+                 <w:p><w:r><w:t>SPAN</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/></w:tc>"
+            )
+        };
+        for tcpr in ["", "<w:tcPr/>"] {
+            let Block::Table { rows, .. } = table(&format!(
+                "<w:tbl><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+                 <w:tr>{}</w:tr></w:tbl>",
+                cell(tcpr)
+            )) else {
+                panic!("table")
+            };
+            assert_eq!(rows[0].len(), 1, "no Deleted Cells stamp on the outer row");
+            let Block::Table { rows: nested, .. } = &*rows[0][0].nested[0] else {
+                panic!("nested table")
+            };
+            assert_eq!(nested[0].len(), 2, "the nested deleted row keeps its stamp");
+            assert_eq!(
+                text(&nested[0][1].paras[0].runs),
+                "Deleted Cells",
+                "the stamp is the nested row's"
+            );
+        }
     }
 
     #[test]
@@ -49712,6 +51134,7 @@ mod coverage_round_two_tests {
                     in_table: false,
                     toc: false,
                     open: None,
+                    flow_pics: false,
                 },
             );
             assert_eq!(text(&runs), expected);
@@ -50288,6 +51711,7 @@ mod coverage_round_three_tests {
                 in_table: false,
                 toc: false,
                 open: None,
+                flow_pics: false,
             },
         );
         assert_eq!(text(&collected), "ABend");
@@ -50912,6 +52336,7 @@ mod coverage_round_three_tests {
                     in_table,
                     toc: false,
                     open: Some(open),
+                    flow_pics: false,
                 },
             )
         }
@@ -50959,6 +52384,7 @@ mod coverage_round_three_tests {
                         comments: &HashMap::new(),
                         in_table: false,
                         toc,
+                        flow_pics: false,
                         open: None,
                     },
                 );
@@ -51206,6 +52632,7 @@ mod coverage_round_three_tests {
                     in_table: false,
                     toc: false,
                     open: None,
+                    flow_pics: false,
                 },
             );
             assert_eq!(text(&collected), "heading8910Z");
@@ -54202,6 +55629,349 @@ mod coverage_round_three_tests {
             }
         }
 
+        // In-memory fixtures share the existing OPC/PNG fixture; no filesystem,
+        // network, clock, or installed font is used by these regressions.
+        fn review_picture_xml(height: u32) -> String {
+            format!(
+                r#"<w:drawing xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><wp:inline><wp:extent cx="889000" cy="{}"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill><pic:spPr/></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#,
+                height * 12700
+            )
+        }
+
+        fn review_hf(content: &str) -> Vec<TextRun> {
+            let pkg = PartFs::open(include_bytes!(
+                "../../tests/fixtures/inline-pictures/1975-header.docx"
+            ))
+            .unwrap();
+            let (dom, root) = xml(&format!("<w:p>{content}</w:p>"));
+            collect_hf_runs(
+                &dom,
+                root,
+                &sheet(),
+                300.0,
+                Some((&pkg, "word/header1.xml")),
+            )
+        }
+
+        fn review_picture_run() -> TextRun {
+            let mut img = picture();
+            img.w = 70.0;
+            img.h = 50.0;
+            img.kind = ImageKind::Rgb {
+                width: 1,
+                height: 1,
+                bytes: vec![255, 0, 0],
+                alpha: None,
+            };
+            let mut run = TextRun::new(INLINE_PIC, Defaults::word().run);
+            run.pic = Some(Rc::new(img));
+            run
+        }
+
+        #[test]
+        fn issue_1975_review_1_header_page_column_breaks() {
+            for kind in ["page", "column", "oddPage", "evenPage"] {
+                let runs = review_hf(&format!(
+                    r#"<w:r><w:t>A</w:t><w:br w:type="{kind}"/><w:t>B</w:t>{}</w:r>"#,
+                    review_picture_xml(15)
+                ));
+                assert_eq!(
+                    text(&runs),
+                    format!("A\nB{INLINE_PIC}"),
+                    "header {kind} break survives picture splice"
+                );
+            }
+        }
+
+        #[test]
+        fn issue_1975_review_1_header_leading_break_style() {
+            let runs = review_hf(&format!(
+                r#"<w:r><w:rPr><w:sz w:val="40"/></w:rPr><w:br/>{}</w:r><w:r><w:t>Tail</w:t></w:r>"#,
+                review_picture_xml(15)
+            ));
+            assert!(
+                runs[0].ends_line && runs[0].text.is_empty() && runs[0].style.size == 20.0,
+                "leading break needs its own 20pt blank carrier: {:?}",
+                runs.iter()
+                    .map(|r| (&r.text, r.ends_line, r.style.size))
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        #[test]
+        fn issue_1975_review_2_header_complex_field_preserves_picture_flow() {
+            for instruction in ["PAGE", "INCLUDEPICTURE image"] {
+                let pic = review_picture_xml(15);
+                let runs = review_hf(&format!(
+                    r#"<w:r><w:t>Page </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText>{instruction}</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r>{pic}</w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r>{pic}</w:r>"#
+                ));
+                // Numeric cached results are replaced by the computed number;
+                // non-numeric results keep the picture inside the field too.
+                let expected = if instruction == "PAGE" { 1 } else { 2 };
+                assert_eq!(
+                    runs.iter().filter(|r| r.pic.is_some()).count(),
+                    expected,
+                    "{instruction}: preserve paragraph flow across begin/end"
+                );
+            }
+        }
+
+        #[test]
+        fn issue_1975_review_3_cell_picture_alignment() {
+            let fonts = fonts();
+            for (jc, expected) in [("center", 75.0), ("right", 130.0), ("both", 130.0)] {
+                let mut block = table(
+                    &format!(
+                        r#"<w:tbl><w:tblPr><w:tblLayout w:type="fixed"/><w:tblCellMar><w:left w:w="0"/><w:right w:w="0"/></w:tblCellMar></w:tblPr><w:tblGrid><w:gridCol w:w="3600"/></w:tblGrid><w:tr><w:tc><w:p><w:pPr><w:jc w:val="{jc}"/></w:pPr><w:r><w:t>placeholder</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
+                    ),
+                    &sheet(),
+                );
+                let Block::Table { rows, .. } = &mut block else {
+                    unreachable!()
+                };
+                let para = &mut rows[0][0].paras[0];
+                para.runs = if jc == "both" {
+                    para.continued = true;
+                    vec![
+                        TextRun::new("A B ", Defaults::word().run),
+                        review_picture_run(),
+                    ]
+                } else {
+                    vec![review_picture_run()]
+                };
+                let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+                lay.emit_nested_table(&block, 20.0, 200.0, 180.0);
+                let x = lay.pages[0]
+                    .ops
+                    .iter()
+                    .find_map(|op| match op {
+                        Op::Rgb { x, .. } => Some(*x),
+                        _ => None,
+                    })
+                    .unwrap();
+                assert!(
+                    (x - expected).abs() < 0.25,
+                    "{jc}: picture x={x}, expected {expected}; real 70pt width must fit the 180pt cell"
+                );
+            }
+        }
+
+        #[test]
+        fn issue_1975_review_4_header_unbound_picture_height() {
+            for height in [15, 100] {
+                let bound = format!("<w:r><w:t>A</w:t>{}</w:r>", review_picture_xml(height));
+                assert!(review_hf(&bound).iter().all(|r| r.hf_pic_h == 0.0));
+                for unbound in [
+                    format!("<w:del><w:r>{}</w:r></w:del>", review_picture_xml(80)),
+                    format!(
+                        r#"<w:fldSimple w:instr="PAGE"><w:r><w:t>1</w:t>{}</w:r></w:fldSimple>"#,
+                        review_picture_xml(80)
+                    ),
+                ] {
+                    let runs = review_hf(&format!("{bound}{unbound}"));
+                    assert_eq!(runs.iter().filter(|r| r.pic.is_some()).count(), 1);
+                    assert_eq!(
+                        runs[0].hf_pic_h, 80.0,
+                        "unbound deleted/cached picture must retain its height reservation"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn issue_1975_review_5_header_box_fields_do_not_enable_flow() {
+            for field in [
+                r#"<w:fldSimple w:instr="PAGE"><w:r><w:t>1</w:t></w:r></w:fldSimple>"#,
+                r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+            ] {
+                let runs = review_hf(&format!(
+                    "<w:r>{}</w:r><w:r><w:drawing><w:txbxContent><w:p>{field}</w:p></w:txbxContent></w:drawing></w:r>",
+                    review_picture_xml(15)
+                ));
+                assert!(
+                    !runs.iter().any(|r| r.pic.is_some()),
+                    "nested box field must not splice a picture-only chrome paragraph"
+                );
+            }
+        }
+
+        #[test]
+        fn issue_1975_review_6_textbox_clips_whole_picture_line() {
+            let fonts = fonts();
+            for jpeg in [false, true] {
+                let mut pic = review_picture_run();
+                let image = Rc::make_mut(pic.pic.as_mut().unwrap());
+                image.outline = Some(([0.0, 0.0, 1.0], 1.0));
+                if jpeg {
+                    image.kind = ImageKind::Jpeg {
+                        width: 1,
+                        height: 1,
+                        bytes: vec![],
+                        components: 3,
+                    };
+                }
+                pic.style.underline = true;
+                pic.style.strike = true;
+                pic.style.highlight = Some([0.0, 1.0, 0.0]);
+                let mut box_ = shape();
+                box_.insets = [0.0; 4];
+                let mut hidden = TextRun::new("Hidden", Defaults::word().run);
+                hidden.styleref = Some(Rc::new(StyleRef {
+                    id: "Heading".into(),
+                    last: false,
+                }));
+                hidden.hf_para = Some(Rc::new(exact_style()));
+                let mut page_ref = TextRun::new("9", Defaults::word().run);
+                page_ref.pageref = Some("destination".into());
+                box_.paras = vec![
+                    (
+                        vec![TextRun::new("Visible", Defaults::word().run)],
+                        exact_style(),
+                    ),
+                    (vec![pic, hidden, page_ref], exact_style()),
+                ];
+                let mut visible = Layout::new(&fonts, page(), HfChrome::default(), 15);
+                visible.known_bookmarks.insert("destination".into());
+                visible.emit_textbox_paras(&box_, 20.0, 100.0, 180.0, 100.0);
+                assert_eq!(visible.styleref_ops.len(), 1);
+                assert_eq!(visible.pageref_ops.len(), 1);
+                assert!(
+                    visible.pages[0]
+                        .ops
+                        .iter()
+                        .any(|op| matches!(op, Op::Rgb { .. } | Op::Jpeg { .. }))
+                );
+                assert!(
+                    visible.pages[0]
+                        .ops
+                        .iter()
+                        .any(|op| matches!(op, Op::StrokeRect { .. }))
+                );
+                assert!(
+                    visible.pages[0]
+                        .ops
+                        .iter()
+                        .any(|op| matches!(op, Op::FillRect { .. } | Op::Line { .. }))
+                );
+                let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+                lay.known_bookmarks.insert("destination".into());
+                lay.emit_textbox_paras(&box_, 20.0, 100.0, 180.0, 30.0);
+                assert_eq!(lay.textbox_floor, None);
+                assert!(lay.pageref_ops.is_empty());
+                assert!(
+                    lay.styleref_ops.is_empty(),
+                    "clipped line must not retain field indices into removed paint ops"
+                );
+                assert!(
+                    !lay.pages[0].ops.iter().any(|op| matches!(
+                        op,
+                        Op::Rgb { .. }
+                            | Op::Jpeg { .. }
+                            | Op::StrokeRect { .. }
+                            | Op::FillRect { .. }
+                            | Op::Line { .. }
+                    )),
+                    "clipped line leaked image, outline, or revision decoration"
+                );
+                assert_eq!(
+                    ink(&lay.pages)
+                        .iter()
+                        .map(|r| r.0.as_str())
+                        .collect::<String>(),
+                    "Visible"
+                );
+            }
+        }
+
+        #[test]
+        fn issue_1975_review_7_textbox_autofit_counts_picture_height() {
+            let fonts = fonts();
+            for text in [false, true] {
+                for spacing in ["multiple", "exact", "minimum", "grid", "tight"] {
+                    let mut style = exact_style();
+                    style.line_exact = (spacing == "exact").then_some(20.0);
+                    style.line_at_least = (spacing == "minimum").then_some(30.0);
+                    style.line_mult = if spacing == "tight" { 0.8 } else { 1.5 };
+                    let mut runs = vec![review_picture_run()];
+                    if text {
+                        runs.push(TextRun::new("Text", Defaults::word().run));
+                    }
+                    let mut box_ = shape();
+                    box_.fit_height = true;
+                    box_.slot = floating();
+                    box_.insets = [0.0, 3.0, 0.0, 5.0];
+                    box_.paras = vec![(runs.clone(), style.clone())];
+                    let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+                    if spacing == "grid" {
+                        lay.page.grid_pitch = 18.0;
+                    }
+                    let top = lay.y;
+                    lay.emit_runs(&runs, &style, false, FloatWrap::default());
+                    let expected = top - lay.y + 8.0;
+                    assert!(
+                        (lay.box_h(&box_) - expected).abs() < 0.01,
+                        "text={text}, spacing={spacing}: fitted height {} must equal painted height {expected}",
+                        lay.box_h(&box_)
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn issue_1975_review_8_textbox_restores_picture_row() {
+            let fonts = fonts();
+            for host in [None, Some((1, 100.0, 150.0, 40.0))] {
+                let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+                lay.pic_row = host;
+                let mut box_ = shape();
+                box_.paras = vec![(vec![review_picture_run()], exact_style())];
+                lay.emit_textbox_paras(&box_, 10.0, 20.0, 120.0, 80.0);
+                assert_eq!(
+                    lay.pic_row, host,
+                    "textbox picture row must not leak into its host"
+                );
+            }
+        }
+
+        #[test]
+        fn issue_1975_textbox_restores_host_first_line() {
+            let fonts = fonts();
+            for host_line in [false, true] {
+                let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+                if host_line {
+                    lay.emit_runs(
+                        &[TextRun::new("Host", Defaults::word().run)],
+                        &exact_style(),
+                        false,
+                        FloatWrap::default(),
+                    );
+                }
+                let snapshot = |line: Option<FirstLine>| {
+                    line.map(|f| {
+                        (
+                            f.line.page,
+                            f.line.ops_start,
+                            f.ops_end,
+                            f.baseline,
+                            f.tab_led,
+                        )
+                    })
+                };
+                let before = snapshot(lay.first_line);
+                let mut box_ = shape();
+                box_.paras = vec![(
+                    vec![TextRun::new("Nested", Defaults::word().run)],
+                    exact_style(),
+                )];
+                lay.emit_textbox_paras(&box_, 10.0, 20.0, 120.0, 80.0);
+                assert_eq!(
+                    snapshot(lay.first_line),
+                    before,
+                    "text box must restore its host's first line, including None"
+                );
+            }
+        }
+
         #[test]
         fn textbox_tables_and_group_children_keep_source_order_and_independent_coordinates() {
             let fonts = fonts();
@@ -56136,6 +57906,28 @@ mod coverage_round_three_tests {
                 ("", "<w:gridCol w:w=\"bad\"/><w:gridCol/>", 144.0),
                 ("", "", 144.0),
                 ("", "<w:gridCol w:w=\"10\"/>", 144.0),
+                // A non-finite column is no width, same as `bad`: the finite
+                // neighbour still contributes (#1737).
+                (
+                    "",
+                    "<w:gridCol w:w=\"bad\"/><w:gridCol w:w=\"5760\"/>",
+                    288.0,
+                ),
+                (
+                    "",
+                    "<w:gridCol w:w=\"NaN\"/><w:gridCol w:w=\"5760\"/>",
+                    288.0,
+                ),
+                (
+                    "",
+                    "<w:gridCol w:w=\"inf\"/><w:gridCol w:w=\"5760\"/>",
+                    288.0,
+                ),
+                (
+                    "",
+                    "<w:gridCol w:w=\"1e40\"/><w:gridCol w:w=\"5760\"/>",
+                    288.0,
+                ),
             ] {
                 let (dom, root) = xml(&format!(
                     "<w:tbl><w:tblPr>{props}</w:tblPr><w:tblGrid>{grid}</w:tblGrid></w:tbl>"
@@ -57607,10 +59399,15 @@ mod rendering_uncovered_contract_tests {
                                     20.0
                                 })
                             );
-                            assert_eq!(tail.images.len(), usize::from(kind == "picture"));
+                            // Since #1980 an inline picture in a cell stands on
+                            // the line: a run carries it, not `images`.
+                            assert!(tail.images.is_empty());
+                            let pictures: Vec<&LaidImage> =
+                                tail.runs.iter().filter_map(|r| r.pic.as_deref()).collect();
+                            assert_eq!(pictures.len(), usize::from(kind == "picture"));
                             assert_eq!(tail.boxes.len(), usize::from(kind == "textbox"));
                             if kind == "picture" {
-                                let img = &tail.images[0];
+                                let img = pictures[0];
                                 assert_eq!((img.w, img.h), (40.0, 20.0));
                                 let ImageKind::Metafile { raster, texts } = &img.kind else {
                                     panic!("retained source picture")
@@ -58031,6 +59828,134 @@ mod rendering_uncovered_contract_tests {
                     }
                 }
             }
+        }
+    }
+
+    // Use the checked-in package and embedded fonts entirely in memory. The
+    // oracle is the supplied Word 16.115 PDF for 1975-textbox.docx (#1979).
+    fn issue_1979_fixture_xml() -> String {
+        PartFs::open(include_bytes!(
+            "../../tests/fixtures/inline-pictures/1975-textbox.docx"
+        ))
+        .unwrap()
+        .part_string("word/document.xml")
+        .unwrap()
+    }
+
+    fn issue_1979_assert_outline(xml: &str, expected: Option<[f32; 3]>) {
+        for revisions in [RevisionStyle::Conventional, RevisionStyle::Word] {
+            with_options(
+                PdfOptions {
+                    revisions,
+                    ..PdfOptions::default()
+                },
+                || {
+                    let mut dom = Dom::new();
+                    let doc = dom.parse_xdocument(xml);
+                    let root = dom.root(doc).unwrap();
+                    let para = dom.descendants(root, Some(&W::p()))[0];
+                    let boxes = collect_textboxes(
+                        None,
+                        &dom,
+                        para,
+                        &Defaults::word().run,
+                        &ThemeFonts::default(),
+                    );
+                    assert_eq!(boxes.len(), 1, "the text box must be collected");
+                    assert!(boxes[0].runs.iter().any(|r| !r.text.trim().is_empty()));
+                    let fonts = embedded_fonts();
+                    let mut lay =
+                        Layout::new(&fonts, Defaults::word().page, HfChrome::default(), 15);
+                    lay.paint_box_geom(&boxes[0], 10.0, 20.0, boxes[0].w, boxes[0].h);
+                    let strokes: Vec<_> = lay.pages[0]
+                        .ops
+                        .iter()
+                        .filter_map(|op| match op {
+                            Op::StrokeRect { color, .. }
+                            | Op::Line { color, .. }
+                            | Op::StrokePoly { color, .. }
+                            | Op::StrokePath { color, .. }
+                            | Op::Cubic { color, .. } => Some(*color),
+                            _ => None,
+                        })
+                        .collect();
+                    if let Some(color) = expected {
+                        assert!(
+                            !strokes.is_empty(),
+                            "authored/default VML outline must paint"
+                        );
+                        assert!(
+                            strokes.iter().all(|actual| *actual == color),
+                            "outline must use its authored colour: {strokes:?}, expected {color:?}"
+                        );
+                    } else {
+                        assert!(
+                            strokes.is_empty(),
+                            "text box without a line must emit no StrokeRect or other outline op; got {}",
+                            strokes.len()
+                        );
+                    }
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn issue_1979_unstyled_wps_fixture_has_no_outline() {
+        let xml = issue_1979_fixture_xml();
+        assert!(!xml.contains("<a:ln") && !xml.contains("<wps:style"));
+        issue_1979_assert_outline(&xml, None);
+    }
+
+    #[test]
+    fn issue_1979_explicit_solid_line_keeps_its_colour() {
+        let xml = issue_1979_fixture_xml().replacen(
+            "</wps:spPr>",
+            r#"<a:ln><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:ln></wps:spPr>"#,
+            1,
+        );
+        issue_1979_assert_outline(&xml, Some([1.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn issue_1979_nofill_line_overrides_style_outline() {
+        for style in [
+            "",
+            r#"<wps:style><a:lnRef idx="1"><a:srgbClr val="FF0000"/></a:lnRef></wps:style>"#,
+        ] {
+            let xml = issue_1979_fixture_xml().replacen(
+                "</wps:spPr>",
+                &format!("<a:ln><a:noFill/></a:ln></wps:spPr>{style}"),
+                1,
+            );
+            issue_1979_assert_outline(&xml, None);
+        }
+    }
+
+    #[test]
+    fn issue_1979_style_line_ref_controls_outline_and_colour() {
+        for idx in [1, 2, 3] {
+            let xml = issue_1979_fixture_xml().replacen("</wps:spPr>",
+                &format!(r#"</wps:spPr><wps:style><a:lnRef idx="{idx}"><a:srgbClr val="00FF00"/></a:lnRef></wps:style>"#), 1);
+            issue_1979_assert_outline(&xml, Some([0.0, 1.0, 0.0]));
+        }
+    }
+
+    #[test]
+    fn issue_1979_zero_line_ref_has_no_outline() {
+        let xml = issue_1979_fixture_xml().replacen("</wps:spPr>",
+            r#"</wps:spPr><wps:style><a:lnRef idx="0"><a:srgbClr val="00FF00"/></a:lnRef></wps:style>"#, 1);
+        issue_1979_assert_outline(&xml, None);
+    }
+
+    #[test]
+    fn issue_1979_vml_textbox_keeps_default_stroke() {
+        for position in ["", "position:absolute;"] {
+            let xml = format!(
+                r#"<w:document xmlns:w="{}" xmlns:v="urn:schemas-microsoft-com:vml"><w:body><w:p><w:r><w:pict><v:shape style="{position}width:160pt;height:100pt"><v:textbox><w:txbxContent><w:p><w:r><w:t>VML box</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p></w:body></w:document>"#,
+                W::URI
+            );
+            issue_1979_assert_outline(&xml, Some([0.0; 3]));
         }
     }
 
@@ -58580,7 +60505,7 @@ mod rendering_uncovered_contract_tests {
             panic!("nested table retained")
         };
         assert_eq!(inner[0][0].paras[0].runs[0].text, "Inner");
-        let flow = collect_hf_runs(&dom, root, &sheet(), 400.0);
+        let flow = collect_hf_runs(&dom, root, &sheet(), 400.0, None);
         assert!(flow.iter().any(|r| r.text == "Tail"));
         assert!(
             flow.iter()
@@ -59285,7 +61210,7 @@ mod rendering_uncovered_contract_tests {
             let (dom, root) = xml(&format!(
                 r#"<w:p><w:pPr><w:jc w:val="both"/><w:ind w:left="200" w:right="400"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Arial"/><w:sz w:val="20"/></w:rPr><w:t>{text}</w:t></w:r></w:p>"#
             ));
-            let runs = collect_hf_runs(&dom, root, &sheet(), 252.0);
+            let runs = collect_hf_runs(&dom, root, &sheet(), 252.0, None);
             let mut lay = Layout::new(&fonts, compact_page(), HfChrome::default(), 15);
             lay.draw_hf_line(&runs, 250.0, Align::Justify, wraps);
             let ink: Vec<_> = lay.pages[0]
@@ -59322,7 +61247,7 @@ mod rendering_uncovered_contract_tests {
         let (dom, root) = xml(
             r#"<w:p><w:r><w:rPr><w:rFonts w:ascii="Arial"/><w:sz w:val="20"/><w:spacing w:val="20"/></w:rPr><w:t>AB</w:t></w:r><w:r><w:rPr><w:rFonts w:ascii="Arial"/><w:sz w:val="20"/></w:rPr><w:t>C</w:t></w:r></w:p>"#,
         );
-        let runs = collect_hf_runs(&dom, root, &sheet(), 252.0);
+        let runs = collect_hf_runs(&dom, root, &sheet(), 252.0, None);
         let mut lay = Layout::new(&fonts, compact_page(), HfChrome::default(), 15);
         lay.draw_hf_line(&runs, 250.0, Align::Left, false);
         let ink: Vec<_> = lay.pages[0]
@@ -61143,7 +63068,7 @@ mod rendering_uncovered_contract_tests {
                             ""
                         }
                     ));
-                    let mut runs = collect_hf_runs(&dom, root, &sheet(), 252.0);
+                    let mut runs = collect_hf_runs(&dom, root, &sheet(), 252.0, None);
                     runs.retain(|r| r.text != HF_LINE_BREAK);
                     assert_eq!(run_text(&runs), if body { "PageBody" } else { "Page" });
                     runs[0].frame_center = center;
@@ -66743,10 +68668,10 @@ mod chrome_collector_source_boundary_tests {
     fn collected_without_mutation(dom: &Dom, root: NodeId) -> Vec<TextRun> {
         let before = dom.serialize_element(root);
         let nodes = dom.node_count();
-        let runs = collect_hf_runs(dom, root, &sheet(), 400.0);
+        let runs = collect_hf_runs(dom, root, &sheet(), 400.0, None);
         assert_eq!(dom.serialize_element(root), before);
         assert_eq!(dom.node_count(), nodes);
-        let repeat = collect_hf_runs(dom, root, &sheet(), 400.0);
+        let repeat = collect_hf_runs(dom, root, &sheet(), 400.0, None);
         assert_eq!(
             runs.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
             repeat.iter().map(|r| r.text.as_str()).collect::<Vec<_>>()

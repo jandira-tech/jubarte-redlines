@@ -6,7 +6,7 @@
 
 use super::{
     ExistingRevisions,
-    for_edit::{ForEditRequest, for_edit},
+    for_edit::{ForEditRequest, for_edit_quoting},
     v2::{self, PlanV2, Target},
 };
 use crate::cli::edit_actions::EditAction;
@@ -60,7 +60,7 @@ pub fn compile(
         super::source_refs::decisions(source, &inline.accept_change, &inline.reject_change)
             .map_err(edit_error)?;
     // Select all original identities, then match anchors in their working text.
-    let view = for_edit(
+    let view = for_edit_quoting(
         source,
         &ForEditRequest {
             all: true,
@@ -76,6 +76,7 @@ pub fn compile(
             track: inline.track == "on",
             ..Default::default()
         },
+        super::PlanSyntax::Typed,
     )
     .map_err(edit_error)?;
     let at = match action {
@@ -210,13 +211,42 @@ pub fn compile(
                     Some(n) => n - 1,
                     None if hits.len() == 1 => 0,
                     None => {
+                        let mut message = format!("expected one exact match; found {}", hits.len());
+                        if !hits.is_empty() {
+                            let mut paragraphs: Vec<(&str, usize)> = Vec::new();
+                            for (row, _) in &hits {
+                                let id = row.target.short_id.as_str();
+                                if let Some((_, count)) =
+                                    paragraphs.last_mut().filter(|(p, _)| *p == id)
+                                {
+                                    *count += 1;
+                                } else {
+                                    paragraphs.push((id, 1));
+                                }
+                            }
+                            let shown = paragraphs
+                                .into_iter()
+                                .map(|(id, count)| {
+                                    if count == 1 {
+                                        id.to_string()
+                                    } else {
+                                        format!("{id} ({count})")
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            message.push_str(&format!(
+                                ": {shown}; pick one with --at pN or --occurrence 1..={}",
+                                hits.len()
+                            ));
+                        }
                         return Err(with_near(refusal(
                             if hits.is_empty() {
                                 "ANCHOR_NOT_FOUND"
                             } else {
                                 "AMBIGUOUS_ANCHOR"
                             },
-                            format!("expected one exact match; found {}", hits.len()),
+                            message,
                         )));
                     }
                 };
@@ -354,6 +384,7 @@ pub fn compile(
         resolve_revisions: v2::RevisionDecisions { accept, reject },
         removed_anchor_comments: Default::default(),
         rewrite_others_comments: None,
+        others: None,
         author: inline.author.clone(),
         date: inline
             .datetime

@@ -54,7 +54,15 @@ before(() => {
 });
 
 function run(...args) {
-  const r = spawnSync(process.execPath, [bin, ...args], { encoding: "utf8", cwd: tmp });
+  return runEnv({}, ...args);
+}
+
+function runEnv(env, ...args) {
+  const r = spawnSync(process.execPath, [bin, ...args], {
+    encoding: "utf8",
+    cwd: tmp,
+    env: { ...process.env, ...env },
+  });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
 
@@ -257,6 +265,28 @@ test("changes, accept and reject by kind", () => {
   assert.equal(run("changes", base).out, "0 change(s)\n");
 });
 
+test("accept/reject -o naming the input refuses in favour of --in-place (#1998)", () => {
+  const file = path.join(tmp, "contract.docx");
+  fs.copyFileSync(tracked, file);
+  const packed = fs.readFileSync(file);
+  for (const args of [
+      ["accept", file, "-o", file],
+    ["accept", file, "-o", file, "--force"],
+    ["reject", file, "-o", file, "--force"],
+    // Another spelling of the same file is the same refusal.
+    ["accept", file, "-o", `${tmp}/./contract.docx`],
+    ]) {
+      const r = run(...args);
+    assert.equal(r.code, 2, `${args.join(" ")}: ${r.err}`);
+    assert.match(r.err, /^error: OUTPUT_ALIAS: the output '.*' is the same file as the input '.*'; use --in-place\n$/);
+    assert.deepEqual(fs.readFileSync(file), packed);
+    }
+    // `-o` naming another file still writes it.
+  const out = path.join(tmp, "other.docx");
+  assert.equal(run("accept", file, "-o", out).code, 0);
+  assert.deepEqual(fs.readFileSync(file), packed);
+  });
+
 test("errors read as the binary's: bad ids are usage, I/O as Rust words it, sorted report keys", () => {
   const out = path.join(tmp, "never-accepted.docx");
   const bad = run("accept", tracked, "-o", out, "--id", "c5");
@@ -449,12 +479,12 @@ test("convert --to md writes the paged Markdown, as the binary does (#454)", () 
 
 test("edit --pdf writes the PDF beside the document, as the binary does (#454)", () => {
   const out = path.join(tmp, "edit-pdf.docx");
-  const r = run("edit", untracked, "-p", "p0", "--content", "Z", "-o", out, "--pdf", "--revisions", "word", "--dpi", "50");
+  const r = run("edit", untracked, "-p", "p0", "--content", "Z", "-a", "Jubarte", "-o", out, "--pdf", "--revisions", "word", "--dpi", "50");
   assert.equal(r.code, 0, r.err);
   assert.match(r.err, /wrote .*edit-pdf\.pdf \(pdf, \d+ bytes, \d+ pages?\)\n/);
   assert.ok(fs.readFileSync(path.join(tmp, "edit-pdf.pdf")).subarray(0, 4).equals(Buffer.from("%PDF")));
   const dir = path.join(tmp, "edit-pdf-bundle");
-  assert.equal(run("edit", untracked, "-p", "p0", "--content", "Z", "--out-dir", dir, "--pdf").code, 0);
+  assert.equal(run("edit", untracked, "-p", "p0", "--content", "Z", "-a", "Jubarte", "--out-dir", dir, "--pdf").code, 0);
   for (const name of ["redline.pdf", "clean.pdf"]) assert.ok(fs.existsSync(path.join(dir, name)), name);
 });
 
@@ -526,6 +556,31 @@ test("a replaced output keeps its mode, as the binary's does (#1698)", () => {
   assert.equal(replaced.code, 0, replaced.err);
   assert.equal(fs.statSync(out).mode & 0o777, 0o640);
   assert.deepEqual(fs.readdirSync(tmp).filter((n) => n.endsWith(".partial")), []);
+});
+
+test("read -o publishes over the path: a hard link to the input keeps its bytes (#1691)", () => {
+  const file = copy(untracked, "hard-link-input.docx");
+  const alias = path.join(tmp, "hard-link-view.md");
+  fs.linkSync(file, alias);
+  const before = fs.readFileSync(file);
+  const r = run("read", file, "-o", alias, "--force");
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(fs.readFileSync(file), before, "the input keeps its bytes");
+  assert.notEqual(fs.statSync(file).ino, fs.statSync(alias).ino, "the link was broken");
+  assert.ok(fs.statSync(alias).size > 0);
+  assert.deepEqual(fs.readdirSync(tmp).filter((n) => n.endsWith(".partial")), []);
+});
+
+test("read -o replaces a symlinked output, never its referent (#1691)", () => {
+  const referent = path.join(tmp, "symlink-referent.md");
+  fs.writeFileSync(referent, "keep me\n");
+  const alias = path.join(tmp, "symlink-view.md");
+  fs.symlinkSync(referent, alias);
+  const r = run("read", untracked, "-o", alias, "--force");
+  assert.equal(r.code, 0, r.err);
+  assert.equal(fs.readFileSync(referent, "utf8"), "keep me\n");
+  assert.ok(!fs.lstatSync(alias).isSymbolicLink(), "the link entry was replaced");
+  assert.ok(fs.statSync(alias).size > 0);
 });
 
 test("convert --move-comments and --changed-only", () => {
@@ -607,7 +662,7 @@ const ownershipShipped = binding.planError(JSON.stringify({
   schema_version: 1, author: "A", rewrite_others_comments: false,
   operations: [{ kind: "delete", paragraph: "p0", find: "x" }],
 })) === undefined;
-test("edit refuses another author's comment unless --rewrite-others-comments (#1264)", {
+test("edit allows another author's comment unless JUBARTE_KEEP_OTHERS=1 (#1892)", {
   skip: !ownershipShipped && "the checked-in engine predates #1264; it ships with the next release",
 }, () => {
   const para = JSON.parse(run("read", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
@@ -617,14 +672,15 @@ test("edit refuses another author's comment unless --rewrite-others-comments (#1
   assert.equal(added.code, 0, added.err);
   const out = path.join(tmp, "ownership-edited.docx");
   const edit = ["edit", commented, "-p", "c0", "--content", "Why not?", "--author", "Bob Lee", "-o", out];
-  const refused = run(...edit);
+  const allowed = run(...edit);
+  assert.equal(allowed.code, 0, allowed.err);
+  assert.ok(allowed.err.includes('note: op-1 (edit_comment): c0 is by "Ann Counsel"; their words were changed under their name'), allowed.err);
+  assert.ok(allowed.out.includes("{>>c0 @AC: Why not?<<}"), allowed.out);
+  const kept = path.join(tmp, "ownership-kept.docx");
+  const refused = runEnv({ JUBARTE_KEEP_OTHERS: "1" }, ...edit.slice(0, -2), "-o", kept);
   assert.equal(refused.code, 3, refused.err);
   assert.ok(refused.err.includes('COMMENT_NOT_YOURS (op-1): c0 is by "Ann Counsel"; reply instead'), refused.err);
-  assert.ok(!fs.existsSync(out));
-  const rewritten = run(...edit, "--rewrite-others-comments");
-  assert.equal(rewritten.code, 0, rewritten.err);
-  assert.ok(rewritten.err.includes('note: op-1 (edit_comment): c0 is by "Ann Counsel"; their words were changed under their name'), rewritten.err);
-  assert.ok(rewritten.out.includes("{>>c0 @AC: Why not?<<}"), rewritten.out);
+  assert.ok(!fs.existsSync(kept));
 });
 
 test("edit and add write FILE_modified.docx, as the binary does (D15)", () => {
@@ -632,7 +688,7 @@ test("edit and add write FILE_modified.docx, as the binary does (D15)", () => {
   const word = para.text.split(" ")[0];
   const file = copy(untracked, "single.docx");
   const written = path.join(tmp, "single_modified.docx");
-  const edit = ["edit", file, "-p", `p${para.index}`, "--anchor", word, "--content", "Changed"];
+  const edit = ["edit", file, "-p", `p${para.index}`, "--anchor", word, "--content", "Changed", "-a", "Jubarte"];
   const r = run(...edit);
   assert.equal(r.code, 0, r.err);
   assert.ok(fs.existsSync(written) && !fs.existsSync(path.join(tmp, "single.edit")));
@@ -669,7 +725,7 @@ test("edit and add write FILE_modified.docx, as the binary does (D15)", () => {
   assert.ok(bundle.err.startsWith(`wrote ${path.join(tmp, "single.edit")} (`), bundle.err);
   assert.doesNotMatch(bundle.out, /\nwrote /);
   // A _modified FILE keeps its name: add edits it in place, with --force.
-  const add = ["add", written, "-p", `p${para.index}`, "--content", "New."];
+  const add = ["add", written, "-p", `p${para.index}`, "--content", "New.", "-a", "Jubarte"];
   assert.equal(run(...add).code, 2);
   const forced = run(...add, "--force");
   assert.equal(forced.code, 0, forced.err);
@@ -696,9 +752,9 @@ test("edit takes the text a comment covers (c0.text), and read names note paragr
   const file = copy(untracked, "covered.docx");
   const commented = path.join(tmp, "covered-c.docx");
   const out = path.join(tmp, "covered-out.docx");
-  const add = run("add", file, "-p", "p8", "--anchor", "Last", "--content", "Check", "-o", commented);
+  const add = run("add", file, "-p", "p8", "--anchor", "Last", "--content", "Check", "-a", "Jubarte", "-o", commented);
   assert.equal(add.code, 0, add.err);
-  const edit = run("edit", commented, "-p", "c0.text", "--content", "Final", "-o", out);
+  const edit = run("edit", commented, "-p", "c0.text", "--content", "Final", "-a", "Jubarte", "-o", out);
   assert.equal(edit.code, 0, edit.err);
   const view = run("read", out);
   assert.equal(view.code, 0, view.err);
@@ -1733,12 +1789,13 @@ test("read --for-edit usage errors as the binary", () => {
   for (const args of [
     ["read", "received-for-edit-usage.docx", "--accept-change", "r0"],
     ["read", "received-for-edit-usage.docx", "--for-edit", "-o", "fe.md"],
-    ["read", "received-for-edit-usage.docx", "--for-edit", "--json"],
   ]) {
     const r = run(...args);
     assert.equal(r.code, 2, `${args}: ${r.out} ${r.err}`);
     assert.match(r.err, /error:/);
   }
+  // --json no longer conflicts with --for-edit (#1889).
+  assert.equal(run("read", "received-for-edit-usage.docx", "--for-edit", "--json").code, 0);
 });
 
 test("changes --author keeps those authors' changes, as the binary (#1690)", { skip: !authorFilter && "the checked-in binding predates #1690" }, () => {
@@ -1763,10 +1820,10 @@ test("read --tables -o writes the grids it prints, as the binary (#1690)", { ski
   assert.equal(wrote.out, "");
   assert.equal(fs.readFileSync(out, "utf8"), grids.out);
   assert.match(wrote.err, new RegExp(`wrote ${out.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(tables, ${fs.statSync(out).size} bytes\\)\n$`));
-  // Refused; the exit status differs from the binary's 2 (#1692).
+  // Refused as the binary refuses it: exit 2 with the OUTPUT_EXISTS code (#1692).
   const again = run("read", untracked, "--tables", "-o", out);
-  assert.notEqual(again.code, 0, again.err);
-  assert.match(again.err, /already exists/);
+  assert.equal(again.code, 2, again.err);
+  assert.equal(again.err, `error: OUTPUT_EXISTS: output '${out}' already exists (use --force to overwrite)\n`);
   const json = run("read", untracked, "--tables", "-o", path.join(tmp, "grids.json"));
   assert.equal(json.code, 2, json.err);
   assert.match(json.err, /--tables writes the grids as text/);
@@ -1797,6 +1854,14 @@ test("an existing output is a usage refusal with the OUTPUT_EXISTS code (#1698)"
   const forced = run("accept", tracked, "-o", docx, "--force");
   assert.equal(forced.code, 0, forced.err);
   assert.deepEqual(fs.readFileSync(docx).subarray(0, 2), Buffer.from("PK"));
+  // The `/` spelling on every OS, as the binary's messages (#568, #1692):
+  // a name that holds a backslash is shown with a slash.
+  const odd = path.join(tmp, "odd\\name.md");
+  fs.writeFileSync(odd, "keep me\n");
+  const backslash = run("convert", tracked, "-o", odd);
+  assert.equal(backslash.code, 2, backslash.err);
+  assert.equal(backslash.err, `error: OUTPUT_EXISTS: output '${odd.replaceAll("\\", "/")}' already exists (use --force to overwrite)\n`);
+  assert.equal(fs.readFileSync(odd, "utf8"), "keep me\n");
 });
 
 test("read refuses an existing output before it reads the input (#1698)", () => {
@@ -1862,4 +1927,195 @@ test("read --tables -o replaces a link, never writing through it (#1698)", () =>
   assert.match(refused.err, /^error: OUTPUT_ALIAS: the output '.*' is the same file as the input '.*'\n$/);
   assert.deepEqual(fs.readFileSync(source), before, "the input keeps its bytes");
   assert.deepEqual(fs.readFileSync(hard), before, "the hard link keeps the input's bytes");
+});
+
+// The checked-in npm wasm predates this checkout's parser, so `accept
+// FILE --in-place` is an unknown flag there. The runner still honours
+// `args.in_place` once the parser reports it. Until `jubarte-wasm/build-npm.sh`
+// rebuilds npm/ from a clean tree, these tests drive that runner through a
+// parseCli shim, the same way `--tables -o` does. The real bin's refusal is
+// its own test.
+const inPlaceParsed = parses(["accept", "a.docx", "--in-place"]);
+
+// Built once per run. A memo, not an existsSync check, so nothing is written
+// to a path between checking it and using it (CodeQL js/file-system-race).
+let inPlaceScript = null;
+
+function inPlaceBin() {
+  if (inPlaceScript) return inPlaceScript;
+  const host = path.join(tmp, "in-place-host");
+  const script = path.join(host, "jubarte-redlines.mjs");
+  const modules = path.join(host, "node_modules", "jubarte-wasm");
+  fs.mkdirSync(modules, { recursive: true });
+  fs.writeFileSync(script, fs.readFileSync(bin));
+  fs.writeFileSync(path.join(modules, "package.json"), JSON.stringify({ name: "jubarte-wasm", main: "index.js" }));
+  fs.writeFileSync(path.join(modules, "index.js"), [
+    `const real = require(${JSON.stringify(path.join(cliDir, "..", "npm"))});`,
+    `const fs = require("node:fs");`,
+    "const parse = real.parseCli;",
+    "module.exports = {",
+    "  ...real,",
+    "  parseCli(argv, ...rest) {",
+    "    const args = JSON.parse(argv);",
+    "    const direct = JSON.parse(parse(argv, ...rest));",
+    "    if (!(direct.exit_code && direct.exit_code !== 0)) return JSON.stringify(direct);",
+    "    const at = args.indexOf('--in-place');",
+    "    if (at === -1) return JSON.stringify(direct);",
+    "    const stripped = args.filter((_, i) => i !== at);",
+    "    if ((stripped[0] === 'accept' || stripped[0] === 'reject') && !stripped.includes('-o') && !stripped.includes('--output')) {",
+    "      stripped.splice(1, 0, '-o', stripped[1]);",
+    "    }",
+    "    const parsed = JSON.parse(parse(JSON.stringify(stripped), ...rest));",
+    "    if (parsed.exit_code && parsed.exit_code !== 0) return JSON.stringify(parsed);",
+    "    parsed.args.in_place = true;",
+    "    if (parsed.args.author_given == null) parsed.args.author_given = args.includes('-a') || args.includes('--author');",
+    "    if (parsed.command === 'accept' || parsed.command === 'reject') {",
+    "      parsed.args.output = parsed.args.file;",
+    "      parsed.args.output_format = 'docx';",
+    "    } else if (parsed.command === 'edit' || parsed.command === 'add') {",
+    "      parsed.args.output = parsed.args.file;",
+    "    }",
+    "    return JSON.stringify(parsed);",
+    "  },",
+    "  acceptChanges(docx, filter) {",
+    "    if (process.env.JUBARTE_IN_PLACE_POISON) fs.writeFileSync(process.env.JUBARTE_IN_PLACE_POISON, 'poisoned-source');",
+    "    return real.acceptChanges(docx, filter);",
+    "  },",
+    "};",
+  ].join("\n"));
+  inPlaceScript = script;
+  return script;
+}
+
+function runInPlace(env, ...args) {
+  const r = spawnSync(process.execPath, [inPlaceBin(), ...args], {
+    encoding: "utf8",
+    cwd: tmp,
+    env: { ...process.env, ...env },
+  });
+  return { code: r.status, out: r.stdout, err: r.stderr };
+}
+
+function editAnchor() {
+  const para = JSON.parse(run("read", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
+  return { index: para.index, word: para.text.split(" ")[0] };
+}
+
+test("the checked-in parser refuses --in-place until npm/ is rebuilt", { skip: inPlaceParsed && "this npm build already parses --in-place" }, () => {
+  const refused = run("accept", "a.docx", "--in-place");
+  assert.equal(refused.code, 2, refused.err);
+  assert.match(refused.err, /--in-place/);
+  assert.doesNotMatch(refused.err, /in place \(replaced sha256/);
+});
+
+test("accept --in-place of a misnamed docx stays a docx (#1888)", () => {
+  for (const name of ["contract.json", "notes.md"]) {
+    const file = copy(tracked, name);
+    const before = fs.readFileSync(file);
+    const accepted = runInPlace({}, "accept", file, "--in-place");
+    assert.equal(accepted.code, 0, accepted.err);
+    assert.ok(fs.readFileSync(file).subarray(0, 4).equals(Buffer.from("PK\x03\x04")), name);
+    assert.ok(!fs.readFileSync(file).equals(before), name);
+    assert.ok(accepted.err.includes(`wrote ${file} in place (replaced sha256 `), accepted.err);
+    assert.match(accepted.err, /replaced sha256 [0-9a-f]{8}\u2026/);
+    assert.doesNotMatch(accepted.err, /\{"schema_version"/);
+  }
+});
+
+test("edit --in-place does not clobber a pdf, and a failed companion leaves the input (#1888)", () => {
+  const { index, word } = editAnchor();
+  const file = copy(untracked, "pdf-in.docx");
+  const pdf = path.join(tmp, "pdf-in.pdf");
+  fs.writeFileSync(pdf, "keep-pdf");
+  const before = fs.readFileSync(file);
+  const refused = runInPlace({ JUBARTE_AUTHOR: "Jubarte" }, "edit", file, "-p", `p${index}`, "--anchor", word, "--content", "Changed", "--in-place", "--pdf");
+  assert.equal(refused.code, 2, refused.err);
+  assert.match(refused.err, /OUTPUT_EXISTS/);
+  assert.match(refused.err, /pdf-in\.pdf/);
+  assert.deepEqual(fs.readFileSync(file), before);
+  assert.equal(fs.readFileSync(pdf, "utf8"), "keep-pdf");
+
+  const companion = copy(untracked, "comp.docx");
+  const blocked = path.join(tmp, "comp.pdf");
+  fs.mkdirSync(blocked);
+  fs.writeFileSync(path.join(blocked, "keep"), "keep");
+  const held = fs.readFileSync(companion);
+  const failed = runInPlace({ JUBARTE_AUTHOR: "Jubarte" }, "edit", companion, "-p", `p${index}`, "--anchor", word, "--content", "Changed", "--in-place", "--pdf", "--force");
+  assert.notEqual(failed.code, 0, failed.err);
+  assert.deepEqual(fs.readFileSync(companion), held, failed.err);
+  assert.equal(fs.readFileSync(path.join(blocked, "keep"), "utf8"), "keep");
+});
+
+test("edit --in-place follows a symlink and keeps its mode (#1888)", () => {
+  const { index, word } = editAnchor();
+  const real = path.join(tmp, "real.docx");
+  fs.copyFileSync(untracked, real);
+  fs.chmodSync(real, 0o640);
+  const link = path.join(tmp, "link.docx");
+  fs.symlinkSync("real.docx", link);
+  const before = fs.readFileSync(real);
+  const edited = runInPlace({}, "edit", link, "-p", `p${index}`, "--anchor", word, "--content", "Changed", "-a", "GiantCo", "--in-place");
+  assert.equal(edited.code, 0, edited.err);
+  assert.ok(fs.lstatSync(link).isSymbolicLink(), edited.err);
+  assert.equal(fs.readlinkSync(link), "real.docx");
+  // One descriptor for the mode and the bytes: both describe the same file
+  // (CodeQL js/file-system-race).
+  const fd = fs.openSync(real, "r");
+  try {
+    assert.equal(fs.fstatSync(fd).mode & 0o777, 0o640);
+    assert.ok(!fs.readFileSync(fd).equals(before));
+  } finally {
+    fs.closeSync(fd);
+  }
+  assert.match(edited.err, /wrote .*link\.docx in place \(replaced sha256 [0-9a-f]{8}\u2026\); \d+ changes? by "GiantCo"/);
+  assert.doesNotMatch(edited.err, /no -a given/);
+});
+
+test("accept --in-place rechecks the source before replacing (#1888)", () => {
+  const file = copy(tracked, "poison.docx");
+  const poisoned = runInPlace({ JUBARTE_IN_PLACE_POISON: file }, "accept", file, "--in-place");
+  assert.equal(poisoned.code, 3, poisoned.err);
+  assert.match(poisoned.err, /SOURCE_CHANGED:/);
+  assert.match(poisoned.err, /nothing was published/);
+  assert.equal(fs.readFileSync(file, "utf8"), "poisoned-source");
+  assert.doesNotMatch(poisoned.err, /in place \(replaced sha256/);
+});
+
+test("JUBARTE_TIMEOUT bounds a task as the binary does (#2016)", () => {
+  // The task runs in a child killed at the deadline; a millisecond is less
+  // than the child needs to start, so it always fires.
+  const view = path.join(tmp, "timeout-view.md");
+  const late = runEnv({ JUBARTE_TIMEOUT: "0.001" }, "read", untracked, "-o", view);
+  assert.equal(late.code, 124, late.err);
+  assert.match(late.err, /error: DEADLINE_EXCEEDED: timed out after 0\.001s \(JUBARTE_TIMEOUT\)/);
+  assert.equal(fs.existsSync(view), false);
+  const roomy = runEnv({ JUBARTE_TIMEOUT: "120" }, "read", untracked);
+  assert.equal(roomy.code, 0, roomy.err);
+  assert.match(roomy.out, /^---\nsource: /);
+  // The binary's grammar (Rust's f64 parse), word for word: no white
+  // space, hex or underscores; infinity and NaN are not finite.
+  for (const bad of ["soon", " 10 ", "0x10", "1_0", "1e"]) {
+    const refused = runEnv({ JUBARTE_TIMEOUT: bad }, "read", untracked);
+    assert.equal(refused.code, 2, `${bad}: ${refused.err}`);
+    assert.equal(refused.err, `error: JUBARTE_TIMEOUT: '${bad}' is not a number of seconds\n`, bad);
+  }
+  for (const bad of ["0", "-1", "inf", "NaN", "+Infinity"]) {
+    const refused = runEnv({ JUBARTE_TIMEOUT: bad }, "read", untracked);
+    assert.equal(refused.code, 2, `${bad}: ${refused.err}`);
+    assert.equal(
+      refused.err,
+      `error: JUBARTE_TIMEOUT: '${bad}': the timeout must be a finite number of seconds above 0\n`,
+      bad,
+    );
+  }
+  // The child's own exit code is the run's: a usage error stays 2 and a
+  // missing input stays 1, with the child's message.
+  const usage = runEnv({ JUBARTE_TIMEOUT: "120" }, "read", untracked, "--no-such-flag");
+  assert.equal(usage.code, 2, usage.err);
+  const missing = runEnv({ JUBARTE_TIMEOUT: "120" }, "read", path.join(tmp, "absent.docx"));
+  assert.equal(missing.code, 1, missing.err);
+  assert.match(missing.err, /^error: /);
+  // A deadline past what a Node timer holds is no deadline, not an instant one.
+  const far = runEnv({ JUBARTE_TIMEOUT: "9999999" }, "read", untracked);
+  assert.equal(far.code, 0, far.err);
 });

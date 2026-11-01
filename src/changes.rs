@@ -8,15 +8,15 @@
 //!
 //! A change is one revision element (`w:ins`, `w:del`, `w:moveFrom`,
 //! `w:moveTo`, `w:cellIns`, `w:cellDel`, `w:*PrChange`, ...), named
-//! by its short id: `r12` in the body, `header1.r1`, `footnotes.r1` or
-//! `styles.r0` in another story, the story being a header, footer or notes
-//! part's file stem (`header1`, `footnotes`, as `jubarte read` names them)
+//! by its short id: `r12` in the body, `header1.r1`, `footnotes.r1`,
+//! `comments.r9` or `styles.r0` in another story, the story being a header,
+//! footer, notes or comments part's file stem (`header1`, `footnotes`,
+//! `comments`, as `jubarte read` names them)
 //! ([`crate::ids::ChangeId::short`]). Resolving some changes never renumbers the rest, so an
 //! id listed before stays valid after. Word moves text as one change:
 //! selecting either side of a move selects both sides and their range
-//! markers. Tracked changes inside comment bodies (`word/comments.xml`)
-//! resolve under Accept/Reject All and under author or kind filters, but
-//! they are never listed and no `--id` names them (#1223).
+//! markers. A revision inside a comment body (`word/comments.xml`) is
+//! `comments.rN`, the same id accept and reject select (#1706).
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -571,6 +571,60 @@ pub(crate) struct Recorded {
 /// story keeps every record, in document order.
 pub(crate) type Records = HashMap<String, Vec<Recorded>>;
 
+/// The comments of a package's comments part: each comment's `w:id`, and
+/// for each comment-body change (`comments.r9`, as [`list_changes`] names
+/// it) the `w:id` of the comment that holds it, `None` when the change's
+/// id repeats in two comments. A comment an edit removes takes its body's
+/// changes with it (#1706).
+#[derive(Debug, Default)]
+pub(crate) struct CommentBodies {
+    pub comments: HashSet<String>,
+    pub owners: HashMap<String, Option<String>>,
+}
+
+/// [`CommentBodies`] of `docx`; empty when it has no comments part.
+pub(crate) fn comment_bodies(docx: &[u8]) -> Result<CommentBodies, ChangeError> {
+    let pkg = open(docx)?;
+    let mut bodies = CommentBodies::default();
+    let Some(part) = crate::revision_processor::comments_part(&pkg) else {
+        return Ok(bodies);
+    };
+    let story = story_id(&main_part(&pkg), &part);
+    let comment = W::name("comment");
+    let id = W::id();
+    for_each_story(&pkg, |dom, root, name| {
+        if name != story {
+            return;
+        }
+        bodies.comments.extend(
+            dom.descendants(root, Some(&comment))
+                .into_iter()
+                .filter_map(|c| dom.attribute(c, &id).map(str::to_string)),
+        );
+        for carrier in carriers(dom, root, name) {
+            let Some(change) = carrier.change else {
+                continue;
+            };
+            let holder = dom
+                .ancestors(carrier.node, Some(&comment))
+                .into_iter()
+                .find_map(|c| dom.attribute(c, &id).map(str::to_string));
+            if let Some(holder) = holder {
+                bodies
+                    .owners
+                    .entry(change.id)
+                    .and_modify(|owner| {
+                        if owner.as_ref() != Some(&holder) {
+                            *owner = None;
+                        }
+                    })
+                    .or_insert(Some(holder));
+            }
+        }
+    });
+    Ok(bodies)
+}
+
 /// [`list_changes`] and its formatting changes' [`Records`], from one
 /// parse of each story. The content of a change `skip` names, and the
 /// paragraph mark it inserts, count for nothing in the characters.
@@ -892,8 +946,8 @@ pub fn changes_text(changes: &[Change]) -> String {
 }
 
 /// Every tracked change, story by story (body, headers, footers, endnotes,
-/// footnotes, styles), in document order. Revisions inside comment bodies
-/// are not listed: the view has no ids for them yet (#1223).
+/// footnotes, comments, styles), in document order. A revision inside a
+/// comment body is `comments.r9` (#1706).
 ///
 /// # Errors
 ///
@@ -998,9 +1052,7 @@ fn tolerant(docx: &[u8]) -> Result<PartFs, ChangeError> {
 }
 
 /// The changes of an opened (transitional) package, as [`list_changes`]
-/// lists them. The comments part is revision-bearing (#1223) but its
-/// revisions stay unlisted — the view has no ids for them yet — so an
-/// `--id` cannot name one. Author and kind filters still resolve them.
+/// lists them. A comment-body revision is `comments.rN` (#1706).
 pub(crate) fn changes_in(pkg: &PartFs) -> Vec<Change> {
     let mut out = Vec::new();
     for_each_story(pkg, |dom, root, story| {
@@ -1014,14 +1066,10 @@ pub(crate) fn changes_in(pkg: &PartFs) -> Vec<Change> {
 }
 
 /// Each listed story's parsed part, in [`list_changes`] order: every
-/// revision-bearing part but the comments part.
+/// revision-bearing part, including comment bodies (`comments.rN`).
 fn for_each_story(pkg: &PartFs, mut each: impl FnMut(&Dom, NodeId, &str)) {
     let main = main_part(pkg);
-    let comments = crate::revision_processor::comments_part(pkg);
     for (part, _) in revision_bearing_parts(pkg) {
-        if Some(&part) == comments.as_ref() {
-            continue;
-        }
         let Some(xml) = pkg.part_string(&part) else {
             continue;
         };
@@ -1073,9 +1121,9 @@ pub struct ResolvedChanges {
     /// by accepting r13`, naming the change that held its mark, or its
     /// thread root's (#1159).
     pub removed_why: Vec<String>,
-    /// Tracked changes still inside comment bodies after the resolution:
-    /// an author or kind filter resolves them, an id selection cannot name
-    /// them, so a partial selection can leave some (#1223).
+    /// Tracked changes still inside comment bodies after the resolution.
+    /// An id, author or kind selection names them as `comments.rN`; one
+    /// that does not name them leaves them tracked (#1706, #1223).
     pub comment_changes_left: usize,
     /// Threads rescued onto empty anchors, in source comment ids; the CLI's
     /// `--keep-nested-comment` opt-in (#1279). Empty when settlement
@@ -1369,8 +1417,9 @@ fn resolve_for_edit_or_cli(
     if whole && filter.ids.is_some() {
         logical::check_whole(filter, &logical_changes_in(&pkg))?;
     }
-    // Comment-body revisions are never listed, but an author or kind
-    // filter selects them all the same (#1223).
+    // Comment-body revisions are listed as `comments.rN` and selected like
+    // every other story (#1706). This count is what a selection leaves in
+    // the comments part, including when the part is the only story.
     let comment_changes = comment_changes_in(&pkg);
     // Nothing selected: nothing to resolve, and nothing else to touch.
     if !listed
@@ -1512,7 +1561,7 @@ fn final_marks_of_row(dom: &Dom, carrier: NodeId) -> Vec<NodeId> {
 }
 
 /// The listed changes of the comments part only (empty when the package
-/// has none): `changes_in` skips it because the view has no ids there.
+/// has none). The same changes are in `changes_in` as `comments.rN`.
 pub fn comment_changes_in(pkg: &PartFs) -> Vec<Change> {
     let Some(part) = crate::revision_processor::comments_part(pkg) else {
         return Vec::new();
@@ -1578,7 +1627,7 @@ fn main_part(pkg: &PartFs) -> String {
 }
 
 /// `body` for the main part, else the part's file stem (`header1`,
-/// `footnotes`, `styles`).
+/// `footnotes`, `comments`, `styles`).
 fn story_id(main: &str, part: &str) -> String {
     if part.trim_start_matches('/') == main.trim_start_matches('/') {
         return "body".to_string();

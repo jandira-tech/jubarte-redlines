@@ -310,6 +310,7 @@ impl R {
 // drawing or shape.
 impl WP {
     cached_xname!(WP::URI, doc_pr, "docPr");
+    cached_xname!(WP::URI, inline, "inline");
 }
 
 impl VML {

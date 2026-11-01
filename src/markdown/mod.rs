@@ -650,15 +650,7 @@ pub struct ReadDocx {
 /// # Ok::<(), jubarte::markdown::MarkdownError>(())
 /// ```
 pub fn docx_to_markdown(docx: &[u8], options: &MarkdownOptions) -> Result<ReadDocx, MarkdownError> {
-    // A `.doc`, an encrypted document or RTF is named for what it is
-    // (`LEGACY_DOC`, `UNSUPPORTED_PACKAGE`), not reported as a bad ZIP.
-    crate::admission::sniff(docx).map_err(|refused| MarkdownError::Docx(refused.to_string()))?;
-    // Bound the whole package before the converter or its tolerant change
-    // listing can inflate it. Full admission also checks all XML syntax;
-    // this view intentionally tolerates parts it can skip (such as a broken
-    // styles part), so use the bounded OPC constructor here instead.
-    crate::opc::PartFs::open_within(docx, options.input_limits)
-        .map_err(|refused| MarkdownError::Docx(crate::opc::refusal_message(docx, &refused)))?;
+    bounded_open(docx, options.input_limits)?;
     let revisions = match options.track_changes {
         TrackChanges::All => from_docx::Revisions::Markup,
         TrackChanges::Accept => from_docx::Revisions::Accept,
@@ -686,6 +678,20 @@ pub fn docx_to_markdown(docx: &[u8], options: &MarkdownOptions) -> Result<ReadDo
         selected: converted.selected,
         selected_stories: converted.selected_stories,
     })
+}
+
+/// Refuse `docx` unless it is a package inside `limits`: the sniff, then the
+/// bounded OPC open (entries, sizes, the XML element budget, no DOCTYPE).
+/// Full admission also checks all XML syntax; the view intentionally
+/// tolerates parts it can skip (such as a broken styles part), so the
+/// bounded constructor is used instead.
+fn bounded_open(docx: &[u8], limits: crate::admission::InputLimits) -> Result<(), MarkdownError> {
+    // A `.doc`, an encrypted document or RTF is named for what it is
+    // (`LEGACY_DOC`, `UNSUPPORTED_PACKAGE`), not reported as a bad ZIP.
+    crate::admission::sniff(docx).map_err(|refused| MarkdownError::Docx(refused.to_string()))?;
+    crate::opc::PartFs::open_within(docx, limits)
+        .map(drop)
+        .map_err(|refused| MarkdownError::Docx(crate::opc::refusal_message(docx, &refused)))
 }
 
 /// How [`read`] (and `jubarte read`) prints the agent view. Defaults
@@ -766,6 +772,12 @@ pub struct ReadView {
 /// # Ok::<(), jubarte::markdown::MarkdownError>(())
 /// ```
 pub fn read(docx: &[u8], options: &ReadOptions) -> Result<ReadView, MarkdownError> {
+    // The view's own budget comes first: the layout pass below admits under
+    // the comparer's larger one, so without this a package `read` refuses
+    // was inflated and laid out before the refusal (4.4 GB for the 215 KB
+    // 70 MiB flood E4 of word_exp, 2026-10-31, #2013).
+    let limits = MarkdownOptions::default().input_limits;
+    bounded_open(docx, limits)?;
     let mut warnings = Vec::new();
     let pages = if options.page_markers {
         page_texts(

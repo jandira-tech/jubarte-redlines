@@ -24,7 +24,7 @@ or PNG — from Rust, Python, Node/browser, or the CLI.
 [![npm](https://img.shields.io/npm/v/jubarte-wasm.svg)](https://www.npmjs.com/package/jubarte-wasm)
 [![MSRV](https://img.shields.io/badge/MSRV-1.94-blue)](./Cargo.toml)
 [![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](./LICENSE)
-[![Socket Badge](https://badge.socket.dev/cargo/package/jubarte-redlines/0.16.0)](https://badge.socket.dev/cargo/package/jubarte-redlines/0.16.0)
+[![Socket Badge](https://badge.socket.dev/cargo/package/jubarte-redlines/0.17.0)](https://badge.socket.dev/cargo/package/jubarte-redlines/0.17.0)
 
 Jubarte is an in-process DOCX engine for applications that need Microsoft
 Word-style review workflows without automating Microsoft Word or LibreOffice.
@@ -373,8 +373,8 @@ Python wheel, the npm CLI) is in the [per-surface guides](#documentation).
 | `jubarte convert` | Convert Word or Markdown to DOCX, PDF, PNG or Markdown |
 | `jubarte diff` | Review differences as GitHub, word, normal, context or side-by-side text |
 | `jubarte read` | Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids |
-| `jubarte edit` | Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply, --accept, --reject, --strike, --restore or --style (several -p per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then prints SUCCESS and a fenced before/after diff of the full agent views (refusal: exit 3) |
-| `jubarte add` | Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command). Writes FILE_modified.docx, as edit does, and prints SUCCESS and a fenced before/after diff of the full agent views |
+| `jubarte edit` | Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply, --accept, --reject, --strike, --restore or --style (several -p per command), or a JSON plan. Writes FILE_modified.docx (--in-place replaces FILE; --out-dir: the bundle), then prints SUCCESS and a fenced before/after diff of the full agent views (refusal: exit 3) |
+| `jubarte add` | Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command). Writes FILE_modified.docx, as edit does (--in-place replaces FILE), and prints SUCCESS and a fenced before/after diff of the full agent views |
 | `jubarte capabilities` | What this binary can do, for agents choosing an operation |
 | `jubarte visual-diff` | Compare rendered pages pixel by pixel (different pages: exit 5) |
 | `jubarte comments` | List comments, threads and the text they annotate |
@@ -825,7 +825,7 @@ supports):
 | `rewrite` | Give a paragraph's whole new text; only the words that differ are edited |
 | `format_run` | Restyle existing text as a tracked formatting change |
 | `comment` | Comment on a match, a whole paragraph, or every paragraph up to `through` |
-| `reply_comment`, `resolve_comment`, `edit_comment`, `delete_comment` | Work on a comment thread by `comment_id`; `edit_comment` on another author's comment needs `"rewrite_others_comments": true` (it keeps their name) |
+| `reply_comment`, `resolve_comment`, `edit_comment`, `delete_comment` | Work on a comment thread by `comment_id`. Rewording, resolving or deleting another author's comment is allowed and noted; `"others": "keep"` refuses it (`COMMENT_NOT_YOURS`) and a reply is the keeping move. `"rewrite_others_comments": true` is accepted and ignored |
 | `strike` | Reject another author's insertion `revision` visibly: your tracked deletion inside it, with an optional `comment` on the struck words |
 | `restore` | Reject another author's deletion `revision` visibly: your tracked copy of its words right after it, with an optional `comment` |
 | `insert_paragraph` | A new paragraph after the anchor, with its properties (or those `like` selects) |

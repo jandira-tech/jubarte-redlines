@@ -45,6 +45,13 @@ pub struct RevisionRefusal {
     reason: String,
     revisions: Vec<Revision>,
     syntax: RevisionSyntax,
+    /// The plan keeps another author's markup. Not on the wire: the message
+    /// already says which routes exist.
+    #[serde(skip)]
+    keep_others: bool,
+    /// The plan's author. Not on the wire.
+    #[serde(skip)]
+    actor: String,
 }
 
 impl RevisionRefusal {
@@ -122,6 +129,26 @@ impl RevisionRefusal {
             revisions,
             // The message quotes its routes in the transaction's syntax.
             syntax: tx.syntax.revision(),
+            keep_others: tx.plan.others.keeps(),
+            actor: tx.plan.author.clone(),
+        }
+    }
+
+    /// A revision someone other than the plan's author wrote. A missing
+    /// author is not the plan's.
+    fn foreign(&self, author: &str) -> bool {
+        author != self.actor
+    }
+
+    fn effect(&self, revision: &Revision, accept: bool) -> String {
+        // Rejecting another author's deletion erases their change. The
+        // stored consequence still says what the mark itself does.
+        if !accept && revision.kind == "deletion" && self.foreign(&revision.author) {
+            "rejecting erases their change".to_string()
+        } else if accept {
+            revision.accept.clone()
+        } else {
+            revision.reject.clone()
         }
     }
 
@@ -129,9 +156,9 @@ impl RevisionRefusal {
         self.revisions
             .iter()
             .map(|r| {
-                let effect = if accept { &r.accept } else { &r.reject };
+                let effect = self.effect(r, accept);
                 if self.revisions.len() == 1 {
-                    effect.clone()
+                    effect
                 } else {
                     format!("{effect} for {}", r.target.short_id)
                 }
@@ -175,7 +202,49 @@ impl EditError {
         }) else {
             return Vec::new();
         };
-        [true, false].into_iter().map(|accept| {
+        let all_foreign = refusal.revisions.iter().all(|r| refusal.foreign(&r.author));
+        let any_foreign = refusal.revisions.iter().any(|r| refusal.foreign(&r.author));
+        // One keeping command only when every revision is the same kind of
+        // answer: restore a deletion, strike an insertion. A mix, or a move
+        // or a formatting change, has no single keeping flag.
+        let keeping = if all_foreign {
+            if refusal.revisions.iter().all(|r| r.kind == "deletion") {
+                Some("restore")
+            } else if refusal.revisions.iter().all(|r| r.kind == "insertion") {
+                Some("strike")
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let mut actions = Vec::new();
+        if let Some(flag) = keeping {
+            let mut argv = vec!["jubarte".into(), "edit".into(), source_path.into()];
+            for revision in &refusal.revisions {
+                argv.extend([
+                    "-p".into(),
+                    revision.target.short_id.clone(),
+                    format!("--{flag}"),
+                ]);
+            }
+            argv.extend(["--author".into(), refusal.actor.clone()]);
+            if refusal.keep_others {
+                argv.push("--keep-others".into());
+            }
+            argv.extend(["-o".into(), "-".into()]);
+            let purpose = if flag == "restore" {
+                "their deletion stays, your insertion shows"
+            } else {
+                "their insertion stays, your deletion shows"
+            };
+            actions.push(NextAction::new(argv).with_purpose(purpose));
+        }
+        // The guard offers no accept or reject of someone else's markup.
+        if refusal.keep_others && any_foreign {
+            return actions;
+        }
+        actions.extend([true, false].into_iter().map(|accept| {
             let key = if accept { "accept" } else { "reject" };
             let mut argv = vec!["jubarte".into(), "edit".into(), "template".into(), source_path.into(),
                 "--expect-sha256".into(), source_digest.into()];
@@ -183,11 +252,13 @@ impl EditError {
                 argv.extend([format!("--{key}-change"), revision.target.short_id.clone()]);
             }
             argv.extend(["-o".into(), "-".into()]);
-            NextAction::new(argv).with_purpose(format!(
+            let action = NextAction::new(argv).with_purpose(format!(
                 "{}; generate a fresh plan and deliberately author the refreshed edit before applying it",
                 refusal.consequence(accept)
-            ))
-        }).collect()
+            ));
+            if any_foreign { action.with_destructive() } else { action }
+        }));
+        actions
     }
 }
 

@@ -107,9 +107,63 @@ fn schema_number(s: &str) -> Option<f64> {
     s.parse::<f64>().ok()
 }
 
+/// A document number. `NaN`, an infinity and a value that overflows the
+/// float (`1e40` as `f32`) read as absent, the same as a token that does
+/// not parse. Finite values, including negatives and a finite exponent
+/// (`1e2`), are unchanged.
+pub(crate) fn parse_finite_f32(s: &str) -> Option<f32> {
+    let v: f32 = s.parse().ok()?;
+    v.is_finite().then_some(v)
+}
+
+/// [`parse_finite_f32`] for an `f64` attribute. `1e40` is finite here;
+/// a later narrowing to `f32` has to check again.
+pub(crate) fn parse_finite_f64(s: &str) -> Option<f64> {
+    let v: f64 = s.parse().ok()?;
+    v.is_finite().then_some(v)
+}
+
+/// `v` as `f32` when that value is finite. A finite `f64` past the `f32`
+/// range (`1e40`) is absent, the same as an infinity.
+pub(crate) fn narrow_finite_f32(v: f64) -> Option<f32> {
+    let n = v as f32;
+    n.is_finite().then_some(n)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{collapse_whitespace, universal_measure_half_points, universal_measure_twips};
+    use super::{
+        collapse_whitespace, narrow_finite_f32, parse_finite_f32, parse_finite_f64,
+        universal_measure_half_points, universal_measure_twips,
+    };
+
+    #[test]
+    fn finite_float_parses_reject_non_finite_tokens() {
+        for bad in [
+            "NaN",
+            "nan",
+            "inf",
+            "+inf",
+            "-inf",
+            "infinity",
+            "-infinity",
+            "1e40",
+            "  ",
+        ] {
+            assert_eq!(parse_finite_f32(bad), None, "{bad}");
+        }
+        assert_eq!(parse_finite_f32("1e2"), Some(100.0));
+        assert_eq!(parse_finite_f32("-1.5"), Some(-1.5));
+        // Rust's float grammar does not trim. Callers that used to trim still trim.
+        assert_eq!(parse_finite_f32(" -1.5 "), None);
+        assert_eq!(parse_finite_f64("1e40"), Some(1e40));
+        assert_eq!(parse_finite_f64("NaN"), None);
+        assert_eq!(parse_finite_f64("inf"), None);
+        assert_eq!(narrow_finite_f32(1e40), None);
+        assert_eq!(narrow_finite_f32(f64::INFINITY), None);
+        assert!(narrow_finite_f32(f64::NAN).is_none());
+        assert_eq!(narrow_finite_f32(12.5), Some(12.5));
+    }
 
     #[test]
     fn collapse_whitespace_writes_one_space_between_words() {

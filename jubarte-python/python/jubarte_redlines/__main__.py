@@ -32,8 +32,12 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import math
 import os
+import re
+import signal
 import stat
+import subprocess
 import sys
 import uuid
 from dataclasses import asdict
@@ -51,6 +55,7 @@ EXIT_USAGE = 2
 EXIT_PLAN_REFUSED = 3
 EXIT_PAGES_DIFFER = 5
 EXIT_FINDINGS = 2
+EXIT_TIMEOUT = 124
 
 # Whether the command line asks for JSON (`_native.wants_json`): an error
 # then prints its JSON line on stdout too, as the binary's does (#1255).
@@ -134,9 +139,21 @@ def _named_kind(path: Path) -> str | None:
     return parsed["args"]["old_format"]
 
 
+def _slash_path(path: Path | str) -> str:
+    """A path as the binary spells it in messages: ``/`` on every OS, even
+    when the argument or the file name holds a backslash (#568)."""
+    return str(path).replace("\\", "/")
+
+
 def _ensure_writable(path: Path, force: bool) -> None:
+    """An existing output is the binary's usage refusal, whatever writes it:
+    exit 2 with the ``OUTPUT_EXISTS`` code (#1692)."""
     if path.exists() and not force:
-        raise CliError(f"output '{path}' already exists (use --force to overwrite)")
+        _error(
+            f"OUTPUT_EXISTS: output '{_slash_path(path)}' already exists (use --force to overwrite)",
+            EXIT_USAGE,
+        )
+        raise SystemExit(EXIT_USAGE)
 
 
 def _same_file(a: Path, b: Path) -> bool:
@@ -159,22 +176,12 @@ def _check_side_file(side: Path, flag: str, others: tuple[tuple[Path, str], ...]
     _ensure_writable(side, force)
 
 
-def _write(path: Path, data: bytes | str) -> int:
-    """Writes ``data`` (text as UTF-8, newlines as given); returns the bytes written."""
-    raw = data.encode("utf-8") if isinstance(data, str) else data
-    try:
-        path.write_bytes(raw)
-    except OSError as exc:
-        raise CliError(f"writing {path}: {_os(exc)}") from exc
-    return len(raw)
-
-
 def _replace(path: Path, data: bytes | str) -> int:
-    """Writes ``data`` beside ``path`` and renames it over, as the binary
-    publishes: an existing output — a hard or symbolic link among them —
-    has its own directory entry replaced, never its target written
-    through; a replaced regular file keeps its mode. Returns the bytes
-    written."""
+    """Writes ``data`` beside ``path`` and renames it over: the one writer
+    for every CLI output, as the binary publishes (#1691). An existing
+    output — a hard or symbolic link among them — has its own directory
+    entry replaced, never its target written through; a replaced regular
+    file keeps its mode. Returns the bytes written."""
     raw = data.encode("utf-8") if isinstance(data, str) else data
     # A name nobody can guess, created only if it is not there: a link
     # planted beside the output is never followed (CodeRabbit on #1698).
@@ -204,6 +211,13 @@ def _replace(path: Path, data: bytes | str) -> int:
     return len(raw)
 
 
+def _replace_inplace(path: Path, data: bytes | str) -> int:
+    """``--in-place`` follows a symlink: the link stays, and the target keeps
+    its mode. Any other path is replaced as ``_replace`` replaces it."""
+    target = path.resolve() if path.is_symlink() else path
+    return _replace(target, data)
+
+
 def _refuse_alias_output(args: argparse.Namespace) -> None:
     """Refuses a ``read --tables -o`` that names its input — the same
     path, or the same file through a hard or symbolic link — before any
@@ -219,7 +233,7 @@ def _refuse_alias_output(args: argparse.Namespace) -> None:
         raise SystemExit(EXIT_USAGE)
     if output.exists() and not args.force:
         _error(
-            f"OUTPUT_EXISTS: output '{_spelled(args, 'output')}' already exists (use --force to overwrite)",
+            f"OUTPUT_EXISTS: output '{_slash_path(_spelled(args, 'output'))}' already exists (use --force to overwrite)",
             EXIT_USAGE,
         )
         raise SystemExit(EXIT_USAGE)
@@ -347,7 +361,7 @@ def _write_result(
         text = _native.read_json(data, **_selection(view), validity_file=validity_file) + "\n"
     else:
         text = data
-    _wrote(args, output, kind, _write(output, text))
+    _wrote(args, output, kind, _replace(output, text))
 
 
 def _not_written(args: argparse.Namespace) -> str:
@@ -428,7 +442,7 @@ def _read_task(args: argparse.Namespace) -> int:
             return EXIT_PLAN_REFUSED
         if args.output is not None:
             _ensure_writable(args.output, args.force)
-            _wrote(args, args.output, "json", _write(args.output, result))
+            _wrote(args, args.output, "json", _replace(args.output, result))
             return EXIT_OK
         sys.stdout.write(result)
         return EXIT_OK
@@ -483,18 +497,34 @@ def _read_task(args: argparse.Namespace) -> int:
 _DOCX_NEEDS_MARKDOWN = "--to docx requires Markdown input in the Python CLI"
 
 
+def _keep_others(args: argparse.Namespace) -> bool:
+    """The guard is on: ``--keep-others``, or exactly ``JUBARTE_KEEP_OTHERS=1``.
+
+    The environment is read here, in the CLI, and nowhere in the library.
+    Any other value leaves the guard off.
+    """
+    return bool(getattr(args, "keep_others", False)) or os.environ.get("JUBARTE_KEEP_OTHERS") == "1"
+
+
 def _edit_plan(args: argparse.Namespace, verb: str, source: bytes) -> tuple[str, list[str]]:
     """``--plan``'s text, or the plan the operation flags describe, and its
-    notes; ``--rewrite-others-comments`` sets the plan's field."""
+    notes. ``--rewrite-others-comments`` still sets its field (a no-op).
+    ``--keep-others`` and ``JUBARTE_KEEP_OTHERS=1`` set ``"others": "keep"``."""
     plan, notes = _edit_plan_as_given(args, verb, source)
-    if getattr(args, "rewrite_others_comments", False):
-        try:
-            parsed = json.loads(plan)
-        except ValueError:
-            return plan, notes  # reported as INVALID_PLAN when applied
-        if isinstance(parsed, dict):
+    rewrite = bool(getattr(args, "rewrite_others_comments", False))
+    keep = _keep_others(args)
+    if not rewrite and not keep:
+        return plan, notes
+    try:
+        parsed = json.loads(plan)
+    except ValueError:
+        return plan, notes  # reported as INVALID_PLAN when applied
+    if isinstance(parsed, dict):
+        if rewrite:
             parsed["rewrite_others_comments"] = True
-            plan = json.dumps(parsed, ensure_ascii=False)
+        if keep:
+            parsed["others"] = "keep"
+        plan = json.dumps(parsed, ensure_ascii=False)
     return plan, notes
 
 
@@ -592,6 +622,81 @@ def _wrote(args: argparse.Namespace, path: Path, format: str, size: int, pages: 
     print(_native.wrote_line(shown, format, size, pages), file=sys.stderr)
 
 
+def _author_was_given(args: argparse.Namespace) -> bool:
+    """Whether ``-a`` was spelled (JUBARTE_AUTHOR counts, the parser says
+    so). Applying a plan treats its author as explicit."""
+    return bool(getattr(args, "author_given", False)) or getattr(args, "plan", None) is not None
+
+
+def _markup_authors(docx: bytes) -> list[str]:
+    """The distinct authors the document's tracked changes and comments
+    name, sorted; an unsigned mark reads ``<no author>``."""
+    from . import _native
+
+    authors: set[str] = set()
+    try:
+        for change in json.loads(_native.list_changes_json(docx)):
+            authors.add(change.get("author") or "<no author>")
+    except (json.JSONDecodeError, _native.JubarteError, TypeError, AttributeError):
+        pass
+    try:
+        for comment in json.loads(_native.list_comments_json(docx)):
+            authors.add(comment.get("author") or "<no author>")
+    except (json.JSONDecodeError, _native.JubarteError, TypeError, AttributeError):
+        pass
+    return sorted(authors)
+
+
+def _count_words(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+def _markup_detail(changes: int, comments: int, author: str) -> str | None:
+    """The ``; 1 change by "GiantCo"`` fragment (#1891). ``None`` when nothing was
+    signed. A markup write without a spelled author refuses (#1997), so the
+    name is always the one the caller gave."""
+    if changes == 0 and comments == 0:
+        return None
+    parts: list[str] = []
+    if changes > 0:
+        parts.append(_count_words(changes, "change"))
+    if comments > 0:
+        parts.append(_count_words(comments, "comment"))
+    return ", ".join(parts) + f' by "{author}"'
+
+
+def _comments_still_published(published: bytes, result: EditResult) -> int:
+    """Comments this edit wrote that the published copy still holds."""
+    from . import _native
+
+    wanted = {op.comment_id for op in result.report.operations if op.comment_id is not None}
+    if not wanted:
+        return 0
+    try:
+        rows = json.loads(_native.list_comments_json(published))
+    except (json.JSONDecodeError, _native.JubarteError, OSError, TypeError):
+        return 0
+    return sum(1 for row in rows if isinstance(row, dict) and row.get("id") in wanted)
+
+
+def _published_markup(args: argparse.Namespace, result: EditResult, published: bytes) -> str | None:
+    """Suggesting mode counts the redline. Editing mode publishes the clean copy."""
+    if bool(getattr(args, "editing_mode", False)):
+        changes, comments = 0, _comments_still_published(published, result)
+    else:
+        changes, comments = result.report.revisions.total, result.report.comments_added
+    return _markup_detail(changes, comments, result.report.author)
+
+
+def _in_place_line(path: str, original: bytes, detail: str | None) -> str:
+    """``wrote FILE in place (replaced sha256 <8 hex>…)``, plus the #1891 detail."""
+    from . import _native
+
+    prefix = _native.source_sha256(original)[:8]
+    extra = f"; {detail}" if detail else ""
+    return f"wrote {path} in place (replaced sha256 {prefix}\u2026){extra}"
+
+
 def _read_plan_text(plan: str) -> str | None:
     """PLAN.json's text, strictly UTF-8 as the binary reads it; ``None``
     when there is no such file."""
@@ -627,6 +732,9 @@ def _record(args: argparse.Namespace, verb: str, doc: Document) -> int:
         "dryRun": dry_run,
         "rewriteOthersComments": bool(getattr(args, "rewrite_others_comments", False)),
     }
+    # Only when set: an engine that predates the field rejects an unknown key.
+    if _keep_others(args):
+        options["keepOthers"] = True
     try:
         recorded = json.loads(
             _native.record_plan(
@@ -726,11 +834,23 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
     # document (FILE_modified.docx by default), ``out_dir`` for the bundle.
     out_dir: Path | None = args.out_dir
     source_bytes = doc.to_bytes()
+    # #1997: a write that signs markup needs a spelled -a (or
+    # JUBARTE_AUTHOR). It refuses before anything is written.
+    published = result.clean.to_bytes() if editing else result.redline.to_bytes()
+    if _published_markup(args, result, published) is not None and not _author_was_given(args):
+        authors = _markup_authors(source_bytes)
+        named = f' (this document has markup by {", ".join(json.dumps(a) for a in authors)})' if authors else ""
+        _error(f"AUTHOR_REQUIRED: sign the new markup with -a NAME{named}", EXIT_USAGE)
+        raise SystemExit(EXIT_USAGE)
     parsed = json.loads(plan_text)
     if out_dir is None:
         return _write_edited(args, args.output, result, notes, source_bytes, parsed)
     if out_dir.exists() and not args.force:
-        raise CliError(f"output directory '{out_dir}' already exists (use --force to replace its files)")
+        _error(
+            f"OUTPUT_EXISTS: output '{_slash_path(out_dir)}' already exists (use --force to overwrite)",
+            EXIT_USAGE,
+        )
+        raise SystemExit(EXIT_USAGE)
     if out_dir.resolve() == args.file.resolve().parent:
         raise CliError("--out-dir must not be the input's own directory")
     lines = result.report.to_jsonl().splitlines()
@@ -763,26 +883,20 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     saved = []
     for name, data in outputs:
-        _write(out_dir / name, data)
+        _replace(out_dir / name, data)
         saved.append({"f": name, "bytes": len(data), "sha256": _native.source_sha256(data)})
     lines.append(_jsonl({"ev": "save", "dir": str(out_dir), "outputs": saved}))
     lines.append(summary)
-    _write(out_dir / "report.jsonl", "\n".join(lines) + "\n")
+    _replace(out_dir / "report.jsonl", "\n".join(lines) + "\n")
     if args.quiet:
         return EXIT_OK
     # A pure accept/reject prints the resolved lines on stdout, nothing
-    # else; the bundle's report.jsonl still holds the summary.
-    # Any failure falls back to the summary and the view, as the binary
-    # does; the bundle already holds the result.
+    # else; the bundle's report.jsonl still holds the summary. The text is
+    # computed first. Only an engine refusal falls back to the summary and
+    # the view; the bundle already holds the result. Anything else propagates.
     if _is_pure_resolution(parsed, result):
-        with contextlib.suppress(Exception):
-            resolved = result.report.resolved_revisions
-            text = _native.resolution_text(
-                source_bytes,
-                json.dumps(
-                    {"accepted": list(resolved.accepted), "rejected": list(resolved.rejected)}, ensure_ascii=False
-                ),
-            )
+        text = _resolved_lines(source_bytes, result)
+        if text is not None:
             names = [name for name, _ in outputs] + ["report.jsonl"]
             sys.stdout.flush()
             print(f"wrote {out_dir} ({len(names)} files: {', '.join(names)})", file=sys.stderr)
@@ -832,20 +946,32 @@ def _is_pure_resolution(parsed: object, result: EditResult) -> bool:
     return bool(resolved.accepted or resolved.rejected)
 
 
-def _print_resolution_or_view(source: bytes, parsed: object, result: EditResult, editing: bool, shown: Path) -> None:
-    """The resolved lines for a pure accept/reject, or the changed view
-    otherwise. Failures fall back to the view, as the binary does."""
+def _resolved_lines(source: bytes, result: EditResult) -> str | None:
+    """The resolved-lines text, or None when the engine refuses it.
+
+    ``resolution_text`` reports that refusal as ``JubarteError``. That is
+    the only failure the fallback exists for, and it is caught before
+    anything is printed. A defect or an I/O error propagates; ``main``
+    prints it and exits 1.
+    """
     from . import _native
 
+    resolved = result.report.resolved_revisions
+    try:
+        return _native.resolution_text(
+            source,
+            json.dumps({"accepted": list(resolved.accepted), "rejected": list(resolved.rejected)}, ensure_ascii=False),
+        )
+    except _native.JubarteError:
+        return None
+
+
+def _print_resolution_or_view(source: bytes, parsed: object, result: EditResult, editing: bool, shown: Path) -> None:
+    """The resolved lines for a pure accept/reject, or the changed view
+    otherwise. An engine refusal falls back to the view."""
     if _is_pure_resolution(parsed, result):
-        with contextlib.suppress(Exception):
-            resolved = result.report.resolved_revisions
-            text = _native.resolution_text(
-                source,
-                json.dumps(
-                    {"accepted": list(resolved.accepted), "rejected": list(resolved.rejected)}, ensure_ascii=False
-                ),
-            )
+        text = _resolved_lines(source, result)
+        if text is not None:
             sys.stdout.write(text)
             return
     _print_changed_view(result, editing, shown)
@@ -885,11 +1011,26 @@ def _write_edited(
     outputs: list[tuple[Path, bytes]] = [(path, document)]
     pdf, png = bool(getattr(args, "pdf", False)), bool(getattr(args, "png", False))
     # FILE itself (X_modified.docx edited again, or -o FILE) exists, so it is
-    # replaced only with --force (D15). The PNG names wait for the page count.
-    for taken in [path] + ([path.with_suffix(".pdf")] if pdf else []):
-        if taken.exists() and not args.force:
-            _error(f"output '{taken}' already exists (use --force to overwrite)", EXIT_USAGE)
+    # replaced only with --force (D15). --in-place authorizes the input only.
+    # The PNG names wait for the page count.
+    in_place = bool(getattr(args, "in_place", False))
+    force = bool(args.force)
+
+    def may_replace(taken: Path) -> bool:
+        # ``--in-place`` authorizes the input only. A PDF or a PNG that
+        # already exists still needs ``--force``.
+        return force or (in_place and taken == path)
+
+    def refuse_taken(taken: Path) -> None:
+        if taken.exists() and not may_replace(taken):
+            _error(
+                f"OUTPUT_EXISTS: output '{_slash_path(taken)}' already exists (use --force to overwrite)",
+                EXIT_USAGE,
+            )
             raise SystemExit(EXIT_USAGE)
+
+    for taken in [path] + ([path.with_suffix(".pdf")] if pdf else []):
+        refuse_taken(taken)
     pages, png_count = None, 0
     if pdf or png:
         # Render before writing, so a failed render writes nothing.
@@ -903,16 +1044,36 @@ def _write_edited(
             outputs.append((path.with_name(_png_name(path.stem, i, png_count)), image))
     # The PNG names are known only now: nothing is written over a file.
     for taken, _ in outputs:
-        if taken.exists() and not args.force:
-            _error(f"output '{taken}' already exists (use --force to overwrite)", EXIT_USAGE)
-            raise SystemExit(EXIT_USAGE)
+        refuse_taken(taken)
+    # Companions first. A failure there leaves the input byte-identical.
+    if in_place and len(outputs) > 1:
+        outputs = [item for item in outputs if item[0] != path] + [item for item in outputs if item[0] == path]
+    # Hash the input before the rename. ``source`` is the bytes just read.
+    original = source if source is not None else (path.read_bytes() if path.is_file() else b"")
     for output, data in outputs:
-        _write(output, data)
+        # --in-place renames a staged file over the input, through a symlink.
+        # A crash keeps the previous bytes. Companions use the same rename
+        # and still replace a link entry; only the input is followed.
+        if in_place and output == path:
+            if source is not None and path.read_bytes() != source:
+                _error(
+                    f"SOURCE_CHANGED: '{_spelled(args, 'file')}' changed since the edit was prepared; nothing was published",
+                    EXIT_PLAN_REFUSED,
+                )
+                return EXIT_PLAN_REFUSED
+            _replace_inplace(output, data)
+        else:
+            _replace(output, data)
     if args.quiet:
         return EXIT_OK
-    print(f"wrote {path} (docx, {len(document)} bytes)", file=sys.stderr)
+    if in_place:
+        detail = _published_markup(args, result, document)
+        sys.stdout.flush()
+        print(_in_place_line(_spelled(args, "file"), original, detail), file=sys.stderr)
+    else:
+        print(f"wrote {path} (docx, {len(document)} bytes)", file=sys.stderr)
     if pages is not None:
-        pdf_path, pdf_bytes = outputs[1]
+        pdf_path, pdf_bytes = next(item for item in outputs if item[0].suffix == ".pdf")
         print(
             f"wrote {pdf_path} (pdf, {len(pdf_bytes)} bytes, {pages} page{'' if pages == 1 else 's'})", file=sys.stderr
         )
@@ -985,7 +1146,7 @@ def cmd_convert(args: argparse.Namespace) -> int:
                     raise CliError(f"{flag} applies to PDF or PNG output only")
             docx_out = args.output or args.file.with_suffix(".docx")
             _ensure_writable(docx_out, args.force)
-            _wrote(args, docx_out, "docx", _write(docx_out, doc.to_bytes()))
+            _wrote(args, docx_out, "docx", _replace(docx_out, doc.to_bytes()))
             return EXIT_OK
     else:
         if args.output_format == "docx" and not args.update_fields:
@@ -1041,18 +1202,18 @@ def _render_to(args: argparse.Namespace, doc: Document, output: Path) -> None:
             if side is not None and _same_file(side, path):
                 raise CliError(f"{flag} '{side}' is the same file as the PNG output")
     if rendered.pdf is not None:
-        _write(output, rendered.pdf)
+        _replace(output, rendered.pdf)
         _wrote(args, output, "pdf", len(rendered.pdf), pages)
     if png:
         from . import _native
 
         for path, image in zip(png_paths, rendered.pngs):
-            _write(path, image)
+            _replace(path, image)
         if not args.quiet:
             pattern = output.parent / f"{output.stem}-page-NN.png"
             print(_native.wrote_png_line(pattern, len(rendered.pngs), args.dpi), file=sys.stderr)
     if getattr(args, "font_report", None) is not None:
-        _write(args.font_report, json.dumps([asdict(f) for f in rendered.report.fonts]))
+        _replace(args.font_report, json.dumps([asdict(f) for f in rendered.report.fonts]))
     if getattr(args, "report", None) is not None:
         report = {
             "page_count": pages,
@@ -1060,7 +1221,7 @@ def _render_to(args: argparse.Namespace, doc: Document, output: Path) -> None:
             "pages": [asdict(p) for p in rendered.report.pages],
             "fonts": [asdict(f) for f in rendered.report.fonts],
         }
-        _write(args.report, json.dumps(report, ensure_ascii=False))
+        _replace(args.report, json.dumps(report, ensure_ascii=False))
 
 
 def _write_updated_fields(args: argparse.Namespace, doc: Document) -> int:
@@ -1080,14 +1241,14 @@ def _write_updated_fields(args: argparse.Namespace, doc: Document) -> int:
         )
     print(f"{len(updated.fields)} field(s) written; {updated.page_count} page(s)", file=sys.stderr)
     if args.report is not None:
-        _write(
+        _replace(
             args.report,
             json.dumps(
                 {"page_count": updated.page_count, "fields": [asdict(f) for f in updated.fields]}, ensure_ascii=False
             ),
         )
     data = updated.document.to_bytes()
-    _write(output, data)
+    _replace(output, data)
     _wrote(args, output, "docx", len(data))
     return EXIT_OK
 
@@ -1127,7 +1288,7 @@ def cmd_diff_render(args: argparse.Namespace) -> int:
             _ensure_writable(path, args.force)
         out.mkdir(parents=True, exist_ok=True)
         for path, data in files:
-            _write(path, data)
+            _replace(path, data)
     if args.json:
         print(summary)
     else:
@@ -1166,7 +1327,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
             raise SystemExit(EXIT_USAGE)
         _ensure_writable(output, args.force)
         critic = diff(original, modified, format="critic", author=args.author, date=args.datetime).text
-        _wrote(args, output, "md", _write(output, critic))
+        _wrote(args, output, "md", _replace(output, critic))
         return EXIT_OK
     if args.output_format != "png":
         _ensure_writable(output, args.force)
@@ -1221,7 +1382,7 @@ def cmd_diff(args: argparse.Namespace) -> int:
     if output is None:
         sys.stdout.write(text)
         return EXIT_OK
-    size = _write(output, text)
+    size = _replace(output, text)
     if not args.quiet:
         print(f"wrote {_spelled(args, 'output')} (md, {size} bytes)", file=sys.stderr)
     return EXIT_OK
@@ -1263,8 +1424,19 @@ def cmd_comments(args: argparse.Namespace) -> int:
 def _resolution(args: argparse.Namespace, accept: bool) -> int:
     from . import _native
 
+    in_place = bool(getattr(args, "in_place", False))
+    if not in_place and args.output is not None and _same_file(args.output, args.file):
+        # ``-o`` naming the input is a usage refusal pointing to
+        # ``--in-place`` (#1998); the 0.16.0 deprecation is over.
+        _error(
+            f"OUTPUT_ALIAS: the output '{_spelled(args, 'output')}' is the same file as the input '{_spelled(args, 'file')}'; use --in-place",
+            EXIT_USAGE,
+        )
+        raise SystemExit(EXIT_USAGE)
     doc = _read(args.file)
-    _ensure_writable(args.output, args.force)
+    original = doc.to_bytes()
+    if not in_place:
+        _ensure_writable(args.output, args.force)
     selection = {"ids": args.id, "authors": args.author, "kinds": args.kind}
     try:
         result = doc.accept(**selection) if accept else doc.reject(**selection)
@@ -1274,6 +1446,20 @@ def _resolution(args: argparse.Namespace, accept: bool) -> int:
         raise SystemExit(EXIT_USAGE) from exc
     except _native.JubarteError as exc:
         raise CliError(f"{'accept' if accept else 'reject'} failed: {exc}") from exc
+    if in_place:
+        # The bytes just read, not a second load. A change after accept or
+        # reject was prepared refuses; the receipt hashes those same bytes.
+        if args.file.read_bytes() != original:
+            _error(
+                f"SOURCE_CHANGED: '{_spelled(args, 'file')}' changed since the edit was prepared; nothing was published",
+                EXIT_PLAN_REFUSED,
+            )
+            return EXIT_PLAN_REFUSED
+        _replace_inplace(args.file, result.to_bytes())
+        if not args.quiet:
+            sys.stdout.flush()
+            print(_in_place_line(_spelled(args, "file"), original, None), file=sys.stderr)
+        return EXIT_OK
     _write_result(args, result.to_bytes(), source=_not_written(args))
     return EXIT_OK
 
@@ -1297,7 +1483,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         _ensure_writable(args.repair, args.force)
         repaired = doc.repair()
         docx = repaired.document.to_bytes()
-        size = _write(args.repair, docx)
+        size = _replace(args.repair, docx)
         if not args.json:
             # A structural repair: the edits' history is a separate check.
             history = (
@@ -1478,8 +1664,81 @@ def build_parser() -> SharedParser:
     return SharedParser()
 
 
+#: A number of seconds as Rust's ``f64`` parse reads one (the binary's
+#: ``JUBARTE_TIMEOUT``): no white space, underscores or hex.
+_SECONDS = re.compile(r"[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+#: The words Rust's parse reads as infinity or NaN, refused as not finite.
+_NOT_FINITE = re.compile(r"[+-]?(?:inf|infinity|nan)", re.IGNORECASE)
+
+
+def _env_timeout() -> float | None:
+    """``JUBARTE_TIMEOUT`` in seconds, as the binary reads it (#2016): unset
+    or empty is no bound; anything but a finite number above 0 is a usage
+    error naming the variable, in the binary's words."""
+    value = os.environ.get("JUBARTE_TIMEOUT", "")
+    if not value:
+        return None
+    finite = _SECONDS.fullmatch(value) is not None
+    if not finite and _NOT_FINITE.fullmatch(value) is None:
+        _error(f"JUBARTE_TIMEOUT: '{value}' is not a number of seconds", EXIT_USAGE)
+        raise SystemExit(EXIT_USAGE)
+    seconds = float(value) if finite else math.nan
+    if not (math.isfinite(seconds) and seconds > 0):
+        _error(
+            f"JUBARTE_TIMEOUT: '{value}': the timeout must be a finite number of seconds above 0",
+            EXIT_USAGE,
+        )
+        raise SystemExit(EXIT_USAGE)
+    return seconds
+
+
+def _seconds_text(seconds: float) -> str:
+    """``seconds`` as the binary prints it: ``2`` for 2.0, ``0.5``."""
+    return str(int(seconds)) if seconds.is_integer() else repr(seconds)
+
+
+def _run_bounded(argv: Sequence[str], seconds: float) -> int:
+    """The task in a child process killed after ``seconds``: the engine call
+    holds the interpreter while it lays out or compares, so no in-process
+    timer could interrupt it. Exits 124 with the binary's message (#2016).
+
+    The child inherits stdin, stdout and stderr; its exit code is the
+    parent's, and one ended by a signal is ``128 + signal`` as a shell
+    reports it. A SIGTERM or SIGHUP to the parent is passed on, so the child
+    never outlives it.
+    """
+    env = {k: v for k, v in os.environ.items() if k != "JUBARTE_TIMEOUT"}
+    child = subprocess.Popen([sys.executable, "-m", "jubarte_redlines", *argv], env=env)
+    forwarded = [sig for sig in ("SIGTERM", "SIGHUP") if hasattr(signal, sig)]
+    previous = {}
+    for name in forwarded:
+        number = getattr(signal, name)
+        previous[number] = signal.signal(number, lambda sig, _frame: child.send_signal(sig))
+    try:
+        code = child.wait(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.wait()
+        print(
+            f"error: DEADLINE_EXCEEDED: timed out after {_seconds_text(seconds)}s (JUBARTE_TIMEOUT)",
+            file=sys.stderr,
+        )
+        return EXIT_TIMEOUT
+    except BaseException:
+        child.kill()
+        child.wait()
+        raise
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+    return 128 - code if code < 0 else code
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI; returns the exit code (``SystemExit`` only for usage errors)."""
+    seconds = _env_timeout()
+    if seconds is not None:
+        return _run_bounded(list(sys.argv[1:] if argv is None else argv), seconds)
     args = build_parser().parse_args(argv)
     try:
         return int(args.func(args))

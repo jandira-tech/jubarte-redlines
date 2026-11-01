@@ -225,6 +225,7 @@ impl Package {
         let mut defects = crate::opc::zip_defects(&zip, &mut Cursor::new(bytes));
         let mut entries = Vec::with_capacity(zip.len());
         let mut total = 0u64;
+        let mut elements = 0u64;
         for i in 0..zip.len() {
             // Every read failure is a finding named for the entry: where
             // a reading route refuses, triage keeps going so the
@@ -308,6 +309,10 @@ impl Package {
                 }
             };
             crate::admission::tally_inflated(&mut total, read as u64, &name, cap, &limits)
+                .map_err(|e| e.to_string())?;
+            // The element budget holds here too (#2014): `xml_parts`
+            // parses every XML part into a tree.
+            crate::admission::count_xml_elements(&mut elements, &name, &data, &limits)
                 .map_err(|e| e.to_string())?;
             entries.push(Entry {
                 name,

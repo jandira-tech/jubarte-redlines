@@ -556,7 +556,7 @@ impl Package {
         let descr = XName::get("descr", "");
         for story in &self.stories {
             let dom = &story.dom;
-            for doc_pr in dom.descendants(story.root, Some(&WP::name("docPr"))) {
+            for doc_pr in dom.descendants(story.root, Some(&WP::doc_pr())) {
                 if under_fallback(dom, doc_pr) {
                     continue;
                 }

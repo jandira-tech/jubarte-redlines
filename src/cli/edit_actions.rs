@@ -130,7 +130,7 @@ pub enum EditAction {
     // or dry-runs.
     #[command(
         override_usage = "jubarte edit apply [OPTIONS] <FILE> --plan FILE",
-        mut_arg("output", |a| a.help("Primary edited DOCX; required unless bundling or dry-running"))
+        mut_arg("output", |a| a.help("Primary edited DOCX; required unless bundling, replacing FILE or dry-running"))
     )]
     Apply {
         /// Immutable source document.
@@ -171,9 +171,16 @@ pub struct TextPayload {
 pub struct InlineOptions {
     /// Immutable source document.
     pub file: PathBuf,
-    /// New revision and comment author.
+    /// New revision and comment author. A write that adds markup needs it
+    /// spelled here or in JUBARTE_AUTHOR.
     #[arg(short = 'a', long, default_value = "Jubarte", value_parser = super::parse_author)]
     pub author: String,
+    /// Whether `-a`/`--author` was spelled on the command line (set after
+    /// parsing). The typed receipt uses this to say when the default signed
+    /// the new markup (#1891).
+    #[arg(skip)]
+    #[serde(skip)]
+    pub author_given: bool,
     /// Frozen timestamp; timezone required. Default current UTC.
     #[arg(short = 'd', long = "datetime", value_parser = super::parse_datetime)]
     pub datetime: Option<String>,
@@ -190,7 +197,7 @@ pub struct InlineOptions {
     #[arg(long)]
     pub reject_change: Vec<String>,
     /// Save a source-bound PlanV2 without applying. Freezes targets, policy and time.
-    #[arg(long, value_name = "FILE", value_parser = super::plan_path(), conflicts_with_all = ["output", "out_dir", "report", "emit", "expect", "dry_run"])]
+    #[arg(long, value_name = "FILE", value_parser = super::plan_path(), conflicts_with_all = ["output", "out_dir", "report", "emit", "expect", "dry_run", "in_place"])]
     pub save_plan: Option<PathBuf>,
     /// Publication and source preconditions.
     #[command(flatten)]
@@ -200,7 +207,10 @@ pub struct InlineOptions {
 /// Publication and preparation options; never serialized into a saved plan.
 #[derive(Args, Debug, Serialize)]
 pub struct DeliveryOptions {
-    /// Primary edited DOCX; required unless saving, bundling or dry-running.
+    /// Replace FILE through the same atomic write as -o. A refused edit leaves FILE unchanged. Not with -o or --out-dir.
+    #[arg(long, conflicts_with_all = ["output", "out_dir", "dry_run"])]
+    pub in_place: bool,
+    /// Primary edited DOCX; required unless saving, bundling, replacing FILE or dry-running.
     #[arg(short = 'o', long, value_name = "FILE", conflicts_with = "out_dir")]
     pub output: Option<PathBuf>,
     /// Publish a new bundle directory (document.docx, changes.diff, report.json).
@@ -229,6 +239,13 @@ pub struct DeliveryOptions {
     /// Replace an explicitly named existing output; never overwrite an input.
     #[arg(long)]
     pub force: bool,
+    /// Refuse to accept or reject another author's tracked change, and
+    /// to delete, resolve, reopen or reword their comment. Restore,
+    /// strike, a comment and a reply stay allowed. JUBARTE_KEEP_OTHERS=1
+    /// sets the same guard. Another author is anyone other than
+    /// --author (Jubarte when --author is left out).
+    #[arg(long)]
+    pub keep_others: bool,
     /// One result envelope, including empty results and refusals.
     #[arg(long, conflicts_with = "jsonl")]
     pub json: bool,
@@ -237,7 +254,7 @@ pub struct DeliveryOptions {
     pub jsonl: bool,
 }
 
-fn positive(s: &str) -> Result<usize, String> {
+pub(super) fn positive(s: &str) -> Result<usize, String> {
     s.parse()
         .ok()
         .filter(|n| *n > 0)
@@ -300,12 +317,12 @@ pub(super) fn validate(
             .clone()
             .error(clap::error::ErrorKind::ArgumentConflict, message)
     };
-    if !["output", "out_dir", "dry_run", "save_plan"]
+    if !["output", "out_dir", "dry_run", "save_plan", "in_place"]
         .into_iter()
         .any(present)
     {
         return Err(error(
-            "writes require -o FILE or --out-dir NEW_DIR; use --dry-run or inline --save-plan FILE",
+            "writes require -o FILE or --out-dir NEW_DIR or --in-place; use --dry-run or inline --save-plan FILE",
         ));
     }
     if action == "insert" {
@@ -346,6 +363,21 @@ impl EditAction {
             | Self::Delete { inline, .. } => Some(inline),
             Self::Apply { .. } => None,
         }
+    }
+    /// Inline policy, mutable, when this action compiles a new plan.
+    pub fn inline_mut(&mut self) -> Option<&mut InlineOptions> {
+        match self {
+            Self::Replace { inline, .. }
+            | Self::Rewrite { inline, .. }
+            | Self::Insert { inline, .. }
+            | Self::Delete { inline, .. } => Some(inline),
+            Self::Apply { .. } => None,
+        }
+    }
+    /// Whether `-a` was spelled for this action. `edit apply` has none:
+    /// the plan's author is the signature.
+    pub fn author_was_given(&self) -> bool {
+        self.inline().is_none_or(|inline| inline.author_given)
     }
     /// Exact payload or resource input for actions with text.
     pub fn payload(&self) -> Option<&TextPayload> {

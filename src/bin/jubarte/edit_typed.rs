@@ -399,7 +399,7 @@ fn prepare_and_publish(
     action: &EditAction,
     source: &[u8],
     command: &str,
-) -> Result<(Envelope, bool), Failure> {
+) -> Result<(Envelope, bool, Option<String>), Failure> {
     let delivery = action.delivery();
     let payload_bytes = action
         .payload()
@@ -452,7 +452,15 @@ fn prepare_and_publish(
             ));
         }
     }
-    let (request, binding) = request(action, source, payload, plan_bytes.as_deref())?;
+    let (mut request, binding) = request(action, source, payload, plan_bytes.as_deref())?;
+    // The flag and JUBARTE_KEEP_OTHERS only turn the guard on. A plan that
+    // already says "others": "keep" stays guarded when neither is set.
+    if delivery.keep_others || super::env_keep_others() {
+        match &mut request {
+            Request::V2(plan) => plan.others = Some(jubarte::edit::Others::Keep),
+            Request::V1(plan, _) => plan.others = jubarte::edit::Others::Keep,
+        }
+    }
     if delivery.expect.is_some() && matches!(&request, Request::V1(..)) {
         // The v1 primary is a comparer redline with no tracked
         // source-to-output correspondence; guessing one could grade the
@@ -542,14 +550,20 @@ fn prepare_and_publish(
         "request_sha256".into(),
         prepared.request_sha256.clone().into(),
     );
+    // `--in-place` publishes FILE itself. `-o` stays unset, so the alias
+    // check above does not treat the source as an output.
+    let document = if delivery.in_place {
+        Some(action.file().to_path_buf())
+    } else {
+        delivery.output.clone()
+    };
     let report_path = delivery.report.clone().or_else(|| {
         if delivery.out_dir.is_some()
             && (delivery.emit.is_empty() || delivery.emit.iter().any(|r| r == "report"))
         {
             delivery.out_dir.as_ref().map(|dir| dir.join("report.json"))
         } else if delivery.emit.iter().any(|r| r == "report") {
-            delivery
-                .output
+            document
                 .as_ref()
                 .map(|path| path.with_extension("report.json"))
         } else {
@@ -631,6 +645,13 @@ fn prepare_and_publish(
     data.counts.comments_added = prepared.result.report.comments_added;
     data.counts.revisions_accepted = prepared.result.report.resolved_revisions.accepted.len();
     data.counts.revisions_rejected = prepared.result.report.resolved_revisions.rejected.len();
+    // Count the published primary. v2 publishes the redline (track off
+    // leaves its revision total at zero); v1 apply asks for that role too.
+    let markup = jubarte::cli::wrote_markup_detail(
+        prepared.result.report.revisions.total,
+        prepared.result.report.comments_added,
+        &prepared.result.report.author,
+    );
     let redacted = prepared
         .result
         .report
@@ -643,7 +664,13 @@ fn prepare_and_publish(
         } else {
             PredictedEffect::Unchanged
         });
-        return Ok((receipt, redacted));
+        return Ok((receipt, redacted, markup));
+    }
+    // #1997: a write that signs markup needs a spelled -a (or
+    // JUBARTE_AUTHOR). It refuses before anything is published. Saving a
+    // plan signs nothing yet; `edit apply` carries the plan's own author.
+    if markup.is_some() && save.is_none() && !action.author_was_given() {
+        return Err(failure("AUTHOR_REQUIRED", author_required_message(source)));
     }
     let mut outputs = Vec::<(PathBuf, Vec<u8>, MediaRole)>::new();
     if let Some(path) = save {
@@ -653,7 +680,7 @@ fn prepare_and_publish(
         let mut bytes = serde_json::to_vec_pretty(plan).expect("plan serializes");
         bytes.push(b'\n');
         outputs.push((path.into(), bytes, MediaRole::Plan));
-    } else if let Some(path) = &delivery.output {
+    } else if let Some(path) = &document {
         outputs.push((path.clone(), prepared.primary.clone(), MediaRole::Document));
         if delivery.emit.iter().any(|r| r == "patch") {
             let patch = jubarte::text_diff::diff_documents(
@@ -722,8 +749,28 @@ fn prepare_and_publish(
             "text payload changed during preparation",
         ));
     }
-    for (i, (path, _, _)) in outputs.iter().enumerate() {
-        writable(path, &inputs, delivery.force)?;
+    // The in-place document is the source, so only that role skips the
+    // alias check. A plan, patch or report that names FILE still refuses.
+    // `--in-place` replaces the input only. A patch or report still needs
+    // `--force`.
+    let replaces = |path: &Path, role: MediaRole| {
+        delivery.force
+            || (delivery.in_place && role == MediaRole::Document && same_path(path, action.file()))
+    };
+    for (i, (path, _, role)) in outputs.iter().enumerate() {
+        let alias_inputs: Vec<(&Path, &str)> = if delivery.in_place
+            && *role == MediaRole::Document
+            && same_path(path, action.file())
+        {
+            inputs
+                .iter()
+                .copied()
+                .filter(|(input, _)| !same_path(input, action.file()))
+                .collect()
+        } else {
+            inputs.clone()
+        };
+        writable(path, &alias_inputs, replaces(path, *role))?;
         for (other, _, _) in &outputs[..i] {
             if same_path(path, other) {
                 return Err(failure(
@@ -767,21 +814,38 @@ fn prepare_and_publish(
         })
         .map_err(publish_failure)?;
     } else {
-        let files: Vec<_> = outputs
+        let mut files: Vec<_> = outputs
             .iter()
             .map(|(path, bytes, _)| (path.clone(), bytes.as_slice()))
             .collect();
+        // The input is last, so a companion that cannot be committed leaves it.
+        if delivery.in_place {
+            files.sort_by_key(|(path, _)| same_path(path, action.file()));
+        }
         publish_files(
             &files,
             &Recheck {
                 force: delivery.force,
-                alias: &|path| refuse_output_alias(path, &inputs),
+                replace_through: &|path| delivery.in_place && same_path(path, action.file()),
+                alias: &|path| {
+                    let filtered: Vec<(&Path, &str)> =
+                        if delivery.in_place && same_path(path, action.file()) {
+                            inputs
+                                .iter()
+                                .copied()
+                                .filter(|(input, _)| !same_path(input, action.file()))
+                                .collect()
+                        } else {
+                            inputs.clone()
+                        };
+                    refuse_output_alias(path, &filtered)
+                },
                 source: &|| recheck_edit_source(action.file(), source),
             },
         )
         .map_err(publish_failure)?;
     }
-    Ok((receipt, redacted))
+    Ok((receipt, redacted, markup))
 }
 
 pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
@@ -791,11 +855,16 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
     if let Ok(source) = &source {
         super::warn_nested_text_boxes(source);
     }
-    let (receipt, redacted) = match source.as_ref() {
+    let (receipt, redacted, markup) = match source.as_ref() {
         Ok(source) => prepare_and_publish(action, source, &command).unwrap_or_else(|error| {
             let operational = matches!(
                 error.code.as_str(),
-                "IO_ERROR" | "OUTPUT_EXISTS" | "USAGE" | "OUTPUT_ALIAS" | "INVALID_UTF8"
+                "IO_ERROR"
+                    | "OUTPUT_EXISTS"
+                    | "USAGE"
+                    | "OUTPUT_ALIAS"
+                    | "INVALID_UTF8"
+                    | "AUTHOR_REQUIRED"
             );
             let mut receipt = if operational {
                 Envelope::new_error(&command, Source::new(source), *error)
@@ -814,7 +883,7 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
             {
                 data.verification.expectations = "unresolved".to_string();
             }
-            (receipt, false)
+            (receipt, false, None)
         }),
         Err(error) => (
             Envelope::new_error(
@@ -823,6 +892,7 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
                 *error.clone(),
             ),
             false,
+            None,
         ),
     };
     let code = edit_envelope_exit(&receipt);
@@ -850,10 +920,24 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
             _ if data.effect == Effect::Unchanged => "unchanged",
             _ => "changed",
         };
+        let replaced = source
+            .as_ref()
+            .map(|bytes| jubarte::inspect::source_sha256(bytes))
+            .unwrap_or_default();
         let paths = receipt
             .artifacts
             .iter()
-            .map(|a| a.path.as_str())
+            .map(|artifact| {
+                if delivery.in_place && artifact.media_role == MediaRole::Document {
+                    let prefix = replaced.get(..8).unwrap_or(replaced.as_str());
+                    format!(
+                        "{} in place (replaced sha256 {prefix}\u{2026})",
+                        artifact.path
+                    )
+                } else {
+                    artifact.path.clone()
+                }
+            })
             .collect::<Vec<_>>()
             .join(", ");
         // An expectations note that stays honest about what ran and what
@@ -878,8 +962,16 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
                 note
             })
             .unwrap_or_default();
+        let authored = if paths.is_empty() || !matches!(data.phase, Some(Phase::Committed)) {
+            String::new()
+        } else {
+            markup
+                .as_deref()
+                .map(|detail| format!("; {detail}"))
+                .unwrap_or_default()
+        };
         format!(
-            "{}: {outcome}{}{expectations}\n",
+            "{}: {outcome}{}{authored}{expectations}\n",
             receipt.command,
             if paths.is_empty() {
                 String::new()
@@ -921,10 +1013,14 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
             .is_some_and(|d| d.phase == Some(Phase::Committed))
         && let Ok(source) = &source
     {
-        let path = delivery
-            .output
-            .clone()
-            .or_else(|| delivery.out_dir.as_ref().map(|d| d.join("document.docx")));
+        let path = if delivery.in_place {
+            Some(action.file().to_path_buf())
+        } else {
+            delivery
+                .output
+                .clone()
+                .or_else(|| delivery.out_dir.as_ref().map(|d| d.join("document.docx")))
+        };
         if let Some(path) = path {
             // Read the committed artifact, not the prepared transaction.
             let published = std::fs::read(&path);

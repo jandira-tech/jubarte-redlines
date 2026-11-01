@@ -24,6 +24,7 @@ use super::{EditError, err};
 // disturb each other's count.
 #[cfg(test)]
 thread_local! {
+    pub(super) static READING_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static ANCHOR_BYTE_PROBES: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
 }
@@ -77,6 +78,8 @@ fn reading(text: &str) -> (String, Vec<(usize, usize)>) {
 /// Byte ranges of `text` that read as `find`, in order (overlapping ones
 /// too); none when `find` reads as nothing.
 pub(super) fn reading_hits(text: &str, find: &str) -> Vec<(usize, usize)> {
+    #[cfg(test)]
+    READING_CALLS.with(|calls| calls.set(calls.get() + 1));
     let (needle, _) = reading(find);
     if needle.is_empty() {
         return Vec::new();

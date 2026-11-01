@@ -92,7 +92,9 @@ fn settings_with_limits(
 /// `w:date` stamp) defaults to the engine's fixed epoch for deterministic
 /// output. `input_limits` overrides the admission budget key by key
 /// (`max_compressed_bytes`, `max_entries`, `max_part_bytes`,
-/// `max_uncompressed_bytes`, `max_xml_depth`); a package past it raises
+/// `max_uncompressed_bytes`, `max_xml_depth`, `max_xml_elements`,
+/// `max_story_units`); a package
+/// past it raises
 /// `JubarteError` with `INPUT_LIMIT`.
 #[pyfunction]
 #[pyo3(signature = (original, modified, author = "Redline", date = None, *, input_limits = None))]
@@ -1321,8 +1323,8 @@ fn validate_run(
             )
             .map_err(|e| e.to_string())?;
             return Ok((
-                baselined_json(&split).map_err(|e| e.to_string())?,
-                baselined_text(&split),
+                baselined_json(&split, strict).map_err(|e| e.to_string())?,
+                baselined_text(&split, strict),
                 fails(&split.new, strict),
             ));
         }
