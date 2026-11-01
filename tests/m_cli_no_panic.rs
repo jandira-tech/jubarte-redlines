@@ -502,3 +502,36 @@ fn compare_refuses_two_body_section_properties_without_a_panic() {
         );
     }
 }
+
+/// The CLI leads with the code, as it does for an admission refusal: the
+/// word_exp N4 rerun printed the Debug form `Io(Custom { … })` (grok
+/// review, 2026-10-31).
+#[test]
+fn cli_compare_names_unsupported_content_by_its_code() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.docx");
+    std::fs::write(
+        &a,
+        package_with_main(&format!(
+            r#"<w:document xmlns:w="{W_NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:subDoc r:id="rIdX"/><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#
+        )),
+    )
+    .unwrap();
+    let out = Command::new(BIN)
+        .arg("compare")
+        .arg(&a)
+        .arg("tests/fixtures/redline/modified.docx")
+        .arg("-o")
+        .arg(dir.path().join("out.docx"))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains(
+            "compare failed: UNSUPPORTED_CONTENT: original document: Document contains subDoc"
+        ),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("Io("), "{stderr}");
+}

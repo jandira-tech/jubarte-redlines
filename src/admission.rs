@@ -248,16 +248,18 @@ impl AdmissionErrorKind {
 /// A refusal's message with its code first (`CODE: context: detail`): the
 /// comparer's opaque `I/O error: ` wrapper is dropped, any other context
 /// before the code (`document B: `) stays after it. `None` when no
-/// `: `-separated segment of `message` is an admission code. The CLI and
+/// `: `-separated segment of `message` is an admission code or the
+/// comparer's `UNSUPPORTED_CONTENT`. The CLI and
 /// the bindings print refusals through it, so a code reads the same
 /// whatever wrapped it.
 #[must_use]
 pub fn code_first(message: &str) -> Option<String> {
     let segments: Vec<&str> = message.split(": ").collect();
     let at = segments.iter().position(|segment| {
-        AdmissionErrorKind::ALL
-            .iter()
-            .any(|kind| kind.code() == *segment)
+        *segment == crate::document_comparer::UnsupportedContentError::CODE
+            || AdmissionErrorKind::ALL
+                .iter()
+                .any(|kind| kind.code() == *segment)
     })?;
     let (before, from) = segments.split_at(at);
     let mut parts = from.iter().take(1).copied().collect::<Vec<_>>();
