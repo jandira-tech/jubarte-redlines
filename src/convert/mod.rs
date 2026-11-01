@@ -7754,7 +7754,7 @@ fn comments_extended(pkg: &PartFs, main: &str) -> (HashMap<String, String>, Hash
     let cdoc = cdom.parse_xdocument(&comments);
     let mut by_para = HashMap::new();
     if let Some(root) = cdom.root(cdoc) {
-        for comment in cdom.descendants(root, Some(&W::name("comment"))) {
+        for comment in cdom.descendants(root, Some(&W::comment())) {
             let last = cdom
                 .descendants(comment, Some(&W::p()))
                 .last()
@@ -7868,7 +7868,7 @@ fn load_comments(pkg: &PartFs, main: &str) -> HashMap<String, CommentRec> {
     };
     let resolved = comments_resolved(pkg, main);
     let mut out = HashMap::new();
-    for node in dom.descendants(root, Some(&W::name("comment"))) {
+    for node in dom.descendants(root, Some(&W::comment())) {
         let Some(id) = attr_any(&dom, node, "id").map(str::to_string) else {
             continue;
         };

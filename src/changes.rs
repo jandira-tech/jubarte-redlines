@@ -590,25 +590,33 @@ pub(crate) fn comment_bodies(docx: &[u8]) -> Result<CommentBodies, ChangeError> 
         return Ok(bodies);
     };
     let story = story_id(&main_part(&pkg), &part);
-    let comment = W::name("comment");
+    let comment = W::comment();
     let id = W::id();
     for_each_story(&pkg, |dom, root, name| {
         if name != story {
             return;
         }
-        bodies.comments.extend(
-            dom.descendants(root, Some(&comment))
-                .into_iter()
-                .filter_map(|c| dom.attribute(c, &id).map(str::to_string)),
-        );
+        dom.for_each_descendant_element(root, Some(&comment), |c| {
+            if let Some(val) = dom.attribute(c, &id) {
+                bodies.comments.insert(val.to_string());
+            }
+        });
         for carrier in carriers(dom, root, name) {
             let Some(change) = carrier.change else {
                 continue;
             };
-            let holder = dom
-                .ancestors(carrier.node, Some(&comment))
-                .into_iter()
-                .find_map(|c| dom.attribute(c, &id).map(str::to_string));
+            // The nearest comment with an id that holds the carrier, walked up without a Vec.
+            let mut holder = None;
+            let mut node = dom.parent(carrier.node);
+            while let Some(n) = node {
+                if dom.name_is(n, &comment)
+                    && let Some(val) = dom.attribute(n, &id)
+                {
+                    holder = Some(val.to_string());
+                    break;
+                }
+                node = dom.parent(n);
+            }
             if let Some(holder) = holder {
                 bodies
                     .owners

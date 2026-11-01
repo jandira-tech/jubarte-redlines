@@ -3294,7 +3294,7 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
         .any(|(part, _, _)| pkg.part_bytes(part).is_some());
     let mut all_para_ids = HashSet::new();
     let mut last_para_ids = HashSet::new();
-    for comment in comments_dom.elements(comments_root, Some(&W::name("comment"))) {
+    for comment in comments_dom.elements(comments_root, Some(&W::comment())) {
         let comment_id = comments_dom
             .attribute(comment, &W::id())
             .unwrap_or("<missing>");

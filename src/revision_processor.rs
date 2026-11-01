@@ -1144,7 +1144,7 @@ fn block_level_content_containers() -> [XName; 8] {
         W::ftr(),
         W::endnote(),
         W::footnote(),
-        W::name("comment"),
+        W::comment(),
     ]
 }
 
@@ -4200,7 +4200,7 @@ fn carry_kept_revisions(dom: &mut Dom, live: NodeId, reverted: NodeId, first: bo
 /// (`w:p`, `w:tbl`, `w:sdt`, `w:customXml`) an empty paragraph (#1223).
 fn ensure_comment_paragraphs(dom: &mut Dom, root: NodeId) {
     let block = [W::p(), W::tbl(), W::sdt(), W::custom_xml()];
-    for comment in dom.elements(root, Some(&W::name("comment"))) {
+    for comment in dom.elements(root, Some(&W::comment())) {
         if !dom
             .elements(comment, None)
             .into_iter()

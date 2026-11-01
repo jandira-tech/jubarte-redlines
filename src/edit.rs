@@ -7881,7 +7881,7 @@ fn existing_comment_ids(opened: &Opened) -> Option<u32> {
     let mut dom = Dom::new();
     let document = dom.parse_xdocument(&xml);
     let root = dom.root(document)?;
-    dom.descendants(root, Some(&W::name("comment")))
+    dom.descendants(root, Some(&W::comment()))
         .into_iter()
         .filter_map(|c| {
             dom.attribute(c, &W::id())

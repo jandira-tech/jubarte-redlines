@@ -816,9 +816,8 @@ impl Opened {
                     "header" => summary.headers += 1,
                     "footer" => summary.footers += 1,
                     "comments" => {
-                        summary.comments += part_dom
-                            .descendants(part_root, Some(&W::name("comment")))
-                            .len();
+                        summary.comments +=
+                            part_dom.descendants(part_root, Some(&W::comment())).len();
                     }
                     "footnotes" => {
                         summary.footnotes += note_count(&part_dom, part_root, "footnote");
