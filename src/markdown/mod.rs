@@ -774,8 +774,8 @@ pub struct ReadView {
 pub fn read(docx: &[u8], options: &ReadOptions) -> Result<ReadView, MarkdownError> {
     // The view's own budget comes first: the layout pass below admits under
     // the comparer's larger one, so without this a package `read` refuses
-    // was inflated and laid out before the refusal (4.6 GB for a 213 KB
-    // file, #2013).
+    // was inflated and laid out before the refusal (4.4 GB for the 215 KB
+    // 70 MiB flood E4 of word_exp, 2026-10-31, #2013).
     let limits = MarkdownOptions::default().input_limits;
     bounded_open(docx, limits)?;
     let mut warnings = Vec::new();

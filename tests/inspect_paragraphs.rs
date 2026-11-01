@@ -230,9 +230,12 @@ fn inspect_json_carries_schema_hash_summary_and_paragraphs() {
 }
 
 #[test]
-fn summary_reads_only_wordprocessingml_parts_for_revisions() {
-    // A custom XML item the strict reader refuses (here a DTD) is not part
-    // of the document text; it must not make the whole summary fail.
+fn a_dtd_in_a_custom_xml_item_is_refused_as_word_refuses_it() {
+    // This test once held that the summary reads past a DTD in a custom
+    // XML item. Word 16.115 refuses that package (unreadable content, then
+    // "Word experienced an error trying to open the file") and opens the
+    // same package without the DOCTYPE cleanly: word_exp X4 and X4c,
+    // 2026-10-31 (#2015). So the summary refuses it too.
     let item = Part {
         name: "customXml/item1.xml",
         content_type: "application/xml",
@@ -240,8 +243,12 @@ fn summary_reads_only_wordprocessingml_parts_for_revisions() {
         xml: r#"<?xml version="1.0"?><!DOCTYPE vendor [<!ENTITY v "1">]><vendor>&v;</vendor>"#,
     };
     let bytes = docx_with(&para("Body"), &[item]);
-    assert_eq!(summary(&bytes).unwrap().revisions, 0);
-    assert!(inspect_json(&bytes).is_ok());
+    let error = summary(&bytes).unwrap_err().to_string();
+    assert!(
+        error.contains("customXml/item1.xml: DTD declarations are unsupported"),
+        "{error}"
+    );
+    assert!(inspect_json(&bytes).is_err());
 }
 
 #[test]

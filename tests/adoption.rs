@@ -761,7 +761,24 @@ fn convert_timeout_exits_124_past_the_deadline() {
         dir.path(),
     );
     assert_eq!(late.status.code(), Some(124), "{late:?}");
-    assert!(String::from_utf8_lossy(&late.stderr).contains("timed out"));
+    // The message names its source since JUBARTE_TIMEOUT shares it (#2016).
+    assert!(
+        String::from_utf8_lossy(&late.stderr)
+            .contains("error: DEADLINE_EXCEEDED: timed out after 0.001s (--timeout)"),
+        "{late:?}"
+    );
+    // With both armed, the earlier deadline speaks.
+    let both = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .args(["convert", "long.docx", "--to", "png", "--timeout", "600"])
+        .env("JUBARTE_TIMEOUT", "0.001")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(both.status.code(), Some(124), "{both:?}");
+    assert!(
+        String::from_utf8_lossy(&both.stderr).contains("timed out after 0.001s (JUBARTE_TIMEOUT)"),
+        "{both:?}"
+    );
     ok(&["convert", "long.docx", "--timeout", "600"], dir.path());
     let zero = jubarte(&["convert", "long.docx", "--timeout", "0"], dir.path());
     assert_eq!(zero.status.code(), Some(2), "{zero:?}");

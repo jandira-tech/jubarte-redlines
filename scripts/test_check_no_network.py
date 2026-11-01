@@ -75,9 +75,37 @@ class Sources(unittest.TestCase):
             ],
         )
 
+    def test_a_url_in_a_string_hides_nothing_after_it(self) -> None:
+        # `//` inside a string literal is no comment (pi review, 2026-10-31).
+        src = self.tree({"lib.rs": 'let u = "http://x"; use std::net::TcpStream;\n'})
+        self.assertEqual(len(check_no_network.network_uses(src)), 1)
+
+    def test_block_comments_are_comments_and_keep_line_numbers(self) -> None:
+        src = self.tree({"lib.rs": "/* use ureq::get;\n std::net */\nfn a() {}\nuse tokio::net::TcpStream;\n"})
+        self.assertEqual(
+            check_no_network.network_uses(src),
+            ["src/lib.rs:4: use tokio::net::TcpStream;"],
+        )
+
+    def test_a_command_that_fetches_is_a_network_use(self) -> None:
+        src = self.tree({"lib.rs": 'let s = Command::new("curl").arg(u).output();\n'})
+        self.assertEqual(len(check_no_network.network_uses(src)), 1)
+
+    def test_a_raw_string_and_a_char_literal_do_not_open_a_comment(self) -> None:
+        src = self.tree({"lib.rs": "let a = r#\"//\"#; let b = '/'; use ureq::get;\n"})
+        self.assertEqual(len(check_no_network.network_uses(src)), 1)
+
     def test_a_function_named_after_self_update_is_not_a_use(self) -> None:
         src = self.tree({"bin/jubarte.rs": "fn run_self_update() {}\n"})
         self.assertEqual(check_no_network.network_uses(src), [])
+
+
+class Tree(unittest.TestCase):
+    def test_every_shipped_feature_set_on_every_target(self) -> None:
+        commands = [check_no_network.tree_command(f) for f in check_no_network.FEATURE_SETS]
+        self.assertTrue(all("--target" in c and "all" in c for c in commands))
+        self.assertEqual([c.count("--features") for c in commands], [0, 1, 1])
+        self.assertNotIn("self-update", " ".join(check_no_network.FEATURE_SETS))
 
 
 class Main(unittest.TestCase):

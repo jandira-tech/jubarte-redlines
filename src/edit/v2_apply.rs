@@ -2692,6 +2692,21 @@ fn compare_history(
             (c, record)
         })
         .collect();
+    // A comment the edit removed takes the changes in its body along, as
+    // Word's Delete Comment does (#1706): they are not history the
+    // candidate lost. The comment guards decide whether it could go.
+    let bodies = |bytes| {
+        crate::changes::comment_bodies(bytes)
+            .map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))
+    };
+    let (old_bodies, new_bodies) = (bodies(working)?, bodies(candidate)?);
+    before.retain(|(c, _)| {
+        old_bodies
+            .owners
+            .get(&c.id)
+            .and_then(Option::as_ref)
+            .is_none_or(|comment| new_bodies.comments.contains(comment))
+    });
     // A run's formatting record, which an operation's words may leave.
     let run_record = |c: &Change, record: Option<&Recorded>| {
         c.kind == ChangeKind::Formatting && record.is_some_and(|r| r.characters.is_some())
@@ -3693,6 +3708,50 @@ mod tests {
                 tracked,
             );
             assert!(result.is_ok(), "tracked {tracked}: {result:?}");
+        }
+    }
+
+    /// A comment that stays keeps its body's changes: losing one is still
+    /// lost history, though a removed comment may take its own (#1706).
+    #[test]
+    fn a_kept_comment_that_loses_its_bodys_change_is_refused() {
+        use crate::edit::deeper_boundary_fixture::{Part, docx_with};
+        let body = r#"<w:p><w:commentRangeStart w:id="0"/><w:r><w:t>Text</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r></w:p>"#;
+        let comments = |run: &str| {
+            format!(
+                r#"<w:comments xmlns:w="{}"><w:comment w:id="0" w:author="Cy"><w:p>{run}</w:p></w:comment></w:comments>"#,
+                W::URI
+            )
+        };
+        let package = |xml: &str| {
+            docx_with(
+                body,
+                &[Part {
+                    name: "word/comments.xml",
+                    content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+                    rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+                    xml,
+                }],
+            )
+        };
+        let source = package(&comments(
+            r#"<w:ins w:id="7" w:author="Cy" w:date="2026-09-01T00:00:00Z"><w:r><w:t>Note</w:t></w:r></w:ins>"#,
+        ));
+        let candidate = package(&comments("<w:r><w:t>Note</w:t></w:r>"));
+        for tracked in [false, true] {
+            let result = compare_history(
+                &source,
+                &candidate,
+                &Edited::default(),
+                "Bob",
+                &BTreeMap::new(),
+                tracked,
+            );
+            assert_eq!(
+                result.map_err(|e| e.code),
+                Err("REVISION_PRESERVATION_FAILED".to_string()),
+                "tracked {tracked}"
+            );
         }
     }
 

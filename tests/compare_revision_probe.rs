@@ -206,10 +206,31 @@ fn commented_source() -> Vec<u8> {
 
 /// A tracked insertion inside a comment, the source's only revision, is
 /// still there after an `add`: the edit does not accept it on its own.
+/// Since #1706 it is a listed change (`comments.r5`), so a plan that does
+/// not say what to do with existing changes is refused, as for one in the
+/// body; `"existing_revisions": "keep"` keeps it.
 #[test]
 fn an_add_keeps_a_tracked_change_inside_a_comment() {
     let source = commented_source();
-    let edited = add_p0(&source);
+    let unsaid = apply_plan(
+        &source,
+        &EditPlan::from_json(
+            r#"{"schema_version":1,"author":"Probe","operations":[
+            {"kind":"insert_paragraph","paragraph":"p0","runs":[{"text":"Probe paragraph."}]}]}"#,
+        )
+        .unwrap(),
+    )
+    .unwrap_err();
+    assert_eq!(unsaid.code, "EXISTING_REVISIONS", "{unsaid:?}");
+    let edited = apply_plan(
+        &source,
+        &EditPlan::from_json(
+            r#"{"schema_version":1,"author":"Probe","existing_revisions":"keep","operations":[
+            {"kind":"insert_paragraph","paragraph":"p0","runs":[{"text":"Probe paragraph."}]}]}"#,
+        )
+        .unwrap(),
+    )
+    .unwrap();
     assert_word_valid_package(&edited.redline);
     for (view, docx) in [("clean", &edited.clean), ("redline", &edited.redline)] {
         let comments = part_string(docx, "word/comments.xml").unwrap();

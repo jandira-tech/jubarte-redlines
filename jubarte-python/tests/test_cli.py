@@ -2077,10 +2077,32 @@ def test_jubarte_timeout_bounds_a_task_as_the_binary_does(letter: Path, tmp_path
     )
     assert run.returncode == 0, run.stderr
     assert run.stdout.startswith("---\nsource: "), run.stdout
-    for bad in ["0", "-1", "soon", "inf"]:
-        env["JUBARTE_TIMEOUT"] = bad
-        run = subprocess.run(
-            [sys.executable, "-m", "jubarte_redlines", "read", str(letter)], capture_output=True, text=True, env=env
+
+    def read(value: str, *extra: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-m", "jubarte_redlines", "read", *extra],
+            capture_output=True,
+            text=True,
+            env={**env, "JUBARTE_TIMEOUT": value},
         )
+
+    # The binary's grammar (Rust's f64 parse), word for word: no white
+    # space, hex or underscores; infinity and NaN are not finite.
+    for bad in ["soon", " 10 ", "0x10", "1_0", "1e"]:
+        run = read(bad, str(letter))
         assert run.returncode == 2, (bad, run.stderr)
-        assert "error: JUBARTE_TIMEOUT: " in run.stderr, (bad, run.stderr)
+        assert run.stderr == f"error: JUBARTE_TIMEOUT: '{bad}' is not a number of seconds\n", (bad, run.stderr)
+    for bad in ["0", "-1", "inf", "NaN", "+Infinity"]:
+        run = read(bad, str(letter))
+        assert run.returncode == 2, (bad, run.stderr)
+        assert run.stderr == (
+            f"error: JUBARTE_TIMEOUT: '{bad}': the timeout must be a finite number of seconds above 0\n"
+        ), (bad, run.stderr)
+    # The child's own exit code is the run's: a usage error stays 2, a
+    # missing input stays 1.
+    assert read("120", str(letter), "--no-such-flag").returncode == 2
+    missing = read("120", str(tmp_path / "absent.docx"))
+    assert missing.returncode == 1, missing.stderr
+    assert missing.stderr.startswith("error: "), missing.stderr
+    # The message prints the seconds as the binary does: 1000000, not 1e+06.
+    assert read("1000000", str(letter)).returncode == 0

@@ -13,10 +13,11 @@
 // combination, an existing output), 3 edit plan refused (its per-operation
 // report is on stdout; nothing was written).
 
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -1099,37 +1100,83 @@ function main(argv) {
   }
 }
 
+/** A number of seconds as Rust's f64 parse reads one: no white space or hex. */
+const SECONDS = /^[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/;
+/** The words Rust's parse reads as infinity or NaN, refused as not finite. */
+const NOT_FINITE = /^[+-]?(?:inf|infinity|nan)$/i;
+/** The longest delay a Node timer holds (2^31 - 1 ms, about 24.8 days). */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/**
+ * JUBARTE_TIMEOUT in seconds, as the binary reads it: `null` when unset or
+ * empty, else the seconds, or a usage error in the binary's words.
+ */
+function envTimeout(value) {
+  if (value === undefined || value === "") return null;
+  const finite = SECONDS.test(value);
+  if (!finite && !NOT_FINITE.test(value)) {
+    return { error: `JUBARTE_TIMEOUT: '${value}' is not a number of seconds` };
+  }
+  const seconds = finite ? Number(value) : Number.NaN;
+  if (!(Number.isFinite(seconds) && seconds > 0)) {
+    return { error: `JUBARTE_TIMEOUT: '${value}': the timeout must be a finite number of seconds above 0` };
+  }
+  return { seconds };
+}
+
 /**
  * JUBARTE_TIMEOUT (seconds), as the binary reads it (#2016): the task runs
  * in a child killed at the deadline, since a synchronous wasm call cannot
  * be interrupted on its own thread. Exits 124 with the binary's message.
+ * The child inherits stdio; its exit code is ours, one ended by a signal
+ * is 128 + the signal's number, and a SIGTERM, SIGINT or SIGHUP sent to
+ * this process is passed on, so the child never outlives it.
  */
 function boundedMain(argv) {
-  const value = process.env.JUBARTE_TIMEOUT ?? "";
-  if (value === "") return main(argv);
-  const seconds = Number(value);
-  if (value.trim() === "" || Number.isNaN(seconds)) {
-    console.error(`error: JUBARTE_TIMEOUT: '${value}' is not a number of seconds`);
-    return EXIT_USAGE;
+  const parsed = envTimeout(process.env.JUBARTE_TIMEOUT);
+  if (parsed === null) {
+    process.exitCode = main(argv);
+    return;
   }
-  if (!(Number.isFinite(seconds) && seconds > 0)) {
-    console.error(`error: JUBARTE_TIMEOUT: '${value}': the timeout must be a finite number of seconds above 0`);
-    return EXIT_USAGE;
+  if (parsed.error) {
+    console.error(`error: ${parsed.error}`);
+    process.exitCode = EXIT_USAGE;
+    return;
   }
+  const { seconds } = parsed;
   const env = { ...process.env };
   delete env.JUBARTE_TIMEOUT;
-  const child = spawnSync(process.execPath, [fileURLToPath(import.meta.url), ...argv], {
-    stdio: "inherit",
-    env,
-    timeout: seconds * 1000,
-    killSignal: "SIGKILL",
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), ...argv], { stdio: "inherit", env });
+  const forward = (signal) => child.kill(signal);
+  const forwarded = ["SIGTERM", "SIGINT", "SIGHUP"];
+  for (const signal of forwarded) process.on(signal, forward);
+  let timedOut = false;
+  // A deadline past what a Node timer holds is no deadline a run reaches.
+  const ms = seconds * 1000;
+  const timer =
+    ms <= MAX_TIMER_MS
+      ? setTimeout(() => {
+          timedOut = true;
+          child.kill("SIGKILL");
+        }, ms)
+      : null;
+  child.on("error", (error) => {
+    if (timer) clearTimeout(timer);
+    console.error(`error: ${messageOf(error)}`);
+    process.exitCode = EXIT_ERROR;
   });
-  if (child.error?.code === "ETIMEDOUT") {
-    console.error(`error: DEADLINE_EXCEEDED: timed out after ${seconds}s (JUBARTE_TIMEOUT)`);
-    return EXIT_TIMEOUT;
-  }
-  if (child.error) throw child.error;
-  return child.status ?? EXIT_ERROR;
+  child.on("exit", (code, signal) => {
+    if (timer) clearTimeout(timer);
+    for (const name of forwarded) process.off(name, forward);
+    if (timedOut) {
+      console.error(`error: DEADLINE_EXCEEDED: timed out after ${seconds}s (JUBARTE_TIMEOUT)`);
+      process.exitCode = EXIT_TIMEOUT;
+    } else if (signal) {
+      process.exitCode = 128 + (os.constants.signals[signal] ?? 0);
+    } else {
+      process.exitCode = code ?? EXIT_ERROR;
+    }
+  });
 }
 
-process.exitCode = boundedMain(process.argv.slice(2));
+boundedMain(process.argv.slice(2));

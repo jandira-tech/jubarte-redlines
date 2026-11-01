@@ -896,11 +896,23 @@ fn env_author_fill(author: &mut String, given: &mut bool) -> Result<(), String> 
 /// `JUBARTE_TIMEOUT: …` when the value is not a finite number of seconds
 /// above 0.
 pub fn env_timeout() -> Result<Option<std::time::Duration>, String> {
-    std::env::var("JUBARTE_TIMEOUT")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .map(|value| parse_timeout(&value).map_err(|m| format!("JUBARTE_TIMEOUT: {m}")))
-        .transpose()
+    // A value that is not Unicode is refused, never read as unset: a host
+    // that set the variable expects a bound.
+    let Some(value) = std::env::var_os("JUBARTE_TIMEOUT") else {
+        return Ok(None);
+    };
+    let value = value.into_string().map_err(|raw| {
+        format!(
+            "JUBARTE_TIMEOUT: '{}' is not a number of seconds",
+            raw.to_string_lossy()
+        )
+    })?;
+    if value.is_empty() {
+        return Ok(None);
+    }
+    parse_timeout(&value)
+        .map(Some)
+        .map_err(|m| format!("JUBARTE_TIMEOUT: {m}"))
 }
 
 /// Inputs and settings shared by explicit and shorthand comparisons.

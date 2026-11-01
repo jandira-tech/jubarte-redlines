@@ -40,7 +40,8 @@ class CompareOptions:
 
     date: str | datetime | None = None
     #: Admission budget overrides (``max_compressed_bytes``, ``max_entries``,
-    #: ``max_part_bytes``, ``max_uncompressed_bytes``, ``max_xml_depth``);
+    #: ``max_part_bytes``, ``max_uncompressed_bytes``, ``max_xml_depth``,
+    #: ``max_xml_elements``);
     #: unset keys keep the engine's compare budget. The engine refuses
     #: unknown keys when the comparison runs.
     input_limits: Mapping[str, int] | None = field(default=None, hash=False)

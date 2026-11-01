@@ -460,54 +460,147 @@ pub(crate) fn tally_inflated(
     Ok(())
 }
 
-/// Count one part's XML element start tags into `total`, the way a
-/// tolerant reader would see them, and refuse a DOCTYPE in its prolog.
+/// Count one part's XML element start tags into `total`, the way the
+/// tolerant reader sees them, and refuse a markup declaration (a DOCTYPE).
 ///
 /// Shared by [`admit`] and the package open every command goes through
 /// (`opc::read_package`), so the cap holds on the tolerant `read` path
-/// too, where a part is never checked for well-formedness (#2014). A part
-/// whose first character (after a byte-order mark and white space) is not
-/// `<` is not XML and is not counted, so media never charges the budget.
-/// Comments are skipped; CDATA is not, so text in it that looks like a tag
-/// counts, which only ever refuses sooner.
+/// too, where a part is never checked for well-formedness (#2014). Every
+/// part is scanned, whatever its name: one whose first byte (after a
+/// byte-order mark and white space) is not `<` is not XML and costs a few
+/// bytes to rule out, so media never charges the budget.
 ///
-/// A DOCTYPE is refused because Word refuses every part that carries one,
+/// The tolerant parser makes an element of every `<` that does not open an
+/// end tag, a comment, a CDATA section, a processing instruction or a
+/// declaration, whatever follows it (`<0>` and `< x>` included), so this
+/// counts each such `<` and skips the rest whole.
+///
+/// A markup declaration (`<!DOCTYPE`, `<!ENTITY`, … in any case, anywhere
+/// in the part) is refused because Word refuses every part that carries a DOCTYPE,
 /// even a bare `<!DOCTYPE w:document>` with no internal subset (#2015,
 /// probed 2026-10-31), and because an internal subset is where entity
 /// bombs and external entities live.
+/// Bytes read from a part before deciding whether it is markup: room for
+/// a byte-order mark and leading white space.
+const XML_SNIFF_BYTES: u64 = 4096;
+
+/// `rest` (what follows a `<`) opens a markup declaration: `!DOCTYPE`,
+/// `!ENTITY`, `!ELEMENT`, `!ATTLIST` or `!NOTATION`, in any case. Another
+/// `<!` inside an element is an element to the tolerant parser, and counts.
+fn declaration(rest: &[u8]) -> bool {
+    ["!DOCTYPE", "!ENTITY", "!ELEMENT", "!ATTLIST", "!NOTATION"]
+        .iter()
+        .any(|keyword| {
+            rest.get(..keyword.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(keyword.as_bytes()))
+        })
+}
+
+/// The part's name says XML: `.xml` or `.rels`, in any case.
+fn has_xml_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.ends_with(".xml") || lower.ends_with(".rels")
+}
+
+/// `head` opens with `<` after an optional byte-order mark and white
+/// space, in UTF-8 or UTF-16: the parts [`tally_xml_elements`] scans.
+fn looks_like_markup(head: &[u8]) -> bool {
+    match head {
+        [0xFF, 0xFE, rest @ ..] | [0xFE, 0xFF, rest @ ..] => {
+            rest.iter()
+                .copied()
+                .find(|b| *b != 0 && !b.is_ascii_whitespace())
+                == Some(b'<')
+        }
+        _ => {
+            head.strip_prefix(b"\xEF\xBB\xBF")
+                .unwrap_or(head)
+                .trim_ascii_start()
+                .first()
+                == Some(&b'<')
+        }
+    }
+}
+
 pub(crate) fn tally_xml_elements(
     total: &mut u64,
     name: &str,
     data: &[u8],
     limits: &InputLimits,
 ) -> Result<(), AdmissionError> {
-    let text = part_text(data);
-    let body = text.trim_start_matches('\u{feff}').trim_start();
-    if !body.starts_with('<') {
+    scan_markup(total, name, data, limits, true)
+}
+
+/// [`tally_xml_elements`] without the DTD refusal, for `jubarte debug`,
+/// which reports a refusable package instead of refusing it: a declaration
+/// is skipped and the elements after it are still counted.
+pub(crate) fn count_xml_elements(
+    total: &mut u64,
+    name: &str,
+    data: &[u8],
+    limits: &InputLimits,
+) -> Result<(), AdmissionError> {
+    scan_markup(total, name, data, limits, false)
+}
+
+fn scan_markup(
+    total: &mut u64,
+    name: &str,
+    data: &[u8],
+    limits: &InputLimits,
+    refuse_dtd: bool,
+) -> Result<(), AdmissionError> {
+    // UTF-16 (a byte-order mark, as SharePoint writes `customXml`) is
+    // transcoded; anything else is scanned as bytes, `<` being ASCII in
+    // UTF-8 and every single-byte encoding Word reads.
+    let utf16 = matches!(data, [0xFF, 0xFE, ..] | [0xFE, 0xFF, ..]);
+    let decoded;
+    let bytes = if utf16 {
+        decoded = part_text(data);
+        decoded.as_bytes()
+    } else {
+        data.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(data)
+    };
+    let bytes = bytes.trim_ascii_start();
+    // Only an XML part carries Word's DTD rule: an altChunk's HTML may
+    // open with `<!DOCTYPE html>`, which Word's HTML import reads.
+    let xml = refuse_dtd && has_xml_name(name);
+    if bytes.first() != Some(&b'<') {
         return Ok(());
     }
-    let bytes = body.as_bytes();
+    // The index just past the first `end` at or after `from`; the end of
+    // the part when it never comes.
+    let past = |from: usize, end: &[u8]| {
+        bytes
+            .get(from..)
+            .and_then(|tail| tail.windows(end.len()).position(|w| w == end))
+            .map_or(bytes.len(), |at| {
+                from.saturating_add(at).saturating_add(end.len())
+            })
+    };
     let mut at = 0usize;
-    let mut rooted = false;
-    while let Some(offset) = bytes.get(at..).and_then(|rest| rest.iter().position(|&b| b == b'<')) {
-        let open = at + offset;
-        let rest = bytes.get(open + 1..).unwrap_or_default();
-        at = open + 1;
+    while let Some(offset) = bytes
+        .get(at..)
+        .and_then(|rest| rest.iter().position(|&b| b == b'<'))
+    {
+        let open = at.saturating_add(offset);
+        let rest = bytes.get(open.saturating_add(1)..).unwrap_or_default();
+        at = open.saturating_add(1);
         match rest.first() {
-            Some(b'!') if rest.starts_with(b"!--") => {
-                at = rest
-                    .get(3..)
-                    .and_then(|tail| tail.windows(3).position(|w| w == b"-->"))
-                    .map_or(bytes.len(), |end| open + 4 + end + 3);
+            Some(b'/') => {}
+            Some(b'?') => at = past(open.saturating_add(2), b"?>"),
+            Some(b'!') if rest.starts_with(b"!--") => at = past(open.saturating_add(4), b"-->"),
+            Some(b'!') if rest.starts_with(b"![CDATA[") => {
+                at = past(open.saturating_add(9), b"]]>");
             }
-            Some(b'!') if !rooted && rest.starts_with(b"!DOCTYPE") => {
+            Some(b'!') if declaration(rest) && xml => {
                 return Err(AdmissionError::new(
                     AdmissionErrorKind::InvalidXml,
                     format!("{}: DTD declarations are unsupported", shown(name)),
                 ));
             }
-            Some(&b) if b == b'_' || b == b':' || b.is_ascii_alphabetic() || b >= 0x80 => {
-                rooted = true;
+            Some(b'!') if declaration(rest) => at = past(open.saturating_add(2), b">"),
+            _ => {
                 *total = total.saturating_add(1);
                 if *total > limits.max_xml_elements {
                     return Err(AdmissionError::new(
@@ -520,7 +613,6 @@ pub(crate) fn tally_xml_elements(
                     ));
                 }
             }
-            _ => {}
         }
     }
     Ok(())
@@ -625,7 +717,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
         let remaining = limits.max_uncompressed_bytes.saturating_sub(total);
         let cap = limits.max_part_bytes.min(remaining);
         let lower = name.to_ascii_lowercase();
-        let is_xml = lower.ends_with(".xml") || lower.ends_with(".rels");
+        let is_xml = has_xml_name(&name);
         let mut limited = (&mut entry).take(cap.saturating_add(1));
         let read = if is_xml {
             let mut buf = Vec::new();
@@ -642,9 +734,29 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             }
             n
         } else {
-            std::io::copy(&mut limited, &mut std::io::sink()).map_err(|e| {
+            // Any other part is charged to the element budget too, as the
+            // package open charges it (`opc::read_package`): XML under
+            // another name still reaches the tolerant parser. Its first
+            // bytes tell; media is streamed past, never held.
+            let io = |e: std::io::Error| {
                 AdmissionError::new(K::InvalidPackage, format!("{}: {e}", shown(&name)))
-            })?
+            };
+            let mut head = Vec::new();
+            (&mut limited)
+                .take(XML_SNIFF_BYTES)
+                .read_to_end(&mut head)
+                .map_err(io)?;
+            if looks_like_markup(&head) {
+                limited.read_to_end(&mut head).map_err(io)?;
+                let n = head.len() as u64;
+                if n <= cap {
+                    tally_xml_elements(&mut elements, &name, &head, &limits)?;
+                }
+                n
+            } else {
+                (head.len() as u64)
+                    .saturating_add(std::io::copy(&mut limited, &mut std::io::sink()).map_err(io)?)
+            }
         };
         tally_inflated(&mut total, read, &name, cap, &limits)?;
     }
@@ -664,8 +776,8 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             .map_err(|e| {
                 AdmissionError::new(K::InvalidPackage, format!("{}: {e}", shown(&main_part)))
             })?;
+        // Its elements were counted in the scan, whatever its name.
         check_xml_depth(&main_part, &buf, limits)?;
-        tally_xml_elements(&mut elements, &main_part, &buf, &limits)?;
     }
     Ok(AdmittedPackage {
         entries: archive.len(),

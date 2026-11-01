@@ -2080,9 +2080,30 @@ test("JUBARTE_TIMEOUT bounds a task as the binary does (#2016)", () => {
   const roomy = runEnv({ JUBARTE_TIMEOUT: "120" }, "read", untracked);
   assert.equal(roomy.code, 0, roomy.err);
   assert.match(roomy.out, /^---\nsource: /);
-  for (const bad of ["0", "-1", "soon", "Infinity"]) {
+  // The binary's grammar (Rust's f64 parse), word for word: no white
+  // space, hex or underscores; infinity and NaN are not finite.
+  for (const bad of ["soon", " 10 ", "0x10", "1_0", "1e"]) {
     const refused = runEnv({ JUBARTE_TIMEOUT: bad }, "read", untracked);
     assert.equal(refused.code, 2, `${bad}: ${refused.err}`);
-    assert.match(refused.err, /error: JUBARTE_TIMEOUT: /, bad);
+    assert.equal(refused.err, `error: JUBARTE_TIMEOUT: '${bad}' is not a number of seconds\n`, bad);
   }
+  for (const bad of ["0", "-1", "inf", "NaN", "+Infinity"]) {
+    const refused = runEnv({ JUBARTE_TIMEOUT: bad }, "read", untracked);
+    assert.equal(refused.code, 2, `${bad}: ${refused.err}`);
+    assert.equal(
+      refused.err,
+      `error: JUBARTE_TIMEOUT: '${bad}': the timeout must be a finite number of seconds above 0\n`,
+      bad,
+    );
+  }
+  // The child's own exit code is the run's: a usage error stays 2 and a
+  // missing input stays 1, with the child's message.
+  const usage = runEnv({ JUBARTE_TIMEOUT: "120" }, "read", untracked, "--no-such-flag");
+  assert.equal(usage.code, 2, usage.err);
+  const missing = runEnv({ JUBARTE_TIMEOUT: "120" }, "read", path.join(tmp, "absent.docx"));
+  assert.equal(missing.code, 1, missing.err);
+  assert.match(missing.err, /^error: /);
+  // A deadline past what a Node timer holds is no deadline, not an instant one.
+  const far = runEnv({ JUBARTE_TIMEOUT: "9999999" }, "read", untracked);
+  assert.equal(far.code, 0, far.err);
 });

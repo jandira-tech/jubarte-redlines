@@ -604,7 +604,9 @@ impl<'a> Parser<'a> {
                     continue;
                 }
                 if self.starts_with("<!") {
-                    self.pos = self.index_of(">", self.pos).map_or(len, |e| e + 1);
+                    // As `parse_document` skips it: whole, internal subset
+                    // and all (#2015).
+                    self.pos = self.declaration_end(len);
                     continue;
                 }
                 if self.cur() != '<' {
@@ -1217,7 +1219,7 @@ mod depth_scan_tests {
 #[cfg(test)]
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod checked_xml_tests {
-    use super::{Dom, parse_xdocument, validate_xml};
+    use super::{Dom, nests_deeper, parse_xdocument, validate_xml};
 
     #[test]
     fn truncated_attribute_input_terminates_in_legacy_parser() {
@@ -1258,6 +1260,14 @@ mod checked_xml_tests {
             );
             assert!(dom.descendants(root, None).is_empty(), "{xml}");
         }
+        // The depth scan ends the declaration where the parser does: tags
+        // inside an entity value are no nesting.
+        let deep_value = format!(
+            r#"<!DOCTYPE d [<!ENTITY a "{}">]><root/>"#,
+            "<x>".repeat(10)
+        );
+        assert!(!nests_deeper(&deep_value, 3), "{deep_value}");
+        assert!(nests_deeper("<a><b><c><d></d></c></b></a>", 3));
     }
 
     /// Package admission tolerates unquoted and valueless attributes so the
