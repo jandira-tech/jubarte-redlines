@@ -185,6 +185,109 @@ fn get_revisions_alt_chunk_document_returns_err() {
     ));
     let err = get_revisions(&doc, &settings).expect_err("altChunk → Err");
     assert!(format!("{err}").contains("altChunk"), "{err}");
+    assert!(format!("{err}").contains("UNSUPPORTED_CONTENT: "), "{err}");
+}
+
+/// `compare` on a `w:subDoc` or a `w:altChunk` document is an Err naming
+/// the element, not the atomizer's panic (word_exp N4 exited 101 at
+/// `atomize.rs:312`, 2026-10-31). Either side, either element.
+#[test]
+fn compare_refuses_a_sub_doc_or_alt_chunk_document_without_a_panic() {
+    let modified = std::fs::read("tests/fixtures/redline/modified.docx").unwrap();
+    for (name, body) in [
+        (
+            "subDoc",
+            r#"<w:subDoc r:id="rIdX"/><w:p><w:r><w:t>x</w:t></w:r></w:p>"#,
+        ),
+        (
+            "altChunk",
+            r#"<w:altChunk r:id="rIdX"/><w:p><w:r><w:t>x</w:t></w:r></w:p>"#,
+        ),
+    ] {
+        let doc = package_with_main(&format!(
+            r#"<w:document xmlns:w="{W_NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>{body}</w:body></w:document>"#
+        ));
+        let err = compare_documents(&doc, &modified, "Author").expect_err("original side → Err");
+        let text = format!("{err}");
+        assert!(
+            text.contains("UNSUPPORTED_CONTENT: ") && text.contains(name),
+            "{name}: {text}"
+        );
+        let err = compare_documents(&modified, &doc, "Author").expect_err("modified side → Err");
+        let text = format!("{err}");
+        assert!(
+            text.contains("UNSUPPORTED_CONTENT: ") && text.contains(name),
+            "{name}: {text}"
+        );
+    }
+    // customXml is in the atomizer's refusal set too, and nothing unwraps
+    // it before the atomizer: a body that carries one is refused.
+    let doc = package_with_main(&format!(
+        r#"<w:document xmlns:w="{W_NS}"><w:body><w:customXml w:element="c"><w:p><w:r><w:t>x</w:t></w:r></w:p></w:customXml></w:body></w:document>"#
+    ));
+    for (a, b) in [(&doc, &modified), (&modified, &doc)] {
+        let err = compare_documents(a, b, "Author").expect_err("customXml body → Err");
+        assert!(format!("{err}").contains("UNSUPPORTED_CONTENT: "), "{err}");
+        assert!(format!("{err}").contains("customXml"), "{err}");
+    }
+}
+
+/// The header and note stories go through the atomizer as well: a
+/// `w:customXml` in either is an Err, not a panic.
+#[test]
+fn compare_refuses_custom_xml_in_a_header_or_a_footnote_without_a_panic() {
+    let wrap_first_paragraph = |xml: &str| {
+        let open = xml.find("<w:p ").or_else(|| xml.find("<w:p>")).unwrap();
+        let close = open + xml[open..].find("</w:p>").unwrap() + "</w:p>".len();
+        format!(
+            r#"{}<w:customXml w:element="c">{}</w:customXml>{}"#,
+            &xml[..open],
+            &xml[open..close],
+            &xml[close..]
+        )
+    };
+    for (fixture, part, other) in [
+        (
+            "tests/fixtures/f4/original.docx",
+            "word/header1.xml",
+            "word/document.xml",
+        ),
+        (
+            "tests/fixtures/md-roundtrip/order/fn-plain.docx",
+            "word/footnotes.xml",
+            "word/document.xml",
+        ),
+    ] {
+        let original = std::fs::read(fixture).unwrap();
+        let mut pkg = PartFs::open(&original).unwrap();
+        let mut story = String::from_utf8(pkg.part_bytes(part).unwrap().to_vec()).unwrap();
+        if part == "word/footnotes.xml" {
+            // The referenced note, not the separators.
+            let at = story.find(r#"w:id="1""#).unwrap();
+            story = format!("{}{}", &story[..at], wrap_first_paragraph(&story[at..]));
+        } else {
+            story = wrap_first_paragraph(&story);
+        }
+        pkg.set_part(part, story.into_bytes());
+        // A one-word body edit, so the pair is not byte-identical.
+        let body = String::from_utf8(pkg.part_bytes(other).unwrap().to_vec()).unwrap();
+        let edited = body.replacen(
+            "</w:body>",
+            "<w:p><w:r><w:t>z</w:t></w:r></w:p></w:body>",
+            1,
+        );
+        let mut revised = PartFs::open(&original).unwrap();
+        revised.set_part(other, edited.into_bytes());
+        let (doc, revised) = (pkg.to_zip().unwrap(), revised.to_zip().unwrap());
+        for (a, b) in [(&doc, &revised), (&revised, &doc)] {
+            let err = compare_documents(a, b, "Author").expect_err("customXml story → Err");
+            let text = format!("{err}");
+            assert!(
+                text.contains("UNSUPPORTED_CONTENT: ") && text.contains("customXml"),
+                "{part}: {text}"
+            );
+        }
+    }
 }
 
 /// A footnote reference with no definition fails the compare (C# throws

@@ -324,6 +324,11 @@ pub struct InputBudget {
     /// had no element limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_xml_elements: Option<u64>,
+    /// Maximum characters of text plus elements in one compared side
+    /// (#2024). `None` in a manifest written before 0.17.0, whose comparer
+    /// had no such limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_story_units: Option<u64>,
 }
 
 impl From<crate::admission::InputLimits> for InputBudget {
@@ -337,6 +342,7 @@ impl From<crate::admission::InputLimits> for InputBudget {
             max_uncompressed_bytes: l.max_uncompressed_bytes,
             max_xml_depth: l.max_xml_depth,
             max_xml_elements: Some(l.max_xml_elements),
+            max_story_units: Some(l.max_story_units),
         }
     }
 }
@@ -515,7 +521,7 @@ pub fn capabilities_text(c: &Capabilities) -> String {
     out.push_str(&format!(
         "limits: plain text runs {}, refuses opaque ranges {}, reads legacy .doc {}, \
          {} bytes compressed, {} entries, {} bytes per part, {} bytes uncompressed, \
-         XML depth {}, {}\n",
+         XML depth {}, {}, {}\n",
         yes(c.limits.plain_text_runs),
         yes(c.limits.refuses_opaque_ranges),
         yes(c.limits.reads_legacy_doc),
@@ -527,6 +533,10 @@ pub fn capabilities_text(c: &Capabilities) -> String {
         input.max_xml_elements.map_or_else(
             || "no XML element limit".to_string(),
             |n| format!("{n} XML elements")
+        ),
+        input.max_story_units.map_or_else(
+            || "no story unit limit".to_string(),
+            |n| format!("{n} story units per compared side")
         )
     ));
     let rules: Vec<String> = c
@@ -588,6 +598,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(older.max_xml_elements, None);
+        assert_eq!(older.max_story_units, None);
         assert!(
             !serde_json::to_string(&older)
                 .unwrap()
@@ -595,6 +606,7 @@ mod tests {
         );
         let today = InputBudget::from(crate::admission::InputLimits::default());
         assert_eq!(today.max_xml_elements, Some(2_000_000));
+        assert_eq!(today.max_story_units, Some(2_000_000));
     }
 
     #[test]

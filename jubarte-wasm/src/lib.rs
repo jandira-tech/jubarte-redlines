@@ -83,7 +83,8 @@ fn settings_with_limits(
 /// Mirrors `jubarte::document_comparer::compare_documents`.
 /// `inputLimitsJson` (optional) overrides the admission budget key by key:
 /// `{"max_compressed_bytes", "max_entries", "max_part_bytes",
-/// "max_uncompressed_bytes", "max_xml_depth", "max_xml_elements"}`. A package past the budget
+/// "max_uncompressed_bytes", "max_xml_depth", "max_xml_elements",
+/// "max_story_units"}`. A package past the budget
 /// throws with `INPUT_LIMIT`; an unknown key throws `invalid input limits`.
 /// The default budget allows 2 GiB inflated, more than a 32-bit WASM heap
 /// holds, so browser hosts should lower it.

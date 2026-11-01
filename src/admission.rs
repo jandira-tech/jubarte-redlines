@@ -63,6 +63,12 @@ pub struct InputLimits {
     /// zipped one-run paragraphs is millions of DOM nodes and several GB
     /// once parsed and laid out (#2014).
     pub max_xml_elements: u64,
+    /// Characters of text plus elements in one side of a comparison: its
+    /// body and notes together, or one header or footer. `compare` turns
+    /// every character into an atom of 2-4 KB, so 1 MiB of text peaked at
+    /// 2.1-3.9 GB and B1's 66 MiB of spaces passed 6 GB (word_exp
+    /// cmp_scale, 2026-10-31). Only the comparer reads it.
+    pub max_story_units: u64,
 }
 
 impl Default for InputLimits {
@@ -80,8 +86,10 @@ impl Default for InputLimits {
             max_start_tag_bytes: crate::xmllinq::parse::MAX_TAG_ATTRIBUTE_BYTES,
             // The largest of 2,434 real documents (the bench corpora and
             // tests/) holds 365,343 elements: 2,000,000 refuses none of them
-            // and bounds `read` near 1.6 GB (#2014).
+            // and bounds `read` near 3 GB: E5, just under it, peaked at
+            // 2.2 GB with page markers and 2.9 GB without (#2014).
             max_xml_elements: 2_000_000,
+            max_story_units: 2_000_000,
         }
     }
 }
@@ -106,6 +114,9 @@ impl InputLimits {
             max_attribute_value_bytes: crate::xmllinq::parse::MAX_ATTRIBUTE_VALUE_BYTES,
             max_start_tag_bytes: crate::xmllinq::parse::MAX_TAG_ATTRIBUTE_BYTES,
             max_xml_elements: 4_000_000,
+            // The largest of 6,645 real documents holds 925,884 (a redline;
+            // the largest original 557,534).
+            max_story_units: 2_000_000,
         }
     }
 }
@@ -137,6 +148,8 @@ pub struct InputLimitOverrides {
     pub max_start_tag_bytes: Option<usize>,
     /// Replaces [`InputLimits::max_xml_elements`].
     pub max_xml_elements: Option<u64>,
+    /// Replaces [`InputLimits::max_story_units`].
+    pub max_story_units: Option<u64>,
 }
 
 impl InputLimitOverrides {
@@ -174,6 +187,7 @@ impl InputLimitOverrides {
                 .unwrap_or(base.max_attribute_value_bytes),
             max_start_tag_bytes: self.max_start_tag_bytes.unwrap_or(base.max_start_tag_bytes),
             max_xml_elements: self.max_xml_elements.unwrap_or(base.max_xml_elements),
+            max_story_units: self.max_story_units.unwrap_or(base.max_story_units),
         }
     }
 }

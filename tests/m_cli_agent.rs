@@ -746,7 +746,7 @@ fn capabilities_print_a_text_summary_by_default() {
     let limits_line = format!(
         "limits: plain text runs {}, refuses opaque ranges {}, reads legacy .doc {}, \
          {} bytes compressed, {} entries, {} bytes per part, {} bytes uncompressed, \
-         XML depth {}, {} XML elements",
+         XML depth {}, {} XML elements, {} story units per compared side",
         yes(&limits["plain_text_runs"]),
         yes(&limits["refuses_opaque_ranges"]),
         yes(&limits["reads_legacy_doc"]),
@@ -755,10 +755,13 @@ fn capabilities_print_a_text_summary_by_default() {
         input["max_part_bytes"],
         input["max_uncompressed_bytes"],
         input["max_xml_depth"],
-        input["max_xml_elements"]
+        input["max_xml_elements"],
+        input["max_story_units"]
     );
     // The element budget is part of the advertised input limits (#2014).
     assert_eq!(input["max_xml_elements"], 2_000_000);
+    // So is the comparer's story budget (#2024).
+    assert_eq!(input["max_story_units"], 2_000_000);
     assert!(
         lines.contains(&limits_line.as_str()),
         "{limits_line}\n{text}"

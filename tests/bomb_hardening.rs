@@ -529,3 +529,74 @@ fn a_utf16_part_charges_the_budget_as_its_text_reads() {
         "{error}"
     );
 }
+
+/// The compare settings with the story budget at `cap`.
+fn story_capped(cap: u64) -> jubarte::comparer::WmlComparerSettings {
+    let limits = InputLimitOverrides {
+        max_story_units: Some(cap),
+        ..InputLimitOverrides::default()
+    }
+    .apply(InputLimits::compare());
+    jubarte::comparer::WmlComparerSettings::default().with_input_limits(limits)
+}
+
+/// The comparer turns every character into an atom of 2-4 KB: 66 MiB of
+/// spaces in one `w:t` (B1, four elements) passed 6 GB in four seconds,
+/// and 1 MiB of text peaked at 2.1-3.9 GB (word_exp cmp_scale,
+/// 2026-10-31). A side's stories past `max_story_units` characters and
+/// elements are refused before any atom is made, on either side.
+#[test]
+fn compare_holds_a_story_budget_of_characters_and_elements() {
+    use jubarte::document_comparer::compare_documents_with_settings;
+    let long = package(&document(
+        "",
+        &format!("<w:p><w:r><w:t>{}</w:t></w:r></w:p>", "x".repeat(100)),
+    ));
+    let short = package(&ok_body());
+    for (a, b) in [(&long, &short), (&short, &long)] {
+        let err = compare_documents_with_settings(a, b, &story_capped(60))
+            .expect_err("a story past the budget")
+            .to_string();
+        assert!(
+            err.contains("INPUT_LIMIT") && err.contains("60 story units"),
+            "{err}"
+        );
+        compare_documents_with_settings(a, b, &story_capped(1_000)).expect("under the budget");
+    }
+    assert_eq!(InputLimits::compare().max_story_units, 2_000_000);
+    assert_eq!(
+        InputLimitOverrides::from_json(r#"{"max_story_units": 7}"#)
+            .unwrap()
+            .max_story_units,
+        Some(7)
+    );
+}
+
+/// A header is its own story under the same budget: 200,000 characters in
+/// one is refused by name at a 100,000-unit cap.
+#[test]
+fn compare_holds_the_story_budget_in_a_header() {
+    use jubarte::document_comparer::compare_documents_with_settings;
+    use jubarte::opc::PartFs;
+    let original = std::fs::read("tests/fixtures/f4/original.docx").unwrap();
+    let mut pkg = PartFs::open(&original).unwrap();
+    let header = String::from_utf8(pkg.part_bytes("word/header1.xml").unwrap().to_vec()).unwrap();
+    let flood = format!(
+        "<w:p><w:r><w:t>{}</w:t></w:r></w:p></w:hdr>",
+        "x".repeat(200_000)
+    );
+    pkg.set_part(
+        "word/header1.xml",
+        header.replacen("</w:hdr>", &flood, 1).into_bytes(),
+    );
+    let flooded = pkg.to_zip().unwrap();
+    for (a, b) in [(&flooded, &original), (&original, &flooded)] {
+        let err = compare_documents_with_settings(a, b, &story_capped(100_000))
+            .expect_err("a header past the budget")
+            .to_string();
+        assert!(
+            err.contains("INPUT_LIMIT") && err.contains("header1.xml"),
+            "{err}"
+        );
+    }
+}
