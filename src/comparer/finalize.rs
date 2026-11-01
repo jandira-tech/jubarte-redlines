@@ -8913,9 +8913,7 @@ fn merge_replaced_in_container(
                     continue;
                 }
                 let merged = dom.new_element(W::p());
-                for (an, av) in dom.attributes(ins_p) {
-                    dom.set_attribute_value(merged, &an, Some(&av));
-                }
+                dom.copy_attributes(ins_p, merged);
                 // Inserted pPr wins when structural (new formatting). M88: when
                 // Inserted is bare but Deleted has numPr/spacing, keep Deleted
                 // structural live with del mark (file_55 mixed "notation"+"a").
@@ -10424,9 +10422,7 @@ pub fn convert_stamped_preins(
                 let after: Vec<NodeId> = sibs[idx + 1..].to_vec();
                 if !after.is_empty() {
                     let del2 = dom.new_element(W::del());
-                    for (an, av) in dom.attributes(parent) {
-                        dom.set_attribute_value(del2, &an, Some(&av));
-                    }
+                    dom.copy_attributes(parent, del2);
                     dom.set_attribute_value(del2, &W::id(), Some(&id_gen.to_string()));
                     *id_gen += 1;
                     for a in after {
@@ -11289,9 +11285,7 @@ pub fn convert_stamped_predeletes(
                 let after: Vec<NodeId> = sibs[idx + 1..].to_vec();
                 if !after.is_empty() {
                     let ins2 = dom.new_element(W::ins());
-                    for (an, av) in dom.attributes(parent) {
-                        dom.set_attribute_value(ins2, &an, Some(&av));
-                    }
+                    dom.copy_attributes(parent, ins2);
                     dom.set_attribute_value(ins2, &W::id(), Some(&id_gen.to_string()));
                     *id_gen += 1;
                     for a in after {
