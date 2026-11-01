@@ -36,7 +36,10 @@ Rust binary surface: it has no `append`, `scrub`, `debug` or `self-update`, and
 its `convert` refuses `--from`, `--resource-path`, `--timeout`,
 `--fail-on-substitution` and `--no-page-markers`. Exit codes: 0 success, 1
 error, 2 usage (and `validate` findings), 3 edit plan refused, 5
-`visual-diff` found a page that differs. Inputs are `.docx`; save a Word 97-2003 `.doc` as
+`visual-diff` found a page that differs. An existing output without `--force`
+is that usage refusal, on every task that writes: exit 2 with `error:
+OUTPUT_EXISTS: output '…' already exists (use --force to overwrite)`, the
+path spelled with `/` on every OS (#1692). Inputs are `.docx`; save a Word 97-2003 `.doc` as
 `.docx` first.
 
 ## CLI reference

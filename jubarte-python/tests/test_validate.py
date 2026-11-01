@@ -87,7 +87,9 @@ def test_validate_command_exit_codes_and_repair(tmp_path: Path, capsys: pytest.C
     )
     assert captured.err.startswith(f"wrote {fixed} (docx, ")
     assert main(["validate", str(fixed)]) == 0
-    assert main(["validate", str(broken), "--repair", str(fixed)]) == 1
+    with pytest.raises(SystemExit) as refusal:
+        main(["validate", str(broken), "--repair", str(fixed)])
+    assert refusal.value.code == 2
     assert "already exists" in capsys.readouterr().err
     with pytest.raises(SystemExit) as exit:
         main(["validate", str(broken), "--original", str(clean)])

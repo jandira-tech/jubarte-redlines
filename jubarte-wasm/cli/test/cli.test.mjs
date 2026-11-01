@@ -1795,10 +1795,10 @@ test("read --tables -o writes the grids it prints, as the binary (#1690)", { ski
   assert.equal(wrote.out, "");
   assert.equal(fs.readFileSync(out, "utf8"), grids.out);
   assert.match(wrote.err, new RegExp(`wrote ${out.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(tables, ${fs.statSync(out).size} bytes\\)\n$`));
-  // Refused; the exit status differs from the binary's 2 (#1692).
+  // Refused as the binary refuses it: exit 2 with the OUTPUT_EXISTS code (#1692).
   const again = run("read", untracked, "--tables", "-o", out);
-  assert.notEqual(again.code, 0, again.err);
-  assert.match(again.err, /already exists/);
+  assert.equal(again.code, 2, again.err);
+  assert.equal(again.err, `error: OUTPUT_EXISTS: output '${out}' already exists (use --force to overwrite)\n`);
   const json = run("read", untracked, "--tables", "-o", path.join(tmp, "grids.json"));
   assert.equal(json.code, 2, json.err);
   assert.match(json.err, /--tables writes the grids as text/);
@@ -1829,6 +1829,14 @@ test("an existing output is a usage refusal with the OUTPUT_EXISTS code (#1698)"
   const forced = run("accept", tracked, "-o", docx, "--force");
   assert.equal(forced.code, 0, forced.err);
   assert.deepEqual(fs.readFileSync(docx).subarray(0, 2), Buffer.from("PK"));
+  // The `/` spelling on every OS, as the binary's messages (#568, #1692):
+  // a name that holds a backslash is shown with a slash.
+  const odd = path.join(tmp, "odd\\name.md");
+  fs.writeFileSync(odd, "keep me\n");
+  const backslash = run("convert", tracked, "-o", odd);
+  assert.equal(backslash.code, 2, backslash.err);
+  assert.equal(backslash.err, `error: OUTPUT_EXISTS: output '${odd.replaceAll("\\", "/")}' already exists (use --force to overwrite)\n`);
+  assert.equal(fs.readFileSync(odd, "utf8"), "keep me\n");
 });
 
 test("read refuses an existing output before it reads the input (#1698)", () => {

@@ -96,9 +96,15 @@ function readInput(file, o, json = false) {
 
 /** The no-clobber refusal, as the binary words and codes it: a usage
  * refusal (exit 2) with the OUTPUT_EXISTS code. */
+/** A path as the binary spells it in messages: `/` on every OS, even when
+ * the argument or the file name holds a backslash (#568). */
+function slashPath(file) {
+  return String(file).replaceAll("\\", "/");
+}
+
 function ensureWritable(file, force) {
   if (fs.existsSync(file) && !force) {
-    throw new UsageError(`OUTPUT_EXISTS: output '${file}' already exists (use --force to overwrite)`);
+    throw new UsageError(`OUTPUT_EXISTS: output '${slashPath(file)}' already exists (use --force to overwrite)`);
   }
 }
 
@@ -789,7 +795,7 @@ function applyEdit(verb, file, docx, o) {
   const outDir = o.out_dir;
   if (outDir == null) return writeEdited(o.output, result, notes, o, docx, plan);
   if (fs.existsSync(outDir) && !o.force) {
-    throw new UsageError(`OUTPUT_EXISTS: output '${outDir}' already exists (use --force to overwrite)`);
+    throw new UsageError(`OUTPUT_EXISTS: output '${slashPath(outDir)}' already exists (use --force to overwrite)`);
   }
   if (path.resolve(outDir) === path.dirname(path.resolve(file))) {
     throw new CliError("--out-dir must not be the input's own directory");
@@ -910,7 +916,7 @@ function writeEdited(output, result, notes, o, docx, plan) {
   const replaces = (taken) => Boolean(o.force) || (Boolean(o.in_place) && taken === output);
   for (const taken of [output, pdfPath]) {
     if (taken != null && fs.existsSync(taken) && !replaces(taken)) {
-      throw new UsageError(`OUTPUT_EXISTS: output '${taken}' already exists (use --force to overwrite)`);
+      throw new UsageError(`OUTPUT_EXISTS: output '${slashPath(taken)}' already exists (use --force to overwrite)`);
     }
   }
   // Render before writing, so a failed render writes nothing.

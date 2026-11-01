@@ -134,9 +134,21 @@ def _named_kind(path: Path) -> str | None:
     return parsed["args"]["old_format"]
 
 
+def _slash_path(path: Path | str) -> str:
+    """A path as the binary spells it in messages: ``/`` on every OS, even
+    when the argument or the file name holds a backslash (#568)."""
+    return str(path).replace("\\", "/")
+
+
 def _ensure_writable(path: Path, force: bool) -> None:
+    """An existing output is the binary's usage refusal, whatever writes it:
+    exit 2 with the ``OUTPUT_EXISTS`` code (#1692)."""
     if path.exists() and not force:
-        raise CliError(f"output '{path}' already exists (use --force to overwrite)")
+        _error(
+            f"OUTPUT_EXISTS: output '{_slash_path(path)}' already exists (use --force to overwrite)",
+            EXIT_USAGE,
+        )
+        raise SystemExit(EXIT_USAGE)
 
 
 def _same_file(a: Path, b: Path) -> bool:
@@ -226,7 +238,7 @@ def _refuse_alias_output(args: argparse.Namespace) -> None:
         raise SystemExit(EXIT_USAGE)
     if output.exists() and not args.force:
         _error(
-            f"OUTPUT_EXISTS: output '{_spelled(args, 'output')}' already exists (use --force to overwrite)",
+            f"OUTPUT_EXISTS: output '{_slash_path(_spelled(args, 'output'))}' already exists (use --force to overwrite)",
             EXIT_USAGE,
         )
         raise SystemExit(EXIT_USAGE)
@@ -839,7 +851,11 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
     if out_dir is None:
         return _write_edited(args, args.output, result, notes, source_bytes, parsed)
     if out_dir.exists() and not args.force:
-        raise CliError(f"output directory '{out_dir}' already exists (use --force to replace its files)")
+        _error(
+            f"OUTPUT_EXISTS: output '{_slash_path(out_dir)}' already exists (use --force to overwrite)",
+            EXIT_USAGE,
+        )
+        raise SystemExit(EXIT_USAGE)
     if out_dir.resolve() == args.file.resolve().parent:
         raise CliError("--out-dir must not be the input's own directory")
     lines = result.report.to_jsonl().splitlines()
@@ -1013,7 +1029,7 @@ def _write_edited(
     def refuse_taken(taken: Path) -> None:
         if taken.exists() and not may_replace(taken):
             _error(
-                f"OUTPUT_EXISTS: output '{taken}' already exists (use --force to overwrite)",
+                f"OUTPUT_EXISTS: output '{_slash_path(taken)}' already exists (use --force to overwrite)",
                 EXIT_USAGE,
             )
             raise SystemExit(EXIT_USAGE)

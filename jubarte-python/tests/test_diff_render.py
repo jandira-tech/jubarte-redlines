@@ -158,7 +158,9 @@ def test_cli_diff_render_exit_codes_and_files(tmp_path: Path, capsys: pytest.Cap
     assert summary["changed"] == 2 and summary["a_pages"] == 2 and summary["b_pages"] == 3
     assert summary["pages"][2] == {"index": 2, "changed_ratio": 1.0, "bbox": summary["pages"][2]["bbox"], "only_in": "b"}
 
-    assert main(["diff-render", str(a), str(b), "--dpi", "20", "--out-dir", str(out)]) == 1
+    with pytest.raises(SystemExit) as refusal:
+        main(["diff-render", str(a), str(b), "--dpi", "20", "--out-dir", str(out)])
+    assert refusal.value.code == 2
     assert "already exists" in capsys.readouterr().err
 
     assert main(["visual-diff", str(a), str(b), "--dpi", "20", "--json", "--no-overlay"]) == 5

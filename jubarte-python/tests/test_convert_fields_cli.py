@@ -117,8 +117,9 @@ def test_existing_destinations_are_checked_before_refresh(args, existing):
     destination.write_bytes(b"preserve this file")
     source = Mock(spec=Document)
 
-    with pytest.raises(cli.CliError, match=r"already exists.*--force"):
+    with pytest.raises(SystemExit) as error:
         cli._write_updated_fields(args, source)
+    assert error.value.code == 2
 
     source.update_fields.assert_not_called()
     assert destination.read_bytes() == b"preserve this file"
