@@ -319,6 +319,10 @@ pub struct InputBudget {
     pub max_uncompressed_bytes: u64,
     /// Maximum element nesting depth in any XML part.
     pub max_xml_depth: usize,
+    /// Maximum XML element start tags across all the package's XML parts
+    /// (#2014). Absent from manifests written before 0.17.0.
+    #[serde(default)]
+    pub max_xml_elements: u64,
 }
 
 impl From<crate::admission::InputLimits> for InputBudget {
@@ -331,6 +335,7 @@ impl From<crate::admission::InputLimits> for InputBudget {
             max_part_bytes: l.max_part_bytes,
             max_uncompressed_bytes: l.max_uncompressed_bytes,
             max_xml_depth: l.max_xml_depth,
+            max_xml_elements: l.max_xml_elements,
         }
     }
 }
@@ -509,7 +514,7 @@ pub fn capabilities_text(c: &Capabilities) -> String {
     out.push_str(&format!(
         "limits: plain text runs {}, refuses opaque ranges {}, reads legacy .doc {}, \
          {} bytes compressed, {} entries, {} bytes per part, {} bytes uncompressed, \
-         XML depth {}\n",
+         XML depth {}, {} XML elements\n",
         yes(c.limits.plain_text_runs),
         yes(c.limits.refuses_opaque_ranges),
         yes(c.limits.reads_legacy_doc),
@@ -517,7 +522,8 @@ pub fn capabilities_text(c: &Capabilities) -> String {
         input.max_entries,
         input.max_part_bytes,
         input.max_uncompressed_bytes,
-        input.max_xml_depth
+        input.max_xml_depth,
+        input.max_xml_elements
     ));
     let rules: Vec<String> = c
         .validate_rules

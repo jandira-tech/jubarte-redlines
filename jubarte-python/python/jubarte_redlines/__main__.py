@@ -33,7 +33,9 @@ import argparse
 import contextlib
 import json
 import os
+import math
 import stat
+import subprocess
 import sys
 import uuid
 from dataclasses import asdict
@@ -51,6 +53,7 @@ EXIT_USAGE = 2
 EXIT_PLAN_REFUSED = 3
 EXIT_PAGES_DIFFER = 5
 EXIT_FINDINGS = 2
+EXIT_TIMEOUT = 124
 
 # Whether the command line asks for JSON (`_native.wants_json`): an error
 # then prints its JSON line on stdout too, as the binary's does (#1255).
@@ -1659,8 +1662,46 @@ def build_parser() -> SharedParser:
     return SharedParser()
 
 
+def _env_timeout() -> float | None:
+    """``JUBARTE_TIMEOUT`` in seconds, as the binary reads it (#2016): unset
+    or empty is no bound; anything but a finite number above 0 is a usage
+    error naming the variable."""
+    value = os.environ.get("JUBARTE_TIMEOUT", "")
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        _error(f"JUBARTE_TIMEOUT: '{value}' is not a number of seconds", EXIT_USAGE)
+        raise SystemExit(EXIT_USAGE) from None
+    if not (math.isfinite(seconds) and seconds > 0):
+        _error(
+            f"JUBARTE_TIMEOUT: '{value}': the timeout must be a finite number of seconds above 0",
+            EXIT_USAGE,
+        )
+        raise SystemExit(EXIT_USAGE)
+    return seconds
+
+
+def _run_bounded(argv: Sequence[str], seconds: float) -> int:
+    """The task in a child process killed after ``seconds``: the engine call
+    holds the interpreter while it lays out or compares, so no in-process
+    timer could interrupt it. Exits 124 with the binary's message (#2016)."""
+    env = {k: v for k, v in os.environ.items() if k != "JUBARTE_TIMEOUT"}
+    try:
+        return subprocess.run(
+            [sys.executable, "-m", "jubarte_redlines", *argv], env=env, timeout=seconds, check=False
+        ).returncode
+    except subprocess.TimeoutExpired:
+        print(f"error: DEADLINE_EXCEEDED: timed out after {seconds:g}s (JUBARTE_TIMEOUT)", file=sys.stderr)
+        return EXIT_TIMEOUT
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI; returns the exit code (``SystemExit`` only for usage errors)."""
+    seconds = _env_timeout()
+    if seconds is not None:
+        return _run_bounded(list(sys.argv[1:] if argv is None else argv), seconds)
     args = build_parser().parse_args(argv)
     try:
         return int(args.func(args))

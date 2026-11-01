@@ -13,10 +13,12 @@
 // combination, an existing output), 3 edit plan refused (its per-operation
 // report is on stdout; nothing was written).
 
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const wasm = require("jubarte-wasm");
@@ -26,6 +28,7 @@ const EXIT_OK = 0;
 const EXIT_ERROR = 1;
 const EXIT_USAGE = 2;
 const EXIT_PLAN_REFUSED = 3;
+const EXIT_TIMEOUT = 124;
 
 /** A user-facing failure; printed as `error: ...`, exit 1. */
 class CliError extends Error {}
@@ -1096,4 +1099,37 @@ function main(argv) {
   }
 }
 
-process.exitCode = main(process.argv.slice(2));
+/**
+ * JUBARTE_TIMEOUT (seconds), as the binary reads it (#2016): the task runs
+ * in a child killed at the deadline, since a synchronous wasm call cannot
+ * be interrupted on its own thread. Exits 124 with the binary's message.
+ */
+function boundedMain(argv) {
+  const value = process.env.JUBARTE_TIMEOUT ?? "";
+  if (value === "") return main(argv);
+  const seconds = Number(value);
+  if (value.trim() === "" || Number.isNaN(seconds)) {
+    console.error(`error: JUBARTE_TIMEOUT: '${value}' is not a number of seconds`);
+    return EXIT_USAGE;
+  }
+  if (!(Number.isFinite(seconds) && seconds > 0)) {
+    console.error(`error: JUBARTE_TIMEOUT: '${value}': the timeout must be a finite number of seconds above 0`);
+    return EXIT_USAGE;
+  }
+  const env = { ...process.env };
+  delete env.JUBARTE_TIMEOUT;
+  const child = spawnSync(process.execPath, [fileURLToPath(import.meta.url), ...argv], {
+    stdio: "inherit",
+    env,
+    timeout: seconds * 1000,
+    killSignal: "SIGKILL",
+  });
+  if (child.error?.code === "ETIMEDOUT") {
+    console.error(`error: DEADLINE_EXCEEDED: timed out after ${seconds}s (JUBARTE_TIMEOUT)`);
+    return EXIT_TIMEOUT;
+  }
+  if (child.error) throw child.error;
+  return child.status ?? EXIT_ERROR;
+}
+
+process.exitCode = boundedMain(process.argv.slice(2));

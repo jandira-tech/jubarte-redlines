@@ -671,11 +671,12 @@ const EXIT_TIMEOUT: i32 = 124;
 
 /// Exit [`EXIT_TIMEOUT`] once `limit` has passed, whatever the main thread
 /// is doing (layout of a pathological document cannot be interrupted).
-fn arm_timeout(limit: std::time::Duration) {
+/// `source` names what set the bound (`--timeout`, `JUBARTE_TIMEOUT`).
+fn arm_timeout(limit: std::time::Duration, source: &'static str) {
     std::thread::spawn(move || {
         std::thread::sleep(limit);
         eprintln!(
-            "error: timed out after {}s (--timeout)",
+            "error: DEADLINE_EXCEEDED: timed out after {}s ({source})",
             limit.as_secs_f64()
         );
         std::process::exit(EXIT_TIMEOUT);
@@ -4473,6 +4474,15 @@ fn main() -> ExitCode {
 }
 
 fn cli_main() -> ExitCode {
+    // A host's bound on any task, a hostile input's included (#2016).
+    match jubarte::cli::env_timeout() {
+        Ok(Some(limit)) => arm_timeout(limit, "JUBARTE_TIMEOUT"),
+        Ok(None) => {}
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(EXIT_USAGE);
+        }
+    }
     let argv: Vec<String> = std::env::args_os()
         .skip(1)
         .map(|a| a.to_string_lossy().into_owned())
@@ -4650,7 +4660,7 @@ fn cli_main() -> ExitCode {
             timeout,
         }) => {
             if let Some(limit) = timeout {
-                arm_timeout(limit);
+                arm_timeout(limit, "--timeout");
             }
             let options = match pdf_options(&render, compress) {
                 Ok(options) => options,

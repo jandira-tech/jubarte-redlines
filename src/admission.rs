@@ -58,6 +58,11 @@ pub struct InputLimits {
     pub max_attribute_value_bytes: usize,
     /// Bytes in a complete start tag, including syntax and delimiters.
     pub max_start_tag_bytes: usize,
+    /// XML element start tags in all the package's XML parts together.
+    /// Memory follows the element count, not the bytes: a few hundred KB of
+    /// zipped one-run paragraphs is millions of DOM nodes and several GB
+    /// once parsed and laid out (#2014).
+    pub max_xml_elements: u64,
 }
 
 impl Default for InputLimits {
@@ -73,6 +78,10 @@ impl Default for InputLimits {
             max_attribute_name_bytes: crate::xmllinq::parse::MAX_ATTRIBUTE_NAME_BYTES,
             max_attribute_value_bytes: crate::xmllinq::parse::MAX_ATTRIBUTE_VALUE_BYTES,
             max_start_tag_bytes: crate::xmllinq::parse::MAX_TAG_ATTRIBUTE_BYTES,
+            // The largest of 2,434 real documents (the bench corpora and
+            // tests/) holds 365,343 elements: 2,000,000 refuses none of them
+            // and bounds `read` near 1.6 GB (#2014).
+            max_xml_elements: 2_000_000,
         }
     }
 }
@@ -96,6 +105,7 @@ impl InputLimits {
             max_attribute_name_bytes: crate::xmllinq::parse::MAX_ATTRIBUTE_NAME_BYTES,
             max_attribute_value_bytes: crate::xmllinq::parse::MAX_ATTRIBUTE_VALUE_BYTES,
             max_start_tag_bytes: crate::xmllinq::parse::MAX_TAG_ATTRIBUTE_BYTES,
+            max_xml_elements: 4_000_000,
         }
     }
 }
@@ -125,6 +135,8 @@ pub struct InputLimitOverrides {
     pub max_attribute_value_bytes: Option<usize>,
     /// Replaces [`InputLimits::max_start_tag_bytes`].
     pub max_start_tag_bytes: Option<usize>,
+    /// Replaces [`InputLimits::max_xml_elements`].
+    pub max_xml_elements: Option<u64>,
 }
 
 impl InputLimitOverrides {
@@ -161,6 +173,7 @@ impl InputLimitOverrides {
                 .max_attribute_value_bytes
                 .unwrap_or(base.max_attribute_value_bytes),
             max_start_tag_bytes: self.max_start_tag_bytes.unwrap_or(base.max_start_tag_bytes),
+            max_xml_elements: self.max_xml_elements.unwrap_or(base.max_xml_elements),
         }
     }
 }
@@ -447,6 +460,72 @@ pub(crate) fn tally_inflated(
     Ok(())
 }
 
+/// Count one part's XML element start tags into `total`, the way a
+/// tolerant reader would see them, and refuse a DOCTYPE in its prolog.
+///
+/// Shared by [`admit`] and the package open every command goes through
+/// (`opc::read_package`), so the cap holds on the tolerant `read` path
+/// too, where a part is never checked for well-formedness (#2014). A part
+/// whose first character (after a byte-order mark and white space) is not
+/// `<` is not XML and is not counted, so media never charges the budget.
+/// Comments are skipped; CDATA is not, so text in it that looks like a tag
+/// counts, which only ever refuses sooner.
+///
+/// A DOCTYPE is refused because Word refuses every part that carries one,
+/// even a bare `<!DOCTYPE w:document>` with no internal subset (#2015,
+/// probed 2026-10-31), and because an internal subset is where entity
+/// bombs and external entities live.
+pub(crate) fn tally_xml_elements(
+    total: &mut u64,
+    name: &str,
+    data: &[u8],
+    limits: &InputLimits,
+) -> Result<(), AdmissionError> {
+    let text = part_text(data);
+    let body = text.trim_start_matches('\u{feff}').trim_start();
+    if !body.starts_with('<') {
+        return Ok(());
+    }
+    let bytes = body.as_bytes();
+    let mut at = 0usize;
+    let mut rooted = false;
+    while let Some(offset) = bytes.get(at..).and_then(|rest| rest.iter().position(|&b| b == b'<')) {
+        let open = at + offset;
+        let rest = bytes.get(open + 1..).unwrap_or_default();
+        at = open + 1;
+        match rest.first() {
+            Some(b'!') if rest.starts_with(b"!--") => {
+                at = rest
+                    .get(3..)
+                    .and_then(|tail| tail.windows(3).position(|w| w == b"-->"))
+                    .map_or(bytes.len(), |end| open + 4 + end + 3);
+            }
+            Some(b'!') if !rooted && rest.starts_with(b"!DOCTYPE") => {
+                return Err(AdmissionError::new(
+                    AdmissionErrorKind::InvalidXml,
+                    format!("{}: DTD declarations are unsupported", shown(name)),
+                ));
+            }
+            Some(&b) if b == b'_' || b == b':' || b.is_ascii_alphabetic() || b >= 0x80 => {
+                rooted = true;
+                *total = total.saturating_add(1);
+                if *total > limits.max_xml_elements {
+                    return Err(AdmissionError::new(
+                        AdmissionErrorKind::InputLimit,
+                        format!(
+                            "{} brings the package past {} XML elements, the element limit",
+                            shown(name),
+                            limits.max_xml_elements
+                        ),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// Admit `bytes` as a DOCX within `limits`, returning facts about it on
 /// success and a typed refusal on the first budget or rule the package
 /// breaks.
@@ -528,6 +607,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
     }
 
     let mut total = 0u64;
+    let mut elements = 0u64;
     let mut kept: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     for i in 0..archive.len() {
         let mut entry = archive
@@ -555,6 +635,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             let n = buf.len() as u64;
             if n <= cap {
                 check_xml_depth(&name, &buf, limits)?;
+                tally_xml_elements(&mut elements, &name, &buf, &limits)?;
                 if lower == "[content_types].xml" || lower == "_rels/.rels" {
                     kept.insert(lower, buf);
                 }
@@ -584,6 +665,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
                 AdmissionError::new(K::InvalidPackage, format!("{}: {e}", shown(&main_part)))
             })?;
         check_xml_depth(&main_part, &buf, limits)?;
+        tally_xml_elements(&mut elements, &main_part, &buf, &limits)?;
     }
     Ok(AdmittedPackage {
         entries: archive.len(),
@@ -916,6 +998,11 @@ fn check_xml_depth(name: &str, xml: &[u8], limits: InputLimits) -> Result<(), Ad
                 return Err(invalid(format!("{depth} element(s) left unclosed")));
             }
             Ok(Event::Eof) => return Ok(()),
+            // Word refuses every part with a DOCTYPE (#2015); entity bombs
+            // and external entities live in its internal subset.
+            Ok(Event::DocType(_)) => {
+                return Err(invalid("DTD declarations are unsupported".to_string()));
+            }
             Ok(_) => {}
             Err(e) => return Err(invalid(e.to_string())),
         }

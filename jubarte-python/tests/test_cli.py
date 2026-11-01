@@ -2054,3 +2054,33 @@ def test_a_failed_publication_leaves_the_output_and_no_partial(
     assert capsys.readouterr().err.splitlines()[-1] == (f"error: writing {out}: Permission denied (os error 13)")
     assert out.read_bytes() == b"keep me\n"
     assert [p.name for p in tmp_path.iterdir() if ".jubarte-" in p.name] == []
+
+
+def test_jubarte_timeout_bounds_a_task_as_the_binary_does(letter: Path, tmp_path: Path) -> None:
+    # #2016: JUBARTE_TIMEOUT runs the task in a child killed at the deadline.
+    # A millisecond is less than the child needs to start, so it always fires.
+    view = tmp_path / "view.md"
+    env = {**os.environ, "JUBARTE_TIMEOUT": "0.001"}
+    run = subprocess.run(
+        [sys.executable, "-m", "jubarte_redlines", "read", str(letter), "-o", str(view)],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert run.returncode == 124, run.stderr
+    assert "error: DEADLINE_EXCEEDED: timed out after 0.001s (JUBARTE_TIMEOUT)" in run.stderr
+    assert not view.exists()
+    # A generous bound changes nothing.
+    env["JUBARTE_TIMEOUT"] = "120"
+    run = subprocess.run(
+        [sys.executable, "-m", "jubarte_redlines", "read", str(letter)], capture_output=True, text=True, env=env
+    )
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.startswith("---\nsource: "), run.stdout
+    for bad in ["0", "-1", "soon", "inf"]:
+        env["JUBARTE_TIMEOUT"] = bad
+        run = subprocess.run(
+            [sys.executable, "-m", "jubarte_redlines", "read", str(letter)], capture_output=True, text=True, env=env
+        )
+        assert run.returncode == 2, (bad, run.stderr)
+        assert "error: JUBARTE_TIMEOUT: " in run.stderr, (bad, run.stderr)

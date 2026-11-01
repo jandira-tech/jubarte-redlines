@@ -2068,3 +2068,21 @@ test("accept --in-place rechecks the source before replacing (#1888)", () => {
   assert.equal(fs.readFileSync(file, "utf8"), "poisoned-source");
   assert.doesNotMatch(poisoned.err, /in place \(replaced sha256/);
 });
+
+test("JUBARTE_TIMEOUT bounds a task as the binary does (#2016)", () => {
+  // The task runs in a child killed at the deadline; a millisecond is less
+  // than the child needs to start, so it always fires.
+  const view = path.join(tmp, "timeout-view.md");
+  const late = runEnv({ JUBARTE_TIMEOUT: "0.001" }, "read", untracked, "-o", view);
+  assert.equal(late.code, 124, late.err);
+  assert.match(late.err, /error: DEADLINE_EXCEEDED: timed out after 0\.001s \(JUBARTE_TIMEOUT\)/);
+  assert.equal(fs.existsSync(view), false);
+  const roomy = runEnv({ JUBARTE_TIMEOUT: "120" }, "read", untracked);
+  assert.equal(roomy.code, 0, roomy.err);
+  assert.match(roomy.out, /^---\nsource: /);
+  for (const bad of ["0", "-1", "soon", "Infinity"]) {
+    const refused = runEnv({ JUBARTE_TIMEOUT: bad }, "read", untracked);
+    assert.equal(refused.code, 2, `${bad}: ${refused.err}`);
+    assert.match(refused.err, /error: JUBARTE_TIMEOUT: /, bad);
+  }
+});

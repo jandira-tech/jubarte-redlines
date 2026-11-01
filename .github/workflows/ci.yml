@@ -55,6 +55,11 @@ jobs:
       # The library without the `cli` feature (clap) must still build: a
       # library path once called into src/cli.rs and only --all-features ran.
       - run: cargo clippy --all-targets --no-default-features -- -D warnings
+      # No network crate without self-update, and no network API outside
+      # src/update (#2018): Word fetches remote templates on open; jubarte
+      # must not. Here, not in the scripts job, because it runs cargo tree.
+      - run: python3 scripts/test_check_no_network.py
+      - run: python3 scripts/check_no_network.py
       # The two rustdoc builds scripts/release.sh runs (steps 5 and 6): 0.13
       # reached its release with 39 broken intra-doc links nothing had built.
       - run: cargo doc --no-deps --all-features
