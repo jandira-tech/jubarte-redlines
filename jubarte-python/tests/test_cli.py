@@ -1997,3 +1997,60 @@ def test_replace_creates_new_outputs_owner_only(tmp_path: Path) -> None:
         finally:
             os.umask(old)
         assert out.stat().st_mode & 0o777 == 0o600, oct(mask)
+
+
+def test_read_output_through_a_hard_link_leaves_the_input_alone(letter: Path, tmp_path: Path) -> None:
+    """``-o`` publishes over the path, as the binary does: a hard link to
+    the input is broken, never written through, and no staged file is left
+    (#1691)."""
+    alias = tmp_path / "alias.md"
+    os.link(letter, alias)
+    before = letter.read_bytes()
+    assert main(["read", str(letter), "-o", str(alias), "--force"]) == 0
+    assert letter.read_bytes() == before, "the input keeps its bytes"
+    assert alias.read_bytes() != before and alias.stat().st_size > 0
+    assert alias.stat().st_ino != letter.stat().st_ino, "the link was broken"
+    assert [p.name for p in tmp_path.iterdir() if ".jubarte-" in p.name] == []
+
+
+def test_read_output_through_a_symbolic_link_replaces_the_link(letter: Path, tmp_path: Path) -> None:
+    """The link's own directory entry is replaced: the referent keeps its
+    bytes and the output path becomes a regular file (#1691)."""
+    referent = tmp_path / "referent.md"
+    referent.write_text("keep me\n", encoding="utf-8")
+    alias = tmp_path / "alias.md"
+    alias.symlink_to(referent)
+    assert main(["read", str(letter), "-o", str(alias), "--force"]) == 0
+    assert referent.read_text(encoding="utf-8") == "keep me\n"
+    assert not alias.is_symlink() and alias.is_file()
+    assert alias.read_bytes() != b"keep me\n"
+
+
+def test_convert_output_through_a_hard_link_leaves_the_input_alone(letter: Path, tmp_path: Path) -> None:
+    """The render path publishes the same way: a hard-linked ``-o`` never
+    writes the PDF into the input's inode (#1691)."""
+    alias = tmp_path / "alias.pdf"
+    os.link(letter, alias)
+    before = letter.read_bytes()
+    assert main(["convert", str(letter), "-o", str(alias), "--force"]) == 0
+    assert letter.read_bytes() == before and zipfile.is_zipfile(letter)
+    assert alias.read_bytes().startswith(b"%PDF")
+    assert alias.stat().st_ino != letter.stat().st_ino
+
+
+def test_a_failed_publication_leaves_the_output_and_no_partial(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed rename is a plain error: the previous output keeps its
+    bytes and the staged file is removed (#1691)."""
+    out = tmp_path / "view.md"
+    out.write_bytes(b"keep me\n")
+
+    def refuse(src: str, dst: str) -> None:
+        raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr(os, "replace", refuse)
+    assert main(["read", str(letter), "-o", str(out), "--force"]) == 1
+    assert capsys.readouterr().err.splitlines()[-1] == (f"error: writing {out}: Permission denied (os error 13)")
+    assert out.read_bytes() == b"keep me\n"
+    assert [p.name for p in tmp_path.iterdir() if ".jubarte-" in p.name] == []

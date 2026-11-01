@@ -171,22 +171,12 @@ def _check_side_file(side: Path, flag: str, others: tuple[tuple[Path, str], ...]
     _ensure_writable(side, force)
 
 
-def _write(path: Path, data: bytes | str) -> int:
-    """Writes ``data`` (text as UTF-8, newlines as given); returns the bytes written."""
-    raw = data.encode("utf-8") if isinstance(data, str) else data
-    try:
-        path.write_bytes(raw)
-    except OSError as exc:
-        raise CliError(f"writing {path}: {_os(exc)}") from exc
-    return len(raw)
-
-
 def _replace(path: Path, data: bytes | str) -> int:
-    """Writes ``data`` beside ``path`` and renames it over, as the binary
-    publishes: an existing output — a hard or symbolic link among them —
-    has its own directory entry replaced, never its target written
-    through; a replaced regular file keeps its mode. Returns the bytes
-    written."""
+    """Writes ``data`` beside ``path`` and renames it over: the one writer
+    for every CLI output, as the binary publishes (#1691). An existing
+    output — a hard or symbolic link among them — has its own directory
+    entry replaced, never its target written through; a replaced regular
+    file keeps its mode. Returns the bytes written."""
     raw = data.encode("utf-8") if isinstance(data, str) else data
     # A name nobody can guess, created only if it is not there: a link
     # planted beside the output is never followed (CodeRabbit on #1698).
@@ -366,7 +356,7 @@ def _write_result(
         text = _native.read_json(data, **_selection(view), validity_file=validity_file) + "\n"
     else:
         text = data
-    _wrote(args, output, kind, _write(output, text))
+    _wrote(args, output, kind, _replace(output, text))
 
 
 def _not_written(args: argparse.Namespace) -> str:
@@ -447,7 +437,7 @@ def _read_task(args: argparse.Namespace) -> int:
             return EXIT_PLAN_REFUSED
         if args.output is not None:
             _ensure_writable(args.output, args.force)
-            _wrote(args, args.output, "json", _write(args.output, result))
+            _wrote(args, args.output, "json", _replace(args.output, result))
             return EXIT_OK
         sys.stdout.write(result)
         return EXIT_OK
@@ -888,11 +878,11 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     saved = []
     for name, data in outputs:
-        _write(out_dir / name, data)
+        _replace(out_dir / name, data)
         saved.append({"f": name, "bytes": len(data), "sha256": _native.source_sha256(data)})
     lines.append(_jsonl({"ev": "save", "dir": str(out_dir), "outputs": saved}))
     lines.append(summary)
-    _write(out_dir / "report.jsonl", "\n".join(lines) + "\n")
+    _replace(out_dir / "report.jsonl", "\n".join(lines) + "\n")
     if args.quiet:
         return EXIT_OK
     # A pure accept/reject prints the resolved lines on stdout, nothing
@@ -1067,10 +1057,8 @@ def _write_edited(
                 )
                 return EXIT_PLAN_REFUSED
             _replace_inplace(output, data)
-        elif in_place:
-            _replace(output, data)
         else:
-            _write(output, data)
+            _replace(output, data)
     if args.quiet:
         return EXIT_OK
     if in_place:
@@ -1153,7 +1141,7 @@ def cmd_convert(args: argparse.Namespace) -> int:
                     raise CliError(f"{flag} applies to PDF or PNG output only")
             docx_out = args.output or args.file.with_suffix(".docx")
             _ensure_writable(docx_out, args.force)
-            _wrote(args, docx_out, "docx", _write(docx_out, doc.to_bytes()))
+            _wrote(args, docx_out, "docx", _replace(docx_out, doc.to_bytes()))
             return EXIT_OK
     else:
         if args.output_format == "docx" and not args.update_fields:
@@ -1209,18 +1197,18 @@ def _render_to(args: argparse.Namespace, doc: Document, output: Path) -> None:
             if side is not None and _same_file(side, path):
                 raise CliError(f"{flag} '{side}' is the same file as the PNG output")
     if rendered.pdf is not None:
-        _write(output, rendered.pdf)
+        _replace(output, rendered.pdf)
         _wrote(args, output, "pdf", len(rendered.pdf), pages)
     if png:
         from . import _native
 
         for path, image in zip(png_paths, rendered.pngs):
-            _write(path, image)
+            _replace(path, image)
         if not args.quiet:
             pattern = output.parent / f"{output.stem}-page-NN.png"
             print(_native.wrote_png_line(pattern, len(rendered.pngs), args.dpi), file=sys.stderr)
     if getattr(args, "font_report", None) is not None:
-        _write(args.font_report, json.dumps([asdict(f) for f in rendered.report.fonts]))
+        _replace(args.font_report, json.dumps([asdict(f) for f in rendered.report.fonts]))
     if getattr(args, "report", None) is not None:
         report = {
             "page_count": pages,
@@ -1228,7 +1216,7 @@ def _render_to(args: argparse.Namespace, doc: Document, output: Path) -> None:
             "pages": [asdict(p) for p in rendered.report.pages],
             "fonts": [asdict(f) for f in rendered.report.fonts],
         }
-        _write(args.report, json.dumps(report, ensure_ascii=False))
+        _replace(args.report, json.dumps(report, ensure_ascii=False))
 
 
 def _write_updated_fields(args: argparse.Namespace, doc: Document) -> int:
@@ -1248,14 +1236,14 @@ def _write_updated_fields(args: argparse.Namespace, doc: Document) -> int:
         )
     print(f"{len(updated.fields)} field(s) written; {updated.page_count} page(s)", file=sys.stderr)
     if args.report is not None:
-        _write(
+        _replace(
             args.report,
             json.dumps(
                 {"page_count": updated.page_count, "fields": [asdict(f) for f in updated.fields]}, ensure_ascii=False
             ),
         )
     data = updated.document.to_bytes()
-    _write(output, data)
+    _replace(output, data)
     _wrote(args, output, "docx", len(data))
     return EXIT_OK
 
@@ -1295,7 +1283,7 @@ def cmd_diff_render(args: argparse.Namespace) -> int:
             _ensure_writable(path, args.force)
         out.mkdir(parents=True, exist_ok=True)
         for path, data in files:
-            _write(path, data)
+            _replace(path, data)
     if args.json:
         print(summary)
     else:
@@ -1334,7 +1322,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
             raise SystemExit(EXIT_USAGE)
         _ensure_writable(output, args.force)
         critic = diff(original, modified, format="critic", author=args.author, date=args.datetime).text
-        _wrote(args, output, "md", _write(output, critic))
+        _wrote(args, output, "md", _replace(output, critic))
         return EXIT_OK
     if args.output_format != "png":
         _ensure_writable(output, args.force)
@@ -1389,7 +1377,7 @@ def cmd_diff(args: argparse.Namespace) -> int:
     if output is None:
         sys.stdout.write(text)
         return EXIT_OK
-    size = _write(output, text)
+    size = _replace(output, text)
     if not args.quiet:
         print(f"wrote {_spelled(args, 'output')} (md, {size} bytes)", file=sys.stderr)
     return EXIT_OK
@@ -1490,7 +1478,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         _ensure_writable(args.repair, args.force)
         repaired = doc.repair()
         docx = repaired.document.to_bytes()
-        size = _write(args.repair, docx)
+        size = _replace(args.repair, docx)
         if not args.json:
             # A structural repair: the edits' history is a separate check.
             history = (

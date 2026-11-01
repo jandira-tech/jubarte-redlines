@@ -558,6 +558,31 @@ test("a replaced output keeps its mode, as the binary's does (#1698)", () => {
   assert.deepEqual(fs.readdirSync(tmp).filter((n) => n.endsWith(".partial")), []);
 });
 
+test("read -o publishes over the path: a hard link to the input keeps its bytes (#1691)", () => {
+  const file = copy(untracked, "hard-link-input.docx");
+  const alias = path.join(tmp, "hard-link-view.md");
+  fs.linkSync(file, alias);
+  const before = fs.readFileSync(file);
+  const r = run("read", file, "-o", alias, "--force");
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(fs.readFileSync(file), before, "the input keeps its bytes");
+  assert.notEqual(fs.statSync(file).ino, fs.statSync(alias).ino, "the link was broken");
+  assert.ok(fs.statSync(alias).size > 0);
+  assert.deepEqual(fs.readdirSync(tmp).filter((n) => n.endsWith(".partial")), []);
+});
+
+test("read -o replaces a symlinked output, never its referent (#1691)", () => {
+  const referent = path.join(tmp, "symlink-referent.md");
+  fs.writeFileSync(referent, "keep me\n");
+  const alias = path.join(tmp, "symlink-view.md");
+  fs.symlinkSync(referent, alias);
+  const r = run("read", untracked, "-o", alias, "--force");
+  assert.equal(r.code, 0, r.err);
+  assert.equal(fs.readFileSync(referent, "utf8"), "keep me\n");
+  assert.ok(!fs.lstatSync(alias).isSymbolicLink(), "the link entry was replaced");
+  assert.ok(fs.statSync(alias).size > 0);
+});
+
 test("convert --move-comments and --changed-only", () => {
   const pages = (r) => {
     assert.equal(r.code, 0, r.err);
