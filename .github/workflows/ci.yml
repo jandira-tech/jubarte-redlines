@@ -293,7 +293,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
       - uses: ./.github/actions/mbx
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - name: build the extension and run pytest
         working-directory: jubarte-python
         run: |
@@ -310,7 +310,7 @@ jobs:
       # Python 3.12 is the scripts' floor, so they are tested on it. The
       # runner's system Python is older; uv installs 3.12 and puts its venv
       # first on PATH, so every `python3` below is 3.12.
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.12"
           activate-environment: true

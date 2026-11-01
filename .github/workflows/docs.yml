@@ -78,7 +78,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
       - uses: ./.github/actions/mbx
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       # The generator runs jubarte-wasm/cli/bin/jubarte-redlines.mjs against
       # the checked-in jubarte-wasm build. That CLI is ESM and engines-declares
       # node >= 18.3 (jubarte-wasm/cli/package.json); the self-hosted runner's
@@ -112,7 +112,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
       - uses: ./.github/actions/mbx
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - run: cargo build --release --bin jubarte
       # The examples' input generators (make_input.py and the like) import
       # python-docx under `set -e`; 1.2.0 is the version the committed
