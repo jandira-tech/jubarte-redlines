@@ -1345,7 +1345,8 @@ class Checklist(unittest.TestCase):
 
     def test_item_14_post_release_reproduction(self) -> None:
         self.kw("reproduces")
-        self.kw("--binary")  # the bench rerun without --binary
+        self.kw("scripts/identity.py")
+        self.kw("not re-run")  # identity replaces a Word rerun on the released binary
 
     def test_item_15_licensing_and_stale_docs(self) -> None:
         self.kw("REUSE")

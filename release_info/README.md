@@ -134,8 +134,9 @@ exist yet; the candidate may still report the previous version, which is
 why `candidate_reports` is recorded beside the release's `version`).
 `tools.jubarte.commit` is that checkout's HEAD and `binary_sha256` is that
 candidate's hash — deliberately not the shipped binaries' hash. After the
-GitHub release exists, the same flow without `--binary` re-runs on the
-release's own binary. `scripts/check_release_info.py --commit SHA
+GitHub release exists, `scripts/identity.py` proves the released binary
+reproduces the candidate's outputs on the release samples; the flow is not
+re-run on it, since identical outputs score the same. `scripts/check_release_info.py --commit SHA
 --binary-sha256 HEX` binds the recorded identity to a given binary when
 that is what you want to prove; `scripts/release.sh` passes neither.
 
