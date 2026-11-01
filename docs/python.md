@@ -1793,7 +1793,8 @@ Mirrors `jubarte::document_comparer::compare_documents`; `date` (ISO-8601
 `w:date` stamp) defaults to the engine's fixed epoch for deterministic
 output. `input_limits` overrides the admission budget key by key
 (`max_compressed_bytes`, `max_entries`, `max_part_bytes`,
-`max_uncompressed_bytes`, `max_xml_depth`, `max_xml_elements`); a package
+`max_uncompressed_bytes`, `max_xml_depth`, `max_xml_elements`,
+`max_story_units`); a package
 past it raises
 `JubarteError` with `INPUT_LIMIT`.
 
