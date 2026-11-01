@@ -48,11 +48,16 @@ pub struct UnsupportedContentError {
 
 impl std::fmt::Display for UnsupportedContentError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "UNSUPPORTED_CONTENT: {}", self.message)
+        write!(f, "{}: {}", Self::CODE, self.message)
     }
 }
 
 impl std::error::Error for UnsupportedContentError {}
+
+impl UnsupportedContentError {
+    /// The stable error code agents and bindings see.
+    pub const CODE: &'static str = "UNSUPPORTED_CONTENT";
+}
 
 fn story_diff_error(part: &str, reason: &'static str) -> OpcError {
     crate::opc::refused(StoryDiffError {
@@ -5326,13 +5331,37 @@ fn refuse_past_story_budget(
     }))
 }
 
-/// Refuse a story the atomizer cannot flatten: a subdocument, an altChunk,
-/// a content part or custom XML markup (word_exp N4 panicked the atomizer,
-/// 2026-10-31). `story` names the part or side in the error.
+/// Refuse a story the atomizer cannot flatten, in one walk: a subdocument,
+/// an altChunk, a content part or custom XML markup (word_exp N4 panicked
+/// the atomizer, 2026-10-31), or an element with two direct `w:sectPr`
+/// (the atomizer's last-sectPr move expects one). `story` names the part or
+/// side in the error.
 fn refuse_unatomizable(dom: &Dom, root: NodeId, story: &str) -> Result<(), OpcError> {
-    crate::comparer::preprocess::test_for_invalid_content(dom, root)
-        .and_then(|()| crate::comparer::atomize::verify_no_invalid_content(dom, root))
-        .map_err(|e| invalid_content(format!("{story}: {e}")))
+    let content_part = W::name("contentPart");
+    let sect_pr = W::sect_pr();
+    let mut sect_parents = std::collections::HashSet::new();
+    let mut bad = None;
+    dom.find_descendant_element(root, None, |e| {
+        if dom.name_is(e, &sect_pr) {
+            if let Some(parent) = dom.parent(e)
+                && !sect_parents.insert(parent)
+            {
+                bad = Some("Document contains two sectPr in one story element".to_string());
+            }
+        } else if dom.name_is(e, &content_part)
+            || dom
+                .name(e)
+                .is_some_and(|name| crate::comparer::tables::INVALID_ELEMENTS.contains(&name))
+        {
+            let name = dom
+                .name(e)
+                .map(|n| n.local_name().to_string())
+                .unwrap_or_default();
+            bad = Some(format!("Document contains {name}"));
+        }
+        bad.is_some()
+    });
+    bad.map_or(Ok(()), |e| Err(invalid_content(format!("{story}: {e}"))))
 }
 
 /// Admit one compare input under `limits`. A refusal keeps the typed
@@ -6793,7 +6822,7 @@ pub fn get_revisions(
 
     // C# :3948–:3949 — TestForInvalidContent (throws) +
     // RemoveExistingPowerToolsMarkup on main and both notes parts.
-    preprocess::test_for_invalid_content(&dom, root).map_err(invalid_content)?;
+    refuse_unatomizable(&dom, root, "input document")?;
     preprocess::remove_existing_powertools_markup(&mut dom, root);
     let mut note_roots: Vec<(NodeId, &str, crate::xmllinq::XName)> = Vec::new();
     let (fn_part, en_part) = notes_part_names(&pkg);
@@ -6804,11 +6833,18 @@ pub fn get_revisions(
         if let Some(x) = pkg.part_string(part) {
             let nd = dom.parse_xdocument(&x);
             if let Some(r) = dom.root(nd) {
+                refuse_unatomizable(&dom, r, part)?;
                 preprocess::remove_existing_powertools_markup(&mut dom, r);
                 note_roots.push((r, part, def));
             }
         }
     }
+    let units = note_roots
+        .iter()
+        .fold(story_units(&dom, root), |sum, (r, _, _)| {
+            sum.saturating_add(story_units(&dom, *r))
+        });
+    refuse_past_story_budget(units, "input document", settings.input_limits)?;
 
     let body = dom
         .element(root, &W::body())
