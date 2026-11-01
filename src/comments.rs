@@ -504,7 +504,7 @@ impl CommentFamily {
         );
         let mut by_para: HashMap<String, u32> = HashMap::new();
         let mut parent_para: Vec<(u32, String)> = Vec::new();
-        for node in dom.elements(comments.root, Some(&W::name("comment"))) {
+        for node in dom.elements(comments.root, Some(&W::comment())) {
             let Some(id) = dom
                 .attribute(node, &W::id())
                 .and_then(|v| v.parse::<u32>().ok())
@@ -570,7 +570,7 @@ impl CommentFamily {
             return Vec::new();
         };
         self.dom
-            .elements(comments.root, Some(&W::name("comment")))
+            .elements(comments.root, Some(&W::comment()))
             .into_iter()
             .filter_map(|c| {
                 self.dom
@@ -648,7 +648,7 @@ impl CommentFamily {
     pub(crate) fn add(&mut self, new: &NewComment<'_>) {
         let root = self.comments_root();
         let dom = &mut self.dom;
-        let comment = dom.new_element(W::name("comment"));
+        let comment = dom.new_element(W::comment());
         dom.set_attribute_value(comment, &W::id(), Some(&new.id.to_string()));
         dom.set_attribute_value(comment, &W::author(), Some(new.author));
         dom.set_attribute_value(comment, &W::date(), Some(new.date));
@@ -753,7 +753,7 @@ impl CommentFamily {
         let wrapper = dom.parse_xdocument(&format!("<fragment>{xml}</fragment>"));
         let Some(comment) = dom
             .root(wrapper)
-            .and_then(|w| dom.elements(w, Some(&W::name("comment"))).first().copied())
+            .and_then(|w| dom.elements(w, Some(&W::comment())).first().copied())
         else {
             return;
         };

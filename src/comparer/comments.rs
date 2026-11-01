@@ -71,7 +71,7 @@ fn comment_ids_of(pkg: &PartFs) -> HashSet<String> {
         return HashSet::new();
     };
     let id = W::id();
-    dom.elements(root, Some(&W::name("comment")))
+    dom.elements(root, Some(&W::comment()))
         .into_iter()
         .filter_map(|c| dom.attribute(c, &id).map(str::to_string))
         .collect()
@@ -104,7 +104,7 @@ fn comment_id_fingerprint_of(pkg: &PartFs) -> HashMap<String, String> {
         return HashMap::new();
     };
     let id = W::id();
-    dom.elements(root, Some(&W::name("comment")))
+    dom.elements(root, Some(&W::comment()))
         .into_iter()
         .filter_map(|c| {
             dom.attribute(c, &id)
@@ -1303,7 +1303,7 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
     };
     let id_name = W::id();
     let b_ids: HashSet<String> = dom
-        .elements(br, Some(&W::name("comment")))
+        .elements(br, Some(&W::comment()))
         .into_iter()
         .filter_map(|c| dom.attribute(c, &id_name).map(str::to_string))
         .collect();
@@ -1327,7 +1327,7 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
         .unwrap_or(0)
         + 1;
     let b_comment_fingerprints: HashMap<String, String> = dom
-        .elements(br, Some(&W::name("comment")))
+        .elements(br, Some(&W::comment()))
         .into_iter()
         .filter_map(|c| {
             dom.attribute(c, &id_name)
@@ -1341,7 +1341,7 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
     // {0,1,2,3,4} → renumber hands out 3,4,5 for A's 0,1,2 collisions, then A's
     // own 3,4 are kept verbatim and collide with the renumbers.
     let a_kept_ids: HashSet<String> = dom
-        .elements(ar, Some(&W::name("comment")))
+        .elements(ar, Some(&W::comment()))
         .into_iter()
         .filter_map(|c| dom.attribute(c, &id_name).map(str::to_string))
         .filter(|id| !b_ids.contains(id))
@@ -1349,7 +1349,7 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
     // Reserved id set the renumber must avoid: B's ids plus A's kept ids.
     let mut reserved: HashSet<String> = b_ids.clone();
     reserved.extend(a_kept_ids.iter().cloned());
-    for c in dom.elements(ar, Some(&W::name("comment"))) {
+    for c in dom.elements(ar, Some(&W::comment())) {
         let Some(id) = dom.attribute(c, &id_name).map(str::to_string) else {
             continue;
         };
@@ -1520,7 +1520,7 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
     let mut dom = Dom::new();
     let d = dom.parse_xdocument(&xml);
     let Some(root) = dom.root(d) else { return };
-    let comments = dom.elements(root, Some(&W::name("comment")));
+    let comments = dom.elements(root, Some(&W::comment()));
     let orphan: Vec<NodeId> = comments
         .iter()
         .copied()
@@ -1622,7 +1622,7 @@ fn select_anchor_aware_comments(
         return anchored.keys().cloned().collect();
     };
     let mut groups = FingerprintGroups::new();
-    for c in d.elements(root, Some(&W::name("comment"))) {
+    for c in d.elements(root, Some(&W::comment())) {
         let Some(id) = d.attribute(c, &W::id()).map(str::to_string) else {
             continue;
         };

@@ -5337,7 +5337,7 @@ fn refuse_past_story_budget(
 /// (the atomizer's last-sectPr move expects one). `story` names the part or
 /// side in the error.
 fn refuse_unatomizable(dom: &Dom, root: NodeId, story: &str) -> Result<(), OpcError> {
-    let content_part = W::name("contentPart");
+    let content_part = W::content_part();
     let sect_pr = W::sect_pr();
     let mut sect_parents = std::collections::HashSet::new();
     let mut bad = None;

@@ -262,7 +262,7 @@ pub fn append_documents(
     join(&mut dom, a_body, a_sect, staged, b_final_sect, options);
     dest.set_part(&a_main, dom.serialize_document(a_doc).into_bytes());
     if let (Some(carried), Some(mut family)) = (b_comments, a_comments) {
-        for comment in dom.elements(carried.container, Some(&W::name("comment"))) {
+        for comment in dom.elements(carried.container, Some(&W::comment())) {
             let Some(id) = dom
                 .attribute(comment, &W::id())
                 .and_then(|v| v.parse::<u32>().ok())
@@ -605,7 +605,7 @@ fn stage_comments(
         related(src, b_main, "/comments").ok_or_else(|| invalid("B", "no comments part"))?;
     let (_, b_root) = parse("B", dom, src, &src_part)?;
     let container = dom.new_element(W::name("comments"));
-    for comment in dom.elements(b_root, Some(&W::name("comment"))) {
+    for comment in dom.elements(b_root, Some(&W::comment())) {
         let Some(&new) = dom
             .attribute(comment, &W::id())
             .and_then(|v| v.parse::<u32>().ok())
