@@ -284,7 +284,7 @@ For known Word-layout differences, see:
 | Python release wheels | macOS x86_64/arm64, manylinux_2_28 x86_64/arm64, musllinux_1_2 x86_64/arm64, Windows x86_64 (abi3, CPython 3.10+) |
 | Node | Node 18+ |
 | Browser | WebAssembly builds |
-| CLI release workflow | Linux x86_64/arm64, macOS x86_64/arm64, Windows x86_64 targets |
+| CLI release workflow | Linux x86_64/arm64 (glibc 2.28+, or static musl for Alpine and other musl images), macOS x86_64/arm64, Windows x86_64 targets |
 
 Release assets can vary by tag. Check the
 [release page](https://github.com/jandira-tech/jubarte-redlines/releases)

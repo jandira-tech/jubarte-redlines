@@ -1587,7 +1587,7 @@ release_from_artifacts() {
   python3 scripts/check_release_artifacts.py dist/release --version "$VER" --sdist \
     || die "release.yml run $run_id lacks wheels or the sdist — no GitHub release was created; fix the release jobs, rerun the workflow on $TAG, then rerun this script"
   (cd dist/release && shasum -a 256 -- * > SHA256SUMS.txt)
-  for a in linux-x86_64 linux-aarch64 macos-x86_64 macos-aarch64 windows-x86_64; do
+  for a in linux-x86_64 linux-aarch64 linux-x86_64-musl linux-aarch64-musl macos-x86_64 macos-aarch64 windows-x86_64; do
     ls dist/release/jubarte-"$VER"-"$a".* >/dev/null 2>&1 || missing="$missing $a"
   done
   {
