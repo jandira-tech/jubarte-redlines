@@ -9,10 +9,17 @@
 //! next text, so a paragraph inserted after it took the start inside its
 //! `w:ins` (`BOOKMARK_CROSSES_REVISION`), and a `PAGEREF` to it pointed at
 //! another paragraph.
+//!
+//! #1710 is the same projection on the deleted side: B deletes the
+//! paragraph that holds only a bookmark (or comment anchor). The start
+//! went into the next paragraph's `w:del`, so Reject All gave an empty
+//! paragraph where the bookmark was, and the bookmark glued to the next
+//! paragraph's text. The `paragraph_summaries` tests below pin the
+//! restore: Reject All gives the original back.
 
 mod common;
 
-use common::docx::{docx, para, part_string, replace_entry};
+use common::docx::{Part, docx, docx_with, para, part_string, replace_entry};
 use common::validity::assert_word_valid_package;
 use jubarte::comparer::WmlComparerSettings;
 use jubarte::document_comparer::{
@@ -250,6 +257,185 @@ fn a_bookmark_on_text_stays_on_its_text() {
                 "{mode}, {view}"
             );
         }
+    }
+}
+
+/// Every `w:p` in document order as (its text, whether it holds `marker`
+/// — a `w:bookmarkStart` or `w:commentRangeStart`). A bookmark inside a
+/// deleted run still counts: it is in the paragraph, wherever in it.
+fn paragraph_summaries(docx: &[u8], marker: &str) -> Vec<(String, bool)> {
+    let xml = part_string(docx, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    dom.descendants(dom.root(doc).unwrap(), Some(&W::p()))
+        .iter()
+        .map(|&p| {
+            let text: String = dom
+                .descendants(p, Some(&W::t()))
+                .iter()
+                .map(|&t| dom.value(t))
+                .collect();
+            let marked = !dom.descendants(p, Some(&W::name(marker))).is_empty();
+            (text, marked)
+        })
+        .collect()
+}
+
+/// A paragraph that holds only `marker` (a bookmark or comment anchor):
+/// "Ka." before it, "Zz." after. `tail` also drops "Zz.".
+fn marker_document(marker_xml: &str, tail: bool) -> (Vec<u8>, Vec<u8>) {
+    let original = docx(&format!("{}{}{}", para("Ka."), marker_xml, para("Zz.")));
+    let revised = if tail {
+        docx(&para("Ka."))
+    } else {
+        docx(&format!("{}{}", para("Ka."), para("Zz.")))
+    };
+    (original, revised)
+}
+
+const BOOKMARK_P: &str =
+    r#"<w:p><w:bookmarkStart w:id="4" w:name="b"/><w:bookmarkEnd w:id="4"/></w:p>"#;
+
+/// #1710: B deletes the paragraph that held only the bookmark. The
+/// redline keeps that paragraph, its mark deleted, the bookmark a direct
+/// child of it — not inside the next paragraph's `w:del`. Reject All
+/// gives A back: the bookmark in its own restored paragraph, no stray
+/// empty paragraph. Accept All gives B's paragraphs.
+#[test]
+fn a_deleted_bookmark_paragraph_comes_back_whole() {
+    for tail in [false, true] {
+        let (original, revised) = marker_document(BOOKMARK_P, tail);
+        for (mode, settings) in modes() {
+            let redline = compare_documents_with_settings(&original, &revised, &settings).unwrap();
+            assert_word_valid_package(&redline);
+            // A deleted paragraph's text is `w:delText`, not `w:t`.
+            let zz = if tail { "" } else { "Zz." };
+            assert_eq!(
+                paragraph_summaries(&redline, "bookmarkStart"),
+                [
+                    ("Ka.".to_string(), false),
+                    (String::new(), true),
+                    (zz.to_string(), false)
+                ],
+                "{mode}, tail={tail}, redline: the bookmark stays in the deleted paragraph"
+            );
+            let rejected = reject_revisions(&redline).unwrap();
+            assert_word_valid_package(&rejected);
+            assert_eq!(
+                paragraph_summaries(&rejected, "bookmarkStart"),
+                [
+                    ("Ka.".to_string(), false),
+                    (String::new(), true),
+                    ("Zz.".to_string(), false)
+                ],
+                "{mode}, tail={tail}, reject: A is restored"
+            );
+            let accepted = accept_revisions(&redline).unwrap();
+            assert_word_valid_package(&accepted);
+            let paragraphs = paragraph_summaries(&accepted, "bookmarkStart");
+            let texts: Vec<String> = paragraphs.iter().map(|(t, _)| t.clone()).collect();
+            assert_eq!(
+                texts,
+                if tail {
+                    vec!["Ka.".to_string()]
+                } else {
+                    vec!["Ka.".to_string(), "Zz.".to_string()]
+                },
+                "{mode}, tail={tail}, accept: B's paragraphs"
+            );
+            // B never carried the bookmark, so a mode may drop it on
+            // accept when its whole paragraph went; when it stays, it
+            // rides a paragraph that survives.
+            if !tail {
+                assert!(
+                    paragraphs.iter().any(|(_, b)| *b),
+                    "{mode}, tail={tail}, accept: the bookmark survives"
+                );
+            }
+        }
+    }
+}
+
+/// The same deletion inside a table cell.
+#[test]
+fn a_deleted_bookmark_paragraph_in_a_cell_comes_back_whole() {
+    let cell = |inner: String| docx(&format!("<w:tbl><w:tr><w:tc>{inner}</w:tc></w:tr></w:tbl>"));
+    let original = cell(format!("{}{}{}", para("Ka."), BOOKMARK_P, para("Zz.")));
+    let revised = cell(para("Ka."));
+    for (mode, settings) in modes() {
+        let redline = compare_documents_with_settings(&original, &revised, &settings).unwrap();
+        assert_word_valid_package(&redline);
+        let rejected = reject_revisions(&redline).unwrap();
+        assert_word_valid_package(&rejected);
+        assert_eq!(
+            paragraph_summaries(&rejected, "bookmarkStart"),
+            [
+                ("Ka.".to_string(), false),
+                (String::new(), true),
+                ("Zz.".to_string(), false)
+            ],
+            "{mode}, cell reject: A is restored"
+        );
+        let accepted = accept_revisions(&redline).unwrap();
+        assert_word_valid_package(&accepted);
+        let paragraphs = paragraph_summaries(&accepted, "bookmarkStart");
+        assert_eq!(
+            paragraphs
+                .iter()
+                .map(|(t, _)| t.as_str())
+                .collect::<Vec<_>>(),
+            ["Ka."],
+            "{mode}, cell accept: B's paragraphs"
+        );
+        assert!(
+            paragraphs.iter().any(|(_, b)| *b),
+            "{mode}, cell accept: the bookmark survives"
+        );
+    }
+}
+
+/// A paragraph holding only a comment's anchor: its `commentRangeStart`
+/// and `commentRangeEnd` were once dropped from the redline entirely, so
+/// Reject All lost the anchor. They stay with the deleted paragraph.
+#[test]
+fn a_deleted_comment_anchor_paragraph_comes_back_whole() {
+    const ANCHOR_P: &str = r#"<w:p><w:commentRangeStart w:id="0"/><w:commentRangeEnd w:id="0"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="0"/></w:r></w:p>"#;
+    let comments = format!(
+        r#"<w:comments xmlns:w="{}"><w:comment w:id="0" w:author="T"><w:p><w:r><w:t>note</w:t></w:r></w:p></w:comment></w:comments>"#,
+        common::docx::W_NS
+    );
+    let with_comments = |body: String| {
+        docx_with(
+            &body,
+            &[Part {
+                name: "word/comments.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+                xml: &comments,
+            }],
+        )
+    };
+    let original = with_comments(format!("{}{}{}", para("Ka."), ANCHOR_P, para("Zz.")));
+    let revised = with_comments(para("Ka."));
+    for (mode, settings) in modes() {
+        let redline = compare_documents_with_settings(&original, &revised, &settings).unwrap();
+        assert_word_valid_package(&redline);
+        assert!(
+            part_string(&redline, "word/document.xml")
+                .unwrap()
+                .contains("<w:commentRangeStart"),
+            "{mode}, redline: the anchor is carried"
+        );
+        let rejected = reject_revisions(&redline).unwrap();
+        assert_word_valid_package(&rejected);
+        let paragraphs = paragraph_summaries(&rejected, "commentRangeStart");
+        assert_eq!(paragraphs.len(), 3, "{mode}, reject: A's three paragraphs");
+        assert_eq!(paragraphs[0].0, "Ka.", "{mode}, reject");
+        assert!(
+            paragraphs[1].1 && paragraphs[1].0.is_empty(),
+            "{mode}, reject: the anchor is back in its own paragraph"
+        );
+        assert_eq!(paragraphs[2].0, "Zz.", "{mode}, reject");
     }
 }
 
