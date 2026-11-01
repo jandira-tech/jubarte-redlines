@@ -8,7 +8,7 @@
 
 [package]
 name = "jubarte-redlines"
-version = "0.16.0"
+version = "0.17.0"
 edition = "2024"
 rust-version = "1.94"
 authors = ["Jandira Technologies, LLC"]
@@ -60,6 +60,7 @@ include = [
 "0.14.0" = "Breaking: `jubarte::cli::ReadArgs::paragraphs` is a `Vec<String>` and `Command::Changes` gains `author`. New Rust API: `cli::refused_package`, `update::verify_signature` with `ReleaseKey`, `comparer::order_tables`, more `namespaces` helpers. Tracked edits keep formatting history apart and refuse duplicate revision ids; table redlines avoid the final-mark revision that hangs Word. No `block-buffer` 0.10.4 in any build. Known: 3 of 600 sample redlines crash Word 16.115 where Word's own does not (#1802)."
 "0.15.0" = "Word-mode table pairing, splitting and row meshing as Word Compare does; validate --original checks comments; strike/restore take paragraph marks and multi-mark changes; comments and edits leave untouched formatting and lists alone; Word opens redlines with deleted page-numbered footers. Breaking: debug::Check gains Tables. Builds against oxml-opc 0.14.4."
 "0.16.0" = "Breaking: changes/comments --json put input_validity on stderr (#1925). validate resolves relationship attributes by namespace and checks every relationships part and nameless move ranges; PDF tables past their grid take Word's widths; keep-path rewrites mark one change per phrase; start-of-paragraph edits no longer panic; --version names the build commit."
+"0.17.0" = "Security hardening: XML element budget, DTDs refused in every part, read limits before layout, a compare story-unit budget and UNSUPPORTED_CONTENT instead of atomizer panics, optional JUBARTE_TIMEOUT. Breaking: InputLimits and InputBudget gain fields; one-shot edit/add need an author; accept/reject -o INPUT replaced by --in-place; --keep-others guards other authors markup. New read --find and validate --baseline verdicts."
 [lib]
 name = "jubarte"
 path = "src/lib.rs"

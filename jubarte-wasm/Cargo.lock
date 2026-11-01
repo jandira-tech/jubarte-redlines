@@ -517,7 +517,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-redlines"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "base64",
  "cap-std",
@@ -549,7 +549,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-wasm"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "console_error_panic_hook",
  "jubarte-redlines",
