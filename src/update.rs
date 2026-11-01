@@ -105,8 +105,8 @@ fn asset_target_for(os: &str, arch: &str, musl: bool) -> Option<&'static str> {
         ("macos", "x86_64", false) => "macos-x86_64",
         ("linux", "aarch64", false) => "linux-aarch64",
         ("linux", "x86_64", false) => "linux-x86_64",
-        ("linux", "aarch64", true) => "linux-aarch64-musl",
-        ("linux", "x86_64", true) => "linux-x86_64-musl",
+        ("linux", "aarch64", true) => "linux-musl-aarch64",
+        ("linux", "x86_64", true) => "linux-musl-x86_64",
         ("windows", "x86_64", false) => "windows-x86_64",
         _ => return None,
     })
@@ -398,17 +398,42 @@ mod tests {
         // glibc one, which would not start on Alpine.
         assert_eq!(
             asset_target_for("linux", "aarch64", true),
-            Some("linux-aarch64-musl")
+            Some("linux-musl-aarch64")
         );
         assert_eq!(
             asset_target_for("linux", "x86_64", true),
-            Some("linux-x86_64-musl")
+            Some("linux-musl-x86_64")
         );
         // No archive is published for these: refuse rather than pick a wrong one.
         assert_eq!(asset_target_for("windows", "aarch64", false), None);
         assert_eq!(asset_target_for("freebsd", "x86_64", false), None);
         assert_eq!(asset_target_for("macos", "aarch64", true), None);
         assert!(asset_target().is_some(), "every CI host has an archive");
+    }
+
+    #[test]
+    fn no_archive_name_holds_another_target() {
+        // self_update takes the first asset whose name contains the target,
+        // so no target may be a substring of another target's archive name.
+        let targets: Vec<&str> = [
+            ("macos", "aarch64"),
+            ("macos", "x86_64"),
+            ("linux", "aarch64"),
+            ("linux", "x86_64"),
+            ("windows", "x86_64"),
+        ]
+        .iter()
+        .flat_map(|&(os, arch)| [false, true].map(|musl| asset_target_for(os, arch, musl)))
+        .flatten()
+        .collect();
+        for target in &targets {
+            for other in &targets {
+                if target != other {
+                    let archive = format!("jubarte-9.9.9-{other}.tar.gz");
+                    assert!(!archive.contains(target), "{target} matches {archive}");
+                }
+            }
+        }
     }
 
     #[test]

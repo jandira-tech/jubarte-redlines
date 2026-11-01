@@ -90,14 +90,14 @@ MANYLINUX = {"manylinux": "2_28", "musllinux": "musllinux_1_2"}
 def label_platform(artifact: str) -> tuple[str, str]:
     """`linux-aarch64` -> ("linux", "aarch64"): what an artifact's name promises.
 
-    `linux-aarch64-musl` promises the same OS and CPU; label_is_musl tells it apart.
+    `linux-musl-aarch64` promises the same OS and CPU; label_is_musl tells it apart.
     """
-    family, arch = artifact.removesuffix("-musl").split("-", 1)
+    family, arch = artifact.replace("linux-musl-", "linux-", 1).split("-", 1)
     return family, ARCHS[arch]
 
 
 def label_is_musl(artifact: str) -> bool:
-    return artifact.startswith("linux-") and artifact.endswith("-musl")
+    return artifact.startswith("linux-musl-")
 
 
 def wheel_platform(artifact: str) -> tuple[str, str]:
@@ -157,9 +157,9 @@ BINARY_MATRIX: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
      ("manylinux_2_28_x86_64", "musllinux_1_2_x86_64")),
     ("linux-aarch64", "aarch64-unknown-linux-gnu", "ubuntu-24.04-arm",
      ("manylinux_2_28_aarch64", "musllinux_1_2_aarch64")),
-    ("linux-x86_64-musl", "x86_64-unknown-linux-musl", "ubuntu-latest",
+    ("linux-musl-x86_64", "x86_64-unknown-linux-musl", "ubuntu-latest",
      ("manylinux_2_28_x86_64", "musllinux_1_2_x86_64")),
-    ("linux-aarch64-musl", "aarch64-unknown-linux-musl", "ubuntu-24.04-arm",
+    ("linux-musl-aarch64", "aarch64-unknown-linux-musl", "ubuntu-24.04-arm",
      ("manylinux_2_28_aarch64", "musllinux_1_2_aarch64")),
     ("macos-x86_64", "x86_64-apple-darwin", "macos-15-intel",
      ("macosx_10_12_x86_64",)),
@@ -377,7 +377,7 @@ class RowMutations(unittest.TestCase):
                 self.assertTrue(binary_row_problems(row))
 
     def test_a_musl_label_with_a_glibc_target_is_caught(self) -> None:
-        row = {"os": "ubuntu-latest", "target": "x86_64-unknown-linux-gnu", "artifact": "linux-x86_64-musl",
+        row = {"os": "ubuntu-latest", "target": "x86_64-unknown-linux-gnu", "artifact": "linux-musl-x86_64",
                "image": "quay.io/pypa/manylinux_2_28_x86_64@sha256:" + "a" * 64}
         self.assertTrue(binary_row_problems(row))
 
@@ -557,6 +557,17 @@ class LinuxPortability(unittest.TestCase):
 
     def step(self, needle: str) -> int:
         return step_index(self.job, lambda s: needle in s.get("run", ""))
+
+    def test_no_archive_name_holds_another_label(self) -> None:
+        # self_update picks the first asset whose name contains the binary's
+        # target (asset_for), so a `linux-x86_64-musl` archive would be what
+        # every installed glibc binary updates to (#2030 review).
+        labels = matrix_artifacts(self.job)
+        for label in labels:
+            for other in labels:
+                if other != label:
+                    with self.subTest(label=label, other=other):
+                        self.assertNotIn(label, f"jubarte-9.9.9-{other}.tar.gz")
 
     def test_the_glibc_rows_build_in_their_manylinux_image(self) -> None:
         i = self.step('"$IMAGE"')

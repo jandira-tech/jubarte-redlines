@@ -3,8 +3,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 # Tag-driven release: push `vX.Y.Z` (see docs/VERSIONING.md) and this builds the
-# `jubarte` CLI for the five desktop targets and attaches the archives to a
-# GitHub release named `jubarte vX.Y.Z`, with the matching CHANGELOG.md
+# `jubarte` CLI for seven targets (the five desktop ones and two static musl
+# Linux ones) and attaches the archives to a GitHub release named
+# `jubarte vX.Y.Z`, with the matching CHANGELOG.md
 # section as the release notes. The publish-* jobs put the same release on
 # crates.io, PyPI and npm through OIDC trusted publishing (#1642): no
 # registry token exists anywhere, and scripts/release.sh steps 9-11 wait for
@@ -75,10 +76,10 @@ jobs:
             image: quay.io/pypa/manylinux_2_28_aarch64@sha256:724b504247662e1cf122590957c857211ec2d16b113ec134f92c570a2d01250f
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            artifact: linux-x86_64-musl
+            artifact: linux-musl-x86_64
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
-            artifact: linux-aarch64-musl
+            artifact: linux-musl-aarch64
           - os: macos-15-intel
             target: x86_64-apple-darwin
             artifact: macos-x86_64
