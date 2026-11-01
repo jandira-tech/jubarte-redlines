@@ -1561,7 +1561,7 @@ fn final_marks_of_row(dom: &Dom, carrier: NodeId) -> Vec<NodeId> {
 }
 
 /// The listed changes of the comments part only (empty when the package
-/// has none). The same changes are in [`changes_in`] as `comments.rN`.
+/// has none). The same changes are in `changes_in` as `comments.rN`.
 pub fn comment_changes_in(pkg: &PartFs) -> Vec<Change> {
     let Some(part) = crate::revision_processor::comments_part(pkg) else {
         return Vec::new();

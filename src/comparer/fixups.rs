@@ -9,7 +9,7 @@
 //! space across shapes, shapetypes, groups and other VML elements (#1800).
 //! References follow the renamed definition. The compare pipeline calls
 //! [`fix_up_drawing_ids`] mid-stream and after the Word-mode merge passes.
-//! The identical-input shortcut calls [`rename_repeated_doc_pr_ids`] only:
+//! The identical-input shortcut calls `rename_repeated_doc_pr_ids` only:
 //! unique DrawingML ids and schema-permitted repeated VML ids stay untouched.
 //!
 //! [`fix_up_group_ids`] remains the standalone upstream consolidate helper;
