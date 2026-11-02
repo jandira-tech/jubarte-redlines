@@ -393,28 +393,28 @@ pub fn copy_missing_numbering(
     let num_id_attr = W::name("numId");
     let mut num_remap: std::collections::HashMap<String, String> = std::collections::HashMap::new();
 
-    let mut max_abstract_num_id = dom
+    let mut taken_abstract_num_id: std::collections::HashSet<i32> = dom
         .elements(to_root, Some(&abstract_num))
         .into_iter()
-        .map(|e| get_int_attribute(dom, e, &abstract_num_id).unwrap_or(0))
-        .max()
-        .unwrap_or(0);
-    let mut max_num_id = dom
+        .filter_map(|e| get_int_attribute(dom, e, &abstract_num_id))
+        .collect();
+    let mut max_abstract_num_id = taken_abstract_num_id.iter().copied().max().unwrap_or(0);
+    let mut taken_num_id: std::collections::HashSet<i32> = dom
         .elements(to_root, Some(&num))
         .into_iter()
-        .map(|e| get_int_attribute(dom, e, &num_id_attr).unwrap_or(0))
-        .max()
-        .unwrap_or(0);
+        .filter_map(|e| get_int_attribute(dom, e, &num_id_attr))
+        .collect();
+    let mut max_num_id = taken_num_id.iter().copied().max().unwrap_or(0);
 
     let num_pic_bullet = W::name("numPicBullet");
     let num_pic_bullet_id = W::name("numPicBulletId");
     let lvl_pic_bullet_id = W::name("lvlPicBulletId");
-    let mut max_pic_id = dom
+    let mut taken_pic_id: std::collections::HashSet<i32> = dom
         .elements(to_root, Some(&num_pic_bullet))
         .into_iter()
-        .map(|e| get_int_attribute(dom, e, &num_pic_bullet_id).unwrap_or(0))
-        .max()
-        .unwrap_or(0);
+        .filter_map(|e| get_int_attribute(dom, e, &num_pic_bullet_id))
+        .collect();
+    let mut max_pic_id = taken_pic_id.iter().copied().max().unwrap_or(0);
     // source numPicBulletId → destination numPicBulletId
     let mut pic_map: std::collections::HashMap<i32, i32> = std::collections::HashMap::new();
     let mut copied_bullets: Vec<NodeId> = Vec::new();
@@ -450,12 +450,17 @@ pub fn copy_missing_numbering(
             .into_iter()
             .any(|e| get_int_attribute(dom, e, &abstract_num_id) == Some(from_id));
         let target_id = if same_id_taken {
-            max_abstract_num_id = max_abstract_num_id.saturating_add(1);
+            max_abstract_num_id = max_abstract_num_id.wrapping_add(1);
+            while max_abstract_num_id == 0 || taken_abstract_num_id.contains(&max_abstract_num_id) {
+                max_abstract_num_id = max_abstract_num_id.wrapping_add(1);
+            }
+            taken_abstract_num_id.insert(max_abstract_num_id);
             max_abstract_num_id
         } else {
             // retained ids must advance the watermark, or a later collision
             // can allocate max+1 == an already-retained id (PR #53 review)
             max_abstract_num_id = max_abstract_num_id.max(from_id);
+            taken_abstract_num_id.insert(from_id);
             from_id
         };
         let cloned = dom.clone_subtree(an);
@@ -481,10 +486,15 @@ pub fn copy_missing_numbering(
                         .into_iter()
                         .any(|b| get_int_attribute(dom, b, &num_pic_bullet_id) == Some(from_pic));
                     let id = if taken {
-                        max_pic_id = max_pic_id.saturating_add(1);
+                        max_pic_id = max_pic_id.wrapping_add(1);
+                        while max_pic_id == 0 || taken_pic_id.contains(&max_pic_id) {
+                            max_pic_id = max_pic_id.wrapping_add(1);
+                        }
+                        taken_pic_id.insert(max_pic_id);
                         max_pic_id
                     } else {
                         max_pic_id = max_pic_id.max(from_pic);
+                        taken_pic_id.insert(from_pic);
                         from_pic
                     };
                     let copy = dom.clone_subtree(bullet);
@@ -527,7 +537,11 @@ pub fn copy_missing_numbering(
             if same_list.is_some() && same_list == list_signature(dom, n, from_root) {
                 continue;
             }
-            max_num_id = max_num_id.saturating_add(1);
+            max_num_id = max_num_id.wrapping_add(1);
+            while max_num_id == 0 || taken_num_id.contains(&max_num_id) {
+                max_num_id = max_num_id.wrapping_add(1);
+            }
+            taken_num_id.insert(max_num_id);
             let cloned = dom.clone_subtree(n);
             dom.set_attribute_value(cloned, &num_id_attr, Some(&max_num_id.to_string()));
             if let Some(e) = dom.element(cloned, &abstract_num_id) {
@@ -539,6 +553,7 @@ pub fn copy_missing_numbering(
             // retained numId — advance the watermark so a later collision
             // can't allocate a duplicate (PR #53 review)
             max_num_id = max_num_id.max(from_num_id);
+            taken_num_id.insert(from_num_id);
             let cloned = dom.clone_subtree(n);
             if mapped != from_ref
                 && let Some(e) = dom.element(cloned, &abstract_num_id)
@@ -564,12 +579,16 @@ pub fn synthesize_dangling_numbering(dom: &mut Dom, numbering_root: NodeId, dang
     if dangling.is_empty() {
         return;
     }
-    let fresh_aid = dom
+    let taken_fresh_aid: std::collections::HashSet<i32> = dom
         .elements(numbering_root, Some(&W::name("abstractNum")))
         .into_iter()
         .filter_map(|e| get_int_attribute(dom, e, &W::abstract_num_id()))
-        .max()
-        .map_or(0, |m| m.saturating_add(1));
+        .collect();
+    let mut fresh_aid = taken_fresh_aid.iter().copied().max().unwrap_or(0);
+    fresh_aid = fresh_aid.wrapping_add(1);
+    while fresh_aid == 0 || taken_fresh_aid.contains(&fresh_aid) {
+        fresh_aid = fresh_aid.wrapping_add(1);
+    }
     let mut lvls = String::new();
     for ilvl in 0..9 {
         lvls.push_str(&format!(
