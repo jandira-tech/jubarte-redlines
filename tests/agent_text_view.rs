@@ -6541,6 +6541,12 @@ fn read_find_invalid_regex_is_diagnosed_by_shared_search() {
     assert!(out.stdout.is_empty());
     let err = String::from_utf8(out.stderr).unwrap();
     assert!(err.contains("--regex does not compile"), "{err}");
+
+    let too_long = "a".repeat(1001);
+    let out_long = jubarte(&["read", "search.docx", "--regex", &too_long], dir.path());
+    assert!(!out_long.status.success());
+    let err_long = String::from_utf8(out_long.stderr).unwrap();
+    assert!(err_long.contains("--regex is too long"), "{err_long}");
 }
 
 #[test]
