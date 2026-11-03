@@ -708,6 +708,9 @@ fn text_selection(
         })
     } else {
         let pattern = request.regex.as_deref().unwrap_or("");
+        if pattern.len() > 1000 {
+            return Err(super::err("USAGE", None, "--regex is too long".to_string()));
+        }
         let pattern = if request.ignore_case {
             format!("(?i){pattern}")
         } else {
