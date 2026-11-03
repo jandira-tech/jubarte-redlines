@@ -309,18 +309,17 @@ fn docx_error(what: &str) -> LegacyDocError {
 /// A word that stands in for an empty paragraph's text on its way through
 /// the Markdown writer: letters and digits only (nothing to escape, and the
 /// writer drops private-use characters), and in none of the document's text.
+// ⚡ Bolt optimization: Use lazy evaluation (any) to avoid O(N) allocation of document text strings
 fn empty_placeholder(document: &LegacyDocument) -> String {
-    let texts: Vec<String> = document
-        .blocks
-        .iter()
-        .map(|block| match block {
-            Block::Paragraph(paragraph) => paragraph.text(),
-            Block::Table(table) => table.rows.iter().flatten().cloned().collect(),
-        })
-        .collect();
     (0u32..)
         .map(|n| format!("jubarteemptyparagraph{n}"))
-        .find(|candidate| texts.iter().all(|text| !text.contains(candidate.as_str())))
+        .find(|candidate| {
+            let c = candidate.as_str();
+            !document.blocks.iter().any(|block| match block {
+                Block::Paragraph(paragraph) => paragraph.text().contains(c),
+                Block::Table(table) => table.rows.iter().flatten().any(|cell| cell.contains(c)),
+            })
+        })
         .unwrap_or_default()
 }
 
