@@ -61,6 +61,10 @@ pub(crate) const MAX_NAMESPACE_URI_BYTES: usize = 8192;
 pub(crate) const MAX_NAMESPACE_PREFIX_BYTES: usize = 256;
 /// Bindings live in one lexical scope (all levels, shadowed included).
 pub(crate) const MAX_LIVE_NS_BINDINGS: usize = 256;
+/// Prefix+URI bytes of bindings stacked at once, shadowed ones included.
+/// A nest that rebinds a long URI keeps every shadowed copy until the
+/// element closes; sequential declarations release theirs (#658).
+pub(crate) const MAX_LIVE_NS_BYTES: usize = 64 * 1024;
 /// Total prefix+URI bytes declared by xmlns attributes in one document.
 pub(crate) const MAX_NS_DECLARED_BYTES: usize = 1024 * 1024;
 
@@ -413,7 +417,13 @@ impl TagPolicy {
                 "in-scope namespace bindings exceed {MAX_LIVE_NS_BINDINGS}"
             ));
         }
-        self.declared_bytes += prefix.len() + uri.len();
+        let add = prefix.len() + uri.len();
+        if self.scope.live_bytes.saturating_add(add) > MAX_LIVE_NS_BYTES {
+            return Err(format!(
+                "in-scope namespace bytes exceed {MAX_LIVE_NS_BYTES}"
+            ));
+        }
+        self.declared_bytes += add;
         if self.declared_bytes > MAX_NS_DECLARED_BYTES {
             return Err(format!(
                 "namespace declarations exceed {MAX_NS_DECLARED_BYTES} bytes"
@@ -1637,6 +1647,41 @@ mod tag_policy_tests {
             s
         };
         assert!(validate_xml(&heavy).is_err());
+    }
+
+    #[test]
+    fn nested_long_uris_hit_the_live_namespace_byte_budget() {
+        // Rebinding one prefix to a maximum URI stacks every shadowed copy.
+        // The depth stays under the binding cap and the cumulative declared
+        // byte cap, and over the bytes that may be live at once.
+        let uri = "u".repeat(MAX_NAMESPACE_URI_BYTES);
+        let per = 1 + uri.len();
+        let over = MAX_LIVE_NS_BYTES / per + 1;
+        let under = MAX_LIVE_NS_BYTES / per;
+        assert!(over < MAX_LIVE_NS_BINDINGS);
+        assert!(over * per > MAX_LIVE_NS_BYTES);
+        assert!(over * per <= MAX_NS_DECLARED_BYTES);
+        assert!(under >= 1 && under * per <= MAX_LIVE_NS_BYTES);
+        let nest = |depth: usize| {
+            let mut xml = String::new();
+            for _ in 0..depth {
+                xml.push_str(&format!("<e xmlns:p='{uri}'>"));
+            }
+            for _ in 0..depth {
+                xml.push_str("</e>");
+            }
+            xml
+        };
+        let error = validate_xml(&nest(over)).expect_err("nested long URIs exceed live bytes");
+        assert!(error.contains(&MAX_LIVE_NS_BYTES.to_string()), "{error}");
+        assert_eq!(validate_xml(&nest(under)), Ok(()));
+        // The same declarations, closed before the next, never stack.
+        let mut sequential = String::from("<a>");
+        for _ in 0..over {
+            sequential.push_str(&format!("<e xmlns:p='{uri}'/>"));
+        }
+        sequential.push_str("</a>");
+        assert_eq!(validate_xml(&sequential), Ok(()));
     }
 
     #[test]
