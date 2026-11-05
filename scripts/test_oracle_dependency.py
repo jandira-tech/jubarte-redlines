@@ -6,6 +6,7 @@
 
 """Integration checks for the temporary zip 9 oracle dependency patch."""
 
+import re
 import tomllib
 import unittest
 from pathlib import Path
@@ -86,6 +87,27 @@ class SecurityAdvisoryRecord(unittest.TestCase):
         self.assertIn(">=1.3, <2.3", security)
         self.assertIn("RUSTSEC-2022-0048", security)
         self.assertIn("withdrawn", security)
+
+    def test_deny_ignores_name_the_locked_crate_that_reaches_them(self) -> None:
+        policy = tomllib.loads((ROOT / "deny.toml").read_text())
+        security = (ROOT / "SECURITY.md").read_text()
+        locked = {package["name"] for package in tomllib.loads((ROOT / "Cargo.lock").read_text())["package"]}
+        ignores = policy["advisories"]["ignore"]
+        self.assertGreaterEqual(len(ignores), 1)
+        for item in ignores:
+            advisory = item["id"]
+            reached = sorted(
+                name
+                for name in locked
+                if re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", item["reason"])
+            )
+            self.assertTrue(reached, f"{advisory} reason names no locked crate")
+            self.assertIn(advisory, security)
+            mapped = [line for line in security.splitlines() if advisory in line]
+            self.assertTrue(
+                any(crate in line for line in mapped for crate in reached),
+                f"{advisory} is not on a line with {reached}",
+            )
 
 
 if __name__ == "__main__":
