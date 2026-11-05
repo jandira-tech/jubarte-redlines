@@ -1501,6 +1501,9 @@ fn selection_error(e: ChangeError, syntax: PlanSyntax, verb: &str) -> EditError 
             syntax.incomplete_change(&part, verb),
         ),
         ChangeError::Package(m) => err("INVALID_DOCUMENT", None, m),
+        exposed @ ChangeError::ExposedFinalMark { .. } => {
+            err("EXPOSED_FINAL_MARK", None, exposed.to_string())
+        }
     }
 }
 
