@@ -9,16 +9,20 @@
 `python3 scripts/check_release_info.py 0.11.2` exits 1 and lists each
 problem; scripts/release.sh runs it as its step 3, right after the changelog
 check. The benchmark writes the six files (release_info/README.md names
-them): two 600-item sample CSVs, two results JSONs scored on exactly those
+them): two sample CSVs, two results JSONs scored on exactly those
 samples, and two JSONL lists of the website facts and app items the release
-moves. Plain Python 3, stdlib only; it reads the folder and never writes it.
+moves. A drawn sample has 600 data rows. A fixed set names `sample.set_version`
+and is checked at that file's `sample.n`; `--rows` overrides either.
+Plain Python 3, stdlib only; it reads the folder and never writes it.
 
 What is proven outright: the six exact names under one shared stamp that is
-a real date and time; the exact CSV headers and 600 data rows of exactly the
-header's width, each with a unique non-empty key/stem and the Word oracle
-path with its sha; results JSONs bound to the sample CSV beside them by that
-file's real sha256, with every tool's n equal to the sample's row count,
-failures within 0..n, mean/median within 0..100, and jubarte's version,
+a real date and time; the exact CSV headers and that row count, each row
+exactly the header's width, each with a unique non-empty key/stem and the
+Word oracle path with its sha; results JSONs bound to the sample CSV beside
+them by that file's real sha256, with jubarte's n equal to the sample's row
+count (a fixed-set comparator may leave rows `not_run`, and then n + not_run
+equals that count), failures within 0..n, mean/median within 0..100, and
+jubarte's version,
 40-hex commit and 64-hex binary sha256; JSONL records that are objects with
 a non-empty string key, website_data holding the five keys
 the app's scripts/check_release_facts.py reads for a release.
@@ -291,6 +295,28 @@ def check_sample_csv(path: Path, header: list[str], paths: list[str], rows: int,
     return problems
 
 
+def expected_sample_rows(override: int | None, results: Path | None) -> int:
+    """Rows a sample CSV must have.
+
+    An explicit ``--rows`` wins. A fixed set (the results JSON has
+    ``sample.set_version`` and ``sample.n`` is a non-negative int) uses that
+    ``n``. A drawn sample stays at `DEFAULT_ROWS` (#2053).
+    """
+    if override is not None:
+        return override
+    if results is not None and results.is_file():
+        try:
+            doc = json.loads(results.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError):
+            doc = None
+        sample = doc.get("sample") if isinstance(doc, dict) else None
+        if isinstance(sample, dict) and "set_version" in sample:
+            n = sample.get("n")
+            if isinstance(n, int) and not isinstance(n, bool) and n >= 0:
+                return n
+    return DEFAULT_ROWS
+
+
 def sample_row_count(sample: Path) -> int | None:
     """Data rows of a sample CSV (blank lines are not rows); None when unreadable."""
     try:
@@ -344,7 +370,19 @@ def check_results_json(path: Path, name: str, six: dict[str, Path], version: str
         n = block.get("n")
         if isinstance(n, bool) or not isinstance(n, (int, float)):
             continue
-        if rows is not None and n != rows:
+        fixed = isinstance(sample, dict) and "set_version" in sample
+        if rows is not None and fixed and tool != JUBARTE:
+            not_run = block.get("not_run", 0)
+            if isinstance(not_run, bool) or not isinstance(not_run, int) or not_run < 0:
+                problems.append(
+                    f"{path.name}: tools.{tool}.not_run is {not_run!r}, want a non-negative integer"
+                )
+            elif n + not_run != rows:
+                problems.append(
+                    f"{path.name}: tools.{tool}.n + not_run is {n:g} + {not_run}, "
+                    f"the sample holds {rows} rows"
+                )
+        elif rows is not None and n != rows:
             problems.append(f"{path.name}: tools.{tool}.n is {n}, the sample holds {rows} rows")
         for field in ("failures",):
             value = block.get(field)
@@ -537,14 +575,16 @@ def changelog_section(path: Path, version: str) -> str | None:
     return m.group(1) if m else None
 
 
-def problems(version: str, folder: Path, rows: int, bench_root: Path | None = None,
+def problems(version: str, folder: Path, rows: int | None, bench_root: Path | None = None,
              want_commit: str | None = None, want_sha: str | None = None) -> list[str]:
     six, found = find_six(folder, version)
     out = list(found)
     if "sample_redline" in six:
-        out += check_sample_csv(six["sample_redline"], REDLINE_HEADER, PATH_COLUMNS["sample_redline"], rows, bench_root)
+        want = expected_sample_rows(rows, six.get("results_redline"))
+        out += check_sample_csv(six["sample_redline"], REDLINE_HEADER, PATH_COLUMNS["sample_redline"], want, bench_root)
     if "sample_conversion" in six:
-        out += check_sample_csv(six["sample_conversion"], CONVERSION_HEADER, PATH_COLUMNS["sample_conversion"], rows, bench_root)
+        want = expected_sample_rows(rows, six.get("results_conversion"))
+        out += check_sample_csv(six["sample_conversion"], CONVERSION_HEADER, PATH_COLUMNS["sample_conversion"], want, bench_root)
     for name in ("results_redline", "results_conversion"):
         if name in six:
             out += check_results_json(six[name], name, six, version, want_commit, want_sha)
@@ -562,8 +602,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("version", help="the release, x.y.z")
     ap.add_argument("--root", type=Path, default=ROOT, help="the engine checkout (default: this script's)")
     ap.add_argument("--dir", type=Path, default=INFO, help="the evidence folder inside it (default: release_info)")
-    ap.add_argument("--rows", type=int, default=DEFAULT_ROWS,
-                    help=f"data rows each sample CSV must have (default: {DEFAULT_ROWS})")
+    ap.add_argument("--rows", type=int, default=None,
+                    help=f"data rows each sample CSV must have "
+                         f"(default: {DEFAULT_ROWS} for a drawn sample; "
+                         "a fixed set with sample.set_version uses that file's sample.n)")
     ap.add_argument("--bench-root", type=Path, default=None,
                     help="the neurotic_docx_bench checkout: every non-empty path cell is resolved against it "
                          "and its sha256 column is verified against the real file")

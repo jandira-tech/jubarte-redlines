@@ -314,6 +314,60 @@ class SixFiles(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stderr)
         self.assertIn(f"sample.n is {ROWS + 2}, the sample holds {ROWS} rows", r.stderr)
 
+    def write_fixed_sets(self, conv_rows: int = 5) -> None:
+        """A redline sample of ROWS and a conversion sample of `conv_rows`.
+
+        Each results JSON names a fixed set (`set_version`). jubarte scored
+        every row. Each comparator left some rows `not_run` (#2053).
+        """
+        conv = "\n".join([CONVERSION_HEADER] + [conversion_row(i) for i in range(conv_rows)]) + "\n"
+        (self.info / f"sample_conversion_{VER}_{STAMP}.csv").write_text(conv)
+        path = self.info / f"results_conversion_{VER}_{STAMP}.json"
+        doc = json.loads(path.read_text())
+        doc["sample"].update({
+            "sha256": sha(conv), "n": conv_rows, "set": "convert_860", "set_version": 1,
+        })
+        doc["tools"]["jubarte"]["n"] = conv_rows
+        doc["tools"]["soffice"]["n"] = conv_rows - 3
+        doc["tools"]["soffice"]["not_run"] = 3
+        path.write_text(json.dumps(doc))
+        path = self.info / f"results_redline_{VER}_{STAMP}.json"
+        doc = json.loads(path.read_text())
+        doc["sample"].update({"set": "redline_600", "set_version": 1})
+        doc["tools"]["docxodus"]["n"] = ROWS - 1
+        doc["tools"]["docxodus"]["not_run"] = 1
+        path.write_text(json.dumps(doc))
+
+    def test_a_fixed_set_uses_each_samples_n_and_comparator_not_run(self) -> None:
+        self.write_fixed_sets()
+        r = self.check(rows=None)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_an_explicit_row_count_overrides_a_fixed_set(self) -> None:
+        self.write_fixed_sets()
+        r = self.check(rows=ROWS)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("5 data rows, want 3", r.stderr)
+
+    def test_jubarte_on_a_fixed_set_must_score_every_row(self) -> None:
+        self.write_fixed_sets()
+        self._edit_results("results_redline", tools={"jubarte": {"n": ROWS - 1, "not_run": 1}})
+        r = self.check(rows=None)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn(f"tools.jubarte.n is {ROWS - 1}, the sample holds {ROWS} rows", r.stderr)
+
+    def test_a_fixed_set_comparator_must_account_for_every_row(self) -> None:
+        self.write_fixed_sets()
+        self._edit_results("results_redline", tools={"docxodus": {"n": 1, "not_run": 1}})
+        r = self.check(rows=None)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("tools.docxodus.n + not_run is 1 + 1", r.stderr)
+        self.write_fixed_sets()
+        self._edit_results("results_redline", tools={"docxodus": {"n": ROWS, "not_run": -1}})
+        r = self.check(rows=None)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("tools.docxodus.not_run", r.stderr)
+
     def test_failures_must_stay_within_zero_and_n(self) -> None:
         self._edit_results("results_redline", tools={"jubarte": {"failures": ROWS + 1}})
         r = self.check()
