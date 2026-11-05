@@ -6074,10 +6074,15 @@ fn ordinal_text_ones(one: &str) -> String {
     }
 }
 
+/// No Word document carries a Chicago sequence past a handful of cycles.
+/// A larger start renders at this cap instead of allocating one mark per
+/// cycle (`u32::MAX` would ask for about a gigabyte of label bytes).
+const MAX_CHICAGO_MARKS: usize = 256;
+
 fn chicago_label(n: u32) -> String {
     const MARKS: [&str; 4] = ["*", "†", "‡", "§"];
     let i = n.saturating_sub(1) as usize;
-    MARKS[i % 4].repeat(i / 4 + 1)
+    MARKS[i % 4].repeat((i / 4 + 1).min(MAX_CHICAGO_MARKS))
 }
 
 fn ideograph_digital_label(n: u32) -> String {
@@ -38152,6 +38157,13 @@ mod page_num_fmt_labels {
         assert_eq!(chicago_label(1), "*");
         assert_eq!(chicago_label(2), "†");
         assert_eq!(chicago_label(5), "**");
+    }
+
+    #[test]
+    fn chicago_label_does_not_grow_with_a_huge_start() {
+        // 1025 is the first value whose uncapped mark is 257 stars.
+        let label = chicago_label(1025);
+        assert_eq!(label, "*".repeat(256), "len {}", label.chars().count());
     }
 
     #[test]

@@ -49,6 +49,14 @@
 //! the structured [`LegacyDocument`]; [`doc_to_markdown`] and
 //! [`doc_to_docx`] for the two written outputs.
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Inspections of the legacy field-code stack. The scan must stay linear
+/// in the story length: an all-false stack is not walked per character.
+#[cfg(test)]
+static FIELD_CODE_STEPS: AtomicUsize = AtomicUsize::new(0);
+
 use std::fmt;
 
 /// The first bytes of an OLE compound file.
@@ -1215,6 +1223,14 @@ struct StoryChar {
 /// A piece that points past the `WordDocument` stream: a truncated or
 /// corrupt file, refused rather than converted short.
 fn main_text(word: &[u8], pieces: &[Piece], ccp_text: u32) -> Result<Vec<StoryChar>> {
+    // The same ceiling `read` uses for a story (`InputLimits::max_story_units`).
+    // Aliased pieces can describe billions of logical characters from one
+    // physical range; refuse that before allocating one record per character.
+    if u64::from(ccp_text) > crate::admission::InputLimits::default().max_story_units {
+        return Err(LegacyDocError::new(
+            "the main story exceeds the logical character budget",
+        ));
+    }
     let past = || LegacyDocError::new("a text piece points past the WordDocument stream");
     // The pieces run from CP 0 through the main story without a gap, or
     // the document would come out quietly shorter than it is.
@@ -1661,8 +1677,10 @@ impl Story<'_> {
         let mut out = Vec::new();
         let mut spans: Vec<Span> = Vec::new();
         // Field nesting: true while inside a field's code (before its
-        // separator).
+        // separator). `code_frames` is how many of those are still code,
+        // so the check below does not walk the stack per character.
         let mut fields: Vec<bool> = Vec::new();
+        let mut code_frames: u32 = 0;
         // Each finished row and whether it is marked as a header.
         let mut rows: Vec<(Vec<String>, bool)> = Vec::new();
         let mut row: Vec<String> = Vec::new();
@@ -1670,20 +1688,26 @@ impl Story<'_> {
 
         for story in chars {
             // Inside any field's code, even a nested field's result is code.
-            let in_code = fields.iter().any(|&code| code);
+            let in_code = code_frames != 0;
             let text = match story.ch {
                 '\u{13}' => {
                     fields.push(true);
+                    code_frames = code_frames.saturating_add(1);
                     continue;
                 }
                 '\u{14}' => {
-                    if let Some(top) = fields.last_mut() {
+                    if let Some(top) = fields.last_mut()
+                        && *top
+                    {
                         *top = false;
+                        code_frames = code_frames.saturating_sub(1);
                     }
                     continue;
                 }
                 '\u{15}' => {
-                    fields.pop();
+                    if fields.pop() == Some(true) {
+                        code_frames = code_frames.saturating_sub(1);
+                    }
                     continue;
                 }
                 _ if in_code => continue,
@@ -2116,6 +2140,68 @@ mod tests {
             })
             .collect();
         assert_eq!(texts, ["aoneb"]);
+    }
+
+    #[test]
+    fn an_all_false_field_stack_is_not_walked_per_character() {
+        let (papx, chpx) = (FkpIndex { runs: Vec::new() }, FkpIndex { runs: Vec::new() });
+        let lists = Lists::default();
+        let depth = 40u32;
+        let mut text = String::new();
+        for _ in 0..depth {
+            text.push('\u{13}');
+            text.push('\u{14}');
+        }
+        text.push_str(&"x".repeat(depth as usize));
+        text.push('\r');
+        let chars = story_chars(&text);
+        let story = Story {
+            papx: &papx,
+            chpx: &chpx,
+            styles: &[],
+            lists: &lists,
+            section_marks: Vec::new(),
+        };
+        FIELD_CODE_STEPS.store(0, Ordering::Relaxed);
+        let blocks = story.blocks(&chars);
+        let steps = FIELD_CODE_STEPS.load(Ordering::Relaxed);
+        assert!(
+            steps <= chars.len(),
+            "field-code check inspected {steps} stack entries for {} characters",
+            chars.len()
+        );
+        let rendered: Vec<String> = blocks
+            .iter()
+            .map(|b| match b {
+                Block::Paragraph(p) => p.text(),
+                Block::Table(_) => "table".into(),
+            })
+            .collect();
+        assert_eq!(rendered, ["x".repeat(depth as usize)]);
+    }
+
+    #[test]
+    fn a_main_story_past_the_logical_budget_is_refused() {
+        let budget = crate::admission::InputLimits::default().max_story_units;
+        let n = u32::try_from(budget).unwrap().saturating_add(1);
+        let word = vec![b'A'; usize::try_from(n).unwrap()];
+        let pieces = [Piece {
+            cp_start: 0,
+            cp_end: n,
+            fc: 0,
+            compressed: true,
+            modifier: CharModifier::default(),
+        }];
+        match main_text(&word, &pieces, n) {
+            Ok(chars) => panic!(
+                "materialized {} logical characters past the budget",
+                chars.len()
+            ),
+            Err(err) => assert!(
+                err.to_string().contains("logical character budget"),
+                "{err}"
+            ),
+        }
     }
 
     /// A supplementary character split across two Unicode pieces is one
