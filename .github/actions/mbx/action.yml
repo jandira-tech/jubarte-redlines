@@ -21,7 +21,9 @@ runs:
         # 1.25.0 adds MBX_REMOTE_TRUST_WRITES, which the next step uses.
         version: "1.25.0"
         remote-url: http://mbx-cache:7543
-        namespace: jandira-tech/jubarte-redlines
+        # No namespace input: mbx reads it from the runner's user config
+        # (/root/.config/mbx/config.toml, from /srv/mbx/runner-config.toml on
+        # the host), so every jandira-tech runner shares one namespace.
         # Linked test binaries are the largest outputs by far: with
         # them cached, one test job left an 84 GiB store and a 79 GiB target
         # on 2026-10-17, and uploads drained at 1 MB/s. Cache compilations only.
