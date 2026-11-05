@@ -342,6 +342,15 @@ class SixFiles(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn(f"{ROWS + 2} data rows, want {ROWS + 4}", r.stderr)
 
+    def test_a_fixed_set_csv_must_match_its_recorded_sha(self) -> None:
+        """A fixed-set CSV is still verified against sample.sha256 (CodeRabbit, #2054)."""
+        self.write_six(rows=ROWS, conversion_rows=ROWS + 2, set_version="2026-11-03.1")
+        path = self.info / f"sample_conversion_{VER}_{STAMP}.csv"
+        path.write_text(path.read_text().replace("clean,s0,", "clean,x0,", 1))
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("sample.sha256 is", r.stderr)
+
     def test_a_comparator_may_record_the_documents_it_did_not_run(self) -> None:
         """A comparator passes with ``n + not_run`` equal to the rows; jubarte must
         score every row, and ``not_run`` must be a non-negative integer (#2053)."""
