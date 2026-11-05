@@ -155,13 +155,6 @@ const CONTROLS: &str = include_str!("data/cell_final_marks_pairs_controls.txt");
 /// The Word-mode pairs whose Accept All (or Reject All) still misses B (or
 /// A), each with its issue: `(from, to, which)`.
 const KNOWN: &[(&str, &str, &str)] = &[
-    // #1686: the comparer drops an empty paragraph the cell gains or loses.
-    ("1", "ee", "Accept"),
-    ("11", "2e", "Accept"),
-    ("2", "ee", "Accept"),
-    ("22", "1e", "Accept"),
-    ("ee", "1", "Reject"),
-    ("ee", "2", "Reject"),
     // #1687: one side's cell ends inside a content control, and the final
     // marks do not pair across it (Word-valid since #1684).
     ("11", "2s", "Accept"),
@@ -312,6 +305,73 @@ fn the_cell_codes_cover_every_shape_once() {
     assert_eq!(
         control_outcome("[tc[sdt[p]][sdt[pSdt.]]]", wanted),
         "control-kept"
+    );
+}
+
+/// Inners of `w:{name}` elements, skipping names that only share that prefix
+/// (`w:tcPr`, `w:pPr`) and counting a self-closing element as empty.
+fn element_inners(xml: &str, name: &str) -> Vec<String> {
+    let open = format!("<w:{name}");
+    let close = format!("</w:{name}>");
+    let mut rest = xml;
+    let mut out = Vec::new();
+    while let Some(at) = rest.find(&open) {
+        let after = &rest[at + open.len()..];
+        let boundary = after.chars().next();
+        if !matches!(boundary, Some('>' | ' ' | '\n' | '\r' | '/')) {
+            rest = after;
+            continue;
+        }
+        let Some(tag_end) = after.find('>') else {
+            break;
+        };
+        if after[..tag_end].ends_with('/') {
+            out.push(String::new());
+            rest = &after[tag_end + 1..];
+            continue;
+        }
+        let Some(end) = after.find(&close) else {
+            break;
+        };
+        out.push(after[..end].to_string());
+        rest = &after[end + close.len()..];
+    }
+    out
+}
+
+/// Paragraphs of the table's second cell.
+fn second_cell_paragraphs(bytes: &[u8]) -> Vec<String> {
+    let xml = part_string(bytes, "word/document.xml").expect("document.xml");
+    let cells = element_inners(&xml, "tc");
+    element_inners(cells.get(1).map(String::as_str).unwrap_or(""), "p")
+}
+
+/// Word writes the inserted mark on the paragraph that deletes `One.` and
+/// keeps the empty paragraph that follows it (`[One.]` → `["" ""]`, #1686).
+#[test]
+fn word_keeps_the_empty_paragraph_a_cell_gains() {
+    const WORD: &[u8] = include_bytes!("fixtures/1686-word-compare.docx");
+    let marked = |paragraphs: &[String]| {
+        paragraphs.len() >= 2
+            && paragraphs
+                .iter()
+                .any(|paragraph| paragraph.contains("One.") && paragraph.contains("<w:ins "))
+    };
+    let oracle = second_cell_paragraphs(WORD);
+    assert!(
+        marked(&oracle),
+        "word oracle fixture lost the inserted mark or the empty paragraph: {oracle:?}"
+    );
+    let out = compare_documents_with_settings(
+        &document("1"),
+        &document("ee"),
+        &WmlComparerSettings::new(CompareMode::Word),
+    )
+    .expect("compare");
+    let got = second_cell_paragraphs(&out);
+    assert!(
+        marked(&got),
+        "word mode dropped the empty paragraph or its inserted mark: {got:?}"
     );
 }
 

@@ -8674,6 +8674,10 @@ fn merge_replaced_in_container(
     comparer_author: &str,
     fold_boundary: bool,
 ) {
+    // #1686: a cell that gains or loses an empty paragraph must keep it.
+    // The story-end fold below treats the end of a cell as the end of the
+    // story and deletes that paragraph. Body folds are unchanged.
+    let in_cell = dom.name_is(container, &W::tc());
     loop {
         let children: Vec<NodeId> = dom.elements(container, None);
         let classes: Vec<Option<bool>> = children
@@ -9078,7 +9082,11 @@ fn merge_replaced_in_container(
                 // inventory first fold — Word keeps one empty pure-D).
                 let carrier = inss[inss.len() - 1];
                 let carrier_has_mark_del = para_mark_revision(dom, carrier, &W::del());
-                let mark_only_empty_del = inss.len() == 1
+                // #1686: inside a cell the mark-only empty paragraph is one
+                // the cell lost. Folding it onto the inserted paragraph
+                // leaves Reject All one paragraph short.
+                let mark_only_empty_del = !in_cell
+                    && inss.len() == 1
                     && !preceding_has_ins
                     && !carrier_has_mark_del
                     && first_mark_only_empty
@@ -9196,7 +9204,11 @@ fn merge_replaced_in_container(
                 // When last pure-I is empty/whitespace and first pure-D is
                 // unrelated, keep trailing empty as carrier (long OR short).
                 let trailing = inss[inss.len() - 1];
-                if inss.len() >= 2
+                // #1686: a cell's trailing empty inserted paragraph is a
+                // paragraph of the revised cell. Using it as the carrier
+                // deletes it on the next fold.
+                if !in_cell
+                    && inss.len() >= 2
                     && trailing != last_ins
                     && (para_has_no_text(dom, trailing)
                         || para_body_text_is_whitespace_only(dom, trailing))
@@ -9763,6 +9775,34 @@ fn merge_replaced_in_container(
                     && para_body_alnum_len(dom, d) >= 10
                     && (para_word_atom_count(dom, d) >= 8 || para_has_heading_style(dom, d))
                 {
+                    continue;
+                }
+                // #1686: the carrier is an empty inserted paragraph of a cell.
+                // Word's `[One.]` → `["" ""]` keeps that inserted mark on the
+                // paragraph that holds the deleted words and leaves the other
+                // paragraph empty. Any other empty inserted paragraph of a
+                // cell stays; folding it away drops a paragraph Accept All
+                // or Reject All still has.
+                if in_cell
+                    && para_has_no_text(dom, last_ins)
+                    && para_mark_revision(dom, last_ins, &W::ins())
+                {
+                    let word_empty_gain = inss.len() == 1
+                        && dels.len() == 1
+                        && para_has_real_del(dom, d)
+                        && !para_mark_revision(dom, d, &W::del());
+                    if word_empty_gain {
+                        for c in dom.elements(d, None) {
+                            if !dom.name_is(c, &W::p_pr()) {
+                                dom.add(last_ins, c);
+                            }
+                        }
+                        for c in dom.elements(d, None) {
+                            dom.remove(c);
+                        }
+                        acted = true;
+                        break;
+                    }
                     continue;
                 }
                 // Strip para-mark revision from the carrier (Word: bare mixed p)
