@@ -182,6 +182,13 @@ extract directory, before that crate unpacks the archive.
 **RUSTSEC-2022-0048** — withdrawn. It is not an active advisory and it is
 not an ignore in `deny.toml`.
 
+**RUSTSEC-2026-0206** — `rustybuzz` is a direct dependency in `Cargo.lock`.
+The `deny.toml` ignore is this reachable crate, not an absent call path.
+
+**RUSTSEC-2026-0192** — `ttf-parser` is a direct dependency in `Cargo.lock`
+and is also reached through `rustybuzz`. The `deny.toml` ignore is this
+reachable crate, not an absent call path.
+
 ## Security checks
 
 Install `cargo-deny` 0.20.2 and Gitleaks 8.30.1, then run:
