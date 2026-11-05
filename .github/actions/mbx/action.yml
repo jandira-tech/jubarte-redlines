@@ -8,22 +8,35 @@ description: Run Cargo through mbx, backed by the self-hosted runners' cache ser
 # The self-hosted runners share one mbx cache server on their private Docker
 # network (`mbx-cache`), so a crate one runner compiled is a cache hit on the
 # others. The server takes no token: mbx sends none over plain HTTP, and only
-# the runners can reach it. mbx publishes only from pushes to a protected
-# branch; pull requests read. GitHub-hosted runners cannot reach the server,
-# so jobs that also run there keep Swatinem/rust-cache on those legs.
+# the runners can reach it. Pushes and pull requests from this repository's
+# own branches publish; pull requests from forks only read (see the step
+# below). GitHub-hosted runners cannot reach the server, so jobs that also run
+# there keep Swatinem/rust-cache on those legs.
 runs:
   using: composite
   steps:
     - uses: jdx/mr-boxington-action@47ce49b32025d93a7a2f4570815afaa2b7092240 # v1.7.2
       with:
         backend: remote
-        version: "1.24.1"
+        # 1.25.0 adds MBX_REMOTE_TRUST_WRITES, which the next step uses.
+        version: "1.25.0"
         remote-url: http://mbx-cache:7543
-        namespace: jandira-tech/jubarte-redlines
+        # No namespace input: mbx reads it from the runner's user config
+        # (/root/.config/mbx/config.toml, from /srv/mbx/runner-config.toml on
+        # the host), so every jandira-tech runner shares one namespace.
         # Linked test binaries are the largest outputs by far: with
         # them cached, one test job left an 84 GiB store and a 79 GiB target
         # on 2026-10-17, and uploads drained at 1 MB/s. Cache compilations only.
         cache-links: "false"
+    # mbx publishes only from pushes to a protected branch unless writes are
+    # trusted, so pull requests used to read without filling the cache. Trust
+    # every build from this repository, but not pull requests from forks: the
+    # repository is public, and a fork's build could otherwise put tampered
+    # artifacts in the cache that release builds read.
+    - name: let same-repository pull requests publish to the cache
+      if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+      shell: bash
+      run: echo "MBX_REMOTE_TRUST_WRITES=true" >> "$GITHUB_ENV"
     # Every job on a runner builds in the same checkout, so mbx always counts
     # that checkout's managed target as the most recently used and never
     # collects it: on 2026-10-17 three of them reached 69-220 GiB in a few
