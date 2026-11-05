@@ -3252,5 +3252,89 @@ class VersionAnswerTests(unittest.TestCase):
             self.assertIn("answers_version", text[start : text.index("\n}\n", start)])
 
 
+class MbxAutoGc(unittest.TestCase):
+    """#2036: step 0 pauses mbx auto-gc when it is on and restores it on the
+    way out, including when the run dies. An owner who turned it off keeps
+    it off. No mbx, nothing happens. The pause is after the main-branch
+    check, so a not-main preflight never touches the machine's setting.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="release_mbx_"))
+        (self.tmp / "scripts").mkdir()
+        shutil.copy(RELEASE_SH, self.tmp / "scripts" / "release.sh")
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        self.log = self.tmp / "mbx.log"
+        stub = self.bin / "mbx"
+        stub.write_text(
+            "#!/bin/sh\n"
+            'printf "%s\\n" "$*" >> "$MBX_LOG"\n'
+            'if [ "$1" = settings ] && [ "$2" = get ]; then\n'
+            '  printf "%s\\n" "${MBX_GC_AUTO:-true}"\n'
+            "fi\n"
+        )
+        stub.chmod(0o755)
+        self.git = ["git", "-C", str(self.tmp)]
+        subprocess.run([*self.git, "init", "-q", "-b", "main"], check=True)
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def run_release(self, *, branch: str = "main", gc: str = "true",
+                    with_mbx: bool = True) -> subprocess.CompletedProcess[str]:
+        if branch != "main":
+            subprocess.run([*self.git, "checkout", "-q", "-b", branch], check=True)
+        env = os.environ.copy()
+        env["MBX_LOG"] = str(self.log)
+        env["MBX_GC_AUTO"] = gc
+        env["PATH"] = f"{self.bin}:/usr/bin:/bin" if with_mbx else "/usr/bin:/bin"
+        return subprocess.run(
+            ["bash", str(self.tmp / "scripts" / "release.sh"),
+             "0.10.0", *SUMMARIES, DOCS_FLAG, "README links bomb prevention"],
+            capture_output=True, text=True, timeout=60, env=env,
+        )
+
+    def test_pauses_auto_gc_when_it_is_on_and_restores_it_when_the_run_dies(self) -> None:
+        r = self.run_release()
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        log = self.log.read_text() if self.log.exists() else ""
+        self.assertIn("settings set gc.auto false", log)
+        self.assertIn("settings set gc.auto true", log)
+        self.assertLess(log.index("settings get gc.auto"), log.index("settings set gc.auto false"))
+        self.assertLess(log.index("settings set gc.auto false"), log.index("settings set gc.auto true"))
+
+    def test_an_owner_who_turned_auto_gc_off_keeps_it_off(self) -> None:
+        r = self.run_release(gc="false")
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        log = self.log.read_text() if self.log.exists() else ""
+        self.assertNotIn("settings set gc.auto", log)
+
+    def test_no_mbx_on_path_changes_nothing(self) -> None:
+        r = self.run_release(with_mbx=False)
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("mbx", r.stderr)
+        self.assertFalse(self.log.exists())
+
+    def test_a_not_main_preflight_does_not_touch_gc(self) -> None:
+        r = self.run_release(branch="not-main")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("release from main only", r.stderr)
+        self.assertFalse(self.log.exists())
+
+    def test_the_checklist_records_the_pause(self) -> None:
+        rows = [line for line in checklist_block().splitlines() if "mbx auto-gc" in line]
+        self.assertEqual(len(rows), 1, rows)
+        row = rows[0]
+        self.assertTrue(row.startswith("0|auto|"), row)
+        self.assertIn("restored", row)
+        self.assertIn("scripts/release.sh step 0", row)
+
+    def test_the_readme_links_bomb_prevention(self) -> None:
+        root = HERE.parent
+        for name in ("README.md", "README.crates.md"):
+            self.assertIn("docs/bomb_prevention.md", (root / name).read_text(), name)
+
+
 if __name__ == "__main__":
     unittest.main()
