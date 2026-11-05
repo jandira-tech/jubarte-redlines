@@ -2097,17 +2097,17 @@ mod tests {
             ),
             "open_within refuses the same"
         );
-        // (b) two raw names, bit 11 set, whose lossy UTF-8 decode is the same
-        // `x\u{FFFD}.bin`: two parts, one name.
+        // (b) two raw names, bit 11 set, that are not UTF-8. A lossy decode
+        // used to alias both as `x\u{FFFD}.bin`; the flag's claim is refused
+        // instead (#640).
         let aliased = base(&[
             zip_names::RawEntry::raw(b"x\x82.bin", b"FIRST").utf8(),
             zip_names::RawEntry::raw(b"x\x83.bin", b"SECOND").utf8(),
         ]);
-        assert!(
-            matches!(PartFs::open(&aliased), Err(OpcError::DuplicatePartName(ref n)) if n == "x\u{FFFD}.bin"),
-            "{:?}",
-            PartFs::open(&aliased).err()
-        );
+        let Err(err) = PartFs::open(&aliased) else {
+            panic!("invalid UTF-8 entry names were accepted");
+        };
+        assert!(err.to_string().contains("not valid UTF-8"), "{err}");
         // (c) two names that differ only in ASCII case: one part, OPC names
         // are case-insensitive.
         let cased = base(&[
