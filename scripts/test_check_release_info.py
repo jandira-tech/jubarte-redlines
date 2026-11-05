@@ -371,7 +371,7 @@ class SixFiles(unittest.TestCase):
         self.write_six(rows=ROWS, conversion_rows=ROWS + 2, set_version="2026-11-03.1")
         path = self.info / f"results_conversion_{VER}_{STAMP}.json"
         sound = json.loads(path.read_text())
-        for broken in ({"set_version": True}, {"set": None}, {"drawn": {"seed": 1}}):
+        for broken in ({"set_version": True}, {"set": None}, {"drawn": {"seed": 1}}, {"drawn": "seed=42"}):
             doc = json.loads(json.dumps(sound))
             for key, value in broken.items():
                 if value is None:

@@ -324,8 +324,8 @@ def fixed_set_rows(results: Path | None) -> int | None:
     n = sample.get("n")
     if not all(isinstance(sample.get(k), str) and sample[k].strip() for k in ("set_version", "set")):
         return None
-    if isinstance(drawn, dict) and "seed" in drawn:
-        return None
+    if drawn is not None and (not isinstance(drawn, dict) or "seed" in drawn):
+        return None  # a drawn sample, or a drawn record that is not an object
     if isinstance(n, bool) or not isinstance(n, int) or n <= 0:
         return None
     return n
