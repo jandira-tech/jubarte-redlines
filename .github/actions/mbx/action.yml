@@ -15,11 +15,12 @@ description: Run Cargo through mbx, backed by the self-hosted runners' cache ser
 runs:
   using: composite
   steps:
-    - uses: jdx/mr-boxington-action@47ce49b32025d93a7a2f4570815afaa2b7092240 # v1.7.2
+    - uses: jdx/mr-boxington-action@88acf2bb50552c7c508cbac13e5f8c576b95b1de # v1.7.3
       with:
         backend: remote
-        # 1.25.0 adds MBX_REMOTE_TRUST_WRITES, which the next step uses.
-        version: "1.25.0"
+        # Always the newest mbx release (1.25.0+ is needed for the
+        # MBX_REMOTE_TRUST_WRITES step below).
+        version: "latest"
         remote-url: http://mbx-cache:7543
         # No namespace input: mbx reads it from the runner's user config
         # (/root/.config/mbx/config.toml, from /srv/mbx/runner-config.toml on
