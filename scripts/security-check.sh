@@ -8,7 +8,7 @@ command -v cargo-deny >/dev/null
 command -v gitleaks >/dev/null
 # Standalone workspaces: the root graph alone misses binding dependencies.
 for manifest in Cargo.toml jubarte-python/Cargo.toml jubarte-wasm/Cargo.toml jubarte-rust-inproc/Cargo.toml fuzz/Cargo.toml; do
-  cargo deny --manifest-path "$manifest" check advisories
+  cargo deny --manifest-path "$manifest" check advisories bans
 done
 # Full reachable history plus local changes; never print credential values.
 gitleaks git --log-opts="--all" --redact --no-banner
