@@ -1,0 +1,4 @@
+## 2025-02-27 - Regex DoS Vulnerability
+**Vulnerability:** A ReDoS (Regular Expression Denial of Service) vulnerability was present in `src/edit/for_edit.rs` where user-controlled input (`request.regex`) was passed directly to `regex::Regex::new()` without any length limits.
+**Learning:** The `regex` crate in Rust explicitly documents that compiling large or complex regular expressions can consume significant resources, potentially leading to exhaustion if limits aren't applied. By default, `Regex::new` has a 10MB limit, which is too high for simple string inputs and could allow malicious clients to construct computationally expensive regexes.
+**Prevention:** Unbounded user input must be length-bounded before compilation. For added defense in depth, use `regex::RegexBuilder::new()` with an explicitly configured `size_limit()` to bound resource usage.
