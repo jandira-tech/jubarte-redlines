@@ -840,11 +840,9 @@ fn tar_c_string(bytes: &[u8]) -> Result<String, String> {
 }
 
 fn tar_octal(bytes: &[u8]) -> Result<u64, String> {
-    let end = bytes
-        .iter()
-        .position(|byte| *byte == 0 || *byte == b' ')
-        .unwrap_or(bytes.len());
-    let text = bytes.get(..end).unwrap_or(&[]);
+    let start = bytes.iter().position(|b| *b != b' ' && *b != 0).unwrap_or(bytes.len());
+    let end = bytes.iter().rposition(|b| *b != b' ' && *b != 0).map_or(start, |p| p + 1);
+    let text = bytes.get(start..end).unwrap_or(&[]);
     if text.is_empty() {
         return Ok(0);
     }
@@ -1362,5 +1360,14 @@ mod tests {
         .unwrap();
         confine_update_zip(&fixture, TAR_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
             .expect("the signed-update fixture tar is a regular member");
+    }
+
+    #[test]
+    fn tar_octal_parses_padded_strings() {
+        assert_eq!(super::tar_octal(b" 123456\0").unwrap(), 42798);
+        assert_eq!(super::tar_octal(b"123456 \0").unwrap(), 42798);
+        assert_eq!(super::tar_octal(b"0000123\0").unwrap(), 83);
+        assert_eq!(super::tar_octal(b" \0").unwrap(), 0);
+        assert_eq!(super::tar_octal(b"\0").unwrap(), 0);
     }
 }
