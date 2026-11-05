@@ -306,17 +306,27 @@ def sample_row_count(sample: Path) -> int | None:
 
 def fixed_set_rows(results: Path | None) -> int | None:
     """The size a fixed set names for itself: ``sample.n`` of a results JSON whose
-    sample carries a ``set_version`` (the bench's fixed sets, plan 7: conversion and
-    redline sets need not be the same size). None for a drawn sample, or when the
-    JSON cannot be read; the caller then holds the CSV to ``--rows``."""
+    sample is a whole fixed set (the bench's fixed sets, plan 7: conversion and
+    redline sets need not be the same size) — a non-empty string ``set_version``
+    and ``set``, and no ``drawn.seed`` (a drawn sample never is one). None
+    otherwise, or when the JSON cannot be read; the caller then holds the CSV to
+    ``--rows``, and check_results_json names what is wrong with the JSON."""
     if results is None:
         return None
     try:
-        sample = json.loads(results.read_text(encoding="utf-8")).get("sample") or {}
-    except (OSError, ValueError, AttributeError):
+        doc = json.loads(results.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return None
+    sample = doc.get("sample") if isinstance(doc, dict) else None
+    if not isinstance(sample, dict):
+        return None
+    drawn = sample.get("drawn")
     n = sample.get("n")
-    if not sample.get("set_version") or isinstance(n, bool) or not isinstance(n, int) or n <= 0:
+    if not all(isinstance(sample.get(k), str) and sample[k].strip() for k in ("set_version", "set")):
+        return None
+    if isinstance(drawn, dict) and "seed" in drawn:
+        return None
+    if isinstance(n, bool) or not isinstance(n, int) or n <= 0:
         return None
     return n
 
@@ -333,7 +343,13 @@ def check_results_json(path: Path, name: str, six: dict[str, Path], version: str
         return [f"{path.name}: not UTF-8 text ({exc.reason} at byte {exc.start})"]
     except ValueError as exc:
         return [f"{path.name} is not JSON: {exc}"]
-    sample = doc.get("sample") or {}
+    if not isinstance(doc, dict):
+        return [f"{path.name}: not a JSON object"]
+    sample = doc.get("sample")
+    if not isinstance(sample, dict):
+        if sample is not None:
+            return [f"{path.name}: sample is not an object"]
+        sample = {}
     csv_name, csv_sha = sample.get("csv"), sample.get("sha256")
     sample_csv = six.get(f"sample_{name[len('results_'):]}")
     rows = sample_row_count(sample_csv) if sample_csv is not None else None
@@ -367,6 +383,8 @@ def check_results_json(path: Path, name: str, six: dict[str, Path], version: str
         not_run = block.get("not_run") if tool != JUBARTE else None
         if not_run is not None and (isinstance(not_run, bool) or not isinstance(not_run, int) or not_run < 0):
             problems.append(f"{path.name}: tools.{tool}.not_run is not a non-negative integer")
+        elif not_run is not None and n < 1:
+            problems.append(f"{path.name}: tools.{tool}.n is {n:g}: a comparator must score at least one item")
         elif rows is not None and not_run is not None and n + not_run != rows:
             problems.append(f"{path.name}: tools.{tool}.n is {n} with not_run {not_run}, "
                             f"the sample holds {rows} rows")

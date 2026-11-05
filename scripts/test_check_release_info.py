@@ -364,6 +364,39 @@ class SixFiles(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn(f"tools.jubarte.n is {ROWS - 1}, the sample holds {ROWS} rows", r.stderr)
 
+    def test_only_a_whole_fixed_set_shape_overrides_rows(self) -> None:
+        """A truthy set_version alone does not make a fixed set: it needs a string
+        set_version and set, and a drawn sample (drawn.seed) never is one (#2054
+        review). Otherwise the CSV is held to --rows."""
+        self.write_six(rows=ROWS, conversion_rows=ROWS + 2, set_version="2026-11-03.1")
+        path = self.info / f"results_conversion_{VER}_{STAMP}.json"
+        sound = json.loads(path.read_text())
+        for broken in ({"set_version": True}, {"set": None}, {"drawn": {"seed": 1}}):
+            doc = json.loads(json.dumps(sound))
+            for key, value in broken.items():
+                if value is None:
+                    doc["sample"].pop(key)
+                else:
+                    doc["sample"][key] = value
+            path.write_text(json.dumps(doc))
+            r = self.check()
+            self.assertEqual(r.returncode, 1, (broken, r.stdout))
+            self.assertIn(f"{ROWS + 2} data rows, want {ROWS}", r.stderr)
+
+    def test_a_sample_that_is_not_an_object_is_a_problem_not_a_traceback(self) -> None:
+        """Jules (#2054): ``"sample": "x"`` must not crash the checker."""
+        self._edit_results("results_redline", sample="x")
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_a_comparator_that_ran_nothing_fails(self) -> None:
+        """Codex (#2054): n 0 with every row not_run has no aggregates to state."""
+        self._edit_results("results_redline", tools={"docxodus": {"n": 0, "not_run": ROWS, "failures": 0}})
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("tools.docxodus.n is 0: a comparator must score at least one item", r.stderr)
+
     def test_failures_must_stay_within_zero_and_n(self) -> None:
         self._edit_results("results_redline", tools={"jubarte": {"failures": ROWS + 1}})
         r = self.check()
