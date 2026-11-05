@@ -1199,18 +1199,13 @@ fn wrapped(body: &str) -> [String; 2] {
 
 /// A paragraph in a block content control or a custom XML element is its
 /// container's: when it is the last, its mark stays, in the body and in a
-/// cell (codex, crush, glm-5.3 and MiniMax on #1670, round 7). The custom
-/// XML element runs under keep only: the comparer panics on it (#1674).
+/// cell (codex, crush, glm-5.3 and MiniMax on #1670, round 7). The default
+/// path unwraps `w:customXml` before compare (#1674).
 #[test]
 fn a_wrapped_final_paragraph_keeps_its_mark() {
     for mode in MODES {
         let cases = wrapped(&para("Old."));
-        let cases = if mode.is_empty() {
-            &cases[..1]
-        } else {
-            &cases[..]
-        };
-        for body in cases {
+        for body in &cases {
             check_outputs(
                 &docx(body),
                 &plan_of(mode, &[delete("p0")]),
@@ -1218,7 +1213,7 @@ fn a_wrapped_final_paragraph_keeps_its_mark() {
                 &format!("{mode} body {body}"),
             );
         }
-        for cell in cases {
+        for cell in &cases {
             check_outputs(
                 &table_with_cell(cell),
                 &plan_of(mode, &[delete("p2")]),

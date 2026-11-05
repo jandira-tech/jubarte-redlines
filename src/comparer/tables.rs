@@ -139,7 +139,9 @@ pub static ELEMENTS_TO_HAVE_SHA1: LazyLock<HashSet<XName>> = LazyLock::new(|| {
 /// `InvalidElements` (WmlComparer.ts :9055) — names that
 /// [`super::atomize::verify_no_invalid_content`] rejects before atomizing.
 /// `w:moveFrom` / `w:moveTo` are deliberately NOT invalid: the redline
-/// keeps moves as their own output shape.
+/// keeps moves as their own output shape. `w:customXml` is unwrapped
+/// before this check; it stays in the set so a wrapper that unwrap missed
+/// is still rejected. The range markers are not unwrapped.
 pub static INVALID_ELEMENTS: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     set(&[
         W::name("altChunk"),
