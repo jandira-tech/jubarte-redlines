@@ -572,10 +572,39 @@ fn render_spans(spans: &[Span]) -> String {
     out.trim().to_string()
 }
 
+// Characters examined while deciding whether a `.` or `)` still has an
+// all-ASCII-digit prefix. Re-reading that prefix at every delimiter is
+// quadratic; one pass is one step per character. The tests reject the
+// rescan. The count is per thread, so tests running together do not
+// share it.
+#[cfg(test)]
+thread_local! {
+    pub(super) static LIST_PREFIX_STEPS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Count `steps` characters of the prefix decision. Test-only; an empty
+/// inline function in production builds, so the runtime cost is zero.
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[inline]
+fn count_list_prefix_steps(steps: usize) {
+    LIST_PREFIX_STEPS.with(|total| total.set(total.get() + steps));
+}
+
+#[cfg(not(test))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[inline]
+fn count_list_prefix_steps(_steps: usize) {}
+
 /// Escape one line of text so Markdown reads it back as the same text.
 fn escape_line(text: &str) -> String {
     let text = text.trim();
     let mut out = String::with_capacity(text.len());
+    // Whether every character before the current one is an ASCII digit.
+    // `1.` or `1)` opens a list only then. Carrying the answer decides each
+    // delimiter in constant time instead of re-reading the prefix (#1503).
+    let mut prefix_is_digits = true;
     for (index, ch) in text.char_indices() {
         let at_start = index == 0;
         let escape = match ch {
@@ -584,8 +613,7 @@ fn escape_line(text: &str) -> String {
             '-' | '+' | '=' => at_start,
             '.' | ')' => {
                 // `1.` or `1)` at the start of a line opens a list.
-                let before = text.get(..index).unwrap_or("");
-                !before.is_empty() && before.chars().all(|c| c.is_ascii_digit())
+                prefix_is_digits && !at_start
             }
             _ => false,
         };
@@ -593,6 +621,9 @@ fn escape_line(text: &str) -> String {
             out.push('\\');
         }
         out.push(ch);
+        // One character of the pass: keep the all-digits answer current.
+        count_list_prefix_steps(1);
+        prefix_is_digits &= ch.is_ascii_digit();
     }
     out
 }
@@ -1793,6 +1824,47 @@ mod tests {
             "a\\_b \\* c \\[x\\] \\#2 \\$5"
         );
         assert_eq!(escape_line("  well-known  "), "well-known");
+    }
+
+    #[test]
+    fn escapes_list_delimiters_only_after_sole_digit_runs() {
+        // `1.` or `1)` opens a list only when nothing but digits precedes
+        // it; a delimiter after that first one is literal text.
+        assert_eq!(escape_line("12) not a list"), "12\\) not a list");
+        assert_eq!(escape_line("1.2."), "1\\.2.");
+        assert_eq!(escape_line("3.14)"), "3\\.14)");
+        assert_eq!(escape_line("."), ".");
+        assert_eq!(escape_line(")."), ").");
+        // Only ASCII digits count: `٣` does not open a list.
+        assert_eq!(escape_line("٣."), "٣.");
+    }
+
+    #[test]
+    fn list_prefix_scan_stays_linear() {
+        // 8_000 digits, then 4_000 `1.` pairs. Re-reading the digit prefix
+        // at every delimiter examines tens of millions of characters; one
+        // pass examines each character a constant number of times.
+        let digits = 8_000;
+        let pairs = 4_000;
+        let mut text = "7".repeat(digits);
+        text.push('.');
+        text.push_str(&"1.".repeat(pairs - 1));
+        let chars = text.chars().count();
+        let delimiters = text.chars().filter(|&c| matches!(c, '.' | ')')).count();
+        assert_eq!(delimiters, pairs);
+        LIST_PREFIX_STEPS.with(|steps| steps.set(0));
+        let escaped = escape_line(&text);
+        let steps = LIST_PREFIX_STEPS.with(std::cell::Cell::get);
+        const C: usize = 4;
+        let bound = C * chars;
+        assert!(
+            steps <= bound,
+            "escaping {delimiters} delimiters examined {steps} characters; \
+             a single pass examines at most {bound}"
+        );
+        // Only the first delimiter follows a pure digit run.
+        let expected = format!("{}\\.{}", "7".repeat(digits), "1.".repeat(pairs - 1));
+        assert_eq!(escaped, expected);
     }
 
     #[test]
