@@ -713,6 +713,12 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             return Err(part_declared_over(&name, entry.size(), &limits));
         }
     }
+    if let Some(name) = ancestor_part(&names) {
+        return Err(AdmissionError::new(
+            K::UnsupportedPackage,
+            format!("unsafe entry name {name:?}: part is an ancestor of another part"),
+        ));
+    }
 
     let mut total = 0u64;
     let mut elements = 0u64;
@@ -1040,7 +1046,9 @@ pub(crate) fn zip_entry_name(
 }
 
 /// A ZIP name must be a relative part name: no leading slash or drive, no
-/// backslash, no empty, `.` or `..` segment.
+/// backslash, no empty, `.` or `..` segment, no trailing dot, and no
+/// percent-encoded unreserved character (`#646`). A percent-encoded
+/// `[Content_Types].xml` is the reserved metadata name, not a second part.
 fn check_part_name(name: &str) -> Result<(), AdmissionError> {
     let refuse = |why: &str| {
         Err(AdmissionError::new(
@@ -1057,6 +1065,9 @@ fn check_part_name(name: &str) -> Result<(), AdmissionError> {
     if name.contains('\\') || name.contains('\0') {
         return refuse("backslash or NUL");
     }
+    if percent_encodes_unreserved(name) {
+        return refuse("percent-encoded unreserved character");
+    }
     let segments = name.strip_suffix('/').unwrap_or(name);
     if segments
         .split('/')
@@ -1064,7 +1075,113 @@ fn check_part_name(name: &str) -> Result<(), AdmissionError> {
     {
         return refuse("empty, . or .. segment");
     }
+    if segments.split('/').any(|segment| segment.ends_with('.')) {
+        return refuse("trailing dot");
+    }
+    match percent_decode(name) {
+        Some(decoded) => {
+            let raw_lower = name.to_ascii_lowercase();
+            let decoded_lower = decoded.to_ascii_lowercase();
+            if decoded_lower == "[content_types].xml" && raw_lower != decoded_lower {
+                return refuse("reserved metadata name");
+            }
+            let decoded_segments = decoded_lower
+                .strip_suffix('/')
+                .unwrap_or(decoded_lower.as_str());
+            if decoded_segments
+                .split('/')
+                .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+            {
+                return refuse("empty, . or .. segment");
+            }
+        }
+        None => return refuse("bad percent-encoding"),
+    }
     Ok(())
+}
+
+/// One stored part is a directory prefix of another (`word/document.xml`
+/// and `word/document.xml/child.bin`). A trailing-slash directory entry
+/// is not a part.
+fn ancestor_part(names: &[String]) -> Option<&str> {
+    let parts: Vec<&str> = names
+        .iter()
+        .map(String::as_str)
+        .filter(|name| !name.ends_with('/'))
+        .collect();
+    for name in &parts {
+        let mut prefix = name.to_ascii_lowercase();
+        prefix.push('/');
+        if parts
+            .iter()
+            .any(|other| other.to_ascii_lowercase().starts_with(&prefix))
+        {
+            return Some(*name);
+        }
+    }
+    None
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => byte.checked_sub(b'0'),
+        b'a'..=b'f' => byte.checked_sub(b'a').and_then(|n| n.checked_add(10)),
+        b'A'..=b'F' => byte.checked_sub(b'A').and_then(|n| n.checked_add(10)),
+        _ => None,
+    }
+}
+
+fn is_unreserved(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
+}
+
+/// True when a `%HH` escape decodes to an unreserved ASCII byte. OPC part
+/// names write those characters literally.
+fn percent_encodes_unreserved(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let Some(byte) = bytes.get(index).copied() else {
+            break;
+        };
+        if byte == b'%' {
+            let hi = bytes.get(index.saturating_add(1)).copied();
+            let lo = bytes.get(index.saturating_add(2)).copied();
+            if let (Some(hi), Some(lo)) = (hi.and_then(hex_digit), lo.and_then(hex_digit)) {
+                let value = hi.saturating_mul(16).saturating_add(lo);
+                if is_unreserved(value) {
+                    return true;
+                }
+                index = index.saturating_add(3);
+                continue;
+            }
+        }
+        index = index.saturating_add(1);
+    }
+    false
+}
+
+/// Decode `%HH` escapes. `None` when a `%` is not a two-digit hex escape
+/// or the result is not UTF-8.
+fn percent_decode(name: &str) -> Option<String> {
+    let bytes = name.as_bytes();
+    let mut out = Vec::new();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let byte = bytes.get(index).copied()?;
+        if byte == b'%' {
+            let hi_at = index.checked_add(1)?;
+            let lo_at = index.checked_add(2)?;
+            let hi = hex_digit(bytes.get(hi_at).copied()?)?;
+            let lo = hex_digit(bytes.get(lo_at).copied()?)?;
+            out.push(hi.checked_mul(16)?.checked_add(lo)?);
+            index = index.checked_add(3)?;
+        } else {
+            out.push(byte);
+            index = index.checked_add(1)?;
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 /// A part's text for scanning. Word writes UTF-8, but a part may be UTF-16
@@ -1990,6 +2107,34 @@ mod tests {
             .unwrap();
         let bytes = out.finish().unwrap().into_inner();
         assert!(admit(&bytes, InputLimits::default()).is_ok());
+    }
+
+    #[test]
+    fn strict_opc_part_names_are_refused() {
+        // Percent-encoded `..`, a percent-encoded unreserved letter, a
+        // trailing dot, a part that is also an ancestor, and a
+        // percent-encoded content-types name (#646).
+        for name in [
+            "word/%2e%2e/evil.bin",
+            "word/doc%75ment2.xml",
+            "word/evil.xml.",
+            "word/document.xml/child.bin",
+            "%5BContent_Types%5D.xml",
+        ] {
+            let bytes = docx_with(&[(name, b"<x/>")]);
+            assert_eq!(
+                kind(&bytes, InputLimits::default()),
+                AdmissionErrorKind::UnsupportedPackage,
+                "{name}"
+            );
+        }
+        assert!(
+            admit(
+                &docx_with(&[("word/media/image1.png", b"png")]),
+                InputLimits::default()
+            )
+            .is_ok()
+        );
     }
 
     #[test]
