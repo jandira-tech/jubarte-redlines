@@ -352,6 +352,42 @@ fn a_redaction_that_survives_in_a_comment_is_refused() {
 }
 
 #[test]
+fn redact_refuses_an_encoding_the_scan_does_not_certify() {
+    // UTF-32BE (BOM 00 00 FE FF) stores the same literal. The scan certifies
+    // raw UTF-8 and UTF-16LE only, so these bytes are not a hit. An empty
+    // finding list must not authorize the redaction.
+    let secret = "12345678";
+    let mut pkg = PartFs::open(&docx(&para(&format!("Account {secret} is closed.")))).unwrap();
+    let mut encoded = vec![0x00, 0x00, 0xFE, 0xFF];
+    encoded.extend(
+        format!("<root>{secret}</root>")
+            .chars()
+            .flat_map(|c| u32::from(c).to_be_bytes()),
+    );
+    pkg.set_part("customXml/item.bin", encoded);
+    pkg.add_content_type_override("/customXml/item.bin", "application/octet-stream");
+    let source = pkg.to_zip().unwrap();
+    let err = apply_plan(
+        &source,
+        &plan(&format!(
+            r#"{{"kind":"redact","paragraph":"p0","find":"{secret}"}}"#
+        )),
+    )
+    .expect_err("a UTF-32BE part cannot pass a redaction");
+    assert_eq!(err.code, "REDACTION_INCOMPLETE");
+    assert!(
+        err.message.contains("customXml/item.bin"),
+        "{}",
+        err.message
+    );
+    assert!(!err.message.contains(secret), "{}", err.message);
+    assert_eq!(
+        err.outcomes[0].code.as_deref(),
+        Some("REDACTION_INCOMPLETE")
+    );
+}
+
+#[test]
 fn the_redaction_is_no_tracked_change_and_the_report_never_echoes_the_text() {
     let source = docx(&para("Account 12345678 is closed."));
     let out = apply_plan(

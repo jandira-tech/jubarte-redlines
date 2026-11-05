@@ -793,7 +793,8 @@ pub enum OperationKind {
     /// (U+2588) per character, untracked: the clean copy and the redline
     /// both show the blocks and neither keeps the text. The plan is refused
     /// with `REDACTION_LEAK` when the text still occurs anywhere in either
-    /// output, and the report never repeats it.
+    /// output, and with `REDACTION_INCOMPLETE` when a part uses an encoding
+    /// the scan does not certify. The report never repeats the text.
     Redact {
         /// Paragraph to redact in; must match exactly one.
         paragraph: Selector,
@@ -6686,16 +6687,27 @@ impl<'p> Transaction<'p> {
 
     /// Refuse the plan when the text of a redaction still occurs in one of
     /// `outputs` (a comment on it, another paragraph, a header, the
-    /// document properties). The message names the parts, never the text.
+    /// document properties), or when a part is in an encoding the scan
+    /// does not certify. The message names the parts, never the text.
     fn check_redactions(&self, outputs: &[&[u8]]) -> Result<(), EditError> {
         for (op, operation) in self.plan.operations.iter().enumerate() {
             let OperationKind::Redact { find, .. } = &operation.kind else {
                 continue;
             };
-            let parts: std::collections::BTreeSet<String> = outputs
-                .iter()
-                .flat_map(|doc| crate::scrub::leaks(doc, find))
-                .collect();
+            let mut parts = std::collections::BTreeSet::new();
+            for doc in outputs {
+                match crate::scrub::leak_scan(doc, find) {
+                    crate::scrub::LeakScan::Incomplete { part, reason } => {
+                        let message =
+                            format!("{part} ({reason}); the redaction scan is incomplete");
+                        let mut error = self.conflict(op, &message);
+                        error.code = "REDACTION_INCOMPLETE".into();
+                        error.outcomes[op].code = Some(error.code.clone());
+                        return Err(error);
+                    }
+                    crate::scrub::LeakScan::Complete(found) => parts.extend(found),
+                }
+            }
             if parts.is_empty() {
                 continue;
             }
