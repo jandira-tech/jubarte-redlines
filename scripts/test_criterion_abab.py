@@ -319,7 +319,8 @@ class CriterionAbab(unittest.TestCase):
         )
         for call in calls:
             self.assertIn(f"CRITERION_HOME={self.state}/criterion_home", call)
-        self.assertNotIn("/tmp", next(iter(calls)))
+        # the state dir may itself sit under /tmp (Linux tempfile); nothing else may
+        self.assertNotIn("/tmp", calls[0].replace(str(self.state), "<state>"))
         # six offline comparisons: both self-noise checks and all four B-vs-A
         cmps = [c.split("|")[1] for c in calls if "--load-baseline" in c]
         self.assertEqual(len(cmps), 6, calls)
