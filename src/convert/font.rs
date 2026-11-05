@@ -2244,7 +2244,14 @@ fn sorted_dir_listing(dir: &Path) -> Arc<Vec<PathBuf>> {
     if let Some(hit) = CACHE.lock().ok().and_then(|c| c.get(dir).cloned()) {
         return hit;
     }
-    let mut paths: Vec<PathBuf> = fs::read_dir(dir)
+    let read = fs::read_dir(dir);
+    // Permission can be granted later without a new directory mtime
+    // (macOS privacy, or chmod). Caching the empty denial would hide the
+    // fonts for the rest of the process (#2051).
+    if matches!(&read, Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied) {
+        return Arc::new(Vec::new());
+    }
+    let mut paths: Vec<PathBuf> = read
         .map(|entries| entries.flatten().map(|e| e.path()).collect())
         .unwrap_or_default();
     paths.sort();
@@ -3107,9 +3114,12 @@ fn font_index_path() -> Option<PathBuf> {
     }
 }
 
-/// Bump the `1` when the family search's matching rules change; the crate
-/// version drops the answers another release recorded.
-const FONT_INDEX_HEADER: &str = concat!("jubarte-font-index\t2\t", env!("CARGO_PKG_VERSION"));
+/// Bump when the family search's matching rules change, or when a recorded
+/// answer would stay wrong for the same folder mtime. Generation 3 drops
+/// misses recorded while a folder could not be listed (#2051): permission
+/// does not change the directory's mtime. The crate version drops the
+/// answers another release recorded.
+const FONT_INDEX_HEADER: &str = concat!("jubarte-font-index\t3\t", env!("CARGO_PKG_VERSION"));
 
 /// A modification time in nanoseconds, `None` for a missing path.
 fn mtime_of(path: &Path) -> Option<u128> {
@@ -3231,6 +3241,14 @@ impl FontIndex {
     }
 }
 
+/// `read_dir` failed because the process may not list `dir` (EACCES/EPERM).
+fn dir_listing_denied(dir: &Path) -> bool {
+    matches!(
+        fs::read_dir(dir),
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied
+    )
+}
+
 /// `key`'s faces from the index when still current, else from `scan`
 /// (faces and the folders it listed), which the index then records.
 fn indexed_faces(
@@ -3243,7 +3261,12 @@ fn indexed_faces(
         return faces;
     }
     let (faces, dirs) = scan();
-    if let Ok(mut index) = index.lock() {
+    // A denial is not an answer. The directory mtime does not change when
+    // the folder becomes readable, so recording the miss would serve it
+    // from then on (#2051).
+    if !dirs.iter().any(|dir| dir_listing_denied(dir))
+        && let Ok(mut index) = index.lock()
+    {
         index.record(key, &dirs, &faces);
     }
     faces
@@ -3824,6 +3847,59 @@ mod tests {
         assert_eq!(scans.get(), 4);
     }
 
+    /// A cloud-font folder that could not be listed (macOS privacy, or any
+    /// permission denial) must not poison the index: chmod does not change
+    /// the directory mtime, so a recorded miss would be served after the
+    /// folder becomes readable (#2051).
+    #[cfg(unix)]
+    #[test]
+    fn a_font_index_miss_while_a_folder_is_unreadable_is_not_reused() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let fonts = tmp.path().join("cloud");
+        fs::create_dir(&fonts).expect("fonts dir");
+        let carlito = fonts.join("Carlito-Regular.ttf");
+        fs::write(
+            &carlito,
+            include_bytes!("../../assets/fonts/Carlito-Regular.ttf"),
+        )
+        .expect("font");
+        let index_path = tmp.path().join("font-index.tsv");
+        let scan = || {
+            let listing = sorted_dir_listing(&fonts);
+            let faces = listing
+                .iter()
+                .filter(|path| path.extension().is_some_and(|ext| ext == "ttf"))
+                .filter_map(|path| {
+                    let bytes = fs::read(path).ok()?;
+                    Some(((false, false), FaceSource::new(path, None), bytes))
+                })
+                .collect();
+            (faces, vec![fonts.clone()])
+        };
+        let readable = fs::metadata(&fonts).expect("stat").permissions();
+        let mut denied = readable.clone();
+        denied.set_mode(0o0);
+        fs::set_permissions(&fonts, denied).expect("deny");
+        let index = Mutex::new(FontIndex::load(Some(index_path.clone())));
+        assert!(
+            indexed_faces(&index, "cloud", scan).is_empty(),
+            "an unreadable folder lists no faces"
+        );
+        fs::set_permissions(&fonts, readable).expect("restore");
+        let again = indexed_faces(&index, "cloud", scan);
+        assert!(
+            !again.is_empty(),
+            "the folder is readable; a miss recorded while it was not must not be served"
+        );
+        let reloaded = Mutex::new(FontIndex::load(Some(index_path)));
+        assert!(
+            !indexed_faces(&reloaded, "cloud", scan).is_empty(),
+            "reloading the index must not keep the unreadable-folder miss"
+        );
+    }
+
     #[test]
     fn the_font_index_file_round_trips_and_rejects_other_versions() {
         let mut entries = HashMap::new();
@@ -3843,7 +3919,7 @@ mod tests {
         );
         let text = format_font_index(&entries);
         assert_eq!(parse_font_index(&text), entries);
-        assert!(parse_font_index(&text.replacen("\t2\t", "\t0\t", 1)).is_empty());
+        assert!(parse_font_index(&text.replacen("\t3\t", "\t0\t", 1)).is_empty());
     }
 
     #[test]
@@ -3862,10 +3938,11 @@ mod tests {
         let header = text.lines().next().unwrap();
         assert!(header.ends_with(&format!("\t{}", env!("CARGO_PKG_VERSION"))));
         assert!(parse_font_index(&text.replace(env!("CARGO_PKG_VERSION"), "0.0.0")).is_empty());
-        // Rules 2 (Windows folders, matched by internal name): an index
-        // the same release wrote under rules 1 never listed those folders.
-        assert!(header.starts_with("jubarte-font-index\t2\t"));
-        assert!(parse_font_index(&text.replacen("\t2\t", "\t1\t", 1)).is_empty());
+        // Generation 3 drops an unreadable-folder miss (#2051). An index
+        // this release wrote under generation 2 is not reused: permission
+        // does not change the directory mtime those entries were stamped with.
+        assert!(header.starts_with("jubarte-font-index\t3\t"));
+        assert!(parse_font_index(&text.replacen("\t3\t", "\t2\t", 1)).is_empty());
     }
 
     #[test]
