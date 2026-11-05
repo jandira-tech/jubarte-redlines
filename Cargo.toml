@@ -239,7 +239,7 @@ criterion = "0.8"
 # `parts` feature (= dep:zip) is built.
 ooxmlsdk = { version = "0.13.2", default-features = false, features = ["parts"] }
 # tests/agent_text_view.rs: the agent view's header must parse as YAML.
-saphyr = "0.2"
+saphyr = "0.3"
 tempfile = "3"
 
 [[bench]]
