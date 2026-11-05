@@ -1670,3 +1670,302 @@ fn rejecting_an_authors_row_insertion_drops_it_with_its_property_change() {
     assert!(!xml.contains("Ann's row."), "{xml}");
     assert!(xml.contains("Kept row."), "{xml}");
 }
+
+/// Author and date on every carrier of the #1693 move, the date Word's
+/// compare of that story also stamps on its marks.
+const ANN_MOVE: &str = r#"w:author="Ann" w:date="2026-10-23T00:00:00Z""#;
+
+/// Word's compare of the #1693 story (`POST /v1/compare` of the before/after
+/// pair). The cell paragraph "Inserted." carries `w:ins` on its mark while
+/// the following paragraph holds the moved text, so that mark is not final.
+const WORD_COMPARE_1693: &[u8] = include_bytes!("fixtures/1693-word-compare.docx");
+
+fn move_mark(tag: &str, id: &str) -> String {
+    format!(r#"<w:{tag} w:id="{id}" {ANN_MOVE}/>"#)
+}
+
+fn move_paragraph(tag: &str, mark_id: &str, range_id: &str, text_id: &str) -> String {
+    format!(
+        r#"<w:p><w:pPr><w:rPr>{}</w:rPr></w:pPr><w:{tag}RangeStart w:id="{range_id}" w:name="MoveA" {ANN_MOVE}/><w:{tag} w:id="{text_id}" {ANN_MOVE}><w:r><w:t>Moved paragraph.</w:t></w:r></w:{tag}><w:{tag}RangeEnd w:id="{range_id}"/></w:p>"#,
+        move_mark(tag, mark_id),
+    )
+}
+
+fn revised_paragraph(kind: &str) -> String {
+    let inner = if kind == "del" {
+        format!(r#"<w:del w:id="2" {ANN_MOVE}><w:r><w:delText>Inserted.</w:delText></w:r></w:del>"#)
+    } else {
+        format!(r#"<w:ins w:id="2" {ANN_MOVE}><w:r><w:t>Inserted.</w:t></w:r></w:ins>"#)
+    };
+    format!(
+        r#"<w:p><w:pPr><w:rPr>{}</w:rPr></w:pPr>{inner}</w:p>"#,
+        move_mark(kind, "1")
+    )
+}
+
+fn cell_with(inner: &str) -> String {
+    format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4500"/><w:gridCol w:w="4500"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4500" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Fixed.</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="4500" w:type="dxa"/></w:tcPr>{inner}</w:tc></w:tr></w:tbl>"#
+    )
+}
+
+/// Source move, then a cell whose revised paragraph is followed by the
+/// destination move, then an unchanged paragraph. `tail` is extra cell
+/// content after the move.
+fn selective_move_body(kind: &str, tail: &str) -> String {
+    format!(
+        "{}{}<w:p><w:r><w:t>After.</w:t></w:r></w:p>",
+        move_paragraph("moveFrom", "3", "5", "4"),
+        cell_with(&format!(
+            "{}{}{tail}",
+            revised_paragraph(kind),
+            move_paragraph("moveTo", "7", "6", "8")
+        ))
+    )
+}
+
+fn move_text_id(pkg: &[u8], side: MoveSide) -> String {
+    list_changes(pkg)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.kind == ChangeKind::Move && c.move_side == Some(side) && c.target == "text")
+        .unwrap_or_else(|| panic!("no {side:?} text move in {}", ids(pkg).join(",")))
+        .id
+}
+
+fn mark_id(pkg: &[u8], kind: ChangeKind) -> String {
+    list_changes(pkg)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.kind == kind && c.target == "paragraph_mark")
+        .unwrap_or_else(|| panic!("no {kind:?} paragraph mark in {}", ids(pkg).join(",")))
+        .id
+}
+
+fn assert_refuses_exposed_mark(pkg: &[u8], side: MoveSide, container: &str, revision: &str) {
+    let selected = move_text_id(pkg, side);
+    match reject_changes(pkg, &filter_ids(&[&selected])) {
+        Err(err) => {
+            let msg = err.to_string();
+            assert!(
+                msg.contains(container) && msg.contains(revision) && msg.contains("paragraph"),
+                "reject {selected} refusal should name {container}, {revision} and the paragraph: {msg}"
+            );
+        }
+        Ok(out) => {
+            let findings = jubarte::validate::validate(&out).unwrap();
+            let codes: Vec<_> = findings.iter().map(|f| f.code.as_str()).collect::<Vec<_>>();
+            assert!(
+                !codes.contains(&"CELL_FINAL_MARK_REVISION"),
+                "reject {selected} left {codes:?}; want a refusal naming {container} {revision} or a document without CELL_FINAL_MARK_REVISION"
+            );
+            let xml = part_string(&out, "word/document.xml").unwrap_or_default();
+            assert!(
+                xml.contains(revision) || xml.contains("Inserted."),
+                "unselected revision {revision} did not survive: {xml}"
+            );
+        }
+    }
+}
+
+#[test]
+fn exposed_final_mark_word_compare_keeps_the_inserted_mark_behind_a_following_insertion() {
+    assert!(
+        WORD_COMPARE_1693.starts_with(b"PK"),
+        "Word compare oracle is empty"
+    );
+    let xml = part_string(WORD_COMPARE_1693, "word/document.xml").unwrap();
+    assert!(
+        xml.contains(r#"<w:ins w:id="3" w:author="Comparison""#)
+            && xml.contains(">Inserted.</w:t>"),
+        "Word's cell paragraph mark: {xml}"
+    );
+    assert!(
+        xml.contains(r#"<w:ins w:id="4" w:author="Comparison""#)
+            && xml.contains(">Moved paragraph.</w:t>"),
+        "Word's following insertion: {xml}"
+    );
+    let findings = jubarte::validate::validate(WORD_COMPARE_1693).unwrap();
+    assert!(
+        findings
+            .iter()
+            .all(|f| f.code != "CELL_FINAL_MARK_REVISION"),
+        "Word's compare is not a final-mark finding: {findings:?}"
+    );
+}
+
+#[test]
+fn exposed_final_mark_rejecting_either_move_side_refuses_an_inserted_cell_mark() {
+    let pkg = docx(&selective_move_body("ins", ""));
+    let input = jubarte::validate::validate(&pkg).unwrap();
+    assert!(
+        input.iter().all(|f| f.code != "CELL_FINAL_MARK_REVISION"),
+        "input validates clean: {input:?}"
+    );
+    let revision = mark_id(&pkg, ChangeKind::Insertion);
+    assert_eq!(revision, "r1");
+    for side in [MoveSide::To, MoveSide::From] {
+        assert_refuses_exposed_mark(&pkg, side, "cell", &revision);
+    }
+}
+
+#[test]
+fn exposed_final_mark_rejecting_either_move_side_refuses_a_deleted_cell_mark() {
+    let pkg = docx(&selective_move_body("del", ""));
+    let revision = mark_id(&pkg, ChangeKind::Deletion);
+    assert_eq!(revision, "r1");
+    for side in [MoveSide::To, MoveSide::From] {
+        assert_refuses_exposed_mark(&pkg, side, "cell", &revision);
+    }
+}
+
+#[test]
+fn exposed_final_mark_accepting_the_move_keeps_the_preceding_revision() {
+    let pkg = docx(&selective_move_body("ins", ""));
+    let out = accept_changes(&pkg, &filter_ids(&["r8"])).unwrap();
+    assert_word_valid_package(&out);
+    let findings = jubarte::validate::validate(&out).unwrap();
+    assert!(
+        findings
+            .iter()
+            .all(|f| f.code != "CELL_FINAL_MARK_REVISION"),
+        "{findings:?}"
+    );
+    let xml = part_string(&out, "word/document.xml").unwrap();
+    assert!(xml.contains(">Inserted.</w:t>"), "{xml}");
+    assert!(xml.contains(r#"w:id="1""#), "{xml}");
+    assert!(xml.contains(r#"w:author="Ann""#), "{xml}");
+    assert!(xml.contains("2026-10-23T00:00:00Z"), "{xml}");
+}
+
+#[test]
+fn exposed_final_mark_rejecting_a_move_before_an_unchanged_cell_tail_succeeds() {
+    let tail = r#"<w:p><w:r><w:t>Tail.</w:t></w:r></w:p>"#;
+    let pkg = docx(&selective_move_body("ins", tail));
+    let out = reject_changes(&pkg, &filter_ids(&["r8"])).unwrap();
+    assert_word_valid_package(&out);
+    let findings = jubarte::validate::validate(&out).unwrap();
+    assert!(
+        findings
+            .iter()
+            .all(|f| f.code != "CELL_FINAL_MARK_REVISION"),
+        "{findings:?}"
+    );
+    let xml = part_string(&out, "word/document.xml").unwrap();
+    assert!(
+        xml.contains(">Inserted.</w:t>") && xml.contains(">Tail.</w:t>"),
+        "{xml}"
+    );
+    assert!(xml.contains(r#"w:id="1""#), "{xml}");
+}
+
+#[test]
+fn exposed_final_mark_rejecting_a_move_at_body_level_refuses() {
+    let body = format!(
+        "{}{}{}",
+        move_paragraph("moveFrom", "3", "5", "4"),
+        revised_paragraph("ins"),
+        move_paragraph("moveTo", "7", "6", "8")
+    );
+    let pkg = docx(&body);
+    let err = reject_changes(&pkg, &filter_ids(&["r8"])).expect_err("body final mark");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("body") && msg.contains("r1") && msg.contains("paragraph"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn exposed_final_mark_rejecting_a_move_in_a_header_refuses() {
+    let header = format!(
+        r#"<w:hdr xmlns:w="{}" xmlns:r="{}">{}{}{}</w:hdr>"#,
+        common::docx::W_NS,
+        common::docx::R_NS,
+        move_paragraph("moveFrom", "3", "5", "4"),
+        revised_paragraph("ins"),
+        move_paragraph("moveTo", "7", "6", "8")
+    );
+    let pkg = docx_with_sect(
+        r#"<w:p><w:r><w:t>Body.</w:t></w:r></w:p>"#,
+        &[Part {
+            name: "word/header1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+            xml: &header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let selected = move_text_id(&pkg, MoveSide::To);
+    let revision = mark_id(&pkg, ChangeKind::Insertion);
+    let err = reject_changes(&pkg, &filter_ids(&[&selected])).expect_err("header final mark");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("header") && msg.contains(&revision) && msg.contains("paragraph"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn exposed_final_mark_rejecting_a_move_in_a_note_refuses() {
+    let notes = format!(
+        r#"<w:footnotes xmlns:w="{}"><w:footnote w:id="1">{}{}{}</w:footnote></w:footnotes>"#,
+        common::docx::W_NS,
+        move_paragraph("moveFrom", "3", "5", "4"),
+        revised_paragraph("ins"),
+        move_paragraph("moveTo", "7", "6", "8")
+    );
+    let pkg = docx_with(
+        r#"<w:p><w:r><w:t>Body.</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>"#,
+        &[Part {
+            name: "word/footnotes.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+            xml: &notes,
+        }],
+    );
+    let selected = move_text_id(&pkg, MoveSide::To);
+    let revision = mark_id(&pkg, ChangeKind::Insertion);
+    let err = reject_changes(&pkg, &filter_ids(&[&selected])).expect_err("note final mark");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("note") && msg.contains(&revision) && msg.contains("paragraph"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn exposed_final_mark_move_marks_are_not_cell_final_mark_revision() {
+    let body = format!(
+        "{}{}",
+        move_paragraph("moveFrom", "3", "5", "4"),
+        cell_with(&move_paragraph("moveTo", "7", "6", "8"))
+    );
+    let pkg = docx(&body);
+    let findings = jubarte::validate::validate(&pkg).unwrap();
+    assert!(
+        findings
+            .iter()
+            .all(|f| f.code != "CELL_FINAL_MARK_REVISION"),
+        "{findings:?}"
+    );
+}
+
+#[test]
+fn exposed_final_mark_unrelated_reject_does_not_refuse_a_preexisting_finding() {
+    let body = format!(
+        r#"{}<w:p><w:ins w:id="9" {ANN_MOVE}><w:r><w:t>Extra.</w:t></w:r></w:ins></w:p>"#,
+        cell_with(&revised_paragraph("ins"))
+    );
+    let pkg = docx(&body);
+    assert!(
+        jubarte::validate::validate(&pkg)
+            .unwrap()
+            .iter()
+            .any(|f| f.code == "CELL_FINAL_MARK_REVISION")
+    );
+    let out = reject_changes(&pkg, &filter_ids(&["r9"])).expect("pre-existing finding stays");
+    let xml = part_string(&out, "word/document.xml").unwrap();
+    assert!(xml.contains(">Inserted.</w:t>"), "{xml}");
+    assert!(xml.contains(r#"w:id="1""#), "{xml}");
+}

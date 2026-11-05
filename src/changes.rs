@@ -836,6 +836,22 @@ pub enum ChangeError {
         /// its kind.
         side: Option<(String, ChangeKind)>,
     },
+    /// Settling the selection would leave `w:ins` or `w:del` on a
+    /// container's final paragraph mark. The mark was not already that
+    /// container's final mark. A cell in this shape hangs Word's Accept
+    /// All and Reject All (#1669, #1693). No document is returned.
+    ExposedFinalMark {
+        /// `cell`, `body`, `header`, or `note`.
+        container: &'static str,
+        /// Path of the container (`w:body[0]/w:tbl[0]/w:tr[0]/w:tc[1]`).
+        path: String,
+        /// Path of the paragraph that would keep the mark.
+        paragraph: String,
+        /// The remaining mark's short id (`r1`, `header1.r1`).
+        revision: String,
+        /// `ins` or `del`.
+        kind: &'static str,
+    },
 }
 
 impl fmt::Display for ChangeError {
@@ -892,6 +908,16 @@ impl fmt::Display for ChangeError {
                     "{named} is part of {side}, the {kind} side of {whole}; name that side ({side}) or the whole change ({whole})"
                 )
             }
+            ChangeError::ExposedFinalMark {
+                container,
+                path,
+                paragraph,
+                revision,
+                kind,
+            } => write!(
+                f,
+                "refusing to leave {kind} {revision} on the final mark of {container} {path} at paragraph {paragraph}"
+            ),
         }
     }
 }
@@ -1094,7 +1120,10 @@ fn for_each_story(pkg: &PartFs, mut each: impl FnMut(&Dom, NodeId, &str)) {
 /// listed change; [`ChangeError::PartOfChange`] when the ids name only some
 /// of the marks of a logical change ([`list_logical_changes`]), so that it
 /// would be half settled ([`accept_elements`] settles marks one by one);
-/// [`ChangeError::Package`] when the package cannot be read or rewritten.
+/// [`ChangeError::Package`] when the package cannot be read or rewritten;
+/// [`ChangeError::ExposedFinalMark`] when settling the selection would
+/// leave `w:ins` or `w:del` on a container's final paragraph mark that
+/// was not already final (#1693).
 pub fn accept_changes(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError> {
     resolve(docx, filter, Resolution::Accept).map(|(document, _, _)| document)
 }
@@ -1435,6 +1464,7 @@ fn resolve_for_edit_or_cli(
         });
     }
     let main = main_part(&pkg);
+    let before_marks = exposed_final_marks(&pkg, &main);
     let freeze = |part: &str, dom: &mut Dom, root: NodeId| {
         let found = carriers(dom, root, &story_id(&main, part));
         let selected: HashSet<&Group> = found
@@ -1475,6 +1505,18 @@ fn resolve_for_edit_or_cli(
         ),
     };
     move_words_past_deleted_tables(&mut pkg, &main);
+    if let Some(mark) = exposed_final_marks(&pkg, &main)
+        .into_iter()
+        .find(|mark| before_marks.iter().all(|had| had.key != mark.key))
+    {
+        return Err(ChangeError::ExposedFinalMark {
+            container: mark.container,
+            path: mark.path,
+            paragraph: mark.paragraph,
+            revision: mark.revision,
+            kind: mark.kind,
+        });
+    }
     // The comment-body revisions a selection left tracked (#1223). The
     // part may be gone when every comment went.
     let comment_left = comment_changes_in(&pkg).len();
@@ -1558,6 +1600,141 @@ fn final_marks_of_row(dom: &Dom, carrier: NodeId) -> Vec<NodeId> {
         .filter_map(|ppr| dom.element(ppr, &W::r_pr()))
         .filter_map(|rpr| dom.element(rpr, &crate::validate::revision_name(kind)))
         .collect()
+}
+
+/// A final paragraph mark carrying `w:ins` or `w:del` that no row covers.
+struct ExposedMark {
+    key: String,
+    container: &'static str,
+    path: String,
+    paragraph: String,
+    revision: String,
+    kind: &'static str,
+}
+
+/// Final `w:ins` / `w:del` marks in `pkg`, one per container that ends on
+/// them. A cell counts only when its row does not carry the same revision
+/// ([`crate::validate::uncovered_final_marks`]). The body's, a header's and
+/// a note's last paragraph count on their own: Word resolves a body's final
+/// mark, so validate does not flag it, and a selective pass still must not
+/// create one (#1693). A final `moveTo` or `moveFrom` is not a mark here.
+fn exposed_final_marks(pkg: &PartFs, main: &str) -> Vec<ExposedMark> {
+    let mut out = Vec::new();
+    for (part, styles) in revision_bearing_parts(pkg) {
+        if styles {
+            continue;
+        }
+        let Some(xml) = pkg.part_string(&part) else {
+            continue;
+        };
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let Some(root) = dom.root(doc) else {
+            continue;
+        };
+        let story = story_id(main, &part);
+        for cell in dom.descendants(root, Some(&W::tc())) {
+            let site = MarkSite {
+                part: &part,
+                story: &story,
+                container: "cell",
+                node: cell,
+            };
+            for (paragraph, kind) in crate::validate::uncovered_final_marks(&dom, cell) {
+                record_exposed_mark(&mut out, &dom, &site, paragraph, kind);
+            }
+        }
+        if let Some(body) = dom.element(root, &W::body()) {
+            record_container_mark(
+                &mut out,
+                &dom,
+                &MarkSite {
+                    part: &part,
+                    story: &story,
+                    container: "body",
+                    node: body,
+                },
+            );
+        } else if dom.name_is(root, &W::hdr()) || dom.name_is(root, &W::ftr()) {
+            record_container_mark(
+                &mut out,
+                &dom,
+                &MarkSite {
+                    part: &part,
+                    story: &story,
+                    container: "header",
+                    node: root,
+                },
+            );
+        }
+        for name in [W::footnote(), W::endnote()] {
+            for note in dom.descendants(root, Some(&name)) {
+                let separator = dom
+                    .attribute(note, &W::type_())
+                    .is_some_and(|kind| kind == "separator" || kind == "continuationSeparator");
+                if separator {
+                    continue;
+                }
+                record_container_mark(
+                    &mut out,
+                    &dom,
+                    &MarkSite {
+                        part: &part,
+                        story: &story,
+                        container: "note",
+                        node: note,
+                    },
+                );
+            }
+        }
+    }
+    out
+}
+
+/// Where a final mark sits: the part, its story, and the container node.
+struct MarkSite<'a> {
+    part: &'a str,
+    story: &'a str,
+    container: &'static str,
+    node: NodeId,
+}
+
+/// The last paragraph of `site`, when its mark is inserted or deleted.
+fn record_container_mark(out: &mut Vec<ExposedMark>, dom: &Dom, site: &MarkSite<'_>) {
+    let Some(paragraph) = crate::validate::last_block_paragraph(dom, site.node) else {
+        return;
+    };
+    for kind in ["ins", "del"] {
+        record_exposed_mark(out, dom, site, paragraph, kind);
+    }
+}
+
+/// Record `paragraph`'s `kind` mark when it has a `w:id`.
+fn record_exposed_mark(
+    out: &mut Vec<ExposedMark>,
+    dom: &Dom,
+    site: &MarkSite<'_>,
+    paragraph: NodeId,
+    kind: &'static str,
+) {
+    let Some(revision) = dom
+        .element(paragraph, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .and_then(|rpr| dom.element(rpr, &crate::validate::revision_name(kind)))
+    else {
+        return;
+    };
+    let Some(wid) = dom.attribute(revision, &W::id()) else {
+        return;
+    };
+    out.push(ExposedMark {
+        key: format!("{}\u{0}{}\u{0}{kind}\u{0}{wid}", site.part, site.container),
+        container: site.container,
+        path: crate::validate::element_path(dom, site.node),
+        paragraph: crate::validate::element_path(dom, paragraph),
+        revision: crate::ids::ChangeId::new(site.story, wid).short(),
+        kind,
+    });
 }
 
 /// The listed changes of the comments part only (empty when the package
