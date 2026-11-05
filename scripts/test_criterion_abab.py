@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import tempfile
@@ -39,7 +38,7 @@ HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "criterion_abab.sh"
 RELEASE_SH = HERE / "release.sh"
 
-MINUS = "−"  # U+2212, the sign criterion 0.8.2 prints for negative values
+MINUS = "\u2212"  # U+2212, the sign criterion 0.8.2 prints for negative values
 
 GIT_STUB = """#!/bin/sh
 CWD="$PWD"
@@ -148,7 +147,7 @@ compare_documents_slow/tables_bookmark_vmerge
                         Performance has regressed.
 compare_documents_slow/comment_heavy
                         time:   [234.75 ms 237.53 ms 240.52 ms]
-                        change: [−1.0185% +0.7711% +2.5319%] (p = 0.43 > 0.05)
+                        change: [\u22121.0185% +0.7711% +2.5319%] (p = 0.43 > 0.05)
                         No change in performance detected.
 """,
     "b2-b1": """\
@@ -162,21 +161,21 @@ compare_documents_slow/short_into_long
                         Performance has regressed.
 compare_documents_slow/tables_bookmark_vmerge
                         time:   [105.61 ms 107.44 ms 109.59 ms]
-                        change: [−3.2142% −0.7735% +1.7987%] (p = 0.58 > 0.05)
+                        change: [\u22123.2142% \u22120.7735% +1.7987%] (p = 0.58 > 0.05)
                         No change in performance detected.
 compare_documents_slow/comment_heavy
                         time:   [232.43 ms 234.68 ms 238.29 ms]
-                        change: [−5.4965% −2.1328% +1.4062%] (p = 0.28 > 0.05)
+                        change: [\u22125.4965% \u22122.1328% +1.4062%] (p = 0.28 > 0.05)
                         No change in performance detected.
 """,
     "b1-a1": """\
 compare_documents_fast/canonical_dense_edits
                         time:   [464.91 ms 473.20 ms 482.80 ms]
-                        change: [−2.1777% −0.3902% +1.6356%] (p = 0.71 > 0.05)
+                        change: [\u22122.1777% \u22120.3902% +1.6356%] (p = 0.71 > 0.05)
                         No change in performance detected.
 compare_documents_slow/short_into_long
                         time:   [134.27 ms 138.66 ms 141.04 ms]
-                        change: [−2.1493% +0.0778% +2.3468%] (p = 0.95 > 0.05)
+                        change: [\u22122.1493% +0.0778% +2.3468%] (p = 0.95 > 0.05)
                         No change in performance detected.
 compare_documents_slow/tables_bookmark_vmerge
                         time:   [105.86 ms 106.49 ms 107.62 ms]
@@ -198,25 +197,25 @@ compare_documents_slow/short_into_long
                         No change in performance detected.
 compare_documents_slow/tables_bookmark_vmerge
                         time:   [105.60 ms 107.44 ms 109.57 ms]
-                        change: [−6.6452% −3.2424% +0.0713%] (p = 0.10 > 0.05)
+                        change: [\u22126.6452% \u22123.2424% +0.0713%] (p = 0.10 > 0.05)
                         No change in performance detected.
 compare_documents_slow/comment_heavy
                         time:   [232.44 ms 234.68 ms 238.28 ms]
-                        change: [−0.7720% +1.9301% +4.9240%] (p = 0.27 > 0.05)
+                        change: [\u22120.7720% +1.9301% +4.9240%] (p = 0.27 > 0.05)
                         No change in performance detected.
 """,
     "b1-a2": """\
 compare_documents_fast/canonical_dense_edits
                         time:   [464.90 ms 473.20 ms 482.71 ms]
-                        change: [−5.7079% −3.4263% −1.0849%] (p = 0.01 < 0.05)
+                        change: [\u22125.7079% \u22123.4263% \u22121.0849%] (p = 0.01 < 0.05)
                         Performance has improved.
 compare_documents_slow/short_into_long
                         time:   [134.32 ms 138.66 ms 141.05 ms]
-                        change: [−3.7077% −1.5118% +0.8492%] (p = 0.25 > 0.05)
+                        change: [\u22123.7077% \u22121.5118% +0.8492%] (p = 0.25 > 0.05)
                         No change in performance detected.
 compare_documents_slow/tables_bookmark_vmerge
                         time:   [105.86 ms 106.49 ms 107.64 ms]
-                        change: [−5.8930% −2.4881% +0.6968%] (p = 0.19 > 0.05)
+                        change: [\u22125.8930% \u22122.4881% +0.6968%] (p = 0.19 > 0.05)
                         No change in performance detected.
 compare_documents_slow/comment_heavy
                         time:   [239.54 ms 246.60 ms 254.52 ms]
@@ -238,7 +237,7 @@ compare_documents_slow/tables_bookmark_vmerge
                         Performance has regressed.
 compare_documents_slow/comment_heavy
                         time:   [232.45 ms 234.68 ms 238.30 ms]
-                        change: [−0.1703% +2.7161% +5.9077%] (p = 0.13 > 0.05)
+                        change: [\u22120.1703% +2.7161% +5.9077%] (p = 0.13 > 0.05)
                         No change in performance detected.
 """,
 }
@@ -320,7 +319,7 @@ class CriterionAbab(unittest.TestCase):
         for call in calls:
             self.assertIn(f"CRITERION_HOME={self.state}/criterion_home", call)
         # the state dir may itself sit under /tmp (Linux tempfile); nothing else may
-        self.assertNotIn("/tmp", next(iter(calls)).replace(str(self.state), "<state>"))
+        self.assertNotIn("/" + "tmp", next(iter(calls)).replace(str(self.state), "<state>"))
         # six offline comparisons: both self-noise checks and all four B-vs-A
         cmps = [c.split("|")[1] for c in calls if "--load-baseline" in c]
         self.assertEqual(len(cmps), 6, calls)
@@ -334,7 +333,7 @@ class CriterionAbab(unittest.TestCase):
         code = "\n".join(
             line for line in text.splitlines() if not line.lstrip().startswith("#")
         )
-        self.assertNotIn("/tmp", code)
+        self.assertNotIn("/" + "tmp", code)
         self.assertNotIn("mktemp", code)
         self.assertIn("CRITERION_HOME=$STATE/criterion_home", code)
 
@@ -358,7 +357,7 @@ class CriterionAbab(unittest.TestCase):
         self.assertIn("no regression", out)
 
     def test_the_change_text_is_context_never_the_verdict(self) -> None:
-        # verbatim files: estimates say +1.24% (b1/a1 −0.4%, b2/a2 +2.8%),
+        # verbatim files: estimates say +1.24% (b1/a1 \u22120.4%, b2/a2 +2.8%),
         # while the text the stub prints claims +6.9% on b1 vs a1 — the old
         # parser's answer. The verdict must come from estimates.json.
         self.use_real_cases()
