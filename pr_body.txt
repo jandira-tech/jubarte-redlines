@@ -1,0 +1,5 @@
+🚨 Severity: HIGH
+💡 Vulnerability: Potential Denial of Service (DoS) via unbounded user input passed directly to `regex::Regex::new()`.
+🎯 Impact: An attacker or malformed query string could supply an excessively long or complex regex pattern, causing high CPU and memory exhaustion or hitting regex size limits ("Compiled regex exceeds size limit"), leading to a denial of service on the instance processing the request.
+🔧 Fix: Added a strict 1024-character length limit on the regex pattern. Upgraded the compilation method to use `regex::RegexBuilder` with a 10MB `size_limit()` to provide defense-in-depth against computationally explosive regular expressions.
+✅ Verification: `cargo clippy` and `cargo test` pass, confirming safe integration without impacting valid use cases.
