@@ -263,7 +263,8 @@ attribution texts under `LICENSES/`.
 ## Cursor Cloud specific instructions
 
 Cloud Agent VMs are Ubuntu. They use the rustup `cargo` on `PATH` (stable,
-which satisfies the 1.94 MSRV). The self-hosted mbx cache at
+which satisfies the 1.94 MSRV). Trust `rustc --version`, not a leftover
+`RUST_VERSION` from the base image. The self-hosted mbx cache at
 `http://mbx-cache:7543` is on the runners' private network, so these VMs
 leave `mbx setup` unused and run Cargo directly.
 
