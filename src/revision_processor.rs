@@ -1134,12 +1134,12 @@ pub fn iterate_block_content_elements(dom: &Dom, element: NodeId) -> Vec<BlockCo
 /// `w:comment`: the C# pipeline never visits `comments.xml`, but Word's
 /// Accept/Reject All does, and a deleted or inserted paragraph mark inside
 /// a comment merges the comment's own paragraphs — never across the
-/// `w:comment` boundary.
-fn block_level_content_containers() -> [XName; 8] {
+/// `w:comment` boundary. Text boxes are not in this list: both names live
+/// in [`crate::inspect::text_box_names`] (#1318).
+fn block_level_content_containers() -> [XName; 7] {
     [
         W::body(),
         W::tc(),
-        W::txbx_content(),
         W::hdr(),
         W::ftr(),
         W::endnote(),
@@ -1148,10 +1148,19 @@ fn block_level_content_containers() -> [XName; 8] {
     ]
 }
 
+/// `w:txbxContent` or the Strict `wne:txbxContent`.
+fn is_text_box(name: &XName) -> bool {
+    crate::inspect::text_box_names().contains(name)
+}
+
+fn is_block_level_content_container(name: &XName) -> bool {
+    block_level_content_containers().contains(name) || is_text_box(name)
+}
+
 /// A.0 — `GetParagraphInfo` (:2917) + `InitializeParagraphInfo` (:2890): for a
 /// child of a block-level content container, `this` = the first
-/// descendant-or-self in {`w:p`, `w:tc`, `w:txbxContent`} — nulled when that
-/// first hit is a `tc`/`txbxContent` (means "no own paragraph") — and
+/// descendant-or-self in {`w:p`, `w:tc`, either text-box name} — nulled when
+/// that first hit is a `tc` or a text box (means "no own paragraph") — and
 /// `previous` = the previous element sibling (content element of any kind).
 ///
 /// # Panics
@@ -1163,17 +1172,20 @@ pub fn get_paragraph_info(dom: &Dom, content_element: NodeId) -> BlockContentInf
         .expect("GetParagraphInfo called for element without parent");
     let parent_name = dom.name(parent);
     assert!(
-        parent_name.is_some_and(|n| block_level_content_containers().contains(&n)),
+        parent_name.is_some_and(|n| is_block_level_content_container(&n)),
         "GetParagraphInfo called for element that is not child of content container"
     );
 
-    let (p, tc, txbx) = (W::p(), W::tc(), W::txbx_content());
+    let (p, tc) = (W::p(), W::tc());
     let mut paragraph = dom
         .descendants_and_self(content_element, None)
         .into_iter()
-        .find(|&e| dom.name(e).is_some_and(|n| n == p || n == tc || n == txbx));
+        .find(|&e| {
+            dom.name(e)
+                .is_some_and(|n| n == p || n == tc || is_text_box(&n))
+        });
     if let Some(hit) = paragraph
-        && dom.name(hit).is_some_and(|n| n == tc || n == txbx)
+        && dom.name(hit).is_some_and(|n| n == tc || is_text_box(&n))
     {
         paragraph = None;
     }
@@ -1750,7 +1762,7 @@ pub fn accept_paragraph_end_tags_in_move_from_transform(dom: &mut Dom, node: Nod
         return dom.clone_subtree(node);
     }
     let name = dom.name(node).unwrap();
-    if block_level_content_containers().contains(&name) {
+    if is_block_level_content_container(&name) {
         let mfrs = W::move_from_range_start();
         let mfre = W::move_from_range_end();
         let mark_in_open_range = |dom: &Dom, p: NodeId| {
@@ -2219,7 +2231,7 @@ fn accept_paragraph_marks_with_owners(
         return dom.clone_subtree(node);
     }
     let name = dom.name(node).unwrap();
-    if !block_level_content_containers().contains(&name) {
+    if !is_block_level_content_container(&name) {
         let ne = dom.new_element(name);
         for (an, av) in dom.attributes(node) {
             dom.set_attribute_value(ne, &an, Some(&av));
@@ -2579,14 +2591,14 @@ fn annotate_paragraph_content_with_id(dom: &mut Dom, element: NodeId) {
     }
 }
 
-/// Descendants of `element` in document order, not descending INTO elements
-/// named `trim` (the `DescendantsTrimmed` helper the annotators use).
-fn descendants_trimmed(dom: &Dom, element: NodeId, trim: &XName) -> Vec<NodeId> {
+/// Descendants of `element` in document order, not descending into a text
+/// box (`w:txbxContent` or Strict `wne:txbxContent`).
+fn descendants_trimmed(dom: &Dom, element: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
     let mut stack: Vec<NodeId> = dom.elements(element, None).into_iter().rev().collect();
     while let Some(e) = stack.pop() {
         out.push(e);
-        if dom.name(e).as_ref() != Some(trim) {
+        if dom.name(e).is_none_or(|name| !is_text_box(&name)) {
             for c in dom.elements(e, None).into_iter().rev() {
                 stack.push(c);
             }
@@ -2597,13 +2609,12 @@ fn descendants_trimmed(dom: &Dom, element: NodeId, trim: &XName) -> Vec<NodeId> 
 
 /// A.5b — `AnnotateContentControlsWithRunIds` (:1945): give every descendant
 /// `w:sdt` a `pt:RunIds` (comma-joined `pt:UniqueId`s of its runs, trimmed at
-/// `w:txbxContent`) and its own `pt:UniqueId` (in place).
+/// either text-box name) and its own `pt:UniqueId` (in place).
 pub fn annotate_content_controls_with_run_ids(dom: &mut Dom, element: NodeId) {
     let unique_id = PT::unique_id();
     let run_ids_name = PT::run_ids();
-    let txbx = W::txbx_content();
     for (sdt_id, e) in (0..).zip(dom.descendants(element, Some(&W::sdt()))) {
-        let ids: Vec<String> = descendants_trimmed(dom, e, &txbx)
+        let ids: Vec<String> = descendants_trimmed(dom, e)
             .into_iter()
             .filter(|&d2| dom.name(d2) == Some(W::r()))
             .filter_map(|r| dom.attribute(r, &unique_id).map(str::to_string))
