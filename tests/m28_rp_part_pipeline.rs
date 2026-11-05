@@ -180,6 +180,25 @@ fn a0_get_paragraph_info() {
     assert_eq!(pi_tbl.previous_block_content_element, Some(p1));
 }
 
+/// A Strict text box (`wne:txbxContent`) is the same block container as
+/// `w:txbxContent`: the paragraph inside it has paragraph info, and it is
+/// not rejected as a non-container (#1318).
+#[test]
+fn a_strict_text_box_is_a_block_content_container() {
+    use jubarte::namespaces::WNE;
+    let mut d = Dom::new();
+    let body = body_from(
+        &mut d,
+        &format!(
+            "<wne:txbxContent xmlns:wne=\"{}\"><w:p><w:r><w:t>In.</w:t></w:r></w:p></wne:txbxContent>",
+            WNE::URI
+        ),
+    );
+    let p = d.descendants(body, Some(&W::p()))[0];
+    let info = get_paragraph_info(&d, p);
+    assert_eq!(info.this_block_content_element, Some(p));
+}
+
 /// A.1 — `FixUpDeletedOrInsertedFieldCodesTransform` (:1354): a `w:r/w:instrText`
 /// group strictly between two `w:del`-of-`w:fldChar` groups is wrapped in a new
 /// `w:del` and its `w:instrText` becomes `w:delInstrText` (attrs + text kept).
@@ -716,6 +735,27 @@ fn a5b_annotate_ids() {
     let sdt = d.descendants(body, Some(&W::name("sdt")))[0];
     assert_eq!(d.attribute(sdt, &PT::name("RunIds")), Some("1,2"));
     assert_eq!(d.attribute(sdt, &PT::name("UniqueId")), Some("0"));
+}
+
+/// Run ids stop at a Strict text box the same way they stop at
+/// `w:txbxContent` (#1318).
+#[test]
+fn run_ids_stop_at_a_strict_text_box() {
+    use jubarte::namespaces::{PT, WNE};
+    let mut d = Dom::new();
+    let body = body_from(
+        &mut d,
+        &format!(
+            "<w:sdt><w:sdtContent><w:p><w:r><w:t>out</w:t></w:r></w:p>\
+             <wne:txbxContent xmlns:wne=\"{}\"><w:p><w:r><w:t>in</w:t></w:r></w:p></wne:txbxContent>\
+             </w:sdtContent></w:sdt>",
+            WNE::URI
+        ),
+    );
+    annotate_run_elements_with_id(&mut d, body);
+    annotate_content_controls_with_run_ids(&mut d, body);
+    let sdt = d.descendants(body, Some(&W::name("sdt")))[0];
+    assert_eq!(d.attribute(sdt, &PT::name("RunIds")), Some("0"));
 }
 
 /// A.5b — plan assert (RP016 shape): an sdt-wrapped paragraph keeps its sdt
