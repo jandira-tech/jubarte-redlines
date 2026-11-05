@@ -14,10 +14,12 @@ samples, and two JSONL lists of the website facts and app items the release
 moves. Plain Python 3, stdlib only; it reads the folder and never writes it.
 
 What is proven outright: the six exact names under one shared stamp that is
-a real date and time; the exact CSV headers and 600 data rows of exactly the
+a real date and time; the exact CSV headers and 600 data rows (a fixed set,
+one whose results JSON names a sample.set_version, holds its own sample.n) of exactly the
 header's width, each with a unique non-empty key/stem and the Word oracle
 path with its sha; results JSONs bound to the sample CSV beside them by that
-file's real sha256, with every tool's n equal to the sample's row count,
+file's real sha256, with jubarte's n equal to the sample's row count (a
+comparator's n plus the not_run it records, when it records one),
 failures within 0..n, mean/median within 0..100, and jubarte's version,
 40-hex commit and 64-hex binary sha256; JSONL records that are objects with
 a non-empty string key, website_data holding the five keys
@@ -301,6 +303,23 @@ def sample_row_count(sample: Path) -> int | None:
     return len([row for row in data[1:] if row]) if data else None
 
 
+def fixed_set_rows(results: Path | None) -> int | None:
+    """The size a fixed set names for itself: ``sample.n`` of a results JSON whose
+    sample carries a ``set_version`` (the bench's fixed sets, plan 7: conversion and
+    redline sets need not be the same size). None for a drawn sample, or when the
+    JSON cannot be read; the caller then holds the CSV to ``--rows``."""
+    if results is None:
+        return None
+    try:
+        sample = json.loads(results.read_text(encoding="utf-8")).get("sample") or {}
+    except (OSError, ValueError, AttributeError):
+        return None
+    n = sample.get("n")
+    if not sample.get("set_version") or isinstance(n, bool) or not isinstance(n, int) or n <= 0:
+        return None
+    return n
+
+
 def check_results_json(path: Path, name: str, six: dict[str, Path], version: str,
                        want_commit: str | None, want_sha: str | None) -> list[str]:
     """The sample it scores is the CSV beside it, both tools answer with sound
@@ -344,7 +363,13 @@ def check_results_json(path: Path, name: str, six: dict[str, Path], version: str
         n = block.get("n")
         if isinstance(n, bool) or not isinstance(n, (int, float)):
             continue
-        if rows is not None and n != rows:
+        not_run = block.get("not_run") if tool != JUBARTE else None
+        if not_run is not None and (isinstance(not_run, bool) or not isinstance(not_run, int) or not_run < 0):
+            problems.append(f"{path.name}: tools.{tool}.not_run is not a non-negative integer")
+        elif rows is not None and not_run is not None and n + not_run != rows:
+            problems.append(f"{path.name}: tools.{tool}.n is {n} with not_run {not_run}, "
+                            f"the sample holds {rows} rows")
+        elif rows is not None and not_run is None and n != rows:
             problems.append(f"{path.name}: tools.{tool}.n is {n}, the sample holds {rows} rows")
         for field in ("failures",):
             value = block.get(field)
@@ -542,9 +567,11 @@ def problems(version: str, folder: Path, rows: int, bench_root: Path | None = No
     six, found = find_six(folder, version)
     out = list(found)
     if "sample_redline" in six:
-        out += check_sample_csv(six["sample_redline"], REDLINE_HEADER, PATH_COLUMNS["sample_redline"], rows, bench_root)
+        out += check_sample_csv(six["sample_redline"], REDLINE_HEADER, PATH_COLUMNS["sample_redline"],
+                                fixed_set_rows(six.get("results_redline")) or rows, bench_root)
     if "sample_conversion" in six:
-        out += check_sample_csv(six["sample_conversion"], CONVERSION_HEADER, PATH_COLUMNS["sample_conversion"], rows, bench_root)
+        out += check_sample_csv(six["sample_conversion"], CONVERSION_HEADER, PATH_COLUMNS["sample_conversion"],
+                                fixed_set_rows(six.get("results_conversion")) or rows, bench_root)
     for name in ("results_redline", "results_conversion"):
         if name in six:
             out += check_results_json(six[name], name, six, version, want_commit, want_sha)

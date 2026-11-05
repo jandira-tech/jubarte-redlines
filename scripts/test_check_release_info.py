@@ -68,29 +68,34 @@ class SixFiles(unittest.TestCase):
 
     # A sound set: every file present, shas right, aggregates sound, jubarte
     # carrying its identity, the JSONLs holding the required keys.
-    def write_six(self, rows: int = ROWS) -> None:
+    def write_six(self, rows: int = ROWS, conversion_rows: int | None = None,
+                  set_version: str | None = None) -> None:
+        conversion_rows = rows if conversion_rows is None else conversion_rows
         redline = "\n".join([REDLINE_HEADER] + [redline_row(i) for i in range(rows)]) + "\n"
-        conversion = "\n".join([CONVERSION_HEADER] + [conversion_row(i) for i in range(rows)]) + "\n"
+        conversion = "\n".join([CONVERSION_HEADER] + [conversion_row(i) for i in range(conversion_rows)]) + "\n"
         (self.info / f"sample_redline_{VER}_{STAMP}.csv").write_text(redline)
         (self.info / f"sample_conversion_{VER}_{STAMP}.csv").write_text(conversion)
-        for name, sample, tool2 in (
-            ("results_redline", f"sample_redline_{VER}_{STAMP}.csv", "docxodus"),
-            ("results_conversion", f"sample_conversion_{VER}_{STAMP}.csv", "soffice"),
+        for name, sample, tool2, n in (
+            ("results_redline", f"sample_redline_{VER}_{STAMP}.csv", "docxodus", rows),
+            ("results_conversion", f"sample_conversion_{VER}_{STAMP}.csv", "soffice", conversion_rows),
         ):
             doc = {
                 "sample": {"csv": sample, "sha256": sha((self.info / sample).read_text()),
-                           "n": rows, "drawn": {"seed": 20261003}},
+                           "n": n, "drawn": {"seed": 20261003}},
                 "tools": {
-                    "jubarte": {"n": rows, "failures": 1, "mean": 80.0, "median": 84.0,
+                    "jubarte": {"n": n, "failures": 1, "mean": 80.0, "median": 84.0,
                                 "exact_100": 1, "at_least_90": 2, "version": f"jubarte {VER}",
                                 "commit": C40, "binary_sha256": D64,
                                 "candidate_reports": "jubarte 0.11.1"},
-                    tool2: {"n": rows, "failures": 2, "mean": 60.0, "median": 62.0,
+                    tool2: {"n": n, "failures": 2, "mean": 60.0, "median": 62.0,
                             "exact_100": 0, "at_least_90": 1, "version": tool2},
                 },
                 "comparison": {"comparator": tool2, "median_delta": 22.0, "ci95": [18.0, 26.0],
                                "bootstrap": {"reps": 2000, "seed": 42}},
             }
+            if set_version is not None:  # a fixed set (plan 7): the set names its own size
+                doc["sample"].update({"set": name[len("results_"):] + f"_{n}", "set_version": set_version})
+                doc["sample"].pop("drawn")
             (self.info / f"{name}_{VER}_{STAMP}.json").write_text(json.dumps(doc))
         website = [
             {"id": "018f" + "0" * 12, "ts": "2026-10-03T16:51:00.000Z", "key": "engine.version",
@@ -313,6 +318,51 @@ class SixFiles(unittest.TestCase):
         r = self.check()
         self.assertEqual(r.returncode, 1, r.stderr)
         self.assertIn(f"sample.n is {ROWS + 2}, the sample holds {ROWS} rows", r.stderr)
+
+    def test_a_fixed_set_sample_is_held_to_its_own_size(self) -> None:
+        """A fixed set (``sample.set_version``) is checked against its results JSON's
+        ``sample.n``, so an 860-document conversion set beside a 600-pair redline set
+        passes; a drawn sample is still held to ``--rows`` (#2053)."""
+        self.write_six(rows=ROWS, conversion_rows=ROWS + 2, set_version="2026-11-03.1")
+        r = self.check()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(f"jubarte: n={ROWS + 2}", r.stdout)
+        self.write_six(rows=ROWS, conversion_rows=ROWS + 2)  # drawn: --rows rules
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(f"{ROWS + 2} data rows, want {ROWS}", r.stderr)
+
+    def test_a_fixed_set_csv_must_still_hold_the_rows_its_results_name(self) -> None:
+        """The fixed-set row count comes from ``sample.n``, and the CSV must hold it."""
+        self.write_six(rows=ROWS, conversion_rows=ROWS + 2, set_version="2026-11-03.1")
+        self._edit_results("results_conversion", sample={
+            **json.loads((self.info / f"results_conversion_{VER}_{STAMP}.json").read_text())["sample"],
+            "n": ROWS + 4})
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(f"{ROWS + 2} data rows, want {ROWS + 4}", r.stderr)
+
+    def test_a_comparator_may_record_the_documents_it_did_not_run(self) -> None:
+        """A comparator passes with ``n + not_run`` equal to the rows; jubarte must
+        score every row, and ``not_run`` must be a non-negative integer (#2053)."""
+        self._edit_results("results_redline", tools={"docxodus": {"n": ROWS - 1, "not_run": 1}})
+        r = self.check()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self._edit_results("results_redline", tools={"docxodus": {"n": ROWS - 1, "not_run": 2}})
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(f"tools.docxodus.n is {ROWS - 1} with not_run 2, the sample holds {ROWS} rows",
+                      r.stderr)
+        for bad in (-1, 1.5, True, "1"):
+            self._edit_results("results_redline", tools={"docxodus": {"n": ROWS - 1, "not_run": bad}})
+            r = self.check()
+            self.assertEqual(r.returncode, 1, (bad, r.stdout))
+            self.assertIn("tools.docxodus.not_run is not a non-negative integer", r.stderr)
+        self._edit_results("results_redline", tools={"docxodus": {"n": ROWS, "not_run": None},
+                                                     "jubarte": {"n": ROWS - 1, "not_run": 1}})
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(f"tools.jubarte.n is {ROWS - 1}, the sample holds {ROWS} rows", r.stderr)
 
     def test_failures_must_stay_within_zero_and_n(self) -> None:
         self._edit_results("results_redline", tools={"jubarte": {"failures": ROWS + 1}})
