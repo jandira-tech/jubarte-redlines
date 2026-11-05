@@ -750,8 +750,32 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             if n <= cap {
                 check_xml_depth(&name, &buf, limits)?;
                 tally_xml_elements(&mut elements, &name, &buf, &limits)?;
-                if lower == "[content_types].xml" || lower == "_rels/.rels" {
+                // Content types and relationships are interpreted below
+                // (`main_part`) and by the package open. A second root or a
+                // foreign default namespace must fail here, before either
+                // reader relabels the records into the OPC namespace (#643).
+                if lower == "[content_types].xml" {
+                    crate::opc::metadata_document(
+                        &buf,
+                        "Types",
+                        "http://schemas.openxmlformats.org/package/2006/content-types",
+                    )
+                    .map_err(|why| {
+                        AdmissionError::new(K::InvalidXml, format!("{}: {why}", shown(&name)))
+                    })?;
                     kept.insert(lower, buf);
+                } else if lower.ends_with(".rels") {
+                    crate::opc::metadata_document(
+                        &buf,
+                        "Relationships",
+                        "http://schemas.openxmlformats.org/package/2006/relationships",
+                    )
+                    .map_err(|why| {
+                        AdmissionError::new(K::InvalidXml, format!("{}: {why}", shown(&name)))
+                    })?;
+                    if lower == "_rels/.rels" {
+                        kept.insert(lower, buf);
+                    }
                 }
             }
             n
