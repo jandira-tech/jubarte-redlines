@@ -466,6 +466,7 @@ fn zip_member_copies(file: &mut std::fs::File, len: u64, member: &str) -> Result
         return Err("update archive central directory runs past the file".into());
     }
     let mut at = cd_offset;
+    let mut name = Vec::new();
     let mut copies = 0u32;
     let mut seen = 0u16;
     while at < cd_end {
@@ -493,7 +494,7 @@ fn zip_member_copies(file: &mut std::fs::File, len: u64, member: &str) -> Result
             .ok_or_else(|| "update archive member name is out of range".to_string())?;
         let name_bytes = usize::try_from(name_len)
             .map_err(|_| "update archive member name is too long".to_string())?;
-        let mut name = vec![0u8; name_bytes];
+        name.resize(name_bytes, 0);
         if name_bytes > 0 {
             read_exact_at(file, name_at, &mut name)?;
         }
@@ -944,6 +945,23 @@ mod tests {
 
     /// ZIP-28 (#656): two central-directory entries with the expected name
     /// are ambiguous. The first match must not be installed.
+
+    #[test]
+    fn update_archive_duplicate_member_allocation_is_correct() {
+        let name = UPDATE_MEMBER.as_bytes();
+        let bytes = crate::admission::zip_names::zip(&[
+            crate::admission::zip_names::RawEntry::raw(name, b"FIRST"),
+            crate::admission::zip_names::RawEntry::raw(name, b"SECOND"),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        let err = confine_update_zip(&archive, UPDATE_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("an archive that lists the expected member twice was accepted");
+        assert!(
+            err.contains("more than once"),
+            "the refusal must name the repeated member, got {err}"
+        );
+    }
     #[test]
     fn update_archive_duplicate_member_is_refused() {
         let name = UPDATE_MEMBER.as_bytes();
