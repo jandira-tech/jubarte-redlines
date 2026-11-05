@@ -259,3 +259,32 @@ attribution texts under `LICENSES/`.
   a comment header.
 - `LICENSES/` is attribution/provenance only, not an alternative licensing
   choice for this repository.
+
+## Cursor Cloud specific instructions
+
+Cloud Agent VMs are Ubuntu. They use the rustup `cargo` on `PATH` (stable,
+which satisfies the 1.94 MSRV). Trust `rustc --version`, not a leftover
+`RUST_VERSION` from the base image. The self-hosted mbx cache at
+`http://mbx-cache:7543` is on the runners' private network, so these VMs
+leave `mbx setup` unused and run Cargo directly.
+
+`$CARGO_HOME/config.toml` (usually `/usr/local/cargo/config.toml`) sets
+`[profile.dev] debug = "line-tables-only"`, the same limit CI sets with
+`CARGO_PROFILE_DEV_DEBUG`. A dev build with full debuginfo grew `target/`
+past 130 GiB during one `cargo nextest` compile. Leave that setting in
+place. `cargo nextest` and `uv` are on `PATH`. `scripts/install.sh
+--fonts-only` puts the supplemental renderer fonts in
+`~/.local/share/jubarte/fonts`.
+
+Microsoft Word is not installed. `cargo nextest`, `jubarte validate`, and
+`jubarte convert` do not need it. Word oracle scripts from
+neurotic_docx_bench have no Word to drive here.
+
+Run one Cargo process at a time. Day to day, `cargo nextest run -E
+'test(PATTERN)'` is the test command; a full `cargo test --all-features`
+links hundreds of binaries. `cargo fmt --check` and `cargo run --locked
+--bin jubarte -- --help` are the smoke checks.
+
+The consulting letter under `examples/adoption/08-accept-reject/` is an
+end-to-end check: compare `original.docx` with `revised.docx`, then
+`changes`, `accept`, `validate`, and `convert --revisions word`.
