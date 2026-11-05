@@ -179,13 +179,21 @@ pub fn is_compound_file(bytes: &[u8]) -> bool {
 ///
 /// # Errors
 ///
-/// [`LegacyDocError`] when the bytes are not a compound file, hold no
-/// `WordDocument` stream (an encrypted `.docx`, a spreadsheet), predate
-/// Word 97, are encrypted, or whose tables point outside their streams
-/// (the piece table, the style sheet, the property bin tables and their
-/// pages, the list tables, the section table) or contradict themselves
-/// (pieces that do not cover the main story, or that run backwards).
+/// [`LegacyDocError`] when the file exceeds the input byte budget
+/// ([`crate::admission::InputLimits::max_compressed_bytes`]), the bytes
+/// are not a compound file, hold no `WordDocument` stream (an encrypted
+/// `.docx`, a spreadsheet), predate Word 97, are encrypted, or whose
+/// tables point outside their streams (the piece table, the style sheet,
+/// the property bin tables and their pages, the list tables, the section
+/// table) or contradict themselves (pieces that do not cover the main
+/// story, or that run backwards).
 pub fn read(bytes: &[u8]) -> Result<LegacyDocument> {
+    let limit = crate::admission::InputLimits::default().max_compressed_bytes;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limit {
+        return Err(LegacyDocError::new(
+            "the file exceeds the input byte budget",
+        ));
+    }
     let file = CompoundFile::open(bytes)?;
     let word = file.stream("WordDocument").ok_or_else(|| {
         LegacyDocError::new(
@@ -2201,6 +2209,17 @@ mod tests {
                 err.to_string().contains("logical character budget"),
                 "{err}"
             ),
+        }
+    }
+
+    #[test]
+    fn a_doc_past_the_input_byte_budget_is_refused() {
+        let budget = crate::admission::InputLimits::default().max_compressed_bytes;
+        let mut bytes = vec![0u8; usize::try_from(budget).unwrap().saturating_add(1)];
+        bytes[..OLE_MAGIC.len()].copy_from_slice(OLE_MAGIC);
+        match read(&bytes) {
+            Ok(_) => panic!("read a document past the input byte budget"),
+            Err(err) => assert!(err.to_string().contains("input byte budget"), "{err}"),
         }
     }
 
