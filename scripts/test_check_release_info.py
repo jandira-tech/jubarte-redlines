@@ -571,6 +571,27 @@ class MeasuredSentence(SixFiles):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("measured sentence", r.stdout)
 
+    FIXED = ("On the 3-pair and 5-document sets scored against Word's own output: redlines mean 80.00 "
+             "(Docxodus 60.00), counting as 0 the 1 redline Word 16.115 crashes opening; PDFs mean 80.00 "
+             "(LibreOffice 60.00), counting as 0 the 1 document jubarte fails.")
+
+    def test_fixed_sets_of_two_sizes_are_stated_one_size_each(self) -> None:
+        """Fixed sets need not share a size (600 pairs, 860 documents; #2053), so no
+        "N-item samples" figure fits both: the sentence names each set's own size,
+        "the P-pair and D-document sets", and each is checked against its results."""
+        self.write_six(rows=ROWS, conversion_rows=ROWS + 2, set_version="2026-11-03.1")
+        r = self.numbers("--summary", self.FIXED)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = self.numbers("--summary", self.FIXED.replace("5-document", "4-document"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"4-document set" — the conversion sample holds 5 items', r.stderr)
+        r = self.numbers("--summary", self.FIXED.replace("3-pair", "5-pair"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"5-pair set" — the redline sample holds 3 items', r.stderr)
+        r = self.numbers("--summary", self.SOUND.replace("3-item", "5-item"))  # one size cannot state both
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"5-item samples" — the redline sample holds 3 items', r.stderr)
+
     def test_each_figure_that_differs_is_named(self) -> None:
         for right, wrong in (
             ("redlines mean 80.00", "redlines mean 80.01"),

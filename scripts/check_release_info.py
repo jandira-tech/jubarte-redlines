@@ -130,7 +130,8 @@ MEAN = r"\d+(?:\.\d+)?"
 # (#1775); the lookahead starts at a word boundary, so a run of digits is
 # scanned once, not at every digit (#1785).
 SENTENCE = re.compile(
-    rf"\b(?P<n>\d+)-item samples\b(?:(?!\.\s)(?!\b\d+-item samples\b).)*?:\s*"
+    rf"\b(?:(?P<n>\d+)-item samples|(?P<n_redline>\d+)-pair and (?P<n_conversion>\d+)-document sets)\b"
+    rf"(?:(?!\.\s)(?!\b\d+-item samples\b)(?!\b\d+-pair and \d+-document sets\b).)*?:\s*"
     rf"redlines mean (?P<redline>{MEAN}) \((?P<redline_name>[^\s()]+) (?P<redline_other>{MEAN})\)(?P<redline_tail>.*?)"
     rf"PDFs mean (?P<conversion>{MEAN}) \((?P<conversion_name>[^\s()]+) (?P<conversion_other>{MEAN})\)"
     rf"(?P<conversion_tail>.*?)\.(?=\s|$)"
@@ -507,8 +508,12 @@ def sentence_problems(m: re.Match[str], where: str, docs: dict[str, dict], sente
         comparator = (doc.get("comparison") or {}).get("comparator") \
             or next((t for t in sorted(tools) if t != JUBARTE), "")
         other = tools.get(comparator) or {}
-        if m["n"] != str(jub.get("n")):
+        if m["n"] is not None and m["n"] != str(jub.get("n")):
             out.append(f'{where}: "{m["n"]}-item samples" — the {kind} sample holds {jub.get("n")} items')
+        elif m["n"] is None and m[f"n_{kind}"] != str(jub.get("n")):
+            # fixed sets (#2053) name each set's own size: "the 600-pair and 860-document sets"
+            unit = "pair" if kind == "redline" else "document"
+            out.append(f'{where}: "{m[f"n_{kind}"]}-{unit} set" — the {kind} sample holds {jub.get("n")} items')
         if m[kind] != two(jub.get("mean", 0)):
             out.append(f'{where}: "{sample} mean {m[kind]}" — the evidence\'s mean is {two(jub.get("mean", 0))}')
         name = DISPLAY.get(comparator, comparator)
@@ -543,7 +548,8 @@ def measured_problems(text: str, where: str, six: dict[str, Path]) -> list[str]:
     found = [(block, matches) for block in blocks if (matches := list(SENTENCE.finditer(block)))]
     if not found:
         return [f"{where} carries no measured sentence (\"On two N-item samples …: redlines mean X "
-                f"(Docxodus Y) …; PDFs mean X (LibreOffice Y) ….\")"]
+                f"(Docxodus Y) …; PDFs mean X (LibreOffice Y) ….\", or on fixed sets of two sizes "
+                f"\"On the P-pair and D-document sets …: …\")"]
     docs = {name: json.loads(six[name].read_text(encoding="utf-8"))
             for name in ("results_redline", "results_conversion")}
     out: list[str] = []
