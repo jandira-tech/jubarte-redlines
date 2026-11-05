@@ -5332,10 +5332,11 @@ fn refuse_past_story_budget(
 }
 
 /// Refuse a story the atomizer cannot flatten, in one walk: a subdocument,
-/// an altChunk, a content part or custom XML markup (word_exp N4 panicked
-/// the atomizer, 2026-10-31), or an element with two direct `w:sectPr`
-/// (the atomizer's last-sectPr move expects one). `story` names the part or
-/// side in the error.
+/// an altChunk, a content part, or a customXml range marker (word_exp N4
+/// panicked the atomizer, 2026-10-31), or an element with two direct
+/// `w:sectPr` (the atomizer's last-sectPr move expects one). A `w:customXml`
+/// element is not a refusal: the atomizer unwraps it and keeps its content
+/// (#1674). `story` names the part or side in the error.
 fn refuse_unatomizable(dom: &Dom, root: NodeId, story: &str) -> Result<(), OpcError> {
     let content_part = W::name("contentPart");
     let sect_pr = W::sect_pr();
@@ -5349,9 +5350,10 @@ fn refuse_unatomizable(dom: &Dom, root: NodeId, story: &str) -> Result<(), OpcEr
                 bad = Some("Document contains two sectPr in one story element".to_string());
             }
         } else if dom.name_is(e, &content_part)
-            || dom
-                .name(e)
-                .is_some_and(|name| crate::comparer::tables::INVALID_ELEMENTS.contains(&name))
+            || dom.name(e).is_some_and(|name| {
+                crate::comparer::tables::INVALID_ELEMENTS.contains(&name)
+                    && name.local_name() != "customXml"
+            })
         {
             let name = dom
                 .name(e)

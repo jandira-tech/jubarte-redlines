@@ -220,22 +220,12 @@ fn compare_refuses_a_sub_doc_or_alt_chunk_document_without_a_panic() {
             "{name}: {text}"
         );
     }
-    // customXml is in the atomizer's refusal set too, and nothing unwraps
-    // it before the atomizer: a body that carries one is refused.
-    let doc = package_with_main(&format!(
-        r#"<w:document xmlns:w="{W_NS}"><w:body><w:customXml w:element="c"><w:p><w:r><w:t>x</w:t></w:r></w:p></w:customXml></w:body></w:document>"#
-    ));
-    for (a, b) in [(&doc, &modified), (&modified, &doc)] {
-        let err = compare_documents(a, b, "Author").expect_err("customXml body → Err");
-        assert!(format!("{err}").contains("UNSUPPORTED_CONTENT: "), "{err}");
-        assert!(format!("{err}").contains("customXml"), "{err}");
-    }
 }
 
 /// The header and note stories go through the atomizer as well: a
-/// `w:customXml` in either is an Err, not a panic.
+/// `w:customXml` there is unwrapped, not a panic and not a refusal.
 #[test]
-fn compare_refuses_custom_xml_in_a_header_or_a_footnote_without_a_panic() {
+fn compare_unwraps_custom_xml_in_a_header_or_a_footnote() {
     let wrap_first_paragraph = |xml: &str| {
         let open = xml.find("<w:p ").or_else(|| xml.find("<w:p>")).unwrap();
         let close = open + xml[open..].find("</w:p>").unwrap() + "</w:p>".len();
@@ -285,14 +275,68 @@ fn compare_refuses_custom_xml_in_a_header_or_a_footnote_without_a_panic() {
         revised.set_part(other, edited.into_bytes());
         let (doc, revised) = (pkg.to_zip().unwrap(), revised.to_zip().unwrap());
         for (a, b) in [(&doc, &revised), (&revised, &doc)] {
-            let err = compare_documents(a, b, "Author").expect_err("customXml story → Err");
-            let text = format!("{err}");
-            assert!(
-                text.contains("UNSUPPORTED_CONTENT: ") && text.contains("customXml"),
-                "{part}: {text}"
-            );
+            let out = compare_documents(a, b, "Author").expect("customXml story");
+            assert!(!out.is_empty(), "{part}");
         }
     }
+}
+
+fn custom_xml_body(other: &str) -> Vec<u8> {
+    package_with_main(&format!(
+        r#"<w:document xmlns:w="{W_NS}"><w:body><w:customXml w:element="item"><w:p><w:r><w:t>Old.</w:t></w:r></w:p></w:customXml><w:p><w:r><w:t>{other}</w:t></w:r></w:p></w:body></w:document>"#
+    ))
+}
+
+fn main_document_xml(docx: &[u8]) -> String {
+    String::from_utf8(
+        PartFs::open(docx)
+            .unwrap()
+            .part_bytes("word/document.xml")
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap()
+}
+
+/// Word drops a block-level `w:customXml` and compares what it wrapped.
+/// The pair is the #1674 repro: `Other.` becomes `Other changed.`
+#[test]
+fn compare_unwraps_a_block_level_custom_xml_instead_of_refusing_it() {
+    let out = compare_documents(
+        &custom_xml_body("Other."),
+        &custom_xml_body("Other changed."),
+        "Author",
+    )
+    .expect("block-level customXml compares");
+    let xml = main_document_xml(&out);
+    assert!(
+        xml.contains(">Old.</w:t>"),
+        "the wrapped paragraph stays: {xml}"
+    );
+    assert!(
+        xml.contains("<w:ins") && xml.contains("> changed</w:t>"),
+        "the wording change is an insertion: {xml}"
+    );
+    assert!(
+        !xml.contains("<w:customXml"),
+        "customXml markup is not part of the redline: {xml}"
+    );
+}
+
+/// The default edit path compares even when the plan never touches the
+/// custom XML element (#1674).
+#[test]
+fn default_path_edit_unwraps_a_block_level_custom_xml() {
+    let plan = jubarte::edit::EditPlan::from_json(
+        r#"{"schema_version":1,"author":"Ann Counsel","date":"2026-10-19T12:00:00Z","operations":[{"kind":"insert_paragraph","paragraph":"p1","position":"after","runs":[{"text":"Added."}]}]}"#,
+    )
+    .unwrap();
+    let result = jubarte::edit::apply_plan(&custom_xml_body("Other."), &plan)
+        .expect("default-path edit of a customXml document");
+    let clean = main_document_xml(&result.clean);
+    assert!(clean.contains("Added."), "{clean}");
+    assert!(clean.contains("Old."), "{clean}");
+    assert!(clean.contains("Other."), "{clean}");
 }
 
 /// A footnote reference with no definition fails the compare (C# throws
@@ -420,22 +464,18 @@ fn pr392_stdout_errors_other_than_broken_pipe_remain_failures() {
     }
 }
 
-/// `get_revisions` walks the same atomizer as `compare`: custom XML in the
-/// body, an altChunk in a footnote and two body `w:sectPr` are Errs, not
-/// panics, and it holds the same story budget (empryo review, 2026-10-31).
+/// `get_revisions` walks the same atomizer as `compare`: a `w:customXml`
+/// element is readable (its content is kept), while an altChunk in a
+/// footnote and two body `w:sectPr` are Errs, not panics, and it holds the
+/// same story budget (empryo review, 2026-10-31; #1674).
 #[test]
 fn get_revisions_refuses_what_the_atomizer_cannot_read() {
     let settings = jubarte::comparer::WmlComparerSettings::default();
     let body = package_with_main(&format!(
         r#"<w:document xmlns:w="{W_NS}"><w:body><w:customXml w:element="c"><w:p><w:r><w:t>x</w:t></w:r></w:p></w:customXml></w:body></w:document>"#
     ));
-    let err = get_revisions(&body, &settings)
-        .expect_err("customXml body")
-        .to_string();
-    assert!(
-        err.contains("UNSUPPORTED_CONTENT: ") && err.contains("customXml"),
-        "{err}"
-    );
+    let revs = get_revisions(&body, &settings).expect("customXml body is readable");
+    assert!(revs.is_empty(), "{revs:?}");
 
     let original = std::fs::read("tests/fixtures/md-roundtrip/order/fn-plain.docx").unwrap();
     let mut pkg = PartFs::open(&original).unwrap();
