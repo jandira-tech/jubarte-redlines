@@ -1008,16 +1008,17 @@ pub(crate) fn zip_entry_name_raw(
             ));
         }
     }
-    Ok(if utf8 {
-        String::from_utf8_lossy(&name).into_owned()
+    if utf8 {
+        utf8_entry_name(&name)
     } else {
-        cp437_name(&name)
-    })
+        Ok(cp437_name(&name))
+    }
 }
 
 /// An entry name decoded exactly as the zip 8 reader did, from the raw name
 /// bytes, the general-purpose flag field and the Info-ZIP Unicode Path
-/// (0x7075) extra fields: bit 11 set means UTF-8 (lossy), clear means CP437,
+/// (0x7075) extra fields: bit 11 set means UTF-8, and those bytes are
+/// refused when they are not UTF-8 (#640). Bit 11 clear means CP437,
 /// and a Unicode Path field whose CRC32 matches the header name replaces it
 /// (`zip-8.6.0/src/read.rs` 523-529 and 705-709). zip 9's `ZipFile::name`
 /// instead tries UTF-8 first whatever the flag says
@@ -1030,7 +1031,8 @@ pub(crate) fn zip_entry_name_raw(
 /// [`zip::result::ZipError`] when a Unicode Path field's CRC matches the
 /// visible name but its content is not UTF-8 — the archive zip 8 refused to
 /// open (`String::from_utf8` on the adopted content) rather than read under
-/// the header name.
+/// the header name — or when bit 11 is set and the header name itself is
+/// not UTF-8. A lossy replacement (`U+FFFD`) is not a part name.
 ///
 /// A field matching neither the header name nor the adopted one (a plain CRC
 /// mismatch, or a second field chained after an adopted one) is
@@ -1062,10 +1064,20 @@ pub(crate) fn zip_entry_name(
     }
     // Bit 11 (0x0800) is the language-encoding flag: `ZipFlags::LanguageEncoding`
     // in zip-9.0.4/src/format/flags.rs, `is_utf8` in zip-8.6.0/src/read.rs.
-    Ok(if flags & 0x0800 != 0 {
-        String::from_utf8_lossy(&raw).into_owned()
+    // The flag is a claim that the bytes are UTF-8; an invalid sequence is
+    // refused rather than replaced (#640).
+    if flags & 0x0800 != 0 {
+        utf8_entry_name(&raw)
     } else {
-        cp437_name(&raw)
+        Ok(cp437_name(&raw))
+    }
+}
+
+/// `bytes` as a UTF-8 part name. Bit 11 and an adopted Unicode Path field
+/// both claim UTF-8; a sequence that is not UTF-8 is not given a name.
+fn utf8_entry_name(bytes: &[u8]) -> Result<String, zip::result::ZipError> {
+    String::from_utf8(bytes.to_vec()).map_err(|_| {
+        zip::result::ZipError::InvalidArchive("UTF-8 flagged entry name is not valid UTF-8".into())
     })
 }
 
@@ -1854,14 +1866,45 @@ mod tests {
         admit(bytes, limits).expect_err("refused").kind
     }
 
+    /// ZIP-12 (#640): bit 11 means the header name is UTF-8. Invalid UTF-8
+    /// is refused, not replaced with U+FFFD and then used as the part name.
+    /// A valid UTF-8 name with the flag set still opens.
+    #[test]
+    fn a_utf8_flagged_name_is_not_read_lossy() {
+        let bytes = zip_names::docx_package(
+            "",
+            &[zip_names::RawEntry::raw(b"word/media/\xff.bin", b"PNG").utf8()],
+        );
+        match crate::opc::PartFs::open(&bytes) {
+            Ok(fs) => panic!("invalid UTF-8 entry name was read as {:?}", fs.parts()),
+            Err(err) => assert!(err.to_string().contains("not valid UTF-8"), "{err}"),
+        }
+        match admit(&bytes, InputLimits::default()) {
+            Ok(pkg) => panic!("admit read an invalid UTF-8 entry name: {pkg:?}"),
+            Err(err) => assert!(err.to_string().contains("not valid UTF-8"), "{err}"),
+        }
+        let ok = zip_names::docx_package(
+            "",
+            &[zip_names::RawEntry::raw("word/media/caf\u{e9}.bin".as_bytes(), b"PNG").utf8()],
+        );
+        let fs = crate::opc::PartFs::open(&ok).expect("valid UTF-8 with bit 11 opens");
+        assert!(
+            fs.parts().iter().any(|name| name.contains("caf\u{e9}")),
+            "{:?}",
+            fs.parts()
+        );
+        assert!(admit(&ok, InputLimits::default()).is_ok());
+    }
+
     /// `admit` and `PartFs::open` decode entry names with the same rule
     /// (bit 11 / CP437 / the 0x7075 override) and refuse the same decoded
     /// duplicates, so a package one reader accepts the other accepts with the
     /// same part names (#524, #1069 zip9 review rows 1-2).
     #[test]
     fn admission_and_partfs_agree_on_decoded_names_and_duplicates() {
-        // Row 1: two raw names, bit 11 set, whose lossy UTF-8 decode collides —
-        // one part, refused by both readers.
+        // Row 1: two raw names, bit 11 set, that are not UTF-8. They used to
+        // collapse to one `x\u{FFFD}.bin` and refuse as a duplicate; each
+        // name is refused as invalid UTF-8 before an alias can form (#640).
         let aliased = zip_names::docx_package(
             "",
             &[
@@ -1869,17 +1912,16 @@ mod tests {
                 zip_names::RawEntry::raw(b"x\x83.bin", b"SECOND").utf8(),
             ],
         );
-        assert_eq!(
-            kind(&aliased, InputLimits::default()).code(),
-            "DUPLICATE_PART"
-        );
+        let admitted = admit(&aliased, InputLimits::default()).expect_err("invalid UTF-8");
+        assert_eq!(admitted.kind.code(), "INVALID_PACKAGE");
         assert!(
-            matches!(
-                crate::opc::PartFs::open(&aliased),
-                Err(crate::opc::OpcError::DuplicatePartName(ref n)) if n == "x\u{FFFD}.bin"
-            ),
-            "the constructor must refuse the same aliases with the typed variant"
+            admitted.to_string().contains("not valid UTF-8"),
+            "{admitted}"
         );
+        let Err(opened) = crate::opc::PartFs::open(&aliased) else {
+            panic!("invalid UTF-8 entry names were accepted");
+        };
+        assert!(opened.to_string().contains("not valid UTF-8"), "{opened}");
         // Two entries of the same name, byte for byte: the same pair of
         // refusals (the p1 shape).
         let exact = zip_names::docx_package(
