@@ -149,7 +149,7 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
         (markdown.to_string(), Vec::new())
     };
     let source = page_commands(&source);
-    let source = inline_math(table_pipes(&source));
+    let source = inline_math(table_pipes(&source), options.critic);
     let mut writer = Writer::new(options);
     (writer.box_markdown, writer.document.box_error) = text_box_sources(markdown);
     writer.tables = table_plans(&source);
@@ -219,11 +219,14 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
 }
 
 /// Keep rejected dollar pairs as text before any Markdown pass consumes them.
-fn inline_math(source: String) -> String {
-    inline_math_passes(source).0
+///
+/// A stand-in can cross a formula only while CriticMarkup is on. Off, the
+/// boundary check has nothing to refuse, so a dollar pair stays math.
+fn inline_math(source: String, critic_on: bool) -> String {
+    inline_math_passes(source, critic_on).0
 }
 
-fn inline_math_passes(mut source: String) -> (String, usize) {
+fn inline_math_passes(mut source: String, critic_on: bool) -> (String, usize) {
     let mut passes = 0;
     if !source.contains('$') {
         return (source, passes);
@@ -254,7 +257,7 @@ fn inline_math_passes(mut source: String) -> (String, usize) {
             let closer = range.end - 1;
             if steals_formula
                 || (!display && opens_amount(&source, closer))
-                || critic::math_crosses_boundary(&latex)
+                || (critic_on && critic::math_crosses_boundary(&latex))
             {
                 rejected.push(range.start);
                 if display {
@@ -3444,16 +3447,21 @@ impl<'o, 'a> Writer<'o, 'a> {
             return;
         }
         // An insertion or deletion inside the math (`$A={--π--}r^2$`) marks
-        // its runs; any other CriticMarkup there is text.
+        // its runs; any other CriticMarkup there is text. With CriticMarkup
+        // off there is no encoded token to split, so the latex is kept.
         let mut source = String::with_capacity(latex.len());
-        Pieces::default().feed(latex, |piece| match piece {
-            Piece::Text(text) => source.push_str(text),
-            Piece::Token(Token::InsertStart) => source.push(math::INSERT_START),
-            Piece::Token(Token::InsertEnd) => source.push(math::INSERT_END),
-            Piece::Token(Token::DeleteStart) => source.push(math::DELETE_START),
-            Piece::Token(Token::DeleteEnd) => source.push(math::DELETE_END),
-            Piece::Token(token) => source.push_str(critic::delimiter(token)),
-        });
+        if self.options.critic {
+            Pieces::default().feed(latex, |piece| match piece {
+                Piece::Text(text) => source.push_str(text),
+                Piece::Token(Token::InsertStart) => source.push(math::INSERT_START),
+                Piece::Token(Token::InsertEnd) => source.push(math::INSERT_END),
+                Piece::Token(Token::DeleteStart) => source.push(math::DELETE_START),
+                Piece::Token(Token::DeleteEnd) => source.push(math::DELETE_END),
+                Piece::Token(token) => source.push_str(critic::delimiter(token)),
+            });
+        } else {
+            source.push_str(latex);
+        }
         self.push(Content::Math {
             latex: source,
             display,
@@ -6566,7 +6574,7 @@ mod tests {
             .map(|n| format!("${n}"))
             .collect::<Vec<_>>()
             .join(",");
-        let (escaped, passes) = inline_math_passes(source);
+        let (escaped, passes) = inline_math_passes(source, true);
         assert!(
             passes <= 3,
             "2,000 amounts took {passes} full parses (limit 3)"
