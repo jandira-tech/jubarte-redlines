@@ -115,7 +115,9 @@ With `--dates`, substitution pairing compares the stored dates, including
 an absent date, even when the author header elides a shared timestamp.
 Sides dated apart print apart, each with its date, and both still name the
 one change: `{--old--}{r1+2 @AL 2026-10-01T09:00:00Z}{++new++}{r1+2 @AL 2026-10-02T10:00:00Z}`.
-The default view omits per-revision dates and keeps its existing grouping.
+The default `read` view omits per-revision dates and keeps its existing grouping.
+`convert -t md` asks for those dates, so a Markdown round trip keeps each
+change's own timestamp; a shared date stays in the authors header.
 Rejecting `¶{tag}` removes its following paragraph separator; a list marker
 on the joined paragraph is removed with it. A patch records that separator
 as an insertion attributed to the paragraph mark.
