@@ -2874,6 +2874,10 @@ impl<'o, 'a> Writer<'o, 'a> {
             });
             paragraph.section_break = line.section_break;
             paragraph.ind = Indent {
+                first_line_chars: line.first_line_chars,
+                hanging_chars: line.hanging_chars,
+                left_chars: line.left_chars,
+                right_chars: line.right_chars,
                 first_line: line.first_line,
                 hanging: line.hanging,
                 left: line.left,

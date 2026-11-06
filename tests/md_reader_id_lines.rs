@@ -3154,3 +3154,69 @@ fn an_empty_text_box_paragraph_keeps_its_spacing_in_the_box() {
         "{view}\n---\n{again_view}"
     );
 }
+
+/// A paragraph's character-unit indent stays beside its twip indent: `200`
+/// hundredths is `2ch`, on a body id line and on a header `indent:` map.
+#[test]
+fn a_character_unit_indent_is_kept() {
+    let body = common::docx::docx(
+        r#"<w:p><w:pPr><w:ind w:firstLine="720" w:firstLineChars="200"/></w:pPr><w:r><w:t>Body</w:t></w:r></w:p>"#,
+    );
+    let (view, again, _) = docx_round_trip(&body);
+    assert!(view.contains("first-line 0.5in, first-line 2ch"), "{view}");
+    let document = part_string(&again, "word/document.xml").unwrap();
+    assert!(
+        document.contains(r#"<w:ind w:firstLine="720" w:firstLineChars="200"/>"#),
+        "{document}"
+    );
+
+    let only = common::docx::docx(
+        r#"<w:p><w:pPr><w:ind w:leftChars="100"/></w:pPr><w:r><w:t>Only</w:t></w:r></w:p>"#,
+    );
+    let (view, again, _) = docx_round_trip(&only);
+    assert!(view.contains("left 1ch"), "{view}");
+    let document = part_string(&again, "word/document.xml").unwrap();
+    assert!(
+        document.contains(r#"<w:ind w:leftChars="100"/>"#),
+        "{document}"
+    );
+
+    let strict = common::docx::docx(
+        r#"<w:p><w:pPr><w:ind w:startChars="50" w:hangingChars="-100"/></w:pPr><w:r><w:t>Strict</w:t></w:r></w:p>"#,
+    );
+    let (view, again, _) = docx_round_trip(&strict);
+    assert!(
+        view.contains("hanging -1ch") && view.contains("left 0.5ch"),
+        "{view}"
+    );
+    let document = part_string(&again, "word/document.xml").unwrap();
+    assert!(
+        document.contains(r#"w:leftChars="50""#) && document.contains(r#"w:hangingChars="-100""#),
+        "{document}"
+    );
+
+    let header = format!(
+        "<w:hdr xmlns:w=\"{}\"><w:p><w:pPr><w:ind w:firstLine=\"720\" w:firstLineChars=\"200\"/></w:pPr><w:r><w:t>Head</w:t></w:r></w:p></w:hdr>",
+        common::docx::W_NS,
+    );
+    let docx = common::docx::docx_with_sect(
+        "<w:p><w:r><w:t>Body</w:t></w:r></w:p>",
+        &[common::docx::Part {
+            name: "word/header1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+            xml: &header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let (view, again, _) = docx_round_trip(&docx);
+    assert!(
+        view.contains("indent: {first-line: 0.5in, first-line: 2ch}"),
+        "{view}"
+    );
+    let xml = part_string(&again, "word/header1.xml").unwrap();
+    assert!(
+        xml.contains(r#"<w:ind w:firstLine="720" w:firstLineChars="200"/>"#),
+        "{xml}"
+    );
+}
