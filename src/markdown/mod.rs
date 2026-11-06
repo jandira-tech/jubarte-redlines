@@ -650,6 +650,23 @@ pub struct ReadDocx {
 /// # Ok::<(), jubarte::markdown::MarkdownError>(())
 /// ```
 pub fn docx_to_markdown(docx: &[u8], options: &MarkdownOptions) -> Result<ReadDocx, MarkdownError> {
+    read_docx(docx, options, false)
+}
+
+/// [`docx_to_markdown`] that also prints each header and footer, between
+/// the body and the notes. A patch reads a change there; a public read does not.
+pub(crate) fn docx_to_markdown_stories(
+    docx: &[u8],
+    options: &MarkdownOptions,
+) -> Result<ReadDocx, MarkdownError> {
+    read_docx(docx, options, true)
+}
+
+fn read_docx(
+    docx: &[u8],
+    options: &MarkdownOptions,
+    stories: bool,
+) -> Result<ReadDocx, MarkdownError> {
     bounded_open(docx, options.input_limits)?;
     let revisions = match options.track_changes {
         TrackChanges::All => from_docx::Revisions::Markup,
@@ -669,6 +686,7 @@ pub fn docx_to_markdown(docx: &[u8], options: &MarkdownOptions) -> Result<ReadDo
             page_markers: options.page_markers,
             dates: options.dates,
             select: options.select.clone(),
+            stories,
         },
     )
     .map_err(|error| MarkdownError::Docx(error.to_string()))?;
