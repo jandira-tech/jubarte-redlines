@@ -1953,13 +1953,13 @@ fn story_part(
             (part == story.part).then_some((tag, index))
         }) else {
             positional.extend(
-                super::view_notes::revision_tags(entry)
+                super::view_notes::revision_tags(super::view_notes::own_fmt_tag(entry))
                     .into_iter()
                     .flatten(),
             );
             continue;
         };
-        if let Some(tags) = super::view_notes::revision_tags(tag) {
+        if let Some(tags) = super::view_notes::revision_tags(super::view_notes::own_fmt_tag(tag)) {
             placed.entry(index).or_default().extend(tags);
         }
     }
