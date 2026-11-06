@@ -279,6 +279,22 @@ fn removed_container(dom: &Dom, node: NodeId) -> Option<NodeId> {
     removed
 }
 
+/// True when `run`'s properties still carry a revision. An unselected
+/// revision is renamed out of the wordprocessing namespace before this scan,
+/// and that record is all the run still holds once its reference marker goes.
+fn properties_hold_a_revision(dom: &Dom, run: NodeId) -> bool {
+    dom.elements(run, Some(&W::r_pr()))
+        .into_iter()
+        .flat_map(|props| dom.descendants(props, None))
+        .any(|node| {
+            dom.name(node).is_some_and(|name| {
+                let ns = name.namespace_name();
+                (ns == W::URI || ns == super::FROZEN_NS)
+                    && super::TRACKED_REVISION_LOCAL_SET.contains(name.local_name())
+            })
+        })
+}
+
 /// A reference-only run goes with its marker; a run containing other content
 /// keeps that content. Range markers normally are siblings of runs.
 fn remove_marker(dom: &mut Dom, marker: NodeId) {
@@ -289,6 +305,7 @@ fn remove_marker(dom: &mut Dom, marker: NodeId) {
             .elements(run, None)
             .into_iter()
             .all(|e| dom.name(e) == Some(W::r_pr()))
+        && !properties_hold_a_revision(dom, run)
     {
         dom.remove(run);
     }
