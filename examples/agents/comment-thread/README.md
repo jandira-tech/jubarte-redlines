@@ -17,8 +17,8 @@ jubarte comments replied/clean.docx --latest       # the newest of each thread
 ```
 
 `plan-1-review.json` adds three comments: one on a phrase (`find`), one over
-all of Section 4 (`through` runs the range from `body:p:2` to the end of
-`body:p:4`), and one on the survival clause. `plan-2-reply.json` replies to
+all of Section 4 (`through` runs the range from `p2` to the end of
+`p4`), and one on the survival clause. `plan-2-reply.json` replies to
 comments 0 and 1 (`reply_comment`) and resolves comment 2
 (`resolve_comment`). A reply can only name a comment that is already in its
 source, so adding and replying take two plans. Both plans are bound to the
