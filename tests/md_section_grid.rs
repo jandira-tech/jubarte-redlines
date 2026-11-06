@@ -9,6 +9,7 @@
 mod common;
 
 use common::docx::{docx_with_sect_pr, part_string};
+use jubarte::changes::{ChangeFilter, reject_changes};
 use jubarte::markdown::{DocxOptions, ReadOptions, TrackChanges, markdown_to_docx, read};
 
 fn view(docx: &[u8]) -> String {
@@ -251,4 +252,76 @@ fn word_s_named_page_sizes_round_trip_exactly() {
         );
         assert_eq!(view(&again), first, "{name}");
     }
+}
+
+#[test]
+fn rejecting_a_section_change_restores_the_earlier_page() {
+    // Section 2 is Letter. Its `w:sectPrChange` keeps the earlier A4.
+    // The view must carry that page: copying Letter into the change makes
+    // Reject leave Letter (#1475).
+    let earlier = r#"<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1701" w:right="1134" w:bottom="1701" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/>"#;
+    let letter = r#"<w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1417" w:right="1701" w:bottom="1417" w:left="1701" w:header="720" w:footer="720" w:gutter="0"/>"#;
+    let change = format!(
+        r#"<w:sectPrChange w:id="1" w:author="Alice" w:date="2026-10-17T09:00:00Z"><w:sectPr>{earlier}</w:sectPr></w:sectPrChange>"#
+    );
+    let body = format!(
+        "<w:p><w:pPr><w:sectPr>{PAGE}</w:sectPr></w:pPr><w:r><w:t>One</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>Two</w:t></w:r></w:p>"
+    );
+    let source = docx_with_sect_pr(
+        &body,
+        &[],
+        &format!("<w:sectPr>{letter}{change}</w:sectPr>"),
+    );
+    let markdown = view(&source);
+    let again = write(&markdown);
+    let rejected = reject_changes(&again, &ChangeFilter::default()).expect("reject");
+    let sects = sections(&rejected);
+    let last = sects.last().expect("a section");
+    assert!(
+        last.contains(r#"w:w="11906""#) && last.contains(r#"w:h="16838""#),
+        "reject kept the new page:\n{last}"
+    );
+    assert!(
+        !last.contains(r#"w:w="12240""#),
+        "Letter survived reject:\n{last}"
+    );
+}
+
+#[test]
+fn rejecting_ids_sections_restores_the_recorded_page() {
+    // The corpus change keeps 11900x16840. The fixture must say that page,
+    // and Reject of the docx the fixture writes must put it back (#1475).
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let corpus = std::fs::read(root.join(
+        "tests/corpus/neurotic_docx_bench/grok_run/wr0928/rejected_tracking/docx/3c920d5996_rejected_tracking.docx",
+    ))
+    .expect("corpus");
+    let markdown = view(&corpus);
+    let section = markdown
+        .lines()
+        .find(|line| line.contains("fmt: r1 @APS"))
+        .expect("section 2");
+    let fixture = std::fs::read_to_string(root.join("tests/fixtures/md-roundtrip/ids-sections.md"))
+        .expect("fixture");
+    let fixture_section = fixture
+        .lines()
+        .find(|line| line.contains("fmt: r1 @APS"))
+        .expect("fixture section");
+    assert_eq!(section, fixture_section, "the source view is the fixture");
+    let again = write(&fixture);
+    let rejected = reject_changes(&again, &ChangeFilter::default()).expect("reject");
+    let last = sections(&rejected).last().expect("a section").clone();
+    assert!(
+        last.contains(r#"w:w="11900""#) && last.contains(r#"w:h="16840""#),
+        "reject kept the new page:\n{last}"
+    );
+    assert!(
+        last.contains(r#"w:top="1701""#) && last.contains(r#"w:header="708""#),
+        "reject dropped the earlier margins:\n{last}"
+    );
+    assert!(
+        !last.contains(r#"w:w="12240""#),
+        "Letter survived reject:\n{last}"
+    );
 }

@@ -1389,10 +1389,15 @@ fn section_entry(
 ) -> String {
     let mut parts = vec![format!("p{}-p{}", section.first, section.last)];
     let setup = |s: &SectionFact| s.sect_pr.as_ref().map(page_setup);
-    if setup(section) != setup(first)
+    let earlier = changed_page(section);
+    if (setup(section) != setup(first) || earlier.is_some())
         && let Some(page) = setup(section)
     {
-        parts.push(format!("page: {page}"));
+        let mut text = format!("page: {page}");
+        if let Some(earlier) = earlier {
+            text.push_str(&format!("; was: {earlier}"));
+        }
+        parts.push(text);
     }
     if let Some(tags) = handles.and_then(|h| section_changes(section, h)) {
         parts.push(format!("fmt: {}", scalar(&tags, true)));
@@ -1426,6 +1431,18 @@ fn section_entry(
         }
     }
     format!("{{{}}}", parts.join(", "))
+}
+
+/// The page a `w:sectPrChange` recorded, when it is not the live page.
+/// Reject restores it; a copy of the live page would not (#1475).
+fn changed_page(section: &SectionFact) -> Option<String> {
+    let sect = section.sect_pr.as_ref()?;
+    let saved = sect
+        .children_named("sectPrChange")
+        .next()?
+        .child("sectPr")?;
+    let earlier = page_setup(saved);
+    (earlier != page_setup(sect)).then_some(earlier)
 }
 
 /// The tracked view's tags for a section's own changes (`w:sectPrChange`):
@@ -1491,6 +1508,9 @@ fn part_two(out: &mut String, f: &Facts) {
         && let Some(sect) = first.sect_pr.as_ref()
     {
         let mut page = page_setup(sect);
+        if let Some(earlier) = changed_page(first) {
+            page.push_str(&format!("; was: {earlier}"));
+        }
         if f.resolved.is_none()
             && let Some(tags) = section_changes(first, f.handles)
         {
