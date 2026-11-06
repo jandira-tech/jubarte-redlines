@@ -56,7 +56,8 @@ pub(super) fn wholly_deleted_endpoints(
     {
         return HashSet::new();
     }
-    let range_deleted = super::move_from_range_deleted_elements(dom, root);
+    let mut range_deleted = super::move_from_range_deleted_elements(dom, root);
+    range_deleted.extend(super::custom_xml_move_from_deleted_elements(dom, root));
     let removed_by_range = |node| {
         range_deleted.contains(&node)
             || dom
@@ -96,7 +97,10 @@ pub(super) fn wholly_deleted_endpoints(
             }
             continue;
         } else if is_character(dom, e, &name) {
-            in_deleted_content(dom, e) || removed_by_range(e)
+            in_deleted_content(dom, e)
+                || removed_by_range(e)
+                || in_deleted_fraction(dom, e)
+                || deleted_field_instruction(dom, e)
         } else {
             continue;
         };
@@ -113,7 +117,9 @@ pub(super) fn is_character(dom: &Dom, e: NodeId, name: &XName) -> bool {
     if name.namespace_name() == M::URI {
         return name.local_name() == "t" && !dom.value_str(e).is_empty();
     }
-    if name.namespace_name() != W::URI {
+    // An unselected deletion is renamed out of the wordprocessing namespace
+    // before this scan. Its text is still a character, and it survives.
+    if name.namespace_name() != W::URI && name.namespace_name() != super::FROZEN_NS {
         return false;
     }
     match name.local_name() {
@@ -124,6 +130,64 @@ pub(super) fn is_character(dom: &Dom, e: NodeId, name: &XName) -> bool {
         | "footnoteReference" | "endnoteReference" | "fldChar" | "ptab" => true,
         _ => false,
     }
+}
+
+/// A fraction whose control properties carry a deletion is removed whole,
+/// including numerator and denominator text that is not itself inside `w:del`.
+fn in_deleted_fraction(dom: &Dom, node: NodeId) -> bool {
+    dom.ancestors(node, Some(&M::name("f")))
+        .into_iter()
+        .any(|fraction| {
+            dom.elements(fraction, Some(&M::name("fPr")))
+                .into_iter()
+                .any(|props| super::has_path(dom, props, &M::name("ctrlPr"), &W::del()))
+        })
+}
+
+/// An instruction run sitting directly between two deleted field-character
+/// runs is wrapped into that deletion before accept removes the field.
+fn deleted_field_instruction(dom: &Dom, node: NodeId) -> bool {
+    if dom.name(node) != Some(W::instr_text()) {
+        return false;
+    }
+    let Some(run) = dom
+        .parent(node)
+        .filter(|&parent| dom.name(parent) == Some(W::r()))
+    else {
+        return false;
+    };
+    let Some(paragraph) = dom
+        .parent(run)
+        .filter(|&parent| dom.name(parent) == Some(W::p()))
+    else {
+        return false;
+    };
+    let children = dom.elements(paragraph, None);
+    let Some(at) = children.iter().position(|&child| child == run) else {
+        return false;
+    };
+    let instruction = |child: NodeId| {
+        dom.name(child) == Some(W::r()) && dom.element(child, &W::instr_text()).is_some()
+    };
+    let deleted_field = |child: NodeId| {
+        dom.name(child) == Some(W::del())
+            && dom
+                .elements(child, Some(&W::r()))
+                .into_iter()
+                .any(|run| dom.element(run, &W::fld_char()).is_some())
+    };
+    let mut first = at;
+    while first > 0 && instruction(children[first - 1]) {
+        first -= 1;
+    }
+    let mut last = at;
+    while last + 1 < children.len() && instruction(children[last + 1]) {
+        last += 1;
+    }
+    first > 0
+        && last + 1 < children.len()
+        && deleted_field(children[first - 1])
+        && deleted_field(children[last + 1])
 }
 
 /// Is `e` inside deleted or moved-from content, or a deleted row?
