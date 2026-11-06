@@ -322,6 +322,17 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
     22.80pt when that grid already fills the measure, and under a 100%
     table width. Forty-two A's, breakable words, and a fixed layout stay
     120.03pt after.
+- **An autofit table uses a cell width every row repeats.** A twip width
+  on every cell replaces the grid. A percent width does the same with
+  the page when the text is wider than its share, and with the text when
+  it is not. Rows that disagree, and a width equal to the grid, leave
+  the grid in place.
+  - Word convert, Letter, Calibri 11, 1in margins: a 2400/6000 grid puts
+    VALUE 200.07pt after LABEL when every cell is 4000 twips. Fifty
+    percent puts it 234.53pt after when one cell's text is wider than
+    the page, and 32.76pt after when the text is short. A later row that
+    asks for another width, and widths equal to the grid, stay 120.03pt
+    after.
 - **Tables with nothing between them are one table**, f2fd0c8b. The second
   table's rows keep their own cell widths and start at the joined table's
   left edge, whatever their own `jc`. The joined table is aligned by its
