@@ -3419,6 +3419,126 @@ fn a_table_of_another_style_keeps_its_own_centre() {
 }
 
 #[test]
+fn a_span_wider_than_its_grid_widens_the_autofit_table() {
+    // Word convert, Letter, 1in margins, Calibri 11, single borders.
+    // A 2400/6000 autofit table: LABEL at 71.66. VALUE stays at 191.69
+    // when the span fits, and moves to 210.53 when the span is wider
+    // than the grid. Three columns 1200/2400/4800 place TWO at 143.06
+    // and SIX at 279.67. The preferred widths may sit on either row.
+    let borders = r#"<w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders>"#;
+    let sect = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let styles = "<w:docDefaults><w:rPrDefault><w:rPr>\
+        <w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/><w:sz w:val=\"22\"/>\
+        </w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>\
+        <w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/>\
+        </w:pPr></w:pPrDefault></w:docDefaults>";
+    let cell = |text: &str, span: u32, tcw: Option<u32>| {
+        let tcw = tcw
+            .map(|w| format!(r#"<w:tcW w:w="{w}" w:type="dxa"/>"#))
+            .unwrap_or_default();
+        let span = if span == 1 {
+            String::new()
+        } else {
+            format!(r#"<w:gridSpan w:val="{span}"/>"#)
+        };
+        let preserve = if text.ends_with(' ') {
+            " xml:space=\"preserve\""
+        } else {
+            ""
+        };
+        format!(
+            r#"<w:tc><w:tcPr>{tcw}{span}</w:tcPr><w:p><w:r><w:t{preserve}>{text}</w:t></w:r></w:p></w:tc>"#
+        )
+    };
+    let table = |grid: &[u32], rows: &[String]| {
+        let cols: String = grid
+            .iter()
+            .map(|w| format!(r#"<w:gridCol w:w="{w}"/>"#))
+            .collect();
+        let body: String = rows
+            .iter()
+            .map(|row| format!("<w:tr>{row}</w:tr>"))
+            .collect();
+        format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/>{borders}</w:tblPr><w:tblGrid>{cols}</w:tblGrid>{body}</w:tbl>"#
+        )
+    };
+    let pair = |span_text: &str, tcw_first: bool| {
+        let labels = format!(
+            "{}{}",
+            cell("LABEL:", 1, Some(2400)),
+            cell("VALUE", 1, Some(6000))
+        );
+        let span = cell(span_text, 2, None);
+        let rows = if tcw_first {
+            vec![labels, span]
+        } else {
+            vec![span, labels]
+        };
+        table(&[2400, 6000], &rows)
+    };
+    let x_of = |body: String, text: &str| {
+        let pdf = docx_to_pdf(&docx_with_settings_and_styles(
+            &format!("{body}{sect}"),
+            "",
+            styles,
+        ))
+        .expect("autofit table");
+        pdf_glyph_text_xy(&pdf, text).expect(text).0
+    };
+    let long = "AAAA ".repeat(25);
+    let wide = pair(&long, true);
+    let (label, value) = (x_of(wide.clone(), "LABEL:"), x_of(wide, "VALUE"));
+    let word_wide = 210.53 - 71.66;
+    assert!(
+        (value - label - word_wide).abs() < 1.0,
+        "a span wider than the grid widens the first column; LABEL {label}, VALUE {value}, Word gap {word_wide}"
+    );
+    let moved = pair(&long, false);
+    let (label_row, value_row) = (x_of(moved.clone(), "LABEL:"), x_of(moved, "VALUE"));
+    assert!(
+        (value_row - label_row - word_wide).abs() < 1.0,
+        "preferred widths on the next row widen it the same way; LABEL {label_row}, VALUE {value_row}"
+    );
+    let three = table(
+        &[1200, 2400, 4800],
+        &[
+            format!(
+                "{}{}{}",
+                cell("ONE", 1, Some(1200)),
+                cell("TWO", 1, Some(2400)),
+                cell("SIX", 1, Some(4800))
+            ),
+            cell(&long, 3, None),
+        ],
+    );
+    let (one, two, six) = (
+        x_of(three.clone(), "ONE"),
+        x_of(three.clone(), "TWO"),
+        x_of(three, "SIX"),
+    );
+    let word_two = 143.06 - 71.66;
+    let word_six = 279.67 - 143.06;
+    assert!(
+        (two - one - word_two).abs() < 1.0 && (six - two - word_six).abs() < 1.0,
+        "three columns share the widen; ONE {one}, TWO {two}, SIX {six}"
+    );
+    let word_grid = 191.69 - 71.66;
+    let short = pair("Ok", true);
+    let (short_label, short_value) = (x_of(short.clone(), "LABEL:"), x_of(short, "VALUE"));
+    assert!(
+        (short_value - short_label - word_grid).abs() < 1.0,
+        "a span that fits keeps the grid; LABEL {short_label}, VALUE {short_value}, Word gap {word_grid}"
+    );
+    let title = pair("Title", false);
+    let (title_label, title_value) = (x_of(title.clone(), "LABEL:"), x_of(title, "VALUE"));
+    assert!(
+        (title_value - title_label - word_grid).abs() < 1.0,
+        "a short spanning title keeps the grid; LABEL {title_label}, VALUE {title_value}"
+    );
+}
+
+#[test]
 fn contextual_spacing_drops_only_the_flagged_paragraphs_share_of_the_gap() {
     // Word 16 probe_cx (2026-10-01), two Normal paragraphs, compat 15:
     // the gap is max(after, before) split into A's after and B's excess
