@@ -32,7 +32,7 @@ use super::critic::{self, Piece, Token};
 use super::diff::{continues, diff_markdown, marker_len, open_paragraph, table_row};
 use super::redline::{RedlineOptions, Source, redline};
 use super::write::named;
-use super::{MarkdownError, MarkdownOptions, docx_to_markdown};
+use super::{MarkdownError, MarkdownOptions, docx_to_markdown, docx_to_markdown_stories};
 use crate::document_comparer::{accept_revisions, reject_revisions};
 use crate::inspect;
 
@@ -380,7 +380,7 @@ fn patch_word(
     options: &PatchOptions,
     markdown_options: &MarkdownOptions,
 ) -> Result<Patch, MarkdownError> {
-    let critic = docx_to_markdown(docx, markdown_options)?.markdown;
+    let critic = docx_to_markdown_stories(docx, markdown_options)?.markdown;
     let (mut patch, texts) = build_with(&critic, options, known);
     let (old, new) = (
         word_paragraphs(old, markdown_options.input_limits)?,
