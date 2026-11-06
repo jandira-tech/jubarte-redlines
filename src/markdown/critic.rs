@@ -117,7 +117,7 @@ const SPANS: [(&str, &str, Option<&str>, Token, Token); 5] = [
     ("{>>", "<<}", None, Token::CommentStart, Token::CommentEnd),
 ];
 
-fn stand_in(token: Token) -> char {
+pub(super) fn stand_in(token: Token) -> char {
     STAND_INS
         .iter()
         .find(|(t, _)| *t == token)
@@ -125,7 +125,7 @@ fn stand_in(token: Token) -> char {
         .unwrap_or(ESCAPE)
 }
 
-fn token_of(c: char) -> Option<Token> {
+pub(super) fn token_of(c: char) -> Option<Token> {
     STAND_INS.iter().find(|(_, s)| *s == c).map(|(t, _)| *t)
 }
 
@@ -1468,13 +1468,128 @@ pub(crate) fn without_attributions(source: &str) -> String {
     out
 }
 
+/// One tracked change inside a comment: its marks, the inner source, the
+/// substitution separator when the change has one, and the byte after
+/// the closer.
+struct CommentMark {
+    start: Token,
+    end: Token,
+    inner: std::ops::Range<usize>,
+    split: Option<(usize, usize)>,
+    after: usize,
+}
+
+/// A complete tracked change at `at` inside a comment, when `at` is its
+/// opener and the closer lies in `until`. A backslash keeps the braces
+/// as text. The outer span still treats the comment as one opaque run.
+fn comment_change(source: &str, at: usize, until: usize) -> Option<CommentMark> {
+    if escaped(source, at) {
+        return None;
+    }
+    let rest = source.get(at..until)?;
+    let (open, close, separator, start, end) = if rest.starts_with("{++") {
+        ("{++", "++}", None, Token::InsertStart, Token::InsertEnd)
+    } else if rest.starts_with("{--") {
+        ("{--", "--}", None, Token::DeleteStart, Token::DeleteEnd)
+    } else if rest.starts_with("{~~") {
+        (
+            "{~~",
+            "~~}",
+            Some("~>"),
+            Token::SubstituteStart,
+            Token::SubstituteEnd,
+        )
+    } else {
+        return None;
+    };
+    let body = at + open.len();
+    let close_at = comment_closer(source, open, close, body, until)?;
+    let split = match separator {
+        Some(separator) => {
+            let mid = comment_separator(source, open, close, separator, body, close_at)?;
+            Some((mid, separator.len()))
+        }
+        None => None,
+    };
+    Some(CommentMark {
+        start,
+        end,
+        inner: body..close_at,
+        split,
+        after: close_at + close.len(),
+    })
+}
+
+/// The closer of `open` that brings its depth back to zero.
+fn comment_closer(
+    source: &str,
+    open: &str,
+    close: &str,
+    from: usize,
+    until: usize,
+) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut at = from;
+    while at < until {
+        if !escaped(source, at) && source[at..].starts_with(open) {
+            depth += 1;
+            at += open.len();
+            continue;
+        }
+        if !escaped(source, at) && source[at..].starts_with(close) {
+            depth -= 1;
+            if depth == 0 {
+                return Some(at);
+            }
+            at += close.len();
+            continue;
+        }
+        at += source[at..].chars().next()?.len_utf8();
+    }
+    None
+}
+
+/// The substitution separator at depth one, between `from` and `until`.
+fn comment_separator(
+    source: &str,
+    open: &str,
+    close: &str,
+    separator: &str,
+    from: usize,
+    until: usize,
+) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut at = from;
+    while at < until {
+        if !escaped(source, at) && source[at..].starts_with(open) {
+            depth += 1;
+            at += open.len();
+            continue;
+        }
+        if !escaped(source, at) && source[at..].starts_with(close) {
+            depth -= 1;
+            if depth == 0 {
+                return None;
+            }
+            at += close.len();
+            continue;
+        }
+        if depth == 1 && !escaped(source, at) && source[at..].starts_with(separator) {
+            return Some(at);
+        }
+        at += source[at..].chars().next()?.len_utf8();
+    }
+    None
+}
+
 /// A comment's body: text, with every run of blank or whitespace-only
 /// lines as one [`Token::CommentBreak`] stand-in so the comment's
 /// paragraphs survive the Markdown parser without splitting the
 /// paragraph the comment is anchored on. A single newline stays text,
 /// and a character reference naming a stand-in stays literal as in any
 /// other text. A comment anchored in a code block unwinds the reader's
-/// fence escapes in its body, as the fence's own text does.
+/// fence escapes in its body, as the fence's own text does. A tracked
+/// change in the body is that change's own mark.
 fn encode_comment(
     source: &str,
     closers: &Closers<'_>,
@@ -1509,6 +1624,26 @@ fn encode_comment(
                 at += 1 + white;
                 continue;
             }
+        }
+        if let Some(CommentMark {
+            start,
+            end,
+            inner,
+            split,
+            after,
+        }) = comment_change(source, at, body.end)
+        {
+            out.push(stand_in(start));
+            if let Some((mid, width)) = split {
+                encode_comment(source, closers, inner.start..mid, out);
+                out.push(stand_in(Token::SubstituteSeparator));
+                encode_comment(source, closers, mid + width..inner.end, out);
+            } else {
+                encode_comment(source, closers, inner, out);
+            }
+            out.push(stand_in(end));
+            at = after;
+            continue;
         }
         let c = source[at..body.end].chars().next().unwrap_or_default();
         push_escaped(out, &source[at..at + c.len_utf8()]);
@@ -2837,6 +2972,19 @@ pub(super) fn resolve_with_policy(
                 removed_text = true;
             }
             let opened = match token {
+                // A mark inside a comment belongs to the note. It does not
+                // open a change of the document around the note.
+                Token::InsertStart
+                | Token::InsertEnd
+                | Token::DeleteStart
+                | Token::DeleteEnd
+                | Token::SubstituteStart
+                | Token::SubstituteSeparator
+                | Token::SubstituteEnd
+                    if state == In::Comment =>
+                {
+                    None
+                }
                 // A highlight run or a field is Markdown, not a change: it
                 // stays.
                 Token::MarkStart
@@ -3328,8 +3476,8 @@ mod tests {
                 "<SubstituteEnd>",
             ]
         );
-        // No change in a change, nor in a highlight in a change, nor any
-        // span in a comment.
+        // No change in a change, nor in a highlight in a change. A
+        // comment's own insertion is a mark of the note.
         assert_eq!(
             pieces(&encode("{++a {--b--}++}")),
             ["<InsertStart>", "a {--b--}", "<InsertEnd>"]
@@ -3346,8 +3494,17 @@ mod tests {
         );
         assert_eq!(
             pieces(&encode("{>>a {++b++}<<}")),
-            ["<CommentStart>", "a {++b++}", "<CommentEnd>"]
+            [
+                "<CommentStart>",
+                "a ",
+                "<InsertStart>",
+                "b",
+                "<InsertEnd>",
+                "<CommentEnd>"
+            ]
         );
+        assert_eq!(resolve("{>>a {++b++}<<}", true), "");
+        assert_eq!(resolve("{==x==}{>>see {++this++}<<}", true), "x");
         // A comment inside a change does not end it.
         let text = "x{++a{>>n<<}b++}{~~c~>{==d==}{>>m<<}e~~}";
         assert_eq!(resolve(text, true), "xabde");
