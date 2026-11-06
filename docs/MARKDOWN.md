@@ -432,7 +432,7 @@ clauses joined by `, ` (no clauses: `<!-- p2 -->`).
 
 ```text
 head:     p{N}[ {Style}][ outline {n}]
-clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · before {x}pt | before auto · after {x}pt | after auto · line {r} | line {x}pt exact | line {x}pt atLeast · size {x}pt · num "{label}" | bullet · level {n} · page-break | page-break-ins {tag} | page-break-del {tag} · section-break · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
+clauses:  {align} · first-line {x}in|{x}ch · hanging {x}in|{x}ch · left {x}in|{x}ch · right {x}in|{x}ch · before {x}pt | before auto · after {x}pt | after auto · line {r} | line {x}pt exact | line {x}pt atLeast · size {x}pt · num "{label}" | bullet · level {n} · page-break | page-break-ins {tag} | page-break-del {tag} · section-break · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
 examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-- p0 Quote justify, hanging 0.25in, left 0.5in -->   <!-- p3 rev r0 @AC; r2+1 @AC -->
 ```
 
@@ -452,7 +452,11 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
 - `align` prints only when the paragraph sets `w:jc` itself: `center`,
   `right`, `justify`, else `left`. Indents come from the paragraph's own
   `w:ind`, in inches, with as many decimals (two to four) as it takes to
-  read back the same twips (`0.7875in` is 1134).
+  read back the same twips (`0.7875in` is 1134). A character unit
+  (`w:firstLineChars` and the rest, hundredths of a character) prints
+  beside that side as `first-line 2ch` (`200` is `2ch`, `150` is `1.5ch`,
+  and a negative value is an outdent). Strict `startChars` and `endChars`
+  read as `left` and `right` when those character attributes are absent.
 - `before`, `after` and `line` come from the paragraph's own `w:spacing`
   (its style's spacing is the legend's): `before 6pt`, `after 0pt` (a
   zero the paragraph states still prints: it overrides its style), in
@@ -1413,11 +1417,13 @@ ends with `--force`.
   (`p1: {text: …, left, indent: {right: 0.25in}, color: …}`), its sides as
   the id lines name them (`first-line`, `hanging`, `left`, `right`; Strict's
   `start` and `end` read as `left` and `right`) in inches, negative for an
-  outdent; a stated 0 is printed, since it overrides the style's. It is a
-  map of its own because `left` and `right` alone are the alignment. A side
-  it does not name or names twice, or a value that is not inches
-  (`0.25in`) or is over 22in either way, does not read, and the story entry
-  with it. Its own tab stops (`w:tabs`) add `tabs: [center 4680, right
+  outdent, or in characters (`first-line: 2ch`, hundredths of a character,
+  beside the inches when both are set); a stated 0 is printed, since it
+  overrides the style's. It is a map of its own because `left` and `right`
+  alone are the alignment. A side it does not name, or names twice in the
+  same unit, or a value that is neither inches (`0.25in`) nor characters
+  (`2ch`), or inches over 22in either way, does not read, and the story
+  entry with it. Its own tab stops (`w:tabs`) add `tabs: [center 4680, right
   9360]`: each stop is its alignment (`left`, `center`, `right`,
   `decimal`, `bar`, `clear`, `num`), an optional leader (`dot`, `hyphen`,
   `underscore`, `heavy`, `middleDot`), and its position in twips, within

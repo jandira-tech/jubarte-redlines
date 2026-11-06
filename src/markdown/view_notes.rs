@@ -1461,6 +1461,11 @@ pub(super) struct IdLine {
     pub rev_del: Vec<Tag>,
     /// The comments whose ranges run into it (`in c5 c6`).
     pub in_comments: Vec<u32>,
+    /// Character-unit indents (`first-line 2ch`), in hundredths of a character.
+    pub first_line_chars: Option<i64>,
+    pub hanging_chars: Option<i64>,
+    pub left_chars: Option<i64>,
+    pub right_chars: Option<i64>,
 }
 
 /// The id line of one paragraph (`pN`, or a range's first `pN-pM`, whose
@@ -1525,6 +1530,18 @@ impl IdLine {
                     .filter_map(|id| crate::ids::short_number(id, 'c'))
                     .filter_map(|n| u32::try_from(n).ok())
                     .collect();
+            }
+            Some(("first-line", v)) if v.ends_with("ch") => {
+                self.first_line_chars = super::xml::char_hundredths(v).or(self.first_line_chars);
+            }
+            Some(("hanging", v)) if v.ends_with("ch") => {
+                self.hanging_chars = super::xml::char_hundredths(v).or(self.hanging_chars);
+            }
+            Some(("left", v)) if v.ends_with("ch") => {
+                self.left_chars = super::xml::char_hundredths(v).or(self.left_chars);
+            }
+            Some(("right", v)) if v.ends_with("ch") => {
+                self.right_chars = super::xml::char_hundredths(v).or(self.right_chars);
             }
             Some(("first-line", v)) => self.first_line = twips(v),
             Some(("hanging", v)) => self.hanging = twips(v),
