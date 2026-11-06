@@ -8460,6 +8460,109 @@ fn fuse_story_tail_into_deleted(dom: &mut Dom, last_ins: NodeId, first_del: Node
     dom.remove(last_ins);
 }
 
+/// #1678. The revised body ends on an empty paragraph and the redline
+/// ended on the table that replaced the source's last paragraph. Word
+/// keeps that empty paragraph as the close, with no revision on it, and
+/// writes an inserted mark on the replacement so Reject All joins the
+/// empty paragraph away.
+pub(crate) fn keep_revised_empty_close(out_xml: &str, revised_xml: &str) -> Option<String> {
+    let mut revised = Dom::new();
+    let revised_doc = revised.parse_xdocument(revised_xml);
+    let revised_body = revised
+        .root(revised_doc)
+        .and_then(|root| revised.element(root, &W::body()))?;
+    let revised_kids: Vec<NodeId> = revised
+        .elements(revised_body, None)
+        .into_iter()
+        .filter(|&child| !revised.name_is(child, &W::sect_pr()))
+        .collect();
+    let &revised_last = revised_kids.last()?;
+    if !paragraph_has_live_empty_pilcrow(&revised, revised_last) {
+        return None;
+    }
+
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(out_xml);
+    let root = dom.root(doc)?;
+    let body = dom.element(root, &W::body())?;
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&child| !dom.name_is(child, &W::sect_pr()))
+        .collect();
+    let (&last, before) = kids.split_last()?;
+    if !dom.name_is(last, &W::tbl()) {
+        return None;
+    }
+    let &previous = before.last()?;
+    if !dom.name_is(previous, &W::p())
+        || dom.descendants(previous, Some(&W::ins())).is_empty()
+        || dom.descendants(previous, Some(&W::del())).is_empty()
+        || para_mark_revision(&dom, previous, &W::del())
+        || para_mark_revision(&dom, previous, &W::move_from())
+        || para_mark_revision(&dom, previous, &W::move_to())
+    {
+        return None;
+    }
+    if !para_mark_revision(&dom, previous, &W::ins()) {
+        mint_replacement_mark(&mut dom, root, previous)?;
+    }
+    let empty = dom.new_element(W::p());
+    match dom.element(body, &W::sect_pr()) {
+        Some(sect) => dom.add_before_self(sect, empty),
+        None => dom.add(body, empty),
+    }
+    Some(dom.serialize_element(root))
+}
+
+/// An inserted mark on the paragraph a table replaced, copied from the
+/// paragraph's own insertion.
+fn mint_replacement_mark(dom: &mut Dom, root: NodeId, paragraph: NodeId) -> Option<()> {
+    let source = dom
+        .descendants(paragraph, Some(&W::ins()))
+        .into_iter()
+        .next()?;
+    let author = dom.attribute(source, &W::author())?.to_string();
+    let date = dom.attribute(source, &W::date()).map(str::to_string);
+    let id = crate::revision_processor::RevisionIds::from_used(
+        dom.descendants(root, None)
+            .into_iter()
+            .filter_map(|element| dom.attribute(element, &W::id())?.parse().ok())
+            .collect(),
+    )
+    .allocate();
+    let mark = dom.new_element(W::ins());
+    dom.set_attribute_value(mark, &W::id(), Some(&id.to_string()));
+    dom.set_attribute_value(mark, &W::author(), Some(&author));
+    if let Some(date) = date.as_deref() {
+        dom.set_attribute_value(mark, &W::date(), Some(date));
+    }
+    let properties = match dom.element(paragraph, &W::p_pr()) {
+        Some(properties) => properties,
+        None => {
+            let properties = dom.new_element(W::p_pr());
+            dom.add_first(paragraph, properties);
+            properties
+        }
+    };
+    let mark_properties = match dom.element(properties, &W::r_pr()) {
+        Some(mark_properties) => mark_properties,
+        None => {
+            let mark_properties = dom.new_element(W::r_pr());
+            let after = dom.elements(properties, None).into_iter().find(|&child| {
+                dom.name_is(child, &W::sect_pr()) || dom.name_is(child, &W::p_pr_change())
+            });
+            match after {
+                Some(after) => dom.add_before_self(after, mark_properties),
+                None => dom.add(properties, mark_properties),
+            }
+            mark_properties
+        }
+    };
+    dom.add_first(mark_properties, mark);
+    Some(())
+}
+
 /// #1683, case 2. Word's Compare writes the revised body's last paragraph
 /// after the table it replaced, as the closing paragraph, with no revision
 /// on that mark. The redline left the inserted paragraph, mark included,
