@@ -345,6 +345,25 @@ fn shape_shell(element: &Element) -> String {
     crate::comparer::textbox::shell(&mut dom, root)
 }
 
+/// Markup inside every text box. A shell comparison empties that markup, so
+/// two frames that differ only there still need this to stay unpaired.
+fn box_payload(element: &Element) -> String {
+    fn walk(element: &Element, out: &mut String) {
+        if element.is("txbxContent") {
+            for child in element.elements() {
+                out.push_str(&serialize(child));
+            }
+            return;
+        }
+        for child in element.elements() {
+            walk(child, out);
+        }
+    }
+    let mut out = String::new();
+    walk(element, &mut out);
+    out
+}
+
 /// Pair nearest-owned copies by box ordinal and drawing order. A Fallback
 /// must match the nested element's Fallback shell; Requires is never evaluated.
 fn nested_pairs(element: &Element) -> Option<Vec<(&Element, &Element, bool)>> {
@@ -370,7 +389,9 @@ fn nested_pairs(element: &Element) -> Option<Vec<(&Element, &Element, bool)>> {
                 } else {
                     shown
                 };
-                if shape_shell(expected) != shape_shell(copy) {
+                if shape_shell(expected) != shape_shell(copy)
+                    || box_payload(expected) != box_payload(copy)
+                {
                     return None;
                 }
                 pairs.push((shown, copy, true));
