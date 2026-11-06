@@ -1974,22 +1974,31 @@ fn isolate_range(
 /// Whether `t` has a sibling the insertion must leave in another run.
 /// An empty `w:t` stays with `t`: it is not a character the insertion splits.
 fn split_around_piece(dom: &Dom, run: NodeId, t: NodeId) -> bool {
-    dom.elements(run, None).into_iter().any(|child| {
-        if child == t || dom.name_is(child, &W::r_pr()) {
-            return false;
+    for i in 0..dom.child_count(run) {
+        let child = dom.child_at(run, i);
+        if !dom.is_element(child) || child == t || dom.name_is(child, &W::r_pr()) {
+            continue;
         }
         if dom.name_is(child, &W::t()) {
-            return !dom.value(child).is_empty();
+            if !dom.value(child).is_empty() {
+                return true;
+            }
+            continue;
         }
-        true
-    })
+        return true;
+    }
+    false
 }
 
 /// Whether `t` is the only child of `run` besides its `w:rPr`.
 fn alone(dom: &Dom, run: NodeId, t: NodeId) -> bool {
-    dom.elements(run, None)
-        .into_iter()
-        .all(|c| c == t || dom.name_is(c, &W::r_pr()))
+    for i in 0..dom.child_count(run) {
+        let child = dom.child_at(run, i);
+        if dom.is_element(child) && child != t && !dom.name_is(child, &W::r_pr()) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Move the children of `run` before `t` into a copy of the run placed
