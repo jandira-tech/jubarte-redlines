@@ -3411,8 +3411,7 @@ impl Writer<'_> {
                     self.drawing(child, false, out, extra);
                 }
                 "AlternateContent" => {
-                    if let Some(choice) = child.child("Choice").or_else(|| child.child("Fallback"))
-                    {
+                    if let Some(choice) = agent::shown_branch(child) {
                         self.inline(choice, link, base, fields, out, extra);
                     }
                 }
@@ -3687,7 +3686,7 @@ impl Writer<'_> {
                 self.drawing(child, true, out, extra);
             }
             "AlternateContent" => {
-                if let Some(choice) = child.child("Choice").or_else(|| child.child("Fallback")) {
+                if let Some(choice) = agent::shown_branch(child) {
                     for inner in choice.elements() {
                         self.run_child(inner, link, style, fields, out, extra);
                     }

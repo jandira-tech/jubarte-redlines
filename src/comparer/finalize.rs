@@ -1533,6 +1533,48 @@ pub(crate) fn word_understands_namespace(uri: &str) -> bool {
     .any(|root| uri.starts_with(root))
 }
 
+/// Every prefix in a Requires list passes `prefix_understood`. No list means
+/// the choice stands.
+pub(crate) fn requires_list_understood(
+    requires: Option<&str>,
+    prefix_understood: impl Fn(&str) -> bool,
+) -> bool {
+    requires.is_none_or(|requires| requires.split_whitespace().all(prefix_understood))
+}
+
+/// The branch Word shows: the first Choice whose Requires it understands,
+/// otherwise the Fallback.
+pub(crate) fn selected_alternate_branch(dom: &Dom, alternate: NodeId) -> Option<NodeId> {
+    dom.elements(alternate, Some(&MC::choice()))
+        .into_iter()
+        .find(|&choice| {
+            requires_list_understood(
+                dom.attribute(choice, &XNamespace::none().name("Requires")),
+                |prefix| {
+                    prefix_namespace(dom, choice, prefix)
+                        .is_some_and(|uri| word_understands_namespace(&uri))
+                },
+            )
+        })
+        .or_else(|| dom.element(alternate, &MC::fallback()))
+}
+
+/// True when `node` sits in a Choice or Fallback that Word does not show.
+pub(crate) fn in_unselected_alternate(dom: &Dom, node: NodeId) -> bool {
+    dom.ancestors(node, None).into_iter().any(|ancestor| {
+        if !dom.name_is(ancestor, &MC::choice()) && !dom.name_is(ancestor, &MC::fallback()) {
+            return false;
+        }
+        let Some(alternate) = dom.parent(ancestor) else {
+            return false;
+        };
+        if !dom.name_is(alternate, &MC::alternate_content()) {
+            return false;
+        }
+        selected_alternate_branch(dom, alternate) != Some(ancestor)
+    })
+}
+
 /// True if `prefix` is bound by an `xmlns:prefix` declaration on `node` or any of
 /// its ancestors (XML namespace scoping).
 fn prefix_in_scope(dom: &Dom, node: NodeId, prefix: &str) -> bool {
