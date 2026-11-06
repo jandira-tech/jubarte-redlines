@@ -14526,7 +14526,7 @@ fn table_pref_width(dom: &Dom, table: NodeId) -> TblWidth {
     let Some(tw) = first_named(dom, pr, "tblW") else {
         return TblWidth::Grid;
     };
-    match attr_any(dom, tw, "type").unwrap_or("auto") {
+    match attr_any(dom, tw, "type").unwrap_or("dxa") {
         "pct" => {
             let fiftieths = attr_any(dom, tw, "w")
                 .and_then(parse_finite_f32)
@@ -14884,7 +14884,7 @@ fn cell_pref_width(dom: &Dom, cell: NodeId) -> PrefWidth {
     let Some(tw) = direct_named(dom, pr, "tcW") else {
         return PrefWidth::Auto;
     };
-    match attr_any(dom, tw, "type").unwrap_or("auto") {
+    match attr_any(dom, tw, "type").unwrap_or("dxa") {
         "pct" => match attr_any(dom, tw, "w").and_then(parse_finite_f32) {
             Some(fiftieths) if fiftieths >= 0.0 => PrefWidth::Pct(fiftieths / 5000.0),
             _ => PrefWidth::Auto,

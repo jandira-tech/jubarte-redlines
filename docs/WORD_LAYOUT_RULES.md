@@ -304,6 +304,13 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
     puts VALUE 227.19pt after LABEL on A4 and 235.61pt on Letter. A 300pt
     table width puts it 151.11pt after. Three short columns sit 20.76pt
     and 23.52pt apart.
+- **A width with no type is a twip width.** A positive `w:w` and no
+  `w:type` on `tblW` or `tcW` is dxa, and a zero one is still no
+  preference. `auto` and `nil` stay what they were.
+  - Word convert, Letter, Calibri 11, 1in margins: a typeless table width
+    of 9000 twips on a 2400/2400 grid puts VALUE 225.89pt after LABEL.
+    Under that same width written as dxa, typeless cell widths of 6000
+    and 3000 twips put VALUE 300.05pt after LABEL.
 - **Tables with nothing between them are one table**, f2fd0c8b. The second
   table's rows keep their own cell widths and start at the joined table's
   left edge, whatever their own `jc`. The joined table is aligned by its
