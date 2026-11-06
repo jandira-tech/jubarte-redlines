@@ -2363,6 +2363,18 @@ pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
     Some(page)
 }
 
+/// The earlier page a section names (`page: Letter portrait; was: A4
+/// portrait, margins 1in`). Reject writes this into `w:sectPrChange`.
+pub(super) fn earlier_page(text: &str) -> Option<PageSetup> {
+    let rest = text.split("; was: ").nth(1)?;
+    let end = [";", ", fmt", ", headers:", ", footers:", ", columns:", "}"]
+        .iter()
+        .filter_map(|key| rest.find(key))
+        .min()
+        .unwrap_or(rest.len());
+    page_setup(rest[..end].trim())
+}
+
 /// A `sections:` entry of the view's YAML header (`  2: {p30-p103, page:
 /// Letter landscape, margins 1in, headers: {…}}`): the section's number and
 /// its page, when it names one (else it keeps the first section's).
