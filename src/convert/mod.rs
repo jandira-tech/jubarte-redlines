@@ -10160,9 +10160,10 @@ fn unclamped_col_widths(
 
 /// Word's autofit widens a column narrower than its longest word to it,
 /// taking the room from columns wider than theirs (21349517's 29pt "ID"
-/// column holds "Sub001" whole). Only when the words together overrun
-/// the measure of a pct or auto table do the columns stay and the words
-/// break (08c53c4f).
+/// column holds "Sub001" whole). When one of those words is wider than
+/// its own column, an auto or pct table re-fits into the measure and the
+/// other columns may break. Words that still fit their columns stay put
+/// when they overrun the measure together (08c53c4f).
 fn autofit_to_words(
     fonts: &Fonts,
     widths: Vec<f32>,
@@ -10171,6 +10172,7 @@ fn autofit_to_words(
     avail: f32,
 ) -> Vec<f32> {
     let mut mins = vec![0.0_f32; widths.len()];
+    let mut words = vec![0.0_f32; widths.len()];
     for cell in rows.iter().flatten() {
         // Vertical text runs along the row, not across the column: 1c99b5cd's
         // btLr "Theory Topics" column stays 13pt wide in Word.
@@ -10180,7 +10182,9 @@ fn autofit_to_words(
             continue;
         }
         let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
-        mins[cell.col] = mins[cell.col].max(cell_content_extent(fonts, cell).0 + pads);
+        let word = cell_content_extent(fonts, cell).0;
+        words[cell.col] = words[cell.col].max(word);
+        mins[cell.col] = mins[cell.col].max(word + pads);
     }
     // A spanning cell's word that overruns the columns it covers widens the
     // last of them (9f41b69c's "Controls" over a 0.65pt grid column).
@@ -10205,8 +10209,36 @@ fn autofit_to_words(
     // A dxa table still gives every column its word and runs past the
     // margin (Word 16 probes a1/a5 2026-10-01; ee7b597379 ends at 610pt).
     let overrun = mins.iter().sum::<f32>() > avail + geom.pct_margins + 0.5;
-    if short < 0.5 || overrun && !matches!(geom.width, TblWidth::Dxa(_)) {
+    let text_over = widths.iter().zip(&words).any(|(w, t)| *t > *w + 0.5);
+    if short < 0.5 || (overrun && !text_over && !matches!(geom.width, TblWidth::Dxa(_))) {
         return widths;
+    }
+    // The saved columns cannot hold a word. An auto or pct table comes
+    // back inside the measure: columns share it by their words when the
+    // words themselves overrun it, and otherwise the narrow columns keep
+    // their words while the rest of the measure goes to the wider ones.
+    if text_over && !matches!(geom.width, TblWidth::Dxa(_)) {
+        let room = (avail + geom.pct_margins).max(0.0);
+        let sum = mins.iter().sum::<f32>();
+        if sum > room + 0.5 || sum <= 0.0 {
+            let scale = if sum > 0.0 { room / sum } else { 1.0 };
+            return mins.iter().map(|m| m * scale).collect();
+        }
+        let extra = room - sum;
+        let spare: Vec<f32> = mins
+            .iter()
+            .zip(&widths)
+            .map(|(m, w)| (w - m).max(0.0))
+            .collect();
+        let spare_sum = spare.iter().sum::<f32>();
+        if spare_sum > 0.5 {
+            return mins
+                .iter()
+                .zip(&spare)
+                .map(|(m, s)| m + extra * s / spare_sum)
+                .collect();
+        }
+        return mins.iter().map(|m| m + extra * m / sum).collect();
     }
     let spare: f32 = widths
         .iter()
