@@ -42,10 +42,13 @@ install) and, with the `mcp` extra, `jubarte-mcp` ([mcp.md](mcp.md)).
 
 Gaps a provider's sandbox may still hit:
 
-- **glibc 2.28 floor.** Debian 10 or older, RHEL 7 and Amazon Linux 2 have
-  an older glibc and fall back to the sdist build, which needs a Rust
-  toolchain. Plan: static musl binaries, then a `manylinux2014` wheel
-  ([plans.md](plans.md) §6).
+- **glibc 2.28 floor.** The `linux-x86_64` and `linux-aarch64` CLI
+  archives are built in the manylinux_2_28 image, the same floor as the
+  wheels (RHEL 8, Debian 10, Ubuntu 20.04). A host older than that still
+  falls back to an sdist build. `linux-x86_64-musl` and
+  `linux-aarch64-musl` are static archives for Alpine and distroless.
+  `jubarte update` keeps fetching the glibc archive. The musl build has
+  not been timed against the bench, so it is not the recommended install.
 - **No Windows arm64 wheel or binary.** Use `cargo install jubarte-redlines`
   or the sdist there. Plan: [plans.md](plans.md) §7.
 

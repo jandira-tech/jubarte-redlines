@@ -82,8 +82,12 @@ MANYLINUX = {"manylinux": "2_28", "musllinux": "musllinux_1_2"}
 
 
 def label_platform(artifact: str) -> tuple[str, str]:
-    """`linux-aarch64` -> ("linux", "aarch64"): what an artifact's name promises."""
-    family, arch = artifact.split("-", 1)
+    """`linux-aarch64` -> ("linux", "aarch64"): what an artifact's name promises.
+
+    A static musl archive is `linux-x86_64-musl`: the `-musl` suffix is the
+    libc, not part of the architecture.
+    """
+    family, arch = artifact.removesuffix("-musl").split("-", 1)
     return family, ARCHS[arch]
 
 
@@ -114,7 +118,8 @@ def runner_problems(row: dict, family: str, arch: str) -> list[str]:
 
 def binary_row_problems(row: dict) -> list[str]:
     family, arch = label_platform(row["artifact"])
-    want = f"{arch}-{TRIPLE_OS[family]}"
+    suffix = "unknown-linux-musl" if row["artifact"].endswith("-musl") else TRIPLE_OS[family]
+    want = f"{arch}-{suffix}"
     problems = [] if row["target"] == want else [f"target {row['target']}, not {want}"]
     return problems + runner_problems(row, family, arch)
 
@@ -134,6 +139,10 @@ BINARY_MATRIX: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
     ("linux-x86_64", "x86_64-unknown-linux-gnu", "ubuntu-latest",
      ("manylinux_2_28_x86_64", "musllinux_1_2_x86_64")),
     ("linux-aarch64", "aarch64-unknown-linux-gnu", "ubuntu-24.04-arm",
+     ("manylinux_2_28_aarch64", "musllinux_1_2_aarch64")),
+    ("linux-x86_64-musl", "x86_64-unknown-linux-musl", "ubuntu-latest",
+     ("manylinux_2_28_x86_64", "musllinux_1_2_x86_64")),
+    ("linux-aarch64-musl", "aarch64-unknown-linux-musl", "ubuntu-24.04-arm",
      ("manylinux_2_28_aarch64", "musllinux_1_2_aarch64")),
     ("macos-x86_64", "x86_64-apple-darwin", "macos-15-intel",
      ("macosx_10_12_x86_64",)),
@@ -497,6 +506,36 @@ class BinaryReleaseMatrix(unittest.TestCase):
         self.assertIn("linux-aarch64", joined)
         self.assertIn("x86_64-unknown-linux-gnu", joined)
         self.assertEqual(binary_matrix_problems(text), [])
+
+
+class LinuxLibcFloor(unittest.TestCase):
+    """#2030: the linux CLI archives link glibc 2.28, and static musl
+    archives ship beside them. ubuntu-latest's glibc is too new."""
+
+    def test_gnu_linux_binaries_build_in_the_glibc_2_28_image(self) -> None:
+        text = WORKFLOW.read_text(encoding="utf-8")
+        binaries = runs(load()["jobs"]["binaries"])
+        self.assertIn("quay.io/pypa/manylinux_2_28_x86_64", binaries)
+        self.assertIn("quay.io/pypa/manylinux_2_28_aarch64", binaries)
+        self.assertIn("scripts/check_glibc_floor.py", binaries)
+        self.assertIn("--max 2.28", binaries)
+        self.assertIn("--musl", binaries)
+        for image in ("ubuntu:20.04", "debian:10", "ubuntu:24.04", "alpine"):
+            self.assertIn(image, binaries, image)
+        self.assertIn("--version", binaries)
+        self.assertIn("compare", binaries)
+        self.assertIn("kept_title_a.docx", binaries)
+        self.assertIn("kept_title_b.docx", binaries)
+        artifacts = matrix_artifacts(load()["jobs"]["binaries"])
+        self.assertIn("linux-x86_64-musl", artifacts)
+        self.assertIn("linux-aarch64-musl", artifacts)
+        # The names jubarte update fetches stay the glibc archives.
+        self.assertIn("linux-x86_64", artifacts)
+        self.assertIn("linux-aarch64", artifacts)
+        # Musl is published and not recommended: it has not been timed.
+        docs = (HERE.parent / "docs" / "adoption" / "install-matrix.md").read_text(encoding="utf-8")
+        self.assertIn("linux-x86_64-musl", docs)
+        self.assertIn("not the recommended install", docs)
 
 
 if __name__ == "__main__":

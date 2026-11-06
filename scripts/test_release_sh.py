@@ -2281,7 +2281,7 @@ GH_FALLBACK_STUB = "#!/bin/bash\n" + GH_BOUND + r"""case "$1 $2" in
       : > "dist/release-art/x/jubarte_redlines-9.9.9-cp310-abi3-$t.whl"
     done
     : > dist/release-art/x/jubarte_redlines-9.9.9.tar.gz
-    for a in linux-x86_64 linux-aarch64 macos-x86_64 macos-aarch64; do
+    for a in linux-x86_64 linux-aarch64 linux-x86_64-musl linux-aarch64-musl macos-x86_64 macos-aarch64; do
       : > "dist/release-art/x/jubarte-9.9.9-$a.tar.gz"
     done
     : > dist/release-art/x/jubarte-9.9.9-windows-x86_64.zip ;;

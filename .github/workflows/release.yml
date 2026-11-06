@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 # Tag-driven release: push `vX.Y.Z` (see docs/VERSIONING.md) and this builds the
-# `jubarte` CLI for the five desktop targets and attaches the archives to a
+# `jubarte` CLI for the desktop targets and attaches the archives to a
 # GitHub release named `jubarte vX.Y.Z`, with the matching CHANGELOG.md
 # section as the release notes. The publish-* jobs put the same release on
 # crates.io, PyPI and npm through OIDC trusted publishing (#1642): no
@@ -67,6 +67,12 @@ jobs:
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             artifact: linux-aarch64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact: linux-x86_64-musl
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            artifact: linux-aarch64-musl
           - os: macos-15-intel
             target: x86_64-apple-darwin
             artifact: macos-x86_64
@@ -91,7 +97,52 @@ jobs:
           targets: ${{ matrix.target }}
       # No build cache: a shipped binary is built from a clean state, so a
       # poisoned cache entry cannot reach a release (zizmor cache-poisoning).
-      - run: cargo build --release --locked --bin jubarte --target ${{ matrix.target }}
+      # Linux glibc archives link the manylinux_2_28 image (glibc 2.28), not
+      # ubuntu-latest. Musl archives are static. The other rows build on the host.
+      - name: Build against glibc 2.28
+        if: contains(matrix.target, 'unknown-linux-gnu')
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          arch="${target%%-*}"
+          case "$arch" in
+            x86_64) image=quay.io/pypa/manylinux_2_28_x86_64 ;;
+            aarch64) image=quay.io/pypa/manylinux_2_28_aarch64 ;;
+            *) echo "::error::no glibc 2.28 image for ${arch}"; exit 1 ;;
+          esac
+          docker run --rm -v "$PWD":/work -w /work "$image" \
+            bash scripts/build_manylinux_binary.sh "$target"
+          python3 scripts/check_glibc_floor.py "target/${target}/release/jubarte" --max 2.28
+      - name: Build static musl
+        if: contains(matrix.target, 'unknown-linux-musl')
+        env:
+          # Target-only: a global RUSTFLAGS would also rebuild host build scripts.
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C target-feature=+crt-static
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --bin jubarte --target ${{ matrix.target }}
+          python3 scripts/check_glibc_floor.py "target/${{ matrix.target }}/release/jubarte" --musl
+      - name: Build
+        if: ${{ !contains(matrix.target, 'unknown-linux-') }}
+        run: cargo build --release --locked --bin jubarte --target ${{ matrix.target }}
+      - name: Smoke the linux binary
+        if: contains(matrix.target, 'unknown-linux-')
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          bin="/work/target/${target}/release/jubarte"
+          a=tests/fixtures/word_probes/final_marks/kept_title_a.docx
+          b=tests/fixtures/word_probes/final_marks/kept_title_b.docx
+          case "$target" in
+            *musl*) images="alpine" ;;
+            *) images="ubuntu:20.04 debian:10 ubuntu:24.04" ;;
+          esac
+          for image in $images; do
+            docker run --rm -v "$PWD":/work -w /work "$image" "$bin" --version
+            docker run --rm -v "$PWD":/work -w /work "$image" \
+              "$bin" compare "$a" "$b" -o /tmp/redline.docx
+          done
 
       - name: Stage archive (unix)
         if: runner.os != 'Windows'
