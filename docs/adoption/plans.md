@@ -121,12 +121,12 @@ A skill that needs LibreOffice's pixels keeps LibreOffice.
   `aarch64-unknown-linux-gnu` binaries and `manylinux_2_28` /
   `musllinux_1_2` wheels. pip on Debian 10, RHEL 7 or Amazon Linux 2 picks
   neither wheel and builds the sdist, which needs Rust.
-- Bare minimum: add `x86_64-unknown-linux-musl` and
-  `aarch64-unknown-linux-musl` static binaries to the GitHub release
-  matrix in `.github/workflows/release.yml`; they run on any Linux kernel
-  of the last decade, whatever the libc. Then a `manylinux2014` wheel
-  (glibc 2.17) with `maturin --zig --compatibility manylinux2014`, checked
-  by `scripts/check_release_artifacts.py`.
+- Static musl CLI archives `linux-x86_64-musl` and `linux-aarch64-musl`
+  are on the GitHub release. `jubarte update` still fetches the glibc
+  archive (`linux-x86_64`, `linux-aarch64`), built in the manylinux_2_28
+  image. The musl build has not been timed against the bench, so it is
+  not the recommended install. A `manylinux2014` wheel (glibc 2.17) is
+  still open.
 
 ## 7. Windows on Arm: plan
 
