@@ -8460,6 +8460,48 @@ fn fuse_story_tail_into_deleted(dom: &mut Dom, last_ins: NodeId, first_del: Node
     dom.remove(last_ins);
 }
 
+/// #1683, case 2. Word's Compare writes the revised body's last paragraph
+/// after the table it replaced, as the closing paragraph, with no revision
+/// on that mark. The redline left the inserted paragraph, mark included,
+/// before the deleted table, and the original's empty close after it.
+/// Move the insertion onto that close. A paragraph that also carries a
+/// deletion stays where it is (#1926).
+pub(crate) fn pair_closing_insert_across_deleted_table(dom: &mut Dom, body: NodeId) {
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&child| !dom.name_is(child, &W::sect_pr()))
+        .collect();
+    let Some((&close, before)) = kids.split_last() else {
+        return;
+    };
+    if !paragraph_has_live_empty_pilcrow(dom, close) {
+        return;
+    }
+    let Some(split) = before
+        .iter()
+        .rposition(|&child| !table_is_deleted(dom, child))
+    else {
+        return;
+    };
+    if split + 1 >= before.len() {
+        return;
+    }
+    let inserted = before[split];
+    if !para_is_pure_inserted(dom, inserted)
+        || !para_mark_revision(dom, inserted, &W::ins())
+        || para_has_no_text(dom, inserted)
+    {
+        return;
+    }
+    for child in dom.elements(inserted, None) {
+        if !dom.name_is(child, &W::p_pr()) {
+            dom.add(close, child);
+        }
+    }
+    dom.remove(inserted);
+}
+
 /// Every paragraph of the table is deleted, marks included, and nothing in it
 /// is live or inserted (the rows get their deleted marks later, from
 /// `mark_fully_revised_rows`).
