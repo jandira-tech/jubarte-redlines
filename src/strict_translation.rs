@@ -659,6 +659,23 @@ fn replace_all(text: &str, table: &[(&str, &str)]) -> String {
     out
 }
 
+/// One part read as Transitional. An XML part's namespace declarations, and
+/// a `.rels` part's relationship `Type` values, are rewritten when they are
+/// Strict URIs. Text and every other byte stay. A part that does not carry
+/// the Strict marker is returned unchanged.
+pub(crate) fn transitional_part<'a>(name: &str, text: &'a str) -> std::borrow::Cow<'a, str> {
+    if !text.contains(STRICT_MARKER) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let rels = crate::opc::ends_with_ignore_case(name, ".rels");
+    let translated = if rels {
+        translate(text, &RELATIONSHIP_SORTED, UriSite::RelationshipType)
+    } else {
+        translate(text, &NAMESPACE_SORTED, UriSite::NamespaceDeclaration)
+    };
+    std::borrow::Cow::Owned(translated)
+}
+
 /// The Strict wordprocessingml main namespace — the URI that makes a main
 /// part Strict rather than Transitional.
 const STRICT_MAIN: &str = "http://purl.oclc.org/ooxml/wordprocessingml/main";

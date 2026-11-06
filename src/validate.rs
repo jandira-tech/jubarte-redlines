@@ -2319,6 +2319,8 @@ pub(crate) fn element_path(dom: &Dom, node: NodeId) -> String {
 
 fn parse_part(pkg: &PartFs, name: &str) -> Option<(Dom, NodeId)> {
     let xml = pkg.part_string(name)?;
+    // Strict parts are read as the Transitional names these checks compare.
+    let xml = crate::strict_translation::transitional_part(name, &xml);
     let mut dom = Dom::new();
     let doc = dom.parse_xdocument(&xml);
     let root = dom.root(doc)?;
