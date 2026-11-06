@@ -293,6 +293,9 @@ struct Output<'a> {
     render: &'a RenderArgs,
     /// SHA-256 of the bytes `--in-place` replaces, set once they are read.
     replaced_sha256: Option<String>,
+    /// A before-view already built from bytes the task holds. When set,
+    /// the confirmation uses it and does not read `input` again.
+    prepared_before: Option<Result<String, String>>,
 }
 
 impl<'a> Output<'a> {
@@ -319,6 +322,7 @@ impl<'a> Output<'a> {
             source: format!("{} (not written)", slash_path(&path.with_extension("docx"))),
             render,
             replaced_sha256: None,
+            prepared_before: None,
         }
     }
 }
@@ -375,8 +379,13 @@ fn write_output(out: &Output<'_>, produced: Produced<'_>) -> Result<(), ConvertF
         }
         (Format::Docx, Produced::Docx(bytes)) => {
             ensure_writable(out.path, out.force)?;
-            let before =
-                (!out.quiet).then(|| input_confirmation_view(out.input, out.markdown_input));
+            let before = if out.quiet {
+                None
+            } else if let Some(ready) = &out.prepared_before {
+                Some(ready.clone())
+            } else {
+                Some(input_confirmation_view(out.input, out.markdown_input))
+            };
             if let Some(expected) = out.replaced_sha256.clone() {
                 // `--in-place`: recheck the hash, then replace only this path.
                 // A symlink is followed inside `publish_files`.
@@ -1024,6 +1033,7 @@ fn run_read_tables(
         source: String::new(),
         render: &render,
         replaced_sha256: None,
+        prepared_before: None,
     });
     if let Some(out) = &out {
         refuse_output_alias(out.path, &[(file, "the input")])
@@ -1144,6 +1154,7 @@ fn run_text(
             source: source.unwrap_or_default(),
             render: &render,
             replaced_sha256: None,
+            prepared_before: None,
         };
         check_output(&out)?;
         if kind == Format::Json {
@@ -3249,6 +3260,7 @@ fn run(job: &Job) -> Result<(), ConvertFailure> {
         source: source.clone(),
         render: &job.render,
         replaced_sha256: None,
+        prepared_before: None,
     });
     let original = read_document(&job.original)?;
     let modified = read_document(&job.modified)?;
@@ -4173,7 +4185,10 @@ fn run_convert_any(
                 }
                 Ok(())
             } else {
-                at(Format::Docx, &path, Some(Produced::Docx(&out)))
+                let mut output =
+                    Output::of_task(Format::Docx, &path, job.file, &render, job.force, job.quiet);
+                output.prepared_before = before;
+                write_output(&output, Produced::Docx(&out))
             }
         }
         (Format::Md, Format::Md) if keep_resolver.is_none() => {
@@ -4370,6 +4385,14 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
         }
         if !job.quiet {
             eprintln!("{}", wrote_line(out, Format::Docx, fixed.docx.len(), None));
+            if !job.json {
+                print_success(
+                    job.file,
+                    confirmation_view(job.file, &docx),
+                    out,
+                    &fixed.docx,
+                )?;
+            }
         }
         docx = fixed.docx;
     }
