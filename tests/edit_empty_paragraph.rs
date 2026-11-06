@@ -1419,8 +1419,8 @@ fn a_replacement_anchored_elsewhere_takes_the_final_mark() {
 
 /// The kept final mark takes the replacement's mark formatting, the old
 /// in a `w:rPrChange`, as Word's Compare writes it: Accept All formats the
-/// mark as the clean copy does (MiniMax on #1670, round 7). Reject All is
-/// checked under keep only: the comparer drops the old formatting (#1677).
+/// mark as the clean copy does, and Reject All restores the source mark
+/// (#1677). `keep` already did; the default comparer must too.
 #[test]
 fn the_kept_final_mark_takes_the_replacements_mark_formatting() {
     let source =
@@ -1438,15 +1438,53 @@ fn the_kept_final_mark_takes_the_replacements_mark_formatting() {
             ppr(&paragraph_xml(&result.clean, 0)),
             "{mode}"
         );
-        if !mode.is_empty() {
-            let rejected = reject_revisions(&result.redline).unwrap();
-            assert_eq!(
-                ppr(&paragraph_xml(&rejected, 0)),
-                ppr(&paragraph_xml(&source, 0)),
-                "{mode}"
-            );
-        }
+        let rejected = reject_revisions(&result.redline).unwrap();
+        assert_eq!(
+            ppr(&paragraph_xml(&rejected, 0)),
+            ppr(&paragraph_xml(&source, 0)),
+            "{mode}"
+        );
     }
+}
+
+/// #1677: Word's Compare of a bold paragraph mark against an unformatted
+/// one records the bold in `w:rPrChange`. Reject All restores it. The
+/// default comparer must do the same.
+#[test]
+fn issue_1677_mark_formatting_change_matches_word() {
+    let source =
+        docx(r#"<w:p><w:pPr><w:rPr><w:b/></w:rPr></w:pPr><w:r><w:t>Old.</w:t></w:r></w:p>"#);
+    let revised = docx(&para("New."));
+    let word = include_bytes!("fixtures/1677-word.docx");
+    let word_mark = ppr(&paragraph_xml(word, 0));
+    assert!(
+        word_mark.contains("<w:rPrChange") && word_mark.contains("<w:b"),
+        "oracle mark: {word_mark}"
+    );
+    let word_rejected = reject_revisions(word).unwrap();
+    assert_eq!(
+        ppr(&paragraph_xml(&word_rejected, 0)),
+        ppr(&paragraph_xml(&source, 0)),
+        "oracle Reject"
+    );
+    let out = compare_documents(&source, &revised, "Redline").expect("compare");
+    let report = check_word_valid_package(&out);
+    assert!(report.ok(), "{:?}", report.errors);
+    let mark = ppr(&paragraph_xml(&out, 0));
+    assert!(
+        mark.contains("<w:rPrChange") && mark.contains("<w:b"),
+        "redline mark: {mark}"
+    );
+    assert_eq!(
+        ppr(&paragraph_xml(&accept_revisions(&out).unwrap(), 0)),
+        ppr(&paragraph_xml(&revised, 0)),
+        "Accept All"
+    );
+    assert_eq!(
+        ppr(&paragraph_xml(&reject_revisions(&out).unwrap(), 0)),
+        ppr(&paragraph_xml(&source, 0)),
+        "Reject All"
+    );
 }
 
 /// A kept final mark's `w:rPr` stays in `CT_ParaRPr` order when its
