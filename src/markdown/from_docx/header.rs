@@ -83,6 +83,14 @@ pub(crate) struct ParaFact {
     /// Its own indent (`w:ind`), as the id lines say it: `first-line`,
     /// `hanging`, `left`, `right` and each one's inches.
     pub indent: Vec<(&'static str, String)>,
+    /// Its own tab stops (`w:tabs`): `center 4680`, or `right dot 9360`
+    /// when a leader is set. The position is twips.
+    pub tabs: Vec<String>,
+    /// Its own spacing (`w:spacing`), in the body's spacing words
+    /// (`before 6pt`, `after 0pt`, `line 1`).
+    pub spacing: Vec<String>,
+    /// Its own shading (`w:shd`): `val`, `color` and `fill`, in that order.
+    pub shading: Vec<(&'static str, String)>,
 }
 
 /// A section of the body (Task 11 fills these).
@@ -1206,15 +1214,72 @@ pub(crate) fn story_style(kind: &str) -> &'static str {
     if kind == "header" { "Header" } else { "Footer" }
 }
 
+/// A paragraph's own tab stops (`w:tabs`), each `center 4680` or
+/// `right dot 9360`. A stop Word would not keep is left out.
+pub(crate) fn tab_stops(tabs: &Element) -> Vec<String> {
+    tabs.children_named("tab")
+        .filter_map(|tab| {
+            let val = tab.attr("val")?;
+            if !crate::markdown::xml::TAB_VALS.contains(&val) {
+                return None;
+            }
+            let pos = tab_pos(tab.attr("pos")?)?;
+            let leader = tab
+                .attr("leader")
+                .filter(|leader| crate::markdown::xml::TAB_LEADERS.contains(leader));
+            Some(match leader {
+                Some(leader) => format!("{val} {leader} {pos}"),
+                None => format!("{val} {pos}"),
+            })
+        })
+        .collect()
+}
+
+fn tab_pos(raw: &str) -> Option<i64> {
+    let twips =
+        crate::util::parse_finite_f64(raw).or_else(|| crate::util::universal_measure_twips(raw))?;
+    let twips = twips.round();
+    // `as` cannot truncate: the bound is checked first, and 31680 is exact.
+    (twips.is_finite() && twips.abs() <= crate::markdown::xml::TAB_POS_LIMIT as f64)
+        .then_some(twips as i64)
+}
+
+/// A paragraph's own shading (`w:shd`): `val`, then `color`, then `fill`.
+pub(crate) fn shading_pairs(shd: &Element) -> Vec<(&'static str, String)> {
+    let mut out = Vec::new();
+    if let Some(val) = shd
+        .attr("val")
+        .filter(|val| crate::markdown::xml::SHD_VALS.contains(val))
+    {
+        out.push(("val", val.to_string()));
+    }
+    if let Some(color) = shd
+        .attr("color")
+        .filter(|color| crate::markdown::xml::shading_colour(color))
+    {
+        out.push(("color", color.to_string()));
+    }
+    if let Some(fill) = shd
+        .attr("fill")
+        .filter(|fill| crate::markdown::xml::shading_colour(fill))
+    {
+        out.push(("fill", fill.to_string()));
+    }
+    out
+}
+
 /// A story prints paragraph by paragraph (`p0: {text: …, color: …}`) when
-/// one carries its own colour, borders, frame or indent, or their
-/// alignments differ.
+/// one carries its own colour, borders, frame, indent, tab stops, spacing
+/// or shading, or their alignments differ.
 fn by_paragraph(s: &StoryFact) -> bool {
     s.paras.iter().any(|p| {
         p.color.is_some()
             || p.border.is_some()
             || p.frame.is_some()
             || !p.indent.is_empty()
+            || !p.tabs.is_empty()
+            || !p.spacing.is_empty()
+            || !p.shading.is_empty()
             || p.align != s.align
     })
 }
@@ -1247,6 +1312,24 @@ fn paragraph_entries(s: &StoryFact) -> Vec<String> {
             }
             if let Some(frame) = &p.frame {
                 inner.push_str(&format!(", frame: {frame}"));
+            }
+            if !p.tabs.is_empty() {
+                let items: Vec<String> = p.tabs.iter().map(|stop| scalar(stop, true)).collect();
+                inner.push_str(&format!(", tabs: [{}]", items.join(", ")));
+            }
+            if !p.spacing.is_empty() {
+                inner.push_str(&format!(
+                    ", spacing: {}",
+                    scalar(&p.spacing.join(", "), true)
+                ));
+            }
+            if !p.shading.is_empty() {
+                let items: Vec<String> = p
+                    .shading
+                    .iter()
+                    .map(|(name, value)| format!("{name}: {}", scalar(value, true)))
+                    .collect();
+                inner.push_str(&format!(", shading: {{{}}}", items.join(", ")));
             }
             format!("p{}: {{{inner}}}", s.first + k)
         })

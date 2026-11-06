@@ -82,6 +82,20 @@ pub(super) struct ParaFormat {
     pub hanging: Option<i64>,
     pub left: Option<i64>,
     pub right: Option<i64>,
+    /// Its own tab stops (`w:tabs`).
+    pub tabs: Vec<TabStop>,
+    /// Its own spacing (`w:spacing`).
+    pub spacing: Option<super::xml::Spacing>,
+    /// Its own shading (`w:shd`): `val`, `color`, `fill`.
+    pub shading: Vec<(String, String)>,
+}
+
+/// One `w:tab`: its alignment, an optional leader, and its position in twips.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct TabStop {
+    val: String,
+    leader: Option<String>,
+    pos: i64,
 }
 
 /// The sides an `indent:` map names, in [`ParaFormat`]'s order.
@@ -157,6 +171,9 @@ impl ParaFormat {
             None => {}
         }
         let [first_line, hanging, left, right] = indent;
+        let tabs = read_tabs(entries)?;
+        let spacing = read_spacing(entries)?;
+        let shading = read_shading(entries)?;
         Some(Self {
             align: align_of(flag),
             color: text_of("color")
@@ -168,7 +185,90 @@ impl ParaFormat {
             hanging,
             left,
             right,
+            tabs,
+            spacing,
+            shading,
         })
+    }
+}
+
+/// `tabs: [center 4680, right dot 9360]`. `None` when a stop does not read.
+fn read_tabs(entries: &[(String, Value)]) -> Option<Vec<TabStop>> {
+    match entries.iter().find(|(k, _)| k == "tabs") {
+        None => Some(Vec::new()),
+        Some((_, Value::List(items))) => items.iter().map(|item| tab_stop(item)).collect(),
+        Some(_) => None,
+    }
+}
+
+fn tab_stop(item: &str) -> Option<TabStop> {
+    let mut words = item.split(' ');
+    let val = words.next()?;
+    if !super::xml::TAB_VALS.contains(&val) {
+        return None;
+    }
+    let second = words.next()?;
+    let (leader, pos_text) = if super::xml::TAB_LEADERS.contains(&second) || second == "none" {
+        (Some(second), words.next()?)
+    } else {
+        (None, second)
+    };
+    if words.next().is_some() {
+        return None;
+    }
+    let pos: i64 = pos_text.parse().ok()?;
+    if pos.abs() > super::xml::TAB_POS_LIMIT {
+        return None;
+    }
+    Some(TabStop {
+        val: val.to_string(),
+        leader: leader
+            .filter(|leader| *leader != "none")
+            .map(str::to_string),
+        pos,
+    })
+}
+
+/// `spacing: "before 6pt, after 0pt, line 1"`, the body's spacing words.
+/// `None` when a clause does not read.
+fn read_spacing(entries: &[(String, Value)]) -> Option<Option<super::xml::Spacing>> {
+    match entries.iter().find(|(k, _)| k == "spacing") {
+        None => Some(None),
+        Some((_, Value::Text(text))) if !text.is_empty() => {
+            let mut spacing = super::xml::Spacing::default();
+            for clause in text.split(", ") {
+                let (word, value) = clause.split_once(' ')?;
+                spacing.clause(word, value)?;
+            }
+            (!spacing.is_empty()).then_some(Some(spacing))
+        }
+        Some(_) => None,
+    }
+}
+
+/// `shading: {val: clear, fill: FFFF00}`. `None` when a key does not read.
+fn read_shading(entries: &[(String, Value)]) -> Option<Vec<(String, String)>> {
+    match entries.iter().find(|(k, _)| k == "shading") {
+        None => Some(Vec::new()),
+        Some((_, Value::Map(items))) => {
+            let mut shading = Vec::new();
+            for (name, value) in items {
+                let Value::Text(value) = value else {
+                    return None;
+                };
+                let ok = match name.as_str() {
+                    "val" => super::xml::SHD_VALS.contains(&value.as_str()),
+                    "color" | "fill" => super::xml::shading_colour(value),
+                    _ => false,
+                };
+                if !ok || shading.iter().any(|(seen, _)| seen == name) {
+                    return None;
+                }
+                shading.push((name.clone(), value.clone()));
+            }
+            Some(shading)
+        }
+        Some(_) => None,
     }
 }
 
@@ -1917,9 +2017,32 @@ fn story_part(
         if let Some(sides) = own.and_then(|f| f.border.as_ref()) {
             let _ = write!(base, "<w:pBdr>{}</w:pBdr>", super::borders::xml(sides));
         }
-        // CT_PPrBase puts `w:ind` after `w:pBdr` (and `w:spacing`, which
-        // a story paragraph does not write) and before `w:jc`.
+        // CT_PPrBase puts `w:shd`, `w:tabs` and `w:spacing` after `w:pBdr`
+        // and before `w:ind`, which comes before `w:jc`.
         if let Some(format) = own {
+            if !format.shading.is_empty() {
+                base.push_str("<w:shd");
+                for name in ["val", "color", "fill"] {
+                    if let Some((_, value)) = format.shading.iter().find(|(key, _)| key == name) {
+                        let _ = write!(base, " w:{name}=\"{value}\"");
+                    }
+                }
+                base.push_str("/>");
+            }
+            if !format.tabs.is_empty() {
+                base.push_str("<w:tabs>");
+                for stop in &format.tabs {
+                    let _ = write!(base, "<w:tab w:val=\"{}\"", stop.val);
+                    if let Some(leader) = &stop.leader {
+                        let _ = write!(base, " w:leader=\"{leader}\"");
+                    }
+                    let _ = write!(base, " w:pos=\"{}\"/>", stop.pos);
+                }
+                base.push_str("</w:tabs>");
+            }
+            if let Some(spacing) = &format.spacing {
+                base.push_str(&spacing.markup());
+            }
             let sides = [
                 ("left", format.left),
                 ("right", format.right),
