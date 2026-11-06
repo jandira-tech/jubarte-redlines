@@ -2901,6 +2901,7 @@ impl Writer<'_> {
                 Some((_, said)) if said == level => 0,
                 _ => level,
             };
+            let mark_inherits = size.is_some() && agent::mark_keeps_style(p);
             let facts = agent::LineFacts {
                 index,
                 style: style.as_deref(),
@@ -2916,6 +2917,7 @@ impl Writer<'_> {
                 comments: &comments,
                 spans: &spans,
                 empty,
+                mark_inherits,
                 unshown: &unshown,
                 size,
             };
@@ -3845,6 +3847,11 @@ impl Writer<'_> {
                     if said.is_empty() {
                         continue;
                     }
+                    let said = if self.own_size(p).is_some() && agent::mark_keeps_style(p) {
+                        format!("{said} mark style")
+                    } else {
+                        said
+                    };
                     match runs.last_mut() {
                         Some((_, last, same)) if *last + 1 == index && *same == said => {
                             *last = index;

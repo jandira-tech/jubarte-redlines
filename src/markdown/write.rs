@@ -898,6 +898,8 @@ struct TablePlan {
     /// Rows' and cells' own changes the text does not show.
     row_marks: BTreeMap<usize, (bool, view_notes::Tag)>,
     cell_marks: BTreeMap<(usize, usize), (view_notes::CellMark, view_notes::Tag)>,
+    /// Cell paragraphs whose size stays on the runs (`mark style`).
+    mark_inherits: HashSet<usize>,
 }
 
 /// One row of a [`TablePlan`].
@@ -1326,6 +1328,7 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
         para_fmt: line.para_fmt,
         row_marks: line.row_marks,
         cell_marks: line.cell_marks,
+        mark_inherits: line.mark_inherits,
     }
 }
 
@@ -2865,6 +2868,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             };
             paragraph.spacing = line.spacing;
             paragraph.size = line.size;
+            paragraph.mark_inherits = line.mark_inherits;
             if let Some(label) = line.label {
                 // The label stands for the list's own number, and a heading
                 // prints it before its text.
@@ -2939,6 +2943,10 @@ impl<'o, 'a> Writer<'o, 'a> {
                 .and_then(|plan| plan.sizes.get(&at).copied())
             {
                 paragraph.size = Some(size);
+                paragraph.mark_inherits = self
+                    .table_plan
+                    .as_ref()
+                    .is_some_and(|plan| plan.mark_inherits.contains(&at));
             }
             let formats = self
                 .table_plan
