@@ -61,6 +61,9 @@ pub(crate) struct Options {
     pub(crate) dates: bool,
     /// With `ids`: which blocks to print.
     pub(crate) select: Option<super::Select>,
+    /// Header and footer paragraphs follow the body, in the same critic
+    /// markup. The public read leaves this unset.
+    pub(crate) stories: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -698,6 +701,41 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
         }
     }
     let mut markdown = blocks.finish();
+    if options.stories {
+        // Inspect lists headers, then footers, each part shorter-name first,
+        // and the patch searches paragraphs in that order. The blocks go
+        // before the note definitions, which are appended below.
+        let mut extra = Blocks::new();
+        for suffix in ["/header", "/footer"] {
+            let mut targets = rels.targets_of_type(suffix);
+            targets.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(b)));
+            for target in targets {
+                let Ok(Some(root)) = package.xml(&target) else {
+                    continue;
+                };
+                writer.open_comments.clear();
+                writer.hidden_ranges.clear();
+                writer.revisions.clear();
+                writer.lead = None;
+                writer.story = None;
+                let saved_part = std::mem::replace(&mut writer.part, target.clone());
+                let saved_scopes =
+                    std::mem::replace(&mut writer.scopes, drawing::ScopeMap::of(&root));
+                let mut list = ListIndent::default();
+                writer.blocks(&root, &mut extra, &mut list);
+                writer.flush_empty(&mut extra);
+                writer.part = saved_part;
+                writer.scopes = saved_scopes;
+            }
+        }
+        let stories = extra.finish();
+        if !stories.is_empty() {
+            if !markdown.is_empty() {
+                markdown.push_str("\n\n");
+            }
+            markdown.push_str(&stories);
+        }
+    }
     if let Some(pages) = options.pages.as_ref().filter(|_| options.ids) {
         let pages: Vec<&str> = pages.iter().map(String::as_str).collect();
         markdown = crate::markdown::paginate(&markdown, &pages);
