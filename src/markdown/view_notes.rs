@@ -724,6 +724,7 @@ pub(super) fn unplaced(value: &str) -> Vec<(usize, &'static str, Tag)> {
     else {
         return Vec::new();
     };
+    let mut seen = HashSet::new();
     list.split(", ")
         .filter_map(|entry| {
             let (entry, _) = scalar_and_comment(entry.trim());
@@ -734,7 +735,12 @@ pub(super) fn unplaced(value: &str) -> Vec<(usize, &'static str, Tag)> {
                 Some(("ins", tag)) => ("ins", tag),
                 _ => ("ins", tag),
             };
-            Some((crate::ids::short_number(at, 'p')?, kind, first_tag(tag)?))
+            let tag = first_tag(tag)?;
+            let number = crate::ids::short_number(at, 'p')?;
+            // A later paragraph of the same ids is the rest of that row
+            // or cell, not a second mark.
+            seen.insert((kind, tag.ids.clone()))
+                .then_some((number, kind, tag))
         })
         .collect()
 }
