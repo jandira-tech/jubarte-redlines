@@ -538,6 +538,10 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
             } else {
                 "footnote text"
             };
+            // A spelling other than the writer's aliases the canonical id
+            // only while that id is free. When another style already owns
+            // it, the note prints the localized id and that definition stays.
+            let canonical_defined = writer.styles.by_id.contains_key(own);
             let styles: Vec<Option<String>> = paragraphs
                 .iter()
                 .map(|p| {
@@ -554,7 +558,10 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
                             if writer.styles.by_id.get(id).map_or(
                                 id.eq_ignore_ascii_case(own),
                                 |s| {
-                                    let own_style = s.name == own_name;
+                                    let other_owns_canonical =
+                                        canonical_defined && !id.eq_ignore_ascii_case(own);
+                                    let own_style = s.name == own_name
+                                        && !(s.exact_name != own_name && other_owns_canonical);
                                     if own_style && s.exact_name != own_name {
                                         note_style_sources
                                             .entry(own.to_string())
