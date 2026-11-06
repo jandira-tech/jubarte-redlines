@@ -968,6 +968,46 @@ fn new_words_after_a_tab_leave_alices_record_on_her_run() {
     }
 }
 
+/// Alice's run holds an empty `w:t` and then a tab. Unlike [`text_and_tab`],
+/// the empty text stays in the package (#1663).
+fn empty_text_then_tab() -> Vec<u8> {
+    let run = formatted_run(5, "").replace("</w:t></w:r>", "</w:t><w:tab/></w:r>");
+    docx(&format!("<w:p>{run}<w:r><w:t>]</w:t></w:r></w:p>"))
+}
+
+/// Formatting record `id` sits on a run that also holds the tab.
+fn record_holds_tab(bytes: &[u8], id: &str) -> bool {
+    let (dom, root) = dom(bytes);
+    dom.descendants(root, Some(&W::name("rPrChange")))
+        .into_iter()
+        .any(|change| {
+            dom.attribute(change, &W::id()) == Some(id)
+                && dom
+                    .ancestors(change, None)
+                    .into_iter()
+                    .find(|&ancestor| dom.name_is(ancestor, &W::r()))
+                    .is_some_and(|run| dom.element(run, &W::name("tab")).is_some())
+        })
+}
+
+#[test]
+fn an_empty_text_before_a_tab_keeps_alices_record_on_both() {
+    // Bob inserts after the tab. The empty `w:t` and the tab stay one run,
+    // under Alice's id 5. ` new` is Bob's own insertion.
+    let source = empty_text_then_tab();
+    let operations = insert("\t", " new");
+    let out = edit(&source, operations.clone());
+    let records = alice_records(&out);
+    assert_eq!(records.len(), 1, "the tab stays in Alice's run");
+    assert_eq!(records[0].id, "5");
+    assert_eq!(records[0].text, "");
+    assert!(record_holds_tab(&out, "5"), "Alice's record leaves the tab");
+    let applied = apply_plan(&source, &plan(operations)).unwrap();
+    assert_eq!(formatting_records(&applied.clean), pairs(&[("5", "")]));
+    assert!(record_holds_tab(&applied.clean, "5"));
+    assert_eq!(accepted(&out), "\t new]");
+}
+
 #[test]
 fn a_correction_of_ones_own_insertion_leaves_the_next_text_its_record() {
     let source = docx(&format!(
