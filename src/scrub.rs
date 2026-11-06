@@ -255,7 +255,8 @@ fn remove_comments(pkg: &mut PartFs) {
         }
         part.store(pkg);
     }
-    crate::revision_processor::prune_orphan_comments(pkg, &stories);
+    let comments = crate::revision_processor::comments_part(pkg);
+    crate::revision_processor::prune_orphan_comments(pkg, &stories, comments.as_deref());
 }
 
 /// The alias's initials: the first letter of each word, upper case.

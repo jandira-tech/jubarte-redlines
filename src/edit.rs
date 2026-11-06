@@ -7744,7 +7744,12 @@ impl<'p> Transaction<'p> {
                     .filter(|(_, is_styles)| !is_styles)
                     .map(|(part, _)| part)
                     .collect();
-            crate::revision_processor::prune_orphan_comments(&mut self.opened.pkg, &stories);
+            let comments = crate::revision_processor::comments_part(&self.opened.pkg);
+            crate::revision_processor::prune_orphan_comments(
+                &mut self.opened.pkg,
+                &stories,
+                comments.as_deref(),
+            );
         }
         let clean = self
             .opened
