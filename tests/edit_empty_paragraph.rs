@@ -714,6 +714,27 @@ fn cell_paragraphs(bytes: &[u8]) -> Vec<String> {
     paragraphs_in(&xml[start..end])
 }
 
+/// No row of `bytes` carries a row revision. Word keeps an emptied row
+/// and deletes only its text (#1672); a `w:del` or `w:ins` inside
+/// `w:trPr` means the comparer threw that row away.
+fn assert_rows_unrevised(bytes: &[u8], what: &str) {
+    let xml = part_string(bytes, "word/document.xml").unwrap();
+    for (at, _) in xml.match_indices("<w:trPr") {
+        let rest = &xml[at..];
+        let end = rest.find('>').unwrap();
+        let props = if rest[..end].ends_with('/') {
+            &rest[..=end]
+        } else {
+            let close = rest.find("</w:trPr>").unwrap();
+            &rest[..close]
+        };
+        assert!(
+            !props.contains("<w:del") && !props.contains("<w:ins"),
+            "{what}: a table row carries a revision: {props}"
+        );
+    }
+}
+
 /// No row of `bytes` carries a deleted mark. A table the two sides share
 /// is matched; a `w:del` inside `w:trPr` means the comparer threw the
 /// table away and inserted another (#1675).
@@ -1340,6 +1361,59 @@ fn a_paragraph_deleted_before_a_table_takes_its_own_deleted_mark() {
             ),
             &format!("{mode} cell, both"),
         );
+    }
+}
+
+/// One cell, one row, whose body is `inner`.
+fn one_cell_row(inner: &str) -> String {
+    format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="1000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1000" w:type="dxa"/></w:tcPr>{inner}</w:tc></w:tr></w:tbl>"#
+    )
+}
+
+/// Deleting every paragraph of a row empties the row. Word's Compare keeps
+/// the row and deletes only its text (#1672): no `w:trPr` revision, Accept
+/// All matches the clean copy (the row, with an empty paragraph), Reject
+/// All gives the source back. A cell of several paragraphs keeps only its
+/// last mark. The same holds for one emptied row beside a row that stays.
+#[test]
+fn an_emptied_table_row_keeps_the_row_and_deletes_only_its_text() {
+    let only = docx(&one_cell_row(&para("Only.")));
+    let two = docx(&one_cell_row(&format!("{}{}", para("One."), para("Two."))));
+    let rows = docx(&format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="1000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1000" w:type="dxa"/></w:tcPr>{}</w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w="1000" w:type="dxa"/></w:tcPr>{}</w:tc></w:tr></w:tbl>"#,
+        para("Keep."),
+        para("Gone.")
+    ));
+    for mode in MODES {
+        let only_plan = plan_of(mode, &[delete("p0")]);
+        let result = check_outputs(&only, &only_plan, &[""], &format!("{mode} only"));
+        assert_rows_unrevised(&result.redline, &format!("{mode} only"));
+        prepare(&only, &only_plan, &REDLINE_ROLE)
+            .unwrap_or_else(|e| panic!("{mode} only redline: {e:?}"));
+
+        let two_plan = plan_of(mode, &[delete("p0"), delete("p1")]);
+        let result = check_outputs(&two, &two_plan, &[""], &format!("{mode} two"));
+        assert_rows_unrevised(&result.redline, &format!("{mode} two"));
+        let paras = paragraphs_in(&normalized(
+            &part_string(&result.redline, "word/document.xml").unwrap(),
+        ));
+        let one = paras.iter().find(|p| p.contains("One.")).expect("One.");
+        let last = paras.iter().find(|p| p.contains("Two.")).expect("Two.");
+        assert_eq!(mark(one), "-", "{mode} two: {one}");
+        assert_eq!(mark(last), "", "{mode} two: the last mark stays: {last}");
+        assert!(
+            words(one).iter().any(|w| w == "-One.") && words(last).iter().any(|w| w == "-Two."),
+            "{mode} two: {paras:?}"
+        );
+        prepare(&two, &two_plan, &REDLINE_ROLE)
+            .unwrap_or_else(|e| panic!("{mode} two redline: {e:?}"));
+
+        let rows_plan = plan_of(mode, &[delete("p1")]);
+        let result = check_outputs(&rows, &rows_plan, &["Keep.", ""], &format!("{mode} rows"));
+        assert_rows_unrevised(&result.redline, &format!("{mode} rows"));
+        prepare(&rows, &rows_plan, &REDLINE_ROLE)
+            .unwrap_or_else(|e| panic!("{mode} rows redline: {e:?}"));
     }
 }
 
