@@ -2126,7 +2126,7 @@ fn check_nested_text_boxes(pkg: &PartFs, out: &mut Vec<Finding>) {
         "http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
     );
     let vml_box = VML::name("textbox");
-    for part in xml_parts(pkg) {
+    for part in nested_text_box_parts(pkg) {
         let Some((dom, root)) = parse_part(pkg, &part) else {
             continue;
         };
@@ -2183,6 +2183,74 @@ fn text_box_name(dom: &Dom, node: NodeId) -> String {
         }
     }
     element_path(dom, node)
+}
+
+/// Parts whose text Word renders as a story: the main document, a header,
+/// footer, footnote, endnote or comment part under its usual name, and any
+/// part the main document relates as one of those. Custom XML is not one.
+fn nested_text_box_parts(pkg: &PartFs) -> Vec<String> {
+    let mut out: Vec<String> = xml_parts(pkg)
+        .into_iter()
+        .filter(|name| conventional_story(name))
+        .collect();
+    let main = pkg.main_document_part().or_else(|| {
+        pkg.parts()
+            .into_iter()
+            .find(|name| name.eq_ignore_ascii_case("word/document.xml"))
+    });
+    let Some(main) = main else {
+        return out;
+    };
+    if !out.iter().any(|have| have.eq_ignore_ascii_case(&main)) {
+        out.push(main.clone());
+    }
+    let Some(rels) = pkg.read_rels_for(&main) else {
+        return out;
+    };
+    for rel in &rels.items {
+        if rel.target_mode.as_deref() == Some("External") {
+            continue;
+        }
+        let story = ["/header", "/footer", "/footnotes", "/endnotes", "/comments"]
+            .iter()
+            .any(|kind| rel.rel_type.ends_with(kind));
+        if !story {
+            continue;
+        }
+        let part = pkg.resolve_rel_target(&main, &rel.target);
+        if !out.iter().any(|have| have.eq_ignore_ascii_case(&part)) {
+            out.push(part);
+        }
+    }
+    out
+}
+
+/// `word/document.xml`, the note and comment parts, and `word/headerN.xml`
+/// / `word/footerN.xml`.
+fn conventional_story(name: &str) -> bool {
+    let name = name.trim_start_matches('/');
+    if name.eq_ignore_ascii_case("word/document.xml")
+        || name.eq_ignore_ascii_case("word/footnotes.xml")
+        || name.eq_ignore_ascii_case("word/endnotes.xml")
+        || name.eq_ignore_ascii_case("word/comments.xml")
+    {
+        return true;
+    }
+    let Some((dir, file)) = name.rsplit_once('/') else {
+        return false;
+    };
+    if !dir.eq_ignore_ascii_case("word") {
+        return false;
+    }
+    let stem = file.split('.').next().unwrap_or(file);
+    numbered_story(stem, "header") || numbered_story(stem, "footer")
+}
+
+/// `header`, `header1`, `footer2`: the kind, or the kind plus digits.
+fn numbered_story(stem: &str, kind: &str) -> bool {
+    let stem = stem.to_ascii_lowercase();
+    stem.strip_prefix(kind)
+        .is_some_and(|rest| rest.is_empty() || rest.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// A style's `w:name` holds no comma: the schema's pattern is `[^,]*`
