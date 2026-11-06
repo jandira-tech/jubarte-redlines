@@ -673,6 +673,9 @@ pub(super) struct Context<'d> {
     /// Each open paragraph's text size (`size 9pt`), in half-points: its
     /// runs take it. A text box's paragraphs open inside their anchor's.
     pub run_sizes: Vec<Option<u32>>,
+    /// A paragraph's single `fmt` that belongs on its emphasized run.
+    /// Taken by the first run that carries that emphasis.
+    pub pending_run_format: Option<FormatMark>,
     /// `w:numId` of each numbering instance.
     pub num_ids: Vec<u32>,
     /// `w:numId` of each label use, by its index in `Document::label_uses`.
@@ -929,7 +932,13 @@ pub(super) fn story(
             }
             Item::Paragraph(paragraph) => {
                 out.push_str("<w:p>");
-                paragraph_properties(context, paragraph, &mut out);
+                let on_run = run_formatting_change(paragraph, &items[at + 1..]);
+                paragraph_properties(
+                    context,
+                    paragraph,
+                    paragraph_formats(paragraph, on_run.is_some()),
+                    &mut out,
+                );
                 // The text box the paragraph anchors leads its content,
                 // its change the first the reader pairs: `rev r12` before
                 // the deletion after it, as Word writes it.
@@ -951,6 +960,7 @@ pub(super) fn story(
                     );
                     bookmark = Some(id);
                 }
+                context.pending_run_format = on_run;
                 if paragraph.mark.is_some()
                     && let Some(by) = paragraph.mark_by
                 {
@@ -1025,6 +1035,7 @@ pub(super) fn story(
                     let mark = context.revision(kind, by);
                     out.insert_str(at, &format!("<{mark}/>"));
                 }
+                context.pending_run_format = None;
                 context.run_sizes.pop();
                 out.push_str("</w:p>");
             }
@@ -2038,7 +2049,12 @@ fn spend(natural: &mut HashMap<u32, usize>, by: u32) {
     }
 }
 
-fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &mut String) {
+fn paragraph_properties(
+    context: &mut Context<'_>,
+    paragraph: &Paragraph,
+    formats: &[FormatMark],
+    out: &mut String,
+) {
     let mut properties = String::new();
     if let Some(style) = &paragraph.style {
         let _ = write!(properties, "<w:pStyle w:val=\"{}\"/>", escape(style));
@@ -2112,7 +2128,7 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
     let base = properties.clone();
     // Word reads the mark's change before the paragraph's: with two, the
     // first is the mark's.
-    let (mark_format, paragraph_format) = match paragraph.formats.as_slice() {
+    let (mark_format, paragraph_format) = match formats {
         [] => (None, None),
         [one] => (None, Some(one)),
         [first, second, ..] => (Some(first), Some(second)),
@@ -2174,7 +2190,7 @@ fn is_endnote(context: &Context<'_>, position: u32) -> bool {
         .is_some_and(|note| note.endnote)
 }
 
-fn run_properties(context: &Context<'_>, run: &Run) -> String {
+fn run_properties(context: &mut Context<'_>, run: &Run) -> String {
     let format = run.format;
     let mut out = String::new();
     let style = match &run.content {
@@ -2219,10 +2235,68 @@ fn run_properties(context: &Context<'_>, run: &Run) -> String {
     } else if format.subscript {
         out.push_str("<w:vertAlign w:val=\"subscript\"/>");
     }
-    if out.is_empty() {
-        out
+    let tracked = direct_emphasis(run)
+        .then(|| context.pending_run_format.take())
+        .flatten();
+    if out.is_empty() && tracked.is_none() {
+        return out;
+    }
+    let mut properties = format!("<w:rPr>{out}");
+    if let Some(format) = tracked {
+        let change = context.format_mark("w:rPrChange", &format);
+        let _ = write!(properties, "<{change}><w:rPr/></w:rPrChange>");
+    }
+    properties.push_str("</w:rPr>");
+    properties
+}
+
+/// Whether a run's Markdown emphasis is direct character formatting.
+fn direct_emphasis(run: &Run) -> bool {
+    let format = run.format;
+    format.bold
+        || format.italic
+        || format.strike
+        || format.underline
+        || format.superscript
+        || format.subscript
+}
+
+/// A paragraph id line named a property of its own, so its `fmt` tag is
+/// that property's change rather than a run's.
+fn paragraph_states_own_property(paragraph: &Paragraph) -> bool {
+    paragraph.style.is_some()
+        || paragraph.numbering.is_some()
+        || paragraph.indent.is_some()
+        || paragraph.ind != Indent::default()
+        || paragraph.spacing != Spacing::default()
+        || paragraph.size.is_some()
+        || paragraph.align.is_some()
+        || paragraph.outline.is_some()
+        || paragraph.rule
+}
+
+/// The paragraph's only `fmt`, when it belongs on an emphasized run: the
+/// paragraph states no property of its own, and a following run is bold,
+/// italic, struck, underlined, or a super/subscript.
+fn run_formatting_change(paragraph: &Paragraph, following: &[Item]) -> Option<FormatMark> {
+    let [mark] = paragraph.formats.as_slice() else {
+        return None;
+    };
+    if paragraph_states_own_property(paragraph) {
+        return None;
+    }
+    following
+        .iter()
+        .take_while(|item| !matches!(item, Item::ParagraphEnd))
+        .any(|item| matches!(item, Item::Run(run) if direct_emphasis(run)))
+        .then(|| mark.clone())
+}
+
+fn paragraph_formats(paragraph: &Paragraph, on_run: bool) -> &[FormatMark] {
+    if on_run {
+        &[]
     } else {
-        format!("<w:rPr>{out}</w:rPr>")
+        paragraph.formats.as_slice()
     }
 }
 
@@ -2393,11 +2467,18 @@ fn text_box_xml(context: &mut Context<'_>, boxed: &TextBox, relate: &mut dyn Rel
 /// it is stamped and its changes read back as the header's `unplaced:`.
 fn box_xml(context: &mut Context<'_>, items: &[Item], relate: &mut dyn Relate, out: &mut String) {
     let mut open: Option<Change> = None;
-    for item in items {
+    for (at, item) in items.iter().enumerate() {
         match item {
             Item::Paragraph(paragraph) => {
                 out.push_str("<w:p>");
-                paragraph_properties(context, paragraph, out);
+                let on_run = run_formatting_change(paragraph, &items[at + 1..]);
+                paragraph_properties(
+                    context,
+                    paragraph,
+                    paragraph_formats(paragraph, on_run.is_some()),
+                    out,
+                );
+                context.pending_run_format = on_run;
             }
             Item::Run(run) => {
                 if open != run.change {
@@ -2419,6 +2500,7 @@ fn box_xml(context: &mut Context<'_>, items: &[Item], relate: &mut dyn Relate, o
                     let mark = context.revision(kind, by);
                     out.insert_str(at, &format!("<{mark}/>"));
                 }
+                context.pending_run_format = None;
                 context.run_sizes.pop();
                 if let Some((kind, _)) = open.take() {
                     out.push_str(close_tag(kind));
