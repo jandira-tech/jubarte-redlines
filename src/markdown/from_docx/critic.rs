@@ -154,11 +154,15 @@ pub(super) fn display(by: &str) -> String {
     let one = |part: &str| {
         if by.starts_with(PLAIN) {
             let printed = super::agent::format_plain_tag(part);
-            return if fold {
+            let printed = if fold {
                 escaped_author(&printed)
             } else {
                 printed
             };
+            // Folded or not: an author that itself holds ` re ` before a
+            // revision id spells that space, so the note's own ` re ` stays
+            // the only separator.
+            return spell_re_in_author(&printed);
         }
         let (t, date) = tag_parts(part);
         let mut out = super::agent::format_tag(t);
@@ -195,6 +199,66 @@ fn escaped_author(part: &str) -> String {
     }
     out.push_str(&rest[author_end..]);
     out
+}
+
+/// A printed plain part whose author holds ` re ` before a revision id
+/// (`r3 Bo re r1 Kim (date)` → `r3 Bo%20re r1 Kim (date)`). The space is
+/// the same percent-spelling the internal tags use, and the date stays
+/// bare. A fold joins its own ` re ` after this, so that separator is
+/// untouched.
+fn spell_re_in_author(part: &str) -> String {
+    let Some((ids, rest)) = part.split_once(' ') else {
+        return part.to_string();
+    };
+    let author_end = super::super::view_notes::trailing_bare_group(rest)
+        .filter(|&at| super::super::write::is_date(&rest[at + 1..rest.len() - 1]))
+        .unwrap_or(rest.len());
+    let author = &rest[..author_end];
+    let spelled = spell_separator_spaces(author);
+    if spelled == author {
+        return part.to_string();
+    }
+    let mut out = String::with_capacity(part.len() + 2);
+    out.push_str(ids);
+    out.push(' ');
+    out.push_str(&spelled);
+    out.push_str(&rest[author_end..]);
+    out
+}
+
+/// ` re ` in `author` whose next word is a revision id, with that leading
+/// space spelled `%20`. Any other ` re ` stays, so a name such as
+/// `Bo re Kim` is unchanged.
+fn spell_separator_spaces(author: &str) -> String {
+    if !author.contains(" re ") {
+        return author.to_string();
+    }
+    let mut out = String::with_capacity(author.len());
+    let mut rest = author;
+    while let Some(at) = rest.find(" re ") {
+        let after = &rest[at + " re ".len()..];
+        let token = after.split_whitespace().next().unwrap_or("");
+        if revision_token(token) {
+            out.push_str(&rest[..at]);
+            out.push_str("%20re ");
+            rest = after;
+        } else {
+            let keep = at + " re ".len();
+            out.push_str(&rest[..keep]);
+            rest = &rest[keep..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Whether `token` is a revision id a plain note would accept as its own.
+fn revision_token(token: &str) -> bool {
+    !token.starts_with(|c: char| c.is_ascii_digit())
+        && !token.starts_with('#')
+        && (token == "noid"
+            || token.strip_suffix(".noid").is_some()
+            || crate::ids::parse_change_ids(token).is_ok())
 }
 
 /// Two attributions can pair: equal notes, or two tags of one author in

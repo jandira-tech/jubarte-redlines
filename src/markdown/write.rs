@@ -6289,7 +6289,8 @@ fn attribution(text: &str) -> Option<(Option<String>, &str)> {
 /// the text after them. The date is the first parenthesised date after a
 /// name whose own parentheses balance, for an author may hold some
 /// (`Ana (consultant)`) and a comment's text may hold a date; in a fold
-/// note they come percent-spelled (`%28`, `%29`, with `%` itself `%25`)
+/// note they come percent-spelled (`%28`, `%29`, with `%` itself `%25`,
+/// and a space that would read as ` re ` before a revision id as `%20`)
 /// and are read back off the name.
 pub(super) fn named(text: &str) -> Option<(Option<String>, &str, &str)> {
     // The first group that is a date after a name: a later one belongs to
@@ -6335,14 +6336,15 @@ pub(super) fn named(text: &str) -> Option<(Option<String>, &str, &str)> {
 }
 
 /// A name with its percent-spelled parentheses (`%28`, `%29`), backslash
-/// (`%5C`) and `%` (`%25`) read back off, as a fold note writes them;
-/// anything else a `%` starts stays as it is.
+/// (`%5C`), space (`%20`) and `%` (`%25`) read back off, as a note writes
+/// them; anything else a `%` starts stays as it is.
 fn unescaped(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     let mut rest = name;
     while let Some(at) = rest.find('%') {
         out.push_str(&rest[..at]);
         let spelled = match rest.get(at + 1..at + 3) {
+            Some("20") => Some(' '),
             Some("25") => Some('%'),
             Some("28") => Some('('),
             Some("29") => Some(')'),
