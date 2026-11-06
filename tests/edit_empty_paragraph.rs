@@ -11,7 +11,7 @@ mod common;
 
 use common::docx::{docx, para, part_string};
 use common::validity::{assert_word_valid_package, check_word_valid_package};
-use jubarte::document_comparer::{accept_revisions, reject_revisions};
+use jubarte::document_comparer::{accept_revisions, compare_documents, reject_revisions};
 use jubarte::edit::{EditPlan, EditResult, apply_plan};
 use jubarte::inspect::paragraphs;
 
@@ -1781,33 +1781,100 @@ fn a_paragraph_deleted_between_a_new_table_and_a_table_separates_them() {
 /// A block the plan places between the paragraph before a deleted final
 /// one and the final one leaves nothing to carry the final mark: the final
 /// paragraph is emptied, and Accept All keeps the new blocks apart (glm-5.3
-/// on #1670, round 8). Under keep only: the comparer ends the body in the
-/// new table and drops the empty paragraph after it (#1678).
+/// on #1670, round 8). The default comparer does the same (#1678): the
+/// revised empty paragraph stays after the new table.
 #[test]
 fn a_block_placed_before_a_deleted_final_paragraph_empties_it() {
     let table = |p: &str, side: &str| {
         format!(r#"{{"kind":"insert_table","paragraph":"{p}","position":"{side}","rows":[["t"]]}}"#)
     };
     let source = docx(&format!("{}{}", para("a"), para("b")));
-    let mode = MODES[1];
-    for (operations, expected) in [
-        (
-            vec![
-                insert("p0", "after", "x"),
-                table("p0", "after"),
-                delete("p1"),
-            ],
-            vec!["a", "x", "t", ""],
-        ),
-        (vec![table("p0", "after"), delete("p1")], vec!["a", "t", ""]),
-    ] {
-        check_outputs(
-            &source,
-            &plan_of(mode, &operations),
-            &expected,
-            &format!("{mode} {operations:?}"),
-        );
+    for mode in MODES {
+        for (operations, expected) in [
+            (
+                vec![
+                    insert("p0", "after", "x"),
+                    table("p0", "after"),
+                    delete("p1"),
+                ],
+                vec!["a", "x", "t", ""],
+            ),
+            (vec![table("p0", "after"), delete("p1")], vec!["a", "t", ""]),
+        ] {
+            check_outputs(
+                &source,
+                &plan_of(mode, &operations),
+                &expected,
+                &format!("{mode} {operations:?}"),
+            );
+        }
     }
+}
+
+/// #1678. Word's compare (`POST /v1/compare`,
+/// `tests/fixtures/1678-word.docx`) of `One.` `Two.` with `One.` `New.`
+/// plus a `Cell.` table plus an empty paragraph writes the substitution
+/// in one paragraph, the inserted table after it, and that empty
+/// paragraph last. Accept All is the revised document. Reject All is the
+/// source. The default comparer dropped the empty paragraph and ended
+/// the body on the table.
+#[test]
+fn issue_1678_deleted_final_paragraph_keeps_the_empty_close() {
+    let table = concat!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr>"#,
+        r#"<w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>"#,
+        r#"<w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>"#,
+    );
+    let cell = format!("{table}{}</w:tc></w:tr></w:tbl>", para("Cell."));
+    let source = docx(&format!("{}{}", para("One."), para("Two.")));
+    let revised = docx(&format!(
+        "{}{}{}{}",
+        para("One."),
+        para("New."),
+        cell,
+        para("")
+    ));
+    let word = include_bytes!("fixtures/1678-word.docx");
+    let word_xml = part_string(word, "word/document.xml").unwrap();
+    let table_at = word_xml.find("<w:tbl").expect("oracle table");
+    let sect = word_xml.find("<w:sectPr").unwrap();
+    let close = word_xml[..sect].rfind("<w:p").expect("oracle close");
+    assert!(table_at < close, "oracle keeps a paragraph after the table");
+    let close_xml = &word_xml[close..sect];
+    assert!(
+        close_xml.starts_with("<w:p>")
+            || close_xml.starts_with("<w:p ")
+            || close_xml.starts_with("<w:p/"),
+        "oracle close is a paragraph: {close_xml}"
+    );
+    assert!(
+        !close_xml.contains("<w:t") && !close_xml.contains("<w:delText"),
+        "oracle close is empty: {close_xml}"
+    );
+    assert_eq!(
+        texts(&accept_revisions(word).unwrap()),
+        texts(&revised),
+        "oracle Accept"
+    );
+    assert_eq!(
+        texts(&reject_revisions(word).unwrap()),
+        texts(&source),
+        "oracle Reject"
+    );
+    let out = compare_documents(&source, &revised, "Redline").expect("compare");
+    let report = check_word_valid_package(&out);
+    assert!(report.ok(), "{:?}", report.errors);
+    assert_eq!(
+        texts(&accept_revisions(&out).unwrap()),
+        texts(&revised),
+        "Accept All\n{}",
+        part_string(&out, "word/document.xml").unwrap()
+    );
+    assert_eq!(
+        texts(&reject_revisions(&out).unwrap()),
+        texts(&source),
+        "Reject All"
+    );
 }
 
 /// #1669, as Word's Compare writes an append: the paragraph a plan adds

@@ -7860,6 +7860,17 @@ fn compare_documents_impl(
                 }
             }
         }
+        // #1678: a table that replaced the body's last paragraph keeps the
+        // revised document's empty close. After M491, which only removes a
+        // misplaced copy of that paragraph.
+        if let (Some(revised_xml), Some(produced_xml)) = (
+            pkg2.part_string("word/document.xml"),
+            out.part_string(&main1),
+        ) && let Some(kept) =
+            crate::comparer::finalize::keep_revised_empty_close(&produced_xml, &revised_xml)
+        {
+            out.set_part(&main1, kept.into_bytes());
+        }
     }
 
     // Word-parity: strip pStyle/rStyle that styles.xml does not define. LO maps
