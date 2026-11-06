@@ -8775,6 +8775,10 @@ fn sweep_part_validity(out: &mut PartFs, main: &str, comparison: Option<&Compari
             }
         }
     }
+    // The glossary is not swept above: it is not a story. Repair the three
+    // inherited shapes in it anyway, and leave the part untouched when that
+    // repair changes nothing.
+    repair_glossary_shapes(out, comparison.is_some());
     // Settling final marks is comparison chrome, including renamed stories.
     if comparison.is_none() {
         return;
@@ -8954,6 +8958,65 @@ fn sweeps_final_marks(part: &str, main: &str) -> bool {
         || part == "word/endnotes.xml"
         || ((part.starts_with("word/header") || part.starts_with("word/footer"))
             && part.ends_with(".xml"))
+}
+
+/// Glossary parts: the canonical building-block part, and any part a
+/// `glossaryDocument` relationship reaches. Not a story, so cell marks are
+/// left alone; only the inherited schema shapes are repaired.
+fn glossary_parts(out: &PartFs) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    let mut push = |name: String| {
+        if name.is_empty()
+            || found
+                .iter()
+                .any(|have: &String| have.eq_ignore_ascii_case(&name))
+        {
+            return;
+        }
+        found.push(name);
+    };
+    for part in out.parts() {
+        if part.eq_ignore_ascii_case("word/glossary/document.xml") {
+            push(part);
+        }
+    }
+    for (source, rels) in out.relationship_parts() {
+        for rel in &rels.items {
+            if rel.target_mode.as_deref() == Some("External")
+                || !rel.rel_type.ends_with("/glossaryDocument")
+            {
+                continue;
+            }
+            push(out.resolve_rel_target(source, &rel.target));
+        }
+    }
+    found
+}
+
+/// Drop an empty shading fill, a grid-column type, and out-of-order cell
+/// margins in a glossary. Write the part back only when that changes it.
+fn repair_glossary_shapes(out: &mut PartFs, comparison: bool) {
+    for part in glossary_parts(out) {
+        let Some(xml) = out.part_string(&part) else {
+            continue;
+        };
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let Some(root) = dom.root(doc) else {
+            continue;
+        };
+        let before = dom.serialize_element(root);
+        crate::comparer::finalize::repair_inherited_invalidity(&mut dom, root);
+        if comparison {
+            crate::comparer::finalize::enforce_part_schema_order(&mut dom, root);
+        } else {
+            crate::comparer::finalize::repair_part_schema_order(&mut dom, root);
+        }
+        let after = dom.serialize_element(root);
+        if before != after {
+            out.set_part(&part, after.into_bytes());
+        }
+    }
 }
 
 #[cfg(test)]
