@@ -235,7 +235,7 @@ pub fn step(opts: &Options, decision: &Plan, resolved: &str) -> Step {
 /// - the checksum download or verification did not match;
 /// - a signature was required but missing or did not verify against
 ///   [`signature_required`];
-/// - the archive is over [`UPDATE_ARCHIVE_BYTE_BUDGET`], lists the expected
+/// - the archive is over `UPDATE_ARCHIVE_BYTE_BUDGET`, lists the expected
 ///   binary more than once, or inflates that binary past the budget;
 /// - the binary swap step failed.
 pub fn run(opts: &Options) -> Result<(), String> {
