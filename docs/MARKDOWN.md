@@ -864,13 +864,15 @@ closer or a pilcrow escapes its brace: `\{r3 @C}`. The reader restores
 it as text. Attribution tags use braces; `{>>…<<}` is reserved for comments.
 Saved views must migrate in one step; old wrappers no longer attribute revisions.
 
-The reader refuses the old attribution form `{>>r1 @ASR<<}` immediately
-after a `++}`, `--}` or `~~}` closer, including intervening `*`, `_` or
-backtick emphasis markers. The error gives the line, old tag and replacement
-`{r1 @ASR}`; an old ` on ` parent chain becomes ` re `. This includes
-story-prefixed and substitution ids. To comment with that text, write
-`{>>c1 @X: r1 @ASR<<}`. Free comments, explicit comment tags and old-looking
-text away from that position remain comments.
+The reader refuses the old attribution form `{>>r1 @ASR<<}` and the old
+plain wrapper `{>>r1 Alice (2026-10-01T09:00:00Z)<<}` immediately after a
+`++}`, `--}` or `~~}` closer, including intervening `*`, `_` or backtick
+emphasis markers. The error gives the line, old tag and replacement
+`{r1 @ASR}` or `{r1 Alice (2026-10-01T09:00:00Z)}`; an old ` on ` parent
+chain becomes ` re `. This includes story-prefixed and substitution ids.
+To comment with that text, write `{>>c1 @X: r1 @ASR<<}`. Free comments,
+explicit comment tags and old-looking text away from that position remain
+comments.
 
 `@??` is the handle of a mark with no author's name (the attribute missing
 or empty); it is a tag, not a comment, and converts back to an empty
