@@ -89,18 +89,20 @@ impl AnchorChanges {
         let comments = crate::comments::list_comments(source)
             .map_err(|e| super::err("INVALID_DOCUMENT", None, e.to_string()))?;
         let groups = |ids: &[String]| {
+            // Receipts name each `w:id` as written. The reader parsed it.
+            let wanted: std::collections::HashSet<u32> =
+                ids.iter().filter_map(|id| id.parse().ok()).collect();
             comments
                 .iter()
                 .filter(|c| {
-                    ids.contains(&c.id.to_string())
-                        && !c.parent.is_some_and(|p| ids.contains(&p.to_string()))
+                    wanted.contains(&c.id) && !c.parent.is_some_and(|p| wanted.contains(&p))
                 })
                 .map(|root| {
                     let mut family = vec![root.id];
                     loop {
                         let before = family.len();
                         for c in &comments {
-                            if ids.contains(&c.id.to_string())
+                            if wanted.contains(&c.id)
                                 && !family.contains(&c.id)
                                 && c.parent.is_some_and(|p| family.contains(&p))
                             {
@@ -136,7 +138,9 @@ impl AnchorChanges {
             .map(|(c, replies)| {
                 let pass = self
                     .passes
-                    .get(&c.id.to_string())
+                    .iter()
+                    .find(|(raw, _)| raw.parse::<u32>().ok() == Some(c.id))
+                    .map(|(_, pass)| pass)
                     .expect("every removed thread is recorded with its pass");
                 let id = format!("c{}", c.id);
                 let thread: Vec<String> = std::iter::once(id.clone())

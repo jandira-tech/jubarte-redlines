@@ -1326,9 +1326,12 @@ fn removed_comment_report(
         .filter(|c| filter.matches(c))
         .map(|c| c.id.clone())
         .collect();
+    // `removed` keeps each `w:id` as written (`0005`). The reader parsed that
+    // same id to a number, so match the number, not the spelling.
+    let removed_ids: HashSet<u32> = removed.iter().filter_map(|id| id.parse().ok()).collect();
     let removed_comments: Vec<crate::comments::CommentRecord> = comments
         .iter()
-        .filter(|c| removed.contains(&c.id.to_string()))
+        .filter(|c| removed_ids.contains(&c.id))
         .cloned()
         .collect();
     // A reply's thread: itself, then each comment it replies to.
