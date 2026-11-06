@@ -467,9 +467,10 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   1.038` is 249); `line 12pt exact` and `line 14pt atLeast` are the other
   two rules. An empty paragraph with its own spacing keeps its own id
   line: a range of empty ones would drop it. Body and table-cell
-  paragraphs keep their spacing this way; a note's, a comment's or a text
-  box's paragraph keeps only its style's for now, and spacing in lines
-  (`w:beforeLines`, `w:afterLines`, for East Asian layout) is not kept.
+  paragraphs keep their spacing this way, and so do a note's, a
+  comment's and a text box's. `before 1.5 lines` and `after 1 lines`
+  are line counts (`w:beforeLines`, `w:afterLines`, hundredths of a
+  line, including East Asian layout).
 - `size 9pt` is the paragraph's own text size: the one `w:sz` every run of
   its text states (`size 10.5pt`, in half points as Word keeps it), or,
   for a paragraph with no text, its mark's, when its style (through
