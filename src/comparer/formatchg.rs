@@ -411,6 +411,10 @@ fn detect_format_changes_impl(
     }
     let mut run_changes: Vec<PendingRunFormatChange> = Vec::new();
     let mut para_changes: Vec<PendingParaFormatChange> = Vec::new();
+    // #1677: a mark's `w:rPr` is noise for paragraph-layout comparison, so a
+    // bold-only pilcrow stayed `Equal` and Reject All lost `w:b`. Record it
+    // on its own, with no `w:pPrChange`.
+    let mut mark_changes: Vec<(usize, NodeId, Option<NodeId>)> = Vec::new();
     // Cache each distinct rPr's normalized serialization: runs share one rPr, so
     // this collapses O(Equal atoms) normalizations to O(distinct rPr). See
     // `normalized_rpr_serialized`.
@@ -471,6 +475,16 @@ fn detect_format_changes_impl(
                     // file_111_112).
                     para_changes.push((i, projected_old));
                 }
+            } else if dom.name_is(old_ppr, &W::p_pr()) {
+                let old_mark = dom.element(old_ppr, &W::r_pr());
+                let new_mark = dom.element(new_ppr, &W::r_pr());
+                if !are_run_properties_equal(dom, old_mark, new_mark) {
+                    // `None` equals an empty `w:rPr`. A real difference means
+                    // one side has formatting. An empty recorded `w:rPr` is
+                    // what Reject All needs when the original mark had none.
+                    let recorded = old_mark.unwrap_or_else(|| dom.new_element(W::r_pr()));
+                    mark_changes.push((i, recorded, new_mark));
+                }
             }
             continue;
         }
@@ -527,6 +541,15 @@ fn detect_format_changes_impl(
             new_run_properties: new_mark_rpr,
             old_para_properties: Some(old_ppr),
             changed_properties: vec!["paragraphFormatting".into()],
+        });
+    }
+    for (i, old_mark, new_mark) in mark_changes {
+        atoms[i].correlation_status = CorrelationStatus::FormatChanged;
+        atoms[i].format_change = Some(FormatChangeInfo {
+            old_run_properties: Some(old_mark),
+            new_run_properties: new_mark,
+            old_para_properties: None,
+            changed_properties: vec!["markFormatting".into()],
         });
     }
 }
