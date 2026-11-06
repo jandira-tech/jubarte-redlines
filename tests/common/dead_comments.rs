@@ -20,9 +20,11 @@ pub fn start(id: u32) -> String {
 pub fn end(id: u32) -> String {
     format!(r#"<w:commentRangeEnd w:id="{id}"/>"#)
 }
+#[allow(dead_code)]
 pub fn reference(id: u32) -> String {
     format!(r#"<w:r><w:commentReference w:id="{id}"/></w:r>"#)
 }
+#[allow(dead_code)]
 pub fn deleted(text: &str, id: u32) -> String {
     format!(r#"<w:del w:id="{id}" {REV}><w:r><w:delText>{text}</w:delText></w:r></w:del>"#)
 }
@@ -30,6 +32,7 @@ pub fn deleted(text: &str, id: u32) -> String {
 /// Probe e has reply markers beside the parent's, as Word writes them,
 /// and an independent surviving thread;
 /// this exercises pruning individual metadata entries, not only whole parts.
+#[allow(dead_code)]
 pub fn probe(case: char) -> Vec<u8> {
     let s = start(0);
     let e = end(0);
@@ -123,6 +126,7 @@ pub fn package(body: &str, threaded: bool) -> Vec<u8> {
 }
 
 /// Exact comment identities, anchors and metadata keys after resolution.
+#[allow(dead_code)]
 pub fn assert_state(bytes: &[u8], modern: bool, expected: &[(u32, &str, Option<u32>)]) {
     use crate::common::docx::part_string;
     use jubarte::namespaces::W;
