@@ -70,10 +70,13 @@ fn validate_exit_codes_prose_json_and_repair() {
         &["validate", "broken.docx", "--repair", "fixed.docx"],
     );
     assert_eq!(code, 0, "{out}");
-    assert_eq!(
-        out,
-        "repaired 1 finding(s), structure only; history not checked (--original, --author)\nno findings\n"
+    assert!(
+        out.starts_with(
+            "repaired 1 finding(s), structure only; history not checked (--original, --author)\nSUCCESS:\n~~~~diff\n"
+        ),
+        "{out}"
     );
+    assert!(out.ends_with("~~~~\nno findings\n"), "{out}");
     assert!(err.starts_with("wrote fixed.docx (docx, "), "{err}");
     let (_, out, err) = run(
         dir.path(),
