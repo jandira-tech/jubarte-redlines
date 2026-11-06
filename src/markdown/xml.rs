@@ -85,8 +85,9 @@ pub(super) struct Paragraph {
     /// A numbering instance (index into [`Document::lists`]) and level.
     pub numbering: Option<(usize, u32)>,
     pub indent: Option<u32>,
-    /// The indents an id line names, in twips (`first-line 0.5in`); its
-    /// `left` wins over `indent`.
+    /// The indents an id line names, in twips (`first-line 0.5in`) and in
+    /// hundredths of a character (`first-line 2ch`); its `left` wins over
+    /// `indent`.
     pub ind: Indent,
     /// The spacing an id line names (`before 6pt, line 1.5`).
     pub spacing: Spacing,
@@ -177,9 +178,39 @@ pub(super) struct TableFormats {
     pub row_borders: HashMap<usize, super::borders::Sides>,
 }
 
-/// A paragraph's `w:ind`, side by side, in twips.
+/// Hundredths of a character (`2ch` is 200, `1.5ch` is 150, `-1ch` is -100)
+/// with the fewest decimals that read back to the same count.
+pub(crate) fn char_units(hundredths: f64) -> String {
+    let hundredths = hundredths.round();
+    let count = hundredths / 100.0;
+    let value = (0..=2)
+        .map(|places| format!("{count:.places$}"))
+        .find(|text| {
+            text.parse::<f64>()
+                .is_ok_and(|v| (v * 100.0).round() == hundredths)
+        })
+        .unwrap_or_else(|| format!("{count:.2}"));
+    let value = value.trim_end_matches('0').trim_end_matches('.');
+    format!("{value}ch")
+}
+
+/// `2ch` as hundredths of a character, within ten million characters either
+/// way. `None` when the suffix or the number does not read.
+pub(crate) fn char_hundredths(value: &str) -> Option<i64> {
+    let count: f64 = value.strip_suffix("ch")?.parse().ok()?;
+    let hundredths = (count * 100.0).round();
+    // `as` cannot truncate: the bound is checked first.
+    (hundredths.is_finite() && hundredths.abs() <= 1_000_000_000.0).then_some(hundredths as i64)
+}
+
+/// A paragraph's `w:ind`: each side in twips, and in hundredths of a
+/// character when the paragraph states a character unit.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct Indent {
+    pub first_line_chars: Option<i64>,
+    pub hanging_chars: Option<i64>,
+    pub left_chars: Option<i64>,
+    pub right_chars: Option<i64>,
     pub first_line: Option<i64>,
     pub hanging: Option<i64>,
     pub left: Option<i64>,
@@ -2193,16 +2224,28 @@ fn paragraph_properties(
     properties.push_str(&paragraph.spacing.markup());
     let ind = paragraph.ind;
     let left = ind.left.or(paragraph.indent.map(i64::from));
-    if left.is_some() || ind.right.is_some() || ind.first_line.is_some() || ind.hanging.is_some() {
+    let sides = [
+        ("left", left, "leftChars", ind.left_chars),
+        ("right", ind.right, "rightChars", ind.right_chars),
+        (
+            "firstLine",
+            ind.first_line,
+            "firstLineChars",
+            ind.first_line_chars,
+        ),
+        ("hanging", ind.hanging, "hangingChars", ind.hanging_chars),
+    ];
+    if sides
+        .iter()
+        .any(|(_, twips, _, chars)| twips.is_some() || chars.is_some())
+    {
         properties.push_str("<w:ind");
-        for (name, value) in [
-            ("left", left),
-            ("right", ind.right),
-            ("firstLine", ind.first_line),
-            ("hanging", ind.hanging),
-        ] {
-            if let Some(value) = value {
+        for (name, twips, chars_name, chars) in sides {
+            if let Some(value) = twips {
                 let _ = write!(properties, " w:{name}=\"{value}\"");
+            }
+            if let Some(value) = chars {
+                let _ = write!(properties, " w:{chars_name}=\"{value}\"");
             }
         }
         properties.push_str("/>");

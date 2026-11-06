@@ -1581,10 +1581,31 @@ pub(crate) fn comment_ids(p: &Element) -> Vec<String> {
     out
 }
 
+/// Character-unit sides of `w:ind` (`w:firstLineChars` and the rest), in
+/// the id lines' order. Each value is hundredths of a character (`200` is
+/// `2ch`). Strict `startChars` and `endChars` count only when `leftChars`
+/// and `rightChars` are absent.
+fn char_indent_clauses(ind: &Element) -> Vec<(&'static str, String)> {
+    [
+        (&["firstLineChars"][..], "first-line"),
+        (&["hangingChars"][..], "hanging"),
+        (&["leftChars", "startChars"][..], "left"),
+        (&["rightChars", "endChars"][..], "right"),
+    ]
+    .into_iter()
+    .filter_map(|(attrs, name)| {
+        let v = attrs.iter().find_map(|attr| ind.attr(attr))?;
+        let hundredths = crate::util::parse_finite_f64(v)?;
+        Some((name, crate::markdown::xml::char_units(hundredths)))
+    })
+    .collect()
+}
+
 /// A paragraph's own indent (`w:ind`), one clause per side in the id
-/// lines' order: `first-line`, `hanging`, `left`, `right`, each in inches.
-/// The strict `start`/`end` count only when the transitional `left`/`right`
-/// is absent, as the layout reads them.
+/// lines' order: `first-line`, `hanging`, `left`, `right`, each in inches,
+/// then the same sides in characters (`first-line 2ch`). The strict
+/// `start`/`end` count only when the transitional `left`/`right` is
+/// absent, as the layout reads them.
 pub(crate) fn indent_clauses(ind: &Element) -> Vec<(&'static str, String)> {
     [
         (&["firstLine"][..], "first-line"),
@@ -1599,6 +1620,7 @@ pub(crate) fn indent_clauses(ind: &Element) -> Vec<(&'static str, String)> {
             crate::util::parse_finite_f64(v).or_else(|| crate::util::universal_measure_twips(v))?;
         Some((name, inches(twips)))
     })
+    .chain(char_indent_clauses(ind))
     .collect()
 }
 
