@@ -323,7 +323,8 @@ pub(super) fn legacy_attribution_error(source: &str) -> Option<String> {
                             .bytes()
                             .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-'))
                 })
-                && super::view_notes::revision_tags(part).is_some_and(|tags| tags.len() == 1)
+                && (super::view_notes::revision_tags(part).is_some_and(|tags| tags.len() == 1)
+                    || super::view_notes::plain_revision(part).is_some())
         };
         if !payload.split(" on ").all(legacy_part) {
             continue;
