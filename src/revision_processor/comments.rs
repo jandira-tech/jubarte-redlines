@@ -340,7 +340,10 @@ pub(crate) fn renumber_rescued_comments(pkg: &mut PartFs, kept: &[String]) {
     if story_order.is_empty() {
         return;
     }
-    let Some(mut comments_xml) = Parsed::load(pkg, FAMILY[0].0) else {
+    let Some(comments_part) = super::comments_part(pkg) else {
+        return;
+    };
+    let Some(mut comments_xml) = Parsed::load(pkg, &comments_part) else {
         return;
     };
     for c in comments_xml.w("comment") {
@@ -419,8 +422,15 @@ pub(crate) fn renumber_rescued_comments(pkg: &mut PartFs, kept: &[String]) {
 /// Drop the comments Accept / Reject All left without a reference, prune the
 /// comment family and `people.xml` (module docs). Return their ids, so
 /// callers can report precisely what went.
-pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) -> Vec<String> {
-    let Some(mut comments) = Parsed::load(pkg, FAMILY[0].0) else {
+pub(crate) fn prune_orphan_comments(
+    pkg: &mut PartFs,
+    story_parts: &[String],
+    comments_part: Option<&str>,
+) -> Vec<String> {
+    let Some(comments_part) = comments_part else {
+        return Vec::new();
+    };
+    let Some(mut comments) = Parsed::load(pkg, comments_part) else {
         return Vec::new();
     };
     // The comments part itself is not an anchor story: a `commentReference`
@@ -429,7 +439,7 @@ pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) ->
     // `word_save::tidy` instead.
     let stories: Vec<Parsed> = story_parts
         .iter()
-        .filter(|p| p.as_str() != FAMILY[0].0)
+        .filter(|p| p.as_str() != comments_part)
         .filter_map(|p| Parsed::load(pkg, p))
         .collect();
     let id = W::id();
@@ -489,7 +499,8 @@ pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) ->
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
     if kept.is_empty() {
-        for (part, _, rel_type) in FAMILY {
+        for (index, (part, _, rel_type)) in FAMILY.iter().enumerate() {
+            let part = if index == 0 { comments_part } else { part };
             remove_part(pkg, &main, part, rel_type);
         }
     } else if dropped {
