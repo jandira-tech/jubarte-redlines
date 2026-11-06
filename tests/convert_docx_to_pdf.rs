@@ -3703,6 +3703,99 @@ fn a_typeless_cell_width_is_a_dxa_width() {
     );
 }
 
+fn unbreakable_column_gap(grid: (u32, u32), right: &str, tbl_w: &str, layout: &str) -> (f32, f32) {
+    // Letter, Calibri 11, 1in margins, no borders. Each cell's tcW equals
+    // its grid column.
+    let styles = "<w:docDefaults><w:rPrDefault><w:rPr>\
+        <w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/><w:sz w:val=\"22\"/>\
+        </w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>\
+        <w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/>\
+        </w:pPr></w:pPrDefault></w:docDefaults>";
+    let cell = |text: &str, w: u32| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+        )
+    };
+    let cols = format!(
+        "<w:gridCol w:w=\"{}\"/><w:gridCol w:w=\"{}\"/>",
+        grid.0, grid.1
+    );
+    let layout_xml = if layout.is_empty() {
+        String::new()
+    } else {
+        format!("<w:tblLayout w:type=\"{layout}\"/>")
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW {tbl_w}/>{layout_xml}</w:tblPr><w:tblGrid>{cols}</w:tblGrid>\
+         <w:tr>{}{}</w:tr><w:tr>{}{}</w:tr></w:tbl>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+         w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>",
+        cell("LABEL:", grid.0),
+        cell("VALUE", grid.1),
+        cell("second row", grid.0),
+        cell(right, grid.1),
+    );
+    let pdf = docx_to_pdf(&docx_with_settings_and_styles(&body, "", styles)).expect("wide word");
+    (
+        pdf_glyph_text_xy(&pdf, "LABEL:").expect("LABEL:").0,
+        pdf_glyph_text_xy(&pdf, "VALUE").expect("VALUE").0,
+    )
+}
+
+#[test]
+fn an_unbreakable_word_wider_than_its_column_refits_an_autofit_table() {
+    // Word convert, Letter, Calibri 11. A 2400/6000 autofit grid with a
+    // tcW on every cell keeps that grid when the longest word fits the
+    // column. A word that does not re-fits the table into the measure:
+    // 102 A's put VALUE 22.80pt after LABEL, and 60 A's, which still fit
+    // the page, put it 86.16pt after. The same 102 A's re-fit when the
+    // grid already fills the measure and when the table width is 100%.
+    let auto = r#"w:w="0" w:type="auto""#;
+    let wide = "A".repeat(102);
+    let (label, value) = unbreakable_column_gap((2400, 6000), &wide, auto, "");
+    let word = 94.82 - 72.02;
+    assert!(
+        (value - label - word).abs() < 1.0,
+        "a word wider than the page re-fits the table; LABEL {label}, VALUE {value}, Word gap {word}"
+    );
+    let (label, value) = unbreakable_column_gap((2400, 6000), &"A".repeat(60), auto, "");
+    let fitted = 158.18 - 72.02;
+    assert!(
+        (value - label - fitted).abs() < 2.0,
+        "a word wider than its column but inside the page takes the leftover; LABEL {label}, VALUE {value}, Word gap {fitted}"
+    );
+    let (label, value) = unbreakable_column_gap((2400, 6960), &wide, auto, "");
+    assert!(
+        (value - label - word).abs() < 1.0,
+        "a full-measure grid still re-fits around the word; LABEL {label}, VALUE {value}, Word gap {word}"
+    );
+    let (label, value) =
+        unbreakable_column_gap((2400, 6000), &wide, r#"w:w="5000" w:type="pct""#, "");
+    assert!(
+        (value - label - word).abs() < 1.0,
+        "a 100% table width re-fits around the word; LABEL {label}, VALUE {value}, Word gap {word}"
+    );
+    let kept = 192.05 - 72.02;
+    let (label, value) = unbreakable_column_gap((2400, 6000), &"A".repeat(42), auto, "");
+    assert!(
+        (value - label - kept).abs() < 1.0,
+        "a word that fits the column keeps the grid; LABEL {label}, VALUE {value}, Word gap {kept}"
+    );
+    let breakable = "AAAA ".repeat(24) + "AAAA";
+    let (label, value) = unbreakable_column_gap((2400, 6000), &breakable, auto, "");
+    assert!(
+        (value - label - kept).abs() < 1.0,
+        "breakable words keep the grid; LABEL {label}, VALUE {value}, Word gap {kept}"
+    );
+    let (label, value) = unbreakable_column_gap((2400, 6000), &wide, auto, "fixed");
+    assert!(
+        (value - label - kept).abs() < 1.0,
+        "a fixed table keeps the grid; LABEL {label}, VALUE {value}, Word gap {kept}"
+    );
+}
+
 #[test]
 fn contextual_spacing_drops_only_the_flagged_paragraphs_share_of_the_gap() {
     // Word 16 probe_cx (2026-10-01), two Normal paragraphs, compat 15:
