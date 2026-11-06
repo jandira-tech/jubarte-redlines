@@ -1343,8 +1343,44 @@ fn tag_fields(line: &str) -> Vec<String> {
     out
 }
 
+/// Ranges of fenced code, in bytes. A line of three or more backticks or
+/// tildes opens a fence, and a later bare line of at least that many of
+/// the same character closes it. An opening line may name a language.
+fn code_fenced(text: &str) -> Vec<std::ops::Range<usize>> {
+    let mut open: Option<(char, usize, usize)> = None;
+    let mut ranges = Vec::new();
+    let mut offset = 0usize;
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if let Some((ch, len, bare)) = fence_mark(trimmed) {
+            match open {
+                Some((och, olen, start)) if ch == och && bare && len >= olen => {
+                    ranges.push(start..offset + line.len());
+                    open = None;
+                }
+                None => open = Some((ch, len, offset)),
+                _ => {}
+            }
+        }
+        offset += line.len();
+    }
+    if let Some((_, _, start)) = open {
+        ranges.push(start..text.len());
+    }
+    ranges
+}
+
+/// A fence marker: its character, how many, and whether nothing else is on
+/// the line, which is what closes a fence.
+fn fence_mark(trimmed: &str) -> Option<(char, usize, bool)> {
+    let ch = trimmed.chars().next().filter(|c| matches!(c, '`' | '~'))?;
+    let len = trimmed.chars().take_while(|&c| c == ch).count();
+    (len >= 3).then(|| (ch, len, trimmed.chars().skip(len).all(char::is_whitespace)))
+}
+
 /// The attribution braces (`{r5 @AC}`, comments skipped) in `text`, and with
-/// `lines` its `<!-- … -->` lines' contents.
+/// `lines` its `<!-- … -->` lines' contents. A comment inside a code fence
+/// is the fence's text.
 fn tag_spans(text: &str, lines: bool, out: &mut Vec<String>) {
     out.extend(
         crate::markdown::critic::attributed_notes(text)
@@ -1352,11 +1388,16 @@ fn tag_spans(text: &str, lines: bool, out: &mut Vec<String>) {
             .map(|(_, note)| note),
     );
     if lines {
+        let fenced = code_fenced(text);
         let mut rest = text;
+        let mut base = 0usize;
         while let Some(at) = rest.find("<!-- ") {
             let after = &rest[at + 5..];
             let end = after.find(" -->").unwrap_or(after.len());
-            out.push(after[..end].to_string());
+            if !fenced.iter().any(|range| range.contains(&(base + at))) {
+                out.push(after[..end].to_string());
+            }
+            base += at + 5 + end;
             rest = &after[end..];
         }
     }
@@ -2891,7 +2932,15 @@ pub(crate) fn collect_revisions(shown: &str) -> Vec<&'static str> {
             _ => add(&tags.iter().collect::<Vec<_>>(), kind),
         }
     }
-    for line in shown.lines() {
+    let fenced = code_fenced(shown);
+    let mut offset = 0usize;
+    for line in shown.split_inclusive('\n') {
+        let at = offset;
+        offset += line.len();
+        if fenced.iter().any(|range| range.contains(&at)) {
+            continue;
+        }
+        let line = line.trim_end_matches(['\n', '\r']);
         if let Some(p) = view_notes::id_line(line) {
             if let Some(tag) = &p.break_ins {
                 add(&[tag], INSERTED_MARK);
@@ -3610,6 +3659,53 @@ mod tests {
         let line = "<!-- t0 1x1, cells p1-p1 by row, break-ins r3 @AC in p1, \
                     break-del r4 @AC in p1 -->";
         assert_eq!(collect_revisions(line), ["mark", "mark"]);
+    }
+
+    /// A code fence keeps a line that looks like an id line as text, so the
+    /// fallback count and a selection skip it. A cell paragraph that names
+    /// an insertion and a deletion still counts as two marks.
+    #[test]
+    fn a_fenced_id_line_does_not_count_and_both_cell_marks_do() {
+        let fenced = "```\n<!-- p3 rev r4 @AC -->\n```\n";
+        let fallback = with_logical(None, || shown_changes(fenced, true));
+        assert!(
+            fallback.is_empty(),
+            "fenced id line counted in the fallback: {fallback:?}"
+        );
+        let selected = with_logical(Some(vec![change("r4")]), || shown_changes(fenced, false));
+        assert!(
+            selected.is_empty(),
+            "fenced id line counted in a selection: {selected:?}"
+        );
+        let marks = "<!-- t0 1x1, cells p5-p5 by row, break-ins r1 @A in p5, \
+                     break-del r2 @A in p5 -->";
+        assert_eq!(collect_revisions(marks), ["mark", "mark"]);
+        assert_eq!(
+            with_logical(None, || shown_changes("<!-- p3 rev r4 @AC -->", true)),
+            ["ins"]
+        );
+        assert_eq!(
+            with_logical(Some(vec![change("r9")]), || shown_changes(fenced, true)),
+            ["ins"]
+        );
+    }
+
+    fn change(id: &str) -> crate::changes::Change {
+        crate::changes::Change {
+            id: id.to_string(),
+            r#ref: id.to_string(),
+            kind: crate::changes::ChangeKind::Insertion,
+            target: "text",
+            author: None,
+            date: None,
+            text: String::new(),
+            paragraph: None,
+            move_name: None,
+            move_side: None,
+            inside: None,
+            holds_comments: Vec::new(),
+            members: Vec::new(),
+        }
     }
 
     /// A mark with no `w:id` prints `noid`, so one author's inserted and
