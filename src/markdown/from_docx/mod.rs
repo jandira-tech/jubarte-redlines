@@ -1052,6 +1052,18 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
                                     .path(&["pPr", "ind"])
                                     .map(agent::indent_clauses)
                                     .unwrap_or_default(),
+                                tabs: p
+                                    .path(&["pPr", "tabs"])
+                                    .map(header::tab_stops)
+                                    .unwrap_or_default(),
+                                spacing: p
+                                    .path(&["pPr", "spacing"])
+                                    .map(agent::spacing_clauses)
+                                    .unwrap_or_default(),
+                                shading: p
+                                    .path(&["pPr", "shd"])
+                                    .map(header::shading_pairs)
+                                    .unwrap_or_default(),
                             };
                             (
                                 i,
