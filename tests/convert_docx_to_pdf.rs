@@ -3539,6 +3539,115 @@ fn a_span_wider_than_its_grid_widens_the_autofit_table() {
 }
 
 #[test]
+fn a_zero_pct_autofit_table_splits_the_measure_when_its_rows_outrun_it() {
+    // Word convert, Calibri 11, 1in margins, no borders. Every cell is
+    // w:w="0" w:type="pct". A 2400/6000 grid puts VALUE 227.19pt after
+    // LABEL on A4 and 235.61pt on Letter. A 300pt table width puts it
+    // 151.11pt after. Three short columns sit 20.76pt and 23.52pt apart.
+    // The saved grid would leave LABEL and VALUE about 120pt apart.
+    let styles = "<w:docDefaults><w:rPrDefault><w:rPr>\
+        <w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/><w:sz w:val=\"22\"/>\
+        </w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>\
+        <w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/>\
+        </w:pPr></w:pPrDefault></w:docDefaults>";
+    let cell = |text: &str| {
+        format!(
+            r#"<w:tc><w:tcPr><w:tcW w:w="0" w:type="pct"/></w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"#
+        )
+    };
+    let table = |grid: &[u32], rows: &[String], tbl_w: &str| {
+        let cols: String = grid
+            .iter()
+            .map(|w| format!(r#"<w:gridCol w:w="{w}"/>"#))
+            .collect();
+        let body: String = rows
+            .iter()
+            .map(|row| format!("<w:tr>{row}</w:tr>"))
+            .collect();
+        format!(
+            r#"<w:tbl><w:tblPr><w:tblW {tbl_w}/></w:tblPr><w:tblGrid>{cols}</w:tblGrid>{body}</w:tbl>"#
+        )
+    };
+    let sect = |w: u32, h: u32| {
+        format!(
+            r#"<w:sectPr><w:pgSz w:w="{w}" w:h="{h}"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#
+        )
+    };
+    let xs = |body: String, sect: String, left: &str, right: &str| {
+        let pdf = docx_to_pdf(&docx_with_settings_and_styles(
+            &format!("{body}{sect}"),
+            "",
+            styles,
+        ))
+        .expect("zero pct table");
+        (
+            pdf_glyph_text_xy(&pdf, left).expect(left).0,
+            pdf_glyph_text_xy(&pdf, right).expect(right).0,
+        )
+    };
+    let long = "AAAA ".repeat(25);
+    let long = long.trim_end();
+    let pair = table(
+        &[2400, 6000],
+        &[
+            format!("{}{}", cell("LABEL:"), cell("VALUE")),
+            format!("{}{}", cell("second row"), cell(long)),
+        ],
+        r#"w:w="0" w:type="auto""#,
+    );
+    // Half the measure is 225.6 on this A4, 234 on Letter, and 150 inside
+    // the 300pt width. The glyph gap sits about 1.6pt over that half.
+    let (label, value) = xs(pair.clone(), sect(11906, 16838), "LABEL:", "VALUE");
+    let word_a4 = 299.21 - 72.02;
+    assert!(
+        (value - label - word_a4).abs() < 2.0,
+        "zero pct cells split the measure; LABEL {label}, VALUE {value}, Word gap {word_a4}"
+    );
+    let (label_letter, value_letter) = xs(pair, sect(12240, 15840), "LABEL:", "VALUE");
+    let word_letter = 307.63 - 72.02;
+    assert!(
+        (value_letter - label_letter - word_letter).abs() < 2.0,
+        "the same cells split a Letter measure; LABEL {label_letter}, VALUE {value_letter}, Word gap {word_letter}"
+    );
+    let declared = table(
+        &[2400, 6000],
+        &[
+            format!("{}{}", cell("LABEL:"), cell("VALUE")),
+            format!("{}{}", cell("second row"), cell(long)),
+        ],
+        r#"w:w="6000" w:type="dxa""#,
+    );
+    let (label_dxa, value_dxa) = xs(declared, sect(11906, 16838), "LABEL:", "VALUE");
+    let word_dxa = 223.13 - 72.02;
+    assert!(
+        (value_dxa - label_dxa - word_dxa).abs() < 2.0,
+        "a declared width is split the same way; LABEL {label_dxa}, VALUE {value_dxa}, Word gap {word_dxa}"
+    );
+    let three = table(
+        &[2000, 3000, 4000],
+        &[format!("{}{}{}", cell("ONE"), cell("TWO"), cell("SIX"))],
+        r#"w:w="0" w:type="auto""#,
+    );
+    let pdf = docx_to_pdf(&docx_with_settings_and_styles(
+        &format!("{three}{}", sect(11906, 16838)),
+        "",
+        styles,
+    ))
+    .expect("three short columns");
+    let (one, two, six) = (
+        pdf_glyph_text_xy(&pdf, "ONE").expect("ONE").0,
+        pdf_glyph_text_xy(&pdf, "TWO").expect("TWO").0,
+        pdf_glyph_text_xy(&pdf, "SIX").expect("SIX").0,
+    );
+    let word_two = 92.78 - 72.02;
+    let word_six = 116.30 - 92.78;
+    assert!(
+        (two - one - word_two).abs() < 1.0 && (six - two - word_six).abs() < 1.0,
+        "short columns stay as wide as their words; ONE {one}, TWO {two}, SIX {six}"
+    );
+}
+
+#[test]
 fn contextual_spacing_drops_only_the_flagged_paragraphs_share_of_the_gap() {
     // Word 16 probe_cx (2026-10-01), two Normal paragraphs, compat 15:
     // the gap is max(after, before) split into A's after and B's excess

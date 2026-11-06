@@ -10047,6 +10047,33 @@ fn span_content_outruns_grid(
     })
 }
 
+/// An autofit table whose every column prefers zero percent of the width.
+/// When the rows outrun that width the columns split it evenly. When they
+/// fit, each column stays as wide as its text.
+fn zero_pct_column_widths(
+    fonts: &Fonts,
+    cols: &[f32],
+    rows: &[Vec<TableCell>],
+    geom: &TableGeom,
+    avail: f32,
+) -> Option<Vec<f32>> {
+    let n = cols.len();
+    if geom.fixed || n == 0 || geom.pref.len() != n {
+        return None;
+    }
+    if geom.pref.iter().any(|p| !matches!(*p, PrefWidth::Pct(0.0))) {
+        return None;
+    }
+    let target = declared_table_width(geom, avail).unwrap_or(avail);
+    let (_, maxs) = content_autofit_extents(fonts, n, rows, geom, false);
+    let gap = 2.0 * geom.cell_spacing;
+    let content = maxs.iter().sum::<f32>() + gap * (n as f32 + 1.0);
+    if content > target + 0.5 {
+        return Some(vec![target / n as f32; n]);
+    }
+    Some(content_autofit_widths(fonts, n, rows, geom, target, false))
+}
+
 fn unclamped_col_widths(
     fonts: &Fonts,
     cols: &[f32],
@@ -10093,6 +10120,9 @@ fn unclamped_col_widths(
     // `autofit_to_words` does: its line runs along the row (#2119 review).
     if span_content_outruns_grid(fonts, cols, rows, geom) {
         return content_autofit_widths(fonts, cols.len(), rows, geom, avail, false, Some(cols));
+    }
+    if let Some(widths) = zero_pct_column_widths(fonts, cols, rows, geom, avail) {
+        return widths;
     }
     let widths = table_col_widths(cols, geom, avail);
     // An autofit column is at least its longest word: Word widens a tcW
@@ -14872,16 +14902,10 @@ fn cell_pref_width(dom: &Dom, cell: NodeId) -> PrefWidth {
         return PrefWidth::Auto;
     };
     match attr_any(dom, tw, "type").unwrap_or("auto") {
-        "pct" => {
-            let fiftieths = attr_any(dom, tw, "w")
-                .and_then(parse_finite_f32)
-                .unwrap_or(0.0);
-            if fiftieths > 0.0 {
-                PrefWidth::Pct(fiftieths / 5000.0)
-            } else {
-                PrefWidth::Auto
-            }
-        }
+        "pct" => match attr_any(dom, tw, "w").and_then(parse_finite_f32) {
+            Some(fiftieths) if fiftieths >= 0.0 => PrefWidth::Pct(fiftieths / 5000.0),
+            _ => PrefWidth::Auto,
+        },
         "dxa" => {
             let w = attr_any(dom, tw, "w").and_then(parse_len).unwrap_or(0.0);
             if w > 0.0 {
