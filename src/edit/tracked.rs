@@ -134,9 +134,29 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
                 let node = tx.paragraph_nodes[*para];
                 let replacement = tx.final_replacement(*para);
                 if let Some(moved) = moved_in(dom, node) {
+                    // A mark stored in a formatting change is that change's
+                    // history. Name the change, which is what the listing offers.
+                    let recorded = dom.ancestors(moved, None).into_iter().find(|&ancestor| {
+                        dom.name(ancestor).is_some_and(|name| {
+                            name.namespace_name() == W::URI
+                                && matches!(
+                                    name.local_name(),
+                                    "rPrChange"
+                                        | "pPrChange"
+                                        | "sectPrChange"
+                                        | "tblPrChange"
+                                        | "tblPrExChange"
+                                        | "tblGridChange"
+                                        | "trPrChange"
+                                        | "tcPrChange"
+                                        | "numberingChange"
+                                        | "cellMerge"
+                                )
+                        })
+                    });
                     Some(named(
                         "under keep, a paragraph that holds a move cannot be deleted yet: the move is",
-                        moved,
+                        recorded.unwrap_or(moved),
                     ))
                 } else if let Some(foreign) = untrackable_content(dom, node) {
                     let name = dom.name(foreign).expect("an element");
