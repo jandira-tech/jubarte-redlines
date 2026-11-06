@@ -9430,12 +9430,18 @@ pub fn find_common_at_beginning_and_end(
     Some(out)
 }
 
+/// Two characters. A word that stays in the same slot is worth this much
+/// more than its length. Word then keeps "that" between a swapped "alpha"
+/// and "beta", and still keeps "alphabet" or "substantialanchor" when the
+/// crossing word is longer by more than this (#2002).
+const SAME_SLOT_BONUS: u64 = 2;
+
 /// Heckel's links between two key sequences (0 never matches): each key
 /// unique to both sides links its two positions, every link extends over
 /// the equal neighbours on both sides, and the in-order chain keeping the
-/// most characters (`w1`, per left unit) wins — Word keeps "document"
-/// over "the" when the two cross (file_165 → file_166). Pairs `(i, j)`
-/// ascending.
+/// most characters (`w1`, per left unit, plus [`SAME_SLOT_BONUS`] when the
+/// word did not move) wins — Word keeps "document" over "the" when the two
+/// cross (file_165 → file_166). Pairs `(i, j)` ascending.
 fn heckel_links(k1: &[u32], k2: &[u32], w1: &[u32]) -> Vec<(usize, usize)> {
     use std::collections::HashMap;
     let mut seen1: HashMap<u32, (u32, usize)> = HashMap::new();
@@ -9518,7 +9524,8 @@ fn heckel_links(k1: &[u32], k2: &[u32], w1: &[u32]) -> Vec<(usize, usize)> {
             }
             q &= q - 1;
         }
-        let weight = before.0 + u64::from(w1[i]);
+        let same_slot = u64::from(i == j && w1[i] > 0);
+        let weight = before.0 + u64::from(w1[i]) + same_slot * SAME_SLOT_BONUS;
         back[p] = before.1.wrapping_sub(1);
         let mut q = j + 1;
         while q <= m {
@@ -9659,6 +9666,70 @@ fn kept_span(
 /// 5 000 words a side, every space being a unit; a longer pair keeps the
 /// run-by-run resolvers.
 const PARAGRAPH_WINDOW_CELL_CAP: usize = 100_000_000;
+
+fn unit_inside_hyperlink(dom: &Dom, unit: &ComparisonUnit) -> bool {
+    let Some(atom) = unit.first_atom() else {
+        return false;
+    };
+    atom.ancestor_elements
+        .iter()
+        .any(|&id| dom.name(id) == Some(W::hyperlink()))
+}
+
+/// The blank immediately before a hyperlink stays with the hyperlink.
+///
+/// A word inserted in front of a link otherwise takes the trailing space,
+/// which is what Word does in front of a plain word. Word's compare of
+/// `See [that]` against `See A [that]` puts the space before `A` (#2002).
+fn retarget_blank_before_hyperlink(
+    dom: &Dom,
+    words1: &[ComparisonUnit],
+    blank1: &[bool],
+    blank2: &[bool],
+    keys1: &[u32],
+    keys2: &[u32],
+    links: &[(usize, usize)],
+) -> Vec<(usize, usize)> {
+    let mut left_of = vec![usize::MAX; words1.len()];
+    let mut right_of = vec![usize::MAX; blank2.len()];
+    for &(i, j) in links {
+        if i < left_of.len() && j < right_of.len() {
+            left_of[i] = j;
+            right_of[j] = i;
+        }
+    }
+    for i in 0..words1.len() {
+        let j = left_of[i];
+        if j == usize::MAX || !blank1.get(i).copied().unwrap_or(false) {
+            continue;
+        }
+        let Some(next) = i.checked_add(1).filter(|next| *next < words1.len()) else {
+            continue;
+        };
+        if !unit_inside_hyperlink(dom, &words1[next]) {
+            continue;
+        }
+        let linked = left_of[next];
+        if linked == usize::MAX || linked == 0 {
+            continue;
+        }
+        let before = linked - 1;
+        if before == j || right_of.get(before).copied().unwrap_or(usize::MAX) != usize::MAX {
+            continue;
+        }
+        if !blank2.get(before).copied().unwrap_or(false) || keys1.get(i) != keys2.get(before) {
+            continue;
+        }
+        right_of[j] = usize::MAX;
+        left_of[i] = before;
+        right_of[before] = i;
+    }
+    left_of
+        .into_iter()
+        .enumerate()
+        .filter(|&(_, j)| j != usize::MAX)
+        .collect()
+}
 
 /// Resolve a window holding one paragraph's words a side the way Word
 /// resolves a changed paragraph (Word 16, 783 single-paragraph probes,
@@ -9886,7 +9957,15 @@ fn resolve_paragraph_window(
         }
         return Ok(out);
     }
-    let links = heckel_links(&k1, &k2, &w1);
+    let links = retarget_blank_before_hyperlink(
+        dom,
+        words1,
+        &blank1,
+        &blank2,
+        &k1,
+        &k2,
+        &heckel_links(&k1, &k2, &w1),
+    );
     let mut word_level = settings.clone();
     word_level.in_word_level_paragraph = true;
     word_level.detail_threshold = 0.0;
