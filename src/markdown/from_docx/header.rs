@@ -1949,7 +1949,7 @@ pub(crate) fn story_text_with(
                     }
                 }
                 "AlternateContent" => {
-                    if let Some(choice) = run.child("Choice").or_else(|| run.child("Fallback")) {
+                    if let Some(choice) = super::agent::shown_branch(run) {
                         walk(choice, s, draw);
                     }
                 }
@@ -2052,7 +2052,7 @@ pub(crate) fn story_text_with(
                 }
             }
             "AlternateContent" => {
-                if let Some(choice) = child.child("Choice").or_else(|| child.child("Fallback")) {
+                if let Some(choice) = super::agent::shown_branch(child) {
                     for inner in choice.elements() {
                         run_content(inner, s, draw);
                     }
