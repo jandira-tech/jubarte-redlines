@@ -306,19 +306,26 @@ impl Pending {
     }
 }
 
-/// Drawing roots directly owned by this story. Stop at drawings and at a
-/// different text-box owner, rather than collecting descendants of descendants.
+/// Drawing roots directly owned by this story. A nested text box is
+/// owned; a picture stays where it sits. Stop at drawings and at a
+/// different text-box owner, rather than collecting descendants of
+/// descendants.
 pub(crate) fn owned_drawings(story: &Element) -> Vec<&Element> {
+    fn holds_text_box(element: &Element) -> bool {
+        let mut boxes = Vec::new();
+        element.find_all("txbxContent", &mut boxes);
+        !boxes.is_empty()
+    }
     fn walk<'a>(node: &'a Element, out: &mut Vec<&'a Element>) {
         for child in node.elements() {
             if child.is("txbxContent") {
                 continue;
             }
-            if matches!(child.local(), "drawing" | "pict" | "object")
-                || (child.is("AlternateContent") && capturable_alternate(child))
-            {
+            let drawing = matches!(child.local(), "drawing" | "pict" | "object")
+                || (child.is("AlternateContent") && capturable_alternate(child));
+            if drawing && holds_text_box(child) {
                 out.push(child);
-            } else {
+            } else if !drawing {
                 walk(child, out);
             }
         }
