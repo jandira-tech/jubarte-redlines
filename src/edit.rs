@@ -1234,8 +1234,9 @@ pub struct EditReport {
     pub ok: bool,
     /// SHA-256 of the bytes handed in.
     pub source_sha256: String,
-    /// SHA-256 of the base the plan edited (differs from `source_sha256`
-    /// only when existing revisions were flattened first).
+    /// SHA-256 of the base the plan edited. It differs from `source_sha256`
+    /// when existing revisions were flattened first, and when a repeated
+    /// permission id was normalized on a revision-free source.
     pub base_sha256: String,
     /// The plan carried a `source_sha256` that was verified.
     pub guarded: bool,
