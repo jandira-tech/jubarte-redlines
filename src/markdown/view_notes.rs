@@ -567,6 +567,9 @@ pub(super) struct CommentHead {
     /// The `w:id`s of the change that holds the comment's reference mark
     /// (`in r13` → 13): the note prints outside it, so it says so.
     pub held_in: Vec<u32>,
+    /// Spacing clauses after the head (`c5 @AC, after 0pt, line 1: `),
+    /// one group per paragraph.
+    pub spacing: Vec<super::xml::Spacing>,
 }
 
 /// The cells a `cell-borders` group names: every cell, a row's, or one.
@@ -1166,7 +1169,11 @@ pub(super) fn note_styles(line: &str) -> Option<Vec<String>> {
     let mut styles = Vec::new();
     let mut rest = rest.trim();
     while !rest.is_empty() {
-        let (style, after) = take_style(rest)?;
+        // A spacing clause (`after 0pt`) is not a style. Stop so the
+        // styles already named still apply.
+        let Some((style, after)) = take_style(rest) else {
+            break;
+        };
         // `""` names no style a paragraph can be in.
         if style.trim().is_empty() {
             return None;
@@ -1175,6 +1182,51 @@ pub(super) fn note_styles(line: &str) -> Option<Vec<String>> {
         rest = after;
     }
     (!styles.is_empty()).then_some(styles)
+}
+
+/// The spacing a note definition's id line names after its styles, one
+/// group per paragraph (`<!-- footnotes.p0 after 0pt, line 1 -->`,
+/// `<!-- footnotes.p0-p1 after 0pt; before 6pt -->`). An empty group is
+/// a paragraph that states none.
+pub(super) fn note_spacings(line: &str) -> Vec<super::xml::Spacing> {
+    if note_line(line, "footnotes").is_none() && note_line(line, "endnotes").is_none() {
+        return Vec::new();
+    }
+    let Some(inner) = line
+        .trim()
+        .strip_prefix("<!--")
+        .and_then(|s| s.strip_suffix("-->"))
+    else {
+        return Vec::new();
+    };
+    let mut rest = inner
+        .trim()
+        .split_once(char::is_whitespace)
+        .map_or("", |(_, rest)| rest)
+        .trim();
+    while !rest.is_empty() {
+        let Some((_, after)) = take_style(rest) else {
+            break;
+        };
+        rest = after;
+    }
+    if rest.is_empty() {
+        return Vec::new();
+    }
+    rest.split("; ")
+        .map(|group| {
+            let mut spacing = super::xml::Spacing::default();
+            if group.is_empty() {
+                return spacing;
+            }
+            for clause in split_clauses(group) {
+                if let Some((word, value)) = clause.split_once(' ') {
+                    let _ = spacing.clause(word, value);
+                }
+            }
+            spacing
+        })
+        .collect()
 }
 
 /// Whether `line` is an endnote definition's id line (`<!-- endnotes.p0 -->`).
@@ -1544,6 +1596,11 @@ fn spacing_words(text: &str) -> Option<(super::xml::Spacing, Option<u32>, bool)>
         {
             value = format!("{value} {rule}");
         }
+        if matches!(word, "before" | "after")
+            && let Some(unit) = words.next_if(|w| *w == "lines")
+        {
+            value = format!("{value} {unit}");
+        }
         spacing.clause(word, &value)?;
     }
     (!spacing.is_empty() || size.is_some()).then_some((spacing, size, inherits))
@@ -1612,6 +1669,11 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
         // A comment with no text: `c5 @AC:` at the end.
         text.strip_suffix(':').map(|head| (head, ""))
     })?;
+    // Spacing follows the head words: `c5 @AC, after 0pt, line 1`.
+    let (head, clauses) = match head.split_once(", ") {
+        Some((head, clauses)) => (head, Some(clauses)),
+        None => (head, None),
+    };
     let mut words = head.split(' ').peekable();
     // `c5`, never a bare `5`: a person's comment such as `3: item three` is
     // text, not a head.
@@ -1624,6 +1686,7 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
         reply_to: None,
         resolved: false,
         held_in: Vec::new(),
+        spacing: Vec::new(),
     };
     if let Some(handle) = words.peek().and_then(|w| w.strip_prefix('@')) {
         if !is_handle(handle) {
@@ -1657,6 +1720,18 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
             parsed.reply_to = Some(crate::ids::parse_comment_id(root).ok()?);
         }
         _ => return None,
+    }
+    if let Some(clauses) = clauses {
+        for group in clauses.split("; ") {
+            let mut spacing = super::xml::Spacing::default();
+            if !group.is_empty() {
+                for clause in group.split(", ") {
+                    let (word, value) = clause.split_once(' ')?;
+                    spacing.clause(word, value)?;
+                }
+            }
+            parsed.spacing.push(spacing);
+        }
     }
     Some((parsed, body))
 }
@@ -2100,6 +2175,7 @@ mod tests {
                 reply_to: None,
                 resolved: false,
                 held_in: Vec::new(),
+                spacing: Vec::new(),
             }
         );
         assert_eq!(text, "Is one percent the cap?");

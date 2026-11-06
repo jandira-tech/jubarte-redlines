@@ -3036,3 +3036,69 @@ fn an_unshown_replacement_in_a_header_names_each_side_by_its_own_marks() {
     assert!(!view.contains("header1.r3+4"), "{view}");
     assert_eq!(kinds(&again), kinds(&docx));
 }
+
+/// A footnote, a comment and a text-box paragraph keep the `w:spacing`
+/// they state, and a body paragraph keeps spacing counted in lines
+/// (`before 1.5 lines` is 150 hundredths of a line).
+#[test]
+fn a_note_a_comment_and_a_text_box_keep_their_own_spacing() {
+    let mut notes = String::new();
+    let note = r#"<w:footnote w:id="1"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> Noted.</w:t></w:r></w:p></w:footnote>"#;
+    let part = notes_part("footnote", note, &mut notes);
+    let source = common::docx::docx_with(
+        r#"<w:p><w:r><w:t>Clause.</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>"#,
+        &[part],
+    );
+    let (_view, again, _) = docx_round_trip(&source);
+    let footnotes = part_string(&again, "word/footnotes.xml").unwrap();
+    let real = footnotes.split("w:id=\"1\"").nth(1).unwrap_or(&footnotes);
+    assert!(
+        real.contains(r#"w:after="0""#)
+            && real.contains(r#"w:line="240""#)
+            && real.contains(r#"w:lineRule="auto""#),
+        "{footnotes}"
+    );
+
+    let (w, r) = (common::docx::W_NS, common::docx::R_NS);
+    let comments = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:comments xmlns:w="{w}" xmlns:r="{r}"><w:comment w:id="0" w:author="Ann" w:date="2026-01-01T00:00:00Z" w:initials="A"><w:p><w:pPr><w:spacing w:before="120" w:after="80"/></w:pPr><w:r><w:annotationRef/></w:r><w:r><w:t>Noted</w:t></w:r></w:p></w:comment></w:comments>"#
+    );
+    let commented = common::docx::docx_with(
+        r#"<w:p><w:commentRangeStart w:id="0"/><w:r><w:t>Clause.</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r></w:p>"#,
+        &[common::docx::Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        }],
+    );
+    let (_view, again, _) = docx_round_trip(&commented);
+    let comments = part_string(&again, "word/comments.xml").unwrap();
+    assert!(
+        comments.contains(r#"w:before="120""#) && comments.contains(r#"w:after="80""#),
+        "{comments}"
+    );
+
+    let boxed = common::docx::docx(concat!(
+        r#"<w:p><w:r><w:t>Host</w:t></w:r>"#,
+        r#"<w:r><w:pict xmlns:v="urn:schemas-microsoft-com:vml"><v:shape style="width:100pt;height:40pt"><v:textbox><w:txbxContent>"#,
+        r#"<w:p><w:pPr><w:spacing w:before="200"/></w:pPr><w:r><w:t>Boxed</w:t></w:r></w:p>"#,
+        r#"</w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"#,
+    ));
+    let (view, again, _) = docx_round_trip(&boxed);
+    assert!(view.contains("before 10pt"), "{view}");
+    let document = part_string(&again, "word/document.xml").unwrap();
+    let txbx = document.split("txbxContent").nth(1).unwrap_or("");
+    assert!(txbx.contains(r#"w:before="200""#), "{document}");
+
+    let lines = common::docx::docx(
+        r#"<w:p><w:pPr><w:spacing w:beforeLines="150" w:afterLines="100"/></w:pPr><w:r><w:t>Lines</w:t></w:r></w:p>"#,
+    );
+    let (view, again, _) = docx_round_trip(&lines);
+    assert!(view.contains("before 1.5 lines"), "{view}");
+    assert!(view.contains("after 1 lines"), "{view}");
+    let document = part_string(&again, "word/document.xml").unwrap();
+    assert!(document.contains(r#"w:beforeLines="150""#), "{document}");
+    assert!(document.contains(r#"w:afterLines="100""#), "{document}");
+}

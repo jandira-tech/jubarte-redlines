@@ -488,6 +488,8 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
     // The style of each note whose first paragraph is not in Word's own
     // (`footnote text`, `endnote text`), by label: its id line names it.
     let mut note_styles: HashMap<String, Vec<String>> = HashMap::new();
+    // Each note paragraph's own spacing, one group per paragraph, by label.
+    let mut note_spacings: HashMap<String, String> = HashMap::new();
     // A silent line still needs the legend when the built-in name's spelling
     // differs from the writer's: canonical output id -> source definition id.
     let mut note_style_sources: HashMap<String, String> = HashMap::new();
@@ -577,6 +579,23 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
                 }
                 Some(list)
             }
+        };
+        // One group per paragraph, empty groups kept so the indexes match.
+        // Nothing when every paragraph states none: the id line stays as it was.
+        let note_spacing = {
+            let groups: Vec<String> = paragraphs
+                .iter()
+                .map(|p| {
+                    p.path(&["pPr", "spacing"])
+                        .map(agent::spacing_clauses)
+                        .unwrap_or_default()
+                        .join(", ")
+                })
+                .collect();
+            groups
+                .iter()
+                .any(|group| !group.is_empty())
+                .then(|| groups.join("; "))
         };
         let many = writer.agent && paragraphs.len() > 1;
         let parts: Vec<critic::Part> = paragraphs
@@ -669,6 +688,9 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
                 note_ids.insert(index.to_string(), id);
                 if let Some(style) = note_style {
                     note_styles.insert(index.to_string(), style);
+                }
+                if let Some(spacing) = note_spacing {
+                    note_spacings.insert(index.to_string(), spacing);
                 }
             }
             defs.push(def);
@@ -1344,7 +1366,17 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
                                 format!(" {}", tokens.join(", "))
                             })
                             .unwrap_or_default();
-                        format!("<!-- {id}{style} -->\n{def}")
+                        let spacing = agent::note_label(def)
+                            .and_then(|label| note_spacings.get(label))
+                            .map(|clauses| {
+                                if style.is_empty() {
+                                    format!(" {clauses}")
+                                } else {
+                                    format!(", {clauses}")
+                                }
+                            })
+                            .unwrap_or_default();
+                        format!("<!-- {id}{style}{spacing} -->\n{def}")
                     }
                     None => def.clone(),
                 }
@@ -2927,6 +2959,14 @@ impl Writer<'_> {
                 agent::id_line(p, &facts, &self.handles)
             ));
             self.line_indent = 0;
+        } else if self.in_box && self.agent {
+            let clauses = ppr
+                .and_then(|pr| pr.child("spacing"))
+                .map(agent::spacing_clauses)
+                .unwrap_or_default();
+            if !clauses.is_empty() {
+                blocks.push_line(&agent::line("p0", &clauses));
+            }
         }
         if written {
             let edges = inline.edges();
@@ -4128,14 +4168,30 @@ impl Writer<'_> {
             .needs_date(comment.attr("author"), self.dates)
             .then(|| comment.comment_date())
             .flatten();
-        agent::comment_head(
+        let mut head = agent::comment_head(
             id,
             comment.attr("author"),
             date,
             &self.handles,
             &self.threads,
             held,
-        )
+        );
+        let groups: Vec<String> = comment
+            .children_named("p")
+            .map(|p| {
+                p.path(&["pPr", "spacing"])
+                    .map(agent::spacing_clauses)
+                    .unwrap_or_default()
+                    .join(", ")
+            })
+            .collect();
+        if groups.iter().any(|group| !group.is_empty()) {
+            let clauses = groups.join("; ");
+            if let Some(bare) = head.strip_suffix(": ") {
+                head = format!("{bare}, {clauses}: ");
+            }
+        }
+        head
     }
 
     /// `note`, its head naming the change that holds comment `id`'s

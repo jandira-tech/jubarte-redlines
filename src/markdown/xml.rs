@@ -207,6 +207,10 @@ pub(super) struct Spacing {
     pub after: Option<u32>,
     pub before_auto: bool,
     pub after_auto: bool,
+    /// `w:beforeLines`, in hundredths of a line (`150` is 1.5 lines).
+    pub before_lines: Option<u32>,
+    /// `w:afterLines`, in hundredths of a line.
+    pub after_lines: Option<u32>,
     pub line: Option<(u32, &'static str)>,
 }
 
@@ -305,6 +309,12 @@ impl Spacing {
         match (word, value) {
             ("before", "auto") => (self.before, self.before_auto) = (None, true),
             ("after", "auto") => (self.after, self.after_auto) = (None, true),
+            ("before", _) if let Some(lines) = hundredths_lines(value) => {
+                self.before_lines = Some(lines);
+            }
+            ("after", _) if let Some(lines) = hundredths_lines(value) => {
+                self.after_lines = Some(lines);
+            }
             ("before", _) => (self.before, self.before_auto) = (Some(points(value)?), false),
             ("after", _) => (self.after, self.after_auto) = (Some(points(value)?), false),
             ("line", _) => {
@@ -327,6 +337,43 @@ impl Spacing {
         }
         Some(())
     }
+
+    /// `<w:spacing …/>` for what `self` names, or nothing when it names none.
+    pub(super) fn markup(&self) -> String {
+        if self.is_empty() {
+            return String::new();
+        }
+        let mut out = String::from("<w:spacing");
+        for (name, value, auto, lines) in [
+            ("before", self.before, self.before_auto, self.before_lines),
+            ("after", self.after, self.after_auto, self.after_lines),
+        ] {
+            if let Some(value) = value {
+                let _ = write!(out, " w:{name}=\"{value}\"");
+            }
+            if let Some(lines) = lines {
+                let _ = write!(out, " w:{name}Lines=\"{lines}\"");
+            }
+            if auto {
+                let _ = write!(out, " w:{name}Autospacing=\"1\"");
+            }
+        }
+        if let Some((line, rule)) = self.line {
+            let _ = write!(out, " w:line=\"{line}\" w:lineRule=\"{rule}\"");
+        }
+        out.push_str("/>");
+        out
+    }
+}
+
+/// `before 1.5 lines`: hundredths of a line (`150`), not twips.
+fn hundredths_lines(value: &str) -> Option<u32> {
+    let count = value.strip_suffix(" lines")?;
+    let n: f64 = count.parse().ok()?;
+    let hundredths = (n * 100.0).round();
+    let most = f64::from(u32::MAX);
+    // `as` cannot overflow: the bound is checked first.
+    (n.is_finite() && (0.0..=most).contains(&hundredths)).then_some(hundredths as u32)
 }
 
 /// A hyperlink's target.
@@ -430,6 +477,8 @@ pub(super) struct Comment {
     /// Its paragraphs' style when the `comments:` line names one for its
     /// number (`c6 style Normal`).
     pub style: Option<String>,
+    /// Each paragraph's own spacing, in paragraph order.
+    pub spacing: Vec<Spacing>,
 }
 
 /// A Markdown document read into Word items.
@@ -2086,25 +2135,7 @@ fn paragraph_properties(
         );
     }
     // Before `w:ind`, as the schema orders `w:pPr`.
-    let spacing = paragraph.spacing;
-    if !spacing.is_empty() {
-        properties.push_str("<w:spacing");
-        for (name, value, auto) in [
-            ("before", spacing.before, spacing.before_auto),
-            ("after", spacing.after, spacing.after_auto),
-        ] {
-            if let Some(value) = value {
-                let _ = write!(properties, " w:{name}=\"{value}\"");
-            }
-            if auto {
-                let _ = write!(properties, " w:{name}Autospacing=\"1\"");
-            }
-        }
-        if let Some((line, rule)) = spacing.line {
-            let _ = write!(properties, " w:line=\"{line}\" w:lineRule=\"{rule}\"");
-        }
-        properties.push_str("/>");
-    }
+    properties.push_str(&paragraph.spacing.markup());
     let ind = paragraph.ind;
     let left = ind.left.or(paragraph.indent.map(i64::from));
     if left.is_some() || ind.right.is_some() || ind.first_line.is_some() || ind.hanging.is_some() {
@@ -2603,24 +2634,39 @@ pub(super) fn comments_part(context: &Context<'_>, comments: &[Comment]) -> Stri
             .as_ref()
             .or(context.document.comment_style.as_ref())
             .map_or("CommentText", String::as_str);
-        let ppr = if style == default_style {
-            String::new()
-        } else {
-            format!("<w:pPr><w:pStyle w:val=\"{}\"/></w:pPr>", escape(style))
+        let ppr = |at: usize| {
+            let mut inner = String::new();
+            if style != default_style {
+                let _ = write!(inner, "<w:pStyle w:val=\"{}\"/>", escape(style));
+            }
+            inner.push_str(
+                &comment
+                    .spacing
+                    .get(at)
+                    .copied()
+                    .unwrap_or_default()
+                    .markup(),
+            );
+            if inner.is_empty() {
+                String::new()
+            } else {
+                format!("<w:pPr>{inner}</w:pPr>")
+            }
         };
         let mut paragraphs = comment.paragraphs.iter().map(|p| p.trim());
         let first = paragraphs.next().unwrap_or_default();
         let _ = write!(
             out,
-            "<w:p>{ppr}\
-             <w:r><w:rPr><w:rStyle w:val=\"CommentReference\"/></w:rPr><w:annotationRef/></w:r>\
+            "<w:p>{}<w:r><w:rPr><w:rStyle w:val=\"CommentReference\"/></w:rPr><w:annotationRef/></w:r>\
              <w:r><w:t xml:space=\"preserve\">{}</w:t></w:r></w:p>",
+            ppr(0),
             escape(first)
         );
-        for paragraph in paragraphs.filter(|p| !p.is_empty()) {
+        for (at, paragraph) in paragraphs.filter(|p| !p.is_empty()).enumerate() {
             let _ = write!(
                 out,
-                "<w:p>{ppr}<w:r><w:t xml:space=\"preserve\">{}</w:t></w:r></w:p>",
+                "<w:p>{}<w:r><w:t xml:space=\"preserve\">{}</w:t></w:r></w:p>",
+                ppr(at + 1),
                 escape(paragraph)
             );
         }

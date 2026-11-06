@@ -1811,6 +1811,10 @@ struct Writer<'o, 'a> {
     /// Endnote -->`), then the open note's.
     note_style_next: Vec<String>,
     note_style: Vec<String>,
+    /// Spacing the next note's id line names, then the open note's, one
+    /// group per paragraph.
+    note_spacing_next: Vec<super::xml::Spacing>,
+    note_spacing: Vec<super::xml::Spacing>,
     /// The note paragraph `begin_paragraph` styles next, from 0.
     note_paragraph: usize,
     /// The number of the next cell paragraph, when the table line counts
@@ -1976,6 +1980,8 @@ impl<'o, 'a> Writer<'o, 'a> {
             note_paragraph_breaks: false,
             note_style_next: Vec::new(),
             note_style: Vec::new(),
+            note_spacing_next: Vec::new(),
+            note_spacing: Vec::new(),
             note_paragraph: 0,
             cell_paragraph: None,
             row_shapes: Vec::new(),
@@ -2201,6 +2207,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .unwrap_or_default();
                 self.note_paragraph_breaks = counted > 1 && breaks + 1 == counted;
                 self.note_style = std::mem::take(&mut self.note_style_next);
+                self.note_spacing = std::mem::take(&mut self.note_spacing_next);
                 self.note_paragraph = 0;
                 self.note_count += 1;
                 let label = note_label(&label);
@@ -2493,6 +2500,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.end_paragraph();
                 self.target = None;
                 self.note_style.clear();
+                self.note_spacing.clear();
                 self.note_paragraph_breaks = false;
             }
             TagEnd::Table => {
@@ -2702,6 +2710,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             // the definition.
             self.endnote_next = view_notes::endnote_line(line);
             self.note_style_next = view_notes::note_styles(line).unwrap_or_default();
+            self.note_spacing_next = view_notes::note_spacings(line);
             if self.endnote_next || view_notes::footnote_line(line) {
                 continue;
             }
@@ -2812,10 +2821,14 @@ impl<'o, 'a> Writer<'o, 'a> {
                 .find(|s| s.default)
                 .map_or("Normal", |s| s.id.as_str());
             // A note paragraph takes its own entry, past the list the last.
+            let spacing_at = self.note_paragraph;
             let at = self
                 .note_paragraph
                 .min(self.note_style.len().saturating_sub(1));
             self.note_paragraph += 1;
+            if let Some(spacing) = self.note_spacing.get(spacing_at) {
+                paragraph.spacing = *spacing;
+            }
             paragraph.style = match self.note_style.get(at) {
                 Some(style) if style == default => None,
                 Some(style) => Some(style.clone().into()),
@@ -3953,6 +3966,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         if let Some((head, text)) = head {
             // By the view's number, before renumbering can move it.
             comment.style = self.document.comment_styles.get(&head.number).cloned();
+            comment.spacing = head.spacing;
             comment.number = Some(head.number).filter(|&n| n <= view_notes::MOST_ID);
             comment.parent = head.reply_to.filter(|&n| n <= view_notes::MOST_ID);
             comment.done = head.resolved;
