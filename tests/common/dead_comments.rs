@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
+#![allow(dead_code)]
+
 //! Synthetic Word-shaped probes for issue #1141.
 
 use crate::common::docx::{Part, W_NS, docx_with};
