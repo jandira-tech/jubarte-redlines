@@ -845,7 +845,11 @@ fn screen_candidates(
         let Some(baseline) = baseline else {
             continue;
         };
-        for finding in introduced_findings(baseline, &findings) {
+        // A block placed before a finding shifts its sibling indices. The
+        // finding is still the one the source had when a stable anchor
+        // (paragraph id, revision id, or that element's own text) finds it.
+        let baseline = relocate_findings(source, bytes, baseline);
+        for finding in introduced_findings(&baseline, &findings) {
             if blocking(&finding) {
                 refusals.push(refused(
                     artifact,
@@ -877,6 +881,221 @@ fn screen_candidates(
         integrity: true,
         operation_postconditions: false,
     })
+}
+
+struct ParsedPart {
+    dom: crate::xmllinq::Dom,
+    root: crate::xmllinq::NodeId,
+}
+
+/// Baseline findings with locations rewritten to where the same element sits
+/// in `candidate`. An element the candidate no longer has, or that cannot be
+/// told from a sibling, keeps the location the source reported.
+fn relocate_findings(source: &[u8], candidate: &[u8], baseline: &[Finding]) -> Vec<Finding> {
+    let Ok(source_pkg) = crate::opc::PartFs::open(source) else {
+        return baseline.to_vec();
+    };
+    let Ok(candidate_pkg) = crate::opc::PartFs::open(candidate) else {
+        return baseline.to_vec();
+    };
+    let mut source_parts = HashMap::new();
+    let mut candidate_parts = HashMap::new();
+    baseline
+        .iter()
+        .map(|finding| {
+            let mut finding = finding.clone();
+            if let Some(location) = moved_location(
+                &source_pkg,
+                &candidate_pkg,
+                &mut source_parts,
+                &mut candidate_parts,
+                &finding.part,
+                &finding.location,
+            ) {
+                finding.r#ref.clone_from(&location);
+                finding.location = location;
+            }
+            finding
+        })
+        .collect()
+}
+
+fn ensure_part(
+    pkg: &crate::opc::PartFs,
+    cache: &mut HashMap<String, ParsedPart>,
+    part: &str,
+) -> Option<()> {
+    if cache.contains_key(part) {
+        return Some(());
+    }
+    let (dom, _, root) = crate::inspect::parse_part(pkg, part).ok()?;
+    cache.insert(part.to_string(), ParsedPart { dom, root });
+    Some(())
+}
+
+fn moved_location(
+    source_pkg: &crate::opc::PartFs,
+    candidate_pkg: &crate::opc::PartFs,
+    source_parts: &mut HashMap<String, ParsedPart>,
+    candidate_parts: &mut HashMap<String, ParsedPart>,
+    part: &str,
+    location: &str,
+) -> Option<String> {
+    if !location.contains('[') {
+        return None;
+    }
+    ensure_part(source_pkg, source_parts, part)?;
+    ensure_part(candidate_pkg, candidate_parts, part)?;
+    let source = source_parts.get(part)?;
+    let candidate = candidate_parts.get(part)?;
+    let mut source_node = source.root;
+    let mut candidate_node = candidate.root;
+    let mut steps = Vec::new();
+    for step in location.split('/') {
+        let (namespace, local, index) = parse_step(step)?;
+        let source_siblings = named_children(&source.dom, source_node, &namespace, &local);
+        let candidate_siblings = named_children(&candidate.dom, candidate_node, &namespace, &local);
+        let source_child = *source_siblings.get(index)?;
+        let candidate_child = match_child(
+            &source.dom,
+            source_child,
+            &source_siblings,
+            &candidate.dom,
+            &candidate_siblings,
+        )?;
+        let new_index = candidate_siblings
+            .iter()
+            .position(|&node| node == candidate_child)?;
+        let name = step.split_once('[').map_or(step, |(name, _)| name);
+        steps.push(format!("{name}[{new_index}]"));
+        source_node = source_child;
+        candidate_node = candidate_child;
+    }
+    let relocated = steps.join("/");
+    (relocated != location).then_some(relocated)
+}
+
+fn parse_step(step: &str) -> Option<(String, String, usize)> {
+    let (name, rest) = step.strip_suffix(']')?.split_once('[')?;
+    let index = rest.parse().ok()?;
+    let (namespace, local) = match name.split_once(':') {
+        Some((prefix, local)) => (
+            crate::xmllinq::serialize::well_known_namespace(prefix)?.to_string(),
+            local.to_string(),
+        ),
+        None => (String::new(), name.to_string()),
+    };
+    Some((namespace, local, index))
+}
+
+fn named_children(
+    dom: &crate::xmllinq::Dom,
+    parent: crate::xmllinq::NodeId,
+    namespace: &str,
+    local: &str,
+) -> Vec<crate::xmllinq::NodeId> {
+    dom.elements(parent, None)
+        .into_iter()
+        .filter(|&element| {
+            dom.name(element).is_some_and(|name| {
+                name.local_name() == local && name.namespace_name() == namespace
+            })
+        })
+        .collect()
+}
+
+fn match_child(
+    source: &crate::xmllinq::Dom,
+    node: crate::xmllinq::NodeId,
+    source_siblings: &[crate::xmllinq::NodeId],
+    candidate: &crate::xmllinq::Dom,
+    candidate_siblings: &[crate::xmllinq::NodeId],
+) -> Option<crate::xmllinq::NodeId> {
+    if let Some(id) = source.attribute(node, &crate::namespaces::W14::para_id())
+        && let Some(found) = sole(candidate_siblings, |sibling| {
+            candidate.attribute(sibling, &crate::namespaces::W14::para_id()) == Some(id)
+        })
+        && sole(source_siblings, |sibling| {
+            source.attribute(sibling, &crate::namespaces::W14::para_id()) == Some(id)
+        })
+        .is_some()
+    {
+        return Some(found);
+    }
+    if let Some(revision) = own_revision(source, node)
+        && let Some(found) = sole(candidate_siblings, |sibling| {
+            own_revision(candidate, sibling).as_ref() == Some(&revision)
+        })
+    {
+        return Some(found);
+    }
+    let marks = revision_marks(source, node);
+    if !marks.is_empty()
+        && sole(source_siblings, |sibling| {
+            revision_marks(source, sibling) == marks
+        })
+        .is_some()
+        && let Some(found) = sole(candidate_siblings, |sibling| {
+            revision_marks(candidate, sibling) == marks
+        })
+    {
+        return Some(found);
+    }
+    let text = source.value(node);
+    if !text.is_empty()
+        && sole(source_siblings, |sibling| source.value(sibling) == text).is_some()
+        && let Some(found) = sole(candidate_siblings, |sibling| {
+            candidate.value(sibling) == text
+        })
+    {
+        return Some(found);
+    }
+    if source_siblings.len() == candidate_siblings.len() {
+        let index = source_siblings
+            .iter()
+            .position(|&sibling| sibling == node)?;
+        return candidate_siblings.get(index).copied();
+    }
+    None
+}
+
+fn sole(
+    nodes: &[crate::xmllinq::NodeId],
+    mut pred: impl FnMut(crate::xmllinq::NodeId) -> bool,
+) -> Option<crate::xmllinq::NodeId> {
+    let mut found = None;
+    for &node in nodes {
+        if !pred(node) {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        found = Some(node);
+    }
+    found
+}
+
+fn own_revision(
+    dom: &crate::xmllinq::Dom,
+    node: crate::xmllinq::NodeId,
+) -> Option<(String, String)> {
+    let id = dom.attribute(node, &W::id())?;
+    dom.attribute(node, &W::author())?;
+    Some((dom.name(node)?.local_name().to_string(), id.to_string()))
+}
+
+fn revision_marks(
+    dom: &crate::xmllinq::Dom,
+    node: crate::xmllinq::NodeId,
+) -> Vec<(String, String)> {
+    let mut marks: Vec<(String, String)> = std::iter::once(node)
+        .chain(dom.descendants(node, None))
+        .filter_map(|element| own_revision(dom, element))
+        .collect();
+    marks.sort();
+    marks.dedup();
+    marks
 }
 
 /// A candidate may not give a revision id a same-kind duplicate the source
