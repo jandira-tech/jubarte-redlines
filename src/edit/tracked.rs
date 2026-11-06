@@ -953,6 +953,12 @@ fn emit(
             cursor
         };
         if let Some(carrier) = carrier {
+            // The mark goes with this paragraph, so a nonempty bookmark ends
+            // inside the deletion, as Word writes it. An empty bookmark, and
+            // a cell whose mark stays, keep the end outside (#1676).
+            if carrier == node {
+                enclose_nonempty_bookmark_ends(dom, node);
+            }
             mark(dom, carrier, W::del(), stamp);
         }
     }
@@ -2114,6 +2120,46 @@ fn wrap_deleted(dom: &mut Dom, group: Vec<NodeId>, stamp: &mut Stamp<'_>) {
         dom.add(del, run);
         rename_deleted_text(dom, run);
     }
+}
+
+/// A nonempty bookmark's end follows its deleted words into the content
+/// `w:del`. An empty bookmark has no deleted words between its endpoints
+/// and stays outside.
+fn enclose_nonempty_bookmark_ends(dom: &mut Dom, paragraph: NodeId) {
+    let children = dom.elements(paragraph, None);
+    let mut moves = Vec::new();
+    for (index, &child) in children.iter().enumerate() {
+        if !dom.name_is(child, &W::bookmark_end()) {
+            continue;
+        }
+        let Some(id) = dom.attribute(child, &W::id()).map(str::to_string) else {
+            continue;
+        };
+        let Some(start_at) = children[..index].iter().rposition(|&start| {
+            dom.name_is(start, &W::bookmark_start())
+                && dom.attribute(start, &W::id()) == Some(id.as_str())
+        }) else {
+            continue;
+        };
+        let Some(&del) = children[start_at + 1..index]
+            .iter()
+            .rev()
+            .find(|&&node| dom.name_is(node, &W::del()) && deletion_has_text(dom, node))
+        else {
+            continue;
+        };
+        moves.push((child, del));
+    }
+    for (end, del) in moves {
+        dom.remove(end);
+        dom.add(del, end);
+    }
+}
+
+fn deletion_has_text(dom: &Dom, del: NodeId) -> bool {
+    dom.descendants(del, Some(&W::del_text()))
+        .iter()
+        .any(|&text| !dom.value(text).is_empty())
 }
 
 /// Revision elements of a paragraph mark that delete it.
