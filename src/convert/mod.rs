@@ -2293,6 +2293,8 @@ struct TableCell {
     /// `tcPr/shd`. Word paints that shd at cell height with x-inset
     /// only (C1E4F5 14.64/14.64); per-line inner is for direct shd.
     style_fill: bool,
+    /// This cell's own `w:tcW`, before a span's width is shared across columns.
+    pref: PrefWidth,
 }
 
 impl TableCell {
@@ -2344,6 +2346,7 @@ impl TableCell {
             grid_skip: self.grid_skip,
             borders: self.borders,
             style_fill: self.style_fill,
+            pref: self.pref,
         }
     }
 }
@@ -10014,6 +10017,36 @@ fn clamp_to_word_max_width(mut widths: Vec<f32>, tbl_ind: f32) -> Vec<f32> {
     widths
 }
 
+/// An autofit table whose widthless span is wider than the grid columns
+/// it covers is laid out again. A span that fits those columns keeps them.
+fn span_content_outruns_grid(
+    fonts: &Fonts,
+    cols: &[f32],
+    rows: &[Vec<TableCell>],
+    geom: &TableGeom,
+) -> bool {
+    if geom.fixed || geom.grid_padded || !matches!(geom.width, TblWidth::Grid) {
+        return false;
+    }
+    let gap = 2.0 * geom.cell_spacing;
+    rows.iter().flatten().any(|cell| {
+        let end = cell.col + cell.colspan;
+        if cell.colspan < 2
+            || end > cols.len()
+            || cell.grid_skip
+            || cell.vertical
+            || !matches!(cell.pref, PrefWidth::Auto)
+        {
+            return false;
+        }
+        let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
+        let inner = gap * (cell.colspan as f32 - 1.0);
+        let need = cell_fit_extent(fonts, cell).1 + pads - inner;
+        let cover: f32 = cols[cell.col..end].iter().sum();
+        need > cover + 0.5
+    })
+}
+
 fn unclamped_col_widths(
     fonts: &Fonts,
     cols: &[f32],
@@ -10053,7 +10086,7 @@ fn unclamped_col_widths(
         let target = declared_table_width(geom, avail);
         return fill_table_width(fonts, cols.len(), rows, geom, target, avail);
     }
-    if geom.content_autofit {
+    if geom.content_autofit || span_content_outruns_grid(fonts, cols, rows, geom) {
         return content_autofit_widths(fonts, cols.len(), rows, geom, avail, false);
     }
     let widths = table_col_widths(cols, geom, avail);
@@ -10493,9 +10526,32 @@ fn content_autofit_extents(
         maxs[cell.col] = maxs[cell.col].max(hi + pads);
     }
     let gap = 2.0 * geom.cell_spacing;
-    // A spanning cell needs its columns to hold its content between them,
-    // and they share what they lack evenly: Word spreads probe span's
-    // sentence over its two columns without a tcW, 231.8 and 236.6pt.
+    // Preferred dxa widths are maximums before a span shares what it
+    // lacks, from every row: a span on the first row leaves the tcW of
+    // the row under it on that row's cells.
+    if !pref_caps {
+        for (j, max) in maxs.iter_mut().enumerate() {
+            if let Some(&PrefWidth::Dxa(w)) = geom.pref.get(j)
+                && w > 0.0
+            {
+                *max = (*max).max(w);
+            }
+        }
+        for cell in rows.iter().flatten() {
+            if cell.colspan != 1 || cell.col >= n || cell.grid_skip {
+                continue;
+            }
+            if let PrefWidth::Dxa(w) = cell.pref
+                && w > 0.0
+            {
+                maxs[cell.col] = maxs[cell.col].max(w);
+            }
+        }
+    }
+    // A spanning cell needs its columns to hold its content between them.
+    // They share what they lack in proportion to those maximums, and
+    // evenly when every one of them is zero (probe span: 231.8 and 236.6pt
+    // over two columns with no tcW).
     for cell in rows.iter().flatten() {
         let end = cell.col + cell.colspan;
         if pref_caps || cell.colspan < 2 || end > n || cell.grid_skip {
@@ -10504,14 +10560,24 @@ fn content_autofit_extents(
         let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
         let inner = gap * (cell.colspan - 1) as f32;
         let (lo, hi) = extent(cell);
+        let weights: Vec<f32> = maxs[cell.col..end].to_vec();
+        let weight: f32 = weights.iter().copied().sum();
         for (need, have) in [
             (lo + pads - inner, &mut mins),
             (hi + pads - inner, &mut maxs),
         ] {
             let cover: f32 = have[cell.col..end].iter().sum();
-            if need > cover {
-                let each = (need - cover) / cell.colspan as f32;
+            if need <= cover {
+                continue;
+            }
+            let lack = need - cover;
+            if weight <= 0.0 {
+                let each = lack / cell.colspan as f32;
                 have[cell.col..end].iter_mut().for_each(|w| *w += each);
+            } else {
+                for (slot, wt) in have[cell.col..end].iter_mut().zip(&weights) {
+                    *slot += lack * (wt / weight);
+                }
             }
         }
     }
@@ -15215,6 +15281,7 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
                 grid_skip: raw.grid_skip,
                 borders: raw.borders,
                 style_fill: false,
+                pref: raw.pref,
             });
             if open.len() < col + span {
                 open.resize(col + span, None);
