@@ -30,6 +30,11 @@
 //! deleted nested table (Word 16 oracle on #1680, 2026-10-23). The
 //! comparer leaves such a revision where it drops an empty paragraph
 //! (#1686); moving it joined two of the revised cell's paragraphs.
+//!
+//! A body that ends in a table never emits the cell's inserted mark
+//! (#1683). This pass writes it on the paragraph before. The same pass
+//! moves an inserted closing paragraph back across a deleted table onto
+//! the body's empty close, which is where Word leaves it, unmarked.
 
 use crate::namespaces::W;
 use crate::revision_processor::RevisionIds;
@@ -38,6 +43,14 @@ use crate::xmllinq::{Dom, NodeId, XName};
 
 /// Settle every cell's final mark under `root`.
 pub fn settle_cell_final_marks(dom: &mut Dom, root: NodeId) {
+    if let Some(body) = dom.element(root, &W::body()) {
+        // After every mark-writing pass: the inserted paragraph and the
+        // deleted table are both finished here (#1683, case 2).
+        crate::comparer::finalize::pair_closing_insert_across_deleted_table(dom, body);
+    }
+    // The inserted mark was never written, so the loop below has nothing
+    // to move (#1683, case 1). Mint it before that loop.
+    mint_cell_insert_when_body_ends_in_table(dom, root);
     let cells = dom.descendants(root, Some(&W::tc()));
     let mut ids = None;
     for cell in cells {
@@ -130,6 +143,119 @@ fn settle(
         }
         None => unrevise(dom, last, kind),
     }
+}
+
+/// #1683, case 1. The cell's last paragraph is an insertion whose mark
+/// was never revised, because the body ends in this table (only deleted
+/// paragraphs follow it). Word writes `w:ins` on the paragraph before.
+/// A live paragraph after the table keeps the mark the comparer already
+/// emitted, and the loop below moves that one.
+fn mint_cell_insert_when_body_ends_in_table(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let cells = dom.descendants(root, Some(&W::tc()));
+    let mut ids = None;
+    for cell in cells {
+        let Some(table) = dom.ancestors(cell, Some(&W::tbl())).into_iter().next() else {
+            continue;
+        };
+        if dom.parent(table) != Some(body) || !body_tail_is_only_deletions(dom, body, table) {
+            continue;
+        }
+        let blocks = crate::validate::container_blocks(dom, cell);
+        let Some((&last, earlier)) = blocks.split_last() else {
+            continue;
+        };
+        let Some(&previous) = earlier.last() else {
+            continue;
+        };
+        if !dom.name_is(last, &W::p())
+            || !dom.name_is(previous, &W::p())
+            || !mark_is_unrevised(dom, last)
+            || !mark_is_unrevised(dom, previous)
+            || !content_is_only_insertions(dom, last)
+        {
+            continue;
+        }
+        let Some(source) = dom.descendants(last, Some(&W::ins())).into_iter().next() else {
+            continue;
+        };
+        let Some(author) = dom.attribute(source, &W::author()).map(str::to_string) else {
+            continue;
+        };
+        let date = dom.attribute(source, &W::date()).map(str::to_string);
+        let id = ids
+            .get_or_insert_with(|| {
+                RevisionIds::from_used(
+                    dom.descendants(root, None)
+                        .into_iter()
+                        .filter_map(|element| dom.attribute(element, &W::id())?.parse::<u64>().ok())
+                        .collect(),
+                )
+            })
+            .allocate();
+        let mark = dom.new_element(W::ins());
+        dom.set_attribute_value(mark, &W::id(), Some(&id.to_string()));
+        dom.set_attribute_value(mark, &W::author(), Some(&author));
+        if let Some(date) = &date {
+            dom.set_attribute_value(mark, &W::date(), Some(date));
+        }
+        let properties = mark_properties(dom, previous);
+        dom.add_first(properties, mark);
+    }
+}
+
+/// Nothing after `table` in `body` is live: only `w:sectPr` and paragraphs
+/// whose text is deleted.
+fn body_tail_is_only_deletions(dom: &Dom, body: NodeId, table: NodeId) -> bool {
+    let children = dom.elements(body, None);
+    let Some(at) = children.iter().position(|&child| child == table) else {
+        return false;
+    };
+    children[at + 1..]
+        .iter()
+        .all(|&child| dom.name_is(child, &W::sect_pr()) || paragraph_is_deletion_only(dom, child))
+}
+
+/// A paragraph Word deleted: no insertion, no live text, and a deletion
+/// in its content or on its mark.
+fn paragraph_is_deletion_only(dom: &Dom, paragraph: NodeId) -> bool {
+    if !dom.name_is(paragraph, &W::p()) || mark_revised_as(dom, paragraph, "ins") {
+        return false;
+    }
+    if !dom.descendants(paragraph, Some(&W::ins())).is_empty() {
+        return false;
+    }
+    let live_text = dom
+        .descendants(paragraph, Some(&W::t()))
+        .iter()
+        .any(|&text| !dom.value(text).trim().is_empty());
+    if live_text {
+        return false;
+    }
+    mark_revised_as(dom, paragraph, "del")
+        || !dom.descendants(paragraph, Some(&W::del())).is_empty()
+}
+
+/// No inserted, deleted, or move revision on `paragraph`'s mark.
+fn mark_is_unrevised(dom: &Dom, paragraph: NodeId) -> bool {
+    !mark_revised_as(dom, paragraph, "ins") && !mark_revised_as(dom, paragraph, "del")
+}
+
+/// Every child past `w:pPr` is a `w:ins`, and there is at least one.
+fn content_is_only_insertions(dom: &Dom, paragraph: NodeId) -> bool {
+    let mut saw = false;
+    for child in dom.elements(paragraph, None) {
+        if dom.name_is(child, &W::p_pr()) {
+            continue;
+        }
+        if !dom.name_is(child, &W::ins()) {
+            return false;
+        }
+        saw = true;
+    }
+    saw
 }
 
 /// Whether `paragraph`'s mark is revised as `kind` (`"ins"` or `"del"`)
