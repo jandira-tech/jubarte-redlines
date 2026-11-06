@@ -708,12 +708,18 @@ fn text_selection(
         })
     } else {
         let pattern = request.regex.as_deref().unwrap_or("");
+        if pattern.len() > 1024 {
+            return Err(super::err("USAGE", None, "regex pattern is too long".to_string()));
+        }
         let pattern = if request.ignore_case {
             format!("(?i){pattern}")
         } else {
             pattern.to_string()
         };
-        let compiled = regex::Regex::new(&pattern)
+        // Explicitly set a size limit (10MB) on compilation to prevent DoS (memory exhaustion/long compile times)
+        let compiled = regex::RegexBuilder::new(&pattern)
+            .size_limit(10 * 1024 * 1024)
+            .build()
             .map_err(|e| super::err("USAGE", None, format!("--regex does not compile: {e}")))?;
         Box::new(move |text: &str| compiled.is_match(text))
     };
