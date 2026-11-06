@@ -428,6 +428,27 @@ fn one_tag(part: &str) -> Option<Tag> {
     }
 }
 
+/// The formatting change's own tag. Words after ` re ` name the insertion,
+/// deletion or move it sits in, and they stay out of the change itself.
+pub(super) fn own_fmt_tag(text: &str) -> &str {
+    match text.split_once(" re ") {
+        Some((own, _)) => own,
+        None => text,
+    }
+}
+
+/// The formatting changes an id line's `fmt` clause names. Each tag may
+/// carry the change it sits in (`r95 @TL re r96 @RC`); the clause keeps
+/// the formatting change.
+pub(super) fn formatting_tags(text: &str) -> Option<Vec<Tag>> {
+    let own = text
+        .split("; ")
+        .map(own_fmt_tag)
+        .collect::<Vec<_>>()
+        .join("; ");
+    revision_tags(&own)
+}
+
 /// The parts of a plain nested revision note, its own change first: `r3
 /// Ben Ode (2026-…) re r1 Ana Lima (2026-…)`. `None` for any other
 /// comment text.
@@ -798,7 +819,7 @@ pub(super) fn note_formats(value: &str) -> Vec<(&'static str, Tag)> {
                 "endnotes" => "endnote",
                 _ => return None,
             };
-            Some((kind, revision_tags(entry)?.into_iter().next()?))
+            Some((kind, revision_tags(own_fmt_tag(entry))?.into_iter().next()?))
         })
         .collect()
 }
@@ -923,6 +944,7 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
                 let (tag, at) = change
                     .rsplit_once(" in ")
                     .map_or((change, None), |(tag, at)| (tag, Some(at)));
+                let tag = own_fmt_tag(tag);
                 // The grid's change has no author to name: `@??` on the
                 // table itself.
                 let grid = at.is_none() && tag.ends_with(&format!(" @{UNNAMED}"));
@@ -1571,7 +1593,7 @@ impl IdLine {
                 self.page_break = true;
                 self.page_break_change = first_tag(v).map(|tag| (kind == "page-break-ins", tag));
             }
-            Some(("fmt", v)) => self.fmt.extend(revision_tags(v).into_iter().flatten()),
+            Some(("fmt", v)) => self.fmt.extend(formatting_tags(v).into_iter().flatten()),
             Some(("rev", v)) => self.rev.extend(
                 revision_tags(v)
                     .into_iter()
