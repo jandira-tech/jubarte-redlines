@@ -89,19 +89,19 @@ fn a_paragraph_whose_runs_share_a_size_names_it() {
     ));
     let shown = view(&source);
     assert!(
-        shown.contains("<!-- p0 size 9pt -->\nNine **points**"),
+        shown.contains("<!-- p0 size 9pt, mark style -->\nNine **points**"),
         "{shown}"
     );
     assert!(
-        shown.contains("<!-- p1 center, size 10.5pt -->\nHalf"),
+        shown.contains("<!-- p1 center, size 10.5pt, mark style -->\nHalf"),
         "{shown}"
     );
     let again = write(&shown);
     assert_eq!(
         sizes(&document(&again)),
         [
-            (vec!["18".into(), "18".into()], Some("18".into())),
-            (vec!["21".into()], Some("21".into())),
+            (vec!["18".into(), "18".into()], None),
+            (vec!["21".into()], None),
         ]
     );
     assert_eq!(view(&again), shown);
@@ -157,7 +157,7 @@ fn cell_paragraphs_name_their_size_on_the_table_line() {
     ));
     let shown = view(&source);
     assert!(
-        shown.contains("<!-- t0 2x2, cells p0-p3 by row, p0-p2 size 9pt, p3 size 12pt -->"),
+        shown.contains("<!-- t0 2x2, cells p0-p3 by row, p0-p2 size 9pt mark style, p3 size 12pt mark style -->"),
         "{shown}"
     );
     let again = write(&shown);
@@ -191,7 +191,10 @@ fn a_tracked_insertion_and_deletion_keep_their_size() {
         r#"<w:del w:id="2" w:author="Ann Cole" w:date="2026-10-01T00:00:00Z"><w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:delText>old</w:delText></w:r></w:del></w:p>"#,
     ));
     let shown = view(&source);
-    assert!(shown.contains("<!-- p0 size 9pt -->"), "{shown}");
+    assert!(
+        shown.contains("<!-- p0 size 9pt, mark style -->"),
+        "{shown}"
+    );
     let again = write(&shown);
     let (runs, _) = &sizes(&document(&again))[0];
     assert_eq!(runs, &["18", "18", "18"], "{}", document(&again));
@@ -294,4 +297,24 @@ fn a_complex_script_size_of_its_own_stops_the_clause() {
     );
     let shown = view(&source);
     assert!(!shown.contains("size"), "{shown}");
+}
+
+#[test]
+fn a_mark_that_inherits_its_style_keeps_no_size_of_its_own() {
+    // The runs share 9pt. The first mark states no size, so it keeps the
+    // style. The second states the same size, so the clause still writes it.
+    let source = docx(concat!(
+        r#"<w:p><w:r><w:rPr><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr><w:t>Nine</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:rPr><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:pPr>"#,
+        r#"<w:r><w:rPr><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr><w:t>Same</w:t></w:r></w:p>"#,
+    ));
+    assert_eq!(sizes(&document(&source))[0].1, None);
+    let shown = view(&source);
+    assert!(id_line(&shown, "p0").contains("size 9pt"), "{shown}");
+    assert!(id_line(&shown, "p1").contains("size 9pt"), "{shown}");
+    let again = write(&shown);
+    let got = sizes(&document(&again));
+    assert_eq!(got[0].0, ["18"], "{}", document(&again));
+    assert_eq!(got[0].1.as_deref(), None, "{}", document(&again));
+    assert_eq!(got[1], (vec!["18".into()], Some("18".into())));
 }

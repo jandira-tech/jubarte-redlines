@@ -1087,6 +1087,8 @@ pub(crate) struct LineFacts<'a> {
     /// The paragraph has no text but keeps its own line for its marks,
     /// revisions or comments: `<!-- p4 -->` followed by `¶{r3 @AC}`.
     pub empty: bool,
+    /// The size is the runs', and the mark states none (`mark style`).
+    pub mark_inherits: bool,
     /// Tracked view: the printed tags of the paragraph's changes its text
     /// prints no tag for, `true` for an insertion (see [`unshown_tags`]).
     pub unshown: &'a [(bool, String)],
@@ -1154,6 +1156,13 @@ pub(crate) fn size_clause(half_points: u32) -> String {
         0 => format!("size {}pt", half_points / 2),
         _ => format!("size {}.5pt", half_points / 2),
     }
+}
+
+/// The mark states no `w:sz`, so a size the runs share stays off it.
+pub(crate) fn mark_keeps_style(p: &Element) -> bool {
+    p.path(&["pPr", "rPr"])
+        .and_then(|rpr| rpr.child("sz"))
+        .is_none()
 }
 
 /// The tags of the insertions, deletions and moves in paragraph `p` whose
@@ -2029,6 +2038,9 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     }
     if let Some(size) = f.size {
         clauses.push(size_clause(size));
+        if f.mark_inherits {
+            clauses.push("mark style".to_string());
+        }
     }
     match f.marker {
         Some("-") => clauses.push("bullet".to_string()),
@@ -3474,6 +3486,7 @@ mod tests {
             comments: &[],
             spans: &[],
             empty: false,
+            mark_inherits: false,
             unshown: &[],
             size: None,
         };
@@ -3504,6 +3517,7 @@ mod tests {
                 comments: &[],
                 spans: &[],
                 empty: false,
+                mark_inherits: false,
                 unshown: &[],
                 size: None,
             };
