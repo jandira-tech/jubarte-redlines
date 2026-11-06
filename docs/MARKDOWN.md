@@ -22,7 +22,10 @@ jubarte reads Markdown alongside Word documents:
 `jubarte convert FILE.docx -t md` prints the [agent view](#agent-view), as
 `jubarte read FILE` does: the Markdown with a YAML header, an id line before
 every paragraph and an id on every change and comment, which comes back
-whole through `jubarte convert FILE.md`. `-o FILE.md` writes it;
+whole through `jubarte convert FILE.md`. When one author's changes do not
+all share one timestamp, convert writes each change's date (as `read
+--dates` does) so the trip back to Word keeps it; a shared date stays in
+the authors header. `-o FILE.md` writes it;
 `--track-changes accept` or `reject` writes the text after Word's Accept
 All or Reject All.
 
