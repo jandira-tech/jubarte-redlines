@@ -1523,6 +1523,41 @@ pub(crate) fn unplaced_entry(change: &crate::changes::Change, handles: &Handles)
     }
 }
 
+/// The header's `unplaced:` entries: each change no other line shows, and,
+/// for a row or cell, one more entry at every later paragraph a change
+/// inside it sits in. The later entry is the same mark. The reader keeps
+/// the first paragraph only.
+pub(crate) fn unplaced_entries(
+    changes: &[crate::changes::Change],
+    printed: &HashSet<String>,
+    handles: &Handles,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for change in changes.iter().filter(|c| !printed.contains(&c.id)) {
+        out.push(unplaced_entry(change, handles));
+        if !matches!(change.target, "table_row" | "table_cell") {
+            continue;
+        }
+        let Some(home) = change.paragraph.as_deref() else {
+            continue;
+        };
+        let mut more: Vec<&str> = changes
+            .iter()
+            .filter(|inner| inner.inside.as_deref() == Some(change.id.as_str()))
+            .filter_map(|inner| inner.paragraph.as_deref())
+            .filter(|paragraph| *paragraph != home)
+            .collect();
+        more.sort_unstable();
+        more.dedup();
+        for paragraph in more {
+            let mut continued = change.clone();
+            continued.paragraph = Some(paragraph.to_string());
+            out.push(unplaced_entry(&continued, handles));
+        }
+    }
+    out
+}
+
 /// A whole story part's changes (a header, a footer, one note) whose id
 /// `shown` prints no tag for, as printed tags: insertions, deletions and
 /// moves, each `true` for an insertion (`rev`/`rev-del`), then formatting
