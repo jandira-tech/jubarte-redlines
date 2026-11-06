@@ -3702,6 +3702,11 @@ impl Writer<'_> {
             self.drawing_text(element, out, extra);
             return;
         }
+        // A picture in a box stays in that box's payload. A nested token
+        // would be relabeled to an image and the box could not be written.
+        if self.in_box && drawing::is_plain_inline(element) {
+            return;
+        }
         if !self.in_box
             && drawing::is_plain_inline(element)
             && let Some(doc_pr) = element.find("docPr")
