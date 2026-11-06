@@ -736,7 +736,7 @@ impl Opened {
         Self::open_within(bytes, crate::admission::InputLimits::default())
     }
 
-    fn open_within(
+    pub(crate) fn open_within(
         bytes: &[u8],
         limits: crate::admission::InputLimits,
     ) -> Result<Self, InspectError> {
