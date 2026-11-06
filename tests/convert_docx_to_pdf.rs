@@ -3796,6 +3796,106 @@ fn an_unbreakable_word_wider_than_its_column_refits_an_autofit_table() {
     );
 }
 
+fn agreed_tcw_gap(rows: [[(&str, &str); 2]; 2]) -> (f32, f32) {
+    // Letter, Calibri 11, 1in margins, no borders. Grid 2400/6000, tblW auto.
+    let styles = "<w:docDefaults><w:rPrDefault><w:rPr>\
+        <w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/><w:sz w:val=\"22\"/>\
+        </w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>\
+        <w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/>\
+        </w:pPr></w:pPrDefault></w:docDefaults>";
+    let cell = |text: &str, tcw: &str| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW {tcw}/></w:tcPr>\
+             <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+        )
+    };
+    let body_rows: String = rows
+        .iter()
+        .map(|row| {
+            format!(
+                "<w:tr>{}{}</w:tr>",
+                cell(row[0].0, row[0].1),
+                cell(row[1].0, row[1].1)
+            )
+        })
+        .collect();
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+         {body_rows}</w:tbl>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+         w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&docx_with_settings_and_styles(&body, "", styles)).expect("agreed tcw");
+    (
+        pdf_glyph_text_xy(&pdf, "LABEL:").expect("LABEL:").0,
+        pdf_glyph_text_xy(&pdf, "VALUE").expect("VALUE").0,
+    )
+}
+
+#[test]
+fn a_consistent_cell_width_replaces_the_autofit_grid() {
+    // Word convert, Letter, Calibri 11. On a 2400/6000 autofit grid, a
+    // width repeated by every cell replaces the grid. 4000 twips puts
+    // VALUE 200.07pt after LABEL. Fifty percent does the same with the
+    // page when the text is wider than the page (234.53pt) and with the
+    // text when it is not (32.76pt). A later row that asks for a
+    // different width, and a width equal to the grid, stay 120.03pt after.
+    let dxa = |w: &str| format!(r#"w:w="{w}" w:type="dxa""#);
+    let pct = r#"w:w="2500" w:type="pct""#;
+    let d4000 = dxa("4000");
+    let d2400 = dxa("2400");
+    let d6000 = dxa("6000");
+    let d2000 = dxa("2000");
+    let d4000b = dxa("4000");
+    let (label, value) = agreed_tcw_gap([
+        [("LABEL:", d4000.as_str()), ("VALUE", d4000b.as_str())],
+        [("second", d4000.as_str()), ("more", d4000b.as_str())],
+    ]);
+    let word = 272.09 - 72.02;
+    assert!(
+        (value - label - word).abs() < 1.0,
+        "a repeated twip width replaces the grid; LABEL {label}, VALUE {value}, Word gap {word}"
+    );
+    let long = "AAAA ".repeat(24) + "AAAA";
+    let (label, value) = agreed_tcw_gap([
+        [("LABEL:", pct), ("VALUE", pct)],
+        [("second", pct), (long.as_str(), pct)],
+    ]);
+    let half = 306.55 - 72.02;
+    assert!(
+        (value - label - half).abs() < 1.0,
+        "a repeated percent width shares the page; LABEL {label}, VALUE {value}, Word gap {half}"
+    );
+    let (label, value) = agreed_tcw_gap([
+        [("LABEL:", pct), ("VALUE", pct)],
+        [("second", pct), ("more", pct)],
+    ]);
+    let fitted = 104.78 - 72.02;
+    assert!(
+        (value - label - fitted).abs() < 1.0,
+        "a repeated percent width stays with the text; LABEL {label}, VALUE {value}, Word gap {fitted}"
+    );
+    let kept = 192.05 - 72.02;
+    let (label, value) = agreed_tcw_gap([
+        [("LABEL:", d2400.as_str()), ("VALUE", d6000.as_str())],
+        [("second", d2000.as_str()), ("more", d4000.as_str())],
+    ]);
+    assert!(
+        (value - label - kept).abs() < 1.0,
+        "rows that disagree keep the grid; LABEL {label}, VALUE {value}, Word gap {kept}"
+    );
+    let (label, value) = agreed_tcw_gap([
+        [("LABEL:", d2400.as_str()), ("VALUE", d6000.as_str())],
+        [("second", d2400.as_str()), ("more", d6000.as_str())],
+    ]);
+    assert!(
+        (value - label - kept).abs() < 1.0,
+        "a width equal to the grid stays there; LABEL {label}, VALUE {value}, Word gap {kept}"
+    );
+}
+
 #[test]
 fn contextual_spacing_drops_only_the_flagged_paragraphs_share_of_the_gap() {
     // Word 16 probe_cx (2026-10-01), two Normal paragraphs, compat 15:

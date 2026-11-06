@@ -10119,7 +10119,12 @@ fn unclamped_col_widths(
     if let Some(widths) = zero_pct_column_widths(fonts, cols, rows, geom, avail) {
         return widths;
     }
-    let widths = table_col_widths(cols, geom, avail);
+    let mut widths = table_col_widths(cols, geom, avail);
+    // A width every single-span cell repeats replaces this grid. Rows
+    // that disagree, a span, and a fixed table leave it alone.
+    if let Some(agreed) = agreed_column_widths(fonts, rows, geom, avail, widths.len()) {
+        widths = agreed;
+    }
     // An autofit column is at least its longest word: Word widens a tcW
     // too narrow for one, and the grid it saved over the same table width
     // is that result (72dcf4dc: tcW 1530 under "complementary", grid 1762
@@ -10147,6 +10152,97 @@ fn unclamped_col_widths(
         return autofit_to_words(fonts, widths, rows, geom, avail);
     }
     widths
+}
+
+/// Widths an autofit table's cells all repeat. A twip width is that
+/// width. A percent width is its share of the measure when any column's
+/// text is wider than its share, and each column's own text otherwise.
+fn agreed_column_widths(
+    fonts: &Fonts,
+    rows: &[Vec<TableCell>],
+    geom: &TableGeom,
+    avail: f32,
+    n: usize,
+) -> Option<Vec<f32>> {
+    if n == 0 || geom.fixed || geom.grid_padded || !matches!(geom.width, TblWidth::Grid) {
+        return None;
+    }
+    let same = |a: PrefWidth, b: PrefWidth| match (a, b) {
+        (PrefWidth::Dxa(x), PrefWidth::Dxa(y)) => (x - y).abs() < 0.5,
+        (PrefWidth::Pct(x), PrefWidth::Pct(y)) => (x - y).abs() < 0.001,
+        _ => false,
+    };
+    let mut agreed = vec![None; n];
+    for cell in rows.iter().flatten() {
+        if cell.grid_skip {
+            continue;
+        }
+        if cell.colspan != 1 || cell.col >= n {
+            return None;
+        }
+        match agreed[cell.col] {
+            Some(prev) if same(prev, cell.pref) => {}
+            None => agreed[cell.col] = Some(cell.pref),
+            Some(_) => return None,
+        }
+    }
+    if agreed.iter().any(Option::is_none) {
+        return None;
+    }
+    let prefs: Vec<PrefWidth> = agreed.into_iter().flatten().collect();
+    if prefs
+        .iter()
+        .all(|pref| matches!(pref, PrefWidth::Dxa(w) if *w > 0.0))
+    {
+        return Some(
+            prefs
+                .iter()
+                .map(|pref| match *pref {
+                    PrefWidth::Dxa(w) => w,
+                    _ => 0.0,
+                })
+                .collect(),
+        );
+    }
+    if !prefs
+        .iter()
+        .all(|pref| matches!(pref, PrefWidth::Pct(p) if *p > 0.0))
+    {
+        return None;
+    }
+    let measure = (avail + geom.pct_margins).max(0.0);
+    let sum_p: f32 = prefs
+        .iter()
+        .map(|pref| match *pref {
+            PrefWidth::Pct(p) => p,
+            _ => 0.0,
+        })
+        .sum();
+    if sum_p <= 0.0 {
+        return None;
+    }
+    let shares: Vec<f32> = prefs
+        .iter()
+        .map(|pref| match *pref {
+            PrefWidth::Pct(p) => measure * p / sum_p,
+            _ => 0.0,
+        })
+        .collect();
+    let mut maxima = vec![0.0_f32; n];
+    for cell in rows.iter().flatten() {
+        if cell.grid_skip || cell.colspan != 1 || cell.col >= n {
+            continue;
+        }
+        let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
+        let content = cell_content_extent(fonts, cell).1;
+        maxima[cell.col] = maxima[cell.col].max(content + pads);
+    }
+    let over = maxima.iter().sum::<f32>() > measure + 0.5
+        || maxima
+            .iter()
+            .zip(&shares)
+            .any(|(max, share)| *max > *share + 0.5);
+    if over { Some(shares) } else { Some(maxima) }
 }
 
 /// Word's autofit widens a column narrower than its longest word to it,
