@@ -80,11 +80,51 @@ fn finish(
     }
 }
 
+/// One destination, however it is spelled. A leading `.` and a `..` that
+/// stays inside the path name the same file, and so does a name that differs
+/// only by case.
+fn destination_key(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push("..");
+                }
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    if normalized.as_os_str().is_empty() {
+        normalized.push(".");
+    }
+    let mut current = normalized;
+    for _ in 0..40 {
+        let Ok(target) = std::fs::read_link(&current) else {
+            break;
+        };
+        current = match current.parent() {
+            Some(dir) if target.is_relative() => dir.join(target),
+            _ => target,
+        };
+    }
+    let name = current
+        .file_name()
+        .map(|name| name.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let parent = match current.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    std::fs::canonicalize(&parent).unwrap_or(parent).join(name)
+}
+
 fn transaction<B: Backend>(
     backend: &mut B,
     files: &[(PathBuf, &[u8])],
 ) -> Result<PublishReport, PublishError> {
-    let mut staged = Vec::with_capacity(files.len());
+    let mut staged: Vec<(PathBuf, B::Staged)> = Vec::with_capacity(files.len());
     let mut committed = Vec::new();
     let failure = |source: io::Error, path: &Path, committed: &[PathBuf], durability_uncertain| {
         PublishError {
@@ -99,7 +139,10 @@ fn transaction<B: Backend>(
     };
     let result = (|| {
         for (path, bytes) in files {
-            if staged.iter().any(|(previous, _)| previous == path) {
+            if staged
+                .iter()
+                .any(|(previous, _)| destination_key(previous) == destination_key(path))
+            {
                 return Err(failure(
                     io::Error::new(io::ErrorKind::InvalidInput, "duplicate output path"),
                     path,
@@ -1043,5 +1086,33 @@ mod tests {
         assert!(error.committed.is_empty());
         assert_eq!(fs.visible, Memory::new(None).visible);
         assert!(transaction(&mut fs, &[]).is_ok());
+    }
+
+    #[test]
+    fn aliased_destinations_publish_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let previous = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp.path()).unwrap();
+        struct Restore(PathBuf);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                let _ = std::env::set_current_dir(&self.0);
+            }
+        }
+        let _restore = Restore(previous);
+        let first = PathBuf::from("a");
+        let second = PathBuf::from("./a");
+        assert_ne!(first, second);
+        let error = publish_paths(&[(first, b"1"), (second, b"2")], false).unwrap_err();
+        assert!(
+            error.source.to_string().contains("duplicate output path"),
+            "{error}"
+        );
+        assert!(error.committed.is_empty(), "{error}");
+        assert!(
+            !temp.path().join("a").exists(),
+            "a refused set must not publish"
+        );
+        assert_no_partials(temp.path());
     }
 }
