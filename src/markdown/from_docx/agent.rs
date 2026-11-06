@@ -882,13 +882,28 @@ pub(crate) fn comment_anchors(e: &Element, out: &mut HashSet<String>) {
 /// counts once.
 pub(super) fn shown_children(e: &Element) -> Vec<&Element> {
     if e.is("AlternateContent") {
-        e.child("Choice")
-            .or_else(|| e.child("Fallback"))
-            .into_iter()
-            .collect()
+        shown_branch(e).into_iter().collect()
     } else {
         e.elements().collect()
     }
+}
+
+/// The branch Word shows. A Choice whose Requires names a namespace Word
+/// does not know is passed over for a later Choice, then the Fallback.
+pub(super) fn shown_branch(alternate: &Element) -> Option<&Element> {
+    alternate
+        .elements()
+        .find(|child| child.is("Choice") && requires_understood(child))
+        .or_else(|| alternate.child("Fallback"))
+}
+
+fn requires_understood(choice: &Element) -> bool {
+    crate::comparer::finalize::requires_list_understood(choice.attr("Requires"), |prefix| {
+        choice
+            .namespaces
+            .get(prefix)
+            .is_some_and(|uri| crate::comparer::finalize::word_understands_namespace(uri))
+    })
 }
 
 /// Whether `e` holds text the view shows: Word's Fallback copy of a text

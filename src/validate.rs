@@ -2131,10 +2131,7 @@ fn check_nested_text_boxes(pkg: &PartFs, out: &mut Vec<Finding>) {
                 continue;
             }
             let ancestors = dom.ancestors(node, None);
-            if ancestors
-                .iter()
-                .any(|&a| dom.name(a).is_some_and(|n| n == MC::name("Fallback")))
-            {
+            if crate::comparer::finalize::in_unselected_alternate(&dom, node) {
                 continue;
             }
             if let Some(&outer) = ancestors
