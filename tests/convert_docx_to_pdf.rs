@@ -3325,6 +3325,100 @@ fn a_table_right_after_another_starts_at_its_left_edge() {
 }
 
 #[test]
+fn a_table_of_another_style_keeps_its_own_centre() {
+    // Word's PDF of two centred auto tables on a 12240 by 15840 page with
+    // 1440 margins. Grid then Plain: A1 at 79.7 and B1 at 85.7, six points
+    // apart, B's own centre (B alone, with no style, is 86.18). The same
+    // pair with no styles, and a pair that differs only by direct borders,
+    // both sit at 79.94.
+    let single = r#"<w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders>"#;
+    let nil = r#"<w:tblBorders><w:top w:val="nil"/><w:left w:val="nil"/><w:bottom w:val="nil"/><w:right w:val="nil"/><w:insideH w:val="nil"/><w:insideV w:val="nil"/></w:tblBorders>"#;
+    let styles = format!(
+        r#"<w:style w:type="table" w:styleId="Grid"><w:name w:val="Grid"/><w:tblPr>{single}</w:tblPr></w:style><w:style w:type="table" w:styleId="Plain"><w:name w:val="Plain"/><w:tblPr>{nil}</w:tblPr></w:style>"#
+    );
+    let table = |grid: &[u32], texts: &[&str], style: &str, borders: &str| {
+        let cols: String = grid
+            .iter()
+            .map(|w| format!(r#"<w:gridCol w:w="{w}"/>"#))
+            .collect();
+        let cells: String = grid
+            .iter()
+            .zip(texts)
+            .map(|(w, t)| {
+                format!(
+                    r#"<w:tc><w:tcPr><w:tcW w:w="{w}" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>{t}</w:t></w:r></w:p></w:tc>"#
+                )
+            })
+            .collect();
+        let style_xml = if style.is_empty() {
+            String::new()
+        } else {
+            format!(r#"<w:tblStyle w:val="{style}"/>"#)
+        };
+        format!(
+            r#"<w:tbl><w:tblPr>{style_xml}<w:tblW w:w="0" w:type="auto"/><w:jc w:val="center"/>{borders}</w:tblPr><w:tblGrid>{cols}</w:tblGrid><w:tr>{cells}</w:tr></w:tbl>"#
+        )
+    };
+    let sect = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let styles_for_x = styles;
+    let x_of = |body: String, text: &str| {
+        let pdf = docx_to_pdf(&docx_with_settings_and_styles(
+            &format!("{body}{sect}"),
+            "",
+            &styles_for_x,
+        ))
+        .expect("tables");
+        pdf_glyph_text_xy(&pdf, text).expect(text).0
+    };
+    let wide = |style: &str, borders: &str| {
+        table(
+            &[1866, 2872, 2330, 1994],
+            &["A1", "A2", "A3", "A4"],
+            style,
+            borders,
+        )
+    };
+    let narrow = |style: &str, borders: &str| table(&[2745, 6068], &["B1", "B2"], style, borders);
+    let paired = format!("{}{}", wide("Grid", ""), narrow("Plain", ""));
+    let a1 = x_of(paired.clone(), "A1");
+    let b1 = x_of(paired, "B1");
+    let alone = x_of(narrow("Plain", ""), "B1");
+    let word_gap = 85.7 - 79.7;
+    assert!(
+        (b1 - alone).abs() < 0.6,
+        "a different table style keeps B on its own centre; alone {alone}, A1 {a1}, B1 {b1}"
+    );
+    assert!(
+        (b1 - a1 - word_gap).abs() < 1.0,
+        "Word places that centre 6pt right of A (A1 79.7, B1 85.7); A1 {a1}, B1 {b1}"
+    );
+    let same_body = format!("{}{}", wide("", ""), narrow("", ""));
+    let same = (x_of(same_body.clone(), "A1"), x_of(same_body, "B1"));
+    assert!(
+        (same.1 - same.0).abs() < 0.3,
+        "one style still shares A's edge (Word 79.94); A1 {}, B1 {}",
+        same.0,
+        same.1
+    );
+    let border_body = format!("{}{}", wide("", single), narrow("", nil));
+    let bordered = (x_of(border_body.clone(), "A1"), x_of(border_body, "B1"));
+    assert!(
+        (bordered.1 - bordered.0).abs() < 0.3,
+        "direct borders still share A's edge (Word 79.94); A1 {}, B1 {}",
+        bordered.0,
+        bordered.1
+    );
+    let shared_body = format!("{}{}", wide("Grid", ""), narrow("Grid", ""));
+    let shared = (x_of(shared_body.clone(), "A1"), x_of(shared_body, "B1"));
+    assert!(
+        (shared.1 - shared.0).abs() < 0.3,
+        "the same table style still joins; A1 {}, B1 {}",
+        shared.0,
+        shared.1
+    );
+}
+
+#[test]
 fn contextual_spacing_drops_only_the_flagged_paragraphs_share_of_the_gap() {
     // Word 16 probe_cx (2026-10-01), two Normal paragraphs, compat 15:
     // the gap is max(after, before) split into A's after and B's excess

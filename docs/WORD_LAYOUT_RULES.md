@@ -299,6 +299,12 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   - A fixed-layout table after an autofit one keeps its own place (j6,
     j9; 0bf5192ed0's alternating tables). Row `jc` and tracked table, row
     or cell property changes play no part (j11-j13; 29379c0 bisect).
+  - Two flow tables whose `tblStyle` differs also keep their own places.
+    A centred wide Grid table then a centred narrow Plain table starts
+    the second at its own centre, 85.7 against the first table's 79.7.
+    The same tables with one style, or with only their direct borders
+    different, still share the first table's left edge (79.94). A
+    `tblLayout` of `fixed` on an auto-width table does not split them.
   - Open: Word shares one grid across the joined rows (29379c0's first
     rows take the third table's 2065/6997 columns, and one row is
     centred on its own); jubarte keeps each table's own grid.

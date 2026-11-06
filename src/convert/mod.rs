@@ -2149,6 +2149,9 @@ struct TableGeom {
     /// `w:tblCellSpacing` in points: Word leaves twice it between cells
     /// and around them.
     cell_spacing: f32,
+    /// `w:tblStyle/@w:val`, when the table names one. Adjacent flow tables
+    /// join only when this matches, including when both are absent.
+    style_id: Option<String>,
 }
 
 /// Preferred table width from `tblW`. Word `pct` is 50ths of a percent
@@ -9948,9 +9951,10 @@ fn para_is_empty_toc_field(dom: &Dom, para: NodeId) -> bool {
 }
 
 /// Whether the table at `i` joins the one straight before it. Word joins
-/// only flow tables of one layout type: a fixed table after an autofit
-/// one keeps its own place (probe_adj j6, j9; 0bf5192ed0's alternating
-/// tables).
+/// only flow tables of one layout type and one table style: a fixed table
+/// after an autofit one keeps its own place (probe_adj j6, j9;
+/// 0bf5192ed0's alternating tables), and so does a table whose `tblStyle`
+/// differs. Direct borders do not split them.
 fn table_joins_previous(blocks: &[Block], i: usize) -> bool {
     let Some(Block::Table { geom, .. }) = blocks.get(i) else {
         return false;
@@ -9958,7 +9962,9 @@ fn table_joins_previous(blocks: &[Block], i: usize) -> bool {
     geom.float.is_none()
         && i.checked_sub(1).is_some_and(|j| {
             matches!(&blocks[j], Block::Table { geom: prev, .. }
-                if prev.float.is_none() && prev.fixed == geom.fixed)
+                if prev.float.is_none()
+                    && prev.fixed == geom.fixed
+                    && prev.style_id == geom.style_id)
         })
 }
 
@@ -14328,6 +14334,7 @@ fn table_block(
                     && matches!(table_pref_width(dom, table), TblWidth::Grid)
                     && (foreign_grid || cells_foreign),
                 cell_spacing: tbl_spacing,
+                style_id: table_style_id(dom, table).map(str::to_owned),
             })
         },
         // Moved last: the geometry above reads them.
@@ -48082,6 +48089,7 @@ mod regression_tests {
             pct_rules: 0.0,
             content_autofit: false,
             cell_spacing: 0.0,
+            style_id: None,
         }
     }
 
@@ -59022,6 +59030,23 @@ mod rendering_uncovered_contract_tests {
         ] {
             assert!(!table_joins_previous(&blocks, 1));
         }
+        let styled = |id: &str| {
+            format!(
+                "<w:tbl><w:tblPr><w:tblStyle w:val=\"{id}\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"1440\"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+            )
+        };
+        for (a, b, join) in [("Grid", "Grid", true), ("Grid", "Plain", false)] {
+            let blocks = vec![parsed_table(&styled(a)), parsed_table(&styled(b))];
+            assert_eq!(table_joins_previous(&blocks, 1), join, "{a} then {b}");
+        }
+        let blocks = vec![
+            parsed_table(&styled("Grid")),
+            parsed_table(&fragment(false)),
+        ];
+        assert!(
+            !table_joins_previous(&blocks, 1),
+            "a styled table does not join an unstyled one"
+        );
     }
 
     fn drawing_dom(fragment: &str) -> (Dom, NodeId) {
