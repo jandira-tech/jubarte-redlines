@@ -663,3 +663,31 @@ When format tracking is enabled, its history contains the complete original
 paragraph properties so rejection restores the authored title spacing.
 Disabling format tracking retains the existing behavior without a property
 history. This improves source reconstruction over Word's empty snapshot.
+
+### Reject All of paired move ranges holding untracked paragraphs (#1245)
+
+Reject All of a synthetic move whose ranges hold untracked paragraphs. This
+is `jubarte convert --track-changes reject`, not a `--revisions word`
+switch. The probe is `normal`, a `moveFromRange` named `m1` around the
+untracked paragraph `movedaway`, `second`, then a `moveToRange` named `m1`
+around the untracked paragraph `landed`.
+
+Word 16's recorded Reject All is `normal, landed, second`: it moves the
+destination paragraph back to the source position and drops what the source
+range held. `jubarte convert --track-changes reject` is
+`normal, movedaway, second`: it keeps the source paragraph and drops the
+destination. `jubarte reject` is `normal, movedaway, second, landed`: the
+range markers are not a listed change, so that command leaves the probe as
+it stands. Accept All through `jubarte convert --track-changes accept`
+agrees with Word: `normal, second, landed`.
+
+The bench corpus has none of this shape. 0 of 471 bench docx
+(22 move ranges) hold untracked text inside a move range.
+0 of 975 docx (32 move ranges) do. A typical Word move wraps
+its text in `w:moveFrom` and `w:moveTo`. We keep both jubarte results.
+Copying Word would change Reject for a shape the corpus does not contain.
+
+The Word backend's compare and convert routes do not apply Reject All, so
+a pair whose ranges hold different numbers of paragraphs was not rejected
+there. The Word result above is the recorded Word 16 Reject All of this
+probe. A convert of the probe is the live document, markup included.

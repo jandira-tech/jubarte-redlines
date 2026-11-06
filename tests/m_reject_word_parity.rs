@@ -1894,6 +1894,62 @@ fn reject_keeps_an_orphan_move_to_range_s_unwrapped_paragraph() {
     );
 }
 
+/// #1245: a paired move whose ranges hold untracked paragraphs. Word 16's
+/// recorded Reject All moves the destination back (`normal, landed,
+/// second`). `convert --track-changes reject` keeps the source
+/// (`normal, movedaway, second`). `reject_changes` leaves the probe as it
+/// stands, because the markers are not a listed change. The bench corpus
+/// has none of this shape, so both results stay and the difference is
+/// recorded in `docs/WORD_DIFFERENCES.md`.
+#[test]
+fn reject_of_paired_untracked_move_ranges_keeps_the_source_paragraph() {
+    let body = r#"<w:p><w:r><w:t>normal</w:t></w:r></w:p>
+<w:moveFromRangeStart w:id="1" w:name="m1" w:author="Alice" w:date="2026-01-01T00:00:00Z"/>
+<w:p><w:r><w:t>movedaway</w:t></w:r></w:p>
+<w:moveFromRangeEnd w:id="1"/>
+<w:p><w:r><w:t>second</w:t></w:r></w:p>
+<w:moveToRangeStart w:id="2" w:name="m1" w:author="Alice" w:date="2026-01-01T00:00:00Z"/>
+<w:p><w:r><w:t>landed</w:t></w:r></w:p>
+<w:moveToRangeEnd w:id="2"/>"#;
+    let pkg = docx(body);
+    let selective =
+        jubarte::changes::reject_changes(&pkg, &jubarte::changes::ChangeFilter::default())
+            .expect("reject_changes");
+    assert_eq!(
+        paragraphs(&selective),
+        ["normal", "movedaway", "second", "landed"],
+        "reject_changes changed the untracked probe"
+    );
+    let rejected = reject_revisions(&pkg).expect("reject_revisions");
+    assert_eq!(
+        paragraphs(&rejected),
+        ["normal", "movedaway", "second"],
+        "convert reject moved the destination back"
+    );
+    let accepted = accept_revisions(&pkg).expect("accept_revisions");
+    assert_eq!(
+        paragraphs(&accepted),
+        ["normal", "second", "landed"],
+        "convert accept diverged from the recorded Word Accept All"
+    );
+    let record = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/docs/WORD_DIFFERENCES.md"
+    ))
+    .unwrap();
+    assert!(
+        record.contains("#1245")
+            && record.contains("normal, landed, second")
+            && record.contains("normal, movedaway, second")
+            && record.contains("normal, movedaway, second, landed")
+            && record.contains("0 of 471")
+            && record.contains("22 move ranges")
+            && record.contains("0 of 975")
+            && record.contains("32 move ranges"),
+        "WORD_DIFFERENCES does not record the #1245 difference and the corpus count"
+    );
+}
+
 /// The first section's page setup: half-inch margins.
 const SECTION_ONE: &str = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr>"#;
 
