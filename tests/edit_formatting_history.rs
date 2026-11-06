@@ -978,16 +978,30 @@ fn empty_text_then_tab() -> Vec<u8> {
 /// Formatting record `id` sits on a run that also holds the tab.
 fn record_holds_tab(bytes: &[u8], id: &str) -> bool {
     let (dom, root) = dom(bytes);
-    dom.descendants(root, Some(&W::name("rPrChange")))
-        .into_iter()
-        .any(|change| {
-            dom.attribute(change, &W::id()) == Some(id)
-                && dom
-                    .ancestors(change, None)
-                    .into_iter()
-                    .find(|&ancestor| dom.name_is(ancestor, &W::r()))
-                    .is_some_and(|run| dom.element(run, &W::name("tab")).is_some())
-        })
+    let mut found = false;
+    let r_pr_change = W::name("rPrChange");
+    let attr_id = W::id();
+    let r_name = W::r();
+    let tab_name = W::name("tab");
+
+    dom.for_each_descendant_element(root, Some(&r_pr_change), |change| {
+        if found {
+            return;
+        }
+        if dom.attribute(change, &attr_id) == Some(id) {
+            let mut cur = dom.parent(change);
+            while let Some(ancestor) = cur {
+                if dom.name_is(ancestor, &r_name) {
+                    if dom.element(ancestor, &tab_name).is_some() {
+                        found = true;
+                    }
+                    break; // stop at closest w:r
+                }
+                cur = dom.parent(ancestor);
+            }
+        }
+    });
+    found
 }
 
 #[test]
