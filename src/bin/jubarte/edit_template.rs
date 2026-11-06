@@ -23,6 +23,36 @@ fn failure(code: &str, message: impl Into<String>) -> Failure {
             .with_commit_state(CommitState::NotCommitted),
     )
 }
+fn keep_authored_rows(plan: &mut v2::PlanV2, carried: &v2::PlanV2) {
+    plan.author.clone_from(&carried.author);
+    plan.date.clone_from(&carried.date);
+    for operation in &mut plan.operations {
+        let v2::Operation::Rewrite {
+            target,
+            text,
+            attached_comment,
+            ..
+        } = operation
+        else {
+            continue;
+        };
+        let Some(v2::Operation::Rewrite {
+            text: authored,
+            attached_comment: note,
+            ..
+        }) = carried.operations.iter().find(|row| {
+            matches!(
+                row,
+                v2::Operation::Rewrite { target: found, .. } if found.short_id == target.short_id
+            )
+        })
+        else {
+            continue;
+        };
+        text.clone_from(authored);
+        attached_comment.clone_from(note);
+    }
+}
 fn read(path: &Path) -> Result<Vec<u8>, Failure> {
     std::fs::read(path).map_err(|e| failure("IO_ERROR", format!("reading {}: {e}", path.display())))
 }
@@ -56,6 +86,14 @@ fn generate(
                 "plan and report name the same file",
             ));
         }
+    }
+    if let Some(carried) = &options.refresh_plan
+        && paths.iter().any(|path| same_path(path, carried))
+    {
+        return Err(failure(
+            "OUTPUT_ALIAS",
+            "the generated plan aliases the carried plan",
+        ));
     }
     let mut generated = template::generate(
         source,
@@ -92,6 +130,22 @@ fn generate(
     .map_err(|e| failure(&e.code, e.message))?;
     if options.keep_others || super::env_keep_others() {
         generated.plan.others = Some(jubarte::edit::Others::Keep);
+    }
+    if let Some(path) = &options.refresh_plan {
+        let carried = read(path)?;
+        let carried = std::str::from_utf8(&carried).map_err(|error| {
+            failure(
+                "INVALID_UTF8",
+                format!("reading {}: {error}", path.display()),
+            )
+        })?;
+        let carried =
+            v2::PlanV2::from_json(carried).map_err(|error| failure(&error.code, error.message))?;
+        keep_authored_rows(&mut generated.plan, &carried);
+        generated
+            .plan
+            .validate()
+            .map_err(|error| failure(&error.code, error.message))?;
     }
     let mut data = ResultData::new(Phase::Generated, Effect::NotApplied);
     data.generation =

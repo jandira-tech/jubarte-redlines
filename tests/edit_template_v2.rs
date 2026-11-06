@@ -2536,22 +2536,29 @@ mod generator {
             .iter()
             .position(|arg| *arg == "--existing-revisions")
             .unwrap();
-        let author = format!("--author={}", q["author"].as_str().unwrap());
+        let refresh = argv
+            .iter()
+            .position(|arg| *arg == "--refresh-plan")
+            .unwrap();
         assert_eq!(
-            &argv[policy_index..argv.len() - 2],
+            &argv[policy_index..refresh],
             [
                 "--existing-revisions",
                 q["policy"]["existing_revisions"].as_str().unwrap(),
                 "--track",
                 q["policy"]["track"].as_str().unwrap(),
-                &author,
-                "--datetime",
-                q["date"].as_str().unwrap(),
-                "--expect-sha256",
-                q["source"]["sha256"].as_str().unwrap(),
             ]
         );
-        assert_eq!(arguments("--author"), [q["author"].as_str().unwrap()]);
+        assert_eq!(
+            Path::new(argv[refresh + 1]).canonicalize().unwrap(),
+            plan_path.canonicalize().unwrap()
+        );
+        assert_eq!(
+            &argv[refresh + 2..argv.len() - 2],
+            ["--expect-sha256", q["source"]["sha256"].as_str().unwrap()]
+        );
+        assert!(arguments("--author").is_empty());
+        assert!(arguments("--datetime").is_empty());
         assert_eq!(
             arguments("--expect-sha256"),
             [q["source"]["sha256"].as_str().unwrap()]
@@ -2582,7 +2589,15 @@ mod generator {
             .collect();
         assert_eq!(targets.join(","), ids);
         for (row, text) in rows.iter().zip(expected) {
-            assert_eq!(row["text"], *text);
+            let id = row["target"]["short_id"].as_str().unwrap();
+            let authored = q["operations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|operation| operation["target"]["short_id"].as_str() == Some(id))
+                .unwrap();
+            assert_eq!(row["text"], authored["text"]);
+            assert_eq!(row["attached_comment"], authored["attached_comment"]);
             assert_eq!(row["before_sha256"], source_sha256(text.as_bytes()));
         }
         for field in ["source", "policy", "resolve_revisions", "author", "date"] {
@@ -2621,7 +2636,7 @@ mod generator {
             let action = regenerate_stale_rows(&s, &q, "p0", &["Payment is due within 30 days."]);
             assert_eq!(
                 action["purpose"],
-                "regenerate a new plan containing only the stale rows with their current working text; the original plan file is not changed; merge those rows into the original plan by hand"
+                "refresh before_sha256 for the stale rows and keep each original row's text and attached_comment; the original plan file is not changed"
             );
         }
     }
