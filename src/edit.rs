@@ -5912,7 +5912,20 @@ impl<'p> Transaction<'p> {
             .find(|&n| hint::Held::of(dom, n).is_some_and(|held| held != hint::Held::Inserted));
         match revision {
             Some(revision) => self.revision_hint(revision, &format!("{subject} is inside")),
-            None => format!("{subject} sits inside {}", self.opaque_structure(run)),
+            None => {
+                let holders = deleted_field_revisions(&self.opened.dom, run);
+                if holders.is_empty() {
+                    format!("{subject} sits inside {}", self.opaque_structure(run))
+                } else {
+                    // The result is visible, and the refusal names the
+                    // deletions of the field's characters (#1285).
+                    let mut lines = vec![format!("{subject} sits inside the result of a field")];
+                    for holder in holders {
+                        lines.push(self.revision_hint(holder, &format!("{subject} is inside")));
+                    }
+                    lines.join("\n")
+                }
+            }
         }
     }
 
@@ -8408,6 +8421,56 @@ fn locate(
 /// A run directly inside a paragraph's pending insertion is editable.
 /// Other wrappers and complex field results retain their refusal: an
 /// insertion around a field does not make that field ordinary text.
+/// The deleted field characters that enclose `run`: each `w:del` or
+/// `w:moveFrom` of a `begin` and its matching `end`. The result between
+/// them is still shown; an edit of it names these deletions (#1285).
+fn deleted_field_revisions(dom: &Dom, run: NodeId) -> Vec<NodeId> {
+    let Some(paragraph) = dom
+        .ancestors(run, None)
+        .into_iter()
+        .find(|&node| dom.name_is(node, &W::p()))
+    else {
+        return Vec::new();
+    };
+    let carrier = |node: NodeId| {
+        dom.ancestors(node, None).into_iter().find(|&ancestor| {
+            dom.name_is(ancestor, &W::del()) || dom.name_is(ancestor, &W::move_from())
+        })
+    };
+    let mut stack: Vec<Option<NodeId>> = Vec::new();
+    let mut open = Vec::new();
+    let mut found = false;
+    let mut holders = Vec::new();
+    for node in dom.descendants(paragraph, None) {
+        if !found && node == run {
+            found = true;
+            open = stack.iter().copied().flatten().collect();
+        }
+        if !dom.name_is(node, &W::fld_char()) {
+            continue;
+        }
+        match dom.attribute(node, &W::fld_char_type()) {
+            Some("begin") => stack.push(carrier(node)),
+            Some("end") => {
+                let Some(begin) = stack.pop().flatten() else {
+                    continue;
+                };
+                if found
+                    && open.contains(&begin)
+                    && let Some(end) = carrier(node)
+                {
+                    holders.push(begin);
+                    if end != begin {
+                        holders.push(end);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    holders
+}
+
 fn editable_insertion(dom: &Dom, piece: &Piece) -> Option<NodeId> {
     let run = run_of(piece);
     let ins = dom.parent(run).filter(|&n| dom.name_is(n, &W::ins()))?;
