@@ -1392,7 +1392,8 @@ ends with `--force`.
   says to read those lines (with no block left when only they changed).
   A story whose paragraphs carry their own text colour (`w:color`, when
   every text run sets the same one), borders (`w:pBdr`, in the table
-  border grammar), frame or indent, or differ in alignment, prints
+  border grammar), frame, indent, tab stops, spacing or shading, or
+  differ in alignment, prints
   paragraph by paragraph:
   `id: header1`, then `p0: {text: …, center, color: "595959", border:
   bottom single 0.5pt 8496B0 space 4pt}` for each, as a block in the first
@@ -1416,7 +1417,17 @@ ends with `--force`.
   map of its own because `left` and `right` alone are the alignment. A side
   it does not name or names twice, or a value that is not inches
   (`0.25in`) or is over 22in either way, does not read, and the story entry
-  with it.
+  with it. Its own tab stops (`w:tabs`) add `tabs: [center 4680, right
+  9360]`: each stop is its alignment (`left`, `center`, `right`,
+  `decimal`, `bar`, `clear`, `num`), an optional leader (`dot`, `hyphen`,
+  `underscore`, `heavy`, `middleDot`), and its position in twips, within
+  22in. Its own spacing (`w:spacing`) adds `spacing: "before 6pt, after
+  0pt, line 1"`, the same words a body paragraph's spacing uses. Its own
+  shading (`w:shd`) adds `shading: {val: clear, fill: FFFF00}` (`val`, and
+  `color` or `fill` as `auto` or six hex digits). The writer puts shading,
+  the stops and the spacing back after the borders and before the indent
+  and alignment. A stop, a spacing clause or a shading key that does not
+  read drops the story entry.
 - Page markers need the layout pass; `--no-page-markers` skips it. With
   `--json`, `--tables`, `--for-edit` or `-o FILE.json`, it is dropped with a
   warning (`warning: --no-page-markers dropped: no page markers in JSON,
