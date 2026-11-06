@@ -2665,3 +2665,56 @@ fn added_break_marks_take_unused_revision_ids() {
     ids.dedup();
     assert_eq!(ids.len(), all, "every revision id is unique: {xml}");
 }
+
+/// A comments part stored under another name still loses a comment whose
+/// only anchor accept deletes. A `commentReference` inside that part keeps
+/// no comment alive either.
+#[test]
+fn a_renamed_comments_part_loses_an_orphan_on_accept() {
+    let part = |body: &str| {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:comments xmlns:w="{}" xmlns:r="{}">{body}</w:comments>"#,
+            common::docx::W_NS,
+            common::docx::R_NS,
+        )
+    };
+    let noted = r#"<w:comment w:id="0" w:author="Ann" w:date="2026-01-01T00:00:00Z" w:initials="A"><w:p><w:r><w:t>Noted</w:t></w:r></w:p></w:comment>"#;
+    let source = common::docx::docx_with(
+        r#"<w:p><w:del w:id="1" w:author="Ann" w:date="2026-01-01T00:00:00Z"><w:commentRangeStart w:id="0"/><w:r><w:delText>Gone</w:delText></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r></w:del></w:p>"#,
+        &[Part {
+            name: "word/comments1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &part(noted),
+        }],
+    );
+    assert!(
+        part_string(&source, "word/comments1.xml")
+            .unwrap()
+            .contains(r#"w:id="0""#)
+    );
+    let accepted = accept_revisions(&source).unwrap();
+    let after = part_string(&accepted, "word/comments1.xml").unwrap_or_default();
+    assert!(
+        !after.contains("<w:comment "),
+        "comments:\n{after}\ndocument:\n{}",
+        part_string(&accepted, "word/document.xml").unwrap_or_default()
+    );
+    assert_word_valid_package(&accepted);
+
+    let echoed = r#"<w:comment w:id="0" w:author="Ann" w:date="2026-01-01T00:00:00Z" w:initials="A"><w:p><w:r><w:commentReference w:id="0"/></w:r><w:r><w:t>Noted</w:t></w:r></w:p></w:comment>"#;
+    let echoed_src = common::docx::docx_with(
+        r#"<w:p><w:r><w:t>Host</w:t></w:r></w:p>"#,
+        &[Part {
+            name: "word/comments1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &part(echoed),
+        }],
+    );
+    let echoed_out = accept_revisions(&echoed_src).unwrap();
+    let echoed_xml = part_string(&echoed_out, "word/comments1.xml").unwrap_or_default();
+    assert!(!echoed_xml.contains("<w:comment "), "{echoed_xml}");
+    assert_word_valid_package(&echoed_out);
+}
