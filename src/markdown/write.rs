@@ -3575,6 +3575,19 @@ impl<'o, 'a> Writer<'o, 'a> {
                         comment.paragraphs.push(String::new());
                     }
                 }
+                Token::InsertStart
+                | Token::InsertEnd
+                | Token::DeleteStart
+                | Token::DeleteEnd
+                | Token::SubstituteStart
+                | Token::SubstituteSeparator
+                | Token::SubstituteEnd => {
+                    if let Some(comment) = &mut self.comment
+                        && let Some(last) = comment.paragraphs.last_mut()
+                    {
+                        last.push(critic::stand_in(token));
+                    }
+                }
                 _ => {}
             }
             return;
