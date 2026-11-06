@@ -1058,6 +1058,30 @@ fn words_between_deleted_field_markers_stay_the_field_result() {
 }
 
 #[test]
+fn accepting_a_deleted_field_drops_its_result() {
+    // Begin, instruction and end are tracked-deleted. The result between
+    // them is not. Word's Accept All drops that result with the field
+    // (#1285); keeping it leaves the words as plain text.
+    let source = docx(&format!(
+        r#"<w:p><w:del w:id="1" w:author="Bob" w:date="{OLD_DATE}"><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:delInstrText xml:space="preserve"> TITLE </w:delInstrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r></w:del><w:ins w:id="6" w:author="Alice" w:date="{OLD_DATE}"><w:r><w:t>alpha beta gamma</w:t></w:r></w:ins><w:del w:id="2" w:author="Bob" w:date="{OLD_DATE}"><w:r><w:fldChar w:fldCharType="end"/></w:r></w:del></w:p>"#
+    ));
+    let accepted = accept_changes(&source, &ChangeFilter::default()).expect("accept");
+    let document = part_string(&accepted, "word/document.xml").unwrap();
+    assert!(
+        !document.contains("alpha beta gamma"),
+        "accept kept the field result:\n{document}"
+    );
+    let e = apply_plan(&source, &plan("Carol Diaz", replace("beta", "delta"))).unwrap_err();
+    assert!(
+        e.message.contains("the result of a field")
+            && e.message.contains("Bob")
+            && e.message.contains("r1")
+            && e.message.contains("r2"),
+        "the refusal should name Bob's field deletion:\n{e}"
+    );
+}
+
+#[test]
 fn word_fixture_split_keeps_existing_nested_deletion_in_order() {
     let (source_dom, source_p) = tree(WORD);
     let original = source_dom

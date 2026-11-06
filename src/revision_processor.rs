@@ -4079,6 +4079,65 @@ fn mark_emptied_controls(dom: &mut Dom, root: NodeId) {
 
 // ─────────────── A.10 — the full AcceptRevisionsForPart pipeline ────────────
 
+/// The `w:del` or `w:moveFrom` that holds `node`, when accept will remove it.
+fn accept_deleted(dom: &Dom, node: NodeId) -> Option<NodeId> {
+    dom.ancestors(node, None).into_iter().find(|&ancestor| {
+        dom.name_is(ancestor, &W::del()) || dom.name_is(ancestor, &W::move_from())
+    })
+}
+
+/// Spans whose field characters accept removes: the deletion that holds the
+/// `begin` and the one that holds the matching `end`.
+fn deleted_field_spans(dom: &Dom, root: NodeId) -> Vec<(NodeId, NodeId)> {
+    let mut stack: Vec<(NodeId, bool)> = Vec::new();
+    let mut spans = Vec::new();
+    for fld in dom.descendants(root, Some(&W::fld_char())) {
+        let deleted = accept_deleted(dom, fld);
+        match dom.attribute(fld, &W::fld_char_type()) {
+            Some("begin") => stack.push((deleted.unwrap_or(fld), deleted.is_some())),
+            Some("end") => {
+                let Some((begin, begin_deleted)) = stack.pop() else {
+                    continue;
+                };
+                if begin_deleted && let Some(end) = deleted {
+                    spans.push((begin, end));
+                }
+            }
+            _ => {}
+        }
+    }
+    spans
+}
+
+/// Accept drops the result of a field whose begin and end are both
+/// tracked-deleted. Those characters may be two deletions with the result
+/// between them; Word removes the result with the field (#1285). A result
+/// already inside the same deletion needs nothing: accept removes it.
+fn drop_deleted_field_results(dom: &mut Dom, root: NodeId) {
+    let spans = deleted_field_spans(dom, root);
+    for (begin_del, end_del) in spans {
+        if begin_del == end_del {
+            continue;
+        }
+        let Some(parent) = dom.parent(begin_del) else {
+            continue;
+        };
+        if dom.parent(end_del) != Some(parent) {
+            continue;
+        }
+        let between: Vec<NodeId> = dom
+            .elements(parent, None)
+            .into_iter()
+            .skip_while(|&child| child != begin_del)
+            .skip(1)
+            .take_while(|&child| child != end_del)
+            .collect();
+        for child in between {
+            dom.remove(child);
+        }
+    }
+}
+
 /// A.10 — `AcceptRevisionsForPart` (:1314) at content scope: the exact
 /// 15-step transform order. `contains_move_from` is captured AFTER the
 /// field-code fixup but BEFORE AcceptMoveFromMoveTo consumes the `w:moveFrom`
@@ -4124,6 +4183,9 @@ fn accept_content(
         bookmarks::drop_wholly_deleted_bookmarks(dom, e);
         drop_wholly_deleted_permissions(dom, e);
         let e = fix_up_deleted_or_inserted_field_codes_transform(dom, e);
+        // #1285: a field whose begin and end are both deleted takes its
+        // result with it. The result may sit outside those deletions.
+        drop_deleted_field_results(dom, e);
         let contains_move_from = !dom.descendants(e, Some(&W::move_from())).is_empty();
         let e = {
             let v = accept_move_from_move_to_transform(dom, e);
