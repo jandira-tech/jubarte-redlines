@@ -8,7 +8,7 @@
 //! comment's head (`c5 @AC: `, `c6 @AS re c5: `, `c7 @AC resolved: `).
 //! `jubarte read` writes them (`from_docx::agent`, `from_docx::header`).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::xml::Label;
 
@@ -662,6 +662,8 @@ pub(super) struct TableLine {
     /// The grid columns each row leaves out before and after its cells
     /// (`gaps t0.row1 before 1; t0.row2 after 1`), by row.
     pub gaps: HashMap<usize, (usize, usize)>,
+    /// Cell paragraphs whose size stays on the runs (`mark style`).
+    pub mark_inherits: HashSet<usize>,
 }
 
 /// The mark a cell paragraph's own changes give it, when they name one:
@@ -835,6 +837,7 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         row_marks: BTreeMap::new(),
         cell_marks: BTreeMap::new(),
         gaps: HashMap::new(),
+        mark_inherits: HashSet::new(),
     };
     for (i, clause) in split_clauses(rest).into_iter().enumerate() {
         // `p5 center`: a cell paragraph aligned against its column.
@@ -855,7 +858,7 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         // cell paragraphs' own spacing and text size.
         if let Some((at, tail)) = clause.split_once(' ')
             && let Some((first, count)) = paragraph_range(at)
-            && let Some((spacing, size)) = spacing_words(tail)
+            && let Some((spacing, size, inherits)) = spacing_words(tail)
         {
             for n in first..first + count {
                 if !spacing.is_empty() {
@@ -863,6 +866,9 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
                 }
                 if let Some(size) = size {
                     parsed.sizes.insert(n, size);
+                    if inherits {
+                        parsed.mark_inherits.insert(n);
+                    }
                 }
             }
             continue;
@@ -1376,6 +1382,8 @@ pub(super) struct IdLine {
     pub size: Option<u32>,
     /// The paragraph holds a page break (`page-break`).
     pub page_break: bool,
+    /// The size names the runs, and the mark keeps the style (`mark style`).
+    pub mark_inherits: bool,
     /// The page break's tracked change, `true` for an insertion
     /// (`page-break-ins r5 @AC`, `page-break-del r5 @AC`).
     pub page_break_change: Option<(bool, Tag)>,
@@ -1481,6 +1489,7 @@ impl IdLine {
             Some(("size", v)) => {
                 self.size = super::xml::size_half_points(v).or(self.size);
             }
+            Some(("mark", "style")) => self.mark_inherits = true,
             Some(("level", v)) => self.level = v.parse().ok().filter(|&n| n <= 8),
             Some(("outline", v)) => self.outline = v.parse().ok().filter(|&n| (1..=9).contains(&n)),
             // A mark has one change: the first tag names it.
@@ -1511,11 +1520,19 @@ impl IdLine {
 /// `before 2pt after 2pt line 8.65pt exact size 9pt`: a cell paragraph's
 /// spacing and text size on the table line, the id line's clauses joined
 /// by spaces. `None` unless every word is one of them.
-fn spacing_words(text: &str) -> Option<(super::xml::Spacing, Option<u32>)> {
+fn spacing_words(text: &str) -> Option<(super::xml::Spacing, Option<u32>, bool)> {
     let mut spacing = super::xml::Spacing::default();
     let mut size = None;
+    let mut inherits = false;
     let mut words = text.split(' ').peekable();
     while let Some(word) = words.next() {
+        if word == "mark" {
+            if words.next()? != "style" {
+                return None;
+            }
+            inherits = true;
+            continue;
+        }
         let mut value = words.next()?.to_string();
         if word == "size" {
             size = Some(super::xml::size_half_points(&value)?);
@@ -1528,7 +1545,7 @@ fn spacing_words(text: &str) -> Option<(super::xml::Spacing, Option<u32>)> {
         }
         spacing.clause(word, &value)?;
     }
-    (!spacing.is_empty() || size.is_some()).then_some((spacing, size))
+    (!spacing.is_empty() || size.is_some()).then_some((spacing, size, inherits))
 }
 
 /// `c5 c6`: the comment numbers of an `in` clause.
