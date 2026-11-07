@@ -931,17 +931,6 @@ fn requires_understood(choice: &Element) -> bool {
     })
 }
 
-/// Whether `e` holds text the view shows: Word's Fallback copy of a text
-/// box is not shown.
-/// Whether a row's cells hold text inside changes of their own: Word's
-/// shape for a row it inserts or deletes, the row's mark and each run's.
-/// The row's mark then goes on the table line (`rev r80 @AL in t0.row1`)
-/// and the text keeps its own tags; a row whose text has none lends it the
-/// row's tag instead.
-pub(crate) fn row_text_marked(tr: &Element) -> bool {
-    super::row_cells(tr).any(text_marked)
-}
-
 /// Whether a cell's own text (not a nested table's) is inside changes of
 /// its own: a cell's insertion or deletion then stays on the table line,
 /// as a row's does.
@@ -967,6 +956,8 @@ fn any_revision(e: &Element) -> bool {
         .any(|c| is_revision(c.local()) || any_revision(c))
 }
 
+/// Whether `e` holds text the view shows. Word's Fallback copy of a text
+/// box is not shown.
 fn shows_text(e: &Element) -> bool {
     shown_children(e).into_iter().any(|c| {
         matches!(c.local(), "t" | "delText" | "instrText" | "delInstrText") || shows_text(c)
@@ -2662,22 +2653,20 @@ pub(crate) fn table_line(
             let at = format!(" in t{t}.row{r}");
             changes_in(tr.child("trPr"), &at, &mut fmt);
             changes_in(tr.child("tblPrEx"), &at, &mut fmt);
-            // A row's insertion or deletion tags its cells' text; a row
-            // with no text, or whose text has marks of its own, names it
-            // here.
-            if !shows_text(tr) || row_text_marked(tr) {
-                for mark in tr
-                    .child("trPr")
-                    .into_iter()
-                    .flat_map(|e| e.elements())
-                    .filter(|e| matches!(e.local(), "ins" | "del"))
-                {
-                    let tag = format!("{}{at}", format_tag(&required_date_tag_of(mark, handles)));
-                    if mark.local() == "del" {
-                        rev_del.push(tag);
-                    } else {
-                        revs.push(tag);
-                    }
+            // A row's own insertion or deletion is named here. Cell text
+            // with no marks of its own still shows the row's tag; the
+            // writer puts the mark back on the row from this clause.
+            for mark in tr
+                .child("trPr")
+                .into_iter()
+                .flat_map(|e| e.elements())
+                .filter(|e| matches!(e.local(), "ins" | "del"))
+            {
+                let tag = format!("{}{at}", format_tag(&required_date_tag_of(mark, handles)));
+                if mark.local() == "del" {
+                    rev_del.push(tag);
+                } else {
+                    revs.push(tag);
                 }
             }
         }
