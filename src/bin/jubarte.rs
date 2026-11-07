@@ -2594,7 +2594,7 @@ fn write_edited(
     // `--in-place` authorizes the input only. A PDF, a PNG page or a
     // failed-op plan that already exists still needs `--force`.
     if let Some((taken, _)) = outputs.iter().find(|(output, _)| {
-        !job.force && !(job.in_place && output == job.file) && output.symlink_metadata().is_ok()
+        !(job.force || (job.in_place && output == job.file)) && output.symlink_metadata().is_ok()
     }) {
         return Err(taken_output(taken));
     }
@@ -5160,7 +5160,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         let unc = r"\\server\share\x.png";
-        std::fs::write(root.join(unc), b"secret").unwrap();
         assert_eq!(
             image_policy(&root, unc),
             Err("a network path"),
