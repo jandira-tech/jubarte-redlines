@@ -93,3 +93,75 @@ unknown-registry = "deny"
 unknown-git = "warn"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = ["https://github.com/jandira-tech/ooxmlsdk"]
+
+# Closed inventory of crates whose build scripts may run. This list is
+# an inventory, not a sandbox: cargo-deny does not constrain what the
+# scripts execute. libmimalloc-sys compiles mimalloc's C and is the
+# reviewed exception for default fast-alloc. ring, alloca, and
+# libfuzzer-sys also compile C; pyo3-ffi links libpython. The other
+# names are cfg or rustc probes. Procedural macros appear here only
+# when they also have a build script. Published crates in this list
+# shipped no native executable under the default executable lint.
+[bans.build]
+# Scan this crate too. The checksum bypass below skips the walk while
+# build.rs is unchanged, so the root check and the nested graphs agree.
+include-workspace = true
+allow-build-scripts = [
+    "ahash",
+    "alloca",
+    "cap-primitives",
+    "cap-std",
+    "crc32fast",
+    "crossbeam-deque",
+    "crossbeam-epoch",
+    "crossbeam-utils",
+    "curve25519-dalek",
+    "encoding_rs",
+    "getrandom",
+    "httparse",
+    "io-extras",
+    "io-lifetimes",
+    "jsonschema-value",
+    "jubarte-redlines",
+    "libc",
+    "libfuzzer-sys",
+    "libm",
+    "libmimalloc-sys",
+    "nix",
+    "num-traits",
+    "parking_lot_core",
+    "proc-macro2",
+    "pulldown-cmark",
+    "pyo3",
+    "pyo3-ffi",
+    "pyo3-macros-backend",
+    "quote",
+    "rayon-core",
+    "ref-cast",
+    "ring",
+    "rustix",
+    "rustls",
+    "rustversion",
+    "self_update",
+    "serde",
+    "serde_core",
+    "serde_json",
+    "target-lexicon",
+    "thiserror",
+    "unicode-general-category",
+    "wasm-bindgen",
+    "wasm-bindgen-shared",
+    "winapi",
+    "windows_x86_64_gnu",
+    "windows_x86_64_msvc",
+    "zerocopy",
+    "zmij",
+]
+
+# This package root is the repository, so the file walk would treat
+# unrelated tools and local environments as crate files. The build
+# script only records the version. The checksum skips that walk until
+# the script itself changes.
+[[bans.build.bypass]]
+name = "jubarte-redlines"
+build-script = "e0180992bf7eeb204ceac3cf8882d78a0acbca893149f5079c1458fcb45d1050"
