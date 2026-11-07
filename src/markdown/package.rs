@@ -442,6 +442,64 @@ fn unique_revision_ids(package: &mut PartFs, markdown: &str, warnings: &mut Vec<
             crate::xmllinq::serialize::serialize_document(&dom, document).into_bytes(),
         );
     }
+    warn_when_separate_tags_touch(package, markdown, warnings);
+}
+
+/// A logical change whose marks the markdown named on separate tags reads
+/// back as one change. Say so. A tag that already names every mark, and a
+/// mark the markdown never named, are the writer's own grouping.
+fn warn_when_separate_tags_touch(package: &PartFs, markdown: &str, warnings: &mut Vec<String>) {
+    let mut tags: Vec<(&str, BTreeSet<String>)> = Vec::new();
+    let mut named = BTreeSet::new();
+    for word in markdown
+        .split(|c: char| c.is_whitespace() || matches!(c, '{' | '}' | ';' | ',' | '"' | '\''))
+    {
+        let Ok(ids) = crate::ids::parse_change_ids(word) else {
+            continue;
+        };
+        let shorts: BTreeSet<String> = ids.iter().map(crate::ids::ChangeId::short).collect();
+        if shorts.is_empty() {
+            continue;
+        }
+        named.extend(shorts.iter().cloned());
+        tags.push((word, shorts));
+    }
+    for change in crate::changes::logical_changes_in(package) {
+        let members: Vec<&str> = change.element_ids().collect();
+        if members.len() < 2 || members.iter().any(|id| !named.contains(*id)) {
+            continue;
+        }
+        let one_tag_names_every_mark = tags
+            .iter()
+            .any(|(_, shorts)| members.iter().all(|id| shorts.contains(*id)));
+        if one_tag_names_every_mark {
+            continue;
+        }
+        let mut tokens = Vec::new();
+        for (token, shorts) in &tags {
+            if shorts.iter().any(|id| members.contains(&id.as_str())) && !tokens.contains(token) {
+                tokens.push(*token);
+            }
+        }
+        if tokens.len() < 2 {
+            continue;
+        }
+        warnings.push(format!(
+            "{} touch in the DOCX, so they read back as one change, {}",
+            listed(&tokens),
+            change.id
+        ));
+    }
+}
+
+/// `r1 and r2`, or `r1, r2 and r3`.
+fn listed(tokens: &[&str]) -> String {
+    match tokens {
+        [one] => (*one).to_string(),
+        [first, second] => format!("{first} and {second}"),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        [] => String::new(),
+    }
 }
 
 /// The byte range of the root element's start tag, `<` up to its `>`: the
