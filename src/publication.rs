@@ -459,6 +459,55 @@ impl Drop for StagedFile {
         let _ = self.cleanup();
     }
 }
+
+/// Attributes that belong to the destination and must move onto the staged
+/// inode. A kernel security label stays behind: the kernel applies it, and
+/// refusing the replacement because that label cannot be reset would fail
+/// an ordinary publish.
+#[cfg(unix)]
+fn copy_replaced_xattrs(from: &cap_std::fs::File, to: &cap_std::fs::File) -> io::Result<()> {
+    use std::os::unix::io::{AsRawFd, RawFd};
+    use xattr::FileExt;
+
+    struct Handle<'a>(&'a cap_std::fs::File);
+
+    impl AsRawFd for Handle<'_> {
+        fn as_raw_fd(&self) -> RawFd {
+            self.0.as_raw_fd()
+        }
+    }
+
+    impl xattr::FileExt for Handle<'_> {}
+
+    let from = Handle(from);
+    let to = Handle(to);
+    let names = match from.list_xattr() {
+        Ok(names) => names,
+        Err(error) if error.kind() == io::ErrorKind::Unsupported => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for name in names {
+        if !replaced_xattr(&name) {
+            continue;
+        }
+        if let Some(value) = from.get_xattr(&name)? {
+            to.set_xattr(&name, &value)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+fn replaced_xattr(name: &std::ffi::OsStr) -> bool {
+    let bytes = name.as_encoded_bytes();
+    bytes.starts_with(b"user.") || bytes.starts_with(b"system.posix_acl_")
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn replaced_xattr(name: &std::ffi::OsStr) -> bool {
+    !name.as_encoded_bytes().starts_with(b"system.")
+}
+
 impl Backend for FsBackend<'_> {
     type Staged = StagedFile;
     fn stage(&mut self, path: &Path) -> io::Result<StagedFile> {
@@ -512,6 +561,14 @@ impl Backend for FsBackend<'_> {
             Err(e) if e.kind() == io::ErrorKind::NotFound => (),
             Err(e) => return Err(e),
         }
+        // Open the destination before `parent` and `target` move into the
+        // staged file. The attributes are read from this handle.
+        #[cfg(unix)]
+        let source = if permissions.is_some() {
+            Some(parent.open(&target)?)
+        } else {
+            None
+        };
         let builder = DirBuilder::new();
         #[cfg(unix)]
         let builder = {
@@ -548,11 +605,14 @@ impl Backend for FsBackend<'_> {
                 )?,
         );
         if let Some(permissions) = permissions {
-            staged
-                .file
-                .as_ref()
-                .expect("open staging file")
-                .set_permissions(permissions)?;
+            let file = staged.file.as_ref().expect("open staging file");
+            file.set_permissions(permissions)?;
+            // Mode bits are on the staged inode. Attributes are not, and the
+            // later rename drops whatever still sits on the old inode.
+            #[cfg(unix)]
+            if let Some(source) = source.as_ref() {
+                copy_replaced_xattrs(source, file)?;
+            }
         }
         Ok(staged)
     }
@@ -779,6 +839,51 @@ mod tests {
             report.contains("symlink"),
             "swapped symlink was not reported: {report}"
         );
+    }
+
+    /// A forced replacement keeps a user attribute that lived on the old inode.
+    #[cfg(unix)]
+    #[test]
+    fn a_forced_replacement_keeps_the_destination_user_xattr() {
+        let temp = tempfile::tempdir().unwrap();
+        let output = temp.path().join("output");
+        std::fs::write(&output, b"old").unwrap();
+        set_user_xattr(&output, "kept");
+        let report = publish_paths(&[(output.clone(), b"new")], true).unwrap();
+        assert!(report.warnings.is_empty(), "{report:?}");
+        assert_eq!(std::fs::read(&output).unwrap(), b"new");
+        assert_eq!(
+            user_xattr(&output).as_deref(),
+            Some(b"kept".as_slice()),
+            "overwrite dropped the destination extended attribute"
+        );
+    }
+
+    #[cfg(unix)]
+    fn set_user_xattr(path: &Path, value: &str) {
+        let status = std::process::Command::new("python3")
+            .args([
+                "-c",
+                "import os, sys; os.setxattr(sys.argv[1], 'user.jubarte', sys.argv[2].encode())",
+            ])
+            .arg(path)
+            .arg(value)
+            .status()
+            .expect("python3 sets the attribute");
+        assert!(status.success(), "could not set the user attribute");
+    }
+
+    #[cfg(unix)]
+    fn user_xattr(path: &Path) -> Option<Vec<u8>> {
+        let output = std::process::Command::new("python3")
+            .args([
+                "-c",
+                "import os, sys; sys.stdout.buffer.write(os.getxattr(sys.argv[1], 'user.jubarte'))",
+            ])
+            .arg(path)
+            .output()
+            .expect("python3 reads the attribute");
+        output.status.success().then_some(output.stdout)
     }
 
     #[test]
