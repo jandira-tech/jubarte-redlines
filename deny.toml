@@ -103,6 +103,8 @@ allow-build-scripts = [
     "alloca",
     "cap-primitives",
     "cap-std",
+    # zip 9.4.2 depends on this crate. Its build script only sets rustc cfgs.
+    "constant_time_eq",
     "crc32fast",
     "crossbeam-deque",
     "crossbeam-epoch",

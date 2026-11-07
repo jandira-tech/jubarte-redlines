@@ -43,6 +43,10 @@ fn build_scripts_are_a_closed_inventory() {
         names.contains(&"libmimalloc-sys"),
         "the native allocator exception libmimalloc-sys is not in the inventory: {names:?}"
     );
+    assert!(
+        names.contains(&"constant_time_eq"),
+        "constant_time_eq's rustc probe is not in the inventory: {names:?}"
+    );
 }
 
 /// Quoted crate names in the `allow-build-scripts` array. Comments are skipped.
