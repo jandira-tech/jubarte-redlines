@@ -877,6 +877,20 @@ fn to_json(value: &impl serde::Serialize) -> Result<String, JsValue> {
     serde_json::to_string(value).map_err(js_err)
 }
 
+/// `v1`, `flags`, `v2` or `typed`: the grammar a refusal quotes.
+fn quoting(syntax: Option<&str>) -> Result<jubarte::edit::PrepareOptions, String> {
+    Ok(jubarte::edit::PrepareOptions {
+        syntax: match syntax.unwrap_or("v1") {
+            "v1" => jubarte::edit::PlanSyntax::V1,
+            "flags" => jubarte::edit::PlanSyntax::Flags,
+            "v2" => jubarte::edit::PlanSyntax::V2,
+            "typed" => jubarte::edit::PlanSyntax::Typed,
+            other => return Err(format!("unknown plan syntax {other:?}")),
+        },
+        ..Default::default()
+    })
+}
+
 /// Apply an edit plan (JSON) to a DOCX: the clean copy, the Word redline,
 /// the patch of the plan's changes and the per-operation report. `name`
 /// (default `document.docx`) is the file the patch names; under
@@ -889,47 +903,56 @@ pub fn apply_edit_plan(
     docx: &[u8],
     plan_json: &str,
     name: Option<String>,
+    syntax: Option<String>,
 ) -> Result<EditOutput, JsValue> {
-    Ok(match jubarte::edit::apply_plan_json(docx, plan_json) {
-        Ok(result) => {
-            let name = name.as_deref().unwrap_or("document.docx");
-            let patch_of =
-                if result.report.existing_revisions == jubarte::edit::ExistingRevisions::Keep {
-                    jubarte::markdown::patch_own_changes
-                } else {
-                    jubarte::markdown::patch_redline
-                };
-            let options = patch_options(name, name, &result.report.author, &result.report.date);
-            EditOutput {
-                ok: true,
-                json: to_json(&result.report)?,
-                patch: Some(
-                    patch_of(&result.redline, &options)
-                        .map_err(js_err)?
-                        .to_string(),
-                ),
-                clean: Some(result.clean),
-                redline: Some(result.redline),
+    let prepared = quoting(syntax.as_deref()).map_err(js_err)?;
+    Ok(
+        match jubarte::edit::apply_plan_json_with(docx, plan_json, &prepared) {
+            Ok(result) => {
+                let name = name.as_deref().unwrap_or("document.docx");
+                let patch_of =
+                    if result.report.existing_revisions == jubarte::edit::ExistingRevisions::Keep {
+                        jubarte::markdown::patch_own_changes
+                    } else {
+                        jubarte::markdown::patch_redline
+                    };
+                let options = patch_options(name, name, &result.report.author, &result.report.date);
+                EditOutput {
+                    ok: true,
+                    json: to_json(&result.report)?,
+                    patch: Some(
+                        patch_of(&result.redline, &options)
+                            .map_err(js_err)?
+                            .to_string(),
+                    ),
+                    clean: Some(result.clean),
+                    redline: Some(result.redline),
+                }
             }
-        }
-        Err(error) => EditOutput {
-            ok: false,
-            clean: None,
-            redline: None,
-            patch: None,
-            json: to_json(&error)?,
+            Err(error) => EditOutput {
+                ok: false,
+                clean: None,
+                redline: None,
+                patch: None,
+                json: to_json(&error)?,
+            },
         },
-    })
+    )
 }
 
 /// Resolve every operation of an edit plan without producing documents.
 ///
 /// Mirrors `jubarte::edit::preview_plan`.
 #[wasm_bindgen(js_name = previewEditPlan)]
-pub fn preview_edit_plan(docx: &[u8], plan_json: &str) -> Result<EditOutput, JsValue> {
+pub fn preview_edit_plan(
+    docx: &[u8],
+    plan_json: &str,
+    syntax: Option<String>,
+) -> Result<EditOutput, JsValue> {
+    let options = quoting(syntax.as_deref()).map_err(js_err)?;
     let resolved =
         jubarte::edit::EditPlan::from_json_with_notes(plan_json).and_then(|(plan, notes)| {
-            jubarte::edit::preview_plan(docx, &plan).map(|mut report| {
+            jubarte::edit::preview_plan_with(docx, &plan, &options).map(|mut report| {
                 report.notes = notes;
                 report
             })
@@ -2156,7 +2179,7 @@ mod tests {
         let source = word(OLD);
         let plan = r#"{"schema_version":1,"author":"Claude","date":"2026-09-25T12:00:00Z","operations":[
             {"kind":"replace","paragraph":{"index":1},"find":"30","replacement":"45"}]}"#;
-        let out = apply_edit_plan(&source, plan, None).unwrap();
+        let out = apply_edit_plan(&source, plan, None, None).unwrap();
         assert!(out.ok());
         assert_eq!(
             out.patch().unwrap(),
@@ -2164,14 +2187,19 @@ mod tests {
              @@ [p1] @@\nPayment is due in [-30-]{+45+} days.\n"
         );
         // The bundle's patch names the edited file, as the binary's does.
-        let named = apply_edit_plan(&source, plan, Some("terms.docx".into())).unwrap();
+        let named = apply_edit_plan(&source, plan, Some("terms.docx".into()), None).unwrap();
         assert!(
             named
                 .patch()
                 .unwrap()
                 .starts_with("--- a/terms.docx\n+++ b/terms.docx\t")
         );
-        assert!(preview_edit_plan(&source, plan).unwrap().patch().is_none());
+        assert!(
+            preview_edit_plan(&source, plan, None)
+                .unwrap()
+                .patch()
+                .is_none()
+        );
     }
 
     #[test]
@@ -2179,7 +2207,7 @@ mod tests {
         let source = word("Due in {~~30~>45~~} days.\n\nOther terms.\n");
         let plan = r#"{"schema_version":1,"author":"Claude","date":"2026-09-25T12:00:00Z","existing_revisions":"keep","operations":[
             {"kind":"replace","paragraph":{"index":1},"find":"Other","replacement":"Further"}]}"#;
-        let out = apply_edit_plan(&source, plan, None).unwrap();
+        let out = apply_edit_plan(&source, plan, None, None).unwrap();
         assert!(out.ok(), "{}", out.json());
         let patch = out.patch().unwrap();
         assert!(patch.contains("[-Other-]{+Further+}"), "{patch}");
@@ -2286,15 +2314,42 @@ mod tests {
             b"not a zip",
             r#"{"schema_version":1,"author":"A","operations":[]}"#,
             None,
+            None,
         )
         .unwrap();
         assert!(!out.ok());
         assert!(out.clean().is_none() && out.redline().is_none() && out.patch().is_none());
         let error: serde_json::Value = serde_json::from_str(&out.json()).unwrap();
         assert_eq!(error["code"], "INVALID_PACKAGE");
-        let preview = preview_edit_plan(b"x", "{").unwrap();
+        let preview = preview_edit_plan(b"x", "{", None).unwrap();
         assert!(!preview.ok());
         assert!(preview.json().contains("INVALID_PLAN"));
+    }
+
+    #[test]
+    fn a_flags_command_quotes_flags_in_a_refusal() {
+        let source = word(OLD);
+        let commented = jubarte::edit::apply_plan_json(
+            &source,
+            r#"{"schema_version":1,"author":"Ann Counsel","operations":[
+            {"kind":"comment","paragraph":{"index":1},"find":"30","text":"Why?"}]}"#,
+        )
+        .unwrap();
+        let plan = r#"{"schema_version":1,"author":"Bob Lee","others":"keep","operations":[
+            {"kind":"edit_comment","comment_id":0,"text":"Reworded."}]}"#;
+        let flags = apply_edit_plan(&commented.clean, plan, None, Some("flags".into())).unwrap();
+        assert!(!flags.ok());
+        let flags_message = flags.json();
+        assert!(
+            flags_message.contains("reply instead (-p c0 --reply TEXT)"),
+            "{flags_message}"
+        );
+        assert!(!flags_message.contains("reply_comment"), "{flags_message}");
+        let json = apply_edit_plan(&commented.clean, plan, None, Some("v1".into())).unwrap();
+        assert!(!json.ok());
+        let json_message = json.json();
+        assert!(json_message.contains("reply_comment"), "{json_message}");
+        assert!(!json_message.contains("--reply"), "{json_message}");
     }
 
     fn document_xml(docx: &[u8]) -> String {

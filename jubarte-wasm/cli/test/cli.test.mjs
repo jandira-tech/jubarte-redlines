@@ -732,6 +732,34 @@ test("edit and add write FILE_modified.docx, as the binary does (D15)", () => {
   assert.ok(forced.out.includes(`\nsource: ${written}\n`), forced.out);
 });
 
+const flagsSyntax = binding.applyEditPlan.length >= 4;
+test("a flags command quotes flags in a refusal, and a plan file quotes the plan", {
+  skip: !flagsSyntax && "the checked-in engine applies a plan as JSON; a rebuild ships the flags grammar",
+}, () => {
+  const para = JSON.parse(run("read", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
+  const word = para.text.split(" ")[0];
+  const commented = path.join(tmp, "flags-hint-commented.docx");
+  const added = run("add", untracked, "-p", `p${para.index}`, "--anchor", word, "--content", "Why?", "--author", "Ann Counsel", "-o", commented);
+  assert.equal(added.code, 0, added.err);
+  const kept = path.join(tmp, "flags-hint-kept.docx");
+  const refused = runEnv({ JUBARTE_KEEP_OTHERS: "1" }, "edit", commented, "-p", "c0", "--content", "Reworded.", "--author", "Bob Lee", "-o", kept);
+  assert.equal(refused.code, 3, refused.err);
+  assert.ok(refused.err.includes("reply instead (-p c0 --reply TEXT)"), refused.err);
+  assert.ok(!refused.err.includes("reply_comment"), refused.err);
+  assert.ok(!fs.existsSync(kept));
+  const plan = path.join(tmp, "flags-hint-plan.json");
+  fs.writeFileSync(plan, JSON.stringify({
+    schema_version: 1,
+    author: "Bob Lee",
+    others: "keep",
+    operations: [{ kind: "edit_comment", comment_id: 0, text: "Reworded." }],
+  }));
+  const json = run("edit", commented, "--plan", plan, "--dry-run");
+  assert.equal(json.code, 3, json.err);
+  assert.ok(json.err.includes("reply_comment"), json.err);
+  assert.ok(!json.err.includes("--reply"), json.err);
+});
+
 test("a bare --plan is FILE_plan.json, as the binary has it (D16)", () => {
   const para = JSON.parse(run("read", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
   const file = copy(untracked, "bare.docx");
