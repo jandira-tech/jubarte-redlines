@@ -46,6 +46,11 @@ pub(super) enum Content {
     Break,
     /// A page break (`w:br w:type="page"`).
     PageBreak,
+    /// A symbol (`w:sym`): the view's `<sym font="…" char="…"/>`.
+    Symbol {
+        font: String,
+        value: String,
+    },
     Tab,
     /// A footnote reference, by the footnote's position (1-based).
     NoteReference(u32),
@@ -2453,6 +2458,14 @@ fn write_run(
         }
         Content::Break => out.push_str("<w:br/>"),
         Content::PageBreak => out.push_str("<w:br w:type=\"page\"/>"),
+        Content::Symbol { font, value } => {
+            let _ = write!(
+                out,
+                "<w:sym w:font=\"{}\" w:char=\"{}\"/>",
+                escape(font),
+                escape(value)
+            );
+        }
         Content::Tab => out.push_str("<w:tab/>"),
         Content::FieldBegin(code) => {
             let element = if deleted {
