@@ -5732,12 +5732,13 @@ impl<'p> Transaction<'p> {
         self.paragraph_story.iter().filter(|(s, _)| *s == 0).count()
     }
 
-    /// Stories an operation of the plan edits.
+    /// Stories an operation of the plan edits. Page setup edits the body's
+    /// section properties, so that story is one of them.
     fn touched_stories(&self) -> std::collections::BTreeSet<usize> {
         self.resolved
             .iter()
             .flat_map(|(_, r)| match r {
-                Resolved::PageSetup { .. } => Vec::new(),
+                Resolved::PageSetup { .. } => vec![0],
                 Resolved::Text { para, .. }
                 | Resolved::CommentRange { para, .. }
                 | Resolved::CommentSpan { para, .. }
@@ -7903,10 +7904,11 @@ impl<'p> Transaction<'p> {
         if !nums.is_empty() {
             structural::splice_numbering(&mut self.opened.pkg, &main, &abstracts, &nums);
         }
-        // The body is always written; a story part only when an operation
-        // edits it, so untouched parts keep their exact bytes.
+        // A story is written only when an operation edits it, so an
+        // untouched main document keeps its exact bytes. A watermark that
+        // creates a header records that reference in the body and names
+        // the body among the stories it returns.
         let mut written = self.touched_stories();
-        written.insert(0);
         written.extend(self.apply_watermark()?);
         written.extend(self.notes_story);
         if let Some(request) = &self.settings {
