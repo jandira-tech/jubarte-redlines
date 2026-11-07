@@ -3537,6 +3537,13 @@ type ImageRefusals = std::rc::Rc<std::cell::RefCell<Vec<(String, &'static str)>>
 /// `path` names a URL (`scheme:…`): a scheme is a letter, then letters,
 /// digits and `+-.`, up to its `:`. A decoded absolute path (`C:\…`) is
 /// not a scheme; the containment check judges it.
+/// A UNC share (`\\server\share`, `//server/share`) or a device path
+/// (`\\?\`, `//./`), including after `%XX` decoding.
+fn network_or_device_path(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    bytes.starts_with(br"\\") || bytes.starts_with(b"//")
+}
+
 fn url_scheme(path: &str) -> bool {
     let Some((scheme, _)) = path.split_once(':') else {
         return false;
@@ -3575,9 +3582,15 @@ fn image_policy(root: &Path, name: &str) -> Result<PathBuf, &'static str> {
         }
     }
     let named = std::str::from_utf8(&decoded).map_err(|_| "not found")?;
+    // Decoded first, so an encoded prefix (`%5C%5Cserver`, `%2F%2Fserver`)
+    // is judged as the name it becomes. A UNC or device prefix is refused
+    // before `canonicalize`, which would contact that share.
+    if network_or_device_path(named) {
+        return Err("a network path");
+    }
     let path = PathBuf::from(named);
-    // Decoded first, so an encoded scheme (`file%3A%2F%2F…`, `DATA%3A`)
-    // is judged as what it names, not as an opaque relative path.
+    // An encoded scheme (`file%3A%2F%2F…`, `DATA%3A`) is judged as what it
+    // names, not as an opaque relative path.
     if !path.is_absolute() && url_scheme(named) {
         return Err("a URL scheme");
     }
@@ -5141,6 +5154,32 @@ mod tests {
         assert_eq!(foreign.len(), 1, "{foreign:?}");
         assert!(foreign[0].starts_with("(unreadable: "), "{foreign:?}");
         assert!(foreign_bundle_entries(&root.path().join("missing")).is_empty());
+    }
+
+    /// A UNC or device image name is refused before the path is resolved.
+    /// Percent-decoding happens first, so an encoded prefix is the same name.
+    #[test]
+    fn a_network_image_path_is_refused_before_resolution() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let unc = r"\\server\share\x.png";
+        std::fs::write(root.join(unc), b"secret").unwrap();
+        assert_eq!(
+            image_policy(&root, unc),
+            Err("a network path"),
+            "a UNC name must be refused before it is resolved"
+        );
+        for name in [
+            "//server/share/x.png",
+            r"\\?\UNC\server\share\x.png",
+            "//./device/x.png",
+            "%5C%5Cserver%5Cshare%5Cx.png",
+            "%2F%2Fserver%2Fshare%2Fx.png",
+        ] {
+            assert_eq!(image_policy(&root, name), Err("a network path"), "{name}");
+        }
+        std::fs::write(root.join("ok.png"), b"png").unwrap();
+        assert!(image_policy(&root, "ok.png").is_ok());
     }
 
     #[test]
