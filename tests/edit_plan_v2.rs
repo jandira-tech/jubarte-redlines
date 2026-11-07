@@ -75,6 +75,33 @@ fn production_schema_and_parser_reject_design_malformed_cases() {
         );
     }
 }
+
+#[test]
+fn a_v2_plan_names_a_v1_field_the_way_a_v1_plan_does() {
+    let bad = r#"{"schema_version":2,"author":"Ann","operations":[{"kind":"delete","paragraph":{"index":0},"find":"thirty"}]}"#;
+    assert_eq!(
+        PlanV2::from_json(bad).unwrap_err().to_string(),
+        r#"INVALID_PLAN (op-1): delete: unknown field "paragraph"; did you mean "target"? fields: find, occurrence, target"#
+    );
+    for written in ["paragraphs", "anchor"] {
+        let bad = format!(
+            r#"{{"schema_version":2,"author":"Ann","operations":[{{"kind":"delete","{written}":{{"index":0}},"find":"thirty"}}]}}"#
+        );
+        assert_eq!(
+            PlanV2::from_json(&bad).unwrap_err().to_string(),
+            format!(
+                r#"INVALID_PLAN (op-1): delete: unknown field "{written}"; did you mean "target"? fields: find, occurrence, target"#
+            ),
+            "{written}"
+        );
+    }
+    let good = with_ops(json!([{
+        "kind": "delete",
+        "target": {"short_id": "p0", "long_id": "document.w:p.j:short.p0"},
+        "find": "thirty"
+    }]));
+    PlanV2::from_json(&good.to_string()).unwrap();
+}
 #[test]
 fn eleven_kinds_and_explicit_policies_round_trip() {
     let t = json!({"short_id":"p0","long_id":"document.w:p.j:short.p0"});
