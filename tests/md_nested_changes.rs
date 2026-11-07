@@ -282,7 +282,7 @@ fn an_insertion_that_is_a_deletions_only_content_names_it_in_the_note() {
 fn a_move_from_that_is_an_insertions_only_content_names_it_in_the_note() {
     assert_eq!(
         plain(&sole_move_from_in_ins()),
-        "{--two--}{r3 Ben Ode (2026-09-30T09:00:00Z) \
+        "{--two--}{r3 Ben Ode (2026-09-30T09:00:00Z) move \
          re r1 Ana Lima (2026-09-29T14:05:00Z)}\n"
     );
 }
@@ -1043,7 +1043,7 @@ fn assert_revision_tree(
         match reader.read_event().unwrap() {
             Event::Start(element) => {
                 let name = element.name().as_ref().to_string();
-                if matches!(name.as_str(), "w:ins" | "w:del") {
+                if matches!(name.as_str(), "w:ins" | "w:del" | "w:moveFrom" | "w:moveTo") {
                     let id = element
                         .attributes()
                         .map(Result::unwrap)
@@ -1298,8 +1298,8 @@ fn live_insertion_keeps_a_move_from() {
     let source = common::docx::replace_entry(&source, "word/document.xml", document.as_bytes());
     assert_nested_round_trip(
         &source,
-        &["{r4 @BO re r3 @AL}"],
-        &[("w:ins", "3", None), ("w:del", "4", Some("3"))],
+        &["{r4 @BO move re r3 @AL}"],
+        &[("w:ins", "3", None), ("w:moveFrom", "4", Some("3"))],
     );
 }
 
@@ -1678,7 +1678,7 @@ fn revision_by(author: &str, date: Option<&str>) -> (String, Option<String>) {
 }
 
 /// Expected attributions come from the source package, independently of
-/// the writer; move marks become insertions/deletions on the round trip.
+/// the writer. A move stays a move on the round trip.
 fn revision_attributes(xml: &str) -> Vec<(String, Option<String>)> {
     use quick_xml::{Reader, events::Event};
     let mut reader = Reader::from_str(xml);

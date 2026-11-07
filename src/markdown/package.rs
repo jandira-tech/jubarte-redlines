@@ -228,6 +228,7 @@ pub(super) fn assemble(
         next_revision,
         cursors: HashMap::new(),
         used_revisions: HashSet::new(),
+        move_ranges: HashMap::new(),
         warnings,
         revision_prefix: "",
         pending_marks: Vec::new(),

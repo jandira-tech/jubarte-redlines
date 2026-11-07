@@ -649,6 +649,10 @@ pub(super) struct Document {
     /// The `w:id`s of the marks of changes the view numbers, by serial, in
     /// order (`{r5+6 @AB}` on a change of two runs).
     pub revision_ids: HashMap<u32, Vec<u32>>,
+    /// Move range name by serial. Present, even when empty, means the change
+    /// is a move rather than a deletion or an insertion. An empty name writes
+    /// the move element without a range.
+    pub moves: HashMap<u32, String>,
     /// Source line of each explicitly numbered change, for rename warnings.
     pub revision_lines: HashMap<u32, usize>,
     /// A change that was another change's only content, by the serial of
@@ -804,6 +808,8 @@ pub(super) struct Context<'d> {
     /// Every revision `w:id` written so far: named ids and fresh ids
     /// both respect uniqueness. Contiguous pieces reuse an open element.
     pub used_revisions: HashSet<u32>,
+    /// The range id of each move whose range is still open, by serial.
+    pub move_ranges: HashMap<u32, u32>,
     pub warnings: &'d mut Vec<String>,
     /// The owning part's short-id prefix; empty for body revisions.
     pub revision_prefix: &'static str,
@@ -905,12 +911,71 @@ impl Context<'_> {
         named.saturating_sub(self.cursors.get(&by).copied().unwrap_or(0))
     }
 
-    fn revision(&mut self, kind: Kind, by: Option<u32>) -> String {
-        let id = self.revision_id(by);
-        let name = match kind {
-            Kind::Insert => "w:ins",
-            Kind::Delete => "w:del",
+    /// `w:ins` / `w:del`, or `w:moveTo` / `w:moveFrom` when `by` is a move.
+    fn element_name(&self, kind: Kind, by: Option<u32>) -> &'static str {
+        let moved = by.is_some_and(|serial| self.document.moves.contains_key(&serial));
+        match (kind, moved) {
+            (Kind::Insert, true) => "w:moveTo",
+            (Kind::Delete, true) => "w:moveFrom",
+            (Kind::Insert, false) => "w:ins",
+            (Kind::Delete, false) => "w:del",
+        }
+    }
+
+    /// The range start, when `by` names one, then the open move or revision tag.
+    fn open_revision(&mut self, out: &mut String, kind: Kind, by: Option<u32>) {
+        let serial = by.filter(|serial| {
+            self.document
+                .moves
+                .get(serial)
+                .is_some_and(|name| !name.is_empty())
+                && !self.move_ranges.contains_key(serial)
+        });
+        if let Some(serial) = serial {
+            let name = self
+                .document
+                .moves
+                .get(&serial)
+                .cloned()
+                .unwrap_or_default();
+            let id = self.revision_id(None);
+            self.move_ranges.insert(serial, id);
+            let start = if kind == Kind::Delete {
+                "moveFromRangeStart"
+            } else {
+                "moveToRangeStart"
+            };
+            let (author, date) = match self.document.attributions.get(&serial) {
+                Some((author, date)) => (escape(author).into_owned(), date.clone()),
+                None => (self.author.clone(), self.date.clone()),
+            };
+            let _ = write!(
+                out,
+                "<w:{start} w:id=\"{id}\" w:author=\"{author}\"{} w:name=\"{}\"/>",
+                date_attribute(&date),
+                escape(&name)
+            );
+        }
+        let wrap = self.revision(kind, by);
+        let _ = write!(out, "<{wrap}>");
+    }
+
+    /// The range end of a move `open_revision` started for `by`.
+    fn finish_move_range(&mut self, out: &mut String, kind: Kind, by: u32) {
+        let Some(id) = self.move_ranges.remove(&by) else {
+            return;
         };
+        let end = if kind == Kind::Delete {
+            "moveFromRangeEnd"
+        } else {
+            "moveToRangeEnd"
+        };
+        let _ = write!(out, "<w:{end} w:id=\"{id}\"/>");
+    }
+
+    fn revision(&mut self, kind: Kind, by: Option<u32>) -> String {
+        let name = self.element_name(kind, by);
+        let id = self.revision_id(by);
         let last_day = by
             .filter(|&serial| self.ids_left(serial) == 0)
             .and_then(|serial| self.document.range_ends.get(&serial));
@@ -991,8 +1056,7 @@ pub(super) fn story(
             close_mark(context, &natural, &mut out, &mut open);
             let (kind, by) = side;
             spend(&mut natural, by);
-            let wrap = context.revision(kind, Some(by));
-            let _ = write!(out, "<{wrap}>");
+            context.open_revision(&mut out, kind, Some(by));
             open = Some(side);
         }
         // A bookmark, a comment's range marks and its reference sit inside
@@ -1058,8 +1122,7 @@ pub(super) fn story(
             } else {
                 close_marks(context, &natural, &mut out, &mut open, &mut marks);
                 spend(&mut natural, change.1);
-                let wrap = context.revision(change.0, Some(change.1));
-                let _ = write!(out, "<{wrap}>");
+                context.open_revision(&mut out, change.0, Some(change.1));
                 open = Some(change);
             }
         }
@@ -1112,9 +1175,8 @@ pub(super) fn story(
                 if first_paragraph {
                     first_paragraph = false;
                     let change = note.flatten();
-                    let wrap = change.map(|(kind, by)| context.revision(kind, Some(by)));
-                    if let Some(wrap) = &wrap {
-                        let _ = write!(out, "<{wrap}>");
+                    if let Some((kind, by)) = change {
+                        context.open_revision(&mut out, kind, Some(by));
                     }
                     let (style, element) = if context.in_endnote {
                         ("EndnoteReference", "endnoteRef")
@@ -1125,7 +1187,9 @@ pub(super) fn story(
                         out,
                         "<w:r><w:rPr><w:rStyle w:val=\"{style}\"/></w:rPr><w:{element}/></w:r>"
                     );
-                    let text = if matches!(change, Some((Kind::Delete, _))) {
+                    let text = if change.is_some_and(|(kind, by)| {
+                        kind == Kind::Delete && !context.document.moves.contains_key(&by)
+                    }) {
                         "delText"
                     } else {
                         "t"
@@ -1145,10 +1209,8 @@ pub(super) fn story(
                             spend(&mut natural, by);
                             open = change;
                         } else {
-                            out.push_str(match kind {
-                                Kind::Insert => "</w:ins>",
-                                Kind::Delete => "</w:del>",
-                            });
+                            out.push_str(&element_close(context, kind, Some(by)));
+                            context.finish_move_range(&mut out, kind, by);
                         }
                     }
                 }
@@ -1270,7 +1332,7 @@ pub(super) fn story(
                             run,
                             relate,
                             &mut out,
-                            marks.iter().any(|mark| mark.0 == Kind::Delete),
+                            deletion_wraps(context, &marks),
                         );
                         // The resumed mark ends here unless the change it
                         // holds another of resumes later: a piece of it is
@@ -1301,13 +1363,11 @@ pub(super) fn story(
                         marks.push(outer);
                         for wrap in chain[..depth].iter().rev() {
                             spend(&mut natural, wrap.1);
-                            let revision = context.revision(wrap.0, Some(wrap.1));
-                            let _ = write!(out, "<{revision}>");
+                            context.open_revision(&mut out, wrap.0, Some(wrap.1));
                             marks.push(*wrap);
                         }
                         spend(&mut natural, change.1);
-                        let wrap = context.revision(change.0, Some(change.1));
-                        let _ = write!(out, "<{wrap}>");
+                        context.open_revision(&mut out, change.0, Some(change.1));
                         open = Some(change);
                     } else if let Some(change) = run.change
                         && let Some(&(kind, by)) = context.document.wraps.get(&change.1)
@@ -1322,8 +1382,7 @@ pub(super) fn story(
                         // stays open around each of them.
                         close_mark(context, &natural, &mut out, &mut open);
                         spend(&mut natural, change.1);
-                        let wrap = context.revision(change.0, Some(change.1));
-                        let _ = write!(out, "<{wrap}>");
+                        context.open_revision(&mut out, change.0, Some(change.1));
                         open = run.change;
                     } else {
                         close_marks(context, &natural, &mut out, &mut open, &mut marks);
@@ -1337,15 +1396,13 @@ pub(super) fn story(
                             let chain = wrapping_chain(context.document, change);
                             for outer in chain.iter().rev() {
                                 spend(&mut natural, outer.1);
-                                let wrap = context.revision(outer.0, Some(outer.1));
-                                let _ = write!(out, "<{wrap}>");
+                                context.open_revision(&mut out, outer.0, Some(outer.1));
                                 marks.push(*outer);
                             }
                         }
                         if let Some((kind, by)) = run.change {
                             spend(&mut natural, by);
-                            let wrap = context.revision(kind, Some(by));
-                            let _ = write!(out, "<{wrap}>");
+                            context.open_revision(&mut out, kind, Some(by));
                         }
                         open = run.change;
                     }
@@ -1355,12 +1412,9 @@ pub(super) fn story(
                     && fields.last().copied().flatten().is_none()
                 {
                     // The change goes on in a new mark: no empty marks yet.
-                    out.push_str(match kind {
-                        Kind::Insert => "</w:ins>",
-                        Kind::Delete => "</w:del>",
-                    });
-                    let wrap = context.revision(kind, Some(by));
-                    let _ = write!(out, "<{wrap}>");
+                    // The range stays open across the split.
+                    out.push_str(&element_close(context, kind, Some(by)));
+                    context.open_revision(&mut out, kind, Some(by));
                     open = run.change;
                 }
                 if carried {
@@ -1374,7 +1428,7 @@ pub(super) fn story(
                         &plain,
                         relate,
                         &mut out,
-                        marks.iter().any(|mark| mark.0 == Kind::Delete),
+                        deletion_wraps(context, &marks),
                     );
                 } else {
                     write_run(
@@ -1382,7 +1436,7 @@ pub(super) fn story(
                         run,
                         relate,
                         &mut out,
-                        marks.iter().any(|mark| mark.0 == Kind::Delete),
+                        deletion_wraps(context, &marks),
                     );
                 }
             }
@@ -1421,8 +1475,7 @@ pub(super) fn story(
                 {
                     close_mark(context, &natural, &mut out, &mut open);
                     spend(&mut natural, by);
-                    let wrap = context.revision(kind, Some(by));
-                    let _ = write!(out, "<{wrap}>");
+                    context.open_revision(&mut out, kind, Some(by));
                     open = field;
                 }
                 let mut instruction = match link {
@@ -1434,8 +1487,9 @@ pub(super) fn story(
                 if let Some(title) = title {
                     let _ = write!(instruction, " \\o \"{}\"", field_argument(title));
                 }
+                let own_move = context.document.moves.contains_key(&by);
                 let element =
-                    if kind == Kind::Delete || marks.iter().any(|mark| mark.0 == Kind::Delete) {
+                    if (!own_move && kind == Kind::Delete) || deletion_wraps(context, &marks) {
                         "delInstrText"
                     } else {
                         "instrText"
@@ -1983,6 +2037,17 @@ fn ends_inserted_side(document: &Document, rest: &[Item], open: Option<Change>) 
         )
 }
 
+fn element_close(context: &Context<'_>, kind: Kind, by: Option<u32>) -> String {
+    format!("</{}>", context.element_name(kind, by))
+}
+
+/// A real `w:del` among `marks`. A move's source is not one: its text is `w:t`.
+fn deletion_wraps(context: &Context<'_>, marks: &[Change]) -> bool {
+    marks
+        .iter()
+        .any(|mark| mark.0 == Kind::Delete && !context.document.moves.contains_key(&mark.1))
+}
+
 fn close_mark(
     context: &mut Context<'_>,
     natural: &HashMap<u32, usize>,
@@ -1992,10 +2057,7 @@ fn close_mark(
     let Some((kind, by)) = open.take() else {
         return;
     };
-    out.push_str(match kind {
-        Kind::Insert => "</w:ins>",
-        Kind::Delete => "</w:del>",
-    });
+    out.push_str(&element_close(context, kind, Some(by)));
     if natural.get(&by).copied().unwrap_or(0) == 0 {
         // A paragraph mark written at its paragraph's end takes its own.
         let deferred = context
@@ -2009,6 +2071,7 @@ fn close_mark(
             let _ = write!(out, "<{mark}/>");
         }
     }
+    context.finish_move_range(out, kind, by);
 }
 
 /// [`close_mark`] for the open mark and every mark a nested change's mark
@@ -2445,7 +2508,10 @@ fn write_run(
     parent_deleted: bool,
 ) {
     let properties = run_properties(context, run);
-    let deleted = parent_deleted || matches!(run.change, Some((Kind::Delete, _)));
+    let own_move = run
+        .change
+        .is_some_and(|(_, by)| context.document.moves.contains_key(&by));
+    let deleted = parent_deleted || (!own_move && matches!(run.change, Some((Kind::Delete, _))));
     let _ = write!(out, "<w:r>{properties}");
     match &run.content {
         Content::Text(text) => {
@@ -2627,8 +2693,8 @@ fn box_xml(context: &mut Context<'_>, items: &[Item], relate: &mut dyn Relate, o
             }
             Item::Run(run) => {
                 if open != run.change {
-                    if let Some((kind, _)) = open.take() {
-                        out.push_str(close_tag(kind));
+                    if let Some((kind, by)) = open.take() {
+                        out.push_str(&close_tag(context, kind, by));
                     }
                     if let Some(change @ (kind, _)) = run.change {
                         let wrap = context.revision(kind, Some(change.1));
@@ -2647,8 +2713,8 @@ fn box_xml(context: &mut Context<'_>, items: &[Item], relate: &mut dyn Relate, o
                 }
                 context.pending_run_format = None;
                 context.run_sizes.pop();
-                if let Some((kind, _)) = open.take() {
-                    out.push_str(close_tag(kind));
+                if let Some((kind, by)) = open.take() {
+                    out.push_str(&close_tag(context, kind, by));
                 }
                 out.push_str("</w:p>");
             }
@@ -2657,12 +2723,9 @@ fn box_xml(context: &mut Context<'_>, items: &[Item], relate: &mut dyn Relate, o
     }
 }
 
-/// The closing tag of a mark of `kind`.
-fn close_tag(kind: Kind) -> &'static str {
-    match kind {
-        Kind::Insert => "</w:ins>",
-        Kind::Delete => "</w:del>",
-    }
+/// The closing tag of a mark of `kind`. A box never opens a move range.
+fn close_tag(context: &Context<'_>, kind: Kind, by: u32) -> String {
+    element_close(context, kind, Some(by))
 }
 
 /// A `w:drawing` holding `picture` inline, embedded through `rel`, with

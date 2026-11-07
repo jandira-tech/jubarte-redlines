@@ -892,8 +892,9 @@ fn a_move_beside_a_change_keeps_its_own_tag() {
     assert_eq!(ids(&doc), ["r3", "r5+6", "r4"]);
     let view = agent(&doc);
     assert!(
-        body(&view)
-            .starts_with("<!-- p0 -->\nPay {--General--}{r3 @B}{++CONSENT++}{r5+6 @B}¶{r5+6 @B}"),
+        body(&view).starts_with(
+            "<!-- p0 -->\nPay {--General--}{r3 @B move move1}{++CONSENT++}{r5+6 @B}¶{r5+6 @B}"
+        ),
         "{view}"
     );
     let back = written(&view);

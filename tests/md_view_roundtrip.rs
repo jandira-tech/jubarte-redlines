@@ -360,11 +360,11 @@ fn undated_move_keeps_no_date_when_rebuilt_as_insertion() {
     );
     for dates in [false, true] {
         let back = undated_back(&source, dates);
-        assert_probe_date(&back, "word/document.xml", "ins", "2", None);
+        assert_probe_date(&back, "word/document.xml", "moveTo", "2", None);
         assert_probe_date(
             &back,
             "word/document.xml",
-            "del",
+            "moveFrom",
             "1",
             Some(UNDATED_PROBE_DATE),
         );
