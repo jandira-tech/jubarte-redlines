@@ -838,10 +838,8 @@ fn changes_without_text_name_their_ids() {
         "{out}"
     );
     assert!(
-        lines
-            .iter()
-            .any(|l| l
-                .starts_with(r#"style_changes: {Normal: "styles.r9 @AC 2026-01-01T00:00:00Z"}"#)),
+        lines.iter().any(|l| l
+            .starts_with(r#"style_changes: {Normal: "rPr styles.r9 @AC 2026-01-01T00:00:00Z"}"#)),
         "{out}"
     );
     assert!(
@@ -900,7 +898,9 @@ fn the_style_changes_legend_leads_with_the_document_defaults() {
     let out = agent(&bytes);
     assert!(
         header_lines(&out).iter().any(|l| {
-            l.starts_with(r#"style_changes: {docDefaults: styles.r11 @AC, Normal: styles.r9 @AC}"#)
+            l.starts_with(
+                r#"style_changes: {docDefaults: rPr styles.r11 @AC, Normal: rPr styles.r9 @AC}"#,
+            )
         }),
         "{out}"
     );
@@ -6241,7 +6241,7 @@ fn a_style_named_changes_does_not_collide_with_the_style_changes() {
     assert!(yaml["styles"]["changes"].as_str().is_some(), "{out}");
     assert_eq!(
         yaml["style_changes"]["changes"].as_str(),
-        Some("styles.r9 @AC"),
+        Some("rPr styles.r9 @AC"),
         "{out}"
     );
     assert!(!out.contains("unplaced:"), "{out}");
