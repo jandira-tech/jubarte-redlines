@@ -405,6 +405,52 @@ fn control_paragraph(control: &ControlSelector) -> Option<(&str, &str)> {
     (!paragraph.is_empty() && k.parse::<usize>().is_ok()).then_some((paragraph, k))
 }
 
+/// An operation that leaves every paragraph in place. A run of these does
+/// not move a positional name, so the plan of the fixes can keep it.
+/// Anything else, including a kind added later, can add or remove a
+/// paragraph and is applied again so the name is read from the output.
+fn keeps_its_paragraphs(kind: &OperationKind) -> bool {
+    matches!(
+        kind,
+        OperationKind::Replace { .. }
+            | OperationKind::Insert { .. }
+            | OperationKind::Delete { .. }
+            | OperationKind::Comment { .. }
+            | OperationKind::FormatParagraph { .. }
+            | OperationKind::Rewrite { .. }
+            | OperationKind::ReplyComment { .. }
+            | OperationKind::ResolveComment { .. }
+            | OperationKind::EditComment { .. }
+            | OperationKind::DeleteComment { .. }
+            | OperationKind::Strike { .. }
+            | OperationKind::Restore { .. }
+            | OperationKind::List { .. }
+            | OperationKind::FormatRun { .. }
+            | OperationKind::PageSetup { .. }
+            | OperationKind::Redact { .. }
+            | OperationKind::Settings { .. }
+    )
+}
+
+/// The operations that land leave every source paragraph on the same id.
+/// Accepting or rejecting revisions already in the source, settling a
+/// named set, or refreshing fields can still move one, so those plans
+/// keep the second application.
+fn places_stay(plan: &EditPlan, left_out: &BTreeSet<usize>) -> bool {
+    plan.resolve_revisions.is_none()
+        && !plan.update_fields
+        && matches!(
+            plan.existing_revisions,
+            ExistingRevisions::Refuse | ExistingRevisions::Keep
+        )
+        && plan
+            .operations
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !left_out.contains(i))
+            .all(|(_, op)| keeps_its_paragraphs(&op.kind))
+}
+
 /// Rename each positional paragraph of `operations` (the skipped ones'),
 /// and each control named through one, to its id in the document the
 /// plan's other operations write, read off a run of them on `source` with
@@ -448,6 +494,12 @@ fn rename_positions(
         return notes;
     }
     let left_out: BTreeSet<usize> = skipped.iter().map(|s| s.index).collect();
+    // Nothing that landed moves a paragraph, so each positional name still
+    // points where the plan wrote it. Applying the survivors again would
+    // only re-read those same ids.
+    if places_stay(plan, &left_out) {
+        return notes;
+    }
     let survivors = EditPlan {
         source_sha256: None,
         operations: plan
