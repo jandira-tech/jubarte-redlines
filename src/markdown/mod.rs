@@ -59,7 +59,7 @@ pub(crate) use anchor::plain_anchor_with_removed;
 pub use anchor::{plain_anchor, unescape_markdown};
 pub use diff::diff_markdown;
 pub use pages::paginate;
-pub use patch::{Patched, apply_markdown};
+pub use patch::{Patched, apply_markdown, apply_markdown_strict};
 pub use redline::{RedlineOptions, Source, redline};
 pub use unified::{
     Attribution, Change, Comment, DEFAULT_COLUMNS, Hunk, Locator, Patch, PatchOptions,
