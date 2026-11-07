@@ -782,7 +782,10 @@ function applyEdit(verb, file, docx, o) {
   if (conflict) throw new UsageError(conflict);
   // The plan first: a refused plan prints its whole report, whatever the
   // outputs (D15).
-  const result = o.dry_run ? wasm.previewEditPlan(docx, plan) : wasm.applyEditPlan(docx, plan, path.basename(file));
+  const syntax = o.plan == null ? "flags" : "v1";
+  const result = o.dry_run
+    ? wasm.previewEditPlan(docx, plan, syntax)
+    : wasm.applyEditPlan(docx, plan, path.basename(file), syntax);
   if (!result.ok) return printRefusal(result);
   const report = wasm.editReportJsonl(result.json);
   if (o.dry_run) return void process.stdout.write(report);
