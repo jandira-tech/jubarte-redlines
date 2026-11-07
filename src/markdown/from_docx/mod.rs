@@ -2251,6 +2251,18 @@ struct Field {
     printed: bool,
 }
 
+/// `<sym font="Wingdings" char="F0FC"/>` for a symbol the view keeps.
+/// A symbol inside a field's instruction prints nothing, as that run's
+/// text does. One with no font or character is left for the run walk.
+fn symbol_token(child: &Element, fields: &[Field]) -> Option<String> {
+    if child.local() != "sym" || fields.iter().any(|field| !field.in_result) {
+        return None;
+    }
+    let font = child.attr("font").filter(|font| !font.is_empty())?;
+    let value = child.attr("char").filter(|value| !value.is_empty())?;
+    Some(format!(r#"<sym font="{font}" char="{value}"/>"#))
+}
+
 /// The `fldChar begin` of each field in `p` whose `separate` and `end` are
 /// in `p` too, inside the same tracked changes as its begin: the writer
 /// reads a field within one change, never one a change boundary cuts.
@@ -3648,6 +3660,10 @@ impl Writer<'_> {
         }
         let opened = out.len();
         for child in run.elements() {
+            if let Some(token) = symbol_token(child, fields) {
+                out.raw(&token);
+                continue;
+            }
             self.run_child(child, link, marks, fields, out, extra);
         }
         if let Some((_, close)) = tags {

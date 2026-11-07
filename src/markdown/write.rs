@@ -4345,6 +4345,16 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             return;
         }
+        if name == "sym" {
+            if empty && !closing {
+                let font = html_attribute(html, "font").unwrap_or_default();
+                let value = html_attribute(html, "char").unwrap_or_default();
+                if !font.is_empty() && !value.is_empty() {
+                    self.push(Content::Symbol { font, value });
+                }
+            }
+            return;
+        }
         // `<b/>` formats nothing; a comment's text is plain, so a tag in it
         // must not format the body after it.
         if empty || self.comment.is_some() {
