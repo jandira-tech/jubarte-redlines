@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+import jubarte_redlines as jubarte
 import jubarte_redlines.__main__ as cli
 import jubarte_redlines.document as document
 from jubarte_redlines.__main__ import main
@@ -992,6 +993,61 @@ def test_edit_allows_another_authors_comment_unless_keep_others(
     assert main([*edit[:-2], "-o", str(kept)]) == 3
     assert 'COMMENT_NOT_YOURS (op-1): c0 is by "Ann Counsel"; reply instead' in capsys.readouterr().err
     assert not kept.exists()
+
+
+def test_a_flags_command_quotes_flags_in_a_refusal(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A person who typed flags is shown flags, including under the keep-others guard.
+    assert (
+        main(
+            [
+                "add",
+                str(letter),
+                "-p",
+                "p2",
+                "--anchor",
+                "survive",
+                "--content",
+                "Which?",
+                "--author",
+                "Ann Counsel",
+                "-o",
+                str(tmp_path / "c.docx"),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    monkeypatch.setenv("JUBARTE_KEEP_OTHERS", "1")
+    assert (
+        main(
+            [
+                "edit",
+                str(tmp_path / "c.docx"),
+                "-p",
+                "c0",
+                "--content",
+                "Reworded.",
+                "--author",
+                "Bob Lee",
+                "--dry-run",
+            ]
+        )
+        == 3
+    )
+    err = capsys.readouterr().err
+    assert "reply instead (-p c0 --reply TEXT)" in err, err
+    assert "reply_comment" not in err, err
+    plan = tmp_path / "plan.json"
+    plan.write_text(
+        jubarte.EditPlan(author="Bob Lee", others="keep").edit_comment(0, text="Reworded.").to_json(),
+        encoding="utf-8",
+    )
+    assert main(["edit", str(tmp_path / "c.docx"), "--plan", str(plan), "--dry-run"]) == 3
+    json_err = capsys.readouterr().err
+    assert "reply_comment" in json_err, json_err
+    assert "--reply" not in json_err, json_err
 
 
 def test_edit_and_add_write_one_document_as_the_binary(
