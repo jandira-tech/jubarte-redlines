@@ -1692,16 +1692,6 @@ struct SpanStart {
     at_break: Option<usize>,
 }
 
-/// The cells of a table row so far: all empty, all one change whole of one
-/// kind, or anything else.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RowCells {
-    Empty,
-    /// The kind, and the serial of the first cell's change.
-    Whole(Kind, u32),
-    Mixed,
-}
-
 /// A span that just closed; a comment right after it anchors to it.
 #[derive(Clone, Copy)]
 struct Anchor {
@@ -1840,8 +1830,6 @@ struct Writer<'o, 'a> {
     column: usize,
     cell: Option<Option<&'static str>>,
     row: Option<(usize, Option<(Kind, u32)>)>,
-    /// Whether every cell of the row so far is one change whole.
-    row_cells: RowCells,
     /// Runs a task list marker wrote at the start of the paragraph: a
     /// change that starts right after them takes them in.
     prefix_runs: Vec<usize>,
@@ -1999,7 +1987,6 @@ impl<'o, 'a> Writer<'o, 'a> {
             column: 0,
             cell: None,
             row: None,
-            row_cells: RowCells::Empty,
             prefix_runs: Vec::new(),
             image: None,
             drawing_block: None,
@@ -2644,30 +2631,27 @@ impl<'o, 'a> Writer<'o, 'a> {
             gaps: row.gaps,
         });
         self.row = Some((index, self.change));
-        self.row_cells = RowCells::Empty;
     }
 
-    /// A row that one change covers from its first cell to its last, or
-    /// whose every cell is one change whole, is inserted or deleted as a row.
+    /// A change still open from the row's first cell through its last is
+    /// that row's insertion or deletion. A change that only fills the
+    /// cells stays on their text. A row the table line names keeps the
+    /// line's mark instead.
     fn end_row(&mut self) {
         self.story().push(Item::RowEnd);
         let Some((index, open)) = self.row.take() else {
             return;
         };
-        let row_change = match (open, self.row_cells) {
-            (Some((kind, serial)), _) if self.change == Some((kind, serial)) => {
-                Some((kind, serial))
-            }
-            (_, RowCells::Whole(kind, serial)) => Some((kind, serial)),
-            _ => None,
+        let row_change = if let Some((kind, serial)) = open
+            && self.change == Some((kind, serial))
+        {
+            Some((kind, serial))
+        } else {
+            None
         };
-        // A row the table line names a mark of its own for has that mark,
-        // and its text keeps its own (`rev r80 @AL in t1.row1`). A row it
-        // says nothing of, whose cells' text is one change whole, had that
-        // change on the row in Word's file — an id two cells' runs share
-        // is nothing Word writes — so the writer puts it back there and
-        // the text carries it. Plain Markdown has no line either way, and
-        // keeps the inference.
+        // A row the table line names has that mark (`rev r80 @AL in
+        // t1.row1`), and its text keeps its own. The line's mark is
+        // written with the table's formats.
         let own = !self.resolved
             && self.table_plan.as_ref().is_some_and(|plan| {
                 plan.row_marks
@@ -3212,37 +3196,6 @@ impl<'o, 'a> Writer<'o, 'a> {
                 _ => (None, false),
             },
         };
-        // In a cell, a change opened at or before the paragraph's start and
-        // open or just closed at its end covers it whole, across the `<br>`
-        // that ends a cell paragraph (`{++A<br>B++}`).
-        let covered = self.span_start.and_then(|span| {
-            let starts = span.paragraph != self.paragraph_serial || span.at_start;
-            let ends = self.change == Some((span.kind, span.serial))
-                || (self.closed == Some(span.serial)
-                    && !folded(span.serial)
-                    && !self.run_after_close);
-            (starts && ends).then_some((span.kind, span.serial))
-        });
-        let whole_in_cell = if whole { mark } else { covered };
-        if self.cell.is_some() && self.paragraph_runs > 0 {
-            // Whole is one change across the cells: the same kind naming
-            // the same ids (two tags naming `r2`, or no ids at all, as
-            // plain Markdown writes). A row whose cells each carry their
-            // own change, all insertions, had no change on the row in
-            // Word's file.
-            let one_change = |before: u32, now: u32| {
-                self.document.revision_ids.get(&before) == self.document.revision_ids.get(&now)
-            };
-            self.row_cells = match (self.row_cells, whole_in_cell) {
-                (RowCells::Empty, Some((kind, serial))) => RowCells::Whole(kind, serial),
-                (RowCells::Whole(before, was), Some((kind, now)))
-                    if before == kind && one_change(was, now) =>
-                {
-                    RowCells::Whole(kind, now)
-                }
-                _ => RowCells::Mixed,
-            };
-        }
         // Blocks added (or removed) after a paragraph, from its break to the
         // end of this one: Word records them as their own marks changed, so
         // the paragraph before keeps its mark and properties.
