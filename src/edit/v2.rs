@@ -180,7 +180,7 @@ pub struct AttachedComment {
     pub text: String,
 }
 
-/// The eleven typed requests in the initial PlanV2 profile.
+/// Typed requests in the text-and-review profile.
 ///
 /// Literal occurrences are 1-based and count overlapping start positions.
 /// All active ranges resolve on one working baseline, not intermediate edits.
@@ -362,6 +362,16 @@ pub enum Operation {
         /// Root removal with replies requires explicit inclusion.
         include_replies: bool,
     },
+    /// Reject another author's insertion visibly. The target names that revision.
+    Strike {
+        /// The insertion, as `changes` lists it.
+        target: Target,
+    },
+    /// Reject another author's deletion visibly. The target names that revision.
+    Restore {
+        /// The deletion, as `changes` lists it.
+        target: Target,
+    },
 }
 
 /// Kind of immutable original-source observation.
@@ -489,6 +499,7 @@ fn operation_fields(kind: &str) -> Option<&'static [&'static str]> {
         "resolve_comment" => &["done", "target"],
         "edit_comment" => &["target", "text"],
         "delete_comment" => &["include_replies", "target"],
+        "strike" | "restore" => &["target"],
         _ => return None,
     };
     Some(fields)
@@ -687,7 +698,9 @@ impl Operation {
             | Self::ReplyComment { target, .. }
             | Self::ResolveComment { target, .. }
             | Self::EditComment { target, .. }
-            | Self::DeleteComment { target, .. } => target,
+            | Self::DeleteComment { target, .. }
+            | Self::Strike { target }
+            | Self::Restore { target } => target,
         }
     }
     fn validate(&self) -> Result<(), EditError> {
@@ -795,7 +808,9 @@ impl Operation {
             }
             Self::DeleteParagraph { .. }
             | Self::ResolveComment { .. }
-            | Self::DeleteComment { .. } => {}
+            | Self::DeleteComment { .. }
+            | Self::Strike { .. }
+            | Self::Restore { .. } => {}
         }
         Ok(())
     }

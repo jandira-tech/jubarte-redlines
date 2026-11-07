@@ -498,7 +498,9 @@ fn all_operations() -> Value {
         {"kind":"reply_comment","target":c,"text":"reply"},
         {"kind":"resolve_comment","target":c,"done":false},
         {"kind":"edit_comment","target":c,"text":"new"},
-        {"kind":"delete_comment","target":c,"include_replies":false}
+        {"kind":"delete_comment","target":c,"include_replies":false},
+        {"kind":"strike","target":{"short_id":"r1","long_id":"document.w:ins.w:id.1"}},
+        {"kind":"restore","target":{"short_id":"r2","long_id":"document.w:del.w:id.2"}}
     ])
 }
 
@@ -781,6 +783,10 @@ fn review_v2_01_schema_walk_pins_every_declared_property() {
         ("deleteComment", "kind"),
         ("deleteComment", "target"),
         ("deleteComment", "include_replies"),
+        ("strike", "kind"),
+        ("strike", "target"),
+        ("restore", "kind"),
+        ("restore", "target"),
         ("scope", "kind"),
         ("scope", "targets"),
         ("sourceContextItem", "kind"),
@@ -949,6 +955,8 @@ fn plan_uses(plan: &Value, def: &str, prop: &str) -> bool {
         "resolveComment" => Some("resolve_comment"),
         "editComment" => Some("edit_comment"),
         "deleteComment" => Some("delete_comment"),
+        "strike" => Some("strike"),
+        "restore" => Some("restore"),
         _ => None,
     };
     if let Some(kind) = kind {
