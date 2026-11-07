@@ -33789,10 +33789,31 @@ impl<'a> Layout<'a> {
                     (3.0 * w, 2.0 * w)
                 };
                 let (on, off) = (on.max(0.5), off.max(0.5));
-                let mut p = from;
-                while p < to {
-                    seg(self, p, (p + on).min(to), 0.0);
-                    p += on + off;
+                /// Dashes one edge may paint. Longer edges stop here, and a
+                /// step that no longer moves the coordinate stops earlier.
+                const MAX_BORDER_DASHES: usize = 4096;
+                // Walk an offset from zero. At large coordinates `p + step`
+                // rounds back to `p`, so a cursor in page space never moves.
+                let span = to - from;
+                if span.is_finite() && span > 0.0 {
+                    let span = span.min(MAX_BORDER_DASHES as f32);
+                    let mut traveled = 0.0_f32;
+                    let mut drawn = 0_usize;
+                    while traveled < span && drawn < MAX_BORDER_DASHES {
+                        let next = (traveled + on).min(span);
+                        let start = from + traveled;
+                        let end = from + next;
+                        if drawn > 0 && end <= start {
+                            break;
+                        }
+                        seg(self, start, end, 0.0);
+                        drawn += 1;
+                        let advanced = traveled + on + off;
+                        if advanced <= traveled {
+                            break;
+                        }
+                        traveled = advanced;
+                    }
                 }
             }
         }
@@ -54678,6 +54699,38 @@ mod coverage_round_three_tests {
                     }
                 }
             }
+        }
+
+        /// A dotted edge used to emit one segment per point, and a dash
+        /// whose step no longer moves the coordinate never returned.
+        #[test]
+        fn a_dashed_border_stops_when_coordinates_stop_advancing() {
+            const BOUND: usize = 4096;
+            let fonts = fonts();
+            let edge = PageBorder {
+                color: [0.0; 3],
+                width: 0.24,
+                space: 0.0,
+                line: BorderLine::Dotted,
+            };
+            let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+            lay.border_edge(edge, (0.0, 10.0), (20_000.0, 10.0));
+            let painted = rectangles(&lay.pages[0].ops);
+            assert!(
+                painted.len() <= BOUND,
+                "drew {} dash segments on one edge",
+                painted.len()
+            );
+
+            let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+            let from = 16_777_216.0_f32;
+            lay.border_edge(edge, (from, 10.0), (from + 64.0, 10.0));
+            let painted = rectangles(&lay.pages[0].ops);
+            assert!(
+                painted.len() <= 8,
+                "drew {} segments after a dash step stopped moving",
+                painted.len()
+            );
         }
 
         #[test]
