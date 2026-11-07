@@ -2786,12 +2786,32 @@ fn check_relationship_integrity(pkg: &PartFs, out: &mut Vec<Finding>) {
     }
 }
 
-/// Internal targets must name a part at their resolved package path.
-fn missing_relationship_target(pkg: &PartFs, source: &str, target: &str) -> Option<String> {
+/// A target that is not an OPC part: an absolute URI, a Windows path, or a
+/// UNC share. A doubled slash in front of a package root (`//word/...`)
+/// still names a part.
+fn external_uri_target(target: &str) -> bool {
     if target.starts_with("http://")
         || target.starts_with("https://")
         || target.starts_with("mailto:")
+        || target.starts_with("file:")
+        || target.contains('\\')
     {
+        return true;
+    }
+    let Some(rest) = target.strip_prefix("//") else {
+        return false;
+    };
+    let host = rest.split('/').next().unwrap_or("");
+    !host.is_empty()
+        && !matches!(
+            host,
+            "word" | "docProps" | "customXml" | "_rels" | "ppt" | "xl"
+        )
+}
+
+/// Internal targets must name a part at their resolved package path.
+fn missing_relationship_target(pkg: &PartFs, source: &str, target: &str) -> Option<String> {
+    if external_uri_target(target) {
         return None;
     }
     let resolved = pkg.resolve_rel_target(source, target);
@@ -5878,6 +5898,75 @@ mod validation_owner_boundary_tests {
             assert_eq!(pkg.to_zip().unwrap(), before);
         }
     }
+
+    #[test]
+    fn file_unc_and_external_template_targets_are_not_internal_parts() {
+        let template =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/attachedTemplate";
+        for target in [
+            "file:///etc/passwd",
+            "file://server/share/template.dotx",
+            r"\\server\share\template.dotx",
+            "//server/share/template.dotx",
+        ] {
+            let mut pkg = package();
+            pkg.add_document_relationship("word/document.xml", template, target);
+            let mut findings = Vec::new();
+            check_relationship_integrity(&pkg, &mut findings);
+            let missing: Vec<_> = findings
+                .iter()
+                .filter(|finding| finding.code == "MISSING_REL_TARGET")
+                .map(|finding| finding.message.clone())
+                .collect::<Vec<_>>();
+            assert!(
+                missing.is_empty(),
+                "{target} was resolved as an internal part: {missing:?}"
+            );
+            let opened = PartFs::open(&pkg.to_zip().unwrap()).expect("reopen");
+            let rels = opened
+                .read_rels_for("word/document.xml")
+                .expect("relationships");
+            assert!(
+                rels.items.iter().any(|item| item.target == target),
+                "{target} was dropped from the package"
+            );
+        }
+
+        let mut kept = package();
+        let external = "file:///C:/Templates/Normal.dotx";
+        kept.add_document_relationship_external("word/document.xml", template, external);
+        let mut findings = Vec::new();
+        check_relationship_integrity(&kept, &mut findings);
+        assert!(
+            findings
+                .iter()
+                .all(|finding| finding.code != "MISSING_REL_TARGET")
+        );
+        let opened = PartFs::open(&kept.to_zip().unwrap()).expect("reopen");
+        let rels = opened
+            .read_rels_for("word/document.xml")
+            .expect("relationships");
+        assert!(
+            rels.items.iter().any(|item| item.target == external),
+            "an external template target was dropped"
+        );
+
+        let mut doubled = package();
+        doubled.add_document_relationship(
+            "word/document.xml",
+            "urn:test/part",
+            "//word/no-such.xml",
+        );
+        let mut findings = Vec::new();
+        check_relationship_integrity(&doubled, &mut findings);
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.code == "MISSING_REL_TARGET"),
+            "a doubled package path still names a part"
+        );
+    }
+
     #[test]
     fn orphan_comment_cleanup_preserves_live_references_and_neighbor_run_properties() {
         for (content, remains) in [
