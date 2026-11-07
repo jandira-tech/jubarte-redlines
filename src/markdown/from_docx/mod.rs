@@ -2833,6 +2833,15 @@ impl Writer<'_> {
                 }
                 "commentRangeStart" | "commentRangeEnd" => self.comment_range(child, None),
                 "customXml" | "sdtContent" | "txbxContent" => self.blocks(child, blocks, list),
+                // The branch Word shows, as read-only text. It takes no tN:
+                // stamp already keeps AlternateContent out of the inventory.
+                "AlternateContent" => {
+                    if let Some(branch) = agent::shown_branch(child) {
+                        blocks.push_line("<!-- alternate -->");
+                        self.blocks(branch, blocks, list);
+                        blocks.push_line("<!-- /alternate -->");
+                    }
+                }
                 _ => {}
             }
         }
