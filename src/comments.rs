@@ -35,6 +35,9 @@ const CEX: &str = "http://schemas.microsoft.com/office/word/2018/wordml/cex";
 const PEOPLE_REL: &str = "http://schemas.microsoft.com/office/2011/relationships/people";
 /// Characters of context kept on either side of an anchor.
 const CONTEXT: usize = 80;
+/// Bytes of anchor text one listing may own. Each comment otherwise copies
+/// the whole range, and the text listing prints 40 characters of it.
+const ANCHOR_BYTE_BUDGET: usize = 256 * 1024;
 /// First sentinel code point used to locate range markers in a projection
 /// (supplementary private use area B, which no Word symbol font uses).
 const SENTINEL: u32 = 0x10_0000;
@@ -72,7 +75,8 @@ pub struct CommentRecord {
     /// ends in a later paragraph than it starts; `None` otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_paragraph: Option<String>,
-    /// The anchored text, exact; paragraphs joined by `\n`.
+    /// The anchored text, paragraphs joined by `\n`. Exact while the
+    /// listing still has anchor budget; a later anchor is the prefix that fit.
     pub anchor_text: String,
     /// Up to 80 characters before the anchor in its first paragraph.
     pub before: String,
@@ -149,7 +153,10 @@ pub(crate) fn comments_in(opened: &mut Opened) -> Result<Vec<CommentRecord>, Com
     if family.is_empty() {
         return Ok(Vec::new());
     }
-    let mut anchors = Anchors::default();
+    let mut anchors = Anchors {
+        budget: ANCHOR_BYTE_BUDGET,
+        ..Anchors::default()
+    };
     anchors.scan("body", &mut opened.dom, opened.body, true);
     for (id, _, part) in opened.story_parts() {
         let (mut dom, _, root) = crate::inspect::parse_part(&opened.pkg, &part)?;
@@ -251,6 +258,8 @@ struct Anchors {
     ends: HashMap<String, (usize, usize, usize)>,
     /// Comment id → (story, paragraph) of the reference.
     references: HashMap<String, (usize, usize)>,
+    /// Bytes of anchor text this listing may still own.
+    budget: usize,
 }
 
 impl Anchors {
@@ -358,7 +367,13 @@ impl Anchors {
         self.stories.push((story_id.to_string(), texts));
     }
 
-    fn fill(&self, record: &mut CommentRecord) {
+    fn fill(&mut self, record: &mut CommentRecord) {
+        let mut budget = self.budget;
+        self.write_anchor(record, &mut budget);
+        self.budget = budget;
+    }
+
+    fn write_anchor(&self, record: &mut CommentRecord, budget: &mut usize) {
         let id = record.id.to_string();
         let start = self.starts.get(&id).copied();
         let end = self.ends.get(&id).copied();
@@ -371,7 +386,7 @@ impl Anchors {
                 // real marks and neither may be dropped.
                 record.paragraph = Some(paragraph_id(story, first));
                 record.last_paragraph = Some(paragraph_id(end_story, last));
-                record.anchor_text = self.stories[story].1[first][s..].to_string();
+                record.anchor_text = take_anchor(budget, &self.stories[story].1[first][s..]);
                 record.before = tail(&self.stories[story].1[first][..s], CONTEXT);
                 record.after = self.stories[end_story].1[last][e..]
                     .chars()
@@ -390,15 +405,16 @@ impl Anchors {
                 record.paragraph = Some(paragraph_id(story, first));
                 record.last_paragraph = (last > first).then(|| paragraph_id(story, last));
                 if first == last {
-                    record.anchor_text = texts[first][s..e].to_string();
+                    record.anchor_text = take_anchor(budget, &texts[first][s..e]);
                 } else {
-                    let mut anchor = texts[first][s..].to_string();
+                    let mut anchor = String::new();
+                    append_anchor(budget, &mut anchor, &texts[first][s..]);
                     for text in &texts[first + 1..last] {
-                        anchor.push('\n');
-                        anchor.push_str(text);
+                        append_anchor(budget, &mut anchor, "\n");
+                        append_anchor(budget, &mut anchor, text);
                     }
-                    anchor.push('\n');
-                    anchor.push_str(&texts[last][..e]);
+                    append_anchor(budget, &mut anchor, "\n");
+                    append_anchor(budget, &mut anchor, &texts[last][..e]);
                     record.anchor_text = anchor;
                 }
                 record.before = tail(&texts[first][..s], CONTEXT);
@@ -411,6 +427,27 @@ impl Anchors {
             }
         }
     }
+}
+
+/// Copy `text` into a new string, charging its bytes to `budget`.
+fn take_anchor(budget: &mut usize, text: &str) -> String {
+    let mut out = String::new();
+    append_anchor(budget, &mut out, text);
+    out
+}
+
+/// Append the prefix of `text` that still fits in `budget`.
+fn append_anchor(budget: &mut usize, out: &mut String, text: &str) {
+    if *budget == 0 || text.is_empty() {
+        return;
+    }
+    let end = if text.len() <= *budget {
+        text.len()
+    } else {
+        text.floor_char_boundary(*budget)
+    };
+    out.push_str(&text[..end]);
+    *budget -= end;
 }
 
 /// The last `n` characters of `text`.
@@ -1583,6 +1620,51 @@ mod public_memory_anchor_boundary_tests {
             Vec::new()
         );
         assert_eq!(select_comments(records.clone(), None, false), records);
+    }
+
+    /// Many comments on one range each used to own a full copy of it. The
+    /// listing keeps at most 256 KiB of anchor text.
+    #[test]
+    fn many_comments_on_one_range_keep_one_anchor_budget() {
+        const BUDGET: usize = 256 * 1024;
+        let text = "A".repeat(80_000);
+        let mut body = String::new();
+        let count = 4;
+        for id in 1..=count {
+            body.push_str(&format!("<w:commentRangeStart w:id='{id}'/>"));
+        }
+        body.push_str(&paragraph(&text));
+        for id in 1..=count {
+            body.push_str(&format!("<w:commentRangeEnd w:id='{id}'/>"));
+        }
+        let mut comments = format!("<w:comments xmlns:w='{}'>", W::URI);
+        for id in 1..=count {
+            comments.push_str(&format!(
+                "<w:comment w:id='{id}' w:author='A' w:date='2025-01-01T00:00:00Z'><w:p><w:r><w:t>n</w:t></w:r></w:p></w:comment>"
+            ));
+        }
+        comments.push_str("</w:comments>");
+        let mut pkg = package(&body);
+        pkg.set_part("word/comments.xml", comments.into_bytes());
+        pkg.add_content_type_override(
+            "/word/comments.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+        );
+        pkg.add_document_relationship(
+            "word/document.xml",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            "comments.xml",
+        );
+        let listed = list_comments(&pkg.to_zip().unwrap()).unwrap();
+        assert_eq!(listed.len(), count);
+        let total: usize = listed.iter().map(|c| c.anchor_text.len()).sum();
+        assert!(
+            total <= BUDGET,
+            "owned {total} bytes of one {len}-byte range",
+            len = text.len()
+        );
+        assert_eq!(listed[0].anchor_text, text);
+        assert!(listed.iter().any(|c| c.anchor_text.len() < text.len()));
     }
 }
 
