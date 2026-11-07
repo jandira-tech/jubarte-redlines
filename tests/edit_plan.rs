@@ -887,16 +887,21 @@ fn a_deleted_paragraphs_comment_is_refused_when_its_twin_is_deleted_instead() {
         (outcome.status.as_str(), outcome.code.as_deref()),
         ("failed", Some("UNSUPPORTED_STRUCTURE"))
     );
-    // Without the comment the same deletion goes through.
-    let result = apply_plan(
+    // Without a new comment the named paragraph still stays, so the same
+    // deletion is refused and the direct route is named.
+    let error = apply_plan(
         &source,
         &plan(
             &source,
             r#"[{"kind":"delete_paragraph","paragraph":{"index":2}}]"#,
         ),
     )
-    .unwrap();
-    assert_eq!(texts(&result.clean).len(), texts(&source).len() - 1);
+    .unwrap_err();
+    assert_eq!(error.code, "UNSUPPORTED_STRUCTURE");
+    assert!(
+        error.message.contains(r#""existing_revisions": "keep""#),
+        "{error}"
+    );
 }
 
 #[test]

@@ -626,6 +626,107 @@ fn a_reply_the_comparer_would_leave_on_kept_text_is_refused_with_keep() {
     );
 }
 
+/// Paragraph elements, in order, whose text contains `needle`.
+fn paragraphs_holding(xml: &str, needle: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = xml;
+    while let Some(at) = rest.find("<w:p") {
+        let next = rest.as_bytes().get(at + 4).copied();
+        if next == Some(b'/') || (next != Some(b'>') && next != Some(b' ')) {
+            rest = &rest[at + 4..];
+            continue;
+        }
+        let Some(end) = rest[at..].find("</w:p>") else {
+            break;
+        };
+        let paragraph = &rest[at..at + end + 6];
+        if paragraph.contains(needle) {
+            out.push(paragraph.to_string());
+        }
+        rest = &rest[at + end + 6..];
+    }
+    out
+}
+
+/// Whether `commentReference` in `paragraph` sits inside a content `w:del`.
+fn reference_inside_deletion(paragraph: &str) -> bool {
+    let mut depth = 0usize;
+    let mut rest = paragraph;
+    while let Some(at) = rest.find('<') {
+        rest = &rest[at..];
+        let Some(end) = rest.find('>') else { break };
+        let tag = &rest[..=end];
+        let name = tag
+            .trim_start_matches('<')
+            .trim_start_matches('/')
+            .strip_prefix("w:")
+            .unwrap_or(tag)
+            .split([' ', '>', '/'])
+            .next()
+            .unwrap_or("");
+        match (name, tag.starts_with("</"), tag.ends_with("/>")) {
+            ("del", false, false) => depth += 1,
+            ("del", true, _) => depth = depth.saturating_sub(1),
+            ("commentReference", _, _) => return depth > 0,
+            _ => {}
+        }
+        rest = &rest[end + 1..];
+    }
+    false
+}
+
+/// Two identical paragraphs. Deleting the commented one must not strike its
+/// twin and leave the comment on text that stays. A twin before the named
+/// paragraph is already the copy the comparer strikes.
+#[test]
+fn a_deleted_identical_paragraph_is_not_silently_moved_onto_its_twin() {
+    let twins = |comment_on: &str| {
+        let base = docx(
+            &(para("Lead.")
+                + &para("Same words here.")
+                + &para("Same words here.")
+                + &para("Tail.")),
+        );
+        let bob = plan(&format!(
+            r#"{{"schema_version":1,"author":"Bob","date":"2026-10-18T12:00:00Z","operations":[{{"kind":"comment","paragraph":"{comment_on}","text":"Bob's note."}}]}}"#
+        ));
+        apply_plan(&base, &bob).unwrap().clean
+    };
+    let delete = |paragraph: &str| {
+        plan(&format!(
+            r#"{{"schema_version":1,"author":"Alice","date":"2026-10-19T12:00:00Z","operations":[{{"kind":"delete_paragraph","paragraph":"{paragraph}"}}]}}"#
+        ))
+    };
+    match apply_plan(&twins("p1"), &delete("p1")) {
+        Err(error) => {
+            assert_eq!(error.code, "UNSUPPORTED_STRUCTURE", "{error}");
+            assert!(
+                error.message.contains(r#""existing_revisions": "keep""#),
+                "{error}"
+            );
+        }
+        Ok(out) => {
+            let xml = part_string(&out.redline, "word/document.xml").unwrap();
+            let copies = paragraphs_holding(&xml, "Same words here.");
+            panic!("the twin was struck instead of the named paragraph: {copies:?}");
+        }
+    }
+    let out = apply_plan(&twins("p2"), &delete("p2")).unwrap();
+    let xml = part_string(&out.redline, "word/document.xml").unwrap();
+    let copies = paragraphs_holding(&xml, "Same words here.");
+    assert_eq!(copies.len(), 2, "{xml}");
+    assert!(
+        !copies[0].contains("<w:delText"),
+        "the earlier twin was struck: {}",
+        copies[0]
+    );
+    assert!(
+        copies[1].contains("<w:delText") && reference_inside_deletion(&copies[1]),
+        "the named paragraph's comment stayed outside the deletion: {}",
+        copies[1]
+    );
+}
+
 /// The comments whose mark change `id` holds, as `changes --json` lists them.
 fn held(docx: &[u8], id: &str) -> Vec<String> {
     list_changes(docx)
