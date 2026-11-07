@@ -675,3 +675,31 @@ fn repair_still_renumbers_duplicates() {
     let comments = common::docx::part_string(&fixed, "word/comments.xml").unwrap();
     assert!(comments.contains(r#"w:id="7""#), "{comments}");
 }
+
+/// `--repair` names a separate file. The input, and another name for it,
+/// are refused even with `--force`.
+#[test]
+fn validate_repair_refuses_its_own_input() {
+    let dir = tempfile::tempdir().unwrap();
+    let broken = docx(DELETED);
+    let input = dir.path().join("broken.docx");
+    std::fs::write(&input, &broken).unwrap();
+    let alias = dir.path().join("alias.docx");
+    std::fs::hard_link(&input, &alias).unwrap();
+    for output in ["broken.docx", "alias.docx"] {
+        for force in [false, true] {
+            let mut args = vec!["validate", "broken.docx", "--repair", output];
+            if force {
+                args.push("--force");
+            }
+            let (code, out, err) = run(dir.path(), &args);
+            assert_eq!(code, 2, "{args:?}: {out}{err}");
+            assert!(!out.contains("repaired"), "{args:?}: {out}");
+            assert!(
+                err.contains("OUTPUT_ALIAS") && err.contains("the input"),
+                "{args:?}: {err}"
+            );
+            assert_eq!(std::fs::read(&input).unwrap(), broken, "{args:?}");
+        }
+    }
+}

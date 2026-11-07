@@ -4379,6 +4379,9 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
     // before any repair.
     let before = job.original.map(read_package).transpose()?;
     if let Some(out) = job.repair {
+        // A repair always writes a separate file. --force replaces another
+        // output; it never authorizes the input under this name or another.
+        refuse_output_alias(out, &[(job.file, "the input")])?;
         ensure_writable(out, job.force)?;
         let fixed = repair(&docx).map_err(|e| e.to_string())?;
         publish_file(out, &fixed.docx, job.force)?;
