@@ -2720,9 +2720,9 @@ pub(crate) fn table_line(
             let at = format!(" in t{t}.row{r}");
             changes_in(tr.child("trPr"), &at, &mut fmt);
             changes_in(tr.child("tblPrEx"), &at, &mut fmt);
-            // A row's own insertion or deletion is named here. Cell text
-            // with no marks of its own still shows the row's tag; the
-            // writer puts the mark back on the row from this clause.
+            // A row's own insertion or deletion is named here. Plain
+            // cells stay untagged: this clause is the row's mark, and
+            // an inline tag under it is a separate change.
             for mark in tr
                 .child("trPr")
                 .into_iter()

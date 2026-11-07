@@ -3905,8 +3905,15 @@ impl Writer<'_> {
             for tc in row_cells(tr) {
                 // Text marked on its own keeps its tags in the agent view,
                 // and so does text that nests a change in a change in
-                // either view; a cell's other text shows the row's mark.
-                let marks = if (self.agent && agent::text_marked(tc)) || agent::nested_marked(tc) {
+                // either view. The agent view names a row's own mark on
+                // the table line, so a plain cell stays untagged: an
+                // inline tag under that clause is its own change. Every
+                // other cell shows the row's mark.
+                let named_on_the_line = self.agent && !row_marks.is_empty();
+                let marks = if named_on_the_line
+                    || (self.agent && agent::text_marked(tc))
+                    || agent::nested_marked(tc)
+                {
                     &[][..]
                 } else {
                     &row_marks[..]
