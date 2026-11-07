@@ -416,6 +416,7 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
         ),
         monospace_paragraph: false,
         closing_fields: HashSet::new(),
+        inline_breaks: HashSet::new(),
         spanning_fields: HashSet::new(),
         open_fields: Vec::new(),
         revisions: Vec::new(),
@@ -2612,6 +2613,9 @@ struct Writer<'a> {
     /// The `fldChar begin` of each field whose `end` lies in the paragraph
     /// being written: only those print as `{CODE}result{/}`.
     closing_fields: HashSet<*const Element>,
+    /// Page-break runs of the paragraph being written that sit before
+    /// later text, printed in that text as `<br type="page"/>`.
+    inline_breaks: HashSet<*const Element>,
     /// The `fldChar begin` of each field whose `end` lies in a later
     /// paragraph of its container (see [`spanning_fields`]).
     spanning_fields: HashSet<*const Element>,
@@ -2977,7 +2981,7 @@ impl Writer<'_> {
             None
         };
         if let Some(index) = index {
-            let page_break = agent::has_page_break(p);
+            let page_break = agent::page_breaks(p) > self.inline_breaks.len();
             let comments = if self.comments_inline {
                 Vec::new()
             } else {
@@ -3370,6 +3374,7 @@ impl Writer<'_> {
     /// Tracked changes around the paragraph and comment ranges still open from
     /// earlier paragraphs are opened again at its start.
     fn paragraph_inline(&mut self, p: &Element) -> (Critic, Vec<String>) {
+        self.inline_breaks = agent::mid_paragraph_page_breaks(p).into_iter().collect();
         let mut inline = Critic::default();
         if self.flattening > 0 {
             inline.set_inline_end();
@@ -3437,6 +3442,9 @@ impl Writer<'_> {
     ) {
         for child in container.elements() {
             match child.local() {
+                "r" if self.inline_breaks.contains(&std::ptr::from_ref(child)) => {
+                    out.raw("<br type=\"page\"/>");
+                }
                 "r" => self.run(child, link, base, fields, out, extra),
                 "hyperlink" => {
                     let url = child.rel_attr("id").and_then(|id| self.rels.link(id));
