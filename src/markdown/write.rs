@@ -3757,7 +3757,10 @@ impl<'o, 'a> Writer<'o, 'a> {
                     self.name_revision(inner, old_ids);
                 }
                 if let Some(tag) = tags.get(1) {
-                    let outer = (other(kind), self.tag_serial(tag));
+                    let parent = self
+                        .established_kind(&tag.ids)
+                        .unwrap_or_else(|| other(kind));
+                    let outer = (parent, self.tag_serial(tag));
                     self.document.wraps.insert(inner, outer);
                     self.unshown_rebuilt(&[outer.1]);
                 }
@@ -3787,7 +3790,10 @@ impl<'o, 'a> Writer<'o, 'a> {
                 }
                 if let Some(part) = parts.get(1) {
                     self.serial += 1;
-                    let outer = (other(kind), self.serial);
+                    let parent = self
+                        .established_kind(&part.ids)
+                        .unwrap_or_else(|| other(kind));
+                    let outer = (parent, self.serial);
                     self.document
                         .attributions
                         .insert(outer.1, (part.author.clone(), part.date.clone()));
@@ -4692,6 +4698,39 @@ impl<'o, 'a> Writer<'o, 'a> {
                 "comment in {part} dropped: Word shows comments only in the body, never in a header or footer"
             ));
         }
+    }
+
+    /// The kind of a change these ids already name in the story being written.
+    /// A substitution inside that change keeps its kind: the other of the
+    /// inner side would call a deletion an insertion and spend one of its
+    /// ids on the wrapper.
+    fn established_kind(&self, ids: &[u32]) -> Option<Kind> {
+        if ids.is_empty() {
+            return None;
+        }
+        let story: &[Item] = match &self.target {
+            Some(label) => self.definitions.get(label).map(Vec::as_slice)?,
+            None => &self.body,
+        };
+        let mut found = None;
+        for item in story {
+            let Item::Run(Run {
+                change: Some((kind, serial)),
+                ..
+            }) = item
+            else {
+                continue;
+            };
+            if self
+                .document
+                .revision_ids
+                .get(serial)
+                .is_some_and(|named| named.as_slice() == ids)
+            {
+                found = Some(*kind);
+            }
+        }
+        found
     }
 
     /// Remember where an explicit id was supplied, including a parent tag.
