@@ -1350,6 +1350,48 @@ fn encode_range(
     }
 }
 
+/// A note the tag parsers accept, including one whose parts carry a move
+/// clause (` move`, or ` move` and one range name). The returned text is
+/// the brace's own note: the clause stays for the writer to read back.
+fn recognized_note(note: &str) -> bool {
+    fn parses(text: &str) -> bool {
+        super::view_notes::revision_tags(text).is_some()
+            || super::view_notes::nested_revision_tags(text).is_some()
+            || super::view_notes::plain_revisions(text).is_some()
+            || super::view_notes::nested_plain_revisions(text).is_some()
+    }
+    if parses(note) {
+        return true;
+    }
+    note.contains(" move") && parses(&note_without_move(note))
+}
+
+/// `note` with a trailing move clause removed from each part.
+fn note_without_move(note: &str) -> String {
+    note.split(" re ")
+        .map(|segment| {
+            segment
+                .split("; ")
+                .map(part_without_move)
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+        .collect::<Vec<_>>()
+        .join(" re ")
+}
+
+/// One part without ` move` or ` move {name}` when `{name}` is one token.
+fn part_without_move(part: &str) -> String {
+    let part = part.trim();
+    if let Some((body, name)) = part.rsplit_once(" move ") {
+        let name = name.trim();
+        if !name.is_empty() && !name.contains(char::is_whitespace) {
+            return body.trim_end().to_string();
+        }
+    }
+    part.strip_suffix(" move").unwrap_or(part).to_string()
+}
+
 /// A complete attribution brace and its byte length. Comments never use
 /// this grammar; callers also check the preceding closer or pilcrow.
 pub(crate) fn attribution_tag(text: &str) -> Option<(&str, usize)> {
@@ -1364,11 +1406,7 @@ pub(crate) fn attribution_tag(text: &str) -> Option<(&str, usize)> {
     }
     let end = end.0;
     let note = &after[..end];
-    (super::view_notes::revision_tags(note).is_some()
-        || super::view_notes::nested_revision_tags(note).is_some()
-        || super::view_notes::plain_revisions(note).is_some()
-        || super::view_notes::nested_plain_revisions(note).is_some())
-    .then_some((note, end + 2))
+    recognized_note(note).then_some((note, end + 2))
 }
 
 /// Complete attribution payloads in rendered text, paired with their mark.
