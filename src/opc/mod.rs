@@ -594,6 +594,12 @@ fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<P
         repaired_duplicate_ids: Vec::new(),
         part_index: HashMap::new(),
         rels_index: HashMap::new(),
+        content_types_original: None,
+        content_types_canonical: Vec::new(),
+        package_rels_original: None,
+        package_rels_canonical: Vec::new(),
+        part_rels_original: HashMap::new(),
+        part_rels_canonical: HashMap::new(),
     };
     // The reserved names match under ASCII case (M1.12): a lone
     // `[content_types].xml` or `_RELS/.RELS` is the part (Word opens it,
@@ -605,12 +611,17 @@ fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<P
         .and_then(|name| parts.remove(&name))
         .ok_or_else(|| OpcError::PartNotFound("[Content_Types].xml".to_string()))?;
     package.pkg.content_types = read_content_types(&content_types)?;
+    package.content_types_canonical = package.pkg.content_types.to_xml().unwrap_or_default();
+    package.content_types_original = Some(content_types);
     if let Some(name) = parts
         .keys()
         .find(|name| name.eq_ignore_ascii_case("_rels/.rels"))
         .cloned()
     {
-        package.package_rels = read_relationships(&parts.remove(&name).unwrap_or_default())?;
+        let data = parts.remove(&name).unwrap_or_default();
+        package.package_rels = read_relationships(&data)?;
+        package.package_rels_canonical = package.package_rels.to_xml().unwrap_or_default();
+        package.package_rels_original = Some(data);
     }
     for (name, data) in parts {
         if name.to_ascii_lowercase().ends_with(".rels") {
@@ -621,7 +632,12 @@ fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<P
             });
             let key = norm(&owner);
             package.rels_index.insert(identity(&key), key.clone());
-            package.part_rels.insert(key, read_relationships(&data)?);
+            let rels = read_relationships(&data)?;
+            package
+                .part_rels_canonical
+                .insert(key.clone(), rels.to_xml().unwrap_or_default());
+            package.part_rels_original.insert(key.clone(), data);
+            package.part_rels.insert(key, rels);
         } else {
             let key = norm(&name);
             package.part_index.insert(identity(&key), key.clone());
@@ -673,7 +689,7 @@ pub(crate) fn rels_path_to_part_name(name: &str) -> Option<String> {
 
 /// One zip entry `PartFs::to_zip` writes after the two package-level ones.
 enum ZipEntry<'a> {
-    Rels(&'a Relationships),
+    Rels(Vec<u8>),
     Part(&'a [u8]),
 }
 
@@ -682,9 +698,18 @@ impl ZipEntry<'_> {
     fn len(&self) -> u64 {
         match self {
             // Serialized at plan time; a rels part never nears the boundary.
-            ZipEntry::Rels(rels) => rels.to_xml().map_or(0, |x| x.len() as u64),
+            ZipEntry::Rels(xml) => xml.len() as u64,
             ZipEntry::Part(data) => data.len() as u64,
         }
+    }
+}
+
+/// Original metadata bytes when `now` is still the serialization captured
+/// at load. A changed model writes `now`.
+fn unchanged_xml(now: Vec<u8>, original: Option<&[u8]>, canonical: &[u8]) -> Vec<u8> {
+    match original {
+        Some(bytes) if now.as_slice() == canonical => bytes.to_vec(),
+        _ => now,
     }
 }
 
@@ -730,6 +755,15 @@ pub struct PartFs {
     part_index: HashMap<String, String>,
     /// `part_rels` owners by identity, same contract as `part_index`.
     rels_index: HashMap<String, String>,
+    /// Bytes loaded for metadata the parsed model does not store. A later
+    /// serialization that still matches the load-time form writes these
+    /// back; a model that changed is serialized from the model.
+    content_types_original: Option<Vec<u8>>,
+    content_types_canonical: Vec<u8>,
+    package_rels_original: Option<Vec<u8>>,
+    package_rels_canonical: Vec<u8>,
+    part_rels_original: HashMap<String, Vec<u8>>,
+    part_rels_canonical: HashMap<String, Vec<u8>>,
 }
 
 /// Canonical target resolution shared by package APIs and text story labels.
@@ -850,8 +884,11 @@ impl PartFs {
             && check_opc_attributes(&data).is_ok()
             && let Ok(rels) = read_relationships(&data)
         {
+            let canonical = rels.to_xml().unwrap_or_default();
             if owner.is_empty() {
                 self.package_rels = rels;
+                self.package_rels_canonical = canonical;
+                self.package_rels_original = Some(data.clone());
             } else {
                 let key = self
                     .rels_index
@@ -859,6 +896,8 @@ impl PartFs {
                     .cloned()
                     .unwrap_or_else(|| norm(&owner));
                 self.rels_index.insert(identity(&key), key.clone());
+                self.part_rels_canonical.insert(key.clone(), canonical);
+                self.part_rels_original.insert(key.clone(), data.clone());
                 self.part_rels.insert(key, rels);
             }
             // A raw part of the same .rels identity is superseded: `to_zip`
@@ -875,6 +914,8 @@ impl PartFs {
             && let Ok(types) = read_content_types(&data)
         {
             self.pkg.content_types = types;
+            self.content_types_canonical = self.pkg.content_types.to_xml().unwrap_or_default();
+            self.content_types_original = Some(data.clone());
             if let Some(key) = self.part_index.remove(&identity(name)) {
                 self.pkg.parts.remove(&key);
             }
@@ -898,8 +939,12 @@ impl PartFs {
         if let Some(owner) = rels_path_to_part_name(name) {
             if owner.is_empty() {
                 self.package_rels = Relationships::new();
+                self.package_rels_original = None;
+                self.package_rels_canonical.clear();
             } else if let Some(key) = self.rels_index.remove(&identity(&owner)) {
                 self.part_rels.remove(&key);
+                self.part_rels_original.remove(&key);
+                self.part_rels_canonical.remove(&key);
             }
         }
         if name
@@ -910,6 +955,8 @@ impl PartFs {
                 defaults: HashMap::new(),
                 overrides: HashMap::new(),
             };
+            self.content_types_original = None;
+            self.content_types_canonical.clear();
         }
         if let Some(key) = self.part_index.remove(&identity(name)) {
             self.pkg.parts.remove(&key);
@@ -939,24 +986,37 @@ impl PartFs {
             .compression_level(Some(1))
             .last_modified_time(zip::DateTime::default());
 
-        let ct_xml = self.pkg.content_types.to_xml()?;
-        let pkg_rels_xml = self.package_rels.to_xml()?;
+        let ct_xml = unchanged_xml(
+            self.pkg.content_types.to_xml()?,
+            self.content_types_original.as_deref(),
+            &self.content_types_canonical,
+        );
+        let pkg_rels_xml = unchanged_xml(
+            self.package_rels.to_xml()?,
+            self.package_rels_original.as_deref(),
+            &self.package_rels_canonical,
+        );
 
         // Source entries keep their places; added ones follow, by name.
-        let mut entries: Vec<(Cow<str>, ZipEntry)> = self
-            .part_rels
-            .iter()
-            .map(|(part, rels)| {
-                (
-                    Cow::Owned(part_name_to_rels_path(part)),
-                    ZipEntry::Rels(rels),
-                )
-            })
-            .chain(self.pkg.parts.iter().map(|(name, data)| {
-                let zip_name = name.strip_prefix('/').unwrap_or(name);
-                (Cow::Borrowed(zip_name), ZipEntry::Part(data))
-            }))
-            .collect();
+        let mut entries: Vec<(Cow<'_, str>, ZipEntry<'_>)> = Vec::new();
+        for (part, rels) in &self.part_rels {
+            let xml = unchanged_xml(
+                rels.to_xml()?,
+                self.part_rels_original.get(part).map(Vec::as_slice),
+                self.part_rels_canonical
+                    .get(part)
+                    .map(Vec::as_slice)
+                    .unwrap_or(b""),
+            );
+            entries.push((
+                Cow::Owned(part_name_to_rels_path(part)),
+                ZipEntry::Rels(xml),
+            ));
+        }
+        entries.extend(self.pkg.parts.iter().map(|(name, data)| {
+            let zip_name = name.strip_prefix('/').unwrap_or(name);
+            (Cow::Borrowed(zip_name), ZipEntry::Part(data.as_slice()))
+        }));
         entries.sort_by(|(a, _), (b, _)| {
             let rank = |name: &str| self.source_order.get(name).copied().unwrap_or(usize::MAX);
             (rank(a), a).cmp(&(rank(b), b))
@@ -998,7 +1058,7 @@ impl PartFs {
         for (name, entry) in &entries {
             zip.start_file(name.as_ref(), options)?;
             match entry {
-                ZipEntry::Rels(rels) => zip.write_all(&rels.to_xml()?)?,
+                ZipEntry::Rels(xml) => zip.write_all(xml)?,
                 ZipEntry::Part(data) => zip.write_all(data)?,
             }
         }
@@ -1375,6 +1435,48 @@ mod tests {
                     .unwrap()
             );
             assert_eq!(direct.add("image", "media/b.png"), "rId8");
+        }
+    }
+
+    /// A write that does not change content types or relationships keeps
+    /// attributes the parsed model does not store.
+    #[test]
+    fn an_unchanged_package_keeps_unmodeled_metadata_attributes() {
+        let types = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types" Extra="kept"><Default Extension="xml" ContentType="application/xml"/></Types>"#;
+        let package_rels = format!(
+            r#"<Relationships xmlns="{RELS_NS}" Extra="kept"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#
+        );
+        let part_rels = format!(r#"<Relationships xmlns="{RELS_NS}" Extra="kept"/>"#);
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, data) in [
+            ("[Content_Types].xml", types),
+            ("_rels/.rels", package_rels.as_str()),
+            ("word/document.xml", "<document/>"),
+            ("word/_rels/document.xml.rels", part_rels.as_str()),
+        ] {
+            writer
+                .start_file(name, SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(data.as_bytes()).unwrap();
+        }
+        let bytes = writer.finish().unwrap().into_inner();
+        let written = PartFs::open(&bytes).unwrap().to_zip().unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(written)).unwrap();
+        for name in [
+            "[Content_Types].xml",
+            "_rels/.rels",
+            "word/_rels/document.xml.rels",
+        ] {
+            let mut text = String::new();
+            archive
+                .by_name(name)
+                .unwrap()
+                .read_to_string(&mut text)
+                .unwrap();
+            assert!(
+                text.contains(r#"Extra="kept""#),
+                "{name} dropped an attribute the model does not store: {text}"
+            );
         }
     }
 
