@@ -5970,6 +5970,62 @@ mod validation_owner_boundary_tests {
     }
 
     #[test]
+    fn a_doubled_package_root_in_any_ascii_case_still_names_a_part() {
+        for target in [
+            "//Word/no-such.xml",
+            "//WORD/no-such.xml",
+            "//DocProps/no-such.xml",
+            "//CustomXml/no-such.xml",
+            "//_RELS/no-such.xml",
+            "//Ppt/no-such.xml",
+            "//XL/no-such.xml",
+        ] {
+            let mut pkg = package();
+            pkg.add_document_relationship("word/document.xml", "urn:test/part", target);
+            let mut findings = Vec::new();
+            check_relationship_integrity(&pkg, &mut findings);
+            assert!(
+                findings
+                    .iter()
+                    .any(|finding| finding.code == "MISSING_REL_TARGET"),
+                "{target} was treated as a share, not a part"
+            );
+        }
+
+        let mut present = package();
+        present.add_document_relationship(
+            "word/document.xml",
+            "urn:test/part",
+            "//Word/document.xml",
+        );
+        let mut findings = Vec::new();
+        check_relationship_integrity(&present, &mut findings);
+        assert!(
+            findings.iter().all(|finding| {
+                finding.code != "MISSING_REL_TARGET"
+                    || !finding.message.contains("//Word/document.xml")
+            }),
+            "the document part was missed under another case: {findings:?}"
+        );
+
+        let mut share = package();
+        share.add_document_relationship(
+            "word/document.xml",
+            "urn:test/part",
+            "//notepad/share/template.dotx",
+        );
+        let mut findings = Vec::new();
+        check_relationship_integrity(&share, &mut findings);
+        assert!(
+            findings
+                .iter()
+                .all(|finding| finding.code != "MISSING_REL_TARGET"
+                    || !finding.message.contains("notepad")),
+            "a share whose name is not a package root was read as a part"
+        );
+    }
+
+    #[test]
     fn orphan_comment_cleanup_preserves_live_references_and_neighbor_run_properties() {
         for (content, remains) in [
             ("", false),
