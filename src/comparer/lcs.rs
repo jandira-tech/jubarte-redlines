@@ -173,7 +173,7 @@ fn unit_para_has_numpr(dom: &Dom, u: &ComparisonUnit) -> bool {
     let mut found = false;
     u.try_for_each_atom(&mut |atom| {
         for &ae in atom.ancestor_elements.iter() {
-            if !dom.name_is(ae, &p_name.clone()) {
+            if !dom.name_is(ae, &p_name) {
                 continue;
             }
             if let Some(ppr) = dom.element(ae, &W::p_pr()) {
@@ -194,7 +194,7 @@ fn unit_para_ilvl(dom: &Dom, u: &ComparisonUnit) -> Option<u32> {
     let mut out: Option<u32> = None;
     u.try_for_each_atom(&mut |atom| {
         for &ae in atom.ancestor_elements.iter() {
-            if !dom.name_is(ae, &p_name.clone()) {
+            if !dom.name_is(ae, &p_name) {
                 continue;
             }
             out = (|| {
@@ -2665,9 +2665,9 @@ pub fn do_lcs_algorithm(
                     };
                     let mut body_para = None;
                     for &ae in first_atom.ancestor_elements.iter() {
-                        if dom.name_is(ae, &p_name.clone())
+                        if dom.name_is(ae, &p_name)
                             && let Some(par) = dom.parent(ae)
-                            && dom.name_is(par, &body_name.clone())
+                            && dom.name_is(par, &body_name)
                         {
                             body_para = Some((ae, par));
                             break;
@@ -2703,7 +2703,7 @@ pub fn do_lcs_algorithm(
                     let mut body_block = None;
                     for &ae in last_atom.ancestor_elements.iter() {
                         if let Some(par) = dom.parent(ae)
-                            && dom.name_is(par, &body_name.clone())
+                            && dom.name_is(par, &body_name)
                         {
                             body_block = Some((ae, par));
                             break;
@@ -8753,7 +8753,7 @@ pub fn set_after_unids(dom: &mut Dom, unknown: &CorrelatedSequence) {
     let mut relevant = Vec::new();
     for &ae in first1.ancestor_elements.iter() {
         relevant.push(ae);
-        if dom.name_is(ae, &take_thru.clone()) {
+        if dom.name_is(ae, &take_thru) {
             break;
         }
     }

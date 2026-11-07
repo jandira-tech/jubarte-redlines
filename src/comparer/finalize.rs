@@ -10784,14 +10784,14 @@ fn order_property_elements(dom: &mut Dom, root: NodeId, comparison: bool) {
             let kids = dom.elements(el, None);
             let needs_move = kids
                 .iter()
-                .position(|&c| dom.name_is(c, &props.clone()))
+                .position(|&c| dom.name_is(c, &props))
                 .is_some_and(|first_props| {
                     kids[..first_props].iter().any(|&c| !dom.name_is(c, &props))
                 });
             if needs_move {
                 let (front, back): (Vec<NodeId>, Vec<NodeId>) = kids
                     .into_iter()
-                    .partition(|&c| dom.name_is(c, &props.clone()));
+                    .partition(|&c| dom.name_is(c, &props));
                 for c in front.into_iter().chain(back) {
                     dom.remove(c);
                     dom.add(el, c);
@@ -11151,7 +11151,7 @@ pub fn flatten_tracked_deletions(
         // kept) above; the childless element must not be "unwrapped" away
         if dom
             .parent(d)
-            .is_some_and(|p| dom.name_is(p, &rpr_name.clone()))
+            .is_some_and(|p| dom.name_is(p, &rpr_name))
         {
             continue;
         }
