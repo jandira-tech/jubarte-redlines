@@ -358,3 +358,83 @@ fn deleted_paragraph_markers_match_word_on_accept_all() {
         "reject restores the bookmark"
     );
 }
+
+/// Comment reference runs that sit after the deleted words, including an
+/// empty range nested in another comment, go with the paragraph.
+fn element_name(tag: &str) -> &str {
+    let rest = tag.trim_start_matches('<').trim_start_matches('/');
+    let rest = rest.strip_prefix("w:").unwrap_or(rest);
+    rest.split([' ', '>', '/']).next().unwrap_or("")
+}
+
+fn live_comment_references(paragraph: &str) -> usize {
+    let mut depth = 0usize;
+    let mut live = 0usize;
+    let mut rest = paragraph;
+    while let Some(at) = rest.find('<') {
+        rest = &rest[at..];
+        let Some(end) = rest.find('>') else { break };
+        let tag = &rest[..=end];
+        match (
+            element_name(tag),
+            tag.starts_with("</"),
+            tag.ends_with("/>"),
+        ) {
+            ("del", false, false) => depth += 1,
+            ("del", true, _) => depth = depth.saturating_sub(1),
+            ("commentReference", _, _) if depth == 0 => live += 1,
+            _ => {}
+        }
+        rest = &rest[end + 1..];
+    }
+    live
+}
+
+#[test]
+fn a_deleted_paragraph_deletes_comment_references_that_follow_its_text() {
+    let body = format!(
+        "{}<w:p><w:commentRangeStart w:id=\"0\"/><w:r><w:t>The Provider shall perform the Services.</w:t></w:r><w:commentRangeStart w:id=\"1\"/><w:r><w:commentReference w:id=\"1\"/></w:r><w:commentRangeEnd w:id=\"1\"/><w:r><w:commentReference w:id=\"0\"/></w:r><w:commentRangeEnd w:id=\"0\"/></w:p>{}",
+        para("Intro."),
+        para("Next paragraph.")
+    );
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}"><w:comment w:id="0" w:author="Bob" w:date="2026-10-19T12:00:00Z"><w:p><w:r><w:t>Bob's note.</w:t></w:r></w:p></w:comment><w:comment w:id="1" w:author="Carol" w:date="2026-10-19T12:00:00Z"><w:p><w:r><w:t>Carol's note.</w:t></w:r></w:p></w:comment></w:comments>"#
+    );
+    let source = docx_with(
+        &body,
+        &[Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        }],
+    );
+    let result = apply_plan(&source, &plan("", "p1")).unwrap();
+    let xml = part_string(&result.redline, "word/document.xml").unwrap();
+    let paragraph = paragraph_holding(&xml, "The Provider shall perform the Services.");
+    assert_eq!(
+        live_comment_references(&paragraph),
+        0,
+        "a reference stayed outside the deletion: {paragraph}"
+    );
+    assert_eq!(
+        paragraph.matches("<w:commentReference").count(),
+        2,
+        "the deletion dropped a reference run: {paragraph}"
+    );
+    let report = check_word_valid_package(&result.redline);
+    assert!(report.ok(), "redline: {:?}", report.errors);
+    let accepted = accept_revisions(&result.redline).unwrap();
+    let left = part_string(&accepted, "word/comments.xml").unwrap_or_default();
+    let accepted_doc = part_string(&accepted, "word/document.xml").unwrap_or_default();
+    assert!(
+        !left.contains("<w:comment "),
+        "accept kept a comment: {left}\nredline: {paragraph}\naccepted: {accepted_doc}"
+    );
+    let rejected = reject_revisions(&result.redline).unwrap();
+    let restored = part_string(&rejected, "word/comments.xml").unwrap_or_default();
+    assert!(
+        restored.contains("Bob's note.") && restored.contains("Carol's note."),
+        "reject dropped a thread: {restored}"
+    );
+}
