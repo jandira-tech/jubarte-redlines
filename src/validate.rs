@@ -218,7 +218,7 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 37] = [
+const RING1_CODES: [&str; 39] = [
     "DATA_BINDING_WITHOUT_STORE",
     "MOVE_RANGE_COUNT_MISMATCH",
     "MOVE_RANGE_NAME_MISSING",
@@ -256,6 +256,8 @@ const RING1_CODES: [&str; 37] = [
     "INSERTED_TEXT_BEFORE_DELETED_TABLE",
     "NON_FINITE_MEASURE",
     "DUPLICATE_DURABLE_ID",
+    "STYLE_CHANGE_SIBLINGS",
+    "DOC_DEFAULTS_CHANGE",
 ];
 
 /// Why a package could not be validated at all (a finding is never an
@@ -1521,6 +1523,7 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_runs_inside_paragraphs(pkg, &mut out);
     check_paragraph_ruby(pkg, &mut out);
     check_style_names(pkg, &mut out);
+    check_style_change_carriers(pkg, &mut out);
     check_nested_text_boxes(pkg, &mut out);
     check_nested_ppr(pkg, &mut out);
     check_move_range_counts(pkg, &mut out);
@@ -2303,6 +2306,75 @@ fn check_style_names(pkg: &PartFs, out: &mut Vec<Finding>) {
             }
         }
     }
+}
+
+/// Two or more same-kind change carriers under one style property, or a
+/// change carrier in the document defaults. The schema allows one
+/// `w:pPrChange` in `w:pPr` and one `w:rPrChange` in `w:rPr`, and the run
+/// defaults' `w:rPr` has no change child. Word opens both shapes, so neither
+/// finding is Word-fatal, and a repair would drop revision data.
+fn check_style_change_carriers(pkg: &PartFs, out: &mut Vec<Finding>) {
+    for part in xml_parts(pkg) {
+        let Some((dom, root)) = parse_part(pkg, &part) else {
+            continue;
+        };
+        if dom
+            .name(root)
+            .is_none_or(|name| name.local_name() != "styles")
+        {
+            continue;
+        }
+        for (holder_name, change_name) in [("pPr", "pPrChange"), ("rPr", "rPrChange")] {
+            for holder in dom.descendants(root, Some(&W::name(holder_name))) {
+                let count = dom.elements(holder, Some(&W::name(change_name))).len();
+                if count < 2 {
+                    continue;
+                }
+                let style = style_id_of(&dom, holder);
+                out.push(Finding::new(
+                    "STYLE_CHANGE_SIBLINGS",
+                    &part,
+                    element_path(&dom, holder),
+                    format!(
+                        "style '{style}' has {count} {change_name} carriers under one {holder_name}"
+                    ),
+                ));
+            }
+        }
+        for defaults in dom.elements(root, Some(&W::name("docDefaults"))) {
+            for run_default in dom.elements(defaults, Some(&W::name("rPrDefault"))) {
+                for run in dom.elements(run_default, Some(&W::name("rPr"))) {
+                    if dom.elements(run, Some(&W::name("rPrChange"))).is_empty() {
+                        continue;
+                    }
+                    out.push(Finding::new(
+                        "DOC_DEFAULTS_CHANGE",
+                        &part,
+                        element_path(&dom, run),
+                        "document defaults have a run-property change, which w:rPrDefault's w:rPr does not allow",
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// The `w:styleId` of the style that contains `node`, when it has one.
+fn style_id_of(dom: &Dom, node: NodeId) -> String {
+    let mut current = Some(node);
+    while let Some(at) = current {
+        if dom
+            .name(at)
+            .is_some_and(|name| name.local_name() == "style")
+        {
+            return dom
+                .attribute(at, &W::name("styleId"))
+                .unwrap_or("")
+                .to_string();
+        }
+        current = dom.parent(at);
+    }
+    String::new()
 }
 
 /// A run outside any paragraph: Word loads the document empty. Probed

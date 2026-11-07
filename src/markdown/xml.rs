@@ -162,6 +162,18 @@ pub(super) struct FormatMark {
     pub date: String,
 }
 
+/// Which property a `style_changes` tag names. `FormatMark` stays the mark
+/// itself: sections and note separators use it with no property kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum StyleChangeKind {
+    /// The style's own `w:pPrChange`.
+    Paragraph,
+    /// The style's own `w:rPrChange`.
+    Run,
+    /// A carrier the view can name and the writer does not put back.
+    Other,
+}
+
 /// The formatting changes a table line names: the table's own, a row's
 /// (`in t0.row1`) and a cell's (`in t0.row1.cell0`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -593,8 +605,9 @@ pub(super) struct Document {
     /// the header's `notes: {fmt: footnotes.r0 @AS; …}`.
     pub note_formats: Vec<(&'static str, super::view_notes::Tag)>,
     /// The tracked style changes the header's `style_changes:` names, by
-    /// holder (`Normal`, `docDefaults`): their ids, authors and dates.
-    pub style_changes: Vec<(String, Vec<FormatMark>)>,
+    /// holder (`Normal`, `docDefaults`): each tag's property, id, author
+    /// and date.
+    pub style_changes: Vec<(String, Vec<(StyleChangeKind, FormatMark)>)>,
     /// The style of every comment's paragraphs, when not CommentText: the
     /// header's `comments: …, style Normal`.
     pub comment_style: Option<String>,

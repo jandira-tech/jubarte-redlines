@@ -1127,6 +1127,81 @@ fn probe_ppr_inside_a_ppr_fails() {
     assert!(!finding.word_fatal && !finding.repairable, "{finding:?}");
 }
 
+fn style_change_carrier_package(styles_body: &str) -> Vec<u8> {
+    let styles = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+{styles_body}
+</w:styles>"#
+    );
+    zip_with_parts(&[
+        ("word/document.xml", MINIMAL_DOC),
+        ("word/styles.xml", &styles),
+    ])
+}
+
+#[test]
+fn style_change_carrier_siblings_are_a_warning() {
+    let bytes = style_change_carrier_package(
+        r#"<w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/>
+    <w:pPr>
+      <w:pPrChange w:id="1" w:author="Ana"><w:pPr/></w:pPrChange>
+      <w:pPrChange w:id="2" w:author="Ana"><w:pPr/></w:pPrChange>
+    </w:pPr>
+  </w:style>"#,
+    );
+    let report = check_word_valid_package(&bytes);
+    assert_eq!(codes(&report), [("STYLE_CHANGE_SIBLINGS", false)]);
+}
+
+#[test]
+fn style_change_carrier_defaults_change_is_a_warning() {
+    let bytes = style_change_carrier_package(
+        r#"<w:docDefaults><w:rPrDefault><w:rPr>
+      <w:rPrChange w:id="7" w:author="Ana"><w:rPr/></w:rPrChange>
+    </w:rPr></w:rPrDefault></w:docDefaults>"#,
+    );
+    let report = check_word_valid_package(&bytes);
+    assert_eq!(codes(&report), [("DOC_DEFAULTS_CHANGE", false)]);
+}
+
+#[test]
+fn style_change_carrier_one_of_each_is_quiet() {
+    let bytes = style_change_carrier_package(
+        r#"<w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/>
+    <w:pPr><w:pPrChange w:id="1" w:author="Ana"><w:pPr/></w:pPrChange></w:pPr>
+    <w:rPr><w:rPrChange w:id="1" w:author="Ana"><w:rPr/></w:rPrChange></w:rPr>
+  </w:style>"#,
+    );
+    let report = check_word_valid_package(&bytes);
+    assert!(
+        codes(&report).iter().all(|(code, _)| {
+            *code != "STYLE_CHANGE_SIBLINGS" && *code != "DOC_DEFAULTS_CHANGE"
+        }),
+        "{:?}",
+        codes(&report)
+    );
+}
+
+#[test]
+fn style_change_carrier_nested_history_is_quiet() {
+    let bytes = style_change_carrier_package(
+        r#"<w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/>
+    <w:rPr><w:rPrChange w:id="1" w:author="Ana"><w:rPr>
+      <w:rPrChange w:id="2" w:author="Ana"><w:rPr/></w:rPrChange>
+    </w:rPr></w:rPrChange></w:rPr>
+  </w:style>"#,
+    );
+    let report = check_word_valid_package(&bytes);
+    assert!(
+        codes(&report).iter().all(|(code, _)| {
+            *code != "STYLE_CHANGE_SIBLINGS" && *code != "DOC_DEFAULTS_CHANGE"
+        }),
+        "{:?}",
+        codes(&report)
+    );
+}
+
 #[test]
 fn probe_paraid_overflow_is_a_repairable_lead() {
     let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

@@ -12,7 +12,7 @@ styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
   LineNumber: character, Calibri 11pt, named line number
   table: TableNormal
-style_changes: {Normal: styles.r0 @LW}  # tracked changes to the styles
+style_changes: {Normal: pPr styles.r0 @LW; rPr styles.r0 @LW}  # tracked changes to the styles
 notes: {fmt: footnotes.r1 @LW; footnotes.r2 @LW; endnotes.r3 @LW; endnotes.r4 @LW, empty: [footnotes, endnotes]}  # changes in notes the body does not show (separators)
 headers:
   default: {id: header1, text: ""}
