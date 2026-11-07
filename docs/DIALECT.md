@@ -38,7 +38,7 @@ CriticMarkup for changes, then the agent view's YAML header and id lines.
 | `<b>` `<i>` `<s>` `<code>` `<mark class="hl-<colour>">` (and `<strong>` `<em>` `<del>`), `<a href>` | bold, italic, strike, code, highlight (yellow by default, the colour the class names), link | read only; other tags warn, and an HTML block keeps only its text |
 | `x ^2^`, `x ~2~` | superscript, subscript | word edges only: `H~2~O` stays text |
 | `$x$`, `$$x$$` | equation (`m:oMath`, `m:oMathPara`) | LaTeX both ways; `{++…++}` inside marks a change in the math; see MARKDOWN.md, Equations |
-| `#`–`######` | `Heading1`–`Heading6` | or the `styles:` legend's heading style |
+| `#`–`######` | `Heading1`–`Heading6` | or the `styles:` legend's heading style. A run's own bold or italic prints inside the heading (`# **Title**`, `## _Lean_`); bold or italic that only the heading style supplies does not |
 | `- a` `* a` `+ a` / `1. a` `1) a` / `- [ ] a` | bullets / numbers (start kept) / task | `ListParagraph` |
 | `> q`, fenced or indented code | `Quote`, `SourceCode` | |
 | `[t](url)` `[t](#a)` `![alt](f.png)` `[^n]` | link, picture, footnote | `#a` is a heading's GitHub slug |

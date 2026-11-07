@@ -606,6 +606,11 @@ pub(crate) fn collapse_ws(s: &str) -> String {
 pub(crate) struct Marks {
     pub bold: bool,
     pub italic: bool,
+    /// Bold the run states itself: a direct `w:b`, or a character style.
+    /// A heading style's bold is `bold` without this.
+    pub own_bold: bool,
+    /// Italic the run states itself, as `own_bold` is for bold.
+    pub own_italic: bool,
     /// Agent view only, as the two below: `<u>…</u>`.
     pub underline: bool,
     /// `<mark>…</mark>`: a highlight of any colour. `None` when the
@@ -709,9 +714,10 @@ impl Inline {
         });
     }
 
-    /// Render to Markdown. `emphasis` false drops bold and italic only
-    /// (headings, whose own style carries them); the other marks are the
-    /// run's and print inside the heading as in a body paragraph.
+    /// Render to Markdown. `emphasis` false keeps only the bold and italic
+    /// the run states itself (a heading's style supplies the rest); the
+    /// other marks are the run's and print inside the heading as in a body
+    /// paragraph.
     pub(crate) fn render(&self, emphasis: bool) -> String {
         let mut out = String::new();
         let mut index = 0;
@@ -811,12 +817,12 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
         let style = if emphasis {
             span.marks
         } else {
-            // Headings drop bold and italic only: underline, highlight,
-            // strike and code are marks of their own, and they print in
-            // a heading as they do in a body paragraph.
+            // A heading keeps the run's own bold and italic. Underline,
+            // highlight, strike and code are marks of their own, and they
+            // print in a heading as they do in a body paragraph.
             Marks {
-                bold: false,
-                italic: false,
+                bold: span.marks.own_bold,
+                italic: span.marks.own_italic,
                 ..span.marks
             }
         };
