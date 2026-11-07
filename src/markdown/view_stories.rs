@@ -1111,8 +1111,15 @@ pub(super) fn section(entry: &str) -> Stories {
 /// which Word does not take in a
 /// header or footer. A `![…][dN]` or `![…][imageK]` token (or an older
 /// view's `![…](drawing:…)`) splices its materialized drawing from
-/// `drawings`.
-fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -> String {
+/// `drawings`. `<b>`, `<i>`, `<u>`, `<s>`, `<code>`, `<sup>`, `<sub>` and
+/// `<mark class="hl-…">` (a bare `<mark>` is yellow) are that text's
+/// character formatting.
+fn runs(
+    text: &str,
+    marks: &mut Marks<'_>,
+    drawings: &HashMap<String, String>,
+    fmt: &mut StoryFmt,
+) -> String {
     let mut out = String::new();
     let mut plain = String::new();
     let mut last_revision = Vec::new();
@@ -1136,7 +1143,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
         if let Some((dest, len)) = super::from_docx::drawing::at(rest) {
             last_revision.clear();
             noid_parent.clear();
-            flush(&mut plain, &mut out, false);
+            flush(&mut plain, &mut out, false, fmt);
             if let Some(drawing) = drawings.get(dest) {
                 out.push_str(drawing);
             }
@@ -1148,7 +1155,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                 last_revision.clear();
                 noid_parent.clear();
             }
-            flush(&mut plain, &mut out, false);
+            flush(&mut plain, &mut out, false, fmt);
             let (mut tags, mut parents, after) = tags_after(after);
             let mut changed = String::new();
             let mut wrappers = Vec::new();
@@ -1186,6 +1193,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                         (None, Some(tag)) => tag.ids.as_slice(),
                         (None, None) => &[][..],
                     };
+                    let mut story = (drawings, &mut *fmt);
                     tracked(
                         &mut changed,
                         marks,
@@ -1193,7 +1201,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                         tag,
                         ids,
                         inner,
-                        drawings,
+                        &mut story,
                     );
                     if ids.len() == 1 {
                         let close = if name == "w:ins" {
@@ -1241,6 +1249,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                         ),
                         _ => (&[][..], &[][..]),
                     };
+                    let mut story = (drawings, &mut *fmt);
                     tracked(
                         &mut changed,
                         marks,
@@ -1248,7 +1257,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                         old_tag,
                         old_ids,
                         old,
-                        drawings,
+                        &mut story,
                     );
                     let mut inserted = String::new();
                     tracked(
@@ -1258,7 +1267,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                         new_tag,
                         new_ids,
                         new,
-                        drawings,
+                        &mut story,
                     );
                     let mut parent_kind = parents
                         .first()
@@ -1296,12 +1305,12 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
         if let Some((field, after)) = field(rest) {
             last_revision.clear();
             noid_parent.clear();
-            flush(&mut plain, &mut out, false);
+            flush(&mut plain, &mut out, false, fmt);
             match field {
                 Field::Coded(code, result) => out.push_str(&format!(
                     "<w:fldSimple w:instr=\" {} \">{}</w:fldSimple>",
                     super::xml::escape(code.trim()),
-                    runs(result, marks, drawings)
+                    runs(result, marks, drawings, fmt)
                 )),
                 // No result: Word computes it (`PAGE` on every page).
                 Field::Bare(name) => {
@@ -1311,10 +1320,16 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
             rest = after;
             continue;
         }
+        if let Some((tag, len)) = format_tag(rest) {
+            flush(&mut plain, &mut out, false, fmt);
+            apply_format(fmt, &tag);
+            rest = &rest[len..];
+            continue;
+        }
         plain.push(c);
         rest = &rest[c.len_utf8()..];
     }
-    flush(&mut plain, &mut out, false);
+    flush(&mut plain, &mut out, false, fmt);
     out
 }
 
@@ -1526,23 +1541,255 @@ fn field(text: &str) -> Option<(Field<'_>, &str)> {
     .then(|| (Field::Bare(&after[..end]), &after[end + 1..]))
 }
 
+/// Character formatting open in a story's text. Counters nest; the
+/// highlight stack's last colour is the one `w:highlight` writes.
+#[derive(Default)]
+struct StoryFmt {
+    bold: u8,
+    italic: u8,
+    underline: u8,
+    strike: u8,
+    code: u8,
+    sup: u8,
+    sub: u8,
+    highlight: Vec<&'static str>,
+}
+
+impl StoryFmt {
+    /// `w:rPr` for the marks that are open, in `CT_RPr` order, or nothing.
+    fn properties(&self) -> String {
+        let mut inner = String::new();
+        if self.code > 0 {
+            inner.push_str("<w:rStyle w:val=\"VerbatimChar\"/>");
+        }
+        if self.bold > 0 {
+            inner.push_str("<w:b/><w:bCs/>");
+        }
+        if self.italic > 0 {
+            inner.push_str("<w:i/><w:iCs/>");
+        }
+        if self.strike > 0 {
+            inner.push_str("<w:strike/>");
+        }
+        if let Some(colour) = self.highlight.last() {
+            let _ = write!(inner, "<w:highlight w:val=\"{colour}\"/>");
+        }
+        if self.underline > 0 {
+            inner.push_str("<w:u w:val=\"single\"/>");
+        }
+        if self.sup > 0 {
+            inner.push_str("<w:vertAlign w:val=\"superscript\"/>");
+        } else if self.sub > 0 {
+            inner.push_str("<w:vertAlign w:val=\"subscript\"/>");
+        }
+        if inner.is_empty() {
+            String::new()
+        } else {
+            format!("<w:rPr>{inner}</w:rPr>")
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FormatKind {
+    Bold,
+    Italic,
+    Underline,
+    Strike,
+    Code,
+    Sup,
+    Sub,
+    Mark(&'static str),
+}
+
+struct FormatTag {
+    closing: bool,
+    empty: bool,
+    kind: FormatKind,
+}
+
+/// A character-formatting tag at the start of `text` (`<b>`, `</mark>`,
+/// `<mark class="hl-cyan">`). Anything else is document text.
+fn format_tag(text: &str) -> Option<(FormatTag, usize)> {
+    let after = text.strip_prefix('<')?;
+    let end = after.find('>')?;
+    let inner = &after[..end];
+    if inner.starts_with(['!', '?']) {
+        return None;
+    }
+    let closing = inner.trim_start().starts_with('/');
+    let mut body = inner.trim().trim_start_matches('/').trim();
+    let empty = body.ends_with('/');
+    body = body.trim_end_matches('/').trim();
+    let name_len = body
+        .find(|c: char| !c.is_ascii_alphanumeric())
+        .unwrap_or(body.len());
+    if name_len == 0 || !body[..name_len].starts_with(|c: char| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    if body[name_len..]
+        .chars()
+        .next()
+        .is_some_and(|c| !c.is_whitespace())
+    {
+        return None;
+    }
+    let kind = match body[..name_len].to_ascii_lowercase().as_str() {
+        "b" | "strong" => FormatKind::Bold,
+        "i" | "em" => FormatKind::Italic,
+        "u" => FormatKind::Underline,
+        "s" | "del" => FormatKind::Strike,
+        "code" => FormatKind::Code,
+        "sup" => FormatKind::Sup,
+        "sub" => FormatKind::Sub,
+        "mark" => FormatKind::Mark(mark_colour(inner)),
+        _ => return None,
+    };
+    Some((
+        FormatTag {
+            closing,
+            empty,
+            kind,
+        },
+        end + 2,
+    ))
+}
+
+fn apply_format(fmt: &mut StoryFmt, tag: &FormatTag) {
+    if tag.empty {
+        return;
+    }
+    let slot = match tag.kind {
+        FormatKind::Bold => &mut fmt.bold,
+        FormatKind::Italic => &mut fmt.italic,
+        FormatKind::Underline => &mut fmt.underline,
+        FormatKind::Strike => &mut fmt.strike,
+        FormatKind::Code => &mut fmt.code,
+        FormatKind::Sup => &mut fmt.sup,
+        FormatKind::Sub => &mut fmt.sub,
+        FormatKind::Mark(colour) => {
+            if tag.closing {
+                fmt.highlight.pop();
+            } else {
+                fmt.highlight.push(colour);
+            }
+            return;
+        }
+    };
+    if tag.closing {
+        *slot = slot.saturating_sub(1);
+    } else {
+        *slot = slot.saturating_add(1);
+    }
+}
+
+/// The highlight colour `class` names (`hl-cyan`), or yellow when the
+/// tag names none that Word lists.
+fn mark_colour(inner: &str) -> &'static str {
+    let lower = inner.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(found) = lower[from..].find("class") {
+        let at = from + found;
+        from = at + "class".len();
+        if lower[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+        {
+            continue;
+        }
+        let Some(value) = inner[from..].trim_start().strip_prefix('=') else {
+            continue;
+        };
+        let value = value.trim_start();
+        let raw = match value.chars().next() {
+            Some(quote @ ('"' | '\'')) => value[1..].split(quote).next().unwrap_or(""),
+            _ => value
+                .split(|c: char| c.is_whitespace() || c == '/')
+                .next()
+                .unwrap_or(""),
+        };
+        if let Some(colour) = raw.split_whitespace().find_map(named_highlight) {
+            return colour;
+        }
+    }
+    "yellow"
+}
+
+fn named_highlight(token: &str) -> Option<&'static str> {
+    let colour = token
+        .get(..3)
+        .filter(|prefix| prefix.eq_ignore_ascii_case("hl-"))
+        .map(|_| &token[3..])?;
+    crate::edit::HIGHLIGHTS
+        .iter()
+        .copied()
+        .find(|highlight| *highlight != "none" && highlight.eq_ignore_ascii_case(colour))
+}
+
 /// Plain text as runs, a line break as a `w:br`; deleted text as
-/// `w:delText`.
-fn flush(plain: &mut String, out: &mut String, deleted: bool) {
+/// `w:delText`. Open character marks become the run's `w:rPr`.
+fn flush(plain: &mut String, out: &mut String, deleted: bool, fmt: &StoryFmt) {
     let element = if deleted { "w:delText" } else { "w:t" };
     let text = unescape(plain);
+    let properties = fmt.properties();
     for (i, line) in text.split('\n').enumerate() {
         if i > 0 {
             out.push_str("<w:r><w:br/></w:r>");
         }
         if !line.is_empty() {
-            out.push_str(&format!(
-                "<w:r><{element} xml:space=\"preserve\">{}</{element}></w:r>",
+            let _ = write!(
+                out,
+                "<w:r>{properties}<{element} xml:space=\"preserve\">{}</{element}></w:r>",
                 super::xml::escape(line)
-            ));
+            );
         }
     }
     plain.clear();
+}
+
+/// `w:color` on every run. A run that already carries character marks
+/// keeps one `w:rPr`, with the colour before highlight, underline and
+/// vertical alignment.
+fn paint_run_color(content: &str, color: &str) -> String {
+    let mut out = String::new();
+    let mut rest = content;
+    while !rest.is_empty() {
+        if let Some(inner) = rest.strip_prefix("<w:r><w:rPr>") {
+            out.push_str("<w:r><w:rPr>");
+            let Some(end) = inner.find("</w:rPr>") else {
+                out.push_str(inner);
+                break;
+            };
+            out.push_str(&with_color(&inner[..end], color));
+            out.push_str("</w:rPr>");
+            rest = &inner[end + "</w:rPr>".len()..];
+        } else if let Some(inner) = rest.strip_prefix("<w:r>") {
+            let _ = write!(out, "<w:r><w:rPr><w:color w:val=\"{color}\"/></w:rPr>");
+            rest = inner;
+        } else if let Some(at) = rest.find("<w:r>") {
+            out.push_str(&rest[..at]);
+            rest = &rest[at..];
+        } else {
+            out.push_str(rest);
+            break;
+        }
+    }
+    out
+}
+
+fn with_color(inner: &str, color: &str) -> String {
+    let colour = format!("<w:color w:val=\"{color}\"/>");
+    for marker in ["<w:highlight", "<w:u", "<w:vertAlign"] {
+        if let Some(at) = inner.find(marker) {
+            let mut out = String::with_capacity(inner.len() + colour.len());
+            out.push_str(&inner[..at]);
+            out.push_str(&colour);
+            out.push_str(&inner[at..]);
+            return out;
+        }
+    }
+    format!("{inner}{colour}")
 }
 
 /// Document text the view escaped back as it was: a mark's delimiter
@@ -1594,7 +1841,7 @@ fn tracked(
     tag: Option<&super::view_notes::Tag>,
     ids: &[u32],
     inner: &str,
-    drawings: &HashMap<String, String>,
+    story: &mut (&HashMap<String, String>, &mut StoryFmt),
 ) {
     let has_field = inner
         .char_indices()
@@ -1624,7 +1871,7 @@ fn tracked(
             tag,
             ids.get(n).copied(),
             piece,
-            drawings,
+            story,
         );
     }
 }
@@ -1638,8 +1885,9 @@ fn tracked_piece(
     tag: Option<&super::view_notes::Tag>,
     id: Option<u32>,
     inner: &str,
-    drawings: &HashMap<String, String>,
+    story: &mut (&HashMap<String, String>, &mut StoryFmt),
 ) {
+    let (drawings, fmt) = (story.0, &mut *story.1);
     let _ = write!(out, "<{}>", marks.mark_id(name, tag, id));
     let mut plain = String::new();
     let mut rest = inner;
@@ -1650,7 +1898,7 @@ fn tracked_piece(
             continue;
         }
         if let Some((dest, len)) = super::from_docx::drawing::at(rest) {
-            flush(&mut plain, out, deleted);
+            flush(&mut plain, out, deleted, fmt);
             if let Some(drawing) = drawings.get(dest) {
                 out.push_str(drawing);
             }
@@ -1658,7 +1906,7 @@ fn tracked_piece(
             continue;
         }
         if let Some((field, after)) = field(rest) {
-            flush(&mut plain, out, deleted);
+            flush(&mut plain, out, deleted, fmt);
             let (code, result) = match field {
                 Field::Coded(code, result) => (code.trim().to_string(), result.to_string()),
                 Field::Bare(name) => (name.to_string(), String::new()),
@@ -1676,15 +1924,21 @@ fn tracked_piece(
                 super::xml::escape(&code)
             );
             let mut result = result;
-            flush(&mut result, out, deleted);
+            flush(&mut result, out, deleted, fmt);
             out.push_str("<w:r><w:fldChar w:fldCharType=\"end\"/></w:r>");
             rest = after;
+            continue;
+        }
+        if let Some((tag, len)) = format_tag(rest) {
+            flush(&mut plain, out, deleted, fmt);
+            apply_format(fmt, &tag);
+            rest = &rest[len..];
             continue;
         }
         plain.push(c);
         rest = &rest[c.len_utf8()..];
     }
-    flush(&mut plain, out, deleted);
+    flush(&mut plain, out, deleted, fmt);
     let _ = write!(out, "</{name}>");
 }
 
@@ -2177,7 +2431,8 @@ fn story_part(
         }
         // The runs first: a paragraph's mark is the last piece of a
         // change that ends there, so it takes that change's last id.
-        let mut content = runs(text, marks, &drawings);
+        let mut formatting = StoryFmt::default();
+        let mut content = runs(text, marks, &drawings, &mut formatting);
         let mut properties = base.clone();
         if let Some(named) = paragraph_marks.remove(&index) {
             // `w:ins` comes before `w:del` in `w:rPr`, sorted above.
@@ -2200,12 +2455,7 @@ fn story_part(
             );
         }
         if let Some(color) = own.and_then(|f| f.color.as_deref()) {
-            // `w:color` is the only run property the writer gives a story's
-            // runs, so it opens each run's `w:rPr`.
-            content = content.replace(
-                "<w:r>",
-                &format!("<w:r><w:rPr><w:color w:val=\"{color}\"/></w:rPr>"),
-            );
+            content = paint_run_color(&content, color);
         }
         let _ = write!(body, "<w:p><w:pPr>{properties}</w:pPr>{content}");
         if index == last {
@@ -2409,6 +2659,7 @@ mod tests {
                 pools: HashMap::new(),
             },
             &HashMap::new(),
+            &mut StoryFmt::default(),
         )
     }
 
