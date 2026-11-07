@@ -4744,6 +4744,13 @@ impl<'p> Transaction<'p> {
                 };
                 let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
                 outcome.context = Some(format!("{{+¶ {}}}", excerpt(&joined, 60)));
+                // Accepting a deleted mark joins this paragraph to the one
+                // after it. The new paragraph is that one; leave the mark.
+                if *position == Side::After
+                    && let Some(note) = self.pending_deleted_mark_note(para)
+                {
+                    outcome.message = Some(note);
+                }
                 Ok((
                     Resolved::InsertParagraph {
                         anchor: para,
@@ -5715,6 +5722,31 @@ impl<'p> Transaction<'p> {
                 Resolved::FillControl { .. } => vec![0],
             })
             .collect()
+    }
+
+    /// The report when `para`'s mark is a pending `w:del`: accepting it
+    /// merges `para` with a paragraph inserted after it. `None` when the
+    /// mark is not a deletion.
+    fn pending_deleted_mark_note(&self, para: usize) -> Option<String> {
+        let node = self.paragraph_nodes[para];
+        let dom = &self.opened.dom;
+        let rpr = dom
+            .element(node, &W::p_pr())
+            .and_then(|ppr| dom.element(ppr, &W::r_pr()))?;
+        let del = dom.elements(rpr, None).into_iter().find(|&child| {
+            dom.name(child)
+                .is_some_and(|name| name.namespace_name() == W::URI && name.local_name() == "del")
+        })?;
+        let wid = dom.attribute(del, &W::id())?;
+        let (story, _) = self.paragraph_story[para];
+        let rev = crate::ids::ChangeId::new(&self.stories[story].id, wid).short();
+        let author = dom
+            .attribute(del, &W::author())
+            .unwrap_or("an unnamed author");
+        let pid = self.paragraph_id(para);
+        Some(format!(
+            "{pid}'s paragraph mark is a pending deletion by {author} ({rev}); if it is accepted, {pid} and the new paragraph merge; restore {rev} to keep them apart"
+        ))
     }
 
     /// The id of a paragraph ([`crate::ids::paragraph_id`]).
