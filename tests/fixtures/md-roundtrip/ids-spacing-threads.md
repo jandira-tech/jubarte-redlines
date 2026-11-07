@@ -25,7 +25,7 @@ A Sampler Document for Extraction Testing
 This document is intentionally varied. It mixes headings, body copy, inline formatting, colors, lists, a table, footnotes, a hyperlink, and a block quote so an extraction tool has plenty to chew on. **Emphasis lives here. See note.**<sup>[\[1\]](#footnote-1)</sup>﻿
 
 <!-- p3 -->
-# 1. Typography Samples
+# **1. Typography Samples**
 
 <!-- p4 -->
 Below are inline runs with mixed formatting. Each run is a separate span so an extractor can detect boundaries.
@@ -34,10 +34,10 @@ Below are inline runs with mixed formatting. Each run is a separate span so an e
 **Bold blue, italic red, underlined green, yellow-highlighted, strikethrough, monospace.**
 
 <!-- p6 -->
-# 2. Lists
+# **2. Lists**
 
 <!-- p7 -->
-## 2.1 Bulleted
+## **2.1 Bulleted**
 
 <!-- p8 -->
 Apples — a pomaceous fruit
@@ -49,7 +49,7 @@ Bourbon — distilled in Kentucky
 Cardamom — a fragrant spice
 
 <!-- p11 -->
-## 2.2 Numbered (with nested)
+## **2.2 Numbered (with nested)**
 
 <!-- p12 -->
 Preheat the oven to 375°F.
@@ -67,7 +67,7 @@ Add a pinch of salt.
 Bake for 22 minutes.
 
 <!-- p17 -->
-# 3. Tabular Data
+# **3. Tabular Data**
 
 <!-- p18 -->
 A small table with a header row:
@@ -83,7 +83,7 @@ A small table with a header row:
 <!-- p39 empty -->
 
 <!-- p40 -->
-# 4. Quote & Link
+# **4. Quote & Link**
 
 <!-- p41 -->
 “Not all those who wander are lost.” — a line often quoted to test block-quote handling.
@@ -95,7 +95,7 @@ More information available at our [reference page](https://example.com/reference
 This sentence carries a second footnote for testing multi-note extraction. †<sup>[\[2\]](#footnote-2)</sup>﻿
 
 <!-- p44 -->
-# 5. Color Callouts
+# **5. Color Callouts**
 
 <!-- p45 -->
 **WARNING: Do not feed the extraction tool after midnight.**
@@ -116,7 +116,7 @@ _— end of sample —_
 {++This document is intentionally varied. It mixes headings, body copy, inline formatting, colors, lists, a table, footnotes, a hyperlink, and a block quote so an extraction tool has plenty to chew on.++}{r3 @ASR} **Emphasis lives here. See note.**{++<sup>[\[3\]](#footnote-3)</sup>++}{r63 @ASR}﻿
 
 <!-- p51 -->
-# {++1. Typography Samples++}{r4 @ASR}
+# {++**1. Typography Samples**++}{r4 @ASR}
 
 <!-- p52 -->
 {++Below are inline runs with mixed formatting. Each run is a separate span so an extractor can detect boundaries.++}{r5 @ASR}
@@ -125,10 +125,10 @@ _— end of sample —_
 {++**Bold blue,** ++}{r6 @ASR}**italic red, underlined green, yellow-highlighted,** {++**strikethrough, monospace.**++}{r64 @ASR}
 
 <!-- p54 -->
-# {++2. Lists++}{r7 @ASR}
+# {++**2. Lists**++}{r7 @ASR}
 
 <!-- p55 -->
-## {++2.1 Bulleted++}{r8 @ASR}
+## {++**2.1 Bulleted**++}{r8 @ASR}
 
 <!-- p56 -->
 {++Apples — a pomaceous fruit++}{r9 @ASR}
@@ -140,7 +140,7 @@ _— end of sample —_
 {++Cardamom — a fragrant spice++}{r11 @ASR}
 
 <!-- p59 -->
-## {++2.2 Numbered (with nested)++}{r12 @ASR}
+## {++**2.2 Numbered (with nested)**++}{r12 @ASR}
 
 <!-- p60 -->
 {++Preheat the oven to 375°F.++}{r13 @ASR}
@@ -158,7 +158,7 @@ _— end of sample —_
 {++Bake for 22 minutes.++}{r17 @ASR}
 
 <!-- p65 -->
-# {++3. Tabular Data++}{r18 @ASR}
+# {++**3. Tabular Data**++}{r18 @ASR}
 
 <!-- p66 -->
 {++A small table with a header row:++}{r19 @ASR}
@@ -177,7 +177,7 @@ _— end of sample —_
 ﻿
 
 <!-- p89 -->
-# {++4. Quote & Link++}{r40 @ASR}
+# {++**4. Quote & Link**++}{r40 @ASR}
 
 <!-- p90 -->
 {++“Not all those who wander are lost.” — a line often quoted to test block-quote handling.++}{r41 @ASR}
@@ -189,7 +189,7 @@ _— end of sample —_
 {++This sentence carries a second footnote for testing multi-note extraction. †<sup>[\[4\]](#footnote-4)</sup>++}{r43 @ASR}﻿
 
 <!-- p93 -->
-# {++5. Color Callouts++}{r44 @ASR}
+# {++**5. Color Callouts**++}{r44 @ASR}
 
 <!-- p94 -->
 {++**WARNING: Do not feed the extraction tool after midnight.**++}{r45 @ASR}
@@ -213,7 +213,7 @@ A Sampler Document for Extraction Testing
 This document is intentionally {--varied. It mixes headings, body copy, inline formatting, colors, lists, a table, footnotes, a hyperlink, and a --}{r48 @ASR}block quote so an extraction tool has plenty to chew on. **Emphasis lives here. See note.**<sup>[\[5\]](#footnote-5)</sup>﻿
 
 <!-- p101 -->
-# 1. Typography Samples
+# **1. Typography Samples**
 
 <!-- p102 -->
 Below are inline runs with mixed formatting. Each run is a separate span so an extractor can detect boundaries.
@@ -222,10 +222,10 @@ Below are inline runs with mixed formatting. Each run is a separate span so an e
 **Bold blue, italic red, underlined green, yellow-highlighted, strikethrough, monospace.**
 
 <!-- p104 -->
-# 2. Lists
+# **2. Lists**
 
 <!-- p105 -->
-## 2.1 Bulleted
+## **2.1 Bulleted**
 
 <!-- p106 -->
 Apples — a pomaceous fruit
@@ -237,7 +237,7 @@ Bourbon — distilled in Kentucky
 Cardamom — a fragrant spice
 
 <!-- p109 -->
-## 2.2 Numbered (with nested)
+## **2.2 Numbered (with nested)**
 
 <!-- p110 -->
 Preheat the oven to 375°F.
@@ -255,7 +255,7 @@ Add a pinch of salt.
 {--Bake for 22 minutes.--}{r49 @ASR}
 
 <!-- p115 -->
-# {--3. Tabular Data--}{r50 @ASR}
+# {--**3. Tabular Data**--}{r50 @ASR}
 
 <!-- p116 -->
 {--A small table with a header row:--}{r51 @ASR}
@@ -264,7 +264,7 @@ Add a pinch of salt.
 ﻿
 
 <!-- p118 -->
-# {--4. Quote & Link--}{r52 @ASR}
+# {--**4. Quote & Link**--}{r52 @ASR}
 
 <!-- p119 -->
 {--“Not all those who wander are lost.” — a line often quoted to test block-quote handling.--}{r53 @ASR}
@@ -276,7 +276,7 @@ Add a pinch of salt.
 {--This sentence carries a second footnote for testing multi-note extraction. †<sup>[\[6\]](#footnote-6)</sup>--}{r55 @ASR}﻿
 
 <!-- p122 -->
-# {--5. Color Callouts--}{r56 @ASR}
+# {--**5. Color Callouts**--}{r56 @ASR}
 
 <!-- p123 -->
 {--**WARNING: Do not feed the extraction tool after midnight.**--}{r57 @ASR}

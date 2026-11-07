@@ -31,7 +31,7 @@ styles:
 <!-- p106 NoSpacing empty, break-del r209 @SW -->
 
 <!-- p107 size 11pt, bullet, break-del r211+210 @SW -->
-## - {--Economics & business--}{r211+210 @SW}
+## - {--**Economics & business**--}{r211+210 @SW}
 
 <!-- p108 NoSpacing break-del r213+212 @SW -->
 {--Title: [Ida Greaves : a pioneer development economist](https://eur.on.worldcat.org/oclc/1381732921)--}{r213+212 @SW}
@@ -44,7 +44,7 @@ styles:
 <!-- p111 NoSpacing empty, break-del r217 @SW -->
 
 <!-- p112 size 11pt, bullet, break-del r219+218 @SW -->
-## - {--History, culture & communication--}{r219+218 @SW}
+## - {--**History, culture & communication**--}{r219+218 @SW}
 
 <!-- p113 NoSpacing break-del r221+220 @SW -->
 {--Title: [Lies my teacher told me : a graphic adaptation](https://eur.on.worldcat.org/oclc/1376499816)--}{r221+220 @SW}
@@ -81,7 +81,7 @@ styles:
 <!-- p125 NoSpacing empty, break-del r240 @SW -->
 
 <!-- p126 size 11pt, bullet, break-del r242+241 @SW -->
-## - {--Law & criminology--}{r242+241 @SW}
+## - {--**Law & criminology**--}{r242+241 @SW}
 
 <!-- p127 NoSpacing break-del r244+243 @SW -->
 {--Title: [The Routledge International Handbook on Decolonizing Justice](https://eur.on.worldcat.org/oclc/1389364158)--}{r244+243 @SW}
@@ -94,7 +94,7 @@ styles:
 <!-- p130 NoSpacing empty, break-del r248 @SW -->
 
 <!-- p131 size 11pt, bullet, break-del r250+249 @SW -->
-## - {--Psychology--}{r250+249 @SW}
+## - {--**Psychology**--}{r250+249 @SW}
 
 <!-- p132 NoSpacing break-del r252+251 @SW -->
 {--Title: [Decolonial psychology: Toward anticolonial theories, research, training, and practice](https://eur.on.worldcat.org/oclc/1402269167)--}{r252+251 @SW}
@@ -107,7 +107,7 @@ styles:
 <!-- p135 NoSpacing empty, break-del r256 @SW -->
 
 <!-- p136 size 11pt, bullet, break-del r258+257 @SW -->
-## - {--Sociology & public administration--}{r258+257 @SW}
+## - {--**Sociology & public administration**--}{r258+257 @SW}
 
 <!-- p137 NoSpacing break-del r260+259 @SW -->
 {--Title: [Diaspora as translation and decolonisation](https://eur.on.worldcat.org/oclc/1319342860)--}{r260+259 @SW}
@@ -128,7 +128,7 @@ styles:
 <!-- p143 NoSpacing empty, break-del r269 @SW -->
 
 <!-- p144 size 11pt, bullet, break-del r271+270 @SW -->
-## - {--Other--}{r271+270 @SW}
+## - {--**Other**--}{r271+270 @SW}
 
 <!-- p145 NoSpacing break-del r273+272 @SW -->
 {--Title: [Black man in the Netherlands : an Afro-Antillean anthropology](https://eur.on.worldcat.org/oclc/1260170646)--}{r273+272 @SW}
@@ -152,7 +152,7 @@ styles:
 <!-- p152 NoSpacing empty, break-del r285 @SW -->
 
 <!-- p153 size 11pt, bullet, break-del r287+286 @SW -->
-## - {--Economics & business--}{r287+286 @SW}
+## - {--**Economics & business**--}{r287+286 @SW}
 
 <!-- p154 NoSpacing break-del r289+288 @SW -->
 {--Title: [Working together : practicing the science of diversity, equity, and inclusion](https://eur.on.worldcat.org/oclc/1406102812)--}{r289+288 @SW}
@@ -165,7 +165,7 @@ styles:
 <!-- p157 NoSpacing empty, break-del r293 @SW -->
 
 <!-- p158 size 11pt, bullet, break-del r295+294 @SW -->
-## - {--History, culture, & communication--}{r295+294 @SW}
+## - {--**History, culture, & communication**--}{r295+294 @SW}
 
 <!-- p159 NoSpacing break-del r297+296 @SW -->
 {--Title: [Hybrid hate : Jews, blacks, and the question of race](https://eur.on.worldcat.org/oclc/1237335998)--}{r297+296 @SW}
@@ -194,7 +194,7 @@ styles:
 <!-- p168 NoSpacing empty, break-del r311 @SW -->
 
 <!-- p169 size 11pt, bullet, break-del r313+312 @SW -->
-## - {--Pedagogy & Education--}{r313+312 @SW}
+## - {--**Pedagogy & Education**--}{r313+312 @SW}
 
 <!-- p170 NoSpacing break-del r315+314 @SW -->
 {--Title: [Education and Dialogue in Polarized Societies: Dialogic perspectives in times of change](https://eur.on.worldcat.org/oclc/1422578570)--}{r315+314 @SW}
@@ -223,7 +223,7 @@ styles:
 <!-- p179 NoSpacing empty, break-del r329 @SW -->
 
 <!-- p180 size 11pt, bullet, break-del r331+330 @SW -->
-## - {--Sociology & public administration--}{r331+330 @SW}
+## - {--**Sociology & public administration**--}{r331+330 @SW}
 
 <!-- p181 NoSpacing break-del r333+332 @SW -->
 {--Title: [Dogwhistles and figleaves : how manipulative language spreads racism and falsehood](https://eur.on.worldcat.org/oclc/1408678201)--}{r333+332 @SW}
@@ -244,7 +244,7 @@ styles:
 <!-- p187 NoSpacing empty, break-del r342 @SW -->
 
 <!-- p188 size 11pt, mark style, bullet, break-del r344+343 @SW -->
-## - {--Other--}{r344+343 @SW}
+## - {--**Other**--}{r344+343 @SW}
 
 <!-- p189 NoSpacing break-del r346+345 @SW -->
 {--Title: [Black women's stories of everyday racism : narrative analysis for social change](https://eur.on.worldcat.org/oclc/1422229613)--}{r346+345 @SW}
