@@ -1685,3 +1685,94 @@ fn changes_lists_the_strike_inside_theirs_and_the_restore_beside_theirs() {
     assert_eq!(ours[0].inside, None);
     assert_eq!(ours[0].text, "use, store, copy");
 }
+
+/// A v2 plan strikes and restores with the same document as v1. The refusal
+/// for text inside another author's deletion leads with the v2 restore, and
+/// pasting that route applies. Discovery offers both under keep only.
+#[test]
+fn a_v2_plan_strikes_and_restores_with_the_same_output() {
+    let shell = |source: &[u8]| -> Value {
+        let generated = jubarte::edit::template::generate(
+            source,
+            &jubarte::edit::template::TemplateRequest {
+                view: jubarte::edit::for_edit::ForEditRequest::default(),
+                author: CAROL.into(),
+                date: DATE.into(),
+            },
+        )
+        .unwrap();
+        serde_json::from_str(&generated.plan.to_json()).unwrap()
+    };
+    fn fragment(line: &str) -> &str {
+        let rest = line.split_once(':').map_or(line, |(_, r)| r).trim_start();
+        rest.rsplit_once(" (")
+            .map_or(rest, |(head, _)| head.trim_end())
+    }
+    let document = |bytes: &[u8]| part_string(bytes, "word/document.xml").unwrap();
+
+    let mut refused = shell(STEP2);
+    let target = refused["operations"][0]["target"].clone();
+    refused["operations"] =
+        json!([{"kind":"replace","target":target,"find":"bankers","text":"brokers"}]);
+    let error = jubarte::edit::v2_apply::apply_plan(
+        STEP2,
+        &jubarte::edit::v2::PlanV2::from_json(&refused.to_string()).unwrap(),
+    )
+    .unwrap_err();
+    let first = error.message.lines().nth(1).unwrap_or("");
+    assert!(
+        first.contains(r#""kind":"restore""#) && first.contains(r#""target""#),
+        "the v2 refusal hint's first route is the v2 restore:\n{}",
+        error.message
+    );
+    let route: Value =
+        serde_json::from_str(fragment(first)).unwrap_or_else(|e| panic!("{e}: {first}"));
+    assert_eq!(route["target"]["short_id"], "r4", "{route}");
+    let mut pasted = shell(STEP2);
+    pasted["operations"] = json!([route]);
+    let restored = jubarte::edit::v2_apply::apply_plan(
+        STEP2,
+        &jubarte::edit::v2::PlanV2::from_json(&pasted.to_string())
+            .unwrap_or_else(|e| panic!("pasting the v2 restore applies: {e}")),
+    )
+    .unwrap_or_else(|e| panic!("pasting the v2 restore applies: {e}"));
+    let v1_restore = apply_plan(STEP2, &plan(&restore("r4"))).unwrap();
+    assert_eq!(document(&restored.redline), document(&v1_restore.redline));
+
+    let mut striking = shell(STEP1);
+    striking["operations"] = json!([{
+        "kind": "strike",
+        "target": {"short_id": "r1", "long_id": "document.w:ins.w:id.1"}
+    }]);
+    let struck = jubarte::edit::v2_apply::apply_plan(
+        STEP1,
+        &jubarte::edit::v2::PlanV2::from_json(&striking.to_string())
+            .unwrap_or_else(|e| panic!("a v2 plan strikes: {e}")),
+    )
+    .unwrap_or_else(|e| panic!("a v2 plan strikes: {e}"));
+    let v1_strike = apply_plan(STEP1, &plan(&strike("r1"))).unwrap();
+    assert_eq!(document(&struck.redline), document(&v1_strike.redline));
+
+    for kind in ["strike", "restore"] {
+        let answer = jubarte::capabilities::discovery("cli", Some(kind), None);
+        let v2: Vec<_> = answer["profiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|profile| profile["plan_version"] == 2)
+            .collect();
+        assert!(!v2.is_empty(), "{kind} is missing from v2 discovery");
+        let rows: Vec<_> = v2[0]["support"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row["track"] == "on")
+            .collect();
+        assert!(!rows.is_empty(), "{kind}");
+        for row in rows {
+            let keep = row["existing_revisions"] == "keep";
+            let want = if keep { "conditional" } else { "unsupported" };
+            assert_eq!(row["status"], want, "{kind}: {row}");
+        }
+    }
+}
