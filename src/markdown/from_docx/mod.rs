@@ -3545,14 +3545,15 @@ impl Writer<'_> {
             .and_then(|s| s.attr("val"))
             .map(|s| self.styles.emphasis(s))
             .unwrap_or((None, None));
-        let bold = rpr
-            .and_then(|r| r.toggle("b"))
-            .or(style_bold)
-            .unwrap_or(base.0);
-        let italic = rpr
-            .and_then(|r| r.toggle("i"))
-            .or(style_italic)
-            .unwrap_or(base.1);
+        let direct_bold = rpr.and_then(|r| r.toggle("b"));
+        let direct_italic = rpr.and_then(|r| r.toggle("i"));
+        let bold = direct_bold.or(style_bold).unwrap_or(base.0);
+        let italic = direct_italic.or(style_italic).unwrap_or(base.1);
+        // A heading style is bold on its own. The stars print only for a
+        // toggle or a character style on the run, so the next write keeps
+        // that property.
+        let own_bold = direct_bold.or(style_bold) == Some(true);
+        let own_italic = direct_italic.or(style_italic) == Some(true);
         // Agent view only: the plain conversion has no underline. In a link,
         // to a bookmark too, the character style's underline is the link's
         // look (Word's Hyperlink style), not formatting: only a direct `w:u`
@@ -3600,6 +3601,8 @@ impl Writer<'_> {
         let marks = Marks {
             bold,
             italic,
+            own_bold,
+            own_italic,
             underline,
             highlight,
             strike,
@@ -5321,7 +5324,7 @@ mod tests {
         );
         assert_eq!(
             md(&bytes),
-            "# Report\n\n## Scope\n\nPlain **bold run** _it_, see [docs](https://example.com/a%20b).\n\n### Outline\n\na\\\nb\tc\n"
+            "# Report\n\n## **Scope**\n\nPlain **bold run** _it_, see [docs](https://example.com/a%20b).\n\n### Outline\n\na\\\nb\tc\n"
         );
     }
 
