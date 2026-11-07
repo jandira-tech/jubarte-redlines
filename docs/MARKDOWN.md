@@ -902,6 +902,11 @@ a mark inside a move or inside two nested changes prints no `in`, and a
 note whose paragraph has no r13 keeps its mark after its text, with a
 warning.
 
+A `holds` clause names the comment events the note does not already show
+inside the change or with `in rN`: `holds del r70 c0 start`, or
+`holds ins r51 c0 end c0 ref`. Each event is `cM` then `start`, `end` or
+`ref`. Converting back puts only those events inside that revision.
+
 A handle is the comment `w:initials` that author wrote, else the initials of
 the name's words, letters and digits only; a collision appends a digit. The
 header's `authors:` line gives each handle's name, counts and its
