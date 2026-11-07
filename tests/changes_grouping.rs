@@ -1342,7 +1342,12 @@ fn a_deletion_and_an_insertion_apart_print_as_the_two_changes_they_are() {
         assert_eq!(ids(&doc), ["r1", "r2"], "{gap}");
         let view = agent(&doc);
         let line = body(&view).lines().nth(1).unwrap_or_default();
-        assert_eq!(line, "pay {--old--}{r1 @B}{++new++}{r2 @B} now", "{gap}");
+        let expected = if gap.contains("<w:sym ") {
+            "pay {--old--}{r1 @B}<sym font=\"Wingdings\" char=\"F0FC\"/>{++new++}{r2 @B} now"
+        } else {
+            "pay {--old--}{r1 @B}{++new++}{r2 @B} now"
+        };
+        assert_eq!(line, expected, "{gap}");
         assert!(
             view.contains("2 marks shown as 2 changes: 1 insertion, 1 deletion"),
             "{gap}\n{view}"
