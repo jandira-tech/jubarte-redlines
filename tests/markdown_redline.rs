@@ -13,7 +13,7 @@ use common::validity::assert_word_valid_package;
 use jubarte::comparer::{WmlComparerRevisionType, WmlComparerSettings};
 use jubarte::document_comparer::{accept_revisions, get_revisions, reject_revisions};
 use jubarte::inspect;
-use jubarte::markdown::{RedlineOptions, Source, apply_markdown, redline};
+use jubarte::markdown::{RedlineOptions, Source, apply_markdown, apply_markdown_strict, redline};
 use jubarte::opc::PartFs;
 
 fn texts(docx: &[u8]) -> Vec<String> {
@@ -351,4 +351,27 @@ fn a_whole_replacement_does_not_take_the_links_character_style() {
     let at = xml.find("new link").unwrap();
     let run = &xml[xml[..at].rfind("<w:r>").unwrap()..at];
     assert!(!run.contains("Hyperlink"), "{run}");
+}
+
+/// A strict patch fails with no document when a rewrite cannot be applied
+/// as written. The best-effort path may still replace the paragraph whole.
+#[test]
+fn a_strict_patch_refuses_a_link_rewrite_it_cannot_apply_exactly() {
+    let source = with_link(
+        r#"<w:p><w:r><w:t>Start.</w:t></w:r></w:p><w:p><w:hyperlink r:id="rId9"><w:r><w:t>old link</w:t></w:r></w:hyperlink></w:p><w:p><w:r><w:t>End.</w:t></w:r></w:p>"#,
+    );
+    match apply_markdown_strict(
+        &source,
+        "Start.\n\n[new link](https://example.com)\n\nEnd.\n",
+    ) {
+        Err(error) => {
+            let rendered = error.to_string();
+            assert!(!rendered.is_empty(), "the refusal must say why");
+        }
+        Ok(patched) => panic!(
+            "a rewrite inside a link was applied: texts {:?}, warnings {:?}",
+            texts(&patched.docx),
+            patched.warnings
+        ),
+    }
 }

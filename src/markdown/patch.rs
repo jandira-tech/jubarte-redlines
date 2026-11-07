@@ -119,6 +119,22 @@ struct Paragraph {
 /// assert!(edited.warnings.is_empty());
 /// ```
 pub fn apply_markdown(docx: &[u8], markdown: &str) -> Result<Patched, MarkdownError> {
+    apply_markdown_exact(docx, markdown, false)
+}
+
+/// Edits `docx` so its body reads as `markdown`, and returns an error
+/// with no document when any edit cannot be applied as written.
+/// A refused rewrite stays refused: it is not replaced by a whole
+/// paragraph, and it is not left out of an otherwise applied result.
+pub fn apply_markdown_strict(docx: &[u8], markdown: &str) -> Result<Patched, MarkdownError> {
+    apply_markdown_exact(docx, markdown, true)
+}
+
+fn apply_markdown_exact(
+    docx: &[u8],
+    markdown: &str,
+    strict: bool,
+) -> Result<Patched, MarkdownError> {
     let invalid = |e: &dyn std::fmt::Display| MarkdownError::Package(e.to_string());
     let summary = crate::inspect::summary(docx).map_err(|e| invalid(&e))?;
     // A plan that accepts existing revisions addresses the accepted text.
@@ -162,9 +178,11 @@ pub fn apply_markdown(docx: &[u8], markdown: &str) -> Result<Patched, MarkdownEr
 
     // Rewrites the engine refuses (text inside a link or a field) become
     // whole-paragraph replacements, and what still fails is left out.
+    // The strict path does neither: the first refusal is the result.
     let mut whole: HashSet<usize> = HashSet::new();
     let mut dropped: HashSet<usize> = HashSet::new();
-    for _ in 0..4 {
+    let attempts = if strict { 1 } else { 4 };
+    for _ in 0..attempts {
         let operations = operations(&paragraphs, &blocks, &edits, &styles, &whole, &dropped);
         if operations.is_empty() {
             return Ok(Patched {
@@ -194,6 +212,9 @@ pub fn apply_markdown(docx: &[u8], markdown: &str) -> Result<Patched, MarkdownEr
                 });
             }
             Err(error) => {
+                if strict {
+                    return Err(MarkdownError::Package(error.to_string()));
+                }
                 // Each failed edit once, with the first reason given.
                 let failed: std::collections::BTreeMap<usize, String> = error
                     .outcomes
