@@ -1296,7 +1296,7 @@ pub(super) fn empty_paragraphs(line: &str) -> Option<usize> {
 
 /// The words that open an id line's clauses (`center`, `left 0.5in`,
 /// `break-ins r3 @AC`): any other word after the id is a style.
-const CLAUSE_WORDS: [&str; 25] = [
+const CLAUSE_WORDS: [&str; 26] = [
     "empty",
     "outline",
     "center",
@@ -1322,6 +1322,7 @@ const CLAUSE_WORDS: [&str; 25] = [
     "rev",
     "comments",
     "in",
+    "holds",
 ];
 
 /// The words that open a id line's clauses (`center`, `left 0.5in`,
@@ -1438,6 +1439,16 @@ fn split_clauses(text: &str) -> Vec<&str> {
     clauses
 }
 
+/// One comment event a `holds` clause puts back inside a revision.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct HeldEvent {
+    pub inserted: bool,
+    pub revision: u32,
+    pub comment: u32,
+    /// 0 is the range start, 1 the range end, 2 the reference.
+    pub event: u8,
+}
+
 /// What a paragraph's id line says about it (`<!-- p5 TitlePage center,
 /// first-line 0.5in -->`): its style, alignment (`w:jc`) and indents in
 /// twips.
@@ -1489,6 +1500,9 @@ pub(super) struct IdLine {
     pub rev_del: Vec<Tag>,
     /// The comments whose ranges run into it (`in c5 c6`).
     pub in_comments: Vec<u32>,
+    /// Comment events the clause puts back inside a revision
+    /// (`holds del r70 c0 start`).
+    pub holds: Vec<HeldEvent>,
     /// Character-unit indents (`first-line 2ch`), in hundredths of a character.
     pub first_line_chars: Option<i64>,
     pub hanging_chars: Option<i64>,
@@ -1609,7 +1623,46 @@ impl IdLine {
                     .extend(tags.iter().cloned().map(|tag| (false, tag)));
                 self.rev_del.extend(tags);
             }
+            Some(("holds", rest)) => self.hold(rest),
             Some(_) => {}
+        }
+    }
+
+    /// `holds del r70 c0 start` or `holds ins r51 c0 end c0 ref`.
+    fn hold(&mut self, rest: &str) {
+        let mut words = rest.split(' ');
+        let inserted = match words.next() {
+            Some("ins") => true,
+            Some("del") => false,
+            _ => return,
+        };
+        let Some(revision) = words
+            .next()
+            .and_then(|word| word.strip_prefix('r'))
+            .and_then(|n| n.parse().ok())
+        else {
+            return;
+        };
+        let words: Vec<&str> = words.collect();
+        if !words.len().is_multiple_of(2) {
+            return;
+        }
+        for pair in words.chunks(2) {
+            let Some(comment) = pair[0].strip_prefix('c').and_then(|n| n.parse().ok()) else {
+                return;
+            };
+            let event = match pair[1] {
+                "start" => 0,
+                "end" => 1,
+                "ref" => 2,
+                _ => return,
+            };
+            self.holds.push(HeldEvent {
+                inserted,
+                revision,
+                comment,
+                event,
+            });
         }
     }
 }

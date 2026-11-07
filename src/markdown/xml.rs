@@ -128,6 +128,10 @@ pub(super) struct Paragraph {
     /// The marks its id line names that its text shows nothing of (`rev
     /// r9 @AL`, `rev-del r10 @AL`): `true` for an insertion.
     pub unshown: Vec<(bool, FormatMark)>,
+    /// Comment events a `holds` clause names: whether the revision inserts,
+    /// its `w:id`, the comment's view number, and the event (0 start, 1 end,
+    /// 2 reference).
+    pub holds: Vec<(bool, u32, u32, u8)>,
     /// The paragraph's number as its id line names it (`p1`), when it has
     /// one: the header's `unplaced:` names paragraphs by it.
     pub number: Option<usize>,
@@ -618,6 +622,9 @@ pub(super) struct Document {
     /// range ends there too: its reference (and range end) open the
     /// change's mark (`{++{>>c1 re c0<<}text++}`).
     pub note_changes: HashMap<u32, (Change, bool)>,
+    /// Comment events a `holds` clause puts back inside a revision, keyed by
+    /// the comment's id and the event (0 start, 1 end, 2 reference).
+    pub event_holds: HashMap<(u32, u8), Change>,
     pub pictures: Vec<Picture>,
     /// `drawing:` payloads to splice back, in the order the runs name them.
     pub drawings: Vec<super::from_docx::drawing::Drawing>,
@@ -1082,7 +1089,8 @@ pub(super) fn story(
             Item::LinkEnd => fields.last().copied().flatten(),
             _ => None,
         };
-        let in_note = note_item_change(context.document, items, at);
+        let in_note = note_item_change(context.document, items, at)
+            .or_else(|| held_event_change(context.document, item));
         // A range or bookmark with no run left before the paragraph ends
         // sits inside the mark a suspended change holds, after the inner
         // ones end: only the open mark closes, the suspended ones wait.
@@ -1871,6 +1879,20 @@ fn note_item_change(document: &Document, items: &[Item], at: usize) -> Option<Ch
         Item::Run(run) if run.change == Some(*change) => Some(*change),
         _ => None,
     }
+}
+
+/// The revision a `holds` clause names for this comment event.
+fn held_event_change(document: &Document, item: &Item) -> Option<Change> {
+    let (id, event) = match item {
+        Item::RangeStart(slot) => {
+            let id = document.slots.get(*slot).copied().flatten()?;
+            (id, 0)
+        }
+        Item::RangeEnd(id) => (*id, 1),
+        Item::CommentReference(id) => (*id, 2),
+        _ => return None,
+    };
+    document.event_holds.get(&(id, event)).copied()
 }
 
 /// Whether the next real item in `rest` is a run still inside a mark:
