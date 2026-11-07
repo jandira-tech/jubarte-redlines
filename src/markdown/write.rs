@@ -1494,6 +1494,16 @@ struct HtmlTag {
     empty: bool,
 }
 
+/// `<br type="page"/>`: a page break in the text, not a line break.
+fn html_is_page_break(html: &str) -> bool {
+    let compact: String = html
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    compact.contains("type=\"page\"") || compact.contains("type='page'")
+}
+
 /// The tag `html` is, if it is one: a comment, a declaration or a
 /// processing instruction is none.
 fn html_tag(html: &str) -> Option<HtmlTag> {
@@ -4149,7 +4159,11 @@ impl<'o, 'a> Writer<'o, 'a> {
         };
         if name == "br" {
             if !closing {
-                self.line_break(empty);
+                if html_is_page_break(html) {
+                    self.push(Content::PageBreak);
+                } else {
+                    self.line_break(empty);
+                }
             }
             return;
         }
