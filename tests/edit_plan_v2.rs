@@ -1033,3 +1033,12 @@ fn removed_anchor_v1_schema_has_policy_enum() {
         json!(["remove", "keep"])
     );
 }
+
+#[test]
+fn a_v2_plan_does_not_short_circuit_on_invalid_operation_fields() {
+    let bad = r#"{"schema_version":2,"author":"Ann","operations":[{"kind":"foo"},{"kind":"delete","paragraph":{"index":0},"find":"thirty"}]}"#;
+    assert_eq!(
+        PlanV2::from_json(bad).unwrap_err().to_string(),
+        r#"INVALID_PLAN (op-2): delete: unknown field "paragraph"; did you mean "target"? fields: find, occurrence, target"#
+    );
+}

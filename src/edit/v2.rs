@@ -510,13 +510,13 @@ fn check_operation_fields(plan: &serde_json::Value) -> Result<(), EditError> {
     };
     for (i, operation) in operations.iter().enumerate() {
         let Some(map) = operation.as_object() else {
-            return Ok(());
+            continue;
         };
         let Some(kind) = map.get("kind").and_then(serde_json::Value::as_str) else {
-            return Ok(());
+            continue;
         };
         let Some(fields) = operation_fields(kind) else {
-            return Ok(());
+            continue;
         };
         let Some(key) = map
             .keys()
@@ -586,10 +586,15 @@ impl PlanV2 {
     /// Successful parsing does not verify this request against source bytes.
     pub fn from_json(json: &str) -> Result<Self, EditError> {
         let json = super::without_byte_order_mark(json);
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(json) {
-            check_operation_fields(&value)?;
-        }
-        let plan: Self = serde_json::from_str(json).map_err(|e| invalid(e.to_string()))?;
+        let plan = serde_json::from_str::<Self>(json).map_err(|e| {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(json) {
+                let err_opt = check_operation_fields(&value).err();
+                if let Some(detailed_err) = err_opt {
+                    return detailed_err;
+                }
+            }
+            invalid(e.to_string())
+        })?;
         plan.validate()?;
         Ok(plan)
     }
