@@ -3913,3 +3913,27 @@ fn a_cells_final_mark_inside_alternate_content_is_the_shown_branch() {
         found[0]
     );
 }
+
+/// Two numbering instances that share one durable id.
+#[test]
+fn ring1_flags_duplicate_durable_ids() {
+    let numbering = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid">
+  <w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/></w:lvl></w:abstractNum>
+  <w:num w:numId="1" w16cid:durableId="100"><w:abstractNumId w:val="0"/></w:num>
+  <w:num w:numId="2" w16cid:durableId="100"><w:abstractNumId w:val="0"/></w:num>
+</w:numbering>"#;
+    let bytes = zip_with_parts(&[
+        ("word/document.xml", MINIMAL_DOC),
+        ("word/numbering.xml", numbering),
+    ]);
+    let report = check_word_valid_package(&bytes);
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "DUPLICATE_DURABLE_ID" && !f.word_fatal),
+        "{:?}",
+        report.findings
+    );
+}
