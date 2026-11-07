@@ -842,7 +842,7 @@ function applyEdit(verb, file, docx, o) {
       const text = wasm.resolutionText(docx, JSON.stringify({ accepted: resolved.accepted ?? [], rejected: resolved.rejected ?? [] }));
       const names = [...outputs.map(([n]) => n), "report.jsonl"];
       console.error(`wrote ${outDir} (${names.length} files: ${names.join(", ")})`);
-      for (const note of editNotes(notes, result)) console.error(note);
+      for (const note of editNotes(notes, result, editing)) console.error(note);
       process.stdout.write(text);
       return;
     } catch {}
@@ -851,7 +851,7 @@ function applyEdit(verb, file, docx, o) {
   const names = [...outputs.map(([n]) => n), "report.jsonl"];
   // The status lines on stderr (D6); the summary and the view are data.
   console.error(`wrote ${outDir} (${names.length} files: ${names.join(", ")})`);
-  for (const note of editNotes(notes, result)) console.error(note);
+  for (const note of editNotes(notes, result, editing)) console.error(note);
   printResolutionOrView(docx, plan, result, editing, path.join(outDir, editing ? "clean.docx" : "redline.docx"));
 }
 
@@ -883,14 +883,28 @@ function printResolutionOrView(docx, planJson, result, editing, shown) {
   printChangedView(result, editing, shown);
 }
 
+/** The same reply tail the Rust receipt uses. */
+function replyClause(replies) {
+  if (!replies?.length) return "";
+  if (replies.length === 1) return ` and its reply ${replies[0]}`;
+  return ` and its replies ${replies.join(", ")}`;
+}
+
 /** The `note:` lines of an applied edit: the flags' notes, the plan's (a field
- * read as another), then each anchor read without its Markdown marks. */
-function editNotes(notes, result) {
+ * read as another), then each anchor read without its Markdown marks.
+ * Editing mode also names threads its clean copy drops. */
+function editNotes(notes, result, editing) {
   const report = JSON.parse(result.json);
   const lines = [...notes, ...(report.notes ?? [])].map((note) => `note: ${note}`);
   for (const outcome of report.operations ?? []) {
     if (outcome.anchor_given != null && outcome.anchor_read_as != null) {
       lines.push(`note: ${outcome.id}: anchor ${JSON.stringify(outcome.anchor_given)} read as ${JSON.stringify(outcome.anchor_read_as)} (Markdown marks are not document text)`);
+    }
+  }
+  if (editing) {
+    for (const comment of report.clean_removed_comments ?? []) {
+      const why = comment.why || "their anchor was text the deletion removed";
+      lines.push(`removed ${comment.id} (${comment.author})${replyClause(comment.replies)}: ${why}`);
     }
   }
   return lines;
@@ -952,7 +966,7 @@ function writeEdited(output, result, notes, o, docx, plan) {
     console.error(`wrote ${output} (docx, ${document.length} bytes)`);
   }
   if (rendered) console.error(wasm.wroteLine(pdfPath, "pdf", rendered.pdf.length, rendered.page_count));
-  for (const note of editNotes(notes, result)) console.error(note);
+  for (const note of editNotes(notes, result, editing)) console.error(note);
   if (docx != null && plan != null) {
     printResolutionOrView(docx, plan, result, editing, output);
     return;

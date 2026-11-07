@@ -1252,6 +1252,11 @@ pub struct EditReport {
     /// Threads removed with the settled text, in source comment ids.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub removed_comments: Vec<RemovedComment>,
+    /// Threads the clean copy drops that the redline still carries, in
+    /// source comment ids. Editing mode publishes that copy, so its
+    /// receipt names these. Suggesting mode keeps them on the redline.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clean_removed_comments: Vec<RemovedComment>,
     /// Threads moved onto empty anchors by opt-in settlement, excluding
     /// comments and replies subsequently deleted by the plan.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1410,6 +1415,10 @@ impl EditReport {
         }
         if !self.notes.is_empty() {
             summary["notes"] = self.notes.clone().into();
+        }
+        if !self.clean_removed_comments.is_empty() {
+            summary["clean_removed_comments"] =
+                serde_json::to_value(&self.clean_removed_comments).expect("serializes");
         }
         push(summary);
         out
@@ -3688,6 +3697,7 @@ impl<'p> Transaction<'p> {
             existing_revisions: self.plan.existing_revisions,
             resolved_revisions: self.resolved_revisions.clone(),
             removed_comments: self.removed_comments.clone(),
+            clean_removed_comments: Vec::new(),
             kept_comments: self
                 .kept_comments
                 .iter()
