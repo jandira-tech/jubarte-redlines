@@ -1361,11 +1361,23 @@ impl<'a> Face<'a> {
         let units: ShapedUnits = glyphs.into();
         if let Ok(mut cache) = self.shaped.lock() {
             // A long-lived caller (Python / WASM) converts many documents
-            // through one face; keep the memory bounded.
+            // through one face. The entry count still clears past 50_000,
+            // and the glyph payloads stay inside the byte budget. The
+            // greatest key is the one that goes. This cache belongs to the
+            // face, so it ends when that face's bytes do.
             if cache.len() > 50_000 {
                 cache.clear();
             }
-            cache.insert(memo, Arc::clone(&units));
+            let add = shaped_payload_bytes(&units);
+            if add <= MAX_SHAPED_CACHE_BYTES {
+                drop_greatest_until(
+                    &mut cache,
+                    add,
+                    MAX_SHAPED_CACHE_BYTES,
+                    shaped_payload_bytes,
+                );
+                cache.insert(memo, Arc::clone(&units));
+            }
         }
         units
     }
@@ -3043,13 +3055,62 @@ fn is_cjk_name_char(c: char) -> bool {
 
 type SharedFaces = Vec<((bool, bool), Arc<[u8]>)>;
 
-/// Installed-face lookups, cached for the process: a long-lived caller
-/// (the Python and WASM bindings) would otherwise re-read 10-20 MB font
-/// collections for every conversion.
-fn cached_faces(key: &str, load: impl FnOnce() -> Vec<((bool, bool), Vec<u8>)>) -> SharedFaces {
+/// Face bytes the process cache will hold. A larger face is not stored.
+/// Past this, the greatest key is dropped until the next face fits.
+const MAX_FACE_CACHE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Glyph payloads kept on one face. The entry-count clear still applies.
+/// A larger shaped entry is not stored.
+const MAX_SHAPED_CACHE_BYTES: usize = 4 * 1024 * 1024;
+
+fn shared_payload(faces: &SharedFaces) -> usize {
+    faces
+        .iter()
+        .fold(0usize, |sum, (_, bytes)| sum.saturating_add(bytes.len()))
+}
+
+fn shaped_payload_bytes(units: &ShapedUnits) -> usize {
+    units
+        .len()
+        .saturating_mul(std::mem::size_of::<(u16, i32, u32)>())
+}
+
+fn face_cache() -> &'static Mutex<HashMap<String, SharedFaces>> {
     static CACHE: LazyLock<Mutex<HashMap<String, SharedFaces>>> =
         LazyLock::new(|| Mutex::new(HashMap::new()));
-    if let Ok(cache) = CACHE.lock()
+    &CACHE
+}
+
+/// Drop the greatest keys until `add` more bytes fit in `max`.
+fn drop_greatest_until<K, V, F>(cache: &mut HashMap<K, V>, add: usize, max: usize, bytes: F)
+where
+    K: Clone + Ord + std::hash::Hash,
+    F: Fn(&V) -> usize,
+{
+    let mut kept = cache
+        .values()
+        .map(&bytes)
+        .fold(0usize, usize::saturating_add);
+    while kept.saturating_add(add) > max {
+        let Some(victim) = cache.keys().max().cloned() else {
+            break;
+        };
+        let Some(removed) = cache.remove(&victim) else {
+            break;
+        };
+        kept = kept.saturating_sub(bytes(&removed));
+    }
+}
+
+/// Installed-face lookups, cached for the process: a long-lived caller
+/// (the Python and WASM bindings) would otherwise re-read 10-20 MB font
+/// collections for every conversion. The cache holds at most
+/// [`MAX_FACE_CACHE_BYTES`] of those bytes. A face that would pass the
+/// budget drops the greatest key until it fits. A face larger than the
+/// budget is returned and not stored. A caller that does not use this
+/// cache is not limited by it.
+fn cached_faces(key: &str, load: impl FnOnce() -> Vec<((bool, bool), Vec<u8>)>) -> SharedFaces {
+    if let Ok(cache) = face_cache().lock()
         && let Some(faces) = cache.get(key)
     {
         return faces.clone();
@@ -3058,7 +3119,13 @@ fn cached_faces(key: &str, load: impl FnOnce() -> Vec<((bool, bool), Vec<u8>)>) 
         .into_iter()
         .map(|(style, bytes)| (style, Arc::from(bytes)))
         .collect();
-    if let Ok(mut cache) = CACHE.lock() {
+    let add = shared_payload(&faces);
+    if add > MAX_FACE_CACHE_BYTES {
+        return faces;
+    }
+    if let Ok(mut cache) = face_cache().lock() {
+        cache.remove(key);
+        drop_greatest_until(&mut cache, add, MAX_FACE_CACHE_BYTES, shared_payload);
         cache.insert(key.to_string(), faces.clone());
     }
     faces
@@ -6918,6 +6985,61 @@ mod residual_embedded_style_contract_tests {
             // resolving it instead would enter the filesystem catalogue.
             assert_eq!(fonts.embedded_index("Absent Memory", false, false), None);
         }
+    }
+
+    /// A shaped entry past the byte budget is dropped when the next word is
+    /// stored, and two face payloads that cannot both fit leave the earlier
+    /// key to be read again. A face inside the budget stays.
+    #[test]
+    fn a_cache_past_its_byte_budget_drops_what_no_longer_fits() {
+        let face = Face::bundled(FaceId::SansRegular);
+        let glyphs = MAX_SHAPED_CACHE_BYTES / std::mem::size_of::<(u16, i32, u32)>() + 1;
+        let oversized: ShapedUnits = vec![(0u16, 0i32, 0u32); glyphs].into();
+        face.shaped
+            .lock()
+            .unwrap()
+            .insert(("zzzz-shaped".into(), false), Arc::clone(&oversized));
+        let _ = face.shape("A", 12.0);
+        let cache = face.shaped.lock().unwrap();
+        let retained = cache
+            .values()
+            .map(shaped_payload_bytes)
+            .fold(0, usize::saturating_add);
+        assert!(
+            retained <= MAX_SHAPED_CACHE_BYTES,
+            "shaped cache kept {retained} bytes past {MAX_SHAPED_CACHE_BYTES}"
+        );
+        assert!(
+            !cache.contains_key(&("zzzz-shaped".into(), false)),
+            "the oversized shaped entry stayed"
+        );
+        drop(cache);
+
+        let half = MAX_FACE_CACHE_BYTES / 2 + 1;
+        cached_faces("zzzz-byte-a", || vec![((false, false), vec![1u8; half])]);
+        cached_faces("zzzz-byte-b", || vec![((false, false), vec![2u8; half])]);
+        let reloaded = cached_faces("zzzz-byte-a", || {
+            vec![((false, false), b"reloaded".to_vec())]
+        });
+        assert_eq!(
+            reloaded[0].1.as_ref(),
+            b"reloaded",
+            "a face that no longer fit stayed in the cache"
+        );
+        let kept = cached_faces("zzzz-byte-b", || {
+            panic!("a face inside the budget was read again")
+        });
+        assert_eq!(kept[0].1.len(), half);
+        let face_bytes = face_cache()
+            .lock()
+            .unwrap()
+            .values()
+            .map(shared_payload)
+            .fold(0, usize::saturating_add);
+        assert!(
+            face_bytes <= MAX_FACE_CACHE_BYTES,
+            "face cache kept {face_bytes} bytes"
+        );
     }
 }
 
