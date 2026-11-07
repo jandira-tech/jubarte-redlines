@@ -17,7 +17,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use super::{
     EditError, EditOutcome, EditPlan, EditResult, ExistingRevisions, OperationKind, Resolved,
     StoryPart, Transaction, check_update_fields, comment_holds_kept_text, comment_text_of,
-    controls, lift_deletion_comments, revision_counts, sections, tracked, whole,
+    controls, enclose_deleted_paragraph_comment_references, lift_deletion_comments,
+    revision_counts, sections, tracked, whole,
 };
 use crate::comparer::WmlComparerSettings;
 use crate::inspect::{body_paragraph_nodes, project_paragraph, source_sha256};
@@ -1851,6 +1852,7 @@ fn produce(
         .map(|&(id, _)| id)
         .collect();
     redline = lift_deletion_comments(&redline, &lifted)?;
+    redline = enclose_deleted_paragraph_comment_references(&redline, &plan.author)?;
     // Settings are not revisions: the redline takes them as they are.
     if let Some(request) = &tx.settings {
         redline = crate::settings::apply_settings_to_docx(&redline, request)
