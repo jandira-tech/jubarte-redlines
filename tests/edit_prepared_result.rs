@@ -302,12 +302,10 @@ fn disjoint_replaces_compose_through_prepare() {
     assert_eq!(prepared.primary_bytes, PrimaryBytes::Candidate);
 }
 
-/// An edit whose redline introduces a bookmark crossing a revision is
-/// refused before publication (plan §3 P2, gate iv): the finding comes
-/// from the real `validate` pass on the serialized candidate bytes, and
-/// the dry run refuses the same bytes the apply refuses.
+/// A page setup beside a bookmarked replacement publishes. Prepare and the
+/// dry run agree, and the redline does not cross the bookmark with a revision.
 #[test]
-fn introduced_bookmark_crossing_fails_the_candidate() {
+fn a_page_setup_beside_a_bookmark_publishes() {
     let source = docx(
         r#"<w:p><w:bookmarkStart w:id="7" w:name="Clause"/><w:r><w:t>alpha beta</w:t></w:r><w:bookmarkEnd w:id="7"/></w:p>"#,
     );
@@ -325,19 +323,75 @@ fn introduced_bookmark_crossing_fails_the_candidate() {
     let plan = plan(
         r#"{"schema_version":1,"author":"Ed Itor","date":"2026-10-17T12:00:00Z","operations":[{"kind":"replace","paragraph":"p0","find":"beta","replacement":"BETA"},{"kind":"page_setup","section":"all","orientation":"landscape"}]}"#,
     );
-    let e = prepare(&source, &plan, &DEFAULT).unwrap_err();
-    assert_eq!(e.code, "CANDIDATE_INVALID");
+    let prepared = prepare(&source, &plan, &DEFAULT).expect("the plan writes a redline");
     assert!(
-        e.message.contains("BOOKMARK_CROSSES_REVISION"),
-        "{}",
-        e.message
+        jubarte::validate::validate(&prepared.result.redline)
+            .unwrap()
+            .iter()
+            .all(|finding| finding.code != "BOOKMARK_CROSSES_REVISION")
     );
-    assert_eq!(
-        preview_plan_with(&source, &plan, &DEFAULT)
-            .unwrap_err()
-            .code,
-        "CANDIDATE_INVALID"
+    preview_plan_with(&source, &plan, &DEFAULT).expect("the dry run writes the same redline");
+}
+
+/// A replacement beside a bookmark and a page setup write together. The
+/// bookmark still wraps the paragraph: Accept All reads "alpha BETA" and
+/// Reject All reads "alpha beta".
+#[test]
+fn a_page_setup_keeps_the_bookmark_around_the_replaced_word() {
+    let source = docx(
+        r#"<w:p><w:bookmarkStart w:id="7" w:name="Clause"/><w:r><w:t>alpha beta</w:t></w:r><w:bookmarkEnd w:id="7"/></w:p>"#,
     );
+    let json = r#"{"schema_version":1,"author":"Ed Itor","date":"2026-10-17T12:00:00Z","operations":[{"kind":"replace","paragraph":"p0","find":"beta","replacement":"BETA"},{"kind":"page_setup","section":"all","orientation":"landscape"}]}"#;
+    let result = apply_plan_json(&source, json).expect("the plan writes a redline");
+    let red = common::docx::part_string(&result.redline, "word/document.xml").unwrap();
+    let findings = jubarte::validate::validate(&result.redline).unwrap();
+    assert!(
+        findings
+            .iter()
+            .all(|f| f.code != "BOOKMARK_CROSSES_REVISION"),
+        "{findings:?}\n{red}"
+    );
+    assert!(red.contains(r#"w:orient="landscape""#), "{red}");
+    let accepted = jubarte::changes::accept_changes(
+        &result.redline,
+        &jubarte::changes::ChangeFilter::default(),
+    )
+    .unwrap();
+    let rejected = jubarte::changes::reject_changes(
+        &result.redline,
+        &jubarte::changes::ChangeFilter::default(),
+    )
+    .unwrap();
+    assert_eq!(bookmark_words(&accepted), "alpha BETA");
+    assert_eq!(bookmark_words(&rejected), "alpha beta");
+    assert_word_valid_package(&result.redline);
+    assert_word_valid_package(&accepted);
+    assert_word_valid_package(&rejected);
+}
+
+/// The `w:t` text between the first bookmark's start and its end.
+fn bookmark_words(bytes: &[u8]) -> String {
+    use jubarte::namespaces::W;
+    use jubarte::xmllinq::Dom;
+    let xml = common::docx::part_string(bytes, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let mut open = false;
+    let mut text = String::new();
+    for node in dom.descendant_nodes(root) {
+        if dom.name_is(node, &W::bookmark_start()) {
+            open = true;
+            continue;
+        }
+        if dom.name_is(node, &W::bookmark_end()) {
+            break;
+        }
+        if open && dom.name_is(node, &W::t()) {
+            text.push_str(&dom.value(node));
+        }
+    }
+    text
 }
 
 /// Finding identity is (set, code, part, location) — message prose and
