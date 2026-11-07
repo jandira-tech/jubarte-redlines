@@ -5940,8 +5940,9 @@ impl<'p> Transaction<'p> {
         }
     }
 
-    /// The innermost hyperlink, field or content control that holds `run`,
-    /// and the way around it.
+    /// The innermost structure that holds `run`, and the way around it:
+    /// a hyperlink, field, content control, smart tag, custom XML markup
+    /// or direction override. Anything else is reported as a field result.
     fn opaque_structure(&self, run: NodeId) -> String {
         let dom = &self.opened.dom;
         let ancestors = dom.ancestors(run, None);
@@ -5979,6 +5980,21 @@ impl<'p> Transaction<'p> {
                         .or_else(|| property("tag"))
                         .unwrap_or_default()
                 ));
+            } else if dom.name_is(node, &W::name("smartTag")) {
+                inner = Some(
+                    "a smart tag (`w:smartTag`); edit the text on either side of it, or comment on it"
+                        .into(),
+                );
+            } else if dom.name_is(node, &W::name("customXml")) {
+                inner = Some(
+                    "custom XML markup (`w:customXml`); edit the text on either side of it, or comment on it"
+                        .into(),
+                );
+            } else if dom.name_is(node, &W::name("dir")) || dom.name_is(node, &W::name("bdo")) {
+                inner = Some(
+                    "a direction override (`w:dir`/`w:bdo`); edit the text on either side of it, or comment on it"
+                        .into(),
+                );
             }
         }
         inner.unwrap_or_else(|| {
