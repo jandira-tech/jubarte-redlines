@@ -1792,6 +1792,11 @@ fn produce(
         .unwrap_or(report.paragraphs.from);
     report.revisions = revision_counts(&redline);
     report.fields = fields;
+    report.clean_removed_comments = super::comment_settlement::threads_the_clean_copy_drops(
+        &clean,
+        &redline,
+        &report.removed_comments,
+    )?;
     if role == PrimaryRole::Redline {
         check_redline_stories(tx, &clean, &redline)?;
     }
@@ -2007,6 +2012,7 @@ pub(crate) mod tests {
                 existing_revisions: ExistingRevisions::Refuse,
                 resolved_revisions: Default::default(),
                 removed_comments: Vec::new(),
+                clean_removed_comments: Vec::new(),
                 kept_comments: Vec::new(),
                 paragraph_ids: Vec::new(),
                 split_revisions: Vec::new(),

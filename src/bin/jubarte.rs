@@ -2470,6 +2470,16 @@ fn edit_notes(
         source,
         decision,
     ));
+    // Suggesting mode publishes the redline, which still holds these threads.
+    if published == result.clean.as_slice() {
+        lines.extend(settlement_notes(
+            &result.report.clean_removed_comments,
+            &[],
+            published,
+            source,
+            "deletion",
+        ));
+    }
     for outcome in &result.report.operations {
         if let (Some(given), Some(read_as)) = (&outcome.anchor_given, &outcome.anchor_read_as) {
             let why = if jubarte::markdown::plain_anchor(given) == *read_as {
