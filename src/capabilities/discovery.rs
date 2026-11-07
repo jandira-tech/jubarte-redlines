@@ -185,10 +185,30 @@ fn support(runtime: &str, version: u32, kind: &str, schema: &Value) -> Vec<Value
                         conditions.push_str(", as does deleting a thread that holds their reply");
                     }
                 }
-                rows.push(json!({"runtime": runtime, "target": target, "track": track,
+                let keep_only = refusal.is_none()
+                    && version == 2
+                    && matches!(kind, "strike" | "restore")
+                    && existing != "keep";
+                if keep_only {
+                    conditions.push_str(
+                        "; the revision it answers stays beside our change, so it needs existing_revisions keep",
+                    );
+                }
+                let mut row = json!({"runtime": runtime, "target": target, "track": track,
                     "existing_revisions": existing,
-                    "status": if refusal.is_some() { "unsupported" } else { "conditional" },
-                    "conditions": conditions}));
+                    "status": if refusal.is_some() || keep_only { "unsupported" } else { "conditional" },
+                    "conditions": conditions});
+                if keep_only {
+                    // Refuse stops while the revision is still in the source.
+                    // Accept and reject settle it first, so the strike or
+                    // restore then names a revision that is no longer there.
+                    row["code"] = json!(if existing == "refuse" {
+                        "EXISTING_REVISIONS"
+                    } else {
+                        "UNKNOWN_CHANGE"
+                    });
+                }
+                rows.push(row);
             }
         }
     }
