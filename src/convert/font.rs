@@ -3120,6 +3120,9 @@ fn font_index_path() -> Option<PathBuf> {
 /// does not change the directory's mtime. The crate version drops the
 /// answers another release recorded.
 const FONT_INDEX_HEADER: &str = concat!("jubarte-font-index\t3\t", env!("CARGO_PKG_VERSION"));
+/// Families one persistent font index keeps. A miss past this bound is not
+/// recorded: recording it would rewrite the whole index once per name.
+const MAX_FONT_INDEX_ENTRIES: usize = 256;
 
 /// A modification time in nanoseconds, `None` for a missing path.
 fn mtime_of(path: &Path) -> Option<u128> {
@@ -3191,15 +3194,21 @@ struct FontIndex {
 
 impl FontIndex {
     fn load(path: Option<PathBuf>) -> Self {
-        let entries = path
+        let mut entries = path
             .as_deref()
             .and_then(|p| fs::read_to_string(p).ok())
             .map(|text| parse_font_index(&text))
             .unwrap_or_default();
+        if entries.len() > MAX_FONT_INDEX_ENTRIES {
+            entries = entries.into_iter().take(MAX_FONT_INDEX_ENTRIES).collect();
+        }
         Self { path, entries }
     }
 
     fn record(&mut self, key: &str, dirs: &[PathBuf], faces: &SourcedFaces) {
+        if !self.entries.contains_key(key) && self.entries.len() >= MAX_FONT_INDEX_ENTRIES {
+            return;
+        }
         let entry = IndexEntry {
             dirs: dirs
                 .iter()
@@ -3215,7 +3224,36 @@ impl FontIndex {
                 .collect(),
         };
         self.entries.insert(key.to_string(), entry);
-        self.save();
+        self.persist(key);
+    }
+
+    /// Appends one family when the file is already this release's index.
+    /// A missing or stale file is written once, capped at
+    /// [`MAX_FONT_INDEX_ENTRIES`].
+    fn persist(&self, key: &str) {
+        let Some(path) = self.path.as_deref() else {
+            return;
+        };
+        if index_file_is_current(path) {
+            self.append_key(path, key);
+        } else {
+            self.save();
+        }
+    }
+
+    fn append_key(&self, path: &Path, key: &str) {
+        let Some(entry) = self.entries.get(key) else {
+            return;
+        };
+        let formatted = format_font_index(&HashMap::from([(key.to_string(), entry.clone())]));
+        let Some(line) = formatted.lines().nth(1).filter(|line| !line.is_empty()) else {
+            return;
+        };
+        let Ok(mut file) = fs::OpenOptions::new().append(true).open(path) else {
+            return;
+        };
+        let _ = std::io::Write::write_all(&mut file, line.as_bytes());
+        let _ = std::io::Write::write_all(&mut file, b"\n");
     }
 
     /// Writes the index, merged over what other processes wrote since it
@@ -3228,6 +3266,22 @@ impl FontIndex {
             .map(|text| parse_font_index(&text))
             .unwrap_or_default();
         merged.extend(self.entries.iter().map(|(k, v)| (k.clone(), v.clone())));
+        if merged.len() > MAX_FONT_INDEX_ENTRIES {
+            let mut kept = HashMap::with_capacity(MAX_FONT_INDEX_ENTRIES);
+            for (k, v) in &self.entries {
+                if kept.len() == MAX_FONT_INDEX_ENTRIES {
+                    break;
+                }
+                kept.insert(k.clone(), v.clone());
+            }
+            for (k, v) in &merged {
+                if kept.len() == MAX_FONT_INDEX_ENTRIES {
+                    break;
+                }
+                kept.entry(k.clone()).or_insert(v.clone());
+            }
+            merged = kept;
+        }
         let text = format_font_index(&merged);
         let tmp = path.with_extension(format!("tsv.{}.tmp", std::process::id()));
         let written = path
@@ -3239,6 +3293,17 @@ impl FontIndex {
             let _ = fs::remove_file(&tmp);
         }
     }
+}
+
+/// The on-disk index starts with this release's header, so one family can
+/// be appended without rewriting the families already stored.
+fn index_file_is_current(path: &Path) -> bool {
+    let Ok(file) = fs::File::open(path) else {
+        return false;
+    };
+    let mut line = String::new();
+    std::io::BufRead::read_line(&mut std::io::BufReader::new(file), &mut line).is_ok()
+        && line.trim_end_matches(['\n', '\r']) == FONT_INDEX_HEADER
 }
 
 /// `read_dir` failed because the process may not list `dir` (EACCES/EPERM).
@@ -3845,6 +3910,36 @@ mod tests {
         let index = Mutex::new(FontIndex::load(Some(index_path)));
         indexed_faces(&index, "absent", none);
         assert_eq!(scans.get(), 4);
+    }
+
+    /// A persistent index used to rewrite every family on each miss. Misses
+    /// append, and the index keeps at most 256 families.
+    #[cfg(unix)]
+    #[test]
+    fn many_font_index_misses_do_not_rewrite_the_growing_index() {
+        use std::os::unix::fs::MetadataExt;
+
+        const BOUND: usize = 256;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let index_path = tmp.path().join("font-index.tsv");
+        let index = Mutex::new(FontIndex::load(Some(index_path.clone())));
+        let miss = || (Vec::new(), Vec::new());
+        indexed_faces(&index, "family-0", miss);
+        let inode = fs::metadata(&index_path).expect("index").ino();
+        for i in 1..8 {
+            indexed_faces(&index, &format!("family-{i}"), miss);
+        }
+        assert_eq!(
+            fs::metadata(&index_path).expect("index").ino(),
+            inode,
+            "each miss rewrote the whole font index"
+        );
+        for i in 8..=BOUND {
+            indexed_faces(&index, &format!("family-{i}"), miss);
+        }
+        let text = fs::read_to_string(&index_path).expect("read index");
+        let families = text.lines().skip(1).filter(|line| !line.is_empty()).count();
+        assert!(families <= BOUND, "index kept {families} families");
     }
 
     /// A cloud-font folder that could not be listed (macOS privacy, or any
