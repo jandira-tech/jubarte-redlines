@@ -217,6 +217,8 @@ uuid = { version = "1", features = ["v4"] }
 # are copied separately; this crate moves the attributes onto the staged inode.
 [target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
 xattr = "1.6.1"
+# Advisory writer lock for a plan commit. Callers use the safe API.
+fs2 = "0.4.3"
 
 # wasm32-unknown-unknown has no clock in std: `SystemTime::now` panics. The
 # host's `Date` dates new comments and DATE/TIME fields there instead.

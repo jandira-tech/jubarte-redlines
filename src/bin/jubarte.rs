@@ -2965,7 +2965,7 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
 /// can still fail later, while the redline is compared); a refusal leaves
 /// PLAN.json as it was.
 fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), (u8, String)> {
-    use jubarte::edit::record::{RecordError, record, write_plan};
+    use jubarte::edit::record::{RecordError, commit_plan, record};
     let options = flags.options;
     let held = match std::fs::read_to_string(path) {
         Ok(json) => Some(json),
@@ -3003,7 +3003,7 @@ fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), 
         }
     }
     if !flags.dry_run {
-        let warnings = write_plan(path, &recorded.json()).map_err(|error| {
+        let warnings = commit_plan(path, held.as_deref(), &recorded.json()).map_err(|error| {
             if let Some(publish) = error
                 .get_ref()
                 .and_then(|source| source.downcast_ref::<jubarte::publication::PublishError>())
