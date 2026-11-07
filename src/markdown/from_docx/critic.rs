@@ -11,8 +11,9 @@
 //! designed for can parse it:
 //!
 //! - a span that crosses another is split so every span closes inside its parent;
-//! - a span inside another of the same kind is merged into it (`{--{--x--}--}`
-//!   would end at the first `--}`);
+//! - a span inside another of the same change, or of the same author, is merged
+//!   into it (`{--{--x--}--}` would end at the first `--}`); another author's
+//!   substitution stays its own span, and that author's other text merges;
 //! - spans with no text are dropped, keeping any comments they held;
 //! - untagged neighbouring spans of the same kind are joined;
 //! - comments inside a highlight move to right after it (`{==text==}{>>note<<}`);
@@ -300,6 +301,16 @@ fn one_change(old_by: Option<&str>, new_by: Option<&str>) -> bool {
     }
 }
 
+/// The new side pairs when it sits in no change, or in the same change as
+/// the old side. A parent on the new side alone would make that side its
+/// own parent, so those stay two marks.
+fn same_nest(old_by: Option<&str>, new_by: Option<&str>) -> bool {
+    match outer_of(new_by) {
+        None => true,
+        Some(new) => outer_of(old_by) == Some(new),
+    }
+}
+
 /// The tags of two neighbours or of a substitution's two sides (whole
 /// attributions, sentinel and all), joined, keeping their shared inline
 /// timestamp. The pairing guard requires equal dates.
@@ -558,7 +569,7 @@ impl Critic {
     /// A header/footer scalar: fold revisions as in the body, preserving
     /// the story walker's escaped text, fields and drawings byte for byte.
     pub(crate) fn into_story(self) -> String {
-        let nodes = tidy(unnest(tree(self.tokens)));
+        let nodes = tidy(unnest(tree(&self.tokens)));
         let mut pieces = Vec::new();
         render(
             &nodes,
@@ -574,7 +585,7 @@ impl Critic {
     }
 
     pub(crate) fn into_inline(self) -> Inline {
-        let mut nodes = tidy(unnest(tree(self.tokens)));
+        let mut nodes = tidy(unnest(tree(&self.tokens)));
         if self.inline_end {
             space_into_last_change(&mut nodes);
         }
@@ -602,47 +613,174 @@ impl Critic {
 /// A span still open while the tree is built.
 type Open = (Mark, Option<String>, Vec<Node>);
 
+/// Whether `inner` is the open change: neither note names anyone, the notes
+/// match, the tags are one logical change, or both name the same author.
+/// Another author's span is not. A note's own marks are that author's, so
+/// they stay in the reference's span; a substitution's new side is not.
+fn same_change_note(outer: Option<&str>, inner: Option<&str>) -> bool {
+    match (outer, inner) {
+        (None, None) => true,
+        (Some(a), Some(b)) if a == b => true,
+        (Some(a), Some(b)) => match (tag(Some(a)), tag(Some(b))) {
+            (Some(left), Some(right)) => {
+                let (left, right) = (tag_parts(left).0, tag_parts(right).0);
+                super::agent::same_change(left, right) || same_handle(left, right)
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Both tags name one author, and it is the same one. A tag with no handle
+/// names nobody, so it does not match another.
+fn same_handle(left: &str, right: &str) -> bool {
+    match (
+        super::agent::handle_of(left),
+        super::agent::handle_of(right),
+    ) {
+        (Some(outer), Some(inner)) if outer != "??" => outer == inner,
+        _ => false,
+    }
+}
+
+/// Whether this open is one side of a substitution that pairs, so it must
+/// keep its own span. Another author's other text still joins the open one.
+fn substitution_side(children: &[Node], mark: Mark, by: &Option<String>, rest: &[Token]) -> bool {
+    match mark {
+        Mark::Insertion => {
+            last_deletion(children).is_some_and(|old| pairs(old.as_deref(), by.as_deref()))
+        }
+        Mark::Deletion => {
+            following_insertion(rest).is_some_and(|new| pairs(by.as_deref(), new.as_deref()))
+        }
+        _ => false,
+    }
+}
+
+/// The deletion a new insertion would pair with, when it is the last thing
+/// already in the open span.
+fn last_deletion(children: &[Node]) -> Option<&Option<String>> {
+    let mut rest = children;
+    loop {
+        match rest.split_last() {
+            Some((Node::Leaf(Leaf::Text { text, .. }), head)) if text.is_empty() => rest = head,
+            Some((Node::Leaf(Leaf::Comment(_)), head)) => rest = head,
+            _ => break,
+        }
+    }
+    match rest.last() {
+        Some(Node::Span(Mark::Deletion, by, _)) => Some(by),
+        _ => None,
+    }
+}
+
+/// The insertion that follows this deletion once the deletion itself closes,
+/// when nothing with text sits between them.
+fn following_insertion(rest: &[Token]) -> Option<&Option<String>> {
+    let mut depth = 1i32;
+    let mut closed = false;
+    for token in rest {
+        if !closed {
+            match token {
+                Token::Open(Mark::Insertion | Mark::Deletion, _) => depth += 1,
+                Token::Close(Mark::Insertion | Mark::Deletion) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        closed = true;
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+        match token {
+            Token::Open(Mark::Insertion, by) => return Some(by),
+            // The insertion of a substitution inside a deletion is written
+            // after that deletion closes: text under a deletion is refused.
+            Token::Close(_) => {}
+            Token::Leaf(Leaf::Text { text, .. }) if text.is_empty() => {}
+            Token::Leaf(Leaf::Comment(_)) => {}
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// The two sides render would pair.
+fn pairs(old_by: Option<&str>, new_by: Option<&str>) -> bool {
+    same_nest(old_by, new_by)
+        && !holds(new_by, old_by)
+        && one_change(old_by, new_by)
+        && pairable_attribution(old_by, new_by)
+}
+
+/// A same-kind span joins the open one unless it is another author's
+/// substitution, which has to keep both sides.
+fn merges(
+    outer_by: Option<&str>,
+    children: &[Node],
+    mark: Mark,
+    by: &Option<String>,
+    rest: &[Token],
+) -> bool {
+    same_change_note(outer_by, by.as_deref()) || !substitution_side(children, mark, by, rest)
+}
+
 /// Builds well-nested spans from flat tokens. A span of a kind that is already
-/// open is merged into the open one, which keeps its attribution; a close that
-/// would cross other spans closes them first and opens them again after it,
-/// with the same attribution. Spans still open at the end close.
-fn tree(tokens: Vec<Token>) -> Vec<Node> {
+/// open merges into it when it is that same change or that author's, which
+/// keeps its attribution. Another author's substitution stays open so both
+/// sides print. A close that would cross other spans closes them first and
+/// opens them again after it, with the same attribution. Spans still open at
+/// the end close.
+fn tree(tokens: &[Token]) -> Vec<Node> {
     let mut root = Vec::new();
     let mut open: Vec<Open> = Vec::new();
     let mut merged = [0usize; 3];
-    for token in tokens {
-        match token {
-            Token::Leaf(leaf) => children(&mut root, &mut open).push(Node::Leaf(leaf)),
-            Token::Open(mark, _)
-                if open
+    let mut index = 0;
+    while index < tokens.len() {
+        match &tokens[index] {
+            Token::Leaf(leaf) => {
+                children(&mut root, &mut open).push(Node::Leaf(leaf.clone()));
+            }
+            Token::Open(mark, by) => {
+                let mark = *mark;
+                let by = by.clone();
+                let merges_into = open
                     .iter()
                     .rposition(|(m, ..)| *m == mark)
                     .is_some_and(|at| {
-                        // A span of a kind already open merges into it when only a
-                        // comment's scope lies between: a change of the other kind
-                        // between them makes a nest the reader must keep (`w:ins >
-                        // w:del > w:ins`), not a span to absorb.
                         open[at + 1..]
                             .iter()
                             .all(|(m, ..)| matches!(m, Mark::Scope))
-                    }) =>
-            {
-                merged[mark.index()] += 1;
+                            && merges(
+                                open[at].1.as_deref(),
+                                &open[at].2,
+                                mark,
+                                &by,
+                                &tokens[index + 1..],
+                            )
+                    });
+                if merges_into {
+                    merged[mark.index()] += 1;
+                } else {
+                    open.push((mark, by, Vec::new()));
+                }
             }
-            Token::Open(mark, by) => open.push((mark, by, Vec::new())),
             Token::Close(mark) if merged[mark.index()] > 0 => merged[mark.index()] -= 1,
             Token::Close(mark) => {
-                let Some(at) = open.iter().rposition(|(m, ..)| *m == mark) else {
-                    continue;
-                };
-                let reopen: Vec<(Mark, Option<String>)> = open[at + 1..]
-                    .iter()
-                    .map(|(m, by, _)| (*m, by.clone()))
-                    .collect();
-                close_from(&mut root, &mut open, at);
-                open.extend(reopen.into_iter().map(|(m, by)| (m, by, Vec::new())));
+                let mark = *mark;
+                if let Some(at) = open.iter().rposition(|(m, ..)| *m == mark) {
+                    let reopen: Vec<(Mark, Option<String>)> = open[at + 1..]
+                        .iter()
+                        .map(|(m, by, _)| (*m, by.clone()))
+                        .collect();
+                    close_from(&mut root, &mut open, at);
+                    open.extend(reopen.into_iter().map(|(m, by)| (m, by, Vec::new())));
+                }
             }
         }
+        index += 1;
     }
     close_from(&mut root, &mut open, 0);
     root
@@ -686,15 +824,17 @@ fn is_change(node: &Node) -> bool {
 
 /// A piece of a split `mark` made is one of the changes it held, not a
 /// piece of the change itself: the writer nests it back inside, so the
-/// outer may fold into its note. Same-kind changes merge in [`tree`],
-/// so a held change never shares the outer's mark — save a level a
-/// deeper fold already dissolved into its sole change, whose note then
-/// names the change it sits inside.
-fn held_change(piece: &Node, outer: Mark) -> bool {
+/// outer may fold into its note. A same-kind span is the outer's own
+/// piece when it is that change, and a held change otherwise.
+fn held_change(piece: &Node, outer_mark: Mark, outer_by: Option<&str>) -> bool {
     match piece {
         Node::Split(..) => true,
         Node::Span(Mark::Scope, _, children) => children.iter().any(is_change),
-        Node::Span(mark, by, _) => outer_of(by.as_deref()).is_some() || *mark != outer,
+        Node::Span(mark, by, _) => {
+            outer_of(by.as_deref()).is_some()
+                || *mark != outer_mark
+                || !same_change_note(outer_by, by.as_deref())
+        }
         _ => false,
     }
 }
@@ -808,7 +948,7 @@ fn tidy(nodes: Vec<Node>) -> Vec<Node> {
             // Each held change names its outer, even when live pieces of
             // that outer remain beside it.
             for piece in &mut pieces {
-                if held_change(piece, mark) {
+                if held_change(piece, mark, outer.as_deref()) {
                     fold_on(piece, outer.as_deref());
                 }
             }
@@ -994,15 +1134,16 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping<'_>, ids: &mu
     while index < nodes.len() {
         match (&nodes[index], nodes.get(index + 1)) {
             // Pair a deletion then a live insertion of one change.
-            // The old side keeps its parent; a parent on the new side
-            // prevents pairing. Insertion then deletion stays in order.
+            // The old side keeps its parent. The new side may share that
+            // parent; a different parent on the new side prevents pairing.
+            // Insertion then deletion stays in order.
             // A rendered bookmark, comment range or field (w:fldChar)
             // between the marks separates them; proofing, unreferenced
             // bookmarks and empty runs are transparent.
             (
                 Node::Span(Mark::Deletion, old_by, old),
                 Some(Node::Span(Mark::Insertion, new_by, new)),
-            ) if outer_of(new_by.as_deref()).is_none()
+            ) if same_nest(old_by.as_deref(), new_by.as_deref())
                 && !holds(new_by.as_deref(), old_by.as_deref())
                 && one_change(old_by.as_deref(), new_by.as_deref())
                 && escaping.pairable(old_by.as_deref(), new_by.as_deref())
@@ -1642,6 +1783,44 @@ mod tests {
             ("close", "-"),
         ];
         assert_eq!(script(&triple), "{~~a~>b~~}{--c--}");
+    }
+
+    #[test]
+    fn another_authors_substitution_stays_inside_the_same_kind() {
+        let inside_insertion = [
+            ("by+", "\u{E000}7+8@B"),
+            ("t", "x"),
+            ("by-", "\u{E000}3+4@A"),
+            ("t", "a"),
+            ("close", "-"),
+            ("by+", "\u{E000}3+4@A"),
+            ("t", "b"),
+            ("close", "+"),
+            ("t", "y"),
+            ("close", "+"),
+        ];
+        let inside_deletion = [
+            ("by-", "\u{E000}7+8@B"),
+            ("t", "x"),
+            ("by-", "\u{E000}3+4@A"),
+            ("t", "a"),
+            ("close", "-"),
+            ("by+", "\u{E000}3+4@A"),
+            ("t", "b"),
+            ("close", "+"),
+            ("t", "y"),
+            ("close", "-"),
+        ];
+        // Each side already carries both ids, and this script does not
+        // collapse a repeated whole, so the joined tag names them twice.
+        assert_eq!(
+            script(&inside_insertion),
+            "{++x++}{r7+8 @B}{~~a~>b~~}{r3+4+3+4 @A re r7+8 @B}{++y++}{r7+8 @B}"
+        );
+        assert_eq!(
+            script(&inside_deletion),
+            "{--x--}{r7+8 @B}{~~a~>b~~}{r3+4+3+4 @A re r7+8 @B}{--y--}{r7+8 @B}"
+        );
     }
 
     #[test]
@@ -2457,7 +2636,7 @@ mod tests {
 
     #[test]
     fn tree_ignores_a_close_with_nothing_open() {
-        assert_eq!(tree(vec![Token::Close(Ins)]), Vec::<Node>::new());
+        assert_eq!(tree(&[Token::Close(Ins)]), Vec::<Node>::new());
     }
 
     #[test]
