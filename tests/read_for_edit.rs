@@ -160,6 +160,26 @@ fn refuse_policy_returns_blockers_not_a_usable_hash() {
     assert_eq!(error.code, "EXISTING_REVISIONS");
 }
 
+/// A policy that cannot form a working basis names the revisions that
+/// block it. The error is the result: there is no rewrite hash.
+#[test]
+fn refuse_policy_names_the_blocking_revisions() {
+    let request = ForEditRequest {
+        existing_revisions: ExistingRevisions::Refuse,
+        ..ForEditRequest::default()
+    };
+    let error = for_edit(&source(), &request).unwrap_err();
+    assert_eq!(error.code, "EXISTING_REVISIONS");
+    assert!(
+        error.message.contains("r7") && error.message.contains("r8"),
+        "the diagnostic names the revisions that block a working basis: {error}"
+    );
+    assert!(
+        !error.message.contains("before_sha256"),
+        "a refused basis is not a usable rewrite hash: {error}"
+    );
+}
+
 #[test]
 fn accept_change_reshapes_the_working_text_and_hash() {
     let request = ForEditRequest {
