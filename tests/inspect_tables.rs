@@ -705,8 +705,8 @@ fn alternate_content_tables_take_no_view_or_picker_index() {
         "{view}"
     );
     assert!(
-        !view.contains("Alice") && !view.contains("Bob"),
-        "AC text is omitted: {view}"
+        view.contains("Alice") && !view.contains("Bob"),
+        "the shown branch is visible: {view}"
     );
     let out = read_table_fixture(&source, false, &["-p", "t0"]);
     assert!(out.status.success(), "{out:?}");
@@ -720,6 +720,27 @@ fn alternate_content_tables_take_no_view_or_picker_index() {
         String::from_utf8_lossy(&out.stdout).contains("p3=Carol Diaz"),
         "{out:?}"
     );
+}
+
+/// Word shows the Choice table. The view shows that text, still without a tN.
+#[test]
+fn alternate_content_table_shows_the_branch_word_renders() {
+    let source = alternate_tables(true);
+    let found = tables(&source).unwrap();
+    assert_eq!(found.len(), 1, "the body table keeps the only tN");
+    assert_eq!(found[0].index, 0);
+    assert_eq!(found[0].rows[0][0].text, "Carol Diaz");
+    let out = read_table_fixture(&source, false, &[]);
+    assert!(out.status.success(), "{out:?}");
+    let view = String::from_utf8_lossy(&out.stdout);
+    assert!(view.contains("Alice"), "{view}");
+    assert!(!view.contains("Bob"), "{view}");
+    assert!(view.contains("<!-- alternate -->"), "{view}");
+    assert!(view.contains("<!-- t0 "), "{view}");
+    assert!(!view.contains("<!-- t1 "), "{view}");
+    let after_t0 = view.rsplit("<!-- t0 ").next().unwrap_or("");
+    assert!(after_t0.contains("Carol Diaz"), "{view}");
+    assert!(!after_t0.contains("Alice"), "{view}");
 }
 
 fn alternate_edit_plan() -> EditPlan {
