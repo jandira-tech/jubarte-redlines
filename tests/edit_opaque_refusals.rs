@@ -60,6 +60,54 @@ fn a_refused_edit_names_what_holds_the_text_and_the_way_around_it() {
 }
 
 #[test]
+fn a_rewrite_inside_a_wrapper_names_that_wrapper() {
+    let cases = [
+        (
+            "smartTag",
+            r#"<w:smartTag w:uri="urn:x" w:element="place"><w:r><w:t>Paris</w:t></w:r></w:smartTag>"#,
+            "a smart tag (`w:smartTag`)",
+        ),
+        (
+            "customXml",
+            r#"<w:customXml w:uri="urn:x" w:element="place"><w:r><w:t>Paris</w:t></w:r></w:customXml>"#,
+            "custom XML markup (`w:customXml`)",
+        ),
+        (
+            "dir",
+            r#"<w:dir w:val="rtl"><w:r><w:t>Paris</w:t></w:r></w:dir>"#,
+            "a direction override (`w:dir`/`w:bdo`)",
+        ),
+        (
+            "bdo",
+            r#"<w:bdo w:val="rtl"><w:r><w:t>Paris</w:t></w:r></w:bdo>"#,
+            "a direction override (`w:dir`/`w:bdo`)",
+        ),
+    ];
+    for (name, inner, says) in cases {
+        let doc = docx(&format!("<w:p>{inner}</w:p>"));
+        let e = apply_plan(
+            &doc,
+            &plan(
+                "",
+                r#"[{"kind":"rewrite","paragraph":"p0","text":"London"}]"#,
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{name}: {e}");
+        assert!(e.message.contains(says), "{name}: {e}");
+        assert!(
+            !e.message.contains("field"),
+            "{name} must not call the wrapper a field: {e}"
+        );
+        assert!(
+            e.message
+                .contains("edit the text on either side of it, or comment on it"),
+            "{name}: {e}"
+        );
+    }
+}
+
+#[test]
 fn settling_the_named_revision_frees_its_text() {
     let out = apply_plan(
         &source(),
