@@ -2760,7 +2760,8 @@ fn check_relationship_integrity(pkg: &PartFs, out: &mut Vec<Finding>) {
 
 /// A target that is not an OPC part: an absolute URI, a Windows path, or a
 /// UNC share. A doubled slash in front of a package root (`//word/...`)
-/// still names a part.
+/// still names a part. The root matches in any ASCII case, the same way a
+/// part name does (`//Word` is `//word`).
 fn external_uri_target(target: &str) -> bool {
     if target.starts_with("http://")
         || target.starts_with("https://")
@@ -2774,11 +2775,14 @@ fn external_uri_target(target: &str) -> bool {
         return false;
     };
     let host = rest.split('/').next().unwrap_or("");
-    !host.is_empty()
-        && !matches!(
-            host,
-            "word" | "docProps" | "customXml" | "_rels" | "ppt" | "xl"
-        )
+    !host.is_empty() && !package_root_host(host)
+}
+
+/// `word`, `docProps`, `customXml`, `_rels`, `ppt`, and `xl`, in any ASCII case.
+fn package_root_host(host: &str) -> bool {
+    ["word", "docProps", "customXml", "_rels", "ppt", "xl"]
+        .iter()
+        .any(|root| host.eq_ignore_ascii_case(root))
 }
 
 /// Internal targets must name a part at their resolved package path.
@@ -5923,6 +5927,62 @@ mod validation_owner_boundary_tests {
                 .iter()
                 .any(|finding| finding.code == "MISSING_REL_TARGET"),
             "a doubled package path still names a part"
+        );
+    }
+
+    #[test]
+    fn a_doubled_package_root_in_any_ascii_case_still_names_a_part() {
+        for target in [
+            "//Word/no-such.xml",
+            "//WORD/no-such.xml",
+            "//DocProps/no-such.xml",
+            "//CustomXml/no-such.xml",
+            "//_RELS/no-such.xml",
+            "//Ppt/no-such.xml",
+            "//XL/no-such.xml",
+        ] {
+            let mut pkg = package();
+            pkg.add_document_relationship("word/document.xml", "urn:test/part", target);
+            let mut findings = Vec::new();
+            check_relationship_integrity(&pkg, &mut findings);
+            assert!(
+                findings
+                    .iter()
+                    .any(|finding| finding.code == "MISSING_REL_TARGET"),
+                "{target} was treated as a share, not a part"
+            );
+        }
+
+        let mut present = package();
+        present.add_document_relationship(
+            "word/document.xml",
+            "urn:test/part",
+            "//Word/document.xml",
+        );
+        let mut findings = Vec::new();
+        check_relationship_integrity(&present, &mut findings);
+        assert!(
+            findings.iter().all(|finding| {
+                finding.code != "MISSING_REL_TARGET"
+                    || !finding.message.contains("//Word/document.xml")
+            }),
+            "the document part was missed under another case: {findings:?}"
+        );
+
+        let mut share = package();
+        share.add_document_relationship(
+            "word/document.xml",
+            "urn:test/part",
+            "//notepad/share/template.dotx",
+        );
+        let mut findings = Vec::new();
+        check_relationship_integrity(&share, &mut findings);
+        assert!(
+            findings
+                .iter()
+                .all(|finding| finding.code != "MISSING_REL_TARGET"
+                    || !finding.message.contains("notepad")),
+            "a share whose name is not a package root was read as a part"
         );
     }
 
