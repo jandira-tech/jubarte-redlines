@@ -183,3 +183,70 @@ impl AnchorChanges {
         Ok((removed, kept))
     }
 }
+
+/// Threads the redline still carries that the clean copy does not.
+/// A reply whose parent is also gone is listed on the root, in comment
+/// order. Threads already named by settlement stay on that receipt.
+pub(crate) fn threads_the_clean_copy_drops(
+    clean: &[u8],
+    redline: &[u8],
+    already: &[RemovedComment],
+) -> Result<Vec<RemovedComment>, super::EditError> {
+    let invalid =
+        |error: crate::comments::CommentError| super::err(error.code(), None, error.to_string());
+    let on_redline = crate::comments::list_comments(redline).map_err(invalid)?;
+    let on_clean = crate::comments::list_comments(clean).map_err(invalid)?;
+    let kept: std::collections::HashSet<u32> = on_clean.iter().map(|comment| comment.id).collect();
+    let dropped: std::collections::HashSet<u32> = on_redline
+        .iter()
+        .map(|comment| comment.id)
+        .filter(|id| !kept.contains(id))
+        .collect();
+    if dropped.is_empty() {
+        return Ok(Vec::new());
+    }
+    let named: std::collections::HashSet<u32> = already
+        .iter()
+        .filter_map(|comment| comment.id.strip_prefix('c')?.parse().ok())
+        .collect();
+    let mut threads = Vec::new();
+    for root in on_redline.iter().filter(|comment| {
+        dropped.contains(&comment.id)
+            && !named.contains(&comment.id)
+            && !comment
+                .parent
+                .is_some_and(|parent| dropped.contains(&parent))
+    }) {
+        let mut family = vec![root.id];
+        loop {
+            let before = family.len();
+            for comment in &on_redline {
+                if dropped.contains(&comment.id)
+                    && !family.contains(&comment.id)
+                    && comment
+                        .parent
+                        .is_some_and(|parent| family.contains(&parent))
+                {
+                    family.push(comment.id);
+                }
+            }
+            if family.len() == before {
+                break;
+            }
+        }
+        let replies = on_redline
+            .iter()
+            .filter(|comment| comment.id != root.id && family.contains(&comment.id))
+            .map(|comment| format!("c{}", comment.id))
+            .collect();
+        let paragraph = root.paragraph.as_deref().unwrap_or("the document");
+        threads.push(RemovedComment {
+            id: format!("c{}", root.id),
+            author: root.author.clone(),
+            replies,
+            why: format!("anchor removed by the plan's deletion of {paragraph}"),
+            decision: None,
+        });
+    }
+    Ok(threads)
+}
