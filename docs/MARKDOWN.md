@@ -513,9 +513,10 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
 - `page-break`: the paragraph holds `w:br w:type="page"`. In the tracked
   view, a page break inside an insertion or deletion names that change
   instead: `page-break-del r282 @SW` (it would otherwise be a `rev` tag,
-  which does not say what the change holds). The clause holds one break,
-  written back at the paragraph's end: a second page break in the same
-  paragraph, or a break between its runs, does not keep its own place yet.
+  which does not say what the change holds). The clause holds a break that
+  ends the paragraph, written back at that end. A break with text after it
+  in the same paragraph is `<br type="page"/>` in that text, and comes back
+  between those runs.
   `section-break`:
   its `w:pPr` holds `w:sectPr`; reading the view back, it takes the page
   the YAML header names for its section (`page:` for the first,
