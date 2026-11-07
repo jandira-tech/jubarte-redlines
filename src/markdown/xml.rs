@@ -1069,7 +1069,7 @@ pub(super) fn story(
             Item::LinkEnd => fields.last().copied().flatten(),
             _ => None,
         };
-        let in_note = note_change(&context.document.note_changes, item);
+        let in_note = note_item_change(context.document, items, at);
         // A range or bookmark with no run left before the paragraph ends
         // sits inside the mark a suspended change holds, after the inner
         // ones end: only the open mark closes, the suspended ones wait.
@@ -1832,6 +1832,34 @@ fn note_change(notes: &HashMap<u32, (Change, bool)>, item: &Item) -> Option<Chan
     }
 }
 
+/// [`note_change`], and a range start that belongs to the same note when
+/// the next run is that change. The start then opens the mark, so it is
+/// not left before a deletion the note sits in.
+fn note_item_change(document: &Document, items: &[Item], at: usize) -> Option<Change> {
+    let item = items.get(at)?;
+    if let Some(change) = note_change(&document.note_changes, item) {
+        return Some(change);
+    }
+    let Item::RangeStart(slot) = item else {
+        return None;
+    };
+    let id = document.slots.get(*slot).copied().flatten()?;
+    let (change, end_inside) = document.note_changes.get(&id)?;
+    if !end_inside {
+        return None;
+    }
+    let next = items[at + 1..].iter().find(|item| {
+        !matches!(
+            item,
+            Item::Bookmark(_) | Item::RangeStart(_) | Item::RangeEnd(_) | Item::CommentReference(_)
+        )
+    })?;
+    match next {
+        Item::Run(run) if run.change == Some(*change) => Some(*change),
+        _ => None,
+    }
+}
+
 /// Whether the next real item in `rest` is a run still inside a mark:
 /// `open`'s own, one a nested change suspended (`marks`), whose other
 /// pieces name the same ids, or a change `open` resumes after, which the
@@ -2093,12 +2121,11 @@ fn close_marks(
 /// The marks each numbered change opens in `items` when no change splits:
 /// a run that does not continue the open mark, a paragraph mark, a row.
 fn natural_marks(document: &Document, items: &[Item]) -> HashMap<u32, usize> {
-    let notes = &document.note_changes;
     let mut marks = HashMap::new();
     let mut open: Option<Change> = None;
     let mut fields: Vec<Option<Change>> = Vec::new();
     for (at, item) in items.iter().enumerate() {
-        if let Some(change) = note_change(notes, item) {
+        if let Some(change) = note_item_change(document, items, at) {
             if open != Some(change) {
                 *marks.entry(change.1).or_default() += 1;
             }
