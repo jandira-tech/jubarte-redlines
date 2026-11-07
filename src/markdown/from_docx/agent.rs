@@ -262,10 +262,20 @@ fn untag_id(piece: &str) -> String {
 /// [`format_tag`] prints it.
 pub(crate) fn split_tag(one: &str) -> (Option<&str>, &str, &str) {
     let (head, handle) = one.rsplit_once('@').unwrap_or((one, "??"));
+    // The range name is not the author. [`join_tags`] copies it back.
+    let handle = handle.split(super::critic::MOVE).next().unwrap_or(handle);
     match head.split_once('#') {
         Some((story, ids)) => (Some(story), ids, handle),
         None => (None, head, handle),
     }
+}
+
+/// The range name stamped after [`super::critic::MOVE`] on `tag`, when it
+/// is a move. Empty is a move whose range has no name.
+fn move_payload(tag: &str) -> Option<&str> {
+    let handle = tag.rsplit_once('@')?.1;
+    let rest = handle.split_once(super::critic::MOVE)?.1;
+    Some(rest.split([' ', '\u{E002}']).next().unwrap_or(rest))
 }
 
 /// The handle of a one-author tag (`1+2@AC` → `AC`); `None` for several.
@@ -296,7 +306,17 @@ pub(crate) fn join_tags(parts: &[String]) -> String {
         Some((story, handle)) if keys.iter().all(|k| *k == keys[0]) => {
             let ids: Vec<&str> = parts.iter().map(|p| split_tag(p).1).collect();
             let story = story.map_or(String::new(), |s| format!("{s}#"));
-            format!("{story}{}@{handle}", ids.join("+"))
+            let mut joined = format!("{story}{}@{handle}", ids.join("+"));
+            let payloads: Vec<Option<&str>> = parts.iter().map(|p| move_payload(p)).collect();
+            if let Some(name) = payloads.iter().find_map(|payload| *payload)
+                && payloads
+                    .iter()
+                    .all(|payload| payload.is_none_or(|payload| payload == name))
+            {
+                joined.push(super::critic::MOVE);
+                joined.push_str(name);
+            }
+            joined
         }
         _ => parts.join("|"),
     }

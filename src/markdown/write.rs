@@ -1945,6 +1945,70 @@ struct Writer<'o, 'a> {
     document: Document,
 }
 
+/// The note with each ` re ` part's ` move` clause removed, and the range
+/// name that clause named. Empty is a move with no range. The original
+/// note comes back, with no names, unless the peeled text is a revision note.
+fn peeled_note(note: &str) -> (String, Vec<Option<String>>) {
+    let peeled: Vec<(String, Option<String>)> = note.split(" re ").map(peel_move_part).collect();
+    let names: Vec<Option<String>> = peeled.iter().map(|(_, name)| name.clone()).collect();
+    if names.iter().all(Option::is_none) {
+        return (note.to_string(), names);
+    }
+    let joined = peeled
+        .iter()
+        .map(|(body, _)| body.as_str())
+        .collect::<Vec<_>>()
+        .join(" re ");
+    let parses = view_notes::nested_revision_tags(&joined).is_some()
+        || view_notes::revision_tags(&joined).is_some()
+        || view_notes::nested_plain_revisions(&joined).is_some()
+        || view_notes::plain_revisions(&joined).is_some()
+        || view_notes::plain_revision(&joined).is_some();
+    if parses {
+        (joined, names)
+    } else {
+        (note.to_string(), vec![None; names.len()])
+    }
+}
+
+/// One ` re ` part without its move clause. A single trailing token is the
+/// range name (` move move1`); a bare ` move` is a move with no name.
+fn peel_move_part(part: &str) -> (String, Option<String>) {
+    let part = part.trim();
+    if let Some((body, name)) = part.rsplit_once(" move ") {
+        let name = name.trim();
+        if !name.is_empty() && !name.contains(char::is_whitespace) {
+            return (body.trim_end().to_string(), Some(decode_move_name(name)));
+        }
+    }
+    if let Some(body) = part.strip_suffix(" move") {
+        return (body.to_string(), Some(String::new()));
+    }
+    (part.to_string(), None)
+}
+
+/// The range name the reader stored. `%25` is `%` and `%20` is a space,
+/// decoded in that order so a name that itself holds `%20` stays.
+fn decode_move_name(token: &str) -> String {
+    let mut out = String::with_capacity(token.len());
+    let mut rest = token;
+    while let Some(at) = rest.find('%') {
+        out.push_str(&rest[..at]);
+        match rest.get(at + 1..at + 3) {
+            Some("25") => out.push('%'),
+            Some("20") => out.push(' '),
+            _ => {
+                out.push('%');
+                rest = &rest[at + 1..];
+                continue;
+            }
+        }
+        rest = &rest[at + 3..];
+    }
+    out.push_str(rest);
+    out
+}
+
 impl<'o, 'a> Writer<'o, 'a> {
     fn new(options: &'o DocxOptions<'a>) -> Self {
         Self {
@@ -3747,10 +3811,33 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.story().push(Item::RangeStart(slot));
     }
 
+    /// Records each peeled move name on the serial it belongs to. One name
+    /// covers every serial of a single-part note. An empty name is still a move.
+    fn note_moves(&mut self, names: &[Option<String>], serials: &[u32]) {
+        if names.len() == 1 {
+            if let Some(name) = names.first().cloned().flatten() {
+                for serial in serials {
+                    self.document.moves.insert(*serial, name.clone());
+                }
+            }
+            return;
+        }
+        for (name, serial) in names.iter().zip(serials) {
+            if let Some(name) = name {
+                self.document.moves.insert(*serial, name.clone());
+            }
+        }
+    }
+
     fn end_comment(&mut self) {
         let Some(mut comment) = self.comment.take() else {
             return;
         };
+        let joined = comment.paragraphs.join("\n");
+        let (note, move_names) = peeled_note(&joined);
+        if note != joined {
+            comment.paragraphs = vec![note];
+        }
         let is_attribution = std::mem::take(&mut self.attribution_open);
         if std::mem::take(&mut self.paragraph_attribution) {
             let whole = comment.paragraphs.join("\n");
@@ -3768,6 +3855,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             } else {
                 return;
             };
+            self.note_moves(&move_names, &[serial]);
             self.ensure_paragraph();
             if let Some(index) = self.paragraph
                 && let Item::Paragraph(p) = &mut self.story()[index]
@@ -3814,6 +3902,11 @@ impl<'o, 'a> Writer<'o, 'a> {
                     self.document.wraps.insert(inner, outer);
                     self.unshown_rebuilt(&[outer.1]);
                 }
+                let mut serials = vec![inner];
+                if let Some(outer) = self.document.wraps.get(&inner).map(|outer| outer.1) {
+                    serials.push(outer);
+                }
+                self.note_moves(&move_names, &serials);
                 return;
             }
             if let Some((kind, inner)) = sole
@@ -3850,6 +3943,11 @@ impl<'o, 'a> Writer<'o, 'a> {
                     self.pool(&part.ids, &[outer.1]);
                     self.document.wraps.insert(inner, outer);
                 }
+                let mut serials = vec![inner];
+                if let Some(outer) = self.document.wraps.get(&inner).map(|outer| outer.1) {
+                    serials.push(outer);
+                }
+                self.note_moves(&move_names, &serials);
                 return;
             }
             // The view's tag note: `r1+2 @AC` names both sides, `r1 @AC;
@@ -3909,6 +4007,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 if serials.len() == 2 && numbers <= 1 {
                     self.anchor = anchor.takes_attribution().then_some(anchor);
                 }
+                self.note_moves(&move_names, &serials);
                 return;
             }
             // The plain view's note: the change's ids, then who made it and
@@ -3961,6 +4060,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 if serials.len() == 2 && tags.iter().map(|tag| tag.ids.len()).sum::<usize>() <= 1 {
                     self.anchor = anchor.takes_attribution().then_some(anchor);
                 }
+                self.note_moves(&move_names, &serials);
                 return;
             }
             if let Some((author, date)) = attribution(whole.trim()) {

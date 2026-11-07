@@ -2449,6 +2449,54 @@ fn attribution(element: &Element, story: Option<&str>) -> Option<String> {
     ))
 }
 
+/// `by` with the move sentinel and `name` before its date or the change it
+/// sits in, so the printed note can say ` move` and the writer can tell a
+/// move from a deletion or an insertion.
+fn with_move_sentinel(by: &str, name: &str) -> String {
+    let carried = by.ends_with(critic::CARRIED);
+    let by = by.strip_suffix(critic::CARRIED).unwrap_or(by);
+    let token = name.replace('%', "%25").replace(' ', "%20");
+    let payload = format!("{}{token}", critic::MOVE);
+    let mut out = match by.find([' ', '\u{E002}']) {
+        Some(at) => format!("{}{payload}{}", &by[..at], &by[at..]),
+        None => format!("{by}{payload}"),
+    };
+    if carried {
+        out.push_str(critic::CARRIED);
+    }
+    out
+}
+
+/// The `w:name` of the move range still open before `child`.
+fn open_move_name(container: &Element, child: &Element) -> String {
+    let (start, end) = if child.local() == "moveFrom" {
+        ("moveFromRangeStart", "moveFromRangeEnd")
+    } else {
+        ("moveToRangeStart", "moveToRangeEnd")
+    };
+    let mut open: Vec<(String, String)> = Vec::new();
+    for sibling in container.elements() {
+        if std::ptr::eq(sibling, child) {
+            break;
+        }
+        if sibling.local() == start {
+            if let Some(id) = sibling.attr("id") {
+                open.push((
+                    id.to_string(),
+                    sibling.attr("name").unwrap_or("").to_string(),
+                ));
+            }
+        } else if sibling.local() == end
+            && let Some(id) = sibling.attr("id")
+        {
+            open.retain(|(open_id, _)| open_id != id);
+        }
+    }
+    open.last()
+        .map(|(_, name)| name.clone())
+        .unwrap_or_default()
+}
+
 /// Tracked changes recorded in a properties element (`trPr`, `tcPr`, a
 /// paragraph mark's `rPr`), in document order.
 fn revision_marks(properties: &Element, story: Option<&str>) -> Vec<Change> {
@@ -2711,7 +2759,10 @@ impl Writer<'_> {
                     }
                 }
                 "ins" | "moveTo" | "del" | "moveFrom" => {
-                    self.revised(self.change_of(child), |w| w.blocks(child, blocks, list));
+                    let (mark, by) = self.change_of(child);
+                    self.revised((mark, self.moved(by, container, child)), |w| {
+                        w.blocks(child, blocks, list);
+                    });
                 }
                 "commentRangeStart" | "commentRangeEnd" => self.comment_range(child, None),
                 "customXml" | "sdtContent" | "txbxContent" => self.blocks(child, blocks, list),
@@ -3387,6 +3438,7 @@ impl Writer<'_> {
                 }
                 "ins" | "moveTo" | "del" | "moveFrom" => {
                     let (mark, by) = self.change_of(child);
+                    let by = self.moved(by, container, child);
                     if self.dates {
                         out.open_dated(mark, by.as_deref(), child.revision_date());
                     } else {
@@ -4108,7 +4160,10 @@ impl Writer<'_> {
                     self.flattening -= 1;
                 }
                 "ins" | "moveTo" | "del" | "moveFrom" => {
-                    self.revised(self.change_of(child), |w| w.cell_parts(child, parts));
+                    let (mark, by) = self.change_of(child);
+                    self.revised((mark, self.moved(by, container, child)), |w| {
+                        w.cell_parts(child, parts);
+                    });
                 }
                 "commentRangeStart" | "commentRangeEnd" => self.comment_range(child, None),
                 "sdt" | "sdtContent" | "customXml" => self.cell_parts(child, parts),
@@ -4166,6 +4221,15 @@ impl Writer<'_> {
             tagged.push_str(&date);
         }
         tagged
+    }
+
+    /// A move's attribution, with the open range's name when `element` is one.
+    fn moved(&self, by: Option<String>, container: &Element, child: &Element) -> Option<String> {
+        let by = by?;
+        if !matches!(child.local(), "moveFrom" | "moveTo") {
+            return Some(by);
+        }
+        Some(with_move_sentinel(&by, &open_move_name(container, child)))
     }
 
     /// A tracked change's mark with its attribution: the agent tag, or the

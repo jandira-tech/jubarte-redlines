@@ -559,7 +559,7 @@ fn a_move_beside_an_insertion_counts_each_change_once() {
         r#"<w:p><w:pPr><w:rPr><w:ins w:id="6" {at}/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">Pay </w:t></w:r><w:moveFromRangeStart w:id="20" {at} w:name="move1"/><w:moveFrom w:id="3" {at}><w:r><w:t>General</w:t></w:r></w:moveFrom><w:moveFromRangeEnd w:id="20"/><w:ins w:id="5" {at}><w:r><w:t>CONSENT</w:t></w:r></w:ins></w:p><w:p><w:r><w:t xml:space="preserve">Then </w:t></w:r><w:moveToRangeStart w:id="21" {at} w:name="move1"/><w:moveTo w:id="4" {at}><w:r><w:t>General</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="21"/><w:r><w:t xml:space="preserve"> end.</w:t></w:r></w:p>"#
     ));
     assert!(
-        view.contains("Pay {--General--}{r3 @B}{++CONSENT++}{r5+6 @B}¶{r5+6 @B}"),
+        view.contains("Pay {--General--}{r3 @B move move1}{++CONSENT++}{r5+6 @B}¶{r5+6 @B}"),
         "{view}"
     );
     assert!(
