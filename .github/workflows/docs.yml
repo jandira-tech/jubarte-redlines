@@ -76,7 +76,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
-      - uses: ./.github/actions/mbx
+      - uses: ./.github/actions/mbx # zizmor: ignore[self-repository]
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       # The generator runs jubarte-wasm/cli/bin/jubarte-redlines.mjs against
       # the checked-in jubarte-wasm build. That CLI is ESM and engines-declares
@@ -97,7 +97,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
-      - uses: ./.github/actions/mbx
+      - uses: ./.github/actions/mbx # zizmor: ignore[self-repository]
       - name: one test per adoption-page row, and the .doc reader
         run: cargo test --release --test adoption --test legacy_doc_convert --test legacy_doc
 
@@ -110,7 +110,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
-      - uses: ./.github/actions/mbx
+      - uses: ./.github/actions/mbx # zizmor: ignore[self-repository]
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - run: cargo build --release --bin jubarte
       # The examples' input generators (make_input.py and the like) import
