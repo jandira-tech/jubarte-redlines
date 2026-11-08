@@ -848,7 +848,18 @@ fn screen_candidates(
         // A block placed before a finding shifts its sibling indices. The
         // finding is still the one the source had when a stable anchor
         // (paragraph id, revision id, or that element's own text) finds it.
-        let baseline = relocate_findings(source, bytes, baseline);
+        // Only findings of a code the candidate seems to introduce are
+        // relocated, so an edit that introduces nothing reads no XML here
+        // (#2127 review).
+        let suspects: HashSet<String> = introduced_findings(baseline, &findings)
+            .into_iter()
+            .map(|finding| finding.code)
+            .collect();
+        let baseline = if suspects.is_empty() {
+            baseline.to_vec()
+        } else {
+            relocate_findings(source, bytes, baseline, &suspects)
+        };
         for finding in introduced_findings(&baseline, &findings) {
             if blocking(&finding) {
                 refusals.push(refused(
@@ -886,16 +897,75 @@ fn screen_candidates(
 struct ParsedPart {
     dom: crate::xmllinq::Dom,
     root: crate::xmllinq::NodeId,
+    /// Same-name children per parent, with each child's text and revision
+    /// marks, built once per part: every finding's walk reads them, and a
+    /// part with many findings would otherwise rescan its siblings for
+    /// each (#2127 review).
+    siblings: HashMap<(crate::xmllinq::NodeId, String, String), std::rc::Rc<Siblings>>,
 }
 
-/// Baseline findings with locations rewritten to where the same element sits
-/// in `candidate`. An element the candidate no longer has, or that cannot be
-/// told from a sibling, keeps the location the source reported.
-fn relocate_findings(source: &[u8], candidate: &[u8], baseline: &[Finding]) -> Vec<Finding> {
-    let Ok(source_pkg) = crate::opc::PartFs::open(source) else {
+struct Siblings {
+    nodes: Vec<crate::xmllinq::NodeId>,
+    texts: Vec<String>,
+    marks: Vec<Vec<(String, String)>>,
+    /// How many siblings carry each text.
+    text_counts: HashMap<String, usize>,
+}
+
+impl ParsedPart {
+    fn siblings(
+        &mut self,
+        parent: crate::xmllinq::NodeId,
+        namespace: &str,
+        local: &str,
+    ) -> std::rc::Rc<Siblings> {
+        let key = (parent, namespace.to_string(), local.to_string());
+        if let Some(found) = self.siblings.get(&key) {
+            return std::rc::Rc::clone(found);
+        }
+        let nodes = named_children(&self.dom, parent, namespace, local);
+        let texts: Vec<String> = nodes.iter().map(|&node| self.dom.value(node)).collect();
+        let marks = nodes
+            .iter()
+            .map(|&node| revision_marks(&self.dom, node))
+            .collect();
+        let mut text_counts = HashMap::new();
+        for text in &texts {
+            *text_counts.entry(text.clone()).or_insert(0) += 1;
+        }
+        let built = std::rc::Rc::new(Siblings {
+            nodes,
+            texts,
+            marks,
+            text_counts,
+        });
+        self.siblings.insert(key, std::rc::Rc::clone(&built));
+        built
+    }
+}
+
+/// Baseline findings of a `suspects` code with locations rewritten to where
+/// the same element sits in `candidate`. An element the candidate no longer
+/// has, or that cannot be told from a sibling, keeps the location the
+/// source reported. Both packages are read as Transitional, as validation
+/// reads a Strict one, so the locations name the same elements (#2127
+/// review).
+fn relocate_findings(
+    source: &[u8],
+    candidate: &[u8],
+    baseline: &[Finding],
+    suspects: &HashSet<String>,
+) -> Vec<Finding> {
+    let (Ok(source), Ok(candidate)) = (
+        crate::strict_translation::strict_to_transitional_docx(source),
+        crate::strict_translation::strict_to_transitional_docx(candidate),
+    ) else {
         return baseline.to_vec();
     };
-    let Ok(candidate_pkg) = crate::opc::PartFs::open(candidate) else {
+    let Ok(source_pkg) = crate::opc::PartFs::open(&source) else {
+        return baseline.to_vec();
+    };
+    let Ok(candidate_pkg) = crate::opc::PartFs::open(&candidate) else {
         return baseline.to_vec();
     };
     let mut source_parts = HashMap::new();
@@ -904,6 +974,9 @@ fn relocate_findings(source: &[u8], candidate: &[u8], baseline: &[Finding]) -> V
         .iter()
         .map(|finding| {
             let mut finding = finding.clone();
+            if !suspects.contains(&finding.code) {
+                return finding;
+            }
             if let Some(location) = moved_location(
                 &source_pkg,
                 &candidate_pkg,
@@ -929,7 +1002,14 @@ fn ensure_part(
         return Some(());
     }
     let (dom, _, root) = crate::inspect::parse_part(pkg, part).ok()?;
-    cache.insert(part.to_string(), ParsedPart { dom, root });
+    cache.insert(
+        part.to_string(),
+        ParsedPart {
+            dom,
+            root,
+            siblings: HashMap::new(),
+        },
+    );
     Some(())
 }
 
@@ -946,26 +1026,24 @@ fn moved_location(
     }
     ensure_part(source_pkg, source_parts, part)?;
     ensure_part(candidate_pkg, candidate_parts, part)?;
-    let source = source_parts.get(part)?;
-    let candidate = candidate_parts.get(part)?;
+    let source = source_parts.get_mut(part)?;
+    let candidate = candidate_parts.get_mut(part)?;
     let mut source_node = source.root;
     let mut candidate_node = candidate.root;
     let mut steps = Vec::new();
     for step in location.split('/') {
         let (namespace, local, index) = parse_step(step)?;
-        let source_siblings = named_children(&source.dom, source_node, &namespace, &local);
-        let candidate_siblings = named_children(&candidate.dom, candidate_node, &namespace, &local);
-        let source_child = *source_siblings.get(index)?;
-        let candidate_child = match_child(
+        let source_siblings = source.siblings(source_node, &namespace, &local);
+        let candidate_siblings = candidate.siblings(candidate_node, &namespace, &local);
+        let source_child = *source_siblings.nodes.get(index)?;
+        let new_index = match_child(
             &source.dom,
-            source_child,
+            index,
             &source_siblings,
             &candidate.dom,
             &candidate_siblings,
         )?;
-        let new_index = candidate_siblings
-            .iter()
-            .position(|&node| node == candidate_child)?;
+        let candidate_child = candidate_siblings.nodes[new_index];
         let name = step.split_once('[').map_or(step, |(name, _)| name);
         steps.push(format!("{name}[{new_index}]"));
         source_node = source_child;
@@ -1004,74 +1082,78 @@ fn named_children(
         .collect()
 }
 
+/// The index among `candidate` of the sibling that is `source.nodes[index]`,
+/// told apart by paragraph id, its own revision, its revision marks, or its
+/// text (an empty text too, #2127 review), each only when that anchor is
+/// unique on both sides; else by position when no sibling came or went.
 fn match_child(
-    source: &crate::xmllinq::Dom,
-    node: crate::xmllinq::NodeId,
-    source_siblings: &[crate::xmllinq::NodeId],
-    candidate: &crate::xmllinq::Dom,
-    candidate_siblings: &[crate::xmllinq::NodeId],
-) -> Option<crate::xmllinq::NodeId> {
-    if let Some(id) = source.attribute(node, &crate::namespaces::W14::para_id())
-        && let Some(found) = sole(candidate_siblings, |sibling| {
-            candidate.attribute(sibling, &crate::namespaces::W14::para_id()) == Some(id)
+    source_dom: &crate::xmllinq::Dom,
+    index: usize,
+    source: &Siblings,
+    candidate_dom: &crate::xmllinq::Dom,
+    candidate: &Siblings,
+) -> Option<usize> {
+    let node = source.nodes[index];
+    let para_id = crate::namespaces::W14::para_id();
+    if let Some(id) = source_dom.attribute(node, &para_id)
+        && let Some(found) = sole_index(&candidate.nodes, |sibling| {
+            candidate_dom.attribute(sibling, &para_id) == Some(id)
         })
-        && sole(source_siblings, |sibling| {
-            source.attribute(sibling, &crate::namespaces::W14::para_id()) == Some(id)
+        && sole_index(&source.nodes, |sibling| {
+            source_dom.attribute(sibling, &para_id) == Some(id)
         })
         .is_some()
     {
         return Some(found);
     }
-    if let Some(revision) = own_revision(source, node)
-        && let Some(found) = sole(candidate_siblings, |sibling| {
-            own_revision(candidate, sibling).as_ref() == Some(&revision)
+    if let Some(revision) = own_revision(source_dom, node)
+        && let Some(found) = sole_index(&candidate.nodes, |sibling| {
+            own_revision(candidate_dom, sibling).as_ref() == Some(&revision)
         })
     {
         return Some(found);
     }
-    let marks = revision_marks(source, node);
+    let marks = &source.marks[index];
     if !marks.is_empty()
-        && sole(source_siblings, |sibling| {
-            revision_marks(source, sibling) == marks
-        })
-        .is_some()
-        && let Some(found) = sole(candidate_siblings, |sibling| {
-            revision_marks(candidate, sibling) == marks
-        })
+        && source.marks.iter().filter(|other| *other == marks).count() == 1
+        && let Some(found) = unique_position(&candidate.marks, marks)
     {
         return Some(found);
     }
-    let text = source.value(node);
-    if !text.is_empty()
-        && sole(source_siblings, |sibling| source.value(sibling) == text).is_some()
-        && let Some(found) = sole(candidate_siblings, |sibling| {
-            candidate.value(sibling) == text
-        })
-    {
-        return Some(found);
+    let text = &source.texts[index];
+    if source.text_counts.get(text) == Some(&1) && candidate.text_counts.get(text) == Some(&1) {
+        return candidate.texts.iter().position(|other| other == text);
     }
-    if source_siblings.len() == candidate_siblings.len() {
-        let index = source_siblings
-            .iter()
-            .position(|&sibling| sibling == node)?;
-        return candidate_siblings.get(index).copied();
-    }
-    None
+    (source.nodes.len() == candidate.nodes.len()).then_some(index)
 }
 
-fn sole(
+fn unique_position<T: PartialEq>(items: &[T], wanted: &T) -> Option<usize> {
+    let mut found = None;
+    for (at, item) in items.iter().enumerate() {
+        if item != wanted {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        found = Some(at);
+    }
+    found
+}
+
+fn sole_index(
     nodes: &[crate::xmllinq::NodeId],
     mut pred: impl FnMut(crate::xmllinq::NodeId) -> bool,
-) -> Option<crate::xmllinq::NodeId> {
+) -> Option<usize> {
     let mut found = None;
-    for &node in nodes {
+    for (at, &node) in nodes.iter().enumerate() {
         if !pred(node) {
             continue;
         }
         if found.is_some() {
             return None;
         }
-        found = Some(node);
+        found = Some(at);
     }
     found
 }

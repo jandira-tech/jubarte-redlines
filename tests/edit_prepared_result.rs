@@ -560,3 +560,61 @@ fn a_baseline_finding_an_edit_moves_stays_disclosed() {
     }
     assert!(refused.is_empty(), "{refused:?}");
 }
+
+fn assert_moved_finding_stays_baseline(label: &str, source: &[u8], operation: &str, code: &str) {
+    let findings = jubarte::validate::validate(source).unwrap();
+    assert!(
+        findings.iter().any(|f| f.code == code),
+        "{label}: the source has no {code}: {findings:?}"
+    );
+    let prepared = prepare(source, &keep_plan(operation), &DEFAULT)
+        .unwrap_or_else(|error| panic!("{label}: refused: {} {}", error.code, error.message));
+    assert!(
+        prepared.checks.baseline.iter().any(|f| f.code == code),
+        "{label}: the baseline lost {code}"
+    );
+    assert!(
+        prepared.checks.introduced.iter().all(|f| f.code != code),
+        "{label}: {code} was called introduced"
+    );
+}
+
+/// An element with no text, paragraph id or revision still relocates when
+/// it is the only such sibling on both sides (#2127 review).
+#[test]
+fn a_moved_finding_on_a_uniquely_empty_paragraph_stays_baseline() {
+    let open_field = r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r></w:p>"#;
+    assert_moved_finding_stays_baseline(
+        "empty paragraph",
+        &docx(&(open_field.to_string() + &para("After."))),
+        r#"{"kind":"insert_paragraph","paragraph":"p0","position":"before","runs":[{"text":"Added."}]}"#,
+        "FIELD_UNBALANCED",
+    );
+}
+
+/// Validation reads a Strict package as Transitional, so its locations are
+/// Transitional paths; relocation reads both packages the same way (#2127
+/// review).
+#[test]
+fn a_moved_finding_in_a_strict_source_stays_baseline() {
+    // FIELD_UNBALANCED comes from triage, which reads Strict as
+    // Transitional. (Ring 1 reads the raw package and finds no Strict
+    // TEXT_INSIDE_DELETION at all.)
+    let open_field =
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:t>Open</w:t></w:r></w:p>"#;
+    let transitional = docx(&(open_field.to_string() + &para("After.")));
+    let document = common::docx::part_string(&transitional, "word/document.xml")
+        .unwrap()
+        .replace(
+            "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+            "http://purl.oclc.org/ooxml/wordprocessingml/main",
+        );
+    let strict =
+        common::docx::replace_entry(&transitional, "word/document.xml", document.as_bytes());
+    assert_moved_finding_stays_baseline(
+        "strict open field",
+        &strict,
+        r#"{"kind":"insert_paragraph","paragraph":"p0","position":"before","runs":[{"text":"Added."}]}"#,
+        "FIELD_UNBALANCED",
+    );
+}
