@@ -12,7 +12,9 @@ mod common;
 use common::docx::{docx, para, part_string};
 use common::validity::{assert_word_valid_package, check_word_valid_package};
 use jubarte::document_comparer::{accept_revisions, compare_documents, reject_revisions};
-use jubarte::edit::{EditPlan, EditResult, apply_plan};
+use jubarte::edit::{
+    EditPlan, EditResult, PlanSyntax, PrepareOptions, PrimaryRole, apply_plan, prepare,
+};
 use jubarte::inspect::paragraphs;
 
 const MARK_PPR: &str =
@@ -64,6 +66,16 @@ fn plan(mode: &str, operation: &str) -> EditPlan {
 }
 
 const MODES: [&str; 2] = ["", r#","existing_revisions":"keep""#];
+
+/// The CLI publishes the redline, so a plan the clean-primary helper
+/// accepts must also pass the serialized-story postcondition.
+const REDLINE_ROLE: PrepareOptions = PrepareOptions {
+    require_change: false,
+    exact_text: false,
+    role: PrimaryRole::Redline,
+    syntax: PlanSyntax::V1,
+    skip_failed: false,
+};
 
 /// Insert `text` into paragraph `p` of `source` in both modes, and check
 /// the redline, Accept All, Reject All and the clean copy.
@@ -702,6 +714,59 @@ fn cell_paragraphs(bytes: &[u8]) -> Vec<String> {
     paragraphs_in(&xml[start..end])
 }
 
+/// No row of `bytes` carries a deleted mark. A table the two sides share
+/// is matched; a `w:del` inside `w:trPr` means the comparer threw the
+/// table away and inserted another (#1675).
+fn assert_rows_unmarked(bytes: &[u8], what: &str) {
+    let xml = part_string(bytes, "word/document.xml").unwrap();
+    for props in row_properties(&xml) {
+        assert!(
+            !props.contains("<w:del ") && !props.contains("<w:del>"),
+            "{what}: a table row is marked deleted: {props}"
+        );
+    }
+}
+
+/// Each `w:trPr` element of `xml`, whole. A self-closing `<w:trPr/>` is
+/// its own tag, and `<w:trPrChange` is a child, not another row's
+/// properties: neither may reach into the next row's cells.
+fn row_properties(xml: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut consumed = 0;
+    for (at, _) in xml.match_indices("<w:trPr") {
+        let rest = &xml[at..];
+        // Skip `<w:trPrChange` and the old `w:trPr` nested inside it.
+        if at < consumed || !matches!(rest.as_bytes().get(7), Some(b'>' | b' ' | b'/')) {
+            continue;
+        }
+        let tag_end = rest.find('>').map_or(rest.len(), |i| i + 1);
+        let end = if rest[..tag_end].ends_with("/>") {
+            tag_end
+        } else {
+            rest.find("</w:trPr>").map_or(rest.len(), |i| i + 9)
+        };
+        consumed = at + end;
+        out.push(&rest[..end]);
+    }
+    out
+}
+
+/// #2105/#2106 review: the row-properties scan stops at its own element.
+#[test]
+fn row_properties_stop_at_their_own_element() {
+    let xml = concat!(
+        r#"<w:tr><w:trPr/><w:tc><w:p><w:del w:id="1"><w:r><w:delText>x</w:delText></w:r></w:del></w:p></w:tc></w:tr>"#,
+        r#"<w:tr><w:trPr><w:trPrChange w:id="2"><w:trPr/></w:trPrChange></w:trPr><w:tc><w:p/></w:tc></w:tr>"#,
+    );
+    let props = row_properties(xml);
+    assert_eq!(props.len(), 2, "{props:?}");
+    assert_eq!(props[0], "<w:trPr/>");
+    assert!(
+        props.iter().all(|p| !p.contains("<w:del ")),
+        "a cell's deletion leaked into row properties: {props:?}"
+    );
+}
+
 /// The paragraph mark's revision: `+` inserted, `-` deleted, or none.
 fn mark(paragraph: &str) -> &'static str {
     let ppr = ppr(paragraph);
@@ -1227,12 +1292,14 @@ fn a_wrapped_final_paragraph_keeps_its_mark() {
 /// A cell holding a paragraph and then a table (a shape other tools
 /// write, already without a closing paragraph) keeps that paragraph when
 /// the plan deletes it: emptied, never removed (glm-5.3 on #1670, round 7).
-/// Under keep only: the comparer re-inserts the nested table (#1675).
+/// The default comparer pairs that nested table across the emptied
+/// paragraph (#1675), the same way keep does. The source cell ends on a
+/// table, which Word asks to repair, so this row has no Word redline.
 #[test]
 fn a_cells_last_paragraph_before_a_nested_table_is_emptied() {
     let inner = r#"<w:tbl><w:tblPr><w:tblW w:w="1000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Inner.</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
     let source = table_with_cell(&format!("{}{inner}", para("Only.")));
-    for mode in &MODES[1..] {
+    for mode in MODES {
         let result = apply_plan(&source, &plan_of(mode, &[delete("p2")]))
             .unwrap_or_else(|e| panic!("{mode}: {e:?}"));
         let expected = ["Before.", "Full.", "", "Inner.", "After."];
@@ -1253,48 +1320,63 @@ fn a_cells_last_paragraph_before_a_nested_table_is_emptied() {
 /// A paragraph deleted ahead of a table takes a deleted mark of its own,
 /// as Word's Compare writes it, in the body and in a cell; the paragraph
 /// after the table, the container's last, keeps its mark (crush on #1670,
-/// round 7; Word oracle in #1670's round-7 ledger). Under keep only: the
-/// comparer deletes and re-inserts the table instead (#1675).
+/// round 7; Word oracle in #1670's round-7 ledger). The default comparer
+/// pairs the two tables across that paragraph (#1675): the table is not
+/// marked deleted, and Accept All does not gain an empty paragraph.
 #[test]
 fn a_paragraph_deleted_before_a_table_takes_its_own_deleted_mark() {
     let inner = r#"<w:tbl><w:tblPr><w:tblW w:w="1000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>In.</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
     let blocks = format!("{}{inner}{}", para("One."), para("Two."));
     let body = docx(&blocks);
     let cell = table_with_cell(&blocks);
-    let keep = MODES[1];
-    let own_deleted_mark = |result: EditResult| {
+    let own_deleted_mark = |result: EditResult, what: &str| {
         let one = paragraphs_in(&normalized(
             &part_string(&result.redline, "word/document.xml").unwrap(),
         ))
         .into_iter()
         .find(|p| p.contains("One."))
         .unwrap();
-        assert_eq!(mark(&one), "-", "{one}");
+        assert_eq!(mark(&one), "-", "{what}: {one}");
+        assert_rows_unmarked(&result.redline, what);
     };
-    own_deleted_mark(check_outputs(
-        &body,
-        &plan_of(keep, &[delete("p0")]),
-        &["In.", "Two."],
-        "body",
-    ));
-    own_deleted_mark(check_outputs(
-        &body,
-        &plan_of(keep, &[delete("p0"), delete("p2")]),
-        &["In.", ""],
-        "body, both",
-    ));
-    own_deleted_mark(check_outputs(
-        &cell,
-        &plan_of(keep, &[delete("p2")]),
-        &["Before.", "Full.", "In.", "Two.", "After."],
-        "cell",
-    ));
-    own_deleted_mark(check_outputs(
-        &cell,
-        &plan_of(keep, &[delete("p2"), delete("p4")]),
-        &["Before.", "Full.", "In.", "", "After."],
-        "cell, both",
-    ));
+    for mode in MODES {
+        let body_plan = plan_of(mode, &[delete("p0")]);
+        own_deleted_mark(
+            check_outputs(&body, &body_plan, &["In.", "Two."], &format!("{mode} body")),
+            &format!("{mode} body"),
+        );
+        // After the texts agree: the CLI publishes this redline and runs
+        // the serialized-story postcondition on it.
+        prepare(&body, &body_plan, &REDLINE_ROLE)
+            .unwrap_or_else(|e| panic!("{mode} body redline: {e:?}"));
+        own_deleted_mark(
+            check_outputs(
+                &body,
+                &plan_of(mode, &[delete("p0"), delete("p2")]),
+                &["In.", ""],
+                &format!("{mode} body, both"),
+            ),
+            &format!("{mode} body, both"),
+        );
+        own_deleted_mark(
+            check_outputs(
+                &cell,
+                &plan_of(mode, &[delete("p2")]),
+                &["Before.", "Full.", "In.", "Two.", "After."],
+                &format!("{mode} cell"),
+            ),
+            &format!("{mode} cell"),
+        );
+        own_deleted_mark(
+            check_outputs(
+                &cell,
+                &plan_of(mode, &[delete("p2"), delete("p4")]),
+                &["Before.", "Full.", "In.", "", "After."],
+                &format!("{mode} cell, both"),
+            ),
+            &format!("{mode} cell, both"),
+        );
+    }
 }
 
 /// Under keep, a replacement joins a final mark whose formatting change is
@@ -1782,8 +1864,8 @@ fn a_deleted_subdocument_is_refused_under_keep() {
 /// A paragraph the plan deletes between a table it inserts and another
 /// table stays, emptied: it is the paragraph the clean copy puts between
 /// the two tables, so Accept All does not join them (glm-5.3 on #1670,
-/// round 8). Under keep only: the comparer deletes the old table and the
-/// paragraph after it and inserts them again (#1675).
+/// round 8). The default comparer pairs the original table across that
+/// paragraph (#1675) instead of deleting it and inserting it again.
 #[test]
 fn a_paragraph_deleted_between_a_new_table_and_a_table_separates_them() {
     let table = |p: &str, side: &str, cell: &str| {
@@ -1794,26 +1876,28 @@ fn a_paragraph_deleted_between_a_new_table_and_a_table_separates_them() {
     let inner = r#"<w:tbl><w:tblPr><w:tblW w:w="1000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>In.</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
     let before_a_table = docx(&format!("{}{}{inner}{}", para("a"), para("b"), para("z")));
     let three = docx(&format!("{}{}{}", para("a"), para("b"), para("c")));
-    let mode = MODES[1];
-    check_outputs(
-        &before_a_table,
-        &plan_of(mode, &[table("p0", "after", "x"), delete("p1")]),
-        &["a", "x", "", "In.", "z"],
-        &format!("{mode} before a table"),
-    );
-    check_outputs(
-        &three,
-        &plan_of(
-            mode,
-            &[
-                table("p0", "after", "x"),
-                table("p2", "before", "y"),
-                delete("p1"),
-            ],
-        ),
-        &["a", "x", "", "y", "c"],
-        &format!("{mode} between new tables"),
-    );
+    for mode in MODES {
+        let result = check_outputs(
+            &before_a_table,
+            &plan_of(mode, &[table("p0", "after", "x"), delete("p1")]),
+            &["a", "x", "", "In.", "z"],
+            &format!("{mode} before a table"),
+        );
+        assert_rows_unmarked(&result.redline, &format!("{mode} before a table"));
+        check_outputs(
+            &three,
+            &plan_of(
+                mode,
+                &[
+                    table("p0", "after", "x"),
+                    table("p2", "before", "y"),
+                    delete("p1"),
+                ],
+            ),
+            &["a", "x", "", "y", "c"],
+            &format!("{mode} between new tables"),
+        );
+    }
 }
 
 /// A block the plan places between the paragraph before a deleted final
@@ -2209,4 +2293,45 @@ fn issue_1678_a_table_the_source_had_is_no_replacement() {
         "Reject All\n{}",
         part_string(&out, "word/document.xml").unwrap()
     );
+}
+
+/// #2105 review: a shared intro, a deleted middle and then the same table
+/// is a table that stayed. Word's Compare of this shape (2026-11-08,
+/// word_redline.py) deletes the middle in place and leaves the table
+/// unmarked after it, with no move markup; Reject All gives back the source.
+#[test]
+fn a_table_after_a_deleted_middle_stays_unmoved() {
+    let table = r#"<w:tbl><w:tblPr><w:tblW w:w="1000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>In.</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let source = docx(&format!(
+        "{}{}{}{table}{}",
+        para("Shared intro."),
+        para("Deleted middle one."),
+        para("Deleted middle two."),
+        para("End.")
+    ));
+    let revised = docx(&format!("{}{table}{}", para("Shared intro."), para("End.")));
+    let out = compare_documents(&source, &revised, "Redline").expect("compare");
+    let xml = part_string(&out, "word/document.xml").unwrap();
+    assert!(
+        !xml.contains("<w:moveTo") && !xml.contains("<w:moveFrom"),
+        "a table that stayed was promoted to a move: {xml}"
+    );
+    assert_rows_unmarked(&out, "deleted middle");
+    let table_at = xml.find("<w:tbl>").expect("table");
+    let middle_at = xml.find("Deleted middle two.").expect("deleted middle");
+    assert!(
+        middle_at < table_at,
+        "the deleted middle must stay before the table: {xml}"
+    );
+    assert_word_valid_package(&out);
+    let rejected = reject_revisions(&out).unwrap();
+    let rejected_xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert!(
+        rejected_xml.contains("Deleted middle one."),
+        "{rejected_xml}"
+    );
+    let accepted = accept_revisions(&out).unwrap();
+    let accepted_xml = part_string(&accepted, "word/document.xml").unwrap();
+    assert!(!accepted_xml.contains("Deleted middle"), "{accepted_xml}");
+    assert_eq!(accepted_xml.matches("<w:tbl>").count(), 1, "{accepted_xml}");
 }
