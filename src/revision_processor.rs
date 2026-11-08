@@ -4079,6 +4079,123 @@ fn mark_emptied_controls(dom: &mut Dom, root: NodeId) {
 
 // ─────────────── A.10 — the full AcceptRevisionsForPart pipeline ────────────
 
+/// The `w:del` or `w:moveFrom` that holds `node`, when accept will remove it.
+pub(crate) fn accept_deleted(dom: &Dom, node: NodeId) -> Option<NodeId> {
+    let mut cur = dom.parent(node);
+    while let Some(ancestor) = cur {
+        if dom.name_is(ancestor, &W::del()) || dom.name_is(ancestor, &W::move_from()) {
+            return Some(ancestor);
+        }
+        cur = dom.parent(ancestor);
+    }
+    None
+}
+
+/// Spans whose field characters accept removes: the deletion that holds the
+/// `begin` and the one that holds the matching `end`.
+fn deleted_field_spans(dom: &Dom, root: NodeId) -> Vec<(NodeId, NodeId)> {
+    let mut stack: Vec<(NodeId, bool)> = Vec::new();
+    let mut spans = Vec::new();
+    dom.for_each_descendant_element(root, Some(&W::fld_char()), |fld| {
+        let deleted = accept_deleted(dom, fld);
+        match dom.attribute(fld, &W::fld_char_type()) {
+            Some("begin") => stack.push((deleted.unwrap_or(fld), deleted.is_some())),
+            Some("end") => {
+                if let Some((begin, true)) = stack.pop()
+                    && let Some(end) = deleted
+                {
+                    spans.push((begin, end));
+                }
+            }
+            _ => {}
+        }
+    });
+    spans
+}
+
+/// Accept drops the result of a field whose begin and end are both
+/// tracked-deleted. Those characters may be two deletions with the result
+/// between them; Word removes the result with the field (#1285). A result
+/// already inside the same deletion needs nothing: accept removes it.
+///
+/// The result is marked deleted here, before the comment, bookmark and
+/// permission prepasses, so its ranges settle as in any other deletion: a
+/// range wholly inside it goes (or is rescued), one that reaches past it
+/// keeps its surviving characters and both ends. Range markers stay where
+/// they are; only content moves into a `w:del` (an insertion becomes one).
+///
+/// The begin and end must share a parent. A field whose result crosses a
+/// paragraph keeps its result, as before #1285: what Word does with the
+/// paragraph marks inside it is not yet probed.
+fn delete_deleted_field_results(dom: &mut Dom, root: NodeId) {
+    for (begin_del, end_del) in deleted_field_spans(dom, root) {
+        if begin_del == end_del {
+            continue;
+        }
+        let Some(parent) = dom.parent(begin_del) else {
+            continue;
+        };
+        if dom.parent(end_del) != Some(parent) {
+            continue;
+        }
+        // Collected before the loop below moves them into new wrappers.
+        let mut between = Vec::new();
+        let mut inside = false;
+        for i in 0..dom.child_count(parent) {
+            let child = dom.child_at(parent, i);
+            if child == end_del {
+                break;
+            }
+            if inside && dom.is_element(child) {
+                between.push(child);
+            } else if child == begin_del {
+                inside = true;
+            }
+        }
+        let attributes = dom.attributes(begin_del);
+        for child in between {
+            if is_range_marker(dom, child)
+                || dom.name_is(child, &W::del())
+                || dom.name_is(child, &W::move_from())
+            {
+                continue;
+            }
+            if dom.name_is(child, &W::ins()) {
+                dom.set_name(child, W::del());
+                continue;
+            }
+            let del = dom.new_element(W::del());
+            for (name, value) in &attributes {
+                dom.set_attribute_value(del, name, Some(value));
+            }
+            dom.add_before_self(child, del);
+            dom.remove(child);
+            dom.add(del, child);
+        }
+    }
+}
+
+/// A range or proofing marker: it holds no character of its own.
+fn is_range_marker(dom: &Dom, node: NodeId) -> bool {
+    dom.name(node).is_some_and(|name| {
+        name.namespace_name() == W::URI
+            && matches!(
+                name.local_name(),
+                "bookmarkStart"
+                    | "bookmarkEnd"
+                    | "commentRangeStart"
+                    | "commentRangeEnd"
+                    | "permStart"
+                    | "permEnd"
+                    | "moveFromRangeStart"
+                    | "moveFromRangeEnd"
+                    | "moveToRangeStart"
+                    | "moveToRangeEnd"
+                    | "proofErr"
+            )
+    })
+}
+
 /// A.10 — `AcceptRevisionsForPart` (:1314) at content scope: the exact
 /// 15-step transform order. `contains_move_from` is captured AFTER the
 /// field-code fixup but BEFORE AcceptMoveFromMoveTo consumes the `w:moveFrom`
@@ -4117,6 +4234,9 @@ fn accept_content(
         // content on Accept (#1243), which is A.2's own doing, and A.10
         // strips every leftover marker afterwards.
         let e = normalize_orphan_moves(dom, e, OrphanMovePass::AcceptElements);
+        // #1285: a field whose begin and end are both deleted takes its
+        // result with it, ranges settled like any deletion's.
+        delete_deleted_field_results(dom, e);
         if keep_comments {
             kept.extend(comments::keep_wholly_deleted_comments(dom, e));
         }

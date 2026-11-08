@@ -5920,7 +5920,30 @@ impl<'p> Transaction<'p> {
             .find(|&n| hint::Held::of(dom, n).is_some_and(|held| held != hint::Held::Inserted));
         match revision {
             Some(revision) => self.revision_hint(revision, &format!("{subject} is inside")),
-            None => format!("{subject} sits inside {}", self.opaque_structure(run)),
+            None => {
+                let holders = deleted_field_revisions(&self.opened.dom, run);
+                if holders.is_empty() {
+                    format!("{subject} sits inside {}", self.opaque_structure(run))
+                } else {
+                    // The result is visible, and the refusal names the
+                    // deletions of the field's characters (#1285): one hint
+                    // each, then one structured refusal for all of them.
+                    // The message opens with that refusal's lead and first
+                    // id, as `revision_next_actions` reads it.
+                    let lead = format!(
+                        "{subject} sits inside the result of a field whose characters are in"
+                    );
+                    let lines: Vec<String> = holders
+                        .iter()
+                        .map(|&holder| self.revision_hint(holder, &lead))
+                        .collect();
+                    if self.revision_refusal.borrow().is_some() {
+                        self.revision_refusal
+                            .replace(Some(refusal::RevisionRefusal::new(self, &lead, &holders)));
+                    }
+                    lines.join("\n")
+                }
+            }
         }
     }
 
@@ -8426,6 +8449,52 @@ fn locate(
         }
     };
     Ok((start, end))
+}
+
+/// The deleted field characters that enclose `run`: each `w:del` or
+/// `w:moveFrom` of a `begin` and its matching `end`. The result between
+/// them is still shown; an edit of it names these deletions (#1285).
+fn deleted_field_revisions(dom: &Dom, run: NodeId) -> Vec<NodeId> {
+    let mut paragraph = dom.parent(run);
+    while let Some(node) = paragraph
+        && !dom.name_is(node, &W::p())
+    {
+        paragraph = dom.parent(node);
+    }
+    let Some(paragraph) = paragraph else {
+        return Vec::new();
+    };
+    let carrier = |node: NodeId| crate::revision_processor::accept_deleted(dom, node);
+    let mut stack: Vec<Option<NodeId>> = Vec::new();
+    let mut open = Vec::new();
+    let mut found = false;
+    let mut holders = Vec::new();
+    dom.for_each_descendant_element(paragraph, None, |node| {
+        if !found && node == run {
+            found = true;
+            open = stack.iter().copied().flatten().collect();
+        }
+        if !dom.name_is(node, &W::fld_char()) {
+            return;
+        }
+        match dom.attribute(node, &W::fld_char_type()) {
+            Some("begin") => stack.push(carrier(node)),
+            Some("end") => {
+                if let Some(Some(begin)) = stack.pop()
+                    && found
+                    && open.contains(&begin)
+                    && let Some(end) = carrier(node)
+                {
+                    holders.push(begin);
+                    if end != begin {
+                        holders.push(end);
+                    }
+                }
+            }
+            _ => {}
+        }
+    });
+    holders
 }
 
 /// A run directly inside a paragraph's pending insertion is editable.
