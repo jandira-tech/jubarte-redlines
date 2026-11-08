@@ -735,6 +735,36 @@ a note): `1 thread open, 1 unanchored`. Word draws no balloon for it. A
 comment anchored in a header or footer is unanchored too: Word shows a
 comment only from a reference in the main story.
 
+### Field comments
+
+> **As issued — needs testing first.** The docx-to-Markdown views do not
+> emit this convention yet (a field prints as `{CODE}result{/}`, e.g.
+> `{PAGE}29{/}`); tracked in #2235 (block-style) and #2236 (inline named
+> field). Verify against real documents before relying on it.
+
+A field may print as HTML-comment markers instead of `{CODE}result{/}`: an
+opening `<!-- Field: ... -->`, the field's result, and a closing
+`<!-- Field: /Name -->`. As issued:
+
+```text
+<!-- Field: Page; Sequence: 29; Value: 1 -->
+
+<!-- Field: Sequence; Type: Arabic; Name: PageNo -->29<!-- Field: /Sequence -->
+
+<!-- Field: /Page -->
+```
+
+- `Field: Name; Attr: value; …` opens a field; `Name` is the field's kind
+  (`Page`, `Sequence`), the remaining `;`-separated clauses its attributes
+  (`Sequence: 29`, `Type: Arabic`, `Name: PageNo`, `Value: 1`).
+- A field whose result is the text that follows prints inline:
+  `<!-- Field: Sequence; Type: Arabic; Name: PageNo -->29<!-- Field: /Sequence -->`.
+- A field with no inline result stands on its own lines with its value in
+  the opening comment and a separate closing comment:
+  `<!-- Field: Page; Sequence: 29; Value: 1 -->` … `<!-- Field: /Page -->`.
+- A field with no result at all leaves a placeholder in the text, as in
+  `4.14      *[Reserved]*`.
+
 ### Tags
 
 A tag is `r<ids> @<handle>`: `r0 @AC`, or `r1+2 @AC` for two Word marks of one
