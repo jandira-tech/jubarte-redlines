@@ -35,8 +35,9 @@ use super::{CorrelationStatus, WmlComparerSettings};
 
 /// `VerifyNoInvalidContent` (WmlComparer.ts :8678): error if any
 /// descendant of `content_parent` is a member of
-/// [`super::tables::INVALID_ELEMENTS`] (`altChunk`, `customXml`, `subDoc`,
-/// the customXml range markers).
+/// [`super::tables::INVALID_ELEMENTS`] (`altChunk`, `subDoc`, the customXml
+/// range markers). A `w:customXml` element is unwrapped before this check
+/// ([`unwrap_custom_xml`]): Word drops that markup and keeps its content.
 ///
 /// # Errors
 ///
@@ -286,6 +287,37 @@ fn salt_field_results(dom: &Dom, list: &mut [ComparisonUnitAtom]) {
     }
 }
 
+/// Drop every `w:customXml` element under `content_parent`, lifting its
+/// content into the parent. `w:customXmlPr` stays with the wrapper: it is
+/// the markup's own metadata. Nested wrappers unwrap deepest first.
+///
+/// Word has dropped custom XML markup on open since 2010 and compared the
+/// content (#1674). Range markers (`w:customXmlInsRangeStart` and the rest)
+/// are different elements and are not unwrapped.
+fn unwrap_custom_xml(dom: &mut Dom, content_parent: NodeId) {
+    let element = W::custom_xml();
+    let props = W::name("customXmlPr");
+    // `descendants` is pre-order, so in reverse every wrapper comes after
+    // the wrappers nested inside it: one pass unwraps deepest first, and
+    // a lifted child stays inside its outer wrapper until that one goes.
+    for node in dom
+        .descendants(content_parent, Some(&element))
+        .into_iter()
+        .rev()
+    {
+        if dom.parent(node).is_none() {
+            continue;
+        }
+        for child in dom.nodes(node) {
+            if !dom.name_is(child, &props) {
+                dom.remove(child);
+                dom.add_before_self(node, child);
+            }
+        }
+        dom.remove(node);
+    }
+}
+
 /// `CreateComparisonUnitAtomList(contentParent)` — assign `pt:Unid` to every
 /// element under `content_parent`, move the trailing body `w:sectPr` into
 /// the last paragraph's `w:pPr` (when present), then flatten the tree
@@ -302,13 +334,16 @@ fn salt_field_results(dom: &Dom, list: &mut [ComparisonUnitAtom]) {
 /// # Panics
 ///
 /// Panics if `verify_no_invalid_content` or `move_last_sectpr_into_last_paragraph`
-/// returns an error; the compare pipeline gates this with an
-/// `admission::admit` check on the source bytes.
+/// returns an error. `refuse_unatomizable` is the gate for what this still
+/// rejects (`altChunk`, `subDoc`, customXml range markers, two `w:sectPr`
+/// in one element). `admission::admit` does not know those names.
+/// `w:customXml` elements are not in that gate: they are unwrapped here.
 pub fn create_comparison_unit_atom_list(
     dom: &mut Dom,
     content_parent: NodeId,
     settings: &WmlComparerSettings,
 ) -> Vec<ComparisonUnitAtom> {
+    unwrap_custom_xml(dom, content_parent);
     verify_no_invalid_content(dom, content_parent).expect("invalid content in comparer input");
     assign_to_all_elements(dom, content_parent);
     move_last_sectpr_into_last_paragraph(dom, content_parent)
