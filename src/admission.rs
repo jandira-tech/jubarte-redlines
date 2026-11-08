@@ -1009,7 +1009,7 @@ pub(crate) fn zip_entry_name_raw(
         }
     }
     if utf8 {
-        utf8_entry_name(&name)
+        utf8_entry_name(name)
     } else {
         Ok(cp437_name(&name))
     }
@@ -1067,7 +1067,7 @@ pub(crate) fn zip_entry_name(
     // The flag is a claim that the bytes are UTF-8; an invalid sequence is
     // refused rather than replaced (#640).
     if flags & 0x0800 != 0 {
-        utf8_entry_name(&raw)
+        utf8_entry_name(raw)
     } else {
         Ok(cp437_name(&raw))
     }
@@ -1075,8 +1075,8 @@ pub(crate) fn zip_entry_name(
 
 /// `bytes` as a UTF-8 part name. Bit 11 and an adopted Unicode Path field
 /// both claim UTF-8; a sequence that is not UTF-8 is not given a name.
-fn utf8_entry_name(bytes: &[u8]) -> Result<String, zip::result::ZipError> {
-    String::from_utf8(bytes.to_vec()).map_err(|_| {
+fn utf8_entry_name(bytes: Vec<u8>) -> Result<String, zip::result::ZipError> {
+    String::from_utf8(bytes).map_err(|_| {
         zip::result::ZipError::InvalidArchive("UTF-8 flagged entry name is not valid UTF-8".into())
     })
 }
