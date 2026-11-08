@@ -671,7 +671,7 @@ class AppGate(unittest.TestCase):
         rows = [line.split("|") for line in checklist_block().splitlines()
                 if line.count("|") == 3 and "cargo test" in line]
         self.assertEqual(len(rows), 1, rows)
-        phase, mark, item, _proof = rows[0]
+        _phase, mark, item, _proof = rows[0]
         self.assertEqual(mark, "auto")
         self.assertIn("app-at-main", item)
         self.assertIn("src-tauri", item)

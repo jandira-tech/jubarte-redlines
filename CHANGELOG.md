@@ -15,6 +15,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+### Fixed
+
+- The release script pauses mbx's automatic cache collection for the whole run and turns it back on when the run ends, failed or not. A collection in the middle of the 0.17.0 run removed the Python and WASM build directories (#2036).
+
 ## [0.17.0] - 2026-11-01
 
 > **Summary.** Security: every package open has an XML element budget (`max_xml_elements`, #2014); a DOCTYPE is refused in every XML part, as Word refuses every DTD (#2015); `read` applies its own limits before the layout pass (#2013); `compare` bounds the atoms it builds with a story-unit budget (`max_story_units`, #2024) and refuses subDoc, altChunk, contentPart, customXml and doubled body sectPr with `UNSUPPORTED_CONTENT` instead of panicking (#2023); `JUBARTE_TIMEOUT=SECONDS` optionally bounds any command in the binary, Python and npm CLIs (#2016); CI fails when a network crate enters the default build (#2018). Every bomb of docs/bomb_prevention.md (33 fixtures) is refused or bounded by read, validate and compare. Breaking: `InputLimits` and `InputBudget` gain fields; a one-shot `edit` or `add` that adds markup requires an author (#1997); `accept`/`reject -o INPUT` refuses, use the new `--in-place` (#1998, #1888); editing the comments of another author is allowed unless the new `--keep-others` guard is set (#1892, #1890). New: `read --find` (#1889), per-change verdicts in `validate --baseline` (#1893), non-finite measures as a Ring-1 finding (#1737). Many accept/reject, content-control and PDF fixes (#1717, #1703, #2004, #2006, #1722-#1725, #1729, #1979, #1913). On the release two 600-item samples, scored against Word own output: redlines mean 74.36 (Docxodus 64.92), counting as 0 the 7 redlines Word 16.115 crashes opening (Word own redline crashes Word on all 7 of those pairs); PDFs mean 79.24 (LibreOffice 54.61) with no failed document. The Miri full suite was not run for this release.

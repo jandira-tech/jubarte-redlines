@@ -74,7 +74,7 @@ def tree_command(features: str) -> list[str]:
     command = ["cargo", "tree", "-e", "normal", "--target", "all", "--no-default-features"]
     if features:
         command += ["--features", features]
-    return command + ["--prefix", "none"]
+    return [*command, "--prefix", "none"]
 
 # A crate line in `cargo tree --prefix none` (or the default prefix):
 # `name v1.2.3 ...`.
