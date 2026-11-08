@@ -8778,7 +8778,7 @@ fn sweep_part_validity(out: &mut PartFs, main: &str, comparison: Option<&Compari
     // The glossary is not swept above: it is not a story. Repair the three
     // inherited shapes in it anyway, and leave the part untouched when that
     // repair changes nothing.
-    repair_glossary_shapes(out, comparison.is_some());
+    repair_glossary_shapes(out);
     // Settling final marks is comparison chrome, including renamed stories.
     if comparison.is_none() {
         return;
@@ -8995,7 +8995,10 @@ fn glossary_parts(out: &PartFs) -> Vec<String> {
 
 /// Drop an empty shading fill, a grid-column type, and out-of-order cell
 /// margins in a glossary. Write the part back only when that changes it.
-fn repair_glossary_shapes(out: &mut PartFs, comparison: bool) {
+/// The glossary is carried, not compared, so compare repairs it as accept
+/// and reject do: the comparison's canonicalizer would drop comments and
+/// whitespace in a valid part's properties and rewrite it (#2117 review).
+fn repair_glossary_shapes(out: &mut PartFs) {
     for part in glossary_parts(out) {
         let Some(xml) = out.part_string(&part) else {
             continue;
@@ -9007,11 +9010,7 @@ fn repair_glossary_shapes(out: &mut PartFs, comparison: bool) {
         };
         let before = dom.serialize_element(root);
         crate::comparer::finalize::repair_inherited_invalidity(&mut dom, root);
-        if comparison {
-            crate::comparer::finalize::enforce_part_schema_order(&mut dom, root);
-        } else {
-            crate::comparer::finalize::repair_part_schema_order(&mut dom, root);
-        }
+        crate::comparer::finalize::repair_part_schema_order(&mut dom, root);
         let after = dom.serialize_element(root);
         if before != after {
             out.set_part(&part, after.into_bytes());

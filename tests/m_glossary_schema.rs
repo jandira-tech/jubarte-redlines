@@ -157,3 +157,28 @@ fn glossary_write_repairs_the_three_schema_invalid_shapes() {
         }
     }
 }
+
+#[test]
+fn a_valid_glossary_with_comments_in_its_properties_stays_byte_for_byte() {
+    // Compare used the comparison canonicalizer, which drops comments and
+    // whitespace inside property containers: a glossary with none of the
+    // three shapes was still rewritten (#2117 review).
+    let glossary = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:glossaryDocument xmlns:w="{W_NS}"><w:docParts><w:docPart><w:docPartPr><w:name w:val="Block"/></w:docPartPr><w:docPartBody><w:p><w:pPr> <!-- kept --> <w:jc w:val="left"/></w:pPr><w:r><w:rPr><!-- also kept --><w:b/></w:rPr><w:t>Block.</w:t></w:r></w:p></w:docPartBody></w:docPart></w:docParts></w:glossaryDocument>"#
+    );
+    let original = package(&para("Old words."), &glossary);
+    let revised = package(&para("New words."), &glossary);
+    let source = part_string(&original, GLOSSARY).expect("source glossary");
+    let outputs = [
+        (
+            "compare",
+            compare_documents(&original, &revised, "Redline").expect("compare"),
+        ),
+        ("accept", accept_revisions(&original).expect("accept")),
+        ("reject", reject_revisions(&original).expect("reject")),
+    ];
+    for (name, out) in outputs {
+        let xml = part_string(&out, GLOSSARY).unwrap_or_default();
+        assert_eq!(xml, source, "{name}");
+    }
+}
