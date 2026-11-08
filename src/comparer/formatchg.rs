@@ -424,6 +424,9 @@ fn detect_format_changes_impl(
     // from `dom`: the per-rPr scratch build must never enlarge the persistent arena
     // (MEM-ATTRIBUTE-01 — that build was the multi-GB single allocation at peak).
     let mut scratch = Dom::new();
+    // Hoisted: each `W::*()` call reads a OnceLock and clones an Arc.
+    let p_pr_name = W::p_pr();
+    let r_pr_name = W::r_pr();
     for (i, atom) in atoms.iter().enumerate() {
         if atom.correlation_status != CorrelationStatus::Equal {
             continue;
@@ -436,10 +439,10 @@ fn detect_format_changes_impl(
         // pPrChange on file_8" flood that once forced a removal-only gate
         // came from scratch `pt14:*` attributes making equal pPr look
         // different, not from Word.
-        if dom.name_is(atom.content_element, &W::p_pr()) {
+        if dom.name_is(atom.content_element, &p_pr_name) {
             let old_ppr = before.content_element;
             let new_ppr = atom.content_element;
-            if dom.name_is(old_ppr, &W::p_pr()) && !are_para_properties_equal(dom, old_ppr, new_ppr)
+            if dom.name_is(old_ppr, &p_pr_name) && !are_para_properties_equal(dom, old_ppr, new_ppr)
             {
                 let projected_old = project_para_properties_for_change(dom, old_ppr);
                 let projected_new = project_para_properties_for_change(dom, new_ppr);
@@ -475,14 +478,23 @@ fn detect_format_changes_impl(
                     // file_111_112).
                     para_changes.push((i, projected_old));
                 }
-            } else if dom.name_is(old_ppr, &W::p_pr()) {
-                let old_mark = dom.element(old_ppr, &W::r_pr());
-                let new_mark = dom.element(new_ppr, &W::r_pr());
-                if !are_run_properties_equal(dom, old_mark, new_mark) {
+            } else if dom.name_is(old_ppr, &p_pr_name) {
+                let old_mark = dom.element(old_ppr, &r_pr_name);
+                let new_mark = dom.element(new_ppr, &r_pr_name);
+                // Same scratch-arena comparison as the run path below: this
+                // runs for every matched paragraph, so it must not build
+                // normalized nodes in the persistent arena.
+                let marks_differ = if use_cache {
+                    normalized_rpr_serialized(dom, &mut scratch, &mut norm_cache, old_mark)
+                        != normalized_rpr_serialized(dom, &mut scratch, &mut norm_cache, new_mark)
+                } else {
+                    !are_run_properties_equal(dom, old_mark, new_mark)
+                };
+                if marks_differ {
                     // `None` equals an empty `w:rPr`. A real difference means
                     // one side has formatting. An empty recorded `w:rPr` is
                     // what Reject All needs when the original mark had none.
-                    let recorded = old_mark.unwrap_or_else(|| dom.new_element(W::r_pr()));
+                    let recorded = old_mark.unwrap_or_else(|| dom.new_element(r_pr_name.clone()));
                     mark_changes.push((i, recorded, new_mark));
                 }
             }
@@ -705,6 +717,49 @@ mod format_change_cache_tests {
              dedicated arena, never the persistent one",
             atoms.len(),
             dom.node_capacity(),
+        );
+    }
+
+    /// #1677 review: the paragraph-mark comparison runs for every matched
+    /// paragraph whose layout is equal, so it must use the same dedicated
+    /// scratch arena as the run path and never grow the production arena.
+    #[test]
+    fn equal_paragraph_marks_never_grow_production_arena_capacity() {
+        let mut dom = Dom::new();
+        let mark: &[(&str, &[(&str, &str)])] = &[("b", &[]), ("sz", &[("val", "24")])];
+        let mut atoms = Vec::new();
+        for _ in 0..1500 {
+            let mut sides = Vec::new();
+            for _ in 0..2 {
+                let p = dom.new_element(W::p());
+                let ppr = dom.new_element(W::p_pr());
+                let rpr = rpr_with(&mut dom, mark);
+                dom.add(ppr, rpr);
+                dom.add(p, ppr);
+                let mut a = ComparisonUnitAtom::new(ppr, vec![p], "h".to_string());
+                a.correlation_status = CorrelationStatus::Equal;
+                sides.push(a);
+            }
+            let before = sides.pop().expect("two sides");
+            let mut a = sides.pop().expect("two sides");
+            a.comparison_unit_atom_before = Some(std::sync::Arc::new(before));
+            atoms.push(a);
+        }
+        dom.shrink_arena_to_fit();
+        let cap_before = dom.node_capacity();
+        let settings = WmlComparerSettings::default();
+        detect_format_changes_in_atom_list(&mut dom, &mut atoms, &settings);
+        assert!(
+            atoms
+                .iter()
+                .all(|a| a.correlation_status == CorrelationStatus::Equal),
+            "test setup: identical marks must produce zero format changes"
+        );
+        assert_eq!(
+            dom.node_capacity(),
+            cap_before,
+            "comparing {} equal paragraph marks reallocated the production arena",
+            atoms.len(),
         );
     }
 
