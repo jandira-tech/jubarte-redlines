@@ -1218,7 +1218,7 @@ fn percent_decode(name: &str) -> Option<String> {
 /// with a byte-order mark (SharePoint's `customXml` items often are) and
 /// Word opens it, so it is transcoded; other bytes decode lossily, as the
 /// rest of the engine reads them.
-fn part_text(xml: &[u8]) -> Cow<'_, str> {
+pub(crate) fn part_text(xml: &[u8]) -> Cow<'_, str> {
     let utf16 = |rest: &[u8], unit: fn([u8; 2]) -> u16| {
         let units = rest.as_chunks::<2>().0.iter().map(|&pair| unit(pair));
         Cow::Owned(

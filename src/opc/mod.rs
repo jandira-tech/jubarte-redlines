@@ -198,7 +198,11 @@ pub fn relative_rel_target(source_part: &str, target_part: &str) -> String {
 /// attribute fails closed rather than disappearing.
 pub(crate) fn metadata_document(xml: &[u8], root: &str, namespace: &str) -> Result<(), String> {
     use quick_xml::events::Event;
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    // Read the text admission reads (`admission::part_text`: UTF-16 by its
+    // BOM, otherwise lossy UTF-8). A raw-byte reader stops at the first
+    // encoding error and let a foreign namespace through (#2080 review).
+    let text = crate::admission::part_text(xml);
+    let mut reader = quick_xml::Reader::from_reader(text.as_bytes());
     reader.config_mut().check_end_names = true;
     let mut depth = 0usize;
     let mut roots = 0usize;
@@ -246,8 +250,27 @@ fn note_metadata_root(
     if local.as_ref() != root {
         return Err(format!("metadata root {local:?} is not {root}"));
     }
+    // A prefixed root names its namespace through `xmlns:prefix`; with no
+    // default namespace its unprefixed records would otherwise take the
+    // legacy local-name read and be relabelled (#2080 review).
+    let prefixed = tag
+        .name()
+        .prefix()
+        .map(|prefix| format!("xmlns:{}", prefix.as_ref()));
+    let mut prefix_bound = prefixed.is_none();
     for attr in tag.attributes().with_checks(false) {
         let attr = attr.map_err(|err| err.to_string())?;
+        if prefixed.as_deref() == Some(attr.key.as_ref()) {
+            let value = attr
+                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                .map_err(|err| err.to_string())?;
+            if value.as_ref() != namespace {
+                return Err(format!(
+                    "metadata root namespace {value:?} is not {namespace}"
+                ));
+            }
+            prefix_bound = true;
+        }
         if attr.key.as_ref() == "xmlns" {
             let value = attr
                 .normalized_value(quick_xml::XmlVersion::Implicit1_0)
@@ -258,6 +281,9 @@ fn note_metadata_root(
                 ));
             }
         }
+    }
+    if !prefix_bound {
+        return Err("metadata root prefix is not bound on the root".to_string());
     }
     Ok(())
 }
@@ -1925,6 +1951,65 @@ mod tests {
     /// default namespace is some other URI, must not be relabelled into the
     /// OPC namespace and then used. An absent default namespace stays the
     /// legacy local-name read.
+    #[test]
+    fn prefixed_or_non_utf8_metadata_is_not_relabelled() {
+        // #2080 review (Bugbot): a prefixed root in a foreign namespace has
+        // no default xmlns, and a UTF-16 or invalid UTF-8 document made the
+        // gate's reader stop with an encoding error; both used to pass the
+        // gate while the record reader still relabelled their children.
+        const RELS_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+        const OFFICE: &str =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
+        const MAIN: &str =
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
+        let package = |types: &[u8]| {
+            let rels = format!(
+                r#"<Relationships xmlns="{RELS_NS}"><Relationship Id="rId1" Type="{OFFICE}" Target="word/document.xml"/></Relationships>"#
+            );
+            let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+            let options = SimpleFileOptions::default();
+            for (name, xml) in [
+                ("[Content_Types].xml", types),
+                ("_rels/.rels", rels.as_bytes()),
+                ("word/document.xml", b"<w:document/>".as_slice()),
+            ] {
+                writer.start_file(name, options).unwrap();
+                writer.write_all(xml).unwrap();
+            }
+            writer.finish().unwrap().into_inner()
+        };
+        let foreign = format!(
+            r#"<Types xmlns="urn:not-opc"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="{MAIN}"/></Types>"#
+        );
+        let prefixed = format!(
+            r#"<ns:Types xmlns:ns="urn:not-opc"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="{MAIN}"/></ns:Types>"#
+        );
+        let mut utf16 = vec![0xFF, 0xFE];
+        utf16.extend(foreign.encode_utf16().flat_map(u16::to_le_bytes));
+        let mut bad_utf8 = foreign.clone().into_bytes();
+        bad_utf8.extend_from_slice(b"<!-- \xFF -->");
+        bad_utf8.push(0xFF);
+        for (label, types) in [
+            ("prefixed foreign root", prefixed.into_bytes()),
+            ("UTF-16 foreign default namespace", utf16),
+            ("invalid UTF-8 foreign default namespace", bad_utf8),
+        ] {
+            let bytes = package(&types);
+            if let Ok(pkg) =
+                crate::admission::admit(&bytes, crate::admission::InputLimits::default())
+            {
+                panic!("{label}: admit interpreted it: {pkg:?}");
+            }
+            if let Ok(fs) = PartFs::open(&bytes) {
+                assert_ne!(
+                    fs.content_type_for("word/document.xml").as_deref(),
+                    Some(MAIN),
+                    "{label}: the package open relabelled the records"
+                );
+            }
+        }
+    }
+
     #[test]
     fn strict_metadata_xml_is_not_relabelled() {
         const CT_NS: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
