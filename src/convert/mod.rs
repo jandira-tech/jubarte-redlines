@@ -10128,13 +10128,23 @@ fn unclamped_col_widths(
     if span_content_outruns_grid(fonts, cols, rows, geom) {
         return content_autofit_widths(fonts, cols.len(), rows, geom, avail, false, Some(cols));
     }
-    let widths = table_col_widths(cols, geom, avail);
+    let mut widths = table_col_widths(cols, geom, avail);
+    // A width every single-span cell repeats replaces this grid. Rows
+    // that disagree, a span, and a fixed table leave it alone.
+    let agreed = agreed_column_widths(fonts, rows, geom, avail, widths.len());
+    let replaced_grid = agreed.is_some();
+    if let Some(agreed) = agreed {
+        widths = agreed;
+    }
     // An autofit column is at least its longest word: Word widens a tcW
     // too narrow for one, and the grid it saved over the same table width
     // is that result (72dcf4dc: tcW 1530 under "complementary", grid 1762
-    // in Word).
+    // in Word). A grid that agreed widths replaced is stale: Word laid the
+    // table out from them (the 4000/4000 probe), so their words widen
+    // them below instead (#2123 review).
     let total = |v: &[f32]| v.iter().sum::<f32>();
-    if !geom.fixed
+    if !replaced_grid
+        && !geom.fixed
         && !geom.grid_padded
         && widths.len() == cols.len()
         && (total(cols) - total(&widths)).abs() < 1.0
@@ -10156,6 +10166,105 @@ fn unclamped_col_widths(
         return autofit_to_words(fonts, widths, rows, geom, avail);
     }
     widths
+}
+
+/// Widths an autofit table's cells all repeat. A twip width is that
+/// width. A percent width is its share of the measure when any column's
+/// text is wider than its share, and each column's own text otherwise.
+fn agreed_column_widths(
+    fonts: &Fonts,
+    rows: &[Vec<TableCell>],
+    geom: &TableGeom,
+    avail: f32,
+    n: usize,
+) -> Option<Vec<f32>> {
+    if n == 0 || geom.fixed || geom.grid_padded || !matches!(geom.width, TblWidth::Grid) {
+        return None;
+    }
+    let same = |a: PrefWidth, b: PrefWidth| match (a, b) {
+        // Agreement is at the authored unit: half a twip, half a fiftieth
+        // of a percent (#2123 review).
+        (PrefWidth::Dxa(x), PrefWidth::Dxa(y)) => (x - y).abs() < 0.025,
+        (PrefWidth::Pct(x), PrefWidth::Pct(y)) => (x - y).abs() < 0.0001,
+        _ => false,
+    };
+    let mut agreed = vec![None; n];
+    for cell in rows.iter().flatten() {
+        if cell.grid_skip {
+            continue;
+        }
+        if cell.colspan != 1 || cell.col >= n {
+            return None;
+        }
+        match agreed[cell.col] {
+            Some(prev) if same(prev, cell.pref) => {}
+            None => agreed[cell.col] = Some(cell.pref),
+            Some(_) => return None,
+        }
+    }
+    if agreed.iter().any(Option::is_none) {
+        return None;
+    }
+    let prefs: Vec<PrefWidth> = agreed.into_iter().flatten().collect();
+    if prefs
+        .iter()
+        .all(|pref| matches!(pref, PrefWidth::Dxa(w) if *w > 0.0))
+    {
+        return Some(
+            prefs
+                .iter()
+                .map(|pref| match *pref {
+                    PrefWidth::Dxa(w) => w,
+                    _ => 0.0,
+                })
+                .collect(),
+        );
+    }
+    if !prefs
+        .iter()
+        .all(|pref| matches!(pref, PrefWidth::Pct(p) if *p > 0.0))
+    {
+        return None;
+    }
+    let measure = (avail + geom.pct_margins).max(0.0);
+    let sum_p: f32 = prefs
+        .iter()
+        .map(|pref| match *pref {
+            PrefWidth::Pct(p) => p,
+            _ => 0.0,
+        })
+        .sum();
+    if sum_p <= 0.0 {
+        return None;
+    }
+    let shares: Vec<f32> = prefs
+        .iter()
+        .map(|pref| match *pref {
+            PrefWidth::Pct(p) => measure * p / sum_p,
+            _ => 0.0,
+        })
+        .collect();
+    let mut maxima = vec![0.0_f32; n];
+    for cell in rows.iter().flatten() {
+        if cell.grid_skip || cell.colspan != 1 || cell.col >= n {
+            continue;
+        }
+        let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
+        // Pictures and nested tables count, as in a content fit; vertical
+        // text runs along the row and does not (#2123 review).
+        let content = if cell.vertical {
+            0.0
+        } else {
+            cell_fit_extent(fonts, cell).1
+        };
+        maxima[cell.col] = maxima[cell.col].max(content + pads);
+    }
+    let over = maxima.iter().sum::<f32>() > measure + 0.5
+        || maxima
+            .iter()
+            .zip(&shares)
+            .any(|(max, share)| *max > *share + 0.5);
+    if over { Some(shares) } else { Some(maxima) }
 }
 
 /// Word's autofit widens a column narrower than its longest word to it,
@@ -10691,7 +10800,8 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
     let n = cols.len();
     let grid_total: f32 = cols.iter().sum();
     // tblW=auto: Word's tblGrid is the last autofit cache. Overlaying
-    // first-row tcW (mini 342) dropped comments-lots. Keep the cache as
+    // first-row tcW (mini 342) dropped comments-lots; a tcW every row
+    // repeats does replace it (`agreed_column_widths`). Keep the cache as
     // written, even past the margins (000aba38's 488.9pt grid in a 481.9pt
     // measure ends at 539.5 in Word, not shrunk to 533).
     if !geom.fixed && matches!(geom.width, TblWidth::Grid) {
@@ -50815,6 +50925,134 @@ mod coverage_round_two_tests {
         assert!(
             (total - declared).abs() < 0.5,
             "the re-fit fills the bordered pct width {declared}, not more: {widths:?}"
+        );
+    }
+
+    fn agreed_table(
+        grid: &str,
+        rows: &[[(&str, &str); 2]],
+    ) -> (Vec<f32>, Vec<Vec<TableCell>>, TableGeom) {
+        let cell = |content: &str, tcw: &str| {
+            let content = if content.starts_with('<') {
+                content.to_string()
+            } else {
+                format!("<w:p><w:r><w:t>{content}</w:t></w:r></w:p>")
+            };
+            format!("<w:tc><w:tcPr><w:tcW {tcw}/></w:tcPr>{content}</w:tc>")
+        };
+        let body: String = rows
+            .iter()
+            .map(|row| {
+                format!(
+                    "<w:tr>{}{}</w:tr>",
+                    cell(row[0].0, row[0].1),
+                    cell(row[1].0, row[1].1)
+                )
+            })
+            .collect();
+        let Block::Table {
+            cols, rows, geom, ..
+        } = table(&format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+             <w:tblGrid>{grid}</w:tblGrid>{body}</w:tbl>"
+        ))
+        else {
+            panic!("table fixture")
+        };
+        (cols, rows, *geom)
+    }
+
+    const GRID_2400_6000: &str = "<w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"6000\"/>";
+    const PCT_2500: &str = "w:w=\"2500\" w:type=\"pct\"";
+
+    #[test]
+    fn an_agreed_pct_column_holds_its_nested_table() {
+        // `cell_fit_extent` counts pictures and nested tables; the agreed
+        // pct path must too, or a column collapses under its nested table
+        // (#2123 review).
+        let fonts = fonts();
+        let nested = "<w:tbl><w:tblPr><w:tblW w:w=\"3000\" w:type=\"dxa\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"3000\"/></w:tblGrid><w:tr><w:tc><w:tcPr>\
+             <w:tcW w:w=\"3000\" w:type=\"dxa\"/></w:tcPr><w:p/></w:tc></w:tr></w:tbl><w:p/>";
+        let (_, rows, geom) =
+            agreed_table(GRID_2400_6000, &[[(nested, PCT_2500), ("x", PCT_2500)]]);
+        assert!(!rows[0][0].nested.is_empty(), "a nested table");
+        let widths = agreed_column_widths(&fonts, &rows, &geom, 468.0, 2).expect("agreed");
+        assert!(
+            widths[0] >= 150.0,
+            "the column holds its 150pt nested table: {widths:?}"
+        );
+    }
+
+    #[test]
+    fn an_agreed_pct_column_of_vertical_text_ignores_its_length() {
+        // Vertical text runs along the row (`autofit_to_words`, 1c99b5cd):
+        // its length must not widen the column or push the table onto
+        // its pct shares (#2123 review).
+        let fonts = fonts();
+        let widths = |text: &str| {
+            let vertical = format!("<w:p><w:pPr/><w:r><w:t>{text}</w:t></w:r></w:p>");
+            let (_, mut rows, geom) = agreed_table(
+                GRID_2400_6000,
+                &[[(vertical.as_str(), PCT_2500), ("x", PCT_2500)]],
+            );
+            rows[0][0].vertical = true;
+            agreed_column_widths(&fonts, &rows, &geom, 468.0, 2).expect("agreed")
+        };
+        let short = widths("Q");
+        let long = widths(&"A very long vertical heading ".repeat(4));
+        assert!(
+            short.iter().zip(&long).all(|(a, b)| (a - b).abs() < 0.5),
+            "vertical text length changes nothing: {short:?} vs {long:?}"
+        );
+    }
+
+    #[test]
+    fn rows_one_twip_apart_do_not_agree() {
+        // Rows that disagree keep the grid; agreement is at the authored
+        // twip, not a layout tolerance (#2123 review).
+        let fonts = fonts();
+        let (_, rows, geom) = agreed_table(
+            GRID_2400_6000,
+            &[
+                [
+                    ("a", "w:w=\"4000\" w:type=\"dxa\""),
+                    ("b", "w:w=\"4000\" w:type=\"dxa\""),
+                ],
+                [
+                    ("c", "w:w=\"4001\" w:type=\"dxa\""),
+                    ("d", "w:w=\"4000\" w:type=\"dxa\""),
+                ],
+            ],
+        );
+        assert!(agreed_column_widths(&fonts, &rows, &geom, 468.0, 2).is_none());
+    }
+
+    #[test]
+    fn an_agreed_width_too_narrow_for_a_word_widens_from_the_agreement() {
+        // Word lays an agreed tcW out over a stale grid (the 4000/4000
+        // probe), so a word too wide for an agreed column widens it from
+        // the agreement rather than restoring the grid (#2123 review).
+        let fonts = fonts();
+        let word = "A".repeat(28);
+        let wide = "w:w=\"6000\" w:type=\"dxa\"";
+        let narrow = "w:w=\"2400\" w:type=\"dxa\"";
+        let (cols, rows, geom) = agreed_table(
+            GRID_2400_6000,
+            &[
+                [("LABEL:", wide), (word.as_str(), narrow)],
+                [("x", wide), ("y", narrow)],
+            ],
+        );
+        let need = cell_content_extent(&fonts, &rows[0][1]).0;
+        assert!(
+            need > 125.0 && need < 290.0,
+            "a word between the two widths: {need}"
+        );
+        let widths = unclamped_col_widths(&fonts, &cols, &rows, &geom, 468.0);
+        assert!(
+            widths[0] > 125.0 && widths[1] + 0.5 >= need,
+            "the agreed 300/120 widens its second column, not back to 120/300: {widths:?}"
         );
     }
 
