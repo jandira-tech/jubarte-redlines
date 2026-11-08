@@ -550,6 +550,28 @@ class AppGate(unittest.TestCase):
                               env=self.gate_env(**env), capture_output=True,
                               text=True, timeout=60)
 
+    def test_a_set_e_death_inside_the_gate_still_runs_the_previous_exit_trap(self) -> None:
+        # #2071 review (Bugbot): the gate's trap named its local "$gate"; a
+        # set -e death unwinds the function's locals before EXIT runs, so
+        # set -u aborted the trap before the chained mbx restore. Both the
+        # system bash 3.2 and a current bash must run the previous trap.
+        script = self.script.replace(
+            f"APP_REPO={self.app}\n",
+            f"APP_REPO={self.tmp / 'no-such-app'}\n"
+            "trap 'echo PREVIOUS-EXIT-TRAP >> \"$CALLS\"' EXIT\n",
+        )
+        for bash in ("/bin/bash", shutil.which("bash") or "/bin/bash"):
+            with self.subTest(bash=bash):
+                self.calls.unlink(missing_ok=True)
+                r = subprocess.run([bash, "-c", script], cwd=self.engine,
+                                   env=self.gate_env(), capture_output=True,
+                                   text=True, timeout=60)
+                self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertNotIn("unbound variable", r.stderr)
+                calls = self.calls.read_text() if self.calls.exists() else ""
+                self.assertIn("PREVIOUS-EXIT-TRAP", calls, r.stderr)
+                self.assertEqual(list((self.tmp / "tmp").iterdir()), [], "layout left behind")
+
     def test_a_failing_cargo_test_stops_the_release_before_step_4(self) -> None:
         r = self.gate(CARGO_RC="1")
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
@@ -649,7 +671,7 @@ class AppGate(unittest.TestCase):
         rows = [line.split("|") for line in checklist_block().splitlines()
                 if line.count("|") == 3 and "cargo test" in line]
         self.assertEqual(len(rows), 1, rows)
-        phase, mark, item, _proof = rows[0]
+        _phase, mark, item, _proof = rows[0]
         self.assertEqual(mark, "auto")
         self.assertIn("app-at-main", item)
         self.assertIn("src-tauri", item)
@@ -1345,7 +1367,8 @@ class Checklist(unittest.TestCase):
 
     def test_item_14_post_release_reproduction(self) -> None:
         self.kw("reproduces")
-        self.kw("--binary")  # the bench rerun without --binary
+        self.kw("scripts/identity.py")
+        self.kw("not re-run")  # identity replaces a Word rerun on the released binary
 
     def test_item_15_licensing_and_stale_docs(self) -> None:
         self.kw("REUSE")
@@ -3250,6 +3273,90 @@ class VersionAnswerTests(unittest.TestCase):
         for name in ("archive_runs() {", "npx_runs() {"):
             start = text.index(name)
             self.assertIn("answers_version", text[start : text.index("\n}\n", start)])
+
+
+class MbxAutoGc(unittest.TestCase):
+    """#2036: step 0 pauses mbx auto-gc when it is on and restores it on the
+    way out, including when the run dies. An owner who turned it off keeps
+    it off. No mbx, nothing happens. The pause is after the main-branch
+    check, so a not-main preflight never touches the machine's setting.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="release_mbx_"))
+        (self.tmp / "scripts").mkdir()
+        shutil.copy(RELEASE_SH, self.tmp / "scripts" / "release.sh")
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        self.log = self.tmp / "mbx.log"
+        stub = self.bin / "mbx"
+        stub.write_text(
+            "#!/bin/sh\n"
+            'printf "%s\\n" "$*" >> "$MBX_LOG"\n'
+            'if [ "$1" = settings ] && [ "$2" = get ]; then\n'
+            '  printf "%s\\n" "${MBX_GC_AUTO:-true}"\n'
+            "fi\n"
+        )
+        stub.chmod(0o755)
+        self.git = ["git", "-C", str(self.tmp)]
+        subprocess.run([*self.git, "init", "-q", "-b", "main"], check=True)
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def run_release(self, *, branch: str = "main", gc: str = "true",
+                    with_mbx: bool = True) -> subprocess.CompletedProcess[str]:
+        if branch != "main":
+            subprocess.run([*self.git, "checkout", "-q", "-b", branch], check=True)
+        env = os.environ.copy()
+        env["MBX_LOG"] = str(self.log)
+        env["MBX_GC_AUTO"] = gc
+        env["PATH"] = f"{self.bin}:/usr/bin:/bin" if with_mbx else "/usr/bin:/bin"
+        return subprocess.run(
+            ["bash", str(self.tmp / "scripts" / "release.sh"),
+             "0.10.0", *SUMMARIES, DOCS_FLAG, "README links bomb prevention"],
+            capture_output=True, text=True, timeout=60, env=env,
+        )
+
+    def test_pauses_auto_gc_when_it_is_on_and_restores_it_when_the_run_dies(self) -> None:
+        r = self.run_release()
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        log = self.log.read_text() if self.log.exists() else ""
+        self.assertIn("settings set gc.auto false", log)
+        self.assertIn("settings set gc.auto true", log)
+        self.assertLess(log.index("settings get gc.auto"), log.index("settings set gc.auto false"))
+        self.assertLess(log.index("settings set gc.auto false"), log.index("settings set gc.auto true"))
+
+    def test_an_owner_who_turned_auto_gc_off_keeps_it_off(self) -> None:
+        r = self.run_release(gc="false")
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        log = self.log.read_text() if self.log.exists() else ""
+        self.assertNotIn("settings set gc.auto", log)
+
+    def test_no_mbx_on_path_changes_nothing(self) -> None:
+        r = self.run_release(with_mbx=False)
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("mbx", r.stderr)
+        self.assertFalse(self.log.exists())
+
+    def test_a_not_main_preflight_does_not_touch_gc(self) -> None:
+        r = self.run_release(branch="not-main")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("release from main only", r.stderr)
+        self.assertFalse(self.log.exists())
+
+    def test_the_checklist_records_the_pause(self) -> None:
+        rows = [line for line in checklist_block().splitlines() if "mbx auto-gc" in line]
+        self.assertEqual(len(rows), 1, rows)
+        row = rows[0]
+        self.assertTrue(row.startswith("0|auto|"), row)
+        self.assertIn("restored", row)
+        self.assertIn("scripts/release.sh step 0", row)
+
+    def test_the_readme_links_bomb_prevention(self) -> None:
+        root = HERE.parent
+        for name in ("README.md", "README.crates.md"):
+            self.assertIn("docs/bomb_prevention.md", (root / name).read_text(), name)
 
 
 if __name__ == "__main__":
