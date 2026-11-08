@@ -91,23 +91,84 @@ class SecurityAdvisoryRecord(unittest.TestCase):
     def test_deny_ignores_name_the_locked_crate_that_reaches_them(self) -> None:
         policy = tomllib.loads((ROOT / "deny.toml").read_text())
         security = (ROOT / "SECURITY.md").read_text()
-        locked = {package["name"] for package in tomllib.loads((ROOT / "Cargo.lock").read_text())["package"]}
-        ignores = policy["advisories"]["ignore"]
-        self.assertGreaterEqual(len(ignores), 1)
-        for item in ignores:
-            advisory = item["id"]
-            reached = sorted(
-                name
-                for name in locked
-                if re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", item["reason"])
-            )
-            self.assertTrue(reached, f"{advisory} reason names no locked crate")
-            self.assertIn(advisory, security)
-            mapped = [line for line in security.splitlines() if advisory in line]
-            self.assertTrue(
-                any(crate in line for line in mapped for crate in reached),
-                f"{advisory} is not on a line with {reached}",
-            )
+        self.assertGreaterEqual(len(policy["advisories"]["ignore"]), 1)
+        self.assertEqual(
+            advisory_inventory_problems(policy, security, audited_locked_crates(), advisory_db_crate),
+            [],
+        )
+
+    def test_inventory_refuses_a_crate_the_advisory_is_not_on(self) -> None:
+        policy = {"advisories": {"ignore": [{"id": "RUSTSEC-1-1", "reason": "serde is locked"}]}}
+        security = "**RUSTSEC-1-1** — `serde` is a direct dependency.\n"
+        problems = advisory_inventory_problems(policy, security, {"serde", "zip"}, lambda _: "zip")
+        self.assertTrue(any("zip" in problem for problem in problems), problems)
+
+    def test_inventory_accepts_a_crate_only_a_binding_locks(self) -> None:
+        policy = {"advisories": {"ignore": [{"id": "RUSTSEC-1-2", "reason": "pyo3 in the binding"}]}}
+        security = "**RUSTSEC-1-2** — `pyo3` is locked by jubarte-python.\n"
+        self.assertEqual(advisory_inventory_problems(policy, security, {"pyo3"}, lambda _: None), [])
+
+    def test_inventory_needs_every_named_crate_in_the_paragraph(self) -> None:
+        policy = {"advisories": {"ignore": [{"id": "RUSTSEC-1-3", "reason": "ttf-parser direct and via rustybuzz"}]}}
+        security = "**RUSTSEC-1-3** — `ttf-parser` is a direct dependency.\n\nrustybuzz elsewhere.\n"
+        problems = advisory_inventory_problems(policy, security, {"ttf-parser", "rustybuzz"}, lambda _: None)
+        self.assertTrue(any("rustybuzz" in problem for problem in problems), problems)
+
+
+def audited_manifests() -> list[str]:
+    """The manifests scripts/security-check.sh runs cargo-deny on."""
+    script = (ROOT / "scripts/security-check.sh").read_text()
+    match = re.search(r"for manifest in ([^;]+);", script)
+    if match is None:
+        raise AssertionError("security-check.sh no longer lists its manifests")
+    return match.group(1).split()
+
+
+def audited_locked_crates() -> set[str]:
+    """Every crate name locked by a workspace the security check audits."""
+    names: set[str] = set()
+    for manifest in audited_manifests():
+        lock = ROOT / Path(manifest).with_name("Cargo.lock")
+        names |= {package["name"] for package in tomllib.loads(lock.read_text())["package"]}
+    return names
+
+
+def advisory_db_crate(advisory: str) -> str | None:
+    """The crate a RustSec advisory is filed under, from cargo-deny's local
+    database, or None where no database has been fetched."""
+    for db in (Path.home() / ".cargo" / "advisory-dbs").glob("*/crates"):
+        for path in db.glob(f"*/{advisory}.md"):
+            return path.parent.name
+    return None
+
+
+def advisory_inventory_problems(policy, security, locked, crate_of) -> list[str]:
+    """Why an ignored advisory is not mapped to the crate that reaches it.
+
+    Each ignore's reason names locked crates; the advisory's paragraph in
+    SECURITY.md (from its id to the next blank line) names every one of
+    them; and where the advisory database is at hand, the crate it is filed
+    under is one of them.
+    """
+    problems = []
+    for item in policy["advisories"]["ignore"]:
+        advisory = item["id"]
+        reached = sorted(
+            name for name in locked if re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", item["reason"])
+        )
+        if not reached:
+            problems.append(f"{advisory} reason names no locked crate")
+            continue
+        at = security.find(advisory)
+        if at < 0:
+            problems.append(f"{advisory} is not in SECURITY.md")
+            continue
+        paragraph = security[at:].split("\n\n", 1)[0]
+        problems.extend(f"{advisory} paragraph lacks {crate}" for crate in reached if crate not in paragraph)
+        filed = crate_of(advisory)
+        if filed is not None and filed not in reached:
+            problems.append(f"{advisory} is filed under {filed}, which the ignore does not name")
+    return problems
 
 
 if __name__ == "__main__":
