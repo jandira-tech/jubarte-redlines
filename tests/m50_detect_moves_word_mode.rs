@@ -434,11 +434,15 @@ fn m123b_file_177_no_weak_body_diagonal_zip() {
     );
 }
 
-/// Skip-ahead pure-delete gap: B jumps from shared intro to a table that A has
-/// later. Word shows the table early as moveTo; we must not leave it after the
-/// gap-only deletes (docx_lots_of_comments_addition_removal_redline × clean).
+/// Skip-ahead pure-delete gap: B jumps from the shared intro to a table A
+/// has later. This was reduced from docx_lots_of_comments_addition_removal,
+/// where Word moves the "3. Capability matrix" heading with its table. Word's
+/// Compare of this reduction itself (2026-11-08, word_redline.py; with or
+/// without the heading) moves nothing: the middle is deleted in place and the
+/// table stays after it, unmarked. A run that opens on the table is the
+/// paragraph deleted in front of a table that stayed (#1675).
 #[test]
-fn m50_skip_ahead_equal_table_promotes_to_move() {
+fn m50_skip_ahead_equal_table_stays_in_place_as_word_does() {
     let mut dom = Dom::new();
     let table = |label: &str| {
         format!(
@@ -468,18 +472,17 @@ fn m50_skip_ahead_equal_table_promotes_to_move() {
     let xml = dom.serialize_element(out);
 
     assert!(
-        xml.contains("moveFrom") || xml.contains("moveTo"),
-        "skip-ahead table must promote to move markup, got: {}",
+        !xml.contains("moveFrom") && !xml.contains("moveTo"),
+        "Word moves nothing in this shape, got: {}",
         xml.chars().take(1200).collect::<String>()
     );
-    // Capability table text should appear before pure-deleted middle content
-    // in serialization order (moveTo early).
+    // The deleted middle stays ahead of the table, in source order.
     let cap_pos = xml.find("Cap capability").expect("cap text");
     let parity_pos = xml
         .find("Parity real-time")
         .expect("deleted middle content must remain present (data loss if absent)");
     assert!(
-        cap_pos < parity_pos,
-        "capability (moveTo) must serialize before A-only deleted middle; cap@{cap_pos} parity@{parity_pos}"
+        parity_pos < cap_pos,
+        "the deleted middle must serialize before the table; cap@{cap_pos} parity@{parity_pos}"
     );
 }
