@@ -550,6 +550,28 @@ class AppGate(unittest.TestCase):
                               env=self.gate_env(**env), capture_output=True,
                               text=True, timeout=60)
 
+    def test_a_set_e_death_inside_the_gate_still_runs_the_previous_exit_trap(self) -> None:
+        # #2071 review (Bugbot): the gate's trap named its local "$gate"; a
+        # set -e death unwinds the function's locals before EXIT runs, so
+        # set -u aborted the trap before the chained mbx restore. Both the
+        # system bash 3.2 and a current bash must run the previous trap.
+        script = self.script.replace(
+            f"APP_REPO={self.app}\n",
+            f"APP_REPO={self.tmp / 'no-such-app'}\n"
+            "trap 'echo PREVIOUS-EXIT-TRAP >> \"$CALLS\"' EXIT\n",
+        )
+        for bash in ("/bin/bash", shutil.which("bash") or "/bin/bash"):
+            with self.subTest(bash=bash):
+                self.calls.unlink(missing_ok=True)
+                r = subprocess.run([bash, "-c", script], cwd=self.engine,
+                                   env=self.gate_env(), capture_output=True,
+                                   text=True, timeout=60)
+                self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertNotIn("unbound variable", r.stderr)
+                calls = self.calls.read_text() if self.calls.exists() else ""
+                self.assertIn("PREVIOUS-EXIT-TRAP", calls, r.stderr)
+                self.assertEqual(list((self.tmp / "tmp").iterdir()), [], "layout left behind")
+
     def test_a_failing_cargo_test_stops_the_release_before_step_4(self) -> None:
         r = self.gate(CARGO_RC="1")
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)

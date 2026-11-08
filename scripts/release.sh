@@ -824,7 +824,11 @@ app_test_gate() {
     body=${body% EXIT}
     eval "_jubarte_app_gate_prev_exit() { eval $body; }"
   fi
-  trap '[ -n "${JUBARTE_APP_GATE_KEEP:-}" ] || rm -rf "$gate"; _jubarte_app_gate_prev_exit' EXIT
+  # The trap names a script-level copy of the layout path: a set -e death
+  # unwinds the function's locals before EXIT runs, and set -u would then
+  # abort the trap on "$gate" before the chained restore (#2071 review).
+  _JUBARTE_APP_GATE_DIR=$gate
+  trap '[ -n "${JUBARTE_APP_GATE_KEEP:-}" ] || rm -rf "$_JUBARTE_APP_GATE_DIR"; _jubarte_app_gate_prev_exit' EXIT
   git archive HEAD | tar -x -C "$gate"
   mkdir "$gate/jubarte-app"
   git -C "$APP_REPO" archive HEAD | tar -x -C "$gate/jubarte-app"
