@@ -323,8 +323,9 @@ fn undated_property_probe(paragraph: bool) {
         assert_probe_date(
             &back,
             "word/document.xml",
-            // Run-format facts are reconstructed as paragraph-format markers.
-            "pPrChange",
+            // A bold run's change comes back on the run. A paragraph's
+            // own change stays a paragraph change.
+            if paragraph { "pPrChange" } else { "rPrChange" },
             "3",
             None,
         );
