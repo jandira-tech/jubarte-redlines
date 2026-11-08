@@ -1080,14 +1080,12 @@ fn check_part_name(name: &str) -> Result<(), AdmissionError> {
     }
     match percent_decode(name) {
         Some(decoded) => {
-            let raw_lower = name.to_ascii_lowercase();
-            let decoded_lower = decoded.to_ascii_lowercase();
-            if decoded_lower == "[content_types].xml" && raw_lower != decoded_lower {
+            if decoded.eq_ignore_ascii_case("[content_types].xml")
+                && !name.eq_ignore_ascii_case("[content_types].xml")
+            {
                 return refuse("reserved metadata name");
             }
-            let decoded_segments = decoded_lower
-                .strip_suffix('/')
-                .unwrap_or(decoded_lower.as_str());
+            let decoded_segments = decoded.strip_suffix('/').unwrap_or(decoded.as_str());
             if decoded_segments
                 .split('/')
                 .any(|segment| segment.is_empty() || segment == "." || segment == "..")
@@ -1104,19 +1102,27 @@ fn check_part_name(name: &str) -> Result<(), AdmissionError> {
 /// and `word/document.xml/child.bin`). A trailing-slash directory entry
 /// is not a part.
 fn ancestor_part(names: &[String]) -> Option<&str> {
-    let parts: Vec<&str> = names
+    // Lowercased once and sorted: the first name at or after `prefix/` is
+    // the only one that can start with it, so each check is a binary
+    // search, not a scan of every name (#2078 review).
+    let mut lower: Vec<(String, &str)> = names
         .iter()
         .map(String::as_str)
         .filter(|name| !name.ends_with('/'))
+        .map(|name| (name.to_ascii_lowercase(), name))
         .collect();
-    for name in &parts {
-        let mut prefix = name.to_ascii_lowercase();
+    lower.sort_unstable();
+    let mut prefix = String::new();
+    for (low, name) in &lower {
+        prefix.clear();
+        prefix.push_str(low);
         prefix.push('/');
-        if parts
-            .iter()
-            .any(|other| other.to_ascii_lowercase().starts_with(&prefix))
+        let at = lower.partition_point(|(other, _)| other.as_str() < prefix.as_str());
+        if lower
+            .get(at)
+            .is_some_and(|(other, _)| other.starts_with(&prefix))
         {
-            return Some(*name);
+            return Some(name);
         }
     }
     None
@@ -2107,6 +2113,31 @@ mod tests {
             .unwrap();
         let bytes = out.finish().unwrap().into_inner();
         assert!(admit(&bytes, InputLimits::default()).is_ok());
+    }
+
+    #[test]
+    fn ancestor_part_matches_by_segment_in_any_case() {
+        let names = |list: &[&str]| list.iter().map(|n| (*n).to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            ancestor_part(&names(&[
+                "WORD/Document.xml/child.bin",
+                "word/document.xml"
+            ])),
+            Some("word/document.xml")
+        );
+        // a shared text prefix is not a shared segment
+        assert_eq!(
+            ancestor_part(&names(&["word/doc", "word/document.xml"])),
+            None
+        );
+        assert_eq!(ancestor_part(&names(&["word/doc", "word/doc.xml/x"])), None);
+        // a directory entry is not a part
+        assert_eq!(ancestor_part(&names(&["word/", "word/document.xml"])), None);
+        // the entry cap's worth of names, none an ancestor (#2078 review)
+        let many: Vec<String> = (0..10_000)
+            .map(|i| format!("word/media/image{i}.png"))
+            .collect();
+        assert_eq!(ancestor_part(&many), None);
     }
 
     #[test]
