@@ -7292,20 +7292,125 @@ impl<'p> Transaction<'p> {
 
     fn apply_paragraph_deletions(&mut self, emptied: &BTreeSet<usize>) {
         // 5. Paragraph deletions; a container's final paragraph that nothing
-        // replaces keeps its mark, as Word keeps it.
-        for (_, r) in &self.resolved {
-            if let Resolved::DeleteParagraph { para } = r {
-                let node = self.paragraph_nodes[*para];
-                if emptied.contains(para) {
-                    let dom = &mut self.opened.dom;
-                    for child in dom.nodes(node) {
-                        if !dom.name_is(child, &W::p_pr()) {
-                            dom.remove(child);
-                        }
-                    }
-                } else {
-                    self.opened.dom.remove(node);
-                }
+        // replaces keeps its mark, as Word keeps it. An empty bookmark has no
+        // characters for Accept All to drop, so it stays on the paragraph the
+        // deleted mark joins, or in the emptied paragraph (#1676).
+        let mut deletions: Vec<usize> = self
+            .resolved
+            .iter()
+            .filter_map(|(_, r)| match r {
+                Resolved::DeleteParagraph { para } => Some(*para),
+                _ => None,
+            })
+            .collect();
+        deletions.sort_unstable();
+        for para in deletions {
+            let node = self.paragraph_nodes[para];
+            if emptied.contains(&para) {
+                Self::retain_empty_bookmarks(&mut self.opened.dom, node);
+            } else {
+                Self::rehome_empty_bookmarks(&mut self.opened.dom, node);
+                self.opened.dom.remove(node);
+            }
+        }
+    }
+
+    /// Bookmark endpoints with no characters between them. Accept All keeps
+    /// those, including when the paragraph around them is deleted.
+    fn empty_bookmark_markers(dom: &Dom, paragraph: NodeId) -> Vec<NodeId> {
+        let children = dom.elements(paragraph, None);
+        let mut open: HashMap<&str, Vec<usize>> = HashMap::new();
+        let mut kept = Vec::new();
+        for (index, &child) in children.iter().enumerate() {
+            if dom.name_is(child, &W::bookmark_start())
+                && let Some(id) = dom.attribute(child, &W::id())
+            {
+                open.entry(id).or_default().push(index);
+            } else if dom.name_is(child, &W::bookmark_end())
+                && let Some(id) = dom.attribute(child, &W::id())
+                && let Some(start_at) = open.get_mut(id).and_then(Vec::pop)
+                && children[start_at + 1..index]
+                    .iter()
+                    .all(|&node| Self::is_range_marker(dom, node))
+            {
+                kept.push(start_at);
+                kept.push(index);
+            }
+        }
+        kept.sort_unstable();
+        kept.into_iter().map(|index| children[index]).collect()
+    }
+
+    fn is_range_marker(dom: &Dom, node: NodeId) -> bool {
+        dom.name(node).is_some_and(|name| {
+            name.namespace_name() == W::URI
+                && matches!(
+                    name.local_name(),
+                    "bookmarkStart"
+                        | "bookmarkEnd"
+                        | "commentRangeStart"
+                        | "commentRangeEnd"
+                        | "permStart"
+                        | "permEnd"
+                        | "proofErr"
+                )
+        })
+    }
+
+    /// Leave an emptied paragraph's empty bookmarks where they are. Its text
+    /// goes; the markers have no deleted characters to follow.
+    fn retain_empty_bookmarks(dom: &mut Dom, paragraph: NodeId) {
+        let keep = Self::empty_bookmark_markers(dom, paragraph);
+        for child in dom.nodes(paragraph) {
+            if !dom.name_is(child, &W::p_pr()) && !keep.contains(&child) {
+                dom.remove(child);
+            }
+        }
+    }
+
+    /// Move an empty bookmark onto the following paragraph, ahead of its
+    /// content: Accept All joins the deleted mark forward and the bookmark
+    /// has nothing left to sit in. A last paragraph (of the body or of a
+    /// cell that keeps another) has no following paragraph; Accept All then
+    /// leaves the bookmark at the end of the preceding one.
+    fn rehome_empty_bookmarks(dom: &mut Dom, paragraph: NodeId) {
+        let p = W::p();
+        let next = dom
+            .nodes_after_self(paragraph)
+            .into_iter()
+            .find(|&node| dom.name_is(node, &p));
+        let Some(next) = next else {
+            let Some(previous) = dom
+                .nodes_before_self(paragraph)
+                .into_iter()
+                .rev()
+                .find(|&node| dom.name_is(node, &p))
+            else {
+                return;
+            };
+            for marker in Self::empty_bookmark_markers(dom, paragraph) {
+                dom.remove(marker);
+                dom.add(previous, marker);
+            }
+            return;
+        };
+        let markers = Self::empty_bookmark_markers(dom, paragraph);
+        for &marker in &markers {
+            dom.remove(marker);
+        }
+        let first_content = dom
+            .elements(next, None)
+            .into_iter()
+            .find(|&child| !dom.name_is(child, &W::p_pr()));
+        if let Some(first_content) = first_content {
+            // Each insert lands immediately before the content, so walking
+            // forward leaves the markers in document order.
+            for marker in markers {
+                dom.add_before_self(first_content, marker);
+            }
+        } else {
+            for marker in markers {
+                dom.add(next, marker);
             }
         }
     }
