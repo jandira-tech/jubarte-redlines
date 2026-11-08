@@ -1,0 +1,62 @@
+=== APPLICATION: Error/Warning (30d, grouped) ===
+
+Count Name                                   
+----- ----                                   
+  235 Microsoft-Windows-Security-SPP, 8233   
+    5 Microsoft-Windows-Security-SPP, 16398  
+    4 Microsoft-Windows-Defrag, 264          
+    3 ESENT, 533                             
+    3 VSS, 13                                
+    3 ESENT, 508                             
+    1 VSS, 8193                              
+    1 Microsoft-Windows-Winlogon, 6006       
+    1 Microsoft-Windows-Winlogon, 6004       
+    1 Microsoft-Windows-RestartManager, 10010
+    1 Microsoft-Windows-Winlogon, 6005       
+
+
+
+=== APPLICATION: WINWORD/python crash details ===
+
+=== SYSTEM: Error/Critical (30d, grouped) ===
+
+Count Name                                    
+----- ----                                    
+  701 Schannel, 36874                         
+  305 Microsoft-Windows-TPM-WMI, 1796         
+    4 Microsoft-Windows-Kernel-Boot, 124      
+    4 Microsoft-Windows-Hyper-V-Hypervisor, 42
+    4 Service Control Manager, 7034           
+    3 Microsoft-Windows-DistributedCOM, 10000 
+    2 Microsoft-Windows-TPM-WMI, 1801         
+    1 Service Control Manager, 7031           
+    1 Service Control Manager, 7023           
+
+
+
+=== SYSTEM: unexpected shutdowns / reboots ===
+
+
+TimeCreated : 11/5/2026 6:55:13 AM
+Id          : 1074
+Msg         : The process C:\windows\servicing\TrustedInstaller.exe (VMI3632487) has initiated the restart of computer VMI3632487 on behalf of user NT AUTHORITY\SYSTEM for the following reason: 
+              Operating System: Upgrade (Planned) |  Reason Code: 0x80020003 |  Shutdown Type: restart
+
+TimeCreated : 11/5/2026 6:45:18 AM
+Id          : 1074
+Msg         : The process C:\windows\system32\shutdown.exe (VMI3632487) has initiated the restart of computer VMI3632487 on behalf of user VMI3632487\Administrator for the following reason: No title 
+              for this reason could be found |  Reason Code: 0x800000ff |  Shutdown Type: restart
+
+TimeCreated : 10/18/2026 6:11:20 PM
+Id          : 1074
+Msg         : The process C:\windows\system32\winlogon.exe (VMI3632487) has initiated the power off of computer VMI3632487 on behalf of user NT AUTHORITY\SYSTEM for the following reason: No title for 
+              this reason could be found |  Reason Code: 0x500ff |  Shutdown Type: power off
+
+TimeCreated : 10/13/2026 3:58:39 AM
+Id          : 1074
+Msg         : The process C:\windows\system32\SystemSettingsAdminFlows.exe (VMI3632487) has initiated the restart of computer VMI3632487 on behalf of user VMI3632487\Administrator for the following 
+              reason: Application: Maintenance (Planned) |  Reason Code: 0x84040001 |  Shutdown Type: restart
+
+
+
+
