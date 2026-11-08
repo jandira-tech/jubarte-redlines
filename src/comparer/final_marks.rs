@@ -32,9 +32,10 @@
 //! (#1686); moving it joined two of the revised cell's paragraphs.
 //!
 //! A body that ends in a table never emits the cell's inserted mark
-//! (#1683). This pass writes it on the paragraph before. The same pass
-//! moves an inserted closing paragraph back across a deleted table onto
-//! the body's empty close, which is where Word leaves it, unmarked.
+//! (#1683). This pass writes it on the paragraph before. The main part's
+//! sweep moves an inserted closing paragraph back across a deleted table
+//! onto the body's empty close first
+//! ([`crate::comparer::finalize::pair_closing_insert_across_deleted_table`]).
 
 use crate::namespaces::W;
 use crate::revision_processor::RevisionIds;
@@ -43,11 +44,6 @@ use crate::xmllinq::{Dom, NodeId, XName};
 
 /// Settle every cell's final mark under `root`.
 pub fn settle_cell_final_marks(dom: &mut Dom, root: NodeId) {
-    if let Some(body) = dom.element(root, &W::body()) {
-        // After every mark-writing pass: the inserted paragraph and the
-        // deleted table are both finished here (#1683, case 2).
-        crate::comparer::finalize::pair_closing_insert_across_deleted_table(dom, body);
-    }
     // The inserted mark was never written, so the loop below has nothing
     // to move (#1683, case 1). Mint it before that loop.
     mint_cell_insert_when_body_ends_in_table(dom, root);
@@ -154,13 +150,20 @@ fn mint_cell_insert_when_body_ends_in_table(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
+    // Minting writes into cells only, so the body's children stay put:
+    // list them once, not once per cell (jules on #2101).
+    let body_kids = dom.elements(body, None);
     let cells = dom.descendants(root, Some(&W::tc()));
-    let mut ids = None;
+    let mut ids: Option<RevisionIds> = None;
     for cell in cells {
-        let Some(table) = dom.ancestors(cell, Some(&W::tbl())).into_iter().next() else {
+        let Some(table) = nearest_table(dom, cell) else {
             continue;
         };
-        if dom.parent(table) != Some(body) || !body_tail_is_only_deletions(dom, body, table) {
+        let Some(at) = body_kids.iter().position(|&child| child == table) else {
+            continue;
+        };
+        let tail = &body_kids[at + 1..];
+        if !body_tail_is_only_deletions(dom, tail) || !body_tail_holds_paired_mark(dom, tail) {
             continue;
         }
         let blocks = crate::validate::container_blocks(dom, cell);
@@ -178,7 +181,7 @@ fn mint_cell_insert_when_body_ends_in_table(dom: &mut Dom, root: NodeId) {
         {
             continue;
         }
-        let Some(source) = dom.descendants(last, Some(&W::ins())).into_iter().next() else {
+        let Some(source) = dom.find_descendant_element(last, Some(&W::ins()), |_| true) else {
             continue;
         };
         let Some(author) = dom.attribute(source, &W::author()).map(str::to_string) else {
@@ -187,12 +190,16 @@ fn mint_cell_insert_when_body_ends_in_table(dom: &mut Dom, root: NodeId) {
         let date = dom.attribute(source, &W::date()).map(str::to_string);
         let id = ids
             .get_or_insert_with(|| {
-                RevisionIds::from_used(
-                    dom.descendants(root, None)
-                        .into_iter()
-                        .filter_map(|element| dom.attribute(element, &W::id())?.parse::<u64>().ok())
-                        .collect(),
-                )
+                let mut used = std::collections::HashSet::new();
+                dom.for_each_descendant_element(root, None, |element| {
+                    if let Some(id) = dom
+                        .attribute(element, &W::id())
+                        .and_then(|v| v.parse::<u64>().ok())
+                    {
+                        used.insert(id);
+                    }
+                });
+                RevisionIds::from_used(used)
             })
             .allocate();
         let mark = dom.new_element(W::ins());
@@ -206,16 +213,54 @@ fn mint_cell_insert_when_body_ends_in_table(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// Nothing after `table` in `body` is live: only `w:sectPr` and paragraphs
-/// whose text is deleted.
-fn body_tail_is_only_deletions(dom: &Dom, body: NodeId, table: NodeId) -> bool {
-    let children = dom.elements(body, None);
-    let Some(at) = children.iter().position(|&child| child == table) else {
-        return false;
-    };
-    children[at + 1..]
-        .iter()
-        .all(|&child| dom.name_is(child, &W::sect_pr()) || paragraph_is_deletion_only(dom, child))
+/// The nearest `w:tbl` above `cell`, walked parent by parent (jules on
+/// #2101).
+fn nearest_table(dom: &Dom, cell: NodeId) -> Option<NodeId> {
+    let mut node = dom.parent(cell);
+    while let Some(current) = node {
+        if dom.name_is(current, &W::tbl()) {
+            return Some(current);
+        }
+        node = dom.parent(current);
+    }
+    None
+}
+
+/// A range or proofing marker a body may hold between blocks: it carries
+/// no text and no revision, so the body's tail reads past it (cursor on
+/// #2101).
+pub(crate) fn is_inert_body_marker(dom: &Dom, node: NodeId) -> bool {
+    [
+        "bookmarkStart",
+        "bookmarkEnd",
+        "commentRangeStart",
+        "commentRangeEnd",
+        "permStart",
+        "permEnd",
+        "proofErr",
+    ]
+    .iter()
+    .any(|name| dom.name_is(node, &W::name(name)))
+}
+
+/// Nothing in the body after the table is live: only `w:sectPr`, inert
+/// markers, and paragraphs whose text is deleted.
+fn body_tail_is_only_deletions(dom: &Dom, tail: &[NodeId]) -> bool {
+    tail.iter().all(|&child| {
+        dom.name_is(child, &W::sect_pr())
+            || is_inert_body_marker(dom, child)
+            || paragraph_is_deletion_only(dom, child)
+    })
+}
+
+/// A deleted paragraph after the table keeps a live mark: the story-final
+/// pairing gave it the cell's mark, which is why the cell's inserted mark
+/// was never written. Without that pairing the mark is deleted with its
+/// words and the cell's final paragraph is the original's own, filled
+/// (codex on #2101).
+fn body_tail_holds_paired_mark(dom: &Dom, tail: &[NodeId]) -> bool {
+    tail.iter()
+        .any(|&child| dom.name_is(child, &W::p()) && mark_is_unrevised(dom, child))
 }
 
 /// A paragraph Word deleted: no insertion, no live text, and a deletion
@@ -224,18 +269,24 @@ fn paragraph_is_deletion_only(dom: &Dom, paragraph: NodeId) -> bool {
     if !dom.name_is(paragraph, &W::p()) || mark_revised_as(dom, paragraph, "ins") {
         return false;
     }
-    if !dom.descendants(paragraph, Some(&W::ins())).is_empty() {
+    if dom
+        .find_descendant_element(paragraph, Some(&W::ins()), |_| true)
+        .is_some()
+    {
         return false;
     }
     let live_text = dom
-        .descendants(paragraph, Some(&W::t()))
-        .iter()
-        .any(|&text| !dom.value(text).trim().is_empty());
+        .find_descendant_element(paragraph, Some(&W::t()), |text| {
+            !dom.value(text).trim().is_empty()
+        })
+        .is_some();
     if live_text {
         return false;
     }
     mark_revised_as(dom, paragraph, "del")
-        || !dom.descendants(paragraph, Some(&W::del())).is_empty()
+        || dom
+            .find_descendant_element(paragraph, Some(&W::del()), |_| true)
+            .is_some()
 }
 
 /// No inserted, deleted, or move revision on `paragraph`'s mark.
@@ -585,6 +636,43 @@ impl Stamp<'_> {
 mod tests {
     use super::*;
     use crate::namespaces::M;
+
+    /// A bookmark end Word leaves between the inserted paragraph and the
+    /// deleted table is a marker, not a block: the inserted paragraph
+    /// still moves onto the body's empty close (cursor on #2101).
+    #[test]
+    fn a_marker_before_the_deleted_table_does_not_block_the_close() {
+        let ins = r#"w:id="1" w:author="Ann" w:date="2026-10-01T00:00:00Z""#;
+        let del = r#"w:author="Ann" w:date="2026-10-01T00:00:00Z""#;
+        let xml = format!(
+            r#"<w:document xmlns:w="{}"><w:body><w:p><w:r><w:t>Text.</w:t></w:r></w:p><w:p><w:pPr><w:rPr><w:ins {ins}/></w:rPr></w:pPr><w:ins w:id="2" w:author="Ann"><w:r><w:t>Final para.</w:t></w:r></w:ins></w:p><w:bookmarkEnd w:id="9"/><w:tbl><w:tr><w:tc><w:p><w:pPr><w:rPr><w:del w:id="3" {del}/></w:rPr></w:pPr><w:del w:id="4" {del}><w:r><w:delText>Cell.</w:delText></w:r></w:del></w:p></w:tc></w:tr></w:tbl><w:p/><w:sectPr/></w:body></w:document>"#,
+            W::URI
+        );
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom.root(doc).unwrap();
+        let body = dom.element(root, &W::body()).unwrap();
+        crate::comparer::finalize::pair_closing_insert_across_deleted_table(
+            &mut dom,
+            body,
+            &format!(
+                r#"<w:document xmlns:w="{}"><w:body><w:p><w:r><w:t>Final para.</w:t></w:r></w:p><w:sectPr/></w:body></w:document>"#,
+                W::URI
+            ),
+        );
+        let kids: Vec<String> = dom
+            .elements(body, None)
+            .into_iter()
+            .map(|k| dom.name(k).unwrap().local_name().to_string())
+            .collect();
+        assert_eq!(kids, ["p", "bookmarkEnd", "tbl", "p", "sectPr"]);
+        let close = dom
+            .elements(body, Some(&W::p()))
+            .into_iter()
+            .last()
+            .unwrap();
+        assert!(dom.serialize_element(close).contains("Final para."));
+    }
 
     /// A paragraph that holds only an equation keeps it once resolved, as
     /// a paragraph of words does: the final mark loses its revision, and

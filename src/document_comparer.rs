@@ -8914,6 +8914,16 @@ fn sweep_comparison_chrome(
                     settings,
                 },
             );
+            // After every mark-writing pass and before the cells settle:
+            // the inserted paragraph and the deleted table are both
+            // finished here (#1683, case 2).
+            if let Some(body) = vd.element(root, &W::body()) {
+                crate::comparer::finalize::pair_closing_insert_across_deleted_table(
+                    vd,
+                    body,
+                    revised_xml,
+                );
+            }
         }
     }
     // A cell's final mark carries no revision its row does not
