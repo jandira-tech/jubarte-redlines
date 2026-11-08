@@ -388,6 +388,31 @@ fn redact_refuses_an_encoding_the_scan_does_not_certify() {
 }
 
 #[test]
+fn leaks_reads_a_utf16le_xml_part() {
+    // #2086 review: SharePoint writes customXml items as UTF-16LE with a
+    // BOM. The XML path must decode them, or the literal survives while
+    // the scan reports nothing.
+    let secret = "12345678";
+    for bom in [true, false] {
+        let mut pkg = PartFs::open(&docx(&para("Nothing here."))).unwrap();
+        let mut encoded = if bom { vec![0xFF, 0xFE] } else { Vec::new() };
+        encoded.extend(
+            format!("<?xml version=\"1.0\" encoding=\"utf-16\"?><root>{secret}</root>")
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes),
+        );
+        pkg.set_part("customXml/item1.xml", encoded);
+        pkg.add_content_type_override("/customXml/item1.xml", "application/xml");
+        let source = pkg.to_zip().unwrap();
+        assert_eq!(
+            leaks(&source, secret),
+            vec!["customXml/item1.xml".to_string()],
+            "bom={bom}"
+        );
+    }
+}
+
+#[test]
 fn the_redaction_is_no_tracked_change_and_the_report_never_echoes_the_text() {
     let source = docx(&para("Account 12345678 is closed."));
     let out = apply_plan(
