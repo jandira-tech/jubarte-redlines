@@ -10218,7 +10218,9 @@ fn autofit_to_words(
     // words themselves overrun it, and otherwise the narrow columns keep
     // their words while the rest of the measure goes to the wider ones.
     if text_over && !matches!(geom.width, TblWidth::Dxa(_)) {
-        let room = (avail + geom.pct_margins).max(0.0);
+        // A pct table keeps to its declared width, its outer rules given
+        // up (#2122 review); an auto one to the measure.
+        let room = declared_table_width(geom, avail).unwrap_or((avail + geom.pct_margins).max(0.0));
         let sum = mins.iter().sum::<f32>();
         if sum > room + 0.5 || sum <= 0.0 {
             let scale = if sum > 0.0 { room / sum } else { 1.0 };
@@ -50781,6 +50783,39 @@ mod coverage_round_two_tests {
         let set = geom_of("w:w=\"9000\"", "w:w=\"6000\"");
         assert!(matches!(set.width, TblWidth::Dxa(w) if (w - 450.0).abs() < 0.01));
         assert!(matches!(set.pref[..], [PrefWidth::Dxa(w)] if (w - 300.0).abs() < 0.01));
+    }
+
+    #[test]
+    fn a_word_refit_keeps_a_pct_table_inside_its_bordered_width() {
+        // A pct table's columns give up half its outer rules so the rim
+        // stays at the pct width (`declared_table_width`, probe pct3). The
+        // re-fit around a word wider than its column keeps to that width
+        // too (#2122 review).
+        let fonts = fonts();
+        let word = "A".repeat(102);
+        let rule = "w:val=\"single\" w:sz=\"24\" w:space=\"0\" w:color=\"auto\"";
+        let Block::Table {
+            cols, rows, geom, ..
+        } = table(&format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"pct\"/>\
+             <w:tblBorders><w:left {rule}/><w:right {rule}/></w:tblBorders></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+             <w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>LABEL:</w:t></w:r></w:p></w:tc>\
+             <w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>{word}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+        ))
+        else {
+            panic!("table fixture")
+        };
+        assert!(geom.pct_rules > 0.0, "outer rules to give up");
+        let declared = declared_table_width(&geom, 468.0).expect("pct width");
+        let widths = unclamped_col_widths(&fonts, &cols, &rows, &geom, 468.0);
+        let total: f32 = widths.iter().sum();
+        assert!(
+            (total - declared).abs() < 0.5,
+            "the re-fit fills the bordered pct width {declared}, not more: {widths:?}"
+        );
     }
 
     #[test]
