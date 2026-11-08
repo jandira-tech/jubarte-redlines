@@ -3361,7 +3361,7 @@ fn a_table_of_another_style_keeps_its_own_centre() {
     };
     let sect = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
     let styles_for_x = styles;
-    let x_of = |body: String, text: &str| {
+    let x_of = |body: &str, text: &str| {
         let pdf = docx_to_pdf(&docx_with_settings_and_styles(
             &format!("{body}{sect}"),
             "",
@@ -3380,9 +3380,9 @@ fn a_table_of_another_style_keeps_its_own_centre() {
     };
     let narrow = |style: &str, borders: &str| table(&[2745, 6068], &["B1", "B2"], style, borders);
     let paired = format!("{}{}", wide("Grid", ""), narrow("Plain", ""));
-    let a1 = x_of(paired.clone(), "A1");
-    let b1 = x_of(paired, "B1");
-    let alone = x_of(narrow("Plain", ""), "B1");
+    let a1 = x_of(&paired, "A1");
+    let b1 = x_of(&paired, "B1");
+    let alone = x_of(&narrow("Plain", ""), "B1");
     let word_gap = 85.7 - 79.7;
     assert!(
         (b1 - alone).abs() < 0.6,
@@ -3393,7 +3393,7 @@ fn a_table_of_another_style_keeps_its_own_centre() {
         "Word places that centre 6pt right of A (A1 79.7, B1 85.7); A1 {a1}, B1 {b1}"
     );
     let same_body = format!("{}{}", wide("", ""), narrow("", ""));
-    let same = (x_of(same_body.clone(), "A1"), x_of(same_body, "B1"));
+    let same = (x_of(&same_body, "A1"), x_of(&same_body, "B1"));
     assert!(
         (same.1 - same.0).abs() < 0.3,
         "one style still shares A's edge (Word 79.94); A1 {}, B1 {}",
@@ -3401,7 +3401,7 @@ fn a_table_of_another_style_keeps_its_own_centre() {
         same.1
     );
     let border_body = format!("{}{}", wide("", single), narrow("", nil));
-    let bordered = (x_of(border_body.clone(), "A1"), x_of(border_body, "B1"));
+    let bordered = (x_of(&border_body, "A1"), x_of(&border_body, "B1"));
     assert!(
         (bordered.1 - bordered.0).abs() < 0.3,
         "direct borders still share A's edge (Word 79.94); A1 {}, B1 {}",
@@ -3409,7 +3409,7 @@ fn a_table_of_another_style_keeps_its_own_centre() {
         bordered.1
     );
     let shared_body = format!("{}{}", wide("Grid", ""), narrow("Grid", ""));
-    let shared = (x_of(shared_body.clone(), "A1"), x_of(shared_body, "B1"));
+    let shared = (x_of(&shared_body, "A1"), x_of(&shared_body, "B1"));
     assert!(
         (shared.1 - shared.0).abs() < 0.3,
         "the same table style still joins; A1 {}, B1 {}",
