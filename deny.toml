@@ -7,12 +7,15 @@
 
 [graph]
 all-features = true
-# Target the host triple cargo-deny uses in CI; multi-target not required.
+# Every triple a release ships for, so a duplicate that only one target's
+# graph pulls in still fails the bans check.
 targets = [
     { triple = "x86_64-unknown-linux-gnu" },
     { triple = "aarch64-apple-darwin" },
     { triple = "x86_64-apple-darwin" },
     { triple = "x86_64-pc-windows-msvc" },
+    # jubarte-wasm ships for the browser; its graph differs from the hosts'.
+    { triple = "wasm32-unknown-unknown" },
 ]
 
 [advisories]
@@ -62,7 +65,9 @@ highlight = "all"
 # Deny path/git deps in published graph (keep builds reproducible).
 allow-wildcard-paths = true
 skip = [
-    # 0.2 via ring/rustls, 0.3 and 0.4 via tempfile and uuid.
+    # 0.2 via ring/rustls, 0.3 and 0.4 via tempfile and uuid in the root
+    # graph; the binding workspaces hold one version and warn
+    # "unnecessary-skip" for the same shared-policy reason.
     { name = "getrandom" },
     # rustix 0.38 still needs 2.x; newer rustix needs 3.x.
     { name = "io-lifetimes" },
@@ -74,7 +79,10 @@ skip = [
     { name = "syn" },
     # windows crates still mix 0.52 and 0.61.
     { name = "windows-sys" },
-    # The Windows target triples pull a second windows-targets set beside the host one.
+    # The Windows target triples pull a second windows-targets set beside
+    # the host one in the binding workspaces (python, wasm, inproc, fuzz).
+    # The root graph has one set, so cargo-deny warns "unnecessary-skip"
+    # there; the one shared policy must still carry them.
     { name = "windows-targets" },
     { name = "windows_x86_64_gnu" },
     { name = "windows_x86_64_msvc" },
