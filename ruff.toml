@@ -51,6 +51,8 @@ ignore = ["RUF012", "E722", "RUF105", "RUF201"]
 # The fixture's confusable characters (a Hebrew vav, no-break spaces) are
 # what it tests.
 "tests/fixtures/from-docx/critic/challenging.py" = ["RUF001"]
+# criterion prints U+2212 MINUS SIGN; the stub output copies it verbatim.
+"scripts/test_criterion_abab.py" = ["RUF001", "RUF003"]
 # A failure in one item must not stop the rest; the loop's cost is the
 # subprocess or office call it wraps, not the try.
 "scripts/md_roundtrip.py" = ["PERF203"]
