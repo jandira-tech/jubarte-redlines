@@ -53,6 +53,14 @@ const RELEASE_KEYS: &[ReleaseKey] = &[];
 /// `v` (`Some("0.11.0")`). `None` until [`RELEASE_KEYS`] holds a key.
 const FIRST_SIGNED_RELEASE: Option<&str> = None;
 
+/// Bytes `jubarte self-update` will download, or inflate from the one
+/// expected member of a release zip, before it refuses and leaves the
+/// installed binary in place.
+///
+/// Published archives are about 18 MiB (`v0.17.0`). This is several times
+/// that size. The tar.gz member's own inflation cap is a separate check.
+const UPDATE_ARCHIVE_BYTE_BUDGET: u64 = 128 * 1024 * 1024;
+
 /// The flags `jubarte self-update` accepts, resolved from the CLI before
 /// [`run`] sees them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -227,6 +235,8 @@ pub fn step(opts: &Options, decision: &Plan, resolved: &str) -> Step {
 /// - the checksum download or verification did not match;
 /// - a signature was required but missing or did not verify against
 ///   [`signature_required`];
+/// - the archive is over [`UPDATE_ARCHIVE_BYTE_BUDGET`], lists the expected
+///   binary more than once, or inflates that binary past the budget;
 /// - the binary swap step failed.
 pub fn run(opts: &Options) -> Result<(), String> {
     let interactive = std::io::stdin().is_terminal();
@@ -279,12 +289,20 @@ pub fn run(opts: &Options) -> Result<(), String> {
     }
 
     let signed = signature_required(&to, FIRST_SIGNED_RELEASE, !RELEASE_KEYS.is_empty())?;
-    if signed {
-        builder.verify_archive(|archive| {
+    let member = resolved_bin_path(target, &to);
+    // Before extraction: cap the download and the inflated member, and refuse
+    // an archive that lists that member twice. The signature decision above
+    // is unchanged: this hook runs it only when that decision already said to.
+    builder.verify_archive(move |archive| {
+        confine_update_zip(archive, &member, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .map_err(self_update::Error::archive_verification_rejected)?;
+        if signed {
             verify_signature(archive, RELEASE_KEYS)
-                .map_err(self_update::Error::archive_verification_rejected)
-        });
-    } else if !RELEASE_KEYS.is_empty() {
+                .map_err(self_update::Error::archive_verification_rejected)?;
+        }
+        Ok(())
+    });
+    if !signed && !RELEASE_KEYS.is_empty() {
         eprintln!("note: {to} predates signed releases; only its SHA-256 is checked.");
     }
     let installer = builder
@@ -357,6 +375,292 @@ fn extracted_binary_is_regular_file(path: &std::path::Path) -> self_update::Resu
             "the extracted binary {} is not a regular file",
             path.display()
         )))
+    }
+}
+
+/// Path of the binary inside a release archive once `{{ version }}` is the
+/// release being installed. `self_update` fills that token itself; the
+/// pre-extract check has to use the same path.
+fn resolved_bin_path(target: &str, version: &str) -> String {
+    bin_path_in_archive(target).replace("{{ version }}", version)
+}
+
+/// Gate the downloaded release archive before `self_update` extracts it.
+///
+/// `run` registers this as the `verify_archive` hook, which runs after the
+/// checksum and before a byte of the archive is unpacked. `member` is the
+/// binary path inside the archive (`jubarte-<version>-<target>/jubarte` or
+/// `.exe`). A file larger than `budget` is refused. A zip whose expected
+/// member appears more than once, or whose expected member inflates past
+/// `budget`, is refused. Anything that is not a zip is left alone once the
+/// download itself fits: the tar.gz arm is checked separately.
+fn confine_update_zip(archive: &std::path::Path, member: &str, budget: u64) -> Result<(), String> {
+    let len = std::fs::metadata(archive)
+        .map_err(|e| {
+            format!(
+                "update archive {} cannot be inspected: {e}",
+                archive.display()
+            )
+        })?
+        .len();
+    if len > budget {
+        return Err(format!(
+            "update archive is {len} bytes, over the {budget}-byte download budget"
+        ));
+    }
+    let mut file = std::fs::File::open(archive)
+        .map_err(|e| format!("update archive {} cannot be opened: {e}", archive.display()))?;
+    // A zip is told by its end record, not by a leading `PK`: a zipsign
+    // signature sits before the zip and zip/self_update still read it
+    // (#2084 review). No end record and no `PK`: not a zip (a tar.gz).
+    let Some(copies) = zip_member_copies(&mut file, len, member)? else {
+        if zip_magic(&mut file)? {
+            return Err("update archive has no zip end record".into());
+        }
+        return Ok(());
+    };
+    if copies > 1 {
+        return Err(format!("update archive lists {member} more than once"));
+    }
+    if copies == 0 {
+        return Err(format!("update archive has no member {member}"));
+    }
+    inflate_member_within_budget(archive, member, budget)
+}
+
+fn zip_magic(file: &mut std::fs::File) -> Result<bool, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    file.seek(SeekFrom::Start(0))
+        .map_err(|e| format!("update archive cannot be rewound: {e}"))?;
+    let mut magic = [0u8; 2];
+    let read = file
+        .read(&mut magic)
+        .map_err(|e| format!("update archive cannot be read: {e}"))?;
+    Ok(read == 2 && magic == [0x50, 0x4b])
+}
+
+/// How many central-directory entries name `member`, or `None` when the
+/// file has no zip end record.
+///
+/// `zip`'s reader keeps one entry per name, so a repeated member is invisible
+/// there and the first copy would be the one installed. The count comes from
+/// the central directory itself. Each name is the one `zip` resolves (an
+/// adopted 0x7075 Unicode Path included), and a directory that a leading
+/// prefix moved past its recorded offset is found where `zip` finds it.
+fn zip_member_copies(
+    file: &mut std::fs::File,
+    len: u64,
+    member: &str,
+) -> Result<Option<u32>, String> {
+    const EOCD_LEN: u64 = 22;
+    const MAX_COMMENT: u64 = 65_535;
+    if len < EOCD_LEN {
+        return Ok(None);
+    }
+    let tail_len = len.min(EOCD_LEN.saturating_add(MAX_COMMENT));
+    let tail_at = len.saturating_sub(tail_len);
+    let tail_bytes = usize::try_from(tail_len)
+        .map_err(|_| "update archive is too large to inspect".to_string())?;
+    let mut tail = vec![0u8; tail_bytes];
+    read_exact_at(file, tail_at, &mut tail)?;
+    let Some(eocd) = find_eocd(&tail) else {
+        return Ok(None);
+    };
+    let entries = le_u16(&tail, eocd.saturating_add(10))?;
+    let cd_size = u64::from(le_u32(&tail, eocd.saturating_add(12))?);
+    let cd_offset = u64::from(le_u32(&tail, eocd.saturating_add(16))?);
+    if entries == u16::MAX || cd_size == u64::from(u32::MAX) || cd_offset == u64::from(u32::MAX) {
+        return Err("update archive uses ZIP64, which this check refuses".into());
+    }
+    // Bytes before the zip (a zipsign signature) shift the directory by
+    // the gap between where it ends and where the end record sits; zip
+    // reads it at the recorded offset first, then shifted.
+    let eocd_at = tail_at.saturating_add(eocd as u64);
+    let recorded_end = cd_offset
+        .checked_add(cd_size)
+        .ok_or_else(|| "update archive central directory is out of range".to_string())?;
+    let shift = eocd_at
+        .checked_sub(recorded_end)
+        .ok_or_else(|| "update archive central directory runs past its end record".to_string())?;
+    let mut signature = [0u8; 4];
+    let at_recorded = cd_size == 0
+        || (read_exact_at(file, cd_offset, &mut signature).is_ok()
+            && signature == [0x50, 0x4b, 0x01, 0x02]);
+    let base = if at_recorded { 0 } else { shift };
+    let cd_start = cd_offset
+        .checked_add(base)
+        .ok_or_else(|| "update archive central directory is out of range".to_string())?;
+    let cd_end = recorded_end
+        .checked_add(base)
+        .ok_or_else(|| "update archive central directory is out of range".to_string())?;
+    if cd_end > len {
+        return Err("update archive central directory runs past the file".into());
+    }
+    let mut at = cd_start;
+    let mut copies = 0u32;
+    let mut seen = 0u16;
+    let mut name_and_extra = Vec::new();
+    while at < cd_end {
+        let mut header = [0u8; 46];
+        read_exact_at(file, at, &mut header)?;
+        if header.get(..4) != Some(&[0x50, 0x4b, 0x01, 0x02]) {
+            return Err("update archive central directory is truncated".into());
+        }
+        let name_len = u64::from(le_u16(&header, 28)?);
+        let extra_len = u64::from(le_u16(&header, 30)?);
+        let comment_len = u64::from(le_u16(&header, 32)?);
+        let step = 46u64
+            .checked_add(name_len)
+            .and_then(|n| n.checked_add(extra_len))
+            .and_then(|n| n.checked_add(comment_len))
+            .ok_or_else(|| "update archive central directory entry is out of range".to_string())?;
+        let next = at
+            .checked_add(step)
+            .ok_or_else(|| "update archive central directory entry is out of range".to_string())?;
+        if next > cd_end {
+            return Err("update archive central directory entry runs past the directory".into());
+        }
+        let name_at = at
+            .checked_add(46)
+            .ok_or_else(|| "update archive member name is out of range".to_string())?;
+        let name_bytes = usize::try_from(name_len)
+            .map_err(|_| "update archive member name is too long".to_string())?;
+        let extra_bytes = usize::try_from(extra_len)
+            .map_err(|_| "update archive extra field is too long".to_string())?;
+        // One buffer for every entry: name then extra field, each at most
+        // 64 KiB, as the header records them.
+        name_and_extra.resize(name_bytes.saturating_add(extra_bytes), 0);
+        if !name_and_extra.is_empty() {
+            read_exact_at(file, name_at, &mut name_and_extra)?;
+        }
+        let (raw_name, extra) = name_and_extra.split_at(name_bytes);
+        let flags = le_u16(&header, 8)?;
+        let name = crate::admission::zip_entry_name_raw(raw_name, flags, extra)
+            .map_err(|e| format!("update archive member name cannot be read: {e}"))?;
+        if member_names_match(name.as_bytes(), member) {
+            copies = copies.saturating_add(1);
+        }
+        seen = seen
+            .checked_add(1)
+            .ok_or_else(|| "update archive has too many entries".to_string())?;
+        at = next;
+    }
+    if seen != entries {
+        return Err("update archive central directory does not match its end record".into());
+    }
+    Ok(Some(copies))
+}
+
+fn find_eocd(tail: &[u8]) -> Option<usize> {
+    let last = tail.len().checked_sub(22)?;
+    let mut at = last;
+    loop {
+        if tail.get(at..at.checked_add(4)?) == Some(&[0x50, 0x4b, 0x05, 0x06][..]) {
+            let comment = usize::from(le_u16(tail, at.saturating_add(20)).ok()?);
+            let end = at.checked_add(22)?.checked_add(comment)?;
+            if end == tail.len() {
+                return Some(at);
+            }
+        }
+        if at == 0 {
+            return None;
+        }
+        at = at.saturating_sub(1);
+    }
+}
+
+fn le_u16(bytes: &[u8], at: usize) -> Result<u16, String> {
+    let mut buf = [0u8; 2];
+    buf.copy_from_slice(
+        bytes
+            .get(
+                at..at
+                    .checked_add(2)
+                    .ok_or_else(|| "update archive field is out of range".to_string())?,
+            )
+            .ok_or_else(|| "update archive field is out of range".to_string())?,
+    );
+    Ok(u16::from_le_bytes(buf))
+}
+
+fn le_u32(bytes: &[u8], at: usize) -> Result<u32, String> {
+    let mut buf = [0u8; 4];
+    buf.copy_from_slice(
+        bytes
+            .get(
+                at..at
+                    .checked_add(4)
+                    .ok_or_else(|| "update archive field is out of range".to_string())?,
+            )
+            .ok_or_else(|| "update archive field is out of range".to_string())?,
+    );
+    Ok(u32::from_le_bytes(buf))
+}
+
+fn member_names_match(entry: &[u8], member: &str) -> bool {
+    let entry = entry.strip_prefix(b"./").unwrap_or(entry);
+    if entry.ends_with(b"/") {
+        return false;
+    }
+    let member = member.strip_prefix("./").unwrap_or(member).as_bytes();
+    entry.len() == member.len()
+        && entry
+            .iter()
+            .zip(member)
+            .all(|(got, want)| *got == *want || (*got == b'\\' && *want == b'/'))
+}
+
+fn read_exact_at(file: &mut std::fs::File, at: u64, buf: &mut [u8]) -> Result<(), String> {
+    use std::io::{Read, Seek, SeekFrom};
+    file.seek(SeekFrom::Start(at))
+        .map_err(|e| format!("update archive seek failed: {e}"))?;
+    file.read_exact(buf)
+        .map_err(|e| format!("update archive read failed: {e}"))
+}
+
+/// Count the bytes the expected member actually inflates to, and stop one
+/// byte past `budget`. The declared uncompressed size is not the limit:
+/// `self_update` copies the stream with no cap of its own.
+fn inflate_member_within_budget(
+    archive: &std::path::Path,
+    member: &str,
+    budget: u64,
+) -> Result<(), String> {
+    use std::io::{Read, copy, sink};
+    let file = std::fs::File::open(archive)
+        .map_err(|e| format!("update archive {} cannot be opened: {e}", archive.display()))?;
+    let mut zip = zip::ZipArchive::new(file)
+        .map_err(|e| format!("update archive is not a readable zip: {e}"))?;
+    let mut matched = None;
+    for index in 0..zip.len() {
+        let entry = zip
+            .by_index(index)
+            .map_err(|e| format!("update archive entry {index} cannot be read: {e}"))?;
+        let name = entry
+            .name()
+            .map_err(|e| format!("update archive entry {index} has no name: {e}"))?;
+        if member_names_match(name.as_bytes(), member) {
+            matched = Some(index);
+            break;
+        }
+    }
+    let Some(index) = matched else {
+        return Err(format!("update archive has no member {member}"));
+    };
+    let mut entry = zip
+        .by_index(index)
+        .map_err(|e| format!("update member {member} cannot be read: {e}"))?;
+    let inflated = copy(
+        &mut (&mut entry).take(budget.saturating_add(1)),
+        &mut sink(),
+    )
+    .map_err(|e| format!("update member {member} could not be inflated: {e}"))?;
+    if inflated > budget {
+        Err(format!(
+            "update member {member} inflates past the {budget}-byte budget"
+        ))
+    } else {
+        Ok(())
     }
 }
 
@@ -615,5 +919,166 @@ mod tests {
             extracted_binary_is_regular_file(&dangling)
                 .expect_err("a dangling symlink must be refused too");
         }
+    }
+
+    const UPDATE_MEMBER: &str = "jubarte-9.9.9-windows-x86_64/jubarte.exe";
+
+    fn write_update_archive(dir: &std::path::Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    fn deflated_update_zip(member: &str, payload: &[u8]) -> Vec<u8> {
+        use std::io::Write;
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options: zip::write::FullFileOptions<'_, '_> =
+            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        writer.start_file(member, options).expect("start member");
+        writer.write_all(payload).expect("write member");
+        writer.finish().expect("finish zip").into_inner()
+    }
+
+    /// ZIP-28 (#656): the downloaded file itself has a byte budget, before
+    /// any member is inflated.
+    #[test]
+    fn update_archive_over_the_download_budget_is_refused() {
+        let bytes = deflated_update_zip(UPDATE_MEMBER, b"#!/jubarte");
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        let budget = (bytes.len() as u64).saturating_sub(1);
+        let err = confine_update_zip(&archive, UPDATE_MEMBER, budget)
+            .expect_err("an archive larger than the download budget was accepted");
+        assert!(
+            err.contains("download budget"),
+            "the refusal must name the download budget, got {err}"
+        );
+    }
+
+    /// ZIP-28 (#656): the expected member can inflate far past the archive
+    /// that carried it. The download fits; the unpacked member must not.
+    #[test]
+    fn update_archive_inflation_is_capped() {
+        let payload = vec![0u8; 8_000];
+        let bytes = deflated_update_zip(UPDATE_MEMBER, &payload);
+        assert!(
+            bytes.len() < payload.len(),
+            "the fixture must be smaller on disk than the member it inflates to, got {} bytes",
+            bytes.len()
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        let budget = bytes.len() as u64;
+        let err = confine_update_zip(&archive, UPDATE_MEMBER, budget)
+            .expect_err("an inflated member past the budget was extracted with no cap");
+        assert!(
+            err.contains("inflates past"),
+            "the refusal must name the inflation cap, got {err}"
+        );
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            1,
+            "a refused archive must stay the only file in the directory"
+        );
+    }
+
+    /// ZIP-28 (#656): two central-directory entries with the expected name
+    /// are ambiguous. The first match must not be installed.
+    #[test]
+    fn update_archive_duplicate_member_is_refused() {
+        let name = UPDATE_MEMBER.as_bytes();
+        let bytes = crate::admission::zip_names::zip(&[
+            crate::admission::zip_names::RawEntry::raw(name, b"FIRST"),
+            crate::admission::zip_names::RawEntry::raw(name, b"SECOND"),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        let err = confine_update_zip(&archive, UPDATE_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("an archive that lists the expected member twice was accepted");
+        assert!(
+            err.contains("more than once"),
+            "the refusal must name the repeated member, got {err}"
+        );
+    }
+
+    /// #2084 review (Bugbot): a zipsign-signed zip starts with its
+    /// signature block, not `PK`, and its offsets are not rewritten; zip and
+    /// self_update still read it. The checks must run on it too.
+    fn prefixed(prefix_len: usize, zip: &[u8]) -> Vec<u8> {
+        let mut out = vec![0xA5u8; prefix_len];
+        out.extend_from_slice(zip);
+        out
+    }
+
+    #[test]
+    fn update_archive_with_a_prefix_still_refuses_a_repeated_member() {
+        let name = UPDATE_MEMBER.as_bytes();
+        let bytes = prefixed(
+            64,
+            &crate::admission::zip_names::zip(&[
+                crate::admission::zip_names::RawEntry::raw(name, b"FIRST"),
+                crate::admission::zip_names::RawEntry::raw(name, b"SECOND"),
+            ]),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        let err = confine_update_zip(&archive, UPDATE_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("a prefixed archive skipped the repeated-member check");
+        assert!(err.contains("more than once"), "{err}");
+    }
+
+    #[test]
+    fn update_archive_with_a_prefix_still_caps_inflation() {
+        let payload = vec![0u8; 8_000];
+        let bytes = prefixed(64, &deflated_update_zip(UPDATE_MEMBER, &payload));
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        let budget = bytes.len() as u64;
+        let err = confine_update_zip(&archive, UPDATE_MEMBER, budget)
+            .expect_err("a prefixed archive skipped the inflation cap");
+        assert!(err.contains("inflates past"), "{err}");
+    }
+
+    #[test]
+    fn update_archive_with_a_prefix_and_one_member_is_allowed() {
+        let bytes = prefixed(64, &deflated_update_zip(UPDATE_MEMBER, b"#!/jubarte"));
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        confine_update_zip(&archive, UPDATE_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect("a signed (prefixed) release zip with one member");
+    }
+
+    /// #2084 review (Bugbot): zip names an entry by its adopted 0x7075
+    /// Unicode Path, so a second entry whose raw name differs but whose
+    /// Unicode Path is the member is the same installed file.
+    #[test]
+    fn update_archive_unicode_path_copy_is_a_repeated_member() {
+        let name = UPDATE_MEMBER.as_bytes();
+        let bytes = crate::admission::zip_names::zip(&[
+            crate::admission::zip_names::RawEntry::raw(name, b"FIRST"),
+            crate::admission::zip_names::RawEntry::raw(b"decoy.bin", b"SECOND").unicode_path(name),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        let err = confine_update_zip(&archive, UPDATE_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("a Unicode Path copy of the member was not counted");
+        assert!(err.contains("more than once"), "{err}");
+    }
+
+    #[test]
+    fn update_archive_single_member_is_allowed() {
+        let bytes = deflated_update_zip(UPDATE_MEMBER, b"#!/jubarte");
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        confine_update_zip(&archive, UPDATE_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect("one member inside the budget is the release zip");
+    }
+
+    #[test]
+    fn update_archive_non_zip_inside_budget_is_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.tar.gz", b"not a zip");
+        confine_update_zip(&archive, UPDATE_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect("a tar.gz inside the download budget is not a zip refusal");
     }
 }
