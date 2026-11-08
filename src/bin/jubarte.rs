@@ -4025,13 +4025,16 @@ fn run_convert_any(
                 bytes
             };
             // The agent view, as `jubarte read` prints it: the dialect that
-            // comes back whole through `convert` to Word.
+            // comes back whole through `convert` to Word. `read` omits
+            // per-revision dates unless `--dates`. Convert asks for them
+            // so an author whose changes do not share one instant keeps
+            // each mark's date; a shared date stays in the authors header.
             let view = jubarte::markdown::read(
                 &source,
                 &jubarte::markdown::ReadOptions {
                     track_changes: markdown.track_changes.into(),
                     comments: true,
-                    dates: false,
+                    dates: true,
                     page_markers: !markdown.no_page_markers,
                     select: None,
                     source: job

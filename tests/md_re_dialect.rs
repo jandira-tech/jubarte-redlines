@@ -56,8 +56,10 @@ fn copy_in(dir: &Path, name: &str) {
     std::fs::copy(format!("{FIXTURES}/{name}"), dir.join(name)).unwrap();
 }
 
-/// `jubarte F.docx > a.md`, `jubarte F.docx -o b.md` and
-/// `jubarte convert F.docx -o c.md` all print `F.md`.
+/// `jubarte F.docx > a.md` and `jubarte F.docx -o b.md` print `F.md`;
+/// `jubarte convert F.docx -o c.md` prints `jubarte read --dates F.docx`,
+/// which keeps the date of each change an author made at different
+/// instants (#2001).
 fn reads_as_its_view(name: &str) {
     let dir = tempfile::tempdir().unwrap();
     let docx = format!("{name}.docx");
@@ -76,7 +78,11 @@ fn reads_as_its_view(name: &str) {
     let c = std::fs::read_to_string(dir.path().join("c.md")).unwrap();
     assert_eq!(a, expected, "jubarte {docx} > a.md");
     assert_eq!(b, expected, "jubarte {docx} -o b.md");
-    assert_eq!(c, expected, "jubarte convert {docx} -o c.md");
+    let dated = ok(
+        &jubarte(&["read", "--dates", &docx], dir.path()),
+        "read --dates",
+    );
+    assert_eq!(c, dated, "jubarte convert {docx} -o c.md");
 }
 
 /// `F.md` written to a docx and read back keeps its body.

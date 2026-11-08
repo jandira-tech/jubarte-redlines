@@ -141,14 +141,21 @@ fn word_converts_to_the_agent_view_unless_commonmark_is_asked() {
         String::from_utf8_lossy(&out.stderr)
     );
     let view = std::fs::read_to_string(dir.path().join("view.md")).unwrap();
+    // Convert prints `read --dates`: an author whose changes do not
+    // share one instant keeps each mark's date (#2001).
     let read = Command::new(env!("CARGO_BIN_EXE_jubarte"))
-        .args(["read", "a.docx", "--no-page-markers"])
+        .args(["read", "a.docx", "--no-page-markers", "--dates"])
         .current_dir(dir.path())
         .output()
         .unwrap();
     assert_eq!(view, String::from_utf8(read.stdout).unwrap());
     assert!(view.starts_with("---\n"), "{view}");
     assert!(view.contains("{++whenever++}{r75 @DE}"), "{view}");
+    assert!(
+        view.contains("{++one ++}{r70+71 @AL 2026-03-02T10:00:00Z}"),
+        "{view}"
+    );
+    assert!(view.contains("{++once++}{r72 @BC}"), "{view}");
     convert(dir.path(), "a.docx", "plain.md");
     let plain = std::fs::read_to_string(dir.path().join("plain.md")).unwrap();
     assert!(!plain.contains("<!-- p0 -->"), "{plain}");
