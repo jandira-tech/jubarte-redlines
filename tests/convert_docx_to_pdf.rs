@@ -23169,10 +23169,12 @@ fn nested_table_paints_inner_cells_separately() {
 }
 
 #[test]
-fn auto_tblw_keeps_tblgrid_not_tcw_after_mini_342() {
-    // sd_2517 / file_22 hideMark: tblW=auto, tcW 9576 vs tblGrid 8640.
-    // Overlaying first-row tcW (mini 342–345) was 0-delta on 41–45 but
-    // dropped comments-lots ~0.35 (NR mean −0.104). Quartz follows grid.
+fn auto_tblw_takes_the_tcw_every_row_repeats_over_its_grid() {
+    // This held the 2000/6000 grid on a Quartz score (mini 342). Word
+    // 2026-11-08 (#2123): this one-row table, and the same with two rows,
+    // puts R at 272.40pt, L at 72.48: the 4000-twip tcW, not the grid.
+    // A tcW only the first row states still leaves the grid (#2123's
+    // `agreed_column_widths` needs every row).
     let body = "<w:tbl>\
          <w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
          <w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"6000\"/></w:tblGrid>\
@@ -23196,8 +23198,8 @@ fn auto_tblw_keeps_tblgrid_not_tcw_after_mini_342() {
     );
     let ratio = rw / gw;
     assert!(
-        (0.28..=0.40).contains(&ratio),
-        "auto tblW must keep tblGrid 2000/6000 (1:3), not tcW; ratio={ratio} red={rw} green={gw}"
+        (0.95..=1.05).contains(&ratio),
+        "a tcW every row repeats replaces the 2000/6000 grid (1:1, Word); ratio={ratio} red={rw} green={gw}"
     );
 }
 
