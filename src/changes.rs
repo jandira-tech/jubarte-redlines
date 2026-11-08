@@ -841,13 +841,15 @@ pub enum ChangeError {
     /// container's final mark. A cell in this shape hangs Word's Accept
     /// All and Reject All (#1669, #1693). No document is returned.
     ExposedFinalMark {
-        /// `cell`, `body`, `header`, or `note`.
+        /// `cell`, `body`, `header`, `footer`, `note`, `textbox`, or
+        /// `comment`.
         container: &'static str,
         /// Path of the container (`w:body[0]/w:tbl[0]/w:tr[0]/w:tc[1]`).
         path: String,
         /// Path of the paragraph that would keep the mark.
         paragraph: String,
-        /// The remaining mark's short id (`r1`, `header1.r1`).
+        /// The remaining mark's short id (`r1`, `header1.r1`), or
+        /// `(no w:id)` for a mark without one.
         revision: String,
         /// `ins` or `del`.
         kind: &'static str,
@@ -1464,7 +1466,10 @@ fn resolve_for_edit_or_cli(
         });
     }
     let main = main_part(&pkg);
-    let before_marks = exposed_final_marks(&pkg, &main);
+    // An edit plan settles accepts, rejects and its global policy in
+    // several passes; it judges exposure once, on the settled document
+    // ([`check_exposed_final_marks`]).
+    let before_marks = edit.is_none().then(|| exposed_final_marks(&pkg, &main));
     let freeze = |part: &str, dom: &mut Dom, root: NodeId| {
         let found = carriers(dom, root, &story_id(&main, part));
         let selected: HashSet<&Group> = found
@@ -1505,17 +1510,8 @@ fn resolve_for_edit_or_cli(
         ),
     };
     move_words_past_deleted_tables(&mut pkg, &main);
-    if let Some(mark) = exposed_final_marks(&pkg, &main)
-        .into_iter()
-        .find(|mark| before_marks.iter().all(|had| had.key != mark.key))
-    {
-        return Err(ChangeError::ExposedFinalMark {
-            container: mark.container,
-            path: mark.path,
-            paragraph: mark.paragraph,
-            revision: mark.revision,
-            kind: mark.kind,
-        });
+    if let Some(before) = before_marks {
+        newly_exposed(before, exposed_final_marks(&pkg, &main))?;
     }
     // The comment-body revisions a selection left tracked (#1223). The
     // part may be gone when every comment went.
@@ -1602,6 +1598,48 @@ fn final_marks_of_row(dom: &Dom, carrier: NodeId) -> Vec<NodeId> {
         .collect()
 }
 
+/// Refuse `after` when it holds a final `w:ins` / `w:del` paragraph mark
+/// that `before` did not: the check an edit plan runs once its accepts,
+/// rejects and global policy have all settled (#1693, #2096).
+///
+/// # Errors
+///
+/// [`ChangeError::ExposedFinalMark`] for the first newly exposed mark;
+/// [`ChangeError::Package`] when either package cannot be read.
+pub(crate) fn check_exposed_final_marks(before: &[u8], after: &[u8]) -> Result<(), ChangeError> {
+    let before = open(before)?;
+    let after = open(after)?;
+    newly_exposed(
+        exposed_final_marks(&before, &main_part(&before)),
+        exposed_final_marks(&after, &main_part(&after)),
+    )
+}
+
+/// The first of `after` that `before` does not account for. Marks are
+/// compared as counted keys, not as a set: two cells may carry one `w:id`
+/// (or none), and one already final must not hide another newly so.
+fn newly_exposed(before: Vec<ExposedMark>, after: Vec<ExposedMark>) -> Result<(), ChangeError> {
+    let mut had: HashMap<String, usize> = HashMap::new();
+    for mark in before {
+        *had.entry(mark.key).or_default() += 1;
+    }
+    for mark in after {
+        match had.get_mut(&mark.key) {
+            Some(left) if *left > 0 => *left -= 1,
+            _ => {
+                return Err(ChangeError::ExposedFinalMark {
+                    container: mark.container,
+                    path: mark.path,
+                    paragraph: mark.paragraph,
+                    revision: mark.revision,
+                    kind: mark.kind,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// A final paragraph mark carrying `w:ins` or `w:del` that no row covers.
 struct ExposedMark {
     key: String,
@@ -1614,10 +1652,13 @@ struct ExposedMark {
 
 /// Final `w:ins` / `w:del` marks in `pkg`, one per container that ends on
 /// them. A cell counts only when its row does not carry the same revision
-/// ([`crate::validate::uncovered_final_marks`]). The body's, a header's and
-/// a note's last paragraph count on their own: Word resolves a body's final
-/// mark, so validate does not flag it, and a selective pass still must not
-/// create one (#1693). A final `moveTo` or `moveFrom` is not a mark here.
+/// ([`crate::validate::uncovered_final_marks`]). The body's, a header's or
+/// footer's, a note's, a text box's and a comment's last paragraph count
+/// on their own: Word resolves a body's final mark, so validate does not
+/// flag it, and a selective pass still must not create one (#1693). Both
+/// branches of an `mc:AlternateContent` are walked. A final `moveTo` or
+/// `moveFrom` is not a mark here, and a container whose last block is a
+/// table has no final paragraph mark.
 fn exposed_final_marks(pkg: &PartFs, main: &str) -> Vec<ExposedMark> {
     let mut out = Vec::new();
     for (part, styles) in revision_bearing_parts(pkg) {
@@ -1633,60 +1674,47 @@ fn exposed_final_marks(pkg: &PartFs, main: &str) -> Vec<ExposedMark> {
             continue;
         };
         let story = story_id(main, &part);
-        for cell in dom.descendants(root, Some(&W::tc())) {
-            let site = MarkSite {
-                part: &part,
-                story: &story,
-                container: "cell",
-                node: cell,
-            };
+        let site = |container: &'static str, node: NodeId| MarkSite {
+            part: &part,
+            story: &story,
+            container,
+            node,
+        };
+        dom.for_each_descendant_element(root, Some(&W::tc()), |cell| {
             for (paragraph, kind) in crate::validate::uncovered_final_marks(&dom, cell) {
-                record_exposed_mark(&mut out, &dom, &site, paragraph, kind);
+                record_exposed_mark(&mut out, &dom, &site("cell", cell), paragraph, kind);
             }
-        }
+        });
         if let Some(body) = dom.element(root, &W::body()) {
-            record_container_mark(
-                &mut out,
-                &dom,
-                &MarkSite {
-                    part: &part,
-                    story: &story,
-                    container: "body",
-                    node: body,
-                },
-            );
-        } else if dom.name_is(root, &W::hdr()) || dom.name_is(root, &W::ftr()) {
-            record_container_mark(
-                &mut out,
-                &dom,
-                &MarkSite {
-                    part: &part,
-                    story: &story,
-                    container: "header",
-                    node: root,
-                },
-            );
+            record_container_mark(&mut out, &dom, &site("body", body));
+        } else if dom.name_is(root, &W::hdr()) {
+            record_container_mark(&mut out, &dom, &site("header", root));
+        } else if dom.name_is(root, &W::ftr()) {
+            record_container_mark(&mut out, &dom, &site("footer", root));
         }
         for name in [W::footnote(), W::endnote()] {
-            for note in dom.descendants(root, Some(&name)) {
-                let separator = dom
-                    .attribute(note, &W::type_())
-                    .is_some_and(|kind| kind == "separator" || kind == "continuationSeparator");
-                if separator {
-                    continue;
+            dom.for_each_descendant_element(root, Some(&name), |note| {
+                // Separators and the continuation notice are not content
+                // notes; the story enumeration skips them too.
+                let structural = dom.attribute(note, &W::type_()).is_some_and(|kind| {
+                    matches!(
+                        kind,
+                        "separator" | "continuationSeparator" | "continuationNotice"
+                    )
+                });
+                if !structural {
+                    record_container_mark(&mut out, &dom, &site("note", note));
                 }
-                record_container_mark(
-                    &mut out,
-                    &dom,
-                    &MarkSite {
-                        part: &part,
-                        story: &story,
-                        container: "note",
-                        node: note,
-                    },
-                );
-            }
+            });
         }
+        for name in crate::inspect::text_box_names() {
+            dom.for_each_descendant_element(root, Some(&name), |text_box| {
+                record_container_mark(&mut out, &dom, &site("textbox", text_box));
+            });
+        }
+        dom.for_each_descendant_element(root, Some(&W::name("comment")), |comment| {
+            record_container_mark(&mut out, &dom, &site("comment", comment));
+        });
     }
     out
 }
@@ -1699,17 +1727,21 @@ struct MarkSite<'a> {
     node: NodeId,
 }
 
-/// The last paragraph of `site`, when its mark is inserted or deleted.
+/// The last block of `site`, when it is a paragraph whose mark is inserted
+/// or deleted. A container that ends in a table has no final mark.
 fn record_container_mark(out: &mut Vec<ExposedMark>, dom: &Dom, site: &MarkSite<'_>) {
-    let Some(paragraph) = crate::validate::last_block_paragraph(dom, site.node) else {
+    let Some(&paragraph) = crate::validate::container_blocks(dom, site.node).last() else {
         return;
     };
+    if !dom.name_is(paragraph, &W::p()) {
+        return;
+    }
     for kind in ["ins", "del"] {
         record_exposed_mark(out, dom, site, paragraph, kind);
     }
 }
 
-/// Record `paragraph`'s `kind` mark when it has a `w:id`.
+/// Record `paragraph`'s `kind` mark, with or without a `w:id`.
 fn record_exposed_mark(
     out: &mut Vec<ExposedMark>,
     dom: &Dom,
@@ -1724,15 +1756,21 @@ fn record_exposed_mark(
     else {
         return;
     };
-    let Some(wid) = dom.attribute(revision, &W::id()) else {
-        return;
-    };
+    let wid = dom.attribute(revision, &W::id());
     out.push(ExposedMark {
-        key: format!("{}\u{0}{}\u{0}{kind}\u{0}{wid}", site.part, site.container),
+        key: format!(
+            "{}\u{0}{}\u{0}{kind}\u{0}{}",
+            site.part,
+            site.container,
+            wid.unwrap_or_default()
+        ),
         container: site.container,
         path: crate::validate::element_path(dom, site.node),
         paragraph: crate::validate::element_path(dom, paragraph),
-        revision: crate::ids::ChangeId::new(site.story, wid).short(),
+        revision: wid.map_or_else(
+            || "(no w:id)".to_string(),
+            |wid| crate::ids::ChangeId::new(site.story, wid).short(),
+        ),
         kind,
     });
 }

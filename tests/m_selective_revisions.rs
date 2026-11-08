@@ -1742,29 +1742,47 @@ fn mark_id(pkg: &[u8], kind: ChangeKind) -> String {
         .id
 }
 
-fn assert_refuses_exposed_mark(pkg: &[u8], side: MoveSide, container: &str, revision: &str) {
+fn assert_refuses_exposed_mark(
+    pkg: &[u8],
+    side: MoveSide,
+    container: &str,
+    revision: &str,
+    kind: &str,
+) {
     let selected = move_text_id(pkg, side);
     match reject_changes(pkg, &filter_ids(&[&selected])) {
-        Err(err) => {
-            let msg = err.to_string();
-            assert!(
-                msg.contains(container) && msg.contains(revision) && msg.contains("paragraph"),
-                "reject {selected} refusal should name {container}, {revision} and the paragraph: {msg}"
-            );
+        Err(ChangeError::ExposedFinalMark {
+            container: got_container,
+            revision: got_revision,
+            kind: got_kind,
+            paragraph,
+            ..
+        }) => {
+            assert_eq!(got_container, container, "reject {selected}");
+            assert_eq!(got_revision, revision, "reject {selected}");
+            assert_eq!(got_kind, kind, "reject {selected}");
+            assert!(paragraph.contains("w:p"), "reject {selected}: {paragraph}");
         }
-        Ok(out) => {
-            let findings = jubarte::validate::validate(&out).unwrap();
-            let codes: Vec<_> = findings.iter().map(|f| f.code.as_str()).collect::<Vec<_>>();
-            assert!(
-                !codes.contains(&"CELL_FINAL_MARK_REVISION"),
-                "reject {selected} left {codes:?}; want a refusal naming {container} {revision} or a document without CELL_FINAL_MARK_REVISION"
-            );
-            let xml = part_string(&out, "word/document.xml").unwrap_or_default();
-            assert!(
-                xml.contains(revision) || xml.contains("Inserted."),
-                "unselected revision {revision} did not survive: {xml}"
-            );
-        }
+        other => panic!(
+            "reject {selected}: want ExposedFinalMark, got {:?}",
+            other.map(|_| "a document")
+        ),
+    }
+}
+
+/// The typed refusal of rejecting `selected` in `pkg`.
+fn exposed(pkg: &[u8], selected: &str) -> (&'static str, String, &'static str) {
+    match reject_changes(pkg, &filter_ids(&[selected])) {
+        Err(ChangeError::ExposedFinalMark {
+            container,
+            revision,
+            kind,
+            ..
+        }) => (container, revision, kind),
+        other => panic!(
+            "reject {selected}: want ExposedFinalMark, got {:?}",
+            other.map(|_| "a document")
+        ),
     }
 }
 
@@ -1805,7 +1823,7 @@ fn exposed_final_mark_rejecting_either_move_side_refuses_an_inserted_cell_mark()
     let revision = mark_id(&pkg, ChangeKind::Insertion);
     assert_eq!(revision, "r1");
     for side in [MoveSide::To, MoveSide::From] {
-        assert_refuses_exposed_mark(&pkg, side, "cell", &revision);
+        assert_refuses_exposed_mark(&pkg, side, "cell", &revision, "ins");
     }
 }
 
@@ -1815,7 +1833,7 @@ fn exposed_final_mark_rejecting_either_move_side_refuses_a_deleted_cell_mark() {
     let revision = mark_id(&pkg, ChangeKind::Deletion);
     assert_eq!(revision, "r1");
     for side in [MoveSide::To, MoveSide::From] {
-        assert_refuses_exposed_mark(&pkg, side, "cell", &revision);
+        assert_refuses_exposed_mark(&pkg, side, "cell", &revision, "del");
     }
 }
 
@@ -1968,4 +1986,149 @@ fn exposed_final_mark_unrelated_reject_does_not_refuse_a_preexisting_finding() {
     let xml = part_string(&out, "word/document.xml").unwrap();
     assert!(xml.contains(">Inserted.</w:t>"), "{xml}");
     assert!(xml.contains(r#"w:id="1""#), "{xml}");
+}
+
+/// #2096 review: a footer is reported as a footer, not a header.
+#[test]
+fn exposed_final_mark_rejecting_a_move_in_a_footer_names_the_footer() {
+    let footer = format!(
+        r#"<w:ftr xmlns:w="{}" xmlns:r="{}">{}{}{}</w:ftr>"#,
+        common::docx::W_NS,
+        common::docx::R_NS,
+        move_paragraph("moveFrom", "3", "5", "4"),
+        revised_paragraph("ins"),
+        move_paragraph("moveTo", "7", "6", "8")
+    );
+    let pkg = docx_with_sect(
+        r#"<w:p><w:r><w:t>Body.</w:t></w:r></w:p>"#,
+        &[Part {
+            name: "word/footer1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer",
+            xml: &footer,
+        }],
+        r#"<w:footerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let selected = move_text_id(&pkg, MoveSide::To);
+    let revision = mark_id(&pkg, ChangeKind::Insertion);
+    assert_eq!(exposed(&pkg, &selected), ("footer", revision, "ins"));
+}
+
+/// #2096 review: a text box is a container of its own; settling a move
+/// there must not leave its last paragraph mark tracked.
+#[test]
+fn exposed_final_mark_rejecting_a_move_in_a_text_box_refuses() {
+    let body = format!(
+        r#"{}<w:p><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml" style="width:200pt;height:60pt"><v:textbox><w:txbxContent>{}{}</w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p><w:p><w:r><w:t>After.</w:t></w:r></w:p>"#,
+        move_paragraph("moveFrom", "3", "5", "4"),
+        revised_paragraph("ins"),
+        move_paragraph("moveTo", "7", "6", "8")
+    );
+    let pkg = docx(&body);
+    let selected = move_text_id(&pkg, MoveSide::To);
+    let revision = mark_id(&pkg, ChangeKind::Insertion);
+    assert_eq!(exposed(&pkg, &selected), ("textbox", revision, "ins"));
+}
+
+/// #2096 review: two cells may carry one `w:id`. A mark already final in
+/// one cell must not hide the same id newly exposed in another.
+#[test]
+fn exposed_final_mark_same_id_in_another_cell_is_still_refused() {
+    let body = format!(
+        "{}{}{}<w:p><w:r><w:t>After.</w:t></w:r></w:p>",
+        cell_with(&revised_paragraph("ins")),
+        move_paragraph("moveFrom", "3", "5", "4"),
+        cell_with(&format!(
+            "{}{}",
+            revised_paragraph("ins"),
+            move_paragraph("moveTo", "7", "6", "8")
+        ))
+    );
+    let pkg = docx(&body);
+    let selected = move_text_id(&pkg, MoveSide::To);
+    let (container, _, kind) = exposed(&pkg, &selected);
+    assert_eq!((container, kind), ("cell", "ins"));
+}
+
+/// #2096 review: a paragraph mark without `w:id` is still a mark.
+#[test]
+fn exposed_final_mark_without_an_id_is_refused() {
+    let idless = format!(
+        r#"<w:p><w:pPr><w:rPr><w:ins {ANN_MOVE}/></w:rPr></w:pPr><w:ins w:id="2" {ANN_MOVE}><w:r><w:t>Inserted.</w:t></w:r></w:ins></w:p>"#
+    );
+    let body = format!(
+        "{}{}<w:p><w:r><w:t>After.</w:t></w:r></w:p>",
+        move_paragraph("moveFrom", "3", "5", "4"),
+        cell_with(&format!(
+            "{idless}{}",
+            move_paragraph("moveTo", "7", "6", "8")
+        ))
+    );
+    let pkg = docx(&body);
+    let selected = move_text_id(&pkg, MoveSide::To);
+    let (container, _, kind) = exposed(&pkg, &selected);
+    assert_eq!((container, kind), ("cell", "ins"));
+}
+
+/// #2096 review: a body that ends in a table after the settlement has no
+/// final paragraph mark; an earlier paragraph is not one.
+#[test]
+fn exposed_final_mark_ignores_a_paragraph_before_a_closing_table() {
+    let body = format!(
+        "{}{}{}{}",
+        move_paragraph("moveFrom", "3", "5", "4"),
+        revised_paragraph("ins"),
+        cell_with(r#"<w:p><w:r><w:t>Cell.</w:t></w:r></w:p>"#),
+        move_paragraph("moveTo", "7", "6", "8")
+    );
+    let pkg = docx(&body);
+    let selected = move_text_id(&pkg, MoveSide::To);
+    let out = reject_changes(&pkg, &filter_ids(&[&selected]));
+    assert!(out.is_ok(), "{:?}", out.err());
+}
+
+/// #2096 review: an edit plan settles its accepts and its rejects as one
+/// step. An accept that exposes a mark the plan's reject then removes is
+/// not a refusal.
+#[test]
+fn exposed_final_mark_is_judged_after_the_whole_plan_settles() {
+    let deleted = format!(
+        r#"<w:p><w:pPr><w:rPr><w:del w:id="3" {ANN_MOVE}/></w:rPr></w:pPr><w:del w:id="4" {ANN_MOVE}><w:r><w:delText>Gone.</w:delText></w:r></w:del></w:p>"#
+    );
+    let pkg = docx(&format!(
+        "{}<w:p><w:r><w:t>After.</w:t></w:r></w:p>",
+        cell_with(&format!("{}{deleted}", revised_paragraph("ins")))
+    ));
+    let listed = list_changes(&pkg).unwrap();
+    let of = |kind: ChangeKind| -> Vec<String> {
+        listed
+            .iter()
+            .filter(|c| c.kind == kind)
+            .map(|c| c.id.clone())
+            .collect()
+    };
+    let (accept, reject) = (of(ChangeKind::Deletion), of(ChangeKind::Insertion));
+    assert!(!accept.is_empty() && !reject.is_empty(), "{listed:?}");
+    // Accepting the deletion alone does expose the inserted mark.
+    let ids: Vec<&str> = accept.iter().map(String::as_str).collect();
+    assert!(matches!(
+        accept_changes(&pkg, &filter_ids(&ids)),
+        Err(ChangeError::ExposedFinalMark { .. })
+    ));
+    let plan = jubarte::edit::EditPlan::from_json(
+        &serde_json::json!({
+            "schema_version": 1,
+            "author": "A",
+            "resolve_revisions": {"accept": {"ids": accept}, "reject": {"ids": reject}},
+            "operations": []
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let out = jubarte::edit::apply_plan(&pkg, &plan).expect("the settled plan exposes nothing");
+    let xml = part_string(&out.redline, "word/document.xml").unwrap();
+    assert!(
+        !xml.contains("Gone.") && !xml.contains("Inserted."),
+        "{xml}"
+    );
 }

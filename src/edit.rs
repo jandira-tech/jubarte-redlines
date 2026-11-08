@@ -1983,6 +1983,7 @@ fn settle(
     probe: Opened,
     syntax: PlanSyntax,
 ) -> Result<Settled, EditError> {
+    let original = source;
     if plan.others.keeps() {
         let wholesale = match plan.existing_revisions {
             ExistingRevisions::Accept => Some("accept"),
@@ -2040,12 +2041,19 @@ fn settle(
             (flattened, reopened, true)
         }
     };
+    let changed = resolved_source.is_some() || flattened;
+    // Accepts, rejects and the global policy settle in separate passes;
+    // only the settled document may not expose a final mark (#2096).
+    if changed {
+        crate::changes::check_exposed_final_marks(original, &base)
+            .map_err(|e| selection_error(e, syntax, ""))?;
+    }
     Ok(Settled {
         base,
         opened,
         resolved_revisions,
         comment_changes,
-        changed: resolved_source.is_some() || flattened,
+        changed,
     })
 }
 
