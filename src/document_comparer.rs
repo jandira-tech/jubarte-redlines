@@ -5785,7 +5785,7 @@ fn adopt_revised_header_footer(
     // its own, which may be another B part's.
     let mut renamed: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for r in refs {
-        let is_header = d2.name(r) == Some(href.clone());
+        let is_header = d2.name(r).as_ref() == Some(&href);
         let ty = d2
             .attribute(r, &W::type_())
             .unwrap_or("default")

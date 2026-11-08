@@ -3373,12 +3373,12 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         let cell_after = dom
             .nodes_after_self(e)
             .into_iter()
-            .find(|&s| dom.name(s) == Some(tc_name.clone()));
+            .find(|&s| dom.name(s).as_ref() == Some(&tc_name));
         let cell_after_is_deleted = cell_after.is_some_and(|ca| has_cell_del(dom, ca));
-        if dom.name(e) == Some(tc_name.clone()) && (cell_after_is_deleted || has_cell_del(dom, e)) {
+        if dom.name(e).as_ref() == Some(&tc_name) && (cell_after_is_deleted || has_cell_del(dom, e)) {
             let anchor = std::iter::once(e)
                 .chain(content_elements_before_self(dom, e))
-                .find(|&z| dom.name(z) == Some(tc_name.clone()) && !has_cell_del(dom, z));
+                .find(|&z| dom.name(z).as_ref() == Some(&tc_name) && !has_cell_del(dom, z));
             return (true, anchor);
         }
         (false, Some(e))
@@ -3420,7 +3420,7 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         let rest: Vec<NodeId> = dom
             .elements(current_tc_pr, None)
             .into_iter()
-            .filter(|&e| dom.name(e) != Some(grid_span_name.clone()))
+            .filter(|&e| dom.name(e).as_ref() != Some(&grid_span_name))
             .collect();
         for e in rest {
             tcpr_kids.push(dom.clone_subtree(e));
@@ -3436,7 +3436,7 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         let body_kids: Vec<NodeId> = dom
             .elements(first, None)
             .into_iter()
-            .filter(|&e| dom.name(e) != Some(tcpr_name.clone()))
+            .filter(|&e| dom.name(e).as_ref() != Some(&tcpr_name))
             .collect();
         for e in body_kids {
             let c = dom.clone_subtree(e);

@@ -1,0 +1,3 @@
+## 2024-05-14 - [Avoid cloning XName objects for dom.name_is/Some(XName) comparisons]
+**Learning:** `XName` objects contain an `Arc<str>`, so `.clone()` performs an atomic increment. Many hot loops in `src/comparer/lcs.rs` and other files were calling `.clone()` when passing references to `dom.name_is(ae, &name.clone())` or doing equality comparisons like `dom.name(e) == Some(name.clone())`. This caused unnecessary allocation/atomic increment overhead.
+**Action:** Always use references directly for `dom.name_is` (e.g. `dom.name_is(ae, &name)`) and for option matching use `.as_ref()` before comparing (e.g. `dom.name(e).as_ref() == Some(&name)`).
