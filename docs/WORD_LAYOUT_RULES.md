@@ -338,6 +338,13 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
     the page, and 32.76pt after when the text is short. A later row that
     asks for another width, and widths equal to the grid, stay 120.03pt
     after.
+  - Word convert 2026-11-08 (#2123): a single row of two 4000-twip cells
+    over a 2000/6000 grid puts R at 272.40pt, L at 72.48, so one row is
+    enough. (The old mini 342 test held that grid on a Quartz score.)
+  - Rows agree at the authored unit: 4000 and 4001 twips disagree. A
+    percent column counts its pictures and nested tables, not the length
+    of vertical text. When a word outgrows an agreed column, that column
+    widens from the agreed widths; the replaced grid is not restored.
 - **Tables with nothing between them are one table**, f2fd0c8b. The second
   table's rows keep their own cell widths and start at the joined table's
   left edge, whatever their own `jc`. The joined table is aligned by its
