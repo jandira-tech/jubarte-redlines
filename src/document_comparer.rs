@@ -5340,19 +5340,28 @@ fn refuse_past_story_budget(
 fn refuse_unatomizable(dom: &Dom, root: NodeId, story: &str) -> Result<(), OpcError> {
     let content_part = W::name("contentPart");
     let sect_pr = W::sect_pr();
+    let custom_xml = W::custom_xml();
+    // The atomizer unwraps `w:customXml` first, so a sectPr's parent is
+    // its nearest ancestor that is not one: two sectPr meet there.
+    let unwrapped_parent = |mut node: NodeId| loop {
+        let parent = dom.parent(node)?;
+        if !dom.name_is(parent, &custom_xml) {
+            return Some(parent);
+        }
+        node = parent;
+    };
     let mut sect_parents = std::collections::HashSet::new();
     let mut bad = None;
     dom.find_descendant_element(root, None, |e| {
         if dom.name_is(e, &sect_pr) {
-            if let Some(parent) = dom.parent(e)
+            if let Some(parent) = unwrapped_parent(e)
                 && !sect_parents.insert(parent)
             {
                 bad = Some("Document contains two sectPr in one story element".to_string());
             }
         } else if dom.name_is(e, &content_part)
             || dom.name(e).is_some_and(|name| {
-                crate::comparer::tables::INVALID_ELEMENTS.contains(&name)
-                    && name.local_name() != "customXml"
+                crate::comparer::tables::INVALID_ELEMENTS.contains(&name) && name != custom_xml
             })
         {
             let name = dom

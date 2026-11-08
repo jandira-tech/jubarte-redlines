@@ -297,43 +297,24 @@ fn salt_field_results(dom: &Dom, list: &mut [ComparisonUnitAtom]) {
 fn unwrap_custom_xml(dom: &mut Dom, content_parent: NodeId) {
     let element = W::custom_xml();
     let props = W::name("customXmlPr");
-    loop {
-        let nodes = dom.descendants(content_parent, Some(&element));
-        if nodes.is_empty() {
-            break;
+    // `descendants` is pre-order, so in reverse every wrapper comes after
+    // the wrappers nested inside it: one pass unwraps deepest first, and
+    // a lifted child stays inside its outer wrapper until that one goes.
+    for node in dom
+        .descendants(content_parent, Some(&element))
+        .into_iter()
+        .rev()
+    {
+        if dom.parent(node).is_none() {
+            continue;
         }
-        // A leaf has no nested `w:customXml`. `descendants` does not include
-        // the node itself, so an empty match is a leaf.
-        let mut leaves: Vec<NodeId> = nodes
-            .iter()
-            .copied()
-            .filter(|&node| dom.descendants(node, Some(&element)).is_empty())
-            .collect();
-        if leaves.is_empty() {
-            leaves = nodes;
-        }
-        let mut progressed = false;
-        for node in leaves {
-            if dom.parent(node).is_none() {
-                continue;
+        for child in dom.nodes(node) {
+            if !dom.name_is(child, &props) {
+                dom.remove(child);
+                dom.add_before_self(node, child);
             }
-            let kids: Vec<NodeId> = dom
-                .nodes(node)
-                .into_iter()
-                .filter(|&child| !dom.name_is(child, &props))
-                .collect();
-            for child in kids {
-                if dom.parent(child).is_some() {
-                    dom.remove(child);
-                    dom.add_before_self(node, child);
-                }
-            }
-            dom.remove(node);
-            progressed = true;
         }
-        if !progressed {
-            break;
-        }
+        dom.remove(node);
     }
 }
 

@@ -323,6 +323,49 @@ fn compare_unwraps_a_block_level_custom_xml_instead_of_refusing_it() {
     );
 }
 
+/// A `w:sectPr` inside a `w:customXml` lands beside the body's own
+/// `w:sectPr` once the wrapper is unwrapped: the gate must see the
+/// unwrapped parent and refuse with `UNSUPPORTED_CONTENT`, not let the
+/// atomizer panic on two sectPr (#2074 review, Bugbot).
+#[test]
+fn compare_refuses_a_sect_pr_that_unwrapping_custom_xml_would_double() {
+    let doc = |other: &str| {
+        package_with_main(&format!(
+            r#"<w:document xmlns:w="{W_NS}"><w:body><w:p><w:r><w:t>{other}</w:t></w:r></w:p><w:customXml w:element="c"><w:sectPr/></w:customXml><w:sectPr/></w:body></w:document>"#
+        ))
+    };
+    let (a, b) = (doc("Other."), doc("Other changed."));
+    for (x, y) in [(&a, &b), (&b, &a)] {
+        let err = compare_documents(x, y, "Author").expect_err("two sectPr after unwrap → Err");
+        let text = format!("{err}");
+        assert!(
+            text.contains("UNSUPPORTED_CONTENT: ") && text.contains("sectPr"),
+            "{text}"
+        );
+    }
+}
+
+/// Nested `w:customXml` wrappers, as deep as admission allows (256), all
+/// unwrap and keep their content (#2074 review, Jules).
+#[test]
+fn compare_unwraps_deeply_nested_custom_xml() {
+    let depth = 250;
+    let doc = |other: &str| {
+        let open = r#"<w:customXml w:element="c">"#.repeat(depth);
+        let close = "</w:customXml>".repeat(depth);
+        package_with_main(&format!(
+            r#"<w:document xmlns:w="{W_NS}"><w:body>{open}<w:p><w:r><w:t>Old.</w:t></w:r></w:p>{close}<w:p><w:r><w:t>{other}</w:t></w:r></w:p></w:body></w:document>"#
+        ))
+    };
+    let out = compare_documents(&doc("Other."), &doc("Other changed."), "Author")
+        .expect("nested customXml compares");
+    let xml = main_document_xml(&out);
+    assert!(
+        xml.contains(">Old.</w:t>") && !xml.contains("<w:customXml"),
+        "{xml}"
+    );
+}
+
 /// The default edit path compares even when the plan never touches the
 /// custom XML element (#1674).
 #[test]
