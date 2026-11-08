@@ -4113,9 +4113,18 @@ fn deleted_field_spans(dom: &Dom, root: NodeId) -> Vec<(NodeId, NodeId)> {
 /// tracked-deleted. Those characters may be two deletions with the result
 /// between them; Word removes the result with the field (#1285). A result
 /// already inside the same deletion needs nothing: accept removes it.
-fn drop_deleted_field_results(dom: &mut Dom, root: NodeId) {
-    let spans = deleted_field_spans(dom, root);
-    for (begin_del, end_del) in spans {
+///
+/// The result is marked deleted here, before the comment, bookmark and
+/// permission prepasses, so its ranges settle as in any other deletion: a
+/// range wholly inside it goes (or is rescued), one that reaches past it
+/// keeps its surviving characters and both ends. Range markers stay where
+/// they are; only content moves into a `w:del` (an insertion becomes one).
+///
+/// The begin and end must share a parent. A field whose result crosses a
+/// paragraph keeps its result, as before #1285: what Word does with the
+/// paragraph marks inside it is not yet probed.
+fn delete_deleted_field_results(dom: &mut Dom, root: NodeId) {
+    for (begin_del, end_del) in deleted_field_spans(dom, root) {
         if begin_del == end_del {
             continue;
         }
@@ -4132,10 +4141,48 @@ fn drop_deleted_field_results(dom: &mut Dom, root: NodeId) {
             .skip(1)
             .take_while(|&child| child != end_del)
             .collect();
+        let attributes = dom.attributes(begin_del);
         for child in between {
+            if is_range_marker(dom, child)
+                || dom.name_is(child, &W::del())
+                || dom.name_is(child, &W::move_from())
+            {
+                continue;
+            }
+            if dom.name_is(child, &W::ins()) {
+                dom.set_name(child, W::del());
+                continue;
+            }
+            let del = dom.new_element(W::del());
+            for (name, value) in &attributes {
+                dom.set_attribute_value(del, name, Some(value));
+            }
+            dom.add_before_self(child, del);
             dom.remove(child);
+            dom.add(del, child);
         }
     }
+}
+
+/// A range or proofing marker: it holds no character of its own.
+fn is_range_marker(dom: &Dom, node: NodeId) -> bool {
+    dom.name(node).is_some_and(|name| {
+        name.namespace_name() == W::URI
+            && matches!(
+                name.local_name(),
+                "bookmarkStart"
+                    | "bookmarkEnd"
+                    | "commentRangeStart"
+                    | "commentRangeEnd"
+                    | "permStart"
+                    | "permEnd"
+                    | "moveFromRangeStart"
+                    | "moveFromRangeEnd"
+                    | "moveToRangeStart"
+                    | "moveToRangeEnd"
+                    | "proofErr"
+            )
+    })
 }
 
 /// A.10 — `AcceptRevisionsForPart` (:1314) at content scope: the exact
@@ -4176,6 +4223,9 @@ fn accept_content(
         // content on Accept (#1243), which is A.2's own doing, and A.10
         // strips every leftover marker afterwards.
         let e = normalize_orphan_moves(dom, e, OrphanMovePass::AcceptElements);
+        // #1285: a field whose begin and end are both deleted takes its
+        // result with it, ranges settled like any deletion's.
+        delete_deleted_field_results(dom, e);
         if keep_comments {
             kept.extend(comments::keep_wholly_deleted_comments(dom, e));
         }
@@ -4183,9 +4233,6 @@ fn accept_content(
         bookmarks::drop_wholly_deleted_bookmarks(dom, e);
         drop_wholly_deleted_permissions(dom, e);
         let e = fix_up_deleted_or_inserted_field_codes_transform(dom, e);
-        // #1285: a field whose begin and end are both deleted takes its
-        // result with it. The result may sit outside those deletions.
-        drop_deleted_field_results(dom, e);
         let contains_move_from = !dom.descendants(e, Some(&W::move_from())).is_empty();
         let e = {
             let v = accept_move_from_move_to_transform(dom, e);

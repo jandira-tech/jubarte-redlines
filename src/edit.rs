@@ -5926,10 +5926,20 @@ impl<'p> Transaction<'p> {
                     format!("{subject} sits inside {}", self.opaque_structure(run))
                 } else {
                     // The result is visible, and the refusal names the
-                    // deletions of the field's characters (#1285).
-                    let mut lines = vec![format!("{subject} sits inside the result of a field")];
-                    for holder in holders {
-                        lines.push(self.revision_hint(holder, &format!("{subject} is inside")));
+                    // deletions of the field's characters (#1285): one hint
+                    // each, then one structured refusal for all of them.
+                    // The message opens with that refusal's lead and first
+                    // id, as `revision_next_actions` reads it.
+                    let lead = format!(
+                        "{subject} sits inside the result of a field whose characters are in"
+                    );
+                    let lines: Vec<String> = holders
+                        .iter()
+                        .map(|&holder| self.revision_hint(holder, &lead))
+                        .collect();
+                    if self.revision_refusal.borrow().is_some() {
+                        self.revision_refusal
+                            .replace(Some(refusal::RevisionRefusal::new(self, &lead, &holders)));
                     }
                     lines.join("\n")
                 }
@@ -8441,9 +8451,6 @@ fn locate(
     Ok((start, end))
 }
 
-/// A run directly inside a paragraph's pending insertion is editable.
-/// Other wrappers and complex field results retain their refusal: an
-/// insertion around a field does not make that field ordinary text.
 /// The deleted field characters that enclose `run`: each `w:del` or
 /// `w:moveFrom` of a `begin` and its matching `end`. The result between
 /// them is still shown; an edit of it names these deletions (#1285).
@@ -8494,6 +8501,9 @@ fn deleted_field_revisions(dom: &Dom, run: NodeId) -> Vec<NodeId> {
     holders
 }
 
+/// A run directly inside a paragraph's pending insertion is editable.
+/// Other wrappers and complex field results retain their refusal: an
+/// insertion around a field does not make that field ordinary text.
 fn editable_insertion(dom: &Dom, piece: &Piece) -> Option<NodeId> {
     let run = run_of(piece);
     let ins = dom.parent(run).filter(|&n| dom.name_is(n, &W::ins()))?;

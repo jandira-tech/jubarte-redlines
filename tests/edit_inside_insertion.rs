@@ -1081,6 +1081,103 @@ fn accepting_a_deleted_field_drops_its_result() {
     );
 }
 
+/// A paragraph whose field `begin` (r1) and `end` (r2) Bob deleted while
+/// the result between them stays: `before` precedes the field, `result` is
+/// its result, `after` follows it.
+fn deleted_field(before: &str, result: &str, after: &str) -> String {
+    format!(
+        r#"<w:p>{before}<w:del w:id="1" w:author="Bob" w:date="{OLD_DATE}"><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:delInstrText xml:space="preserve"> TITLE </w:delInstrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r></w:del>{result}<w:del w:id="2" w:author="Bob" w:date="{OLD_DATE}"><w:r><w:fldChar w:fldCharType="end"/></w:r></w:del>{after}</w:p>"#
+    )
+}
+
+#[test]
+fn an_edit_of_a_deleted_fields_result_offers_routes_for_both_deletions() {
+    // One structured refusal names r1 and r2, and its header is the one
+    // `revision_next_actions` reads, so a client gets its routes (#1285).
+    let source = docx(&deleted_field(
+        "",
+        &format!(
+            r#"<w:ins w:id="6" w:author="Alice" w:date="{OLD_DATE}"><w:r><w:t>alpha beta gamma</w:t></w:r></w:ins>"#
+        ),
+        "",
+    ));
+    let e = apply_plan(&source, &plan("Carol Diaz", replace("beta", "delta"))).unwrap_err();
+    assert_eq!(e.revision_refusals.len(), 1, "{e}");
+    let refusal = serde_json::to_value(&e.revision_refusals[0]).unwrap();
+    assert_eq!(
+        refusal["revisions"].as_array().unwrap().len(),
+        2,
+        "{refusal}"
+    );
+    let actions = e.revision_next_actions("in.docx", &jubarte::inspect::source_sha256(&source));
+    assert!(!actions.is_empty(), "no routes for:\n{e}");
+}
+
+#[test]
+fn accepting_a_deleted_field_rescues_a_comment_on_its_result() {
+    // The comment's whole range is the result Accept drops. With the
+    // keep-comments opt-in its thread stays on an empty anchor.
+    let body = deleted_field(
+        r#"<w:r><w:t xml:space="preserve">Keep </w:t></w:r>"#,
+        r#"<w:commentRangeStart w:id="0"/><w:r><w:t>alpha</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r>"#,
+        "",
+    );
+    let comment = r#"<w:comment w:id="0" w:author="Ann" w:date="2026-10-17T09:00:00Z" w:initials="A"><w:p><w:r><w:t>Note</w:t></w:r></w:p></w:comment>"#;
+    let comments = format!(
+        r#"<w:comments xmlns:w="{}">{comment}</w:comments>"#,
+        common::docx::W_NS
+    );
+    let source = common::docx::docx_with(
+        &body,
+        &[common::docx::Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        }],
+    );
+    let kept = jubarte::changes::accept_changes_keeping_comments(&source, &ChangeFilter::default())
+        .expect("accept");
+    let document = part_string(&kept.document, "word/document.xml").unwrap();
+    assert!(
+        !document.contains("alpha"),
+        "accept kept the field result:\n{document}"
+    );
+    assert!(
+        document.contains(r#"<w:commentRangeStart w:id="0""#)
+            && document.contains(r#"<w:commentReference w:id="0""#),
+        "the rescued comment lost its anchor:\n{document}"
+    );
+    assert!(
+        part_string(&kept.document, "word/comments.xml").is_some_and(|c| c.contains("Note")),
+        "the rescued comment's thread is gone"
+    );
+    assert_word_valid_package(&kept.document);
+}
+
+#[test]
+fn accepting_a_deleted_field_keeps_a_bookmark_that_reaches_into_it() {
+    // The bookmark covers "Keep " before the field and ends in its result.
+    // Its surviving characters keep it.
+    let source = docx(&deleted_field(
+        r#"<w:bookmarkStart w:id="7" w:name="span"/><w:r><w:t xml:space="preserve">Keep </w:t></w:r>"#,
+        r#"<w:r><w:t>alpha</w:t></w:r><w:bookmarkEnd w:id="7"/><w:r><w:t>beta</w:t></w:r>"#,
+        "",
+    ));
+    let accepted = accept_changes(&source, &ChangeFilter::default()).expect("accept");
+    let document = part_string(&accepted, "word/document.xml").unwrap();
+    assert!(
+        !document.contains("alpha") && !document.contains("beta"),
+        "{document}"
+    );
+    assert!(
+        document.contains(r#"<w:bookmarkStart w:id="7""#)
+            && document.contains(r#"<w:bookmarkEnd w:id="7""#),
+        "the bookmark lost an end:\n{document}"
+    );
+    assert_word_valid_package(&accepted);
+}
+
 #[test]
 fn word_fixture_split_keeps_existing_nested_deletion_in_order() {
     let (source_dom, source_p) = tree(WORD);
