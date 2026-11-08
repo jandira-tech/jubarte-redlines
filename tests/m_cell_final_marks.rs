@@ -581,11 +581,11 @@ fn a_final_mark_keeps_apart_the_paragraphs_b_keeps() {
     }
 }
 
-/// A cell losing an empty paragraph while it gains words: the comparer
-/// drops one of the two empty paragraphs (#1686), and the deletion left on
-/// the final mark does not move onto `Ka.`'s, which would join `Ka.` and
-/// `Gb.`, two of B's paragraphs (GLM on #1680, round 10). Reject All still
-/// misses one empty paragraph: that is #1686.
+/// A cell losing an empty paragraph while it gains words. Accept All gives
+/// B and Reject All gives A, including the empty paragraph the cell lost
+/// (#1686). The deletion left on the final mark does not move onto `Ka.`'s,
+/// which would join `Ka.` and `Gb.`, two of B's paragraphs (GLM on #1680,
+/// round 10).
 #[test]
 fn a_dropped_empty_paragraph_does_not_join_the_paragraphs_b_keeps() {
     let pairs = [
@@ -607,6 +607,12 @@ fn a_dropped_empty_paragraph_does_not_join_the_paragraphs_b_keeps() {
             texts(&accept_revisions(&out).unwrap()),
             texts(&b),
             "{old}: Accept All\n{}",
+            part_string(&out, "word/document.xml").unwrap()
+        );
+        assert_eq!(
+            texts(&reject_revisions(&out).unwrap()),
+            texts(&a),
+            "{old}: Reject All\n{}",
             part_string(&out, "word/document.xml").unwrap()
         );
     }
