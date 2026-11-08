@@ -68,29 +68,34 @@ class SixFiles(unittest.TestCase):
 
     # A sound set: every file present, shas right, aggregates sound, jubarte
     # carrying its identity, the JSONLs holding the required keys.
-    def write_six(self, rows: int = ROWS) -> None:
+    def write_six(self, rows: int = ROWS, conversion_rows: int | None = None,
+                  set_version: str | None = None) -> None:
+        conversion_rows = rows if conversion_rows is None else conversion_rows
         redline = "\n".join([REDLINE_HEADER] + [redline_row(i) for i in range(rows)]) + "\n"
-        conversion = "\n".join([CONVERSION_HEADER] + [conversion_row(i) for i in range(rows)]) + "\n"
+        conversion = "\n".join([CONVERSION_HEADER] + [conversion_row(i) for i in range(conversion_rows)]) + "\n"
         (self.info / f"sample_redline_{VER}_{STAMP}.csv").write_text(redline)
         (self.info / f"sample_conversion_{VER}_{STAMP}.csv").write_text(conversion)
-        for name, sample, tool2 in (
-            ("results_redline", f"sample_redline_{VER}_{STAMP}.csv", "docxodus"),
-            ("results_conversion", f"sample_conversion_{VER}_{STAMP}.csv", "soffice"),
+        for name, sample, tool2, n in (
+            ("results_redline", f"sample_redline_{VER}_{STAMP}.csv", "docxodus", rows),
+            ("results_conversion", f"sample_conversion_{VER}_{STAMP}.csv", "soffice", conversion_rows),
         ):
             doc = {
                 "sample": {"csv": sample, "sha256": sha((self.info / sample).read_text()),
-                           "n": rows, "drawn": {"seed": 20261003}},
+                           "n": n, "drawn": {"seed": 20261003}},
                 "tools": {
-                    "jubarte": {"n": rows, "failures": 1, "mean": 80.0, "median": 84.0,
+                    "jubarte": {"n": n, "failures": 1, "mean": 80.0, "median": 84.0,
                                 "exact_100": 1, "at_least_90": 2, "version": f"jubarte {VER}",
                                 "commit": C40, "binary_sha256": D64,
                                 "candidate_reports": "jubarte 0.11.1"},
-                    tool2: {"n": rows, "failures": 2, "mean": 60.0, "median": 62.0,
+                    tool2: {"n": n, "failures": 2, "mean": 60.0, "median": 62.0,
                             "exact_100": 0, "at_least_90": 1, "version": tool2},
                 },
                 "comparison": {"comparator": tool2, "median_delta": 22.0, "ci95": [18.0, 26.0],
                                "bootstrap": {"reps": 2000, "seed": 42}},
             }
+            if set_version is not None:  # a fixed set (plan 7): the set names its own size
+                doc["sample"].update({"set": name[len("results_"):] + f"_{n}", "set_version": set_version})
+                doc["sample"].pop("drawn")
             (self.info / f"{name}_{VER}_{STAMP}.json").write_text(json.dumps(doc))
         website = [
             {"id": "018f" + "0" * 12, "ts": "2026-10-03T16:51:00.000Z", "key": "engine.version",
@@ -314,59 +319,92 @@ class SixFiles(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stderr)
         self.assertIn(f"sample.n is {ROWS + 2}, the sample holds {ROWS} rows", r.stderr)
 
-    def write_fixed_sets(self, conv_rows: int = 5) -> None:
-        """A redline sample of ROWS and a conversion sample of `conv_rows`.
-
-        Each results JSON names a fixed set (`set_version`). jubarte scored
-        every row. Each comparator left some rows `not_run` (#2053).
-        """
-        conv = "\n".join([CONVERSION_HEADER] + [conversion_row(i) for i in range(conv_rows)]) + "\n"
-        (self.info / f"sample_conversion_{VER}_{STAMP}.csv").write_text(conv)
-        path = self.info / f"results_conversion_{VER}_{STAMP}.json"
-        doc = json.loads(path.read_text())
-        doc["sample"].update({
-            "sha256": sha(conv), "n": conv_rows, "set": "convert_860", "set_version": 1,
-        })
-        doc["tools"]["jubarte"]["n"] = conv_rows
-        doc["tools"]["soffice"]["n"] = conv_rows - 3
-        doc["tools"]["soffice"]["not_run"] = 3
-        path.write_text(json.dumps(doc))
-        path = self.info / f"results_redline_{VER}_{STAMP}.json"
-        doc = json.loads(path.read_text())
-        doc["sample"].update({"set": "redline_600", "set_version": 1})
-        doc["tools"]["docxodus"]["n"] = ROWS - 1
-        doc["tools"]["docxodus"]["not_run"] = 1
-        path.write_text(json.dumps(doc))
-
-    def test_a_fixed_set_uses_each_samples_n_and_comparator_not_run(self) -> None:
-        self.write_fixed_sets()
-        r = self.check(rows=None)
+    def test_a_fixed_set_sample_is_held_to_its_own_size(self) -> None:
+        """A fixed set (``sample.set_version``) is checked against its results JSON's
+        ``sample.n``, so an 860-document conversion set beside a 600-pair redline set
+        passes; a drawn sample is still held to ``--rows`` (#2053)."""
+        self.write_six(rows=ROWS, conversion_rows=ROWS + 2, set_version="2026-11-03.1")
+        r = self.check()
         self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(f"jubarte: n={ROWS + 2}", r.stdout)
+        self.write_six(rows=ROWS, conversion_rows=ROWS + 2)  # drawn: --rows rules
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(f"{ROWS + 2} data rows, want {ROWS}", r.stderr)
 
-    def test_an_explicit_row_count_overrides_a_fixed_set(self) -> None:
-        self.write_fixed_sets()
-        r = self.check(rows=ROWS)
-        self.assertEqual(r.returncode, 1, r.stderr)
-        self.assertIn("5 data rows, want 3", r.stderr)
+    def test_a_fixed_set_csv_must_still_hold_the_rows_its_results_name(self) -> None:
+        """The fixed-set row count comes from ``sample.n``, and the CSV must hold it."""
+        self.write_six(rows=ROWS, conversion_rows=ROWS + 2, set_version="2026-11-03.1")
+        self._edit_results("results_conversion", sample={
+            **json.loads((self.info / f"results_conversion_{VER}_{STAMP}.json").read_text())["sample"],
+            "n": ROWS + 4})
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(f"{ROWS + 2} data rows, want {ROWS + 4}", r.stderr)
 
-    def test_jubarte_on_a_fixed_set_must_score_every_row(self) -> None:
-        self.write_fixed_sets()
-        self._edit_results("results_redline", tools={"jubarte": {"n": ROWS - 1, "not_run": 1}})
-        r = self.check(rows=None)
-        self.assertEqual(r.returncode, 1, r.stderr)
+    def test_a_fixed_set_csv_must_match_its_recorded_sha(self) -> None:
+        """A fixed-set CSV is still verified against sample.sha256 (CodeRabbit, #2054)."""
+        self.write_six(rows=ROWS, conversion_rows=ROWS + 2, set_version="2026-11-03.1")
+        path = self.info / f"sample_conversion_{VER}_{STAMP}.csv"
+        path.write_text(path.read_text().replace("clean,s0,", "clean,x0,", 1))
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("sample.sha256 is", r.stderr)
+
+    def test_a_comparator_may_record_the_documents_it_did_not_run(self) -> None:
+        """A comparator passes with ``n + not_run`` equal to the rows; jubarte must
+        score every row, and ``not_run`` must be a non-negative integer (#2053)."""
+        self._edit_results("results_redline", tools={"docxodus": {"n": ROWS - 1, "not_run": 1}})
+        r = self.check()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self._edit_results("results_redline", tools={"docxodus": {"n": ROWS - 1, "not_run": 2}})
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(f"tools.docxodus.n is {ROWS - 1} with not_run 2, the sample holds {ROWS} rows",
+                      r.stderr)
+        for bad in (-1, 1.5, True, "1"):
+            self._edit_results("results_redline", tools={"docxodus": {"n": ROWS - 1, "not_run": bad}})
+            r = self.check()
+            self.assertEqual(r.returncode, 1, (bad, r.stdout))
+            self.assertIn("tools.docxodus.not_run is not a non-negative integer", r.stderr)
+        self._edit_results("results_redline", tools={"docxodus": {"n": ROWS, "not_run": None},
+                                                     "jubarte": {"n": ROWS - 1, "not_run": 1}})
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn(f"tools.jubarte.n is {ROWS - 1}, the sample holds {ROWS} rows", r.stderr)
 
-    def test_a_fixed_set_comparator_must_account_for_every_row(self) -> None:
-        self.write_fixed_sets()
-        self._edit_results("results_redline", tools={"docxodus": {"n": 1, "not_run": 1}})
-        r = self.check(rows=None)
-        self.assertEqual(r.returncode, 1, r.stderr)
-        self.assertIn("tools.docxodus.n + not_run is 1 + 1", r.stderr)
-        self.write_fixed_sets()
-        self._edit_results("results_redline", tools={"docxodus": {"n": ROWS, "not_run": -1}})
-        r = self.check(rows=None)
-        self.assertEqual(r.returncode, 1, r.stderr)
-        self.assertIn("tools.docxodus.not_run", r.stderr)
+    def test_only_a_whole_fixed_set_shape_overrides_rows(self) -> None:
+        """A truthy set_version alone does not make a fixed set: it needs a string
+        set_version and set, and a drawn sample (drawn.seed) never is one (#2054
+        review). Otherwise the CSV is held to --rows."""
+        self.write_six(rows=ROWS, conversion_rows=ROWS + 2, set_version="2026-11-03.1")
+        path = self.info / f"results_conversion_{VER}_{STAMP}.json"
+        sound = json.loads(path.read_text())
+        for broken in ({"set_version": True}, {"set": None}, {"drawn": {"seed": 1}}, {"drawn": "seed=42"}):
+            doc = json.loads(json.dumps(sound))
+            for key, value in broken.items():
+                if value is None:
+                    doc["sample"].pop(key)
+                else:
+                    doc["sample"][key] = value
+            path.write_text(json.dumps(doc))
+            r = self.check()
+            self.assertEqual(r.returncode, 1, (broken, r.stdout))
+            self.assertIn(f"{ROWS + 2} data rows, want {ROWS}", r.stderr)
+
+    def test_a_sample_that_is_not_an_object_is_a_problem_not_a_traceback(self) -> None:
+        """Jules (#2054): ``"sample": "x"`` must not crash the checker."""
+        self._edit_results("results_redline", sample="x")
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_a_comparator_that_ran_nothing_fails(self) -> None:
+        """Codex (#2054): n 0 with every row not_run has no aggregates to state."""
+        self._edit_results("results_redline", tools={"docxodus": {"n": 0, "not_run": ROWS, "failures": 0}})
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("tools.docxodus.n is 0: a comparator must score at least one item", r.stderr)
 
     def test_failures_must_stay_within_zero_and_n(self) -> None:
         self._edit_results("results_redline", tools={"jubarte": {"failures": ROWS + 1}})
@@ -574,6 +612,27 @@ class MeasuredSentence(SixFiles):
         r = self.numbers("--summary", "Breaking: none. " + self.SOUND + " Docs follow.")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("measured sentence", r.stdout)
+
+    FIXED = ("On the 3-pair and 5-document sets scored against Word's own output: redlines mean 80.00 "
+             "(Docxodus 60.00), counting as 0 the 1 redline Word 16.115 crashes opening; PDFs mean 80.00 "
+             "(LibreOffice 60.00), counting as 0 the 1 document jubarte fails.")
+
+    def test_fixed_sets_of_two_sizes_are_stated_one_size_each(self) -> None:
+        """Fixed sets need not share a size (600 pairs, 860 documents; #2053), so no
+        "N-item samples" figure fits both: the sentence names each set's own size,
+        "the P-pair and D-document sets", and each is checked against its results."""
+        self.write_six(rows=ROWS, conversion_rows=ROWS + 2, set_version="2026-11-03.1")
+        r = self.numbers("--summary", self.FIXED)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = self.numbers("--summary", self.FIXED.replace("5-document", "4-document"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"4-document set" — the conversion sample holds 5 items', r.stderr)
+        r = self.numbers("--summary", self.FIXED.replace("3-pair", "5-pair"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"5-pair set" — the redline sample holds 3 items', r.stderr)
+        r = self.numbers("--summary", self.SOUND.replace("3-item", "5-item"))  # one size cannot state both
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"5-item samples" — the redline sample holds 3 items', r.stderr)
 
     def test_each_figure_that_differs_is_named(self) -> None:
         for right, wrong in (
