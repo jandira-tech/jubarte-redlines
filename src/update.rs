@@ -410,10 +410,15 @@ fn confine_update_zip(archive: &std::path::Path, member: &str, budget: u64) -> R
     }
     let mut file = std::fs::File::open(archive)
         .map_err(|e| format!("update archive {} cannot be opened: {e}", archive.display()))?;
-    if !zip_magic(&mut file)? {
+    // A zip is told by its end record, not by a leading `PK`: a zipsign
+    // signature sits before the zip and zip/self_update still read it
+    // (#2084 review). No end record and no `PK`: not a zip (a tar.gz).
+    let Some(copies) = zip_member_copies(&mut file, len, member)? else {
+        if zip_magic(&mut file)? {
+            return Err("update archive has no zip end record".into());
+        }
         return Ok(());
-    }
-    let copies = zip_member_copies(&mut file, len, member)?;
+    };
     if copies > 1 {
         return Err(format!("update archive lists {member} more than once"));
     }
@@ -434,16 +439,23 @@ fn zip_magic(file: &mut std::fs::File) -> Result<bool, String> {
     Ok(read == 2 && magic == [0x50, 0x4b])
 }
 
-/// How many central-directory entries name `member`.
+/// How many central-directory entries name `member`, or `None` when the
+/// file has no zip end record.
 ///
 /// `zip`'s reader keeps one entry per name, so a repeated member is invisible
 /// there and the first copy would be the one installed. The count comes from
-/// the central directory itself.
-fn zip_member_copies(file: &mut std::fs::File, len: u64, member: &str) -> Result<u32, String> {
+/// the central directory itself. Each name is the one `zip` resolves (an
+/// adopted 0x7075 Unicode Path included), and a directory that a leading
+/// prefix moved past its recorded offset is found where `zip` finds it.
+fn zip_member_copies(
+    file: &mut std::fs::File,
+    len: u64,
+    member: &str,
+) -> Result<Option<u32>, String> {
     const EOCD_LEN: u64 = 22;
     const MAX_COMMENT: u64 = 65_535;
     if len < EOCD_LEN {
-        return Err("update archive is too small to be a zip".into());
+        return Ok(None);
     }
     let tail_len = len.min(EOCD_LEN.saturating_add(MAX_COMMENT));
     let tail_at = len.saturating_sub(tail_len);
@@ -451,23 +463,43 @@ fn zip_member_copies(file: &mut std::fs::File, len: u64, member: &str) -> Result
         .map_err(|_| "update archive is too large to inspect".to_string())?;
     let mut tail = vec![0u8; tail_bytes];
     read_exact_at(file, tail_at, &mut tail)?;
-    let eocd =
-        find_eocd(&tail).ok_or_else(|| "update archive has no zip end record".to_string())?;
+    let Some(eocd) = find_eocd(&tail) else {
+        return Ok(None);
+    };
     let entries = le_u16(&tail, eocd.saturating_add(10))?;
     let cd_size = u64::from(le_u32(&tail, eocd.saturating_add(12))?);
     let cd_offset = u64::from(le_u32(&tail, eocd.saturating_add(16))?);
     if entries == u16::MAX || cd_size == u64::from(u32::MAX) || cd_offset == u64::from(u32::MAX) {
         return Err("update archive uses ZIP64, which this check refuses".into());
     }
-    let cd_end = cd_offset
+    // Bytes before the zip (a zipsign signature) shift the directory by
+    // the gap between where it ends and where the end record sits; zip
+    // reads it at the recorded offset first, then shifted.
+    let eocd_at = tail_at.saturating_add(eocd as u64);
+    let recorded_end = cd_offset
         .checked_add(cd_size)
+        .ok_or_else(|| "update archive central directory is out of range".to_string())?;
+    let shift = eocd_at
+        .checked_sub(recorded_end)
+        .ok_or_else(|| "update archive central directory runs past its end record".to_string())?;
+    let mut signature = [0u8; 4];
+    let at_recorded = cd_size == 0
+        || (read_exact_at(file, cd_offset, &mut signature).is_ok()
+            && signature == [0x50, 0x4b, 0x01, 0x02]);
+    let base = if at_recorded { 0 } else { shift };
+    let cd_start = cd_offset
+        .checked_add(base)
+        .ok_or_else(|| "update archive central directory is out of range".to_string())?;
+    let cd_end = recorded_end
+        .checked_add(base)
         .ok_or_else(|| "update archive central directory is out of range".to_string())?;
     if cd_end > len {
         return Err("update archive central directory runs past the file".into());
     }
-    let mut at = cd_offset;
+    let mut at = cd_start;
     let mut copies = 0u32;
     let mut seen = 0u16;
+    let mut name_and_extra = Vec::new();
     while at < cd_end {
         let mut header = [0u8; 46];
         read_exact_at(file, at, &mut header)?;
@@ -493,11 +525,19 @@ fn zip_member_copies(file: &mut std::fs::File, len: u64, member: &str) -> Result
             .ok_or_else(|| "update archive member name is out of range".to_string())?;
         let name_bytes = usize::try_from(name_len)
             .map_err(|_| "update archive member name is too long".to_string())?;
-        let mut name = vec![0u8; name_bytes];
-        if name_bytes > 0 {
-            read_exact_at(file, name_at, &mut name)?;
+        let extra_bytes = usize::try_from(extra_len)
+            .map_err(|_| "update archive extra field is too long".to_string())?;
+        // One buffer for every entry: name then extra field, each at most
+        // 64 KiB, as the header records them.
+        name_and_extra.resize(name_bytes.saturating_add(extra_bytes), 0);
+        if !name_and_extra.is_empty() {
+            read_exact_at(file, name_at, &mut name_and_extra)?;
         }
-        if member_names_match(&name, member) {
+        let (raw_name, extra) = name_and_extra.split_at(name_bytes);
+        let flags = le_u16(&header, 8)?;
+        let name = crate::admission::zip_entry_name_raw(raw_name, flags, extra)
+            .map_err(|e| format!("update archive member name cannot be read: {e}"))?;
+        if member_names_match(name.as_bytes(), member) {
             copies = copies.saturating_add(1);
         }
         seen = seen
@@ -508,7 +548,7 @@ fn zip_member_copies(file: &mut std::fs::File, len: u64, member: &str) -> Result
     if seen != entries {
         return Err("update archive central directory does not match its end record".into());
     }
-    Ok(copies)
+    Ok(Some(copies))
 }
 
 fn find_eocd(tail: &[u8]) -> Option<usize> {
@@ -959,6 +999,70 @@ mod tests {
             err.contains("more than once"),
             "the refusal must name the repeated member, got {err}"
         );
+    }
+
+    /// #2084 review (Bugbot): a zipsign-signed zip starts with its
+    /// signature block, not `PK`, and its offsets are not rewritten; zip and
+    /// self_update still read it. The checks must run on it too.
+    fn prefixed(prefix_len: usize, zip: &[u8]) -> Vec<u8> {
+        let mut out = vec![0xA5u8; prefix_len];
+        out.extend_from_slice(zip);
+        out
+    }
+
+    #[test]
+    fn update_archive_with_a_prefix_still_refuses_a_repeated_member() {
+        let name = UPDATE_MEMBER.as_bytes();
+        let bytes = prefixed(
+            64,
+            &crate::admission::zip_names::zip(&[
+                crate::admission::zip_names::RawEntry::raw(name, b"FIRST"),
+                crate::admission::zip_names::RawEntry::raw(name, b"SECOND"),
+            ]),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        let err = confine_update_zip(&archive, UPDATE_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("a prefixed archive skipped the repeated-member check");
+        assert!(err.contains("more than once"), "{err}");
+    }
+
+    #[test]
+    fn update_archive_with_a_prefix_still_caps_inflation() {
+        let payload = vec![0u8; 8_000];
+        let bytes = prefixed(64, &deflated_update_zip(UPDATE_MEMBER, &payload));
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        let budget = bytes.len() as u64;
+        let err = confine_update_zip(&archive, UPDATE_MEMBER, budget)
+            .expect_err("a prefixed archive skipped the inflation cap");
+        assert!(err.contains("inflates past"), "{err}");
+    }
+
+    #[test]
+    fn update_archive_with_a_prefix_and_one_member_is_allowed() {
+        let bytes = prefixed(64, &deflated_update_zip(UPDATE_MEMBER, b"#!/jubarte"));
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        confine_update_zip(&archive, UPDATE_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect("a signed (prefixed) release zip with one member");
+    }
+
+    /// #2084 review (Bugbot): zip names an entry by its adopted 0x7075
+    /// Unicode Path, so a second entry whose raw name differs but whose
+    /// Unicode Path is the member is the same installed file.
+    #[test]
+    fn update_archive_unicode_path_copy_is_a_repeated_member() {
+        let name = UPDATE_MEMBER.as_bytes();
+        let bytes = crate::admission::zip_names::zip(&[
+            crate::admission::zip_names::RawEntry::raw(name, b"FIRST"),
+            crate::admission::zip_names::RawEntry::raw(b"decoy.bin", b"SECOND").unicode_path(name),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        let err = confine_update_zip(&archive, UPDATE_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("a Unicode Path copy of the member was not counted");
+        assert!(err.contains("more than once"), "{err}");
     }
 
     #[test]
