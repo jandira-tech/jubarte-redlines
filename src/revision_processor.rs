@@ -4080,10 +4080,15 @@ fn mark_emptied_controls(dom: &mut Dom, root: NodeId) {
 // ─────────────── A.10 — the full AcceptRevisionsForPart pipeline ────────────
 
 /// The `w:del` or `w:moveFrom` that holds `node`, when accept will remove it.
-fn accept_deleted(dom: &Dom, node: NodeId) -> Option<NodeId> {
-    dom.ancestors(node, None).into_iter().find(|&ancestor| {
-        dom.name_is(ancestor, &W::del()) || dom.name_is(ancestor, &W::move_from())
-    })
+pub(crate) fn accept_deleted(dom: &Dom, node: NodeId) -> Option<NodeId> {
+    let mut cur = dom.parent(node);
+    while let Some(ancestor) = cur {
+        if dom.name_is(ancestor, &W::del()) || dom.name_is(ancestor, &W::move_from()) {
+            return Some(ancestor);
+        }
+        cur = dom.parent(ancestor);
+    }
+    None
 }
 
 /// Spans whose field characters accept removes: the deletion that holds the
@@ -4091,21 +4096,20 @@ fn accept_deleted(dom: &Dom, node: NodeId) -> Option<NodeId> {
 fn deleted_field_spans(dom: &Dom, root: NodeId) -> Vec<(NodeId, NodeId)> {
     let mut stack: Vec<(NodeId, bool)> = Vec::new();
     let mut spans = Vec::new();
-    for fld in dom.descendants(root, Some(&W::fld_char())) {
+    dom.for_each_descendant_element(root, Some(&W::fld_char()), |fld| {
         let deleted = accept_deleted(dom, fld);
         match dom.attribute(fld, &W::fld_char_type()) {
             Some("begin") => stack.push((deleted.unwrap_or(fld), deleted.is_some())),
             Some("end") => {
-                let Some((begin, begin_deleted)) = stack.pop() else {
-                    continue;
-                };
-                if begin_deleted && let Some(end) = deleted {
+                if let Some((begin, true)) = stack.pop()
+                    && let Some(end) = deleted
+                {
                     spans.push((begin, end));
                 }
             }
             _ => {}
         }
-    }
+    });
     spans
 }
 
@@ -4134,13 +4138,20 @@ fn delete_deleted_field_results(dom: &mut Dom, root: NodeId) {
         if dom.parent(end_del) != Some(parent) {
             continue;
         }
-        let between: Vec<NodeId> = dom
-            .elements(parent, None)
-            .into_iter()
-            .skip_while(|&child| child != begin_del)
-            .skip(1)
-            .take_while(|&child| child != end_del)
-            .collect();
+        // Collected before the loop below moves them into new wrappers.
+        let mut between = Vec::new();
+        let mut inside = false;
+        for i in 0..dom.child_count(parent) {
+            let child = dom.child_at(parent, i);
+            if child == end_del {
+                break;
+            }
+            if inside && dom.is_element(child) {
+                between.push(child);
+            } else if child == begin_del {
+                inside = true;
+            }
+        }
         let attributes = dom.attributes(begin_del);
         for child in between {
             if is_range_marker(dom, child)

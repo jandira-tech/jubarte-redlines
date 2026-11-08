@@ -8455,37 +8455,33 @@ fn locate(
 /// `w:moveFrom` of a `begin` and its matching `end`. The result between
 /// them is still shown; an edit of it names these deletions (#1285).
 fn deleted_field_revisions(dom: &Dom, run: NodeId) -> Vec<NodeId> {
-    let Some(paragraph) = dom
-        .ancestors(run, None)
-        .into_iter()
-        .find(|&node| dom.name_is(node, &W::p()))
-    else {
+    let mut paragraph = dom.parent(run);
+    while let Some(node) = paragraph
+        && !dom.name_is(node, &W::p())
+    {
+        paragraph = dom.parent(node);
+    }
+    let Some(paragraph) = paragraph else {
         return Vec::new();
     };
-    let carrier = |node: NodeId| {
-        dom.ancestors(node, None).into_iter().find(|&ancestor| {
-            dom.name_is(ancestor, &W::del()) || dom.name_is(ancestor, &W::move_from())
-        })
-    };
+    let carrier = |node: NodeId| crate::revision_processor::accept_deleted(dom, node);
     let mut stack: Vec<Option<NodeId>> = Vec::new();
     let mut open = Vec::new();
     let mut found = false;
     let mut holders = Vec::new();
-    for node in dom.descendants(paragraph, None) {
+    dom.for_each_descendant_element(paragraph, None, |node| {
         if !found && node == run {
             found = true;
             open = stack.iter().copied().flatten().collect();
         }
         if !dom.name_is(node, &W::fld_char()) {
-            continue;
+            return;
         }
         match dom.attribute(node, &W::fld_char_type()) {
             Some("begin") => stack.push(carrier(node)),
             Some("end") => {
-                let Some(begin) = stack.pop().flatten() else {
-                    continue;
-                };
-                if found
+                if let Some(Some(begin)) = stack.pop()
+                    && found
                     && open.contains(&begin)
                     && let Some(end) = carrier(node)
                 {
@@ -8497,7 +8493,7 @@ fn deleted_field_revisions(dom: &Dom, run: NodeId) -> Vec<NodeId> {
             }
             _ => {}
         }
-    }
+    });
     holders
 }
 
