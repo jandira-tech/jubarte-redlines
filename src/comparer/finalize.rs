@@ -12248,12 +12248,12 @@ pub fn mark_fully_revised_rows(
                 p
             }
         };
-        // A paired row's property history establishes structural ownership
-        // on both sides. Deleted old text does not delete that row when B
-        // deliberately retained empty cells (Word M337). A surviving
-        // paragraph mark is an independent owner of the paired structure.
-        // Existing row revision marks still control wholesale lifetimes.
-        let paired_row = dom.element(trpr, &W::name("trPrChange")).is_some();
+        // Deleted text does not delete a row the other document kept.
+        // A surviving paragraph mark is that row's owner, including when
+        // the row properties are equal and carry no `w:trPrChange`
+        // (#1672). A row the other document dropped has its paragraph
+        // marks deleted, so it still receives the row mark. An existing
+        // row revision still controls a wholesale lifetime.
         let already_owned =
             dom.element(trpr, &W::ins()).is_some() || dom.element(trpr, &W::del()).is_some();
         if already_owned {
@@ -12267,13 +12267,11 @@ pub fn mark_fully_revised_rows(
                     && !para_mark_revision(dom, p, &W::move_from())
             }
         };
-        if paired_row
-            && dom
-                .elements(tr, Some(&tc_name))
-                .into_iter()
-                .flat_map(|tc| dom.descendants(tc, Some(&W::p())))
-                .any(survives_direction)
-        {
+        let p_name = W::p();
+        if dom.elements(tr, Some(&tc_name)).into_iter().any(|tc| {
+            dom.find_descendant_element(tc, Some(&p_name), survives_direction)
+                .is_some()
+        }) {
             continue;
         }
         let rev_name = if k { W::ins() } else { W::del() };
