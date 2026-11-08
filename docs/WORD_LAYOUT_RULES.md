@@ -311,11 +311,16 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
     of 9000 twips on a 2400/2400 grid puts VALUE 225.89pt after LABEL.
     Under that same width written as dxa, typeless cell widths of 6000
     and 3000 twips put VALUE 300.05pt after LABEL.
-- **An autofit table re-fits when one word is wider than its column.**
-  The columns then share the measure by those words, so a short column
-  can break. A word that still fits its column leaves the grid alone,
-  and a fixed table stays on it. A pct or auto table whose words overrun
-  the measure but still fit their own columns keeps those columns.
+- **An auto or pct autofit table re-fits when one word is wider than its
+  column.** The columns then share the table's room by those words, so a
+  short column can break. That room is the measure for an auto table and
+  the pct width, less half its outer rules, for a pct one. A dxa table
+  does not re-fit: it gives every column its longest word and may run
+  past the margin (the rule above). A word that still fits its column
+  leaves the grid alone, and a fixed table stays on it. When every word
+  fits its own column, this rule does not apply, even if the words
+  together overrun the measure: the rule above and the grid-outruns
+  re-fit decide those tables.
   - Word convert, Letter, Calibri 11, 1in margins: a 2400/6000 grid with
     a tcW on every cell puts VALUE 22.80pt after LABEL when the other
     cell holds 102 A's, and 86.16pt after when it holds 60 A's. The same
