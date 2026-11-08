@@ -10047,6 +10047,35 @@ fn span_content_outruns_grid(
     })
 }
 
+/// An autofit table whose every column prefers zero percent of the width.
+/// When the rows outrun that width the columns split it evenly. When they
+/// fit, each column stays as wide as its text.
+fn zero_pct_column_widths(
+    fonts: &Fonts,
+    cols: &[f32],
+    rows: &[Vec<TableCell>],
+    geom: &TableGeom,
+    avail: f32,
+) -> Option<Vec<f32>> {
+    let n = cols.len();
+    if geom.fixed || n == 0 || geom.pref.len() != n {
+        return None;
+    }
+    if geom.pref.iter().any(|p| !matches!(*p, PrefWidth::Pct(0.0))) {
+        return None;
+    }
+    let target = declared_table_width(geom, avail).unwrap_or(avail);
+    let (_, maxs) = content_autofit_extents(fonts, n, rows, geom, false, None);
+    let gap = 2.0 * geom.cell_spacing;
+    let content = maxs.iter().sum::<f32>() + gap * (n as f32 + 1.0);
+    if content > target + 0.5 {
+        return Some(vec![target / n as f32; n]);
+    }
+    Some(content_autofit_widths(
+        fonts, n, rows, geom, target, false, None,
+    ))
+}
+
 fn unclamped_col_widths(
     fonts: &Fonts,
     cols: &[f32],
@@ -10054,6 +10083,11 @@ fn unclamped_col_widths(
     geom: &TableGeom,
     avail: f32,
 ) -> Vec<f32> {
+    // Word ignores a zero-percent table's saved grid, so it splits the
+    // measure before a grid that outruns the room is re-fit (#2120 review).
+    if let Some(widths) = zero_pct_column_widths(fonts, cols, rows, geom, avail) {
+        return widths;
+    }
     // An autofit table whose saved grid outruns its room is laid out again
     // inside it (Word probes b1, b2, b4 and b6, 2026-10-02: 500pt and
     // 600pt grids in a 468pt measure; a9de4ed3f9's landscape register in
@@ -14872,16 +14906,10 @@ fn cell_pref_width(dom: &Dom, cell: NodeId) -> PrefWidth {
         return PrefWidth::Auto;
     };
     match attr_any(dom, tw, "type").unwrap_or("auto") {
-        "pct" => {
-            let fiftieths = attr_any(dom, tw, "w")
-                .and_then(parse_finite_f32)
-                .unwrap_or(0.0);
-            if fiftieths > 0.0 {
-                PrefWidth::Pct(fiftieths / 5000.0)
-            } else {
-                PrefWidth::Auto
-            }
-        }
+        "pct" => match attr_any(dom, tw, "w").and_then(parse_finite_f32) {
+            Some(fiftieths) if fiftieths >= 0.0 => PrefWidth::Pct(fiftieths / 5000.0),
+            _ => PrefWidth::Auto,
+        },
         "dxa" => {
             let w = attr_any(dom, tw, "w").and_then(parse_len).unwrap_or(0.0);
             if w > 0.0 {
@@ -50666,6 +50694,35 @@ mod coverage_round_two_tests {
         assert!(
             (short[0] - long[0]).abs() < 0.5,
             "the vertical column keeps one width whatever its text: {short:?} vs {long:?}"
+        );
+    }
+
+    #[test]
+    fn a_zero_pct_table_splits_the_measure_even_when_its_grid_outruns_it() {
+        // Word ignores a zero-percent table's saved grid and splits the
+        // measure when the rows outrun it (WORD_LAYOUT_RULES, #2120). A
+        // grid wider than the measure must not send it down the
+        // grid-outruns re-fit first (#2120 review).
+        let fonts = fonts();
+        let long = "AAAA ".repeat(25);
+        let Block::Table {
+            cols, rows, geom, ..
+        } = table(&format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"6000\"/><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+             <w:tr><w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"pct\"/></w:tcPr>\
+             <w:p><w:r><w:t>LABEL:</w:t></w:r></w:p></w:tc>\
+             <w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"pct\"/></w:tcPr>\
+             <w:p><w:r><w:t>{long}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+        ))
+        else {
+            panic!("table fixture")
+        };
+        assert!(cols.iter().sum::<f32>() > 468.0, "the grid outruns");
+        let widths = unclamped_col_widths(&fonts, &cols, &rows, &geom, 468.0);
+        assert!(
+            widths.iter().all(|w| (w - 234.0).abs() < 0.5),
+            "two equal halves of the 468pt measure: {widths:?}"
         );
     }
 

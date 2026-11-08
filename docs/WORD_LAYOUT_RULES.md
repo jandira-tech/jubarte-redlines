@@ -298,6 +298,12 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
     the span is twenty-five `AAAA`. The same gap when those preferences
     sit on the second row. Columns 1200/2400/4800 leave 71.40pt between
     ONE and TWO and 136.61pt between TWO and SIX.
+- **An autofit table whose cells are all zero percent splits the measure
+  when the rows outrun it.** Short columns stay as wide as their words.
+  - Word convert, Calibri 11, 1in margins, no borders: a 2400/6000 grid
+    puts VALUE 227.19pt after LABEL on A4 and 235.61pt on Letter. A 300pt
+    table width puts it 151.11pt after. Three short columns sit 20.76pt
+    and 23.52pt apart.
 - **Tables with nothing between them are one table**, f2fd0c8b. The second
   table's rows keep their own cell widths and start at the joined table's
   left edge, whatever their own `jc`. The joined table is aligned by its
