@@ -243,6 +243,12 @@ fn apply_bound(
             bytes
         }
     };
+    // Judged once the selection and the global policy have both settled,
+    // as the legacy path does (#2096).
+    if working.as_slice() != source {
+        crate::changes::check_exposed_final_marks(source, &working)
+            .map_err(|e| super::selection_error(e, syntax, ""))?;
+    }
     let mut execution = legacy(plan);
     execution.operations = mapped.iter().map(|m| m.legacy.clone()).collect();
     // Always use the preserving engine path. Tracking controls only the new edits.
