@@ -37,7 +37,7 @@ use super::{CorrelationStatus, WmlComparerSettings};
 /// descendant of `content_parent` is a member of
 /// [`super::tables::INVALID_ELEMENTS`] (`altChunk`, `subDoc`, the customXml
 /// range markers). A `w:customXml` element is unwrapped before this check
-/// ([`unwrap_custom_xml`]): Word drops that markup and keeps its content.
+/// (`unwrap_custom_xml`): Word drops that markup and keeps its content.
 ///
 /// # Errors
 ///

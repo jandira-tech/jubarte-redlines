@@ -2573,7 +2573,7 @@ fn write_edited(
     // `--in-place` authorizes the input only. A PDF, a PNG page or a
     // failed-op plan that already exists still needs `--force`.
     if let Some((taken, _)) = outputs.iter().find(|(output, _)| {
-        !job.force && !(job.in_place && output == job.file) && output.symlink_metadata().is_ok()
+        !(job.force || (job.in_place && output == job.file)) && output.symlink_metadata().is_ok()
     }) {
         return Err(taken_output(taken));
     }
