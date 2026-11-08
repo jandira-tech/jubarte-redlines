@@ -188,6 +188,110 @@ pub fn relative_rel_target(source_part: &str, target_part: &str) -> String {
     }
 }
 
+/// Refuse metadata that is not one authoritative document (#643).
+///
+/// `[Content_Types].xml` and `.rels` are interpreted only after this
+/// check. A second root is not folded in. A root whose default namespace
+/// is present and is not `namespace` is not rewritten into the OPC
+/// namespace. An absent default namespace stays the legacy local-name
+/// read, and a record-local `xmlns=""` is still dropped later so a missing
+/// attribute fails closed rather than disappearing.
+pub(crate) fn metadata_document(xml: &[u8], root: &str, namespace: &str) -> Result<(), String> {
+    use quick_xml::events::Event;
+    // Read the text admission reads (`admission::part_text`: UTF-16 by its
+    // BOM, otherwise lossy UTF-8). A raw-byte reader stops at the first
+    // encoding error and let a foreign namespace through (#2080 review).
+    let text = crate::admission::part_text(xml);
+    let mut reader = quick_xml::Reader::from_reader(text.as_bytes());
+    reader.config_mut().check_end_names = true;
+    let mut depth = 0usize;
+    let mut roots = 0usize;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(ref tag)) => {
+                if depth == 0 {
+                    note_metadata_root(tag, &mut roots, root, namespace)?;
+                }
+                depth = depth.saturating_add(1);
+            }
+            Ok(Event::Empty(ref tag)) => {
+                if depth == 0 {
+                    note_metadata_root(tag, &mut roots, root, namespace)?;
+                }
+            }
+            Ok(Event::End(_)) => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| "unmatched XML end tag".to_string())?;
+            }
+            Ok(Event::DocType(_)) => {
+                return Err("DTD declarations are unsupported".to_string());
+            }
+            Ok(Event::Eof) => return Ok(()),
+            Ok(_) => {}
+            // A syntax error stays the 0.41 record reader's `OpcError::Xml`.
+            // This gate only refuses a document that reader would accept.
+            Err(_) => return Ok(()),
+        }
+    }
+}
+
+fn note_metadata_root(
+    tag: &quick_xml::events::BytesStart<'_>,
+    roots: &mut usize,
+    root: &str,
+    namespace: &str,
+) -> Result<(), String> {
+    *roots = roots.saturating_add(1);
+    if *roots > 1 {
+        return Err("multiple XML roots".to_string());
+    }
+    let local = tag.local_name();
+    if local.as_ref() != root {
+        return Err(format!("metadata root {local:?} is not {root}"));
+    }
+    // A prefixed root names its namespace through `xmlns:prefix`; with no
+    // default namespace its unprefixed records would otherwise take the
+    // legacy local-name read and be relabelled (#2080 review).
+    let prefixed = tag
+        .name()
+        .prefix()
+        .map(|prefix| format!("xmlns:{}", prefix.as_ref()));
+    let mut prefix_bound = prefixed.is_none();
+    for attr in tag.attributes().with_checks(false) {
+        let attr = attr.map_err(|err| err.to_string())?;
+        if prefixed.as_deref() == Some(attr.key.as_ref()) {
+            let value = attr
+                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                .map_err(|err| err.to_string())?;
+            if value.as_ref() != namespace {
+                return Err(format!(
+                    "metadata root namespace {value:?} is not {namespace}"
+                ));
+            }
+            prefix_bound = true;
+        }
+        if attr.key.as_ref() == "xmlns" {
+            let value = attr
+                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                .map_err(|err| err.to_string())?;
+            if value.as_ref() != namespace {
+                return Err(format!(
+                    "metadata root namespace {value:?} is not {namespace}"
+                ));
+            }
+        }
+    }
+    if !prefix_bound {
+        return Err("metadata root prefix is not bound on the root".to_string());
+    }
+    Ok(())
+}
+
+fn metadata_refused(why: String) -> OpcError {
+    refused(std::io::Error::new(std::io::ErrorKind::InvalidData, why))
+}
+
 /// Select the same unprefixed metadata records as the legacy adapter, folding
 /// explicit closes, then let upstream decode and validate each record. Parsing
 /// records separately preserves identical-duplicate repair and last-wins content
@@ -264,6 +368,12 @@ fn metadata_records(
 }
 
 fn read_relationships(xml: &[u8]) -> Result<Relationships, OpcError> {
+    metadata_document(
+        xml,
+        "Relationships",
+        "http://schemas.openxmlformats.org/package/2006/relationships",
+    )
+    .map_err(metadata_refused)?;
     let mut rels = Relationships::new();
     let mut items = Vec::new();
     for record in metadata_records(
@@ -360,6 +470,12 @@ pub(crate) fn typed_as_xml(content_types: Option<&[u8]>) -> impl Fn(&str) -> boo
 }
 
 fn read_content_types(xml: &[u8]) -> Result<ContentTypes, OpcError> {
+    metadata_document(
+        xml,
+        "Types",
+        "http://schemas.openxmlformats.org/package/2006/content-types",
+    )
+    .map_err(metadata_refused)?;
     let mut types = ContentTypes {
         defaults: HashMap::new(),
         overrides: HashMap::new(),
@@ -1830,6 +1946,180 @@ mod tests {
         ));
     }
 
+    /// ZIP-47 (#643): `[Content_Types].xml` and `.rels` are read only after
+    /// they are one authoritative document. A second root, or a root whose
+    /// default namespace is some other URI, must not be relabelled into the
+    /// OPC namespace and then used. An absent default namespace stays the
+    /// legacy local-name read.
+    #[test]
+    fn prefixed_or_non_utf8_metadata_is_not_relabelled() {
+        // #2080 review (Bugbot): a prefixed root in a foreign namespace has
+        // no default xmlns, and a UTF-16 or invalid UTF-8 document made the
+        // gate's reader stop with an encoding error; both used to pass the
+        // gate while the record reader still relabelled their children.
+        const RELS_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+        const OFFICE: &str =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
+        const MAIN: &str =
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
+        let package = |types: &[u8]| {
+            let rels = format!(
+                r#"<Relationships xmlns="{RELS_NS}"><Relationship Id="rId1" Type="{OFFICE}" Target="word/document.xml"/></Relationships>"#
+            );
+            let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+            let options = SimpleFileOptions::default();
+            for (name, xml) in [
+                ("[Content_Types].xml", types),
+                ("_rels/.rels", rels.as_bytes()),
+                ("word/document.xml", b"<w:document/>".as_slice()),
+            ] {
+                writer.start_file(name, options).unwrap();
+                writer.write_all(xml).unwrap();
+            }
+            writer.finish().unwrap().into_inner()
+        };
+        let foreign = format!(
+            r#"<Types xmlns="urn:not-opc"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="{MAIN}"/></Types>"#
+        );
+        let prefixed = format!(
+            r#"<ns:Types xmlns:ns="urn:not-opc"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="{MAIN}"/></ns:Types>"#
+        );
+        let mut utf16 = vec![0xFF, 0xFE];
+        utf16.extend(foreign.encode_utf16().flat_map(u16::to_le_bytes));
+        let mut bad_utf8 = foreign.clone().into_bytes();
+        bad_utf8.extend_from_slice(b"<!-- \xFF -->");
+        bad_utf8.push(0xFF);
+        for (label, types) in [
+            ("prefixed foreign root", prefixed.into_bytes()),
+            ("UTF-16 foreign default namespace", utf16),
+            ("invalid UTF-8 foreign default namespace", bad_utf8),
+        ] {
+            let bytes = package(&types);
+            if let Ok(pkg) =
+                crate::admission::admit(&bytes, crate::admission::InputLimits::default())
+            {
+                panic!("{label}: admit interpreted it: {pkg:?}");
+            }
+            if let Ok(fs) = PartFs::open(&bytes) {
+                assert_ne!(
+                    fs.content_type_for("word/document.xml").as_deref(),
+                    Some(MAIN),
+                    "{label}: the package open relabelled the records"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn strict_metadata_xml_is_not_relabelled() {
+        const CT_NS: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
+        const RELS_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+        const OFFICE: &str =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
+        const MAIN: &str =
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
+        let package = |types: &str, rels: &str| {
+            let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+            let options = SimpleFileOptions::default();
+            for (name, xml) in [
+                ("[Content_Types].xml", types),
+                ("_rels/.rels", rels),
+                ("word/document.xml", "<w:document/>"),
+            ] {
+                writer.start_file(name, options).unwrap();
+                writer.write_all(xml.as_bytes()).unwrap();
+            }
+            writer.finish().unwrap().into_inner()
+        };
+        let rels = format!(
+            r#"<Relationships xmlns="{RELS_NS}"><Relationship Id="rId1" Type="{OFFICE}" Target="word/document.xml"/></Relationships>"#
+        );
+        let typed = format!(
+            r#"<Types xmlns="{CT_NS}"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="{MAIN}"/></Types>"#
+        );
+
+        let wrong_types = package(
+            &format!(
+                r#"<Types xmlns="urn:not-opc"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="{MAIN}"/></Types>"#
+            ),
+            &rels,
+        );
+        match PartFs::open(&wrong_types) {
+            Ok(fs) => panic!(
+                "wrong-namespace content types were interpreted as {:?}",
+                fs.content_type_for("word/document.xml")
+            ),
+            Err(err) => assert!(err.to_string().contains("urn:not-opc"), "{err}"),
+        }
+        match crate::admission::admit(&wrong_types, crate::admission::InputLimits::default()) {
+            Ok(pkg) => panic!("admit interpreted wrong-namespace content types: {pkg:?}"),
+            Err(err) => assert!(err.to_string().contains("urn:not-opc"), "{err}"),
+        }
+
+        let two_roots = package(
+            &format!(
+                r#"<Types xmlns="{CT_NS}"/><Types xmlns="{CT_NS}"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="{MAIN}"/></Types>"#
+            ),
+            &rels,
+        );
+        match PartFs::open(&two_roots) {
+            Ok(fs) => panic!(
+                "two content-type roots were interpreted as {:?}",
+                fs.content_type_for("word/document.xml")
+            ),
+            Err(err) => assert!(err.to_string().contains("multiple XML roots"), "{err}"),
+        }
+        match crate::admission::admit(&two_roots, crate::admission::InputLimits::default()) {
+            Ok(pkg) => panic!("admit interpreted two content-type roots: {pkg:?}"),
+            Err(err) => assert!(err.to_string().contains("multiple XML roots"), "{err}"),
+        }
+
+        let wrong_rels = package(
+            &typed,
+            &format!(
+                r#"<Relationships xmlns="urn:not-opc"><Relationship Id="rId1" Type="{OFFICE}" Target="word/document.xml"/></Relationships>"#
+            ),
+        );
+        match PartFs::open(&wrong_rels) {
+            Ok(fs) => panic!(
+                "wrong-namespace relationships resolved {:?}",
+                fs.main_document_part()
+            ),
+            Err(err) => assert!(err.to_string().contains("urn:not-opc"), "{err}"),
+        }
+        match crate::admission::admit(&wrong_rels, crate::admission::InputLimits::default()) {
+            Ok(pkg) => panic!("admit resolved wrong-namespace relationships: {pkg:?}"),
+            Err(err) => assert!(err.to_string().contains("urn:not-opc"), "{err}"),
+        }
+
+        let ordinary = package(&typed, &rels);
+        let fs = PartFs::open(&ordinary).expect("authoritative metadata opens");
+        assert_eq!(
+            fs.content_type_for("word/document.xml").as_deref(),
+            Some(MAIN)
+        );
+        assert_eq!(
+            fs.main_document_part().as_deref(),
+            Some("word/document.xml")
+        );
+        assert!(
+            crate::admission::admit(&ordinary, crate::admission::InputLimits::default()).is_ok()
+        );
+
+        let unnamespaced = package(
+            &typed,
+            &format!(
+                r#"<Relationships><Relationship Id="rId1" Type="{OFFICE}" Target="word/document.xml"/></Relationships>"#
+            ),
+        );
+        let fs =
+            PartFs::open(&unnamespaced).expect("an absent default namespace stays the legacy read");
+        assert_eq!(
+            fs.main_document_part().as_deref(),
+            Some("word/document.xml")
+        );
+    }
+
     /// A minimal package whose one media entry carries the raw name bytes and
     /// flag `media` names, with the document relationship pointing at the
     /// CP437 spelling of `\xc3\xa9` (`├⌐`), as a legacy writer left it.
@@ -1892,17 +2182,17 @@ mod tests {
             ),
             "open_within refuses the same"
         );
-        // (b) two raw names, bit 11 set, whose lossy UTF-8 decode is the same
-        // `x\u{FFFD}.bin`: two parts, one name.
+        // (b) two raw names, bit 11 set, that are not UTF-8. A lossy decode
+        // used to alias both as `x\u{FFFD}.bin`; the flag's claim is refused
+        // instead (#640).
         let aliased = base(&[
             zip_names::RawEntry::raw(b"x\x82.bin", b"FIRST").utf8(),
             zip_names::RawEntry::raw(b"x\x83.bin", b"SECOND").utf8(),
         ]);
-        assert!(
-            matches!(PartFs::open(&aliased), Err(OpcError::DuplicatePartName(ref n)) if n == "x\u{FFFD}.bin"),
-            "{:?}",
-            PartFs::open(&aliased).err()
-        );
+        let Err(err) = PartFs::open(&aliased) else {
+            panic!("invalid UTF-8 entry names were accepted");
+        };
+        assert!(err.to_string().contains("not valid UTF-8"), "{err}");
         // (c) two names that differ only in ASCII case: one part, OPC names
         // are case-insensitive.
         let cased = base(&[

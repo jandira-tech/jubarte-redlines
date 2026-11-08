@@ -581,11 +581,11 @@ fn a_final_mark_keeps_apart_the_paragraphs_b_keeps() {
     }
 }
 
-/// A cell losing an empty paragraph while it gains words: the comparer
-/// drops one of the two empty paragraphs (#1686), and the deletion left on
-/// the final mark does not move onto `Ka.`'s, which would join `Ka.` and
-/// `Gb.`, two of B's paragraphs (GLM on #1680, round 10). Reject All still
-/// misses one empty paragraph: that is #1686.
+/// A cell losing an empty paragraph while it gains words. Accept All gives
+/// B and Reject All gives A, including the empty paragraph the cell lost
+/// (#1686). The deletion left on the final mark does not move onto `Ka.`'s,
+/// which would join `Ka.` and `Gb.`, two of B's paragraphs (GLM on #1680,
+/// round 10).
 #[test]
 fn a_dropped_empty_paragraph_does_not_join_the_paragraphs_b_keeps() {
     let pairs = [
@@ -607,6 +607,12 @@ fn a_dropped_empty_paragraph_does_not_join_the_paragraphs_b_keeps() {
             texts(&accept_revisions(&out).unwrap()),
             texts(&b),
             "{old}: Accept All\n{}",
+            part_string(&out, "word/document.xml").unwrap()
+        );
+        assert_eq!(
+            texts(&reject_revisions(&out).unwrap()),
+            texts(&a),
+            "{old}: Reject All\n{}",
             part_string(&out, "word/document.xml").unwrap()
         );
     }
@@ -869,5 +875,312 @@ fn a_cell_with_an_authored_move_compares_valid_in_powertools_mode() {
         texts(&reject_revisions(&out).unwrap()),
         texts(&reject_revisions(&a).unwrap()),
         "Reject All"
+    );
+}
+
+fn tc(inner: &str) -> String {
+    format!(r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{inner}</w:tc>"#)
+}
+
+fn row(cells: &[String]) -> String {
+    let grid: String = cells.iter().map(|_| r#"<w:gridCol w:w="2000"/>"#).collect();
+    let width = 2000 * cells.len();
+    format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="{width}" w:type="dxa"/></w:tblPr><w:tblGrid>{grid}</w:tblGrid><w:tr>{}</w:tr></w:tbl>"#,
+        cells.concat()
+    )
+}
+
+/// Accept All may add the empty paragraph a body Word saves always ends
+/// with, when the revision's body ends in a table (#1683, not a defect).
+fn body_matches(actual: &str, expected: &str, allow_saved_tail: bool) -> bool {
+    actual == expected || (allow_saved_tail && actual.strip_suffix("[p]") == Some(expected))
+}
+
+fn resolved(a: &[u8], b: &[u8], word_mode: bool, allow_saved_tail: bool, what: &str) -> Vec<u8> {
+    use jubarte::comparer::CompareMode;
+    let out = if word_mode {
+        compare_documents(a, b, "Redline").expect("compare")
+    } else {
+        compare_documents_with_settings(a, b, &WmlComparerSettings::new(CompareMode::PowerTools))
+            .expect("compare")
+    };
+    let report = check_word_valid_package(&out);
+    assert!(
+        report.ok(),
+        "{what}: {:?}\n{}",
+        report.errors,
+        part_string(&out, "word/document.xml").unwrap()
+    );
+    let accepted = blocks_of(&accept_revisions(&out).unwrap(), "word/document.xml");
+    let revised = blocks_of(b, "word/document.xml");
+    assert!(
+        body_matches(&accepted, &revised, allow_saved_tail),
+        "{what}: Accept All\n{accepted}\nwant\n{revised}"
+    );
+    assert_eq!(
+        blocks_of(&reject_revisions(&out).unwrap(), "word/document.xml"),
+        blocks_of(a, "word/document.xml"),
+        "{what}: Reject All"
+    );
+    out
+}
+
+fn paragraph_open_before(xml: &str, at: usize) -> Option<usize> {
+    ["<w:p ", "<w:p>", "<w:p/>"]
+        .into_iter()
+        .filter_map(|needle| xml[..at].rfind(needle))
+        .max()
+}
+
+fn has_paragraph_element(xml: &str) -> bool {
+    xml.contains("<w:p ") || xml.contains("<w:p>") || xml.contains("<w:p/>")
+}
+
+/// The paragraph holding `needle` carries no inserted or deleted mark.
+/// Word's compare of case 2 writes `Final para.` that way: it is the
+/// body's closing paragraph, after the deleted table.
+fn closing_paragraph_is_unmarked(xml: &str, needle: &str) -> bool {
+    let Some(at) = xml.find(needle) else {
+        return false;
+    };
+    let Some(start) = paragraph_open_before(xml, at) else {
+        return false;
+    };
+    let Some(rel_end) = xml[at..].find("</w:p>") else {
+        return false;
+    };
+    let para = &xml[start..at + rel_end];
+    let mark = regex::Regex::new(r"(?s)<w:pPr>.*?<w:rPr>(.*?)</w:rPr>").unwrap();
+    let unmarked = mark.captures(para).is_none_or(|c| {
+        let rpr = &c[1];
+        !rpr.contains("<w:ins ") && !rpr.contains("<w:del ")
+    });
+    unmarked && para.contains("<w:ins ") && !has_paragraph_element(&xml[at + rel_end..])
+}
+
+/// #1683 case 1. A body that ends in a table still records the inserted
+/// mark on the paragraph before the cell's last one. Word's compare
+/// (`POST /v1/compare`, `tests/fixtures/1683-case1-word.docx`) writes
+/// `w:ins` on `Old.`'s mark and inserts `New.` in the following paragraph.
+/// Reject All returns the cell to `Old.`; Accept All returns `Old.` and
+/// `New.`.
+#[test]
+fn issue_1683_body_ending_in_a_table_keeps_the_cells_inserted_mark() {
+    let a = docx(&format!(
+        "{}{}",
+        row(&[tc(&para("Keep.")), tc(&para("Old."))]),
+        para("Tail.")
+    ));
+    let b = docx(&row(&[
+        tc(&para("Keep.")),
+        tc(&format!("{}{}", para("Old."), para("New."))),
+    ]));
+    let word = include_bytes!("fixtures/1683-case1-word.docx");
+    let word_cell = cell(word);
+    assert_eq!(
+        word_cell,
+        vec![("+", "Old.".to_string()), ("", "+New.".to_string())],
+        "oracle cell"
+    );
+    for (word_mode, what) in [(true, "case1-word"), (false, "case1-powertools")] {
+        let out = resolved(&a, &b, word_mode, word_mode, what);
+        assert_eq!(cell(&out), word_cell, "{what}");
+    }
+}
+
+/// #1683 case 2. Word's compare (`POST /v1/compare`,
+/// `tests/fixtures/1683-case2-word.docx`) deletes the table's row and
+/// writes `Final para.` after the table, as the body's closing paragraph,
+/// with no revision on that paragraph's mark. Accept All is B and Reject
+/// All is A. Powertools mode already round-trips; it stays that way.
+#[test]
+fn issue_1683_final_paragraph_pairs_across_the_deleted_table() {
+    let a = docx(&format!(
+        "{}{}{}",
+        para("Text."),
+        row(&[
+            tc(&format!(
+                "{}{}",
+                para("New cell one."),
+                para("New cell two.")
+            )),
+            tc(&para("B.")),
+        ]),
+        para("")
+    ));
+    let b = docx(&format!("{}{}", para("Text."), para("Final para.")));
+    let word = include_bytes!("fixtures/1683-case2-word.docx");
+    let word_xml = part_string(word, "word/document.xml").unwrap();
+    let table_at = word_xml.find("<w:tbl").expect("oracle table");
+    let final_at = word_xml.find("Final para.").expect("oracle final");
+    assert!(
+        table_at < final_at,
+        "oracle puts Final para. after the table"
+    );
+    assert!(
+        closing_paragraph_is_unmarked(&word_xml, "Final para."),
+        "oracle closing paragraph"
+    );
+    let out = resolved(&a, &b, true, false, "case2-word");
+    let xml = part_string(&out, "word/document.xml").unwrap();
+    let produced_table = xml.find("<w:tbl").unwrap_or(usize::MAX);
+    let produced_final = xml.find("Final para.").unwrap_or(usize::MAX);
+    assert!(
+        produced_table < produced_final,
+        "word: Final para. follows the table\n{xml}"
+    );
+    assert!(
+        closing_paragraph_is_unmarked(&xml, "Final para."),
+        "word: closing paragraph\n{xml}"
+    );
+    resolved(&a, &b, false, false, "case2-powertools");
+}
+
+/// #2101 review: the original cell already ends in an empty paragraph that
+/// the revision fills. That paragraph was not added, so no inserted mark
+/// belongs on the one before it.
+#[test]
+fn issue_1683_a_filled_empty_close_mints_no_inserted_mark() {
+    let a = docx(&format!(
+        "{}{}",
+        row(&[
+            tc(&para("Keep.")),
+            tc(&format!("{}{}", para("Old."), para("")))
+        ]),
+        para("Tail.")
+    ));
+    let b = docx(&row(&[
+        tc(&para("Keep.")),
+        tc(&format!("{}{}", para("Old."), para("New."))),
+    ]));
+    for (word_mode, what) in [(true, "filled-word"), (false, "filled-powertools")] {
+        resolved(&a, &b, word_mode, word_mode, what);
+    }
+}
+
+/// #2101 review: a paragraph inside a block content control is not the
+/// paragraph before one that follows the control.
+#[test]
+fn issue_1683_the_inserted_mark_stays_inside_its_control() {
+    let control =
+        |inner: &str| format!("<w:sdt><w:sdtPr/><w:sdtContent>{inner}</w:sdtContent></w:sdt>");
+    let a = docx(&format!(
+        "{}{}",
+        row(&[tc(&para("Keep.")), tc(&control(&para("Old.")))]),
+        para("Tail.")
+    ));
+    let b = docx(&row(&[
+        tc(&para("Keep.")),
+        tc(&format!("{}{}", control(&para("Old.")), para("New."))),
+    ]));
+    for (word_mode, what) in [(true, "control-word"), (false, "control-powertools")] {
+        resolved(&a, &b, word_mode, word_mode, what);
+    }
+}
+
+/// #2101 review: the paired closing paragraph takes the revised
+/// paragraph's properties on Accept All and keeps the original close's on
+/// Reject All.
+#[test]
+fn issue_1683_the_paired_close_keeps_both_sides_properties() {
+    let centered =
+        r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>Final para.</w:t></w:r></w:p>"#;
+    let a = docx(&format!(
+        "{}{}{}",
+        para("Text."),
+        row(&[tc(&para("Cell.")), tc(&para("B."))]),
+        para("")
+    ));
+    let b = docx(&format!("{}{centered}", para("Text.")));
+    let out = resolved(&a, &b, true, false, "close-properties");
+    let accepted = part_string(&accept_revisions(&out).unwrap(), "word/document.xml").unwrap();
+    let final_at = accepted.find("Final para.").expect("accepted final");
+    let start = paragraph_open_before(&accepted, final_at).unwrap();
+    assert!(
+        accepted[start..final_at].contains(r#"w:jc w:val="center""#),
+        "Accept All lost the revised alignment\n{accepted}"
+    );
+    let rejected = part_string(&reject_revisions(&out).unwrap(), "word/document.xml").unwrap();
+    assert!(
+        !rejected.contains(r#"w:jc w:val="center""#),
+        "Reject All kept the revised alignment\n{rejected}"
+    );
+}
+
+/// #2101 review: Word saves `_GoBack` as a bookmark in an empty closing
+/// paragraph; that marker does not make the close live content.
+#[test]
+fn issue_1683_a_bookmarked_close_still_pairs() {
+    let a = docx(&format!(
+        "{}{}{}",
+        para("Text."),
+        row(&[
+            tc(&format!(
+                "{}{}",
+                para("New cell one."),
+                para("New cell two.")
+            )),
+            tc(&para("B.")),
+        ]),
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="_GoBack"/><w:bookmarkEnd w:id="0"/></w:p>"#
+    ));
+    let b = docx(&format!("{}{}", para("Text."), para("Final para.")));
+    let out = resolved(&a, &b, true, false, "bookmarked-close");
+    let xml = part_string(&out, "word/document.xml").unwrap();
+    assert!(
+        xml.find("<w:tbl").unwrap_or(usize::MAX) < xml.find("Final para.").unwrap_or(usize::MAX),
+        "word: Final para. follows the table\n{xml}"
+    );
+}
+
+/// #2101 review: the original close has properties of its own; Reject
+/// All restores them and Accept All keeps the revised paragraph's.
+#[test]
+fn issue_1683_the_paired_close_restores_the_original_properties() {
+    let centered =
+        r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>Final para.</w:t></w:r></w:p>"#;
+    let right = r#"<w:p><w:pPr><w:jc w:val="right"/></w:pPr></w:p>"#;
+    let a = docx(&format!(
+        "{}{}{right}",
+        para("Text."),
+        row(&[tc(&para("Cell.")), tc(&para("B."))])
+    ));
+    let b = docx(&format!("{}{centered}", para("Text.")));
+    let out = resolved(&a, &b, true, false, "close-own-properties");
+    let accepted = part_string(&accept_revisions(&out).unwrap(), "word/document.xml").unwrap();
+    assert!(
+        accepted.contains(r#"w:jc w:val="center""#),
+        "Accept All lost the revised alignment\n{accepted}"
+    );
+    let rejected = part_string(&reject_revisions(&out).unwrap(), "word/document.xml").unwrap();
+    assert!(
+        rejected.contains(r#"w:jc w:val="right""#),
+        "Reject All lost the original alignment\n{rejected}"
+    );
+    assert!(
+        !rejected.contains(r#"w:jc w:val="center""#),
+        "Reject All kept the revised alignment\n{rejected}"
+    );
+}
+
+/// #2101 review: a body-level bookmark end between the deleted table and
+/// the empty close is a marker, not content; the closing paragraph still
+/// pairs.
+#[test]
+fn issue_1683_a_body_level_marker_does_not_block_the_pairing() {
+    let a = docx(&format!(
+        "{}{}{}{}",
+        para("Text."),
+        row(&[tc(&para("Cell.")), tc(&para("B."))]),
+        r#"<w:bookmarkStart w:id="7" w:name="mark"/><w:bookmarkEnd w:id="7"/>"#,
+        para("")
+    ));
+    let b = docx(&format!("{}{}", para("Text."), para("Final para.")));
+    let out = resolved(&a, &b, true, false, "body-marker");
+    let xml = part_string(&out, "word/document.xml").unwrap();
+    assert!(
+        xml.find("<w:tbl").unwrap_or(usize::MAX) < xml.find("Final para.").unwrap_or(usize::MAX),
+        "word: Final para. follows the table\n{xml}"
     );
 }

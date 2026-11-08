@@ -667,3 +667,57 @@ Status: open. Plan:
 - [ ] 10. Paragraph text in Strict01 and ac6cd8d92f.
 - [ ] 11. Substitution order on write.
 - [ ] 12. Pandoc manuscripts (decision D2).
+
+## 15. Word-fatal shapes found in Apryse's redlines (2026-11-01)
+
+Status: open, for `jubarte validate` (Ring 1). Found while benchmarking
+Apryse `DOCXCompare` (apryse-sdk 12.2.1, neurotic_docx_bench #100); jubarte
+does not write these shapes today as far as we know, but the checks belong in
+`ring1` so no engine, ours included, can ship them unseen. The same list went to
+`../docx-validate/docs/plans/2026-11-01-apryse-redline-word-refusals.md`.
+
+Evidence (Word 16.115, `scripts/word_pdf.py` in the bench, one batch alone):
+33 Apryse redlines Word refused (18 of a random 50, 15 more from a first
+stage) were repaired two ways and reopened.
+
+| Repair | Opens |
+|---|---|
+| hyperlink shape only (first row below) | 17 / 33 |
+| all four shapes below, plus comment ranges lifted out of runs and fractional twips rounded | 29 / 33 |
+
+Each of the four shapes appears only in refused files (33 refused against 32
+that open, Open XML SDK 3.5.1 uncapped + lxml), and every refused file has at
+least one:
+
+- [ ] 1. `HYPERLINK_INSIDE_RUN` — `w:hyperlink` as a child of `w:r`, the run
+  inside `w:del` or `w:ins`: `<w:del><w:r><w:hyperlink r:id=…><w:r><w:t>…`.
+  24 refused / 0 that open inside `w:del`. Under `w:ins` it is tolerated (9 / 6),
+  so the check fires for the deletion case only, or is Word-fatal only there.
+  Causal: fixing this alone opened 17 of the 33. Word's shape:
+  `<w:hyperlink><w:del><w:r><w:delText>…`.
+- [ ] 2. `FLDSIMPLE_INSIDE_RUN` — `w:fldSimple` as a child of `w:r` inside a
+  change. 2 / 0. Not isolated: needs a single-defect Word probe.
+- [ ] 3. Note or comment reference with no target: `w:footnoteReference` /
+  `w:endnoteReference` whose id has no note, `w:commentReference` with no
+  `comments.xml` at all (one file). 12 / 0. `NOTE_REFERENCE_DANGLING` and
+  `COMMENT_ANCHOR_ORPHAN` may already catch these: run `jubarte validate` on
+  the refused files to confirm before adding anything.
+- [ ] 4. `BOOKMARK_ID_DUPLICATE` — two `w:bookmarkStart` with one `w:id`
+  in the document. 7 / 0. Today `BOOKMARK_*` is listed as not Word-fatal; this
+  needs a single-defect Word probe before it becomes one.
+
+Not Word-fatal, measured: `w:pPr` children out of schema order (`w:rPr`
+before `w:pStyle`), present in 27 of the 32 files that open, and
+`w:hyperlink` inside a run inside `w:ins`.
+
+Still open: 4 files fail after the full repair (3 crash Word, 1 does not
+load): `87dc2ebfec…`, `ec3dd0df69_file_53…`, `fc29454fff…`,
+`8441c4ae21_sd_2517_localized_heading_styles…`. The SDK validator shows nothing
+they share and the 29 lack; the next step is bisecting them in Word.
+
+Specimens (git-ignored scratch in the bench checkout, copy them before
+relying on them): `~/temp/T/neurotic_docx_bench/out/apryse_fixab/{orig,hyperlink,all}`,
+Word's verdicts in `out/apryse_fixab/word/pdf/manifest.jsonl`, the repair
+script `~/temp/T/ndb-apryse/out/apryse/diag_fix.py`. Per this repo's
+AGENTS.md, each check needs a broken probe in `tests/m_validity_ring1.rs`
+and a Word-refused file behind any "Word-fatal" mark.

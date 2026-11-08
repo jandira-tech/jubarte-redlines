@@ -53,6 +53,14 @@ const RELEASE_KEYS: &[ReleaseKey] = &[];
 /// `v` (`Some("0.11.0")`). `None` until [`RELEASE_KEYS`] holds a key.
 const FIRST_SIGNED_RELEASE: Option<&str> = None;
 
+/// Bytes `jubarte self-update` will download, or inflate from the one
+/// expected member of a release zip, before it refuses and leaves the
+/// installed binary in place.
+///
+/// Published archives are about 18 MiB (`v0.17.0`). This is several times
+/// that size. The tar.gz member's own inflation cap is a separate check.
+const UPDATE_ARCHIVE_BYTE_BUDGET: u64 = 128 * 1024 * 1024;
+
 /// The flags `jubarte self-update` accepts, resolved from the CLI before
 /// [`run`] sees them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -227,6 +235,8 @@ pub fn step(opts: &Options, decision: &Plan, resolved: &str) -> Step {
 /// - the checksum download or verification did not match;
 /// - a signature was required but missing or did not verify against
 ///   [`signature_required`];
+/// - the archive is over `UPDATE_ARCHIVE_BYTE_BUDGET`, lists the expected
+///   binary more than once, or inflates that binary past the budget;
 /// - the binary swap step failed.
 pub fn run(opts: &Options) -> Result<(), String> {
     let interactive = std::io::stdin().is_terminal();
@@ -279,12 +289,20 @@ pub fn run(opts: &Options) -> Result<(), String> {
     }
 
     let signed = signature_required(&to, FIRST_SIGNED_RELEASE, !RELEASE_KEYS.is_empty())?;
-    if signed {
-        builder.verify_archive(|archive| {
+    let member = resolved_bin_path(target, &to);
+    // Before extraction: cap the download and the inflated member, and refuse
+    // an archive that lists that member twice. The signature decision above
+    // is unchanged: this hook runs it only when that decision already said to.
+    builder.verify_archive(move |archive| {
+        confine_update_zip(archive, &member, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .map_err(self_update::Error::archive_verification_rejected)?;
+        if signed {
             verify_signature(archive, RELEASE_KEYS)
-                .map_err(self_update::Error::archive_verification_rejected)
-        });
-    } else if !RELEASE_KEYS.is_empty() {
+                .map_err(self_update::Error::archive_verification_rejected)?;
+        }
+        Ok(())
+    });
+    if !signed && !RELEASE_KEYS.is_empty() {
         eprintln!("note: {to} predates signed releases; only its SHA-256 is checked.");
     }
     let installer = builder
@@ -358,6 +376,680 @@ fn extracted_binary_is_regular_file(path: &std::path::Path) -> self_update::Resu
             path.display()
         )))
     }
+}
+
+/// Path of the binary inside a release archive once `{{ version }}` is the
+/// release being installed. `self_update` fills that token itself; the
+/// pre-extract check has to use the same path.
+fn resolved_bin_path(target: &str, version: &str) -> String {
+    bin_path_in_archive(target).replace("{{ version }}", version)
+}
+
+/// Gate the downloaded release archive before `self_update` extracts it.
+///
+/// `run` registers this as the `verify_archive` hook, which runs after the
+/// checksum and before a byte of the archive is unpacked. `member` is the
+/// binary path inside the archive (`jubarte-<version>-<target>/jubarte` or
+/// `.exe`). A file larger than `budget` is refused. A zip whose expected
+/// member appears more than once, or whose expected member inflates past
+/// `budget`, is refused. A gzipped tar is refused when its expected member
+/// is a symlink or a hardlink, when that member's mode carries setuid,
+/// setgid or sticky bits, when any entry climbs out of the extract
+/// directory, or when the tar inflates past `budget`. Any other bytes are
+/// left alone once the download itself fits.
+fn confine_update_zip(archive: &std::path::Path, member: &str, budget: u64) -> Result<(), String> {
+    let len = std::fs::metadata(archive)
+        .map_err(|e| {
+            format!(
+                "update archive {} cannot be inspected: {e}",
+                archive.display()
+            )
+        })?
+        .len();
+    if len > budget {
+        return Err(format!(
+            "update archive is {len} bytes, over the {budget}-byte download budget"
+        ));
+    }
+    let mut file = std::fs::File::open(archive)
+        .map_err(|e| format!("update archive {} cannot be opened: {e}", archive.display()))?;
+    // A zip is told by its end record, not by a leading `PK`: a zipsign
+    // signature sits before the zip and zip/self_update still read it
+    // (#2084 review). No end record and no `PK`: a gzip is the tar.gz the
+    // tar gate reads; anything else is not an archive this gate knows.
+    let Some(copies) = zip_member_copies(&mut file, len, member)? else {
+        if zip_magic(&mut file)? {
+            return Err("update archive has no zip end record".into());
+        }
+        if gzip_magic(&mut file)? {
+            return confine_update_tar(archive, member, budget);
+        }
+        return Ok(());
+    };
+    if copies > 1 {
+        return Err(format!("update archive lists {member} more than once"));
+    }
+    if copies == 0 {
+        return Err(format!("update archive has no member {member}"));
+    }
+    inflate_member_within_budget(archive, member, budget)
+}
+
+fn zip_magic(file: &mut std::fs::File) -> Result<bool, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    file.seek(SeekFrom::Start(0))
+        .map_err(|e| format!("update archive cannot be rewound: {e}"))?;
+    let mut magic = [0u8; 2];
+    let read = file
+        .read(&mut magic)
+        .map_err(|e| format!("update archive cannot be read: {e}"))?;
+    Ok(read == 2 && magic == [0x50, 0x4b])
+}
+
+/// How many central-directory entries name `member`, or `None` when the
+/// file has no zip end record.
+///
+/// `zip`'s reader keeps one entry per name, so a repeated member is invisible
+/// there and the first copy would be the one installed. The count comes from
+/// the central directory itself. Each name is the one `zip` resolves (an
+/// adopted 0x7075 Unicode Path included), and a directory that a leading
+/// prefix moved past its recorded offset is found where `zip` finds it.
+fn zip_member_copies(
+    file: &mut std::fs::File,
+    len: u64,
+    member: &str,
+) -> Result<Option<u32>, String> {
+    const EOCD_LEN: u64 = 22;
+    const MAX_COMMENT: u64 = 65_535;
+    if len < EOCD_LEN {
+        return Ok(None);
+    }
+    let tail_len = len.min(EOCD_LEN.saturating_add(MAX_COMMENT));
+    let tail_at = len.saturating_sub(tail_len);
+    let tail_bytes = usize::try_from(tail_len)
+        .map_err(|_| "update archive is too large to inspect".to_string())?;
+    let mut tail = vec![0u8; tail_bytes];
+    read_exact_at(file, tail_at, &mut tail)?;
+    let Some(eocd) = find_eocd(&tail) else {
+        return Ok(None);
+    };
+    let entries = le_u16(&tail, eocd.saturating_add(10))?;
+    let cd_size = u64::from(le_u32(&tail, eocd.saturating_add(12))?);
+    let cd_offset = u64::from(le_u32(&tail, eocd.saturating_add(16))?);
+    if entries == u16::MAX || cd_size == u64::from(u32::MAX) || cd_offset == u64::from(u32::MAX) {
+        return Err("update archive uses ZIP64, which this check refuses".into());
+    }
+    // Bytes before the zip (a zipsign signature) shift the directory by
+    // the gap between where it ends and where the end record sits; zip
+    // reads it at the recorded offset first, then shifted.
+    let eocd_at = tail_at.saturating_add(eocd as u64);
+    let recorded_end = cd_offset
+        .checked_add(cd_size)
+        .ok_or_else(|| "update archive central directory is out of range".to_string())?;
+    let shift = eocd_at
+        .checked_sub(recorded_end)
+        .ok_or_else(|| "update archive central directory runs past its end record".to_string())?;
+    let mut signature = [0u8; 4];
+    let at_recorded = cd_size == 0
+        || (read_exact_at(file, cd_offset, &mut signature).is_ok()
+            && signature == [0x50, 0x4b, 0x01, 0x02]);
+    let base = if at_recorded { 0 } else { shift };
+    let cd_start = cd_offset
+        .checked_add(base)
+        .ok_or_else(|| "update archive central directory is out of range".to_string())?;
+    let cd_end = recorded_end
+        .checked_add(base)
+        .ok_or_else(|| "update archive central directory is out of range".to_string())?;
+    if cd_end > len {
+        return Err("update archive central directory runs past the file".into());
+    }
+    let mut at = cd_start;
+    let mut copies = 0u32;
+    let mut seen = 0u16;
+    let mut name_and_extra = Vec::new();
+    while at < cd_end {
+        let mut header = [0u8; 46];
+        read_exact_at(file, at, &mut header)?;
+        if header.get(..4) != Some(&[0x50, 0x4b, 0x01, 0x02]) {
+            return Err("update archive central directory is truncated".into());
+        }
+        let name_len = u64::from(le_u16(&header, 28)?);
+        let extra_len = u64::from(le_u16(&header, 30)?);
+        let comment_len = u64::from(le_u16(&header, 32)?);
+        let step = 46u64
+            .checked_add(name_len)
+            .and_then(|n| n.checked_add(extra_len))
+            .and_then(|n| n.checked_add(comment_len))
+            .ok_or_else(|| "update archive central directory entry is out of range".to_string())?;
+        let next = at
+            .checked_add(step)
+            .ok_or_else(|| "update archive central directory entry is out of range".to_string())?;
+        if next > cd_end {
+            return Err("update archive central directory entry runs past the directory".into());
+        }
+        let name_at = at
+            .checked_add(46)
+            .ok_or_else(|| "update archive member name is out of range".to_string())?;
+        let name_bytes = usize::try_from(name_len)
+            .map_err(|_| "update archive member name is too long".to_string())?;
+        let extra_bytes = usize::try_from(extra_len)
+            .map_err(|_| "update archive extra field is too long".to_string())?;
+        // One buffer for every entry: name then extra field, each at most
+        // 64 KiB, as the header records them.
+        name_and_extra.resize(name_bytes.saturating_add(extra_bytes), 0);
+        if !name_and_extra.is_empty() {
+            read_exact_at(file, name_at, &mut name_and_extra)?;
+        }
+        let (raw_name, extra) = name_and_extra.split_at(name_bytes);
+        let flags = le_u16(&header, 8)?;
+        let name = crate::admission::zip_entry_name_raw(raw_name, flags, extra)
+            .map_err(|e| format!("update archive member name cannot be read: {e}"))?;
+        if member_names_match(name.as_bytes(), member) {
+            copies = copies.saturating_add(1);
+        }
+        seen = seen
+            .checked_add(1)
+            .ok_or_else(|| "update archive has too many entries".to_string())?;
+        at = next;
+    }
+    if seen != entries {
+        return Err("update archive central directory does not match its end record".into());
+    }
+    Ok(Some(copies))
+}
+
+fn find_eocd(tail: &[u8]) -> Option<usize> {
+    let last = tail.len().checked_sub(22)?;
+    let mut at = last;
+    loop {
+        if tail.get(at..at.checked_add(4)?) == Some(&[0x50, 0x4b, 0x05, 0x06][..]) {
+            let comment = usize::from(le_u16(tail, at.saturating_add(20)).ok()?);
+            let end = at.checked_add(22)?.checked_add(comment)?;
+            if end == tail.len() {
+                return Some(at);
+            }
+        }
+        if at == 0 {
+            return None;
+        }
+        at = at.saturating_sub(1);
+    }
+}
+
+fn le_u16(bytes: &[u8], at: usize) -> Result<u16, String> {
+    let mut buf = [0u8; 2];
+    buf.copy_from_slice(
+        bytes
+            .get(
+                at..at
+                    .checked_add(2)
+                    .ok_or_else(|| "update archive field is out of range".to_string())?,
+            )
+            .ok_or_else(|| "update archive field is out of range".to_string())?,
+    );
+    Ok(u16::from_le_bytes(buf))
+}
+
+fn le_u32(bytes: &[u8], at: usize) -> Result<u32, String> {
+    let mut buf = [0u8; 4];
+    buf.copy_from_slice(
+        bytes
+            .get(
+                at..at
+                    .checked_add(4)
+                    .ok_or_else(|| "update archive field is out of range".to_string())?,
+            )
+            .ok_or_else(|| "update archive field is out of range".to_string())?,
+    );
+    Ok(u32::from_le_bytes(buf))
+}
+
+fn member_names_match(entry: &[u8], member: &str) -> bool {
+    let entry = entry.strip_prefix(b"./").unwrap_or(entry);
+    if entry.ends_with(b"/") {
+        return false;
+    }
+    let member = member.strip_prefix("./").unwrap_or(member).as_bytes();
+    entry.len() == member.len()
+        && entry
+            .iter()
+            .zip(member)
+            .all(|(got, want)| *got == *want || (*got == b'\\' && *want == b'/'))
+}
+
+fn read_exact_at(file: &mut std::fs::File, at: u64, buf: &mut [u8]) -> Result<(), String> {
+    use std::io::{Read, Seek, SeekFrom};
+    file.seek(SeekFrom::Start(at))
+        .map_err(|e| format!("update archive seek failed: {e}"))?;
+    file.read_exact(buf)
+        .map_err(|e| format!("update archive read failed: {e}"))
+}
+
+/// Count the bytes the expected member actually inflates to, and stop one
+/// byte past `budget`. The declared uncompressed size is not the limit:
+/// `self_update` copies the stream with no cap of its own.
+fn inflate_member_within_budget(
+    archive: &std::path::Path,
+    member: &str,
+    budget: u64,
+) -> Result<(), String> {
+    use std::io::{Read, copy, sink};
+    let file = std::fs::File::open(archive)
+        .map_err(|e| format!("update archive {} cannot be opened: {e}", archive.display()))?;
+    let mut zip = zip::ZipArchive::new(file)
+        .map_err(|e| format!("update archive is not a readable zip: {e}"))?;
+    let mut matched = None;
+    for index in 0..zip.len() {
+        let entry = zip
+            .by_index(index)
+            .map_err(|e| format!("update archive entry {index} cannot be read: {e}"))?;
+        let name = entry
+            .name()
+            .map_err(|e| format!("update archive entry {index} has no name: {e}"))?;
+        if member_names_match(name.as_bytes(), member) {
+            matched = Some(index);
+            break;
+        }
+    }
+    let Some(index) = matched else {
+        return Err(format!("update archive has no member {member}"));
+    };
+    let mut entry = zip
+        .by_index(index)
+        .map_err(|e| format!("update member {member} cannot be read: {e}"))?;
+    let inflated = copy(
+        &mut (&mut entry).take(budget.saturating_add(1)),
+        &mut sink(),
+    )
+    .map_err(|e| format!("update member {member} could not be inflated: {e}"))?;
+    if inflated > budget {
+        Err(format!(
+            "update member {member} inflates past the {budget}-byte budget"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn gzip_magic(file: &mut std::fs::File) -> Result<bool, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    file.seek(SeekFrom::Start(0))
+        .map_err(|e| format!("update archive cannot be rewound: {e}"))?;
+    let mut magic = [0u8; 2];
+    let read = file
+        .read(&mut magic)
+        .map_err(|e| format!("update archive cannot be read: {e}"))?;
+    Ok(read == 2 && magic == [0x1f, 0x8b])
+}
+
+/// Walk a gzipped tar the way a Unix release archive is packed. `self_update`
+/// then asks `tar` to unpack the one member, which restores a symlink or a
+/// hardlink as a real link and keeps setuid bits. Refuse those before that
+/// unpack. The decompressed byte count stops at `budget`.
+fn confine_update_tar(archive: &std::path::Path, member: &str, budget: u64) -> Result<(), String> {
+    let file = std::fs::File::open(archive)
+        .map_err(|e| format!("update archive {} cannot be opened: {e}", archive.display()))?;
+    let mut decoder = flate2::read::GzDecoder::new(file);
+    let mut inflated = 0u64;
+    let mut zero_blocks = 0u8;
+    let mut copies = 0u32;
+    // The tar crate's extension entries: a GNU `L` long name, a GNU `K`
+    // long link and a PAX `x` record set each describe the next member.
+    let mut long_name: Option<Vec<u8>> = None;
+    let mut long_link = false;
+    let mut pax: Option<Vec<u8>> = None;
+    loop {
+        let mut header = [0u8; 512];
+        if !read_tar_block(&mut decoder, &mut header, &mut inflated, budget)? {
+            break;
+        }
+        if header.iter().all(|byte| *byte == 0) {
+            zero_blocks = zero_blocks.saturating_add(1);
+            if zero_blocks == 2 {
+                break;
+            }
+            continue;
+        }
+        zero_blocks = 0;
+        if !tar_checksum_ok(&header) {
+            return Err("update archive is not a tar".into());
+        }
+        let typeflag = *header.get(156).unwrap_or(&0);
+        let extension = matches!(typeflag, b'L' | b'K' | b'x' | b'g');
+        let mut size = tar_octal(header.get(124..136).unwrap_or(&[]))?;
+        if !extension
+            && let Some(records) = pax.as_deref()
+            && let Some(pax_size) = pax_value(records, b"size")?
+        {
+            size = std::str::from_utf8(pax_size)
+                .ok()
+                .and_then(|text| text.parse::<u64>().ok())
+                .ok_or_else(|| "update archive PAX size is not a number".to_string())?;
+        }
+        if tar_magic_recognized(&header) && matches!(typeflag, b'L' | b'K' | b'x') {
+            let twice = match typeflag {
+                b'L' => long_name.is_some(),
+                b'K' => long_link,
+                _ => pax.is_some(),
+            };
+            if twice {
+                return Err("update archive describes one member twice".into());
+            }
+            let body = read_tar_extension(&mut decoder, size, &mut inflated, budget)?;
+            match typeflag {
+                b'L' => long_name = Some(body),
+                b'K' => long_link = true,
+                _ => pax = Some(body),
+            }
+            continue;
+        }
+        let name_bytes = match long_name.take() {
+            Some(mut bytes) => {
+                if bytes.last() == Some(&0) {
+                    bytes.pop();
+                }
+                bytes
+            }
+            None => match pax.as_deref().map(|records| pax_value(records, b"path")) {
+                Some(Ok(Some(path))) => path.to_vec(),
+                Some(Err(e)) => return Err(e),
+                _ => tar_entry_name(&header)?.into_bytes(),
+            },
+        };
+        pax = None;
+        long_link = false;
+        let name = String::from_utf8(name_bytes)
+            .map_err(|_| "update archive tar name is not UTF-8".to_string())?;
+        if tar_name_escapes(&name) {
+            return Err(format!(
+                "update archive entry {name} escapes the extraction directory"
+            ));
+        }
+        let mode = tar_octal(header.get(100..108).unwrap_or(&[]))?;
+        if member_names_match(name.as_bytes(), member) {
+            match typeflag {
+                b'2' => return Err(format!("update member {member} is a symlink")),
+                b'1' => return Err(format!("update member {member} is a hardlink")),
+                b'0' | 0 => {}
+                _ => {
+                    return Err(format!("update member {member} is not a regular file"));
+                }
+            }
+            if mode & 0o7000 != 0 {
+                return Err(format!(
+                    "update member {member} mode {mode:o} carries setuid, setgid, or sticky bits"
+                ));
+            }
+            copies = copies.saturating_add(1);
+        }
+        skip_tar_body(&mut decoder, size, &mut inflated, budget)?;
+    }
+    if long_name.is_some() || long_link || pax.is_some() {
+        return Err("update archive describes a member that never follows".into());
+    }
+    if copies > 1 {
+        return Err(format!("update archive lists {member} more than once"));
+    }
+    if copies == 0 {
+        return Err(format!("update archive has no member {member}"));
+    }
+    Ok(())
+}
+
+/// The tar crate honours `L`, `K` and `x` entries only under a ustar
+/// (`"ustar\0"`, `"00"`) or GNU (`"ustar "`, `" \0"`) magic.
+fn tar_magic_recognized(header: &[u8; 512]) -> bool {
+    let magic = header.get(257..263).unwrap_or(&[]);
+    let version = header.get(263..265).unwrap_or(&[]);
+    (magic == b"ustar\0" && version == b"00") || (magic == b"ustar " && version == b" \0")
+}
+
+/// Largest GNU long name or PAX record set the gate reads into memory.
+const TAR_EXTENSION_LIMIT: u64 = 1 << 20;
+
+fn read_tar_extension(
+    reader: &mut impl std::io::Read,
+    size: u64,
+    inflated: &mut u64,
+    budget: u64,
+) -> Result<Vec<u8>, String> {
+    if size > TAR_EXTENSION_LIMIT {
+        return Err(format!(
+            "update archive extension header of {size} bytes exceeds {TAR_EXTENSION_LIMIT}"
+        ));
+    }
+    let len = usize::try_from(size)
+        .map_err(|_| "update archive extension header is too large".to_string())?;
+    let mut body = vec![0u8; len];
+    read_exact_capped(reader, &mut body, inflated, budget)?;
+    let pad = (512 - size % 512) % 512;
+    let mut padding = [0u8; 512];
+    let pad_len = usize::try_from(pad).unwrap_or(0);
+    read_exact_capped(
+        reader,
+        padding
+            .get_mut(..pad_len)
+            .ok_or_else(|| "update archive tar padding is out of range".to_string())?,
+        inflated,
+        budget,
+    )?;
+    Ok(body)
+}
+
+/// The first value for `key` among PAX records `"<len> <key>=<value>\n"`.
+/// A malformed record set is a refusal: the extractor and the gate must
+/// not read it two ways.
+fn pax_value<'a>(records: &'a [u8], key: &[u8]) -> Result<Option<&'a [u8]>, String> {
+    let malformed = || "update archive PAX header is malformed".to_string();
+    let mut rest = records;
+    while !rest.is_empty() {
+        let space = rest
+            .iter()
+            .position(|byte| *byte == b' ')
+            .ok_or_else(malformed)?;
+        let len = std::str::from_utf8(rest.get(..space).ok_or_else(malformed)?)
+            .ok()
+            .and_then(|text| text.parse::<usize>().ok())
+            .ok_or_else(malformed)?;
+        let record = rest.get(..len).ok_or_else(malformed)?;
+        let body = record
+            .get(space.saturating_add(1)..)
+            .and_then(|body| body.strip_suffix(b"\n"))
+            .ok_or_else(malformed)?;
+        let equals = body
+            .iter()
+            .position(|byte| *byte == b'=')
+            .ok_or_else(malformed)?;
+        if body.get(..equals) == Some(key) {
+            return Ok(body.get(equals.saturating_add(1)..));
+        }
+        rest = rest.get(len..).ok_or_else(malformed)?;
+    }
+    Ok(None)
+}
+
+/// `Ok(false)` is a clean end of the gzip member. A short read in the middle
+/// of a header is a refusal.
+fn read_tar_block(
+    reader: &mut impl std::io::Read,
+    header: &mut [u8; 512],
+    inflated: &mut u64,
+    budget: u64,
+) -> Result<bool, String> {
+    let mut filled = 0usize;
+    while filled < header.len() {
+        if *inflated >= budget {
+            return Err(format!(
+                "update archive inflates past the {budget}-byte budget"
+            ));
+        }
+        let room = budget.saturating_sub(*inflated);
+        let want = u64::try_from(header.len().saturating_sub(filled)).unwrap_or(u64::MAX);
+        let take = usize::try_from(room.min(want)).unwrap_or(0);
+        if take == 0 {
+            return Err(format!(
+                "update archive inflates past the {budget}-byte budget"
+            ));
+        }
+        let end = filled.saturating_add(take);
+        let read = reader
+            .read(
+                header
+                    .get_mut(filled..end)
+                    .ok_or_else(|| "update archive tar header is out of range".to_string())?,
+            )
+            .map_err(|e| format!("update archive could not be inflated: {e}"))?;
+        if read == 0 {
+            if filled == 0 {
+                return Ok(false);
+            }
+            return Err("update archive ended inside a tar header".into());
+        }
+        filled = filled.saturating_add(read);
+        *inflated = inflated.saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
+    }
+    Ok(true)
+}
+
+fn skip_tar_body(
+    reader: &mut impl std::io::Read,
+    size: u64,
+    inflated: &mut u64,
+    budget: u64,
+) -> Result<(), String> {
+    let padded = size
+        .checked_add(511)
+        .ok_or_else(|| "update archive tar member is too large".to_string())?
+        / 512
+        * 512;
+    let mut left = padded;
+    let mut buf = [0u8; 8192];
+    while left > 0 {
+        let take = usize::try_from(left.min(8192)).unwrap_or(8192);
+        let dest = buf
+            .get_mut(..take)
+            .ok_or_else(|| "update archive tar member is out of range".to_string())?;
+        read_exact_capped(reader, dest, inflated, budget)?;
+        left = left.saturating_sub(u64::try_from(take).unwrap_or(left));
+    }
+    Ok(())
+}
+
+fn read_exact_capped(
+    reader: &mut impl std::io::Read,
+    buf: &mut [u8],
+    inflated: &mut u64,
+    budget: u64,
+) -> Result<(), String> {
+    let mut filled = 0usize;
+    while filled < buf.len() {
+        if *inflated >= budget {
+            return Err(format!(
+                "update archive inflates past the {budget}-byte budget"
+            ));
+        }
+        let room = budget.saturating_sub(*inflated);
+        let want = u64::try_from(buf.len().saturating_sub(filled)).unwrap_or(u64::MAX);
+        let take = usize::try_from(room.min(want)).unwrap_or(0);
+        if take == 0 {
+            return Err(format!(
+                "update archive inflates past the {budget}-byte budget"
+            ));
+        }
+        let end = filled.saturating_add(take);
+        let read = reader
+            .read(
+                buf.get_mut(filled..end)
+                    .ok_or_else(|| "update archive tar body is out of range".to_string())?,
+            )
+            .map_err(|e| format!("update archive could not be inflated: {e}"))?;
+        if read == 0 {
+            return Err("update archive ended inside a tar member".into());
+        }
+        filled = filled.saturating_add(read);
+        *inflated = inflated.saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
+    }
+    Ok(())
+}
+
+fn tar_checksum_ok(header: &[u8; 512]) -> bool {
+    let mut sum = 0u32;
+    for (index, byte) in header.iter().enumerate() {
+        if (148..156).contains(&index) {
+            sum += u32::from(b' ');
+        } else {
+            sum += u32::from(*byte);
+        }
+    }
+    tar_octal(header.get(148..156).unwrap_or(&[])).ok() == Some(u64::from(sum))
+}
+
+fn tar_entry_name(header: &[u8; 512]) -> Result<String, String> {
+    let name = tar_c_string(header.get(..100).unwrap_or(&[]))?;
+    // Only a ustar header carries a prefix field; a GNU header keeps
+    // other data at those bytes, and the tar crate ignores them there.
+    let ustar = header.get(257..263) == Some(b"ustar\0") && header.get(263..265) == Some(b"00");
+    if !ustar {
+        return Ok(name);
+    }
+    let prefix = tar_c_string(header.get(345..500).unwrap_or(&[]))?;
+    if prefix.is_empty() {
+        Ok(name)
+    } else {
+        Ok(format!("{prefix}/{name}"))
+    }
+}
+
+fn tar_c_string(bytes: &[u8]) -> Result<String, String> {
+    let end = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(bytes.len());
+    let text = bytes.get(..end).unwrap_or(&[]);
+    String::from_utf8(text.to_vec()).map_err(|_| "update archive tar name is not UTF-8".to_string())
+}
+
+/// Parsed as the tar crate does: cut at the first NUL, trim blanks on both
+/// sides, then read octal digits (an optional leading `+`, as
+/// `u64::from_str_radix` allows). An empty field is refused there too.
+fn tar_octal(bytes: &[u8]) -> Result<u64, String> {
+    let end = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(bytes.len());
+    let text = bytes.get(..end).unwrap_or(&[]).trim_ascii();
+    let text = text.strip_prefix(b"+").unwrap_or(text);
+    if text.is_empty() {
+        return Err("update archive tar field is not octal".into());
+    }
+    let mut value = 0u64;
+    for byte in text {
+        let digit = byte
+            .checked_sub(b'0')
+            .filter(|digit| *digit < 8)
+            .ok_or_else(|| "update archive tar field is not octal".to_string())?;
+        value = value
+            .checked_mul(8)
+            .and_then(|next| next.checked_add(u64::from(digit)))
+            .ok_or_else(|| "update archive tar field is out of range".to_string())?;
+    }
+    Ok(value)
+}
+
+fn tar_name_escapes(name: &str) -> bool {
+    use std::path::{Component, Path};
+    if name.starts_with('/') || name.starts_with('\\') {
+        return true;
+    }
+    if name.split(['/', '\\']).any(|part| part == "..") {
+        return true;
+    }
+    Path::new(name).components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    })
 }
 
 #[cfg(test)]
@@ -615,5 +1307,445 @@ mod tests {
             extracted_binary_is_regular_file(&dangling)
                 .expect_err("a dangling symlink must be refused too");
         }
+    }
+
+    const UPDATE_MEMBER: &str = "jubarte-9.9.9-windows-x86_64/jubarte.exe";
+
+    fn write_update_archive(dir: &std::path::Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    fn deflated_update_zip(member: &str, payload: &[u8]) -> Vec<u8> {
+        use std::io::Write;
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options: zip::write::FullFileOptions<'_, '_> =
+            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        writer.start_file(member, options).expect("start member");
+        writer.write_all(payload).expect("write member");
+        writer.finish().expect("finish zip").into_inner()
+    }
+
+    /// ZIP-28 (#656): the downloaded file itself has a byte budget, before
+    /// any member is inflated.
+    #[test]
+    fn update_archive_over_the_download_budget_is_refused() {
+        let bytes = deflated_update_zip(UPDATE_MEMBER, b"#!/jubarte");
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        let budget = (bytes.len() as u64).saturating_sub(1);
+        let err = confine_update_zip(&archive, UPDATE_MEMBER, budget)
+            .expect_err("an archive larger than the download budget was accepted");
+        assert!(
+            err.contains("download budget"),
+            "the refusal must name the download budget, got {err}"
+        );
+    }
+
+    /// ZIP-28 (#656): the expected member can inflate far past the archive
+    /// that carried it. The download fits; the unpacked member must not.
+    #[test]
+    fn update_archive_inflation_is_capped() {
+        let payload = vec![0u8; 8_000];
+        let bytes = deflated_update_zip(UPDATE_MEMBER, &payload);
+        assert!(
+            bytes.len() < payload.len(),
+            "the fixture must be smaller on disk than the member it inflates to, got {} bytes",
+            bytes.len()
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        let budget = bytes.len() as u64;
+        let err = confine_update_zip(&archive, UPDATE_MEMBER, budget)
+            .expect_err("an inflated member past the budget was extracted with no cap");
+        assert!(
+            err.contains("inflates past"),
+            "the refusal must name the inflation cap, got {err}"
+        );
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            1,
+            "a refused archive must stay the only file in the directory"
+        );
+    }
+
+    /// ZIP-28 (#656): two central-directory entries with the expected name
+    /// are ambiguous. The first match must not be installed.
+    #[test]
+    fn update_archive_duplicate_member_is_refused() {
+        let name = UPDATE_MEMBER.as_bytes();
+        let bytes = crate::admission::zip_names::zip(&[
+            crate::admission::zip_names::RawEntry::raw(name, b"FIRST"),
+            crate::admission::zip_names::RawEntry::raw(name, b"SECOND"),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        let err = confine_update_zip(&archive, UPDATE_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("an archive that lists the expected member twice was accepted");
+        assert!(
+            err.contains("more than once"),
+            "the refusal must name the repeated member, got {err}"
+        );
+    }
+
+    /// #2084 review (Bugbot): a zipsign-signed zip starts with its
+    /// signature block, not `PK`, and its offsets are not rewritten; zip and
+    /// self_update still read it. The checks must run on it too.
+    fn prefixed(prefix_len: usize, zip: &[u8]) -> Vec<u8> {
+        let mut out = vec![0xA5u8; prefix_len];
+        out.extend_from_slice(zip);
+        out
+    }
+
+    #[test]
+    fn update_archive_with_a_prefix_still_refuses_a_repeated_member() {
+        let name = UPDATE_MEMBER.as_bytes();
+        let bytes = prefixed(
+            64,
+            &crate::admission::zip_names::zip(&[
+                crate::admission::zip_names::RawEntry::raw(name, b"FIRST"),
+                crate::admission::zip_names::RawEntry::raw(name, b"SECOND"),
+            ]),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        let err = confine_update_zip(&archive, UPDATE_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("a prefixed archive skipped the repeated-member check");
+        assert!(err.contains("more than once"), "{err}");
+    }
+
+    #[test]
+    fn update_archive_with_a_prefix_still_caps_inflation() {
+        let payload = vec![0u8; 8_000];
+        let bytes = prefixed(64, &deflated_update_zip(UPDATE_MEMBER, &payload));
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        let budget = bytes.len() as u64;
+        let err = confine_update_zip(&archive, UPDATE_MEMBER, budget)
+            .expect_err("a prefixed archive skipped the inflation cap");
+        assert!(err.contains("inflates past"), "{err}");
+    }
+
+    #[test]
+    fn update_archive_with_a_prefix_and_one_member_is_allowed() {
+        let bytes = prefixed(64, &deflated_update_zip(UPDATE_MEMBER, b"#!/jubarte"));
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        confine_update_zip(&archive, UPDATE_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect("a signed (prefixed) release zip with one member");
+    }
+
+    /// #2084 review (Bugbot): zip names an entry by its adopted 0x7075
+    /// Unicode Path, so a second entry whose raw name differs but whose
+    /// Unicode Path is the member is the same installed file.
+    #[test]
+    fn update_archive_unicode_path_copy_is_a_repeated_member() {
+        let name = UPDATE_MEMBER.as_bytes();
+        let bytes = crate::admission::zip_names::zip(&[
+            crate::admission::zip_names::RawEntry::raw(name, b"FIRST"),
+            crate::admission::zip_names::RawEntry::raw(b"decoy.bin", b"SECOND").unicode_path(name),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        let err = confine_update_zip(&archive, UPDATE_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("a Unicode Path copy of the member was not counted");
+        assert!(err.contains("more than once"), "{err}");
+    }
+
+    #[test]
+    fn update_archive_single_member_is_allowed() {
+        let bytes = deflated_update_zip(UPDATE_MEMBER, b"#!/jubarte");
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", &bytes);
+        confine_update_zip(&archive, UPDATE_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect("one member inside the budget is the release zip");
+    }
+
+    #[test]
+    fn update_archive_non_zip_inside_budget_is_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.tar.gz", b"not a zip");
+        confine_update_zip(&archive, UPDATE_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect("a tar.gz inside the download budget is not a zip refusal");
+    }
+
+    const TAR_MEMBER: &str = "jubarte-9.9.9-linux-x86_64/jubarte";
+
+    /// A ustar header. `size` is the entry payload. Symlinks and hardlinks
+    /// use a zero size and carry the target in the link field.
+    fn tar_header(name: &str, typeflag: u8, mode: u32, size: u64, link: &str) -> [u8; 512] {
+        let mut header = [0u8; 512];
+        let name_bytes = name.as_bytes();
+        assert!(name_bytes.len() < 100, "tar name fits the ustar field");
+        header[..name_bytes.len()].copy_from_slice(name_bytes);
+        let mode_text = format!("{mode:07o}");
+        header[100..100 + mode_text.len()].copy_from_slice(mode_text.as_bytes());
+        let size_text = format!("{size:011o}");
+        header[124..124 + size_text.len()].copy_from_slice(size_text.as_bytes());
+        header[136..147].copy_from_slice(b"00000000000");
+        header[156] = typeflag;
+        let link_bytes = link.as_bytes();
+        assert!(
+            link_bytes.len() < 100,
+            "tar link target fits the ustar field"
+        );
+        header[157..157 + link_bytes.len()].copy_from_slice(link_bytes);
+        header[257..263].copy_from_slice(b"ustar\0");
+        header[263..265].copy_from_slice(b"00");
+        tar_reseal(&mut header);
+        header
+    }
+
+    /// Rewrite the header checksum after a test edits a field.
+    fn tar_reseal(header: &mut [u8; 512]) {
+        let mut sum = 0u32;
+        for (index, byte) in header.iter().enumerate() {
+            if (148..156).contains(&index) {
+                sum += u32::from(b' ');
+            } else {
+                sum += u32::from(*byte);
+            }
+        }
+        let checksum = format!("{sum:06o}\0 ");
+        header[148..156].copy_from_slice(checksum.as_bytes());
+    }
+
+    /// One PAX extended-header record, `"<len> <key>=<value>\n"`, where
+    /// `<len>` counts the whole record including its own digits.
+    fn pax_record(key: &str, value: &str) -> Vec<u8> {
+        let body = format!(" {key}={value}\n");
+        let mut len = body.len() + 1;
+        while format!("{len}").len() + body.len() != len {
+            len += 1;
+        }
+        format!("{len}{body}").into_bytes()
+    }
+
+    fn gzip_tar(entries: &[([u8; 512], &[u8])]) -> Vec<u8> {
+        use std::io::Write;
+        let mut raw = Vec::new();
+        for (header, body) in entries {
+            raw.extend_from_slice(header);
+            raw.extend_from_slice(body);
+            let pad = (512 - (body.len() % 512)) % 512;
+            raw.extend(std::iter::repeat_n(0u8, pad));
+        }
+        raw.extend_from_slice(&[0u8; 1024]);
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&raw).expect("gzip");
+        encoder.finish().expect("finish gzip")
+    }
+
+    fn tar_archive(dir: &std::path::Path, entries: &[([u8; 512], &[u8])]) -> std::path::PathBuf {
+        write_update_archive(dir, "jubarte.tar.gz", &gzip_tar(entries))
+    }
+
+    /// R06a (#1305): macOS and Linux extract a tar.gz. A symlink at the
+    /// binary's path must not be unpacked and installed.
+    #[test]
+    fn update_tar_symlink_member_is_refused() {
+        let header = tar_header(TAR_MEMBER, b'2', 0o777, 0, "/tmp/outside");
+        let dir = tempfile::tempdir().unwrap();
+        let archive = tar_archive(dir.path(), &[(header, &[][..])]);
+        let err = confine_update_zip(&archive, TAR_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("a tar.gz symlink member was accepted");
+        assert!(
+            err.contains("symlink"),
+            "the refusal must name the symlink, got {err}"
+        );
+    }
+
+    /// R06a (#1305): a hardlink is not a regular file either.
+    #[test]
+    fn update_tar_hardlink_member_is_refused() {
+        let header = tar_header(TAR_MEMBER, b'1', 0o644, 0, "other");
+        let dir = tempfile::tempdir().unwrap();
+        let archive = tar_archive(dir.path(), &[(header, &[][..])]);
+        let err = confine_update_zip(&archive, TAR_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("a tar.gz hardlink member was accepted");
+        assert!(
+            err.contains("hardlink"),
+            "the refusal must name the hardlink, got {err}"
+        );
+    }
+
+    /// R06a (#1305): the zip arm masks mode to `0o777`. A setuid tar member
+    /// must not be installed with those bits.
+    #[test]
+    fn update_tar_setuid_member_is_refused() {
+        let body = b"#!/jubarte";
+        let header = tar_header(TAR_MEMBER, b'0', 0o4755, body.len() as u64, "");
+        let dir = tempfile::tempdir().unwrap();
+        let archive = tar_archive(dir.path(), &[(header, &body[..])]);
+        let err = confine_update_zip(&archive, TAR_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("a setuid tar member was accepted");
+        assert!(
+            err.contains("setuid"),
+            "the refusal must name the setuid bit, got {err}"
+        );
+    }
+
+    /// R06a (#1305): an entry name that climbs out of the extract directory
+    /// is refused even when the expected binary is also present.
+    #[test]
+    fn update_tar_escaping_entry_is_refused() {
+        let body = b"#!/jubarte";
+        let binary = tar_header(TAR_MEMBER, b'0', 0o755, body.len() as u64, "");
+        let escape = tar_header("../outside", b'0', 0o644, 1, "");
+        let dir = tempfile::tempdir().unwrap();
+        let archive = tar_archive(dir.path(), &[(binary, &body[..]), (escape, b"x")]);
+        let err = confine_update_zip(&archive, TAR_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("a tar entry that climbs out of the extract directory was accepted");
+        assert!(
+            err.contains("escapes"),
+            "the refusal must name the escaping path, got {err}"
+        );
+    }
+
+    /// #2085 review: the tar crate takes a member's path from a PAX `path`
+    /// record before the ustar name. A symlink whose ustar name is harmless
+    /// but whose PAX path is the binary must be refused.
+    #[test]
+    fn update_tar_pax_path_symlink_is_refused() {
+        let body = b"#!/jubarte";
+        let pax = pax_record("path", TAR_MEMBER);
+        let pax_header = tar_header("PaxHeaders/other", b'x', 0o644, pax.len() as u64, "");
+        let link = tar_header("other", b'2', 0o777, 0, "/tmp/outside");
+        let decoy = tar_header(TAR_MEMBER, b'0', 0o755, body.len() as u64, "");
+        let dir = tempfile::tempdir().unwrap();
+        let archive = tar_archive(
+            dir.path(),
+            &[(pax_header, &pax[..]), (link, &[][..]), (decoy, &body[..])],
+        );
+        let err = confine_update_zip(&archive, TAR_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("a symlink named by a PAX path record was accepted");
+        assert!(err.contains("symlink"), "got {err}");
+    }
+
+    /// #2085 review: a GNU `L` long-name entry renames the member after it.
+    #[test]
+    fn update_tar_gnu_long_name_symlink_is_refused() {
+        let body = b"#!/jubarte";
+        let mut long = TAR_MEMBER.as_bytes().to_vec();
+        long.push(0);
+        let long_header = tar_header("././@LongLink", b'L', 0o644, long.len() as u64, "");
+        let link = tar_header("other", b'2', 0o777, 0, "/tmp/outside");
+        let decoy = tar_header(TAR_MEMBER, b'0', 0o755, body.len() as u64, "");
+        let dir = tempfile::tempdir().unwrap();
+        let archive = tar_archive(
+            dir.path(),
+            &[
+                (long_header, &long[..]),
+                (link, &[][..]),
+                (decoy, &body[..]),
+            ],
+        );
+        let err = confine_update_zip(&archive, TAR_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("a symlink named by a GNU long name was accepted");
+        assert!(err.contains("symlink"), "got {err}");
+    }
+
+    /// #2085 review: a PAX `size` record overrides the ustar size. A gate
+    /// that skips the ustar size steps over a header the extractor reads.
+    #[test]
+    fn update_tar_pax_size_cannot_hide_a_member() {
+        let body = b"#!/jubarte";
+        let pax = pax_record("size", "0");
+        let pax_header = tar_header("PaxHeaders/pad", b'x', 0o644, pax.len() as u64, "");
+        let hidden = tar_header(TAR_MEMBER, b'2', 0o777, 0, "/tmp/outside");
+        let pad = tar_header("pad", b'0', 0o644, 512, "");
+        let decoy = tar_header(TAR_MEMBER, b'0', 0o755, body.len() as u64, "");
+        let dir = tempfile::tempdir().unwrap();
+        let archive = tar_archive(
+            dir.path(),
+            &[
+                (pax_header, &pax[..]),
+                (pad, &hidden[..]),
+                (decoy, &body[..]),
+            ],
+        );
+        let err = confine_update_zip(&archive, TAR_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("a member hidden behind a PAX size was accepted");
+        assert!(err.contains("symlink"), "got {err}");
+    }
+
+    /// #2085 review: the tar crate trims blanks around an octal field, so a
+    /// mode of `" 4755"` is setuid there and must be setuid here.
+    #[test]
+    fn update_tar_space_led_setuid_mode_is_refused() {
+        let body = b"#!/jubarte";
+        let mut header = tar_header(TAR_MEMBER, b'0', 0o755, body.len() as u64, "");
+        header[100..108].copy_from_slice(b"  4755\0\0");
+        tar_reseal(&mut header);
+        let dir = tempfile::tempdir().unwrap();
+        let archive = tar_archive(dir.path(), &[(header, &body[..])]);
+        let err = confine_update_zip(&archive, TAR_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("a blank-led setuid mode was accepted");
+        assert!(err.contains("setuid"), "got {err}");
+    }
+
+    /// #2093 review: the tar crate cuts a numeric field at its first NUL
+    /// and refuses what is left when it is empty. A NUL-led size must not
+    /// read as zero here, or the gate and the extractor walk different
+    /// entries.
+    #[test]
+    fn update_tar_nul_led_size_is_refused() {
+        let body = b"#!/jubarte";
+        let mut header = tar_header(TAR_MEMBER, b'0', 0o755, body.len() as u64, "");
+        header[124..136].copy_from_slice(b"\x0000000000012");
+        tar_reseal(&mut header);
+        let dir = tempfile::tempdir().unwrap();
+        let archive = tar_archive(dir.path(), &[(header, &body[..])]);
+        let err = confine_update_zip(&archive, TAR_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("a NUL-led size field was accepted");
+        assert!(err.contains("octal"), "got {err}");
+    }
+
+    /// #2085 review: a `..` between backslashes is refused like one
+    /// between slashes, matching how member names are compared.
+    #[test]
+    fn update_tar_backslash_parent_entry_is_refused() {
+        let body = b"#!/jubarte";
+        let binary = tar_header(TAR_MEMBER, b'0', 0o755, body.len() as u64, "");
+        let escape = tar_header("jubarte-9.9.9\\..\\..\\outside", b'0', 0o644, 1, "");
+        let dir = tempfile::tempdir().unwrap();
+        let archive = tar_archive(dir.path(), &[(binary, &body[..]), (escape, b"x")]);
+        let err = confine_update_zip(&archive, TAR_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("a backslash .. entry was accepted");
+        assert!(err.contains("escapes"), "got {err}");
+    }
+
+    /// A long binary path carried by a PAX record (as GNU tar and bsdtar
+    /// write it) is still the release archive.
+    #[test]
+    fn update_tar_pax_path_regular_member_is_allowed() {
+        let body = b"#!/jubarte";
+        let mut pax = pax_record("mtime", "1700000000.5");
+        pax.extend(pax_record("path", TAR_MEMBER));
+        let pax_header = tar_header("PaxHeaders/jubarte", b'x', 0o644, pax.len() as u64, "");
+        let binary = tar_header("short-name", b'0', 0o755, body.len() as u64, "");
+        let dir = tempfile::tempdir().unwrap();
+        let archive = tar_archive(dir.path(), &[(pax_header, &pax[..]), (binary, &body[..])]);
+        confine_update_zip(&archive, TAR_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect("a regular member named by a PAX path is the release archive");
+    }
+
+    #[test]
+    fn update_tar_regular_member_is_allowed() {
+        let body = b"#!/jubarte";
+        let header = tar_header(TAR_MEMBER, b'0', 0o755, body.len() as u64, "");
+        let dir = tempfile::tempdir().unwrap();
+        let archive = tar_archive(dir.path(), &[(header, &body[..])]);
+        confine_update_zip(&archive, TAR_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect("a regular tar member inside the budget is the release archive");
+        let fixture = dir.path().join("unsigned.tar.gz");
+        std::fs::write(
+            &fixture,
+            include_bytes!("../tests/data/self_update/unsigned.tar.gz"),
+        )
+        .unwrap();
+        confine_update_zip(&fixture, TAR_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect("the signed-update fixture tar is a regular member");
     }
 }

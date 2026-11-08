@@ -24,7 +24,9 @@
 //! Text, tracked changes and formatting stay. Revision dates stay.
 //!
 //! [`leaks`] is the check behind the `redact` plan operation: the parts of a
-//! package where a text still occurs.
+//! package where a text still occurs. [`leak_scan`] is that check with a
+//! completeness receipt, so an encoding this scanner does not certify is
+//! not reported as "the text is absent".
 
 use std::collections::BTreeSet;
 use std::io::Read;
@@ -390,7 +392,9 @@ fn scrub_properties(pkg: &mut PartFs) {
 /// text of a paragraph (a text split across runs), or the raw bytes of a
 /// part that is not XML (UTF-8 or UTF-16LE). An empty needle occurs nowhere.
 /// An unreadable archive or entry is a finding: an incomplete scan cannot
-/// certify a redaction.
+/// certify a redaction. An encoding this scanner does not certify is also
+/// a finding here; [`leak_scan`] reports that case as
+/// [`LeakScan::Incomplete`] instead of a part where the text occurs.
 ///
 /// The scan is bounded like the package constructor (#645): a package past
 /// the admission budget, or an entry that inflates past its per-part or
@@ -405,6 +409,41 @@ pub fn leaks(docx: &[u8], needle: &str) -> Vec<String> {
     leaks_within(docx, needle, crate::admission::InputLimits::compare())
 }
 
+/// [`leaks`] plus a completeness receipt.
+///
+/// [`LeakScan::Complete`] means every part was read in a representation
+/// this scanner certifies (XML as UTF-8 or UTF-16LE text, anything else as
+/// raw UTF-8 or UTF-16LE). An empty finding list then means the needle does not
+/// occur. [`LeakScan::Incomplete`] means a part uses an encoding this
+/// scanner does not certify, which is not the same as the needle being
+/// absent. The reason names the encoding, never the needle.
+pub fn leak_scan(docx: &[u8], needle: &str) -> LeakScan {
+    leak_scan_within(docx, needle, crate::admission::InputLimits::compare())
+}
+
+/// What [`leak_scan`] was able to certify.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LeakScan {
+    /// Parts where `needle` occurs under a certified representation.
+    Complete(Vec<String>),
+    /// `part` is not in a representation this scanner can certify.
+    Incomplete {
+        /// Archive name of the part, with control characters escaped.
+        part: String,
+        /// Encoding the scan does not certify. This text does not contain the needle.
+        reason: &'static str,
+    },
+}
+
+impl LeakScan {
+    fn findings_fail_closed(self) -> Vec<String> {
+        match self {
+            Self::Complete(found) => found,
+            Self::Incomplete { part, reason } => vec![format!("{part} ({reason})")],
+        }
+    }
+}
+
 /// [`leaks`] under an explicit budget, so the fail-closed paths are provable
 /// with budgets small enough for a test.
 pub(crate) fn leaks_within(
@@ -412,16 +451,22 @@ pub(crate) fn leaks_within(
     needle: &str,
     limits: crate::admission::InputLimits,
 ) -> Vec<String> {
+    leak_scan_within(docx, needle, limits).findings_fail_closed()
+}
+
+fn leak_scan_within(docx: &[u8], needle: &str, limits: crate::admission::InputLimits) -> LeakScan {
     let mut found = BTreeSet::new();
     if needle.is_empty() {
-        return Vec::new();
+        return LeakScan::Complete(Vec::new());
     }
     if let Err(error) = crate::admission::preindex_budget(docx, limits) {
-        return vec![format!("the package ({error})")];
+        return LeakScan::Complete(vec![format!("the package ({error})")]);
     }
     let mut zip = match crate::opc::open_archive(std::io::Cursor::new(docx)) {
         Ok(zip) => zip,
-        Err(error) => return vec![format!("the package (cannot read: {error})")],
+        Err(error) => {
+            return LeakScan::Complete(vec![format!("the package (cannot read: {error})")]);
+        }
     };
     let utf16: Vec<u8> = needle.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let mut total = 0u64;
@@ -467,9 +512,12 @@ pub(crate) fn leaks_within(
             found.insert(format!("{name} ({error})"));
             break;
         }
+        if let Some(reason) = uncertified_encoding(&bytes) {
+            return LeakScan::Incomplete { part: name, reason };
+        }
         let xml = name.ends_with(".xml") || name.ends_with(".rels");
         let hit = if xml {
-            xml_holds(&String::from_utf8_lossy(&bytes), needle)
+            xml_holds(&xml_text(&bytes), needle)
         } else {
             contains(&bytes, needle.as_bytes()) || contains(&bytes, &utf16)
         };
@@ -477,7 +525,47 @@ pub(crate) fn leaks_within(
             found.insert(name);
         }
     }
-    found.into_iter().collect()
+    LeakScan::Complete(found.into_iter().collect())
+}
+
+/// An XML part as text: UTF-16LE when it opens with that BOM or with a
+/// UTF-16LE `<` (SharePoint writes customXml items so), UTF-8 otherwise.
+fn xml_text(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
+    let utf16 = bytes
+        .strip_prefix(&[0xFF, 0xFE])
+        .or_else(|| bytes.starts_with(b"<\0").then_some(bytes));
+    match utf16 {
+        Some(body) => std::borrow::Cow::Owned(
+            char::decode_utf16(body.chunks(2).map(|pair| {
+                u16::from_le_bytes([*pair.first().unwrap_or(&0), *pair.get(1).unwrap_or(&0)])
+            }))
+            .map(|unit| unit.unwrap_or(char::REPLACEMENT_CHARACTER))
+            .collect(),
+        ),
+        None => String::from_utf8_lossy(bytes),
+    }
+}
+
+/// BOM of an encoding this scanner does not read. UTF-8 and UTF-16LE,
+/// with or without a BOM, stay certified: the XML path reads UTF-8 text
+/// and every other part is searched as raw UTF-8 and UTF-16LE bytes.
+fn uncertified_encoding(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0x00, 0x00, 0xFE, 0xFF]) {
+        return Some(
+            "UTF-32BE is not a certified encoding; this scan reads UTF-8 and UTF-16LE only",
+        );
+    }
+    if bytes.starts_with(&[0xFF, 0xFE, 0x00, 0x00]) {
+        return Some(
+            "UTF-32LE is not a certified encoding; this scan reads UTF-8 and UTF-16LE only",
+        );
+    }
+    if bytes.starts_with(&[0xFE, 0xFF]) {
+        return Some(
+            "UTF-16BE is not a certified encoding; this scan reads UTF-8 and UTF-16LE only",
+        );
+    }
+    None
 }
 
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
