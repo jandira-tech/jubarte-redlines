@@ -84,11 +84,11 @@ MANYLINUX = {"manylinux": "2_28", "musllinux": "musllinux_1_2"}
 def label_platform(artifact: str) -> tuple[str, str]:
     """`linux-aarch64` -> ("linux", "aarch64"): what an artifact's name promises.
 
-    A static musl archive is `linux-x86_64-musl`: the `-musl` suffix is the
+    A static musl archive is `linux-musl-x86_64`: the `musl-` part is the
     libc, not part of the architecture.
     """
-    family, arch = artifact.removesuffix("-musl").split("-", 1)
-    return family, ARCHS[arch]
+    family, arch = artifact.split("-", 1)
+    return family, ARCHS[arch.removeprefix("musl-")]
 
 
 def wheel_platform(artifact: str) -> tuple[str, str]:
@@ -118,7 +118,7 @@ def runner_problems(row: dict, family: str, arch: str) -> list[str]:
 
 def binary_row_problems(row: dict) -> list[str]:
     family, arch = label_platform(row["artifact"])
-    suffix = "unknown-linux-musl" if row["artifact"].endswith("-musl") else TRIPLE_OS[family]
+    suffix = "unknown-linux-musl" if row["artifact"].startswith("linux-musl-") else TRIPLE_OS[family]
     want = f"{arch}-{suffix}"
     problems = [] if row["target"] == want else [f"target {row['target']}, not {want}"]
     return problems + runner_problems(row, family, arch)
@@ -140,9 +140,9 @@ BINARY_MATRIX: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
      ("manylinux_2_28_x86_64", "musllinux_1_2_x86_64")),
     ("linux-aarch64", "aarch64-unknown-linux-gnu", "ubuntu-24.04-arm",
      ("manylinux_2_28_aarch64", "musllinux_1_2_aarch64")),
-    ("linux-x86_64-musl", "x86_64-unknown-linux-musl", "ubuntu-latest",
+    ("linux-musl-x86_64", "x86_64-unknown-linux-musl", "ubuntu-latest",
      ("manylinux_2_28_x86_64", "musllinux_1_2_x86_64")),
-    ("linux-aarch64-musl", "aarch64-unknown-linux-musl", "ubuntu-24.04-arm",
+    ("linux-musl-aarch64", "aarch64-unknown-linux-musl", "ubuntu-24.04-arm",
      ("manylinux_2_28_aarch64", "musllinux_1_2_aarch64")),
     ("macos-x86_64", "x86_64-apple-darwin", "macos-15-intel",
      ("macosx_10_12_x86_64",)),
@@ -513,7 +513,6 @@ class LinuxLibcFloor(unittest.TestCase):
     archives ship beside them. ubuntu-latest's glibc is too new."""
 
     def test_gnu_linux_binaries_build_in_the_glibc_2_28_image(self) -> None:
-        text = WORKFLOW.read_text(encoding="utf-8")
         binaries = runs(load()["jobs"]["binaries"])
         self.assertIn("quay.io/pypa/manylinux_2_28_x86_64", binaries)
         self.assertIn("quay.io/pypa/manylinux_2_28_aarch64", binaries)
@@ -527,15 +526,40 @@ class LinuxLibcFloor(unittest.TestCase):
         self.assertIn("kept_title_a.docx", binaries)
         self.assertIn("kept_title_b.docx", binaries)
         artifacts = matrix_artifacts(load()["jobs"]["binaries"])
-        self.assertIn("linux-x86_64-musl", artifacts)
-        self.assertIn("linux-aarch64-musl", artifacts)
-        # The names jubarte update fetches stay the glibc archives.
+        self.assertIn("linux-musl-x86_64", artifacts)
+        self.assertIn("linux-musl-aarch64", artifacts)
         self.assertIn("linux-x86_64", artifacts)
         self.assertIn("linux-aarch64", artifacts)
         # Musl is published and not recommended: it has not been timed.
         docs = (HERE.parent / "docs" / "adoption" / "install-matrix.md").read_text(encoding="utf-8")
-        self.assertIn("linux-x86_64-musl", docs)
+        self.assertIn("linux-musl-x86_64", docs)
         self.assertIn("not the recommended install", docs)
+
+    def test_musl_rows_build_in_an_alpine_image(self) -> None:
+        # The runners ship no musl C compiler; ring and mimalloc build C.
+        binaries = runs(load()["jobs"]["binaries"])
+        self.assertIn("rust:1-alpine", binaries)
+        self.assertIn("scripts/build_musl_binary.sh", binaries)
+
+    def test_no_archive_name_holds_another(self) -> None:
+        self.assertEqual(overlapping_archive_names(WORKFLOW.read_text(encoding="utf-8")), [])
+
+    def test_a_suffixed_musl_name_is_caught(self) -> None:
+        text = WORKFLOW.read_text(encoding="utf-8").replace(
+            "artifact: linux-musl-x86_64", "artifact: linux-x86_64-musl"
+        )
+        self.assertEqual(overlapping_archive_names(text), [("linux-x86_64", "linux-x86_64-musl")])
+
+
+def overlapping_archive_names(text: str) -> list[tuple[str, str]]:
+    """Pairs of binary archive names where one holds the other.
+
+    `jubarte update` (self_update 1.3) takes the first release asset whose
+    name *contains* its target, so `linux-x86_64` would also match a
+    `linux-x86_64-musl` archive, and so would every installed binary.
+    """
+    names = [row["artifact"] for row in yaml.safe_load(text)["jobs"]["binaries"]["strategy"]["matrix"]["include"]]
+    return [(a, b) for a in names for b in names if a != b and a in b]
 
 
 if __name__ == "__main__":

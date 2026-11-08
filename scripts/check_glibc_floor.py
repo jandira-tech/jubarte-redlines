@@ -51,18 +51,42 @@ def version_text(binary: Path) -> str:
     raise SystemExit(2)
 
 
+def static_from_program_headers(text: str) -> bool:
+    """True when `readelf -lW` text has no INTERP header.
+
+    A static-pie Rust musl binary is `DYN`, like a PIE linked against
+    glibc; only a dynamic one asks for a program interpreter.
+    """
+    return "Program Headers:" in text and not re.search(r"^\s*INTERP\b", text, re.M)
+
+
+def static_from_descriptions(file_out: str, ldd_out: str) -> bool:
+    """True when `file` or `ldd` describes a binary that needs no loader.
+
+    `file` prints `statically linked` or `static-pie linked`; glibc's `ldd`
+    prints `statically linked` for a static-pie and `not a dynamic
+    executable` for a plain static binary.
+    """
+    if "statically linked" in file_out or "static-pie linked" in file_out:
+        return True
+    return "statically linked" in ldd_out or "not a dynamic executable" in ldd_out
+
+
 def is_static(binary: Path) -> bool:
-    """True when `file` or `ldd` says `binary` does not need a dynamic libc."""
+    """True when `binary` needs no dynamic loader: no INTERP program header
+    (`readelf -lW`), else what `file` or `ldd` say."""
+    if shutil.which("readelf"):
+        result = subprocess.run(["readelf", "-lW", str(binary)], capture_output=True, text=True)
+        if result.returncode == 0:
+            return static_from_program_headers(result.stdout)
+    file_out = ""
     if shutil.which("file"):
-        result = subprocess.run(["file", str(binary)], capture_output=True, text=True)
-        if "statically linked" in result.stdout:
-            return True
+        file_out = subprocess.run(["file", str(binary)], capture_output=True, text=True).stdout
+    ldd_out = ""
     if shutil.which("ldd"):
         result = subprocess.run(["ldd", str(binary)], capture_output=True, text=True)
-        text = result.stdout + result.stderr
-        if "not a dynamic executable" in text:
-            return True
-    return False
+        ldd_out = result.stdout + result.stderr
+    return static_from_descriptions(file_out, ldd_out)
 
 
 def spell(version: tuple[int, int]) -> str:

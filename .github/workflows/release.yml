@@ -69,10 +69,10 @@ jobs:
             artifact: linux-aarch64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            artifact: linux-x86_64-musl
+            artifact: linux-musl-x86_64
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
-            artifact: linux-aarch64-musl
+            artifact: linux-musl-aarch64
           - os: macos-15-intel
             target: x86_64-apple-darwin
             artifact: macos-x86_64
@@ -113,16 +113,16 @@ jobs:
           docker run --rm -v "$PWD":/work -w /work "$image" \
             bash scripts/build_manylinux_binary.sh "$target"
           python3 scripts/check_glibc_floor.py "target/${target}/release/jubarte" --max 2.28
+      # The runners ship no musl C compiler, and ring and libmimalloc-sys
+      # build C: the musl rows build in rust:alpine, whose gcc is musl's.
       - name: Build static musl
         if: contains(matrix.target, 'unknown-linux-musl')
-        env:
-          # Target-only: a global RUSTFLAGS would also rebuild host build scripts.
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C target-feature=+crt-static
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C target-feature=+crt-static
         run: |
           set -euo pipefail
-          cargo build --release --locked --bin jubarte --target ${{ matrix.target }}
-          python3 scripts/check_glibc_floor.py "target/${{ matrix.target }}/release/jubarte" --musl
+          target="${{ matrix.target }}"
+          docker run --rm -v "$PWD":/work -w /work rust:1-alpine \
+            sh scripts/build_musl_binary.sh "$target"
+          python3 scripts/check_glibc_floor.py "target/${target}/release/jubarte" --musl
       - name: Build
         if: ${{ !contains(matrix.target, 'unknown-linux-') }}
         run: cargo build --release --locked --bin jubarte --target ${{ matrix.target }}

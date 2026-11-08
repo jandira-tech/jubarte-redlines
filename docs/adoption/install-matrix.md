@@ -42,13 +42,16 @@ install) and, with the `mcp` extra, `jubarte-mcp` ([mcp.md](mcp.md)).
 
 Gaps a provider's sandbox may still hit:
 
-- **glibc 2.28 floor.** The `linux-x86_64` and `linux-aarch64` CLI
-  archives are built in the manylinux_2_28 image, the same floor as the
-  wheels (RHEL 8, Debian 10, Ubuntu 20.04). A host older than that still
-  falls back to an sdist build. `linux-x86_64-musl` and
-  `linux-aarch64-musl` are static archives for Alpine and distroless.
-  `jubarte update` keeps fetching the glibc archive. The musl build has
-  not been timed against the bench, so it is not the recommended install.
+- **glibc 2.28 floor.** The 0.11.2 CLI archives above were built on
+  `ubuntu-latest` and need that runner's glibc. From the first release
+  after #2112, the `linux-x86_64` and `linux-aarch64` CLI archives are
+  built in the manylinux_2_28 image, the same floor as the wheels (RHEL 8,
+  Debian 10, Ubuntu 20.04), and `linux-musl-x86_64` and
+  `linux-musl-aarch64` static archives for Alpine and distroless ship
+  beside them. A host older than glibc 2.28 still falls back to an sdist
+  build. `jubarte update` fetches the archive of the libc it was built
+  for. The musl build has not been timed against the bench, so it is
+  not the recommended install.
 - **No Windows arm64 wheel or binary.** Use `cargo install jubarte-redlines`
   or the sdist there. Plan: [plans.md](plans.md) §7.
 
