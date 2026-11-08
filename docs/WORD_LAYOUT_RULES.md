@@ -288,6 +288,16 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
     that wraps one underscore each. ee7b597379's tcW 4321/720/4381/4381
     become 3945/1535/4304/989, the four longest words, and the table
     ends at 610pt.
+- **An autofit table widens when a widthless span outruns its grid.**
+  Each column's maximum starts at its dxa preference, read from every row.
+  The span's extra width is shared in proportion to those maximums, evenly
+  when every maximum is zero, and the columns then take their share of the
+  measure. A span that fits the grid leaves the columns where they are.
+  - Word convert, Letter, 1in margins, Calibri 11: a 2400/6000 grid puts
+    VALUE 120.03pt after LABEL when the span fits, and 138.87pt after when
+    the span is twenty-five `AAAA`. The same gap when those preferences
+    sit on the second row. Columns 1200/2400/4800 leave 71.40pt between
+    ONE and TWO and 136.61pt between TWO and SIX.
 - **Tables with nothing between them are one table**, f2fd0c8b. The second
   table's rows keep their own cell widths and start at the joined table's
   left edge, whatever their own `jc`. The joined table is aligned by its
