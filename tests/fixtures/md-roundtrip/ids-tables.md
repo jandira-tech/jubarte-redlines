@@ -19,7 +19,7 @@ headers:
 footers:
   default: {id: footer1, text: "", style: LineNumber, fmt: footer1.r903 @LW in footer1}
 sections:
-  2: {p392-p827, page: A4 landscape, margins 1in, header/footer 0.4924in, fmt: r1650 @LW, footers: {default: {id: footer2, p0: {text: "{--{PAGE   \\* MERGEFORMAT}5{/}--}{footer2.r1648+1647 @LW}", right}, p1: {text: ""}, styles: [Footer, LineNumber], rev: break-del footer2.r1648+1647 @LW in footer2, fmt: footer2.r1649 @LW in footer2.p1}}}
+  2: {p392-p827, page: A4 landscape, margins 1in, header/footer 0.4924in; was: A4 portrait, margins 1in, header/footer 0.4924in, fmt: r1650 @LW, footers: {default: {id: footer2, p0: {text: "{--{PAGE   \\* MERGEFORMAT}5{/}--}{footer2.r1648+1647 @LW}", right}, p1: {text: ""}, styles: [Footer, LineNumber], rev: break-del footer2.r1648+1647 @LW in footer2, fmt: footer2.r1649 @LW in footer2.p1}}}
 ---
 
 <!-- p0 center -->

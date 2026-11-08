@@ -1559,25 +1559,37 @@ impl SectionStories {
             out.insert_str(open, &refs);
         }
         if title_page {
-            // `w:titlePg` comes before these in a `w:sectPr`.
-            let at = [
-                "<w:textDirection",
-                "<w:bidi",
-                "<w:rtlGutter",
-                "<w:docGrid",
-                "<w:printerSettings",
-                "<w:sectPrChange",
-                "</w:sectPr>",
-            ]
-            .iter()
-            .filter_map(|tag| out.find(tag))
-            .min();
-            if let Some(at) = at {
+            // The view names no change of title page: a section change's
+            // saved section keeps it as well, or Reject switches it off.
+            if let Some(change) = out.find("<w:sectPrChange")
+                && let Some(saved) = out[change..].find("<w:sectPr>").map(|at| change + at)
+                && let Some(at) = title_page_at(&out, saved + "<w:sectPr>".len())
+            {
+                out.insert_str(at, "<w:titlePg/>");
+            }
+            if let Some(at) = title_page_at(&out, 0) {
                 out.insert_str(at, "<w:titlePg/>");
             }
         }
         out
     }
+}
+
+/// Where `w:titlePg` goes in the `w:sectPr` whose content starts at `from`:
+/// before the elements that follow it there.
+fn title_page_at(section: &str, from: usize) -> Option<usize> {
+    [
+        "<w:textDirection",
+        "<w:bidi",
+        "<w:rtlGutter",
+        "<w:docGrid",
+        "<w:printerSettings",
+        "<w:sectPrChange",
+        "</w:sectPr>",
+    ]
+    .iter()
+    .filter_map(|tag| section[from..].find(tag).map(|at| from + at))
+    .min()
 }
 
 /// `xml` without its empty `<name …/>` elements.

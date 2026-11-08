@@ -8,7 +8,7 @@ authors:
   ASR: Arthur Souza Rodrigues      # 226 revisions, 2026-09-26T14:54:00-04:00
   U: User                          # 1 comment, 2026-03-05T19:41:00Z
 body: p0-p110, 6 tables, 3 pages   # pages from layout
-page: Letter portrait, margins 1in, header/footer 0.5in; fmt r226 @ASR
+page: Letter portrait, margins 1in, header/footer 0.5in; was: Letter portrait, margins top 0.903in, right 1in, bottom 0.903in, left 1in, header/footer 0.492in; fmt r226 @ASR
 styles:
   Normal: Inter 11pt, left         # default; unannotated paragraphs use it
   ListParagraph: Inter 11pt, named List Paragraph

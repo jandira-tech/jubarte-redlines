@@ -2363,10 +2363,36 @@ pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
     Some(page)
 }
 
+/// The earlier page a section names (`page: Letter portrait; was: A4
+/// portrait, margins 1in`). Reject writes this into `w:sectPrChange`.
+pub(super) fn earlier_page(text: &str) -> Option<PageSetup> {
+    let rest = text.split("; was: ").nth(1)?;
+    let end = [";", ", fmt", ", headers:", ", footers:", ", columns:", "}"]
+        .iter()
+        .filter_map(|key| rest.find(key))
+        .min()
+        .unwrap_or(rest.len());
+    page_setup(rest[..end].trim())
+}
+
 /// A `sections:` entry of the view's YAML header (`  2: {p30-p103, page:
 /// Letter landscape, margins 1in, headers: {…}}`): the section's number and
 /// its page, when it names one (else it keeps the first section's).
 pub(super) fn section_page(line: &str) -> Option<(usize, Option<PageSetup>)> {
+    let (number, page) = section_page_clause(line)?;
+    Some((number, page.and_then(page_setup)))
+}
+
+/// The earlier page a `sections:` entry's own `page:` clause names (`page:
+/// Letter portrait; was: A4 portrait`). Only that clause counts: a story's
+/// text later in the entry may read `; was: …` too.
+pub(super) fn section_earlier_page(line: &str) -> Option<PageSetup> {
+    earlier_page(section_page_clause(line)?.1?)
+}
+
+/// A `sections:` entry's number and the text of its `page:` clause, when it
+/// has one.
+fn section_page_clause(line: &str) -> Option<(usize, Option<&str>)> {
     let (number, entry) = line.trim().split_once(": ")?;
     let number: usize = number.parse().ok()?;
     let entry = entry.strip_prefix('{')?;
@@ -2380,5 +2406,5 @@ pub(super) fn section_page(line: &str) -> Option<(usize, Option<PageSetup>)> {
         .min()
         .or_else(|| page.rfind('}'))
         .unwrap_or(page.len());
-    Some((number, page_setup(&page[..end])))
+    Some((number, Some(&page[..end])))
 }

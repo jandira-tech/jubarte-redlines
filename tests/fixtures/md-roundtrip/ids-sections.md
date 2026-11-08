@@ -18,7 +18,7 @@ headers:
 footers:
   default: {id: footer1, text: ""}
 sections:
-  2: {p142-p142, page: Letter portrait, margins top 0.984in, right 1.181in, bottom 0.984in, left 1.181in, header 0in, footer 0.026in, fmt: r1 @APS}
+  2: {p142-p142, page: Letter portrait, margins top 0.984in, right 1.181in, bottom 0.984in, left 1.181in, header 0in, footer 0.026in; was: 8.264x11.6944in portrait, margins top 1.181in, right 0.7875in, bottom 1.181in, left 0.7875in, header/footer 0.492in, fmt: r1 @APS}
 ---
 
 <!-- p0 empty -->

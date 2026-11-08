@@ -521,6 +521,9 @@ pub(super) struct Document {
     /// The formatting change each section's page names (`page: …; fmt r17
     /// @AL`), by section number from one.
     pub section_formats: HashMap<usize, FormatMark>,
+    /// The earlier page a section's change keeps (`page: …; was: …`), by
+    /// section number from one. Without one, the change keeps the live page.
+    pub earlier_pages: BTreeMap<usize, super::view_notes::PageSetup>,
     /// The `w:id`s formatting changes take: no fresh id takes them.
     pub reserved_ids: BTreeSet<u32>,
     /// The list labels id lines name (`num "(a)"`, `bullet`), each once.
@@ -565,7 +568,10 @@ impl Document {
             .or_else(|| self.pages.get(&1))
             .map_or_else(|| fallback.to_string(), |page| page.sect_pr());
         match self.section_formats.get(&number) {
-            Some(mark) => with_section_change(&section, mark),
+            Some(mark) => {
+                let earlier = self.earlier_pages.get(&number).map(|page| page.sect_pr());
+                with_section_change(&section, earlier.as_deref(), mark)
+            }
             None => section,
         }
     }
@@ -2867,30 +2873,35 @@ pub(crate) fn style_definition(id: &str) -> Option<String> {
     })
 }
 
-/// ` w:date="…"`, or nothing for an empty date: the attribute is optional,
-/// and a note the view gave no exact date (an author with several, the
-/// `authors:` table only spanning days) is written undated, never with an
-/// invented one.
-/// `section` with a `w:sectPrChange` that keeps its page as it is.
-fn with_section_change(section: &str, mark: &FormatMark) -> String {
-    let (Some(open), Some(close)) = (
-        section
-            .find("<w:sectPr")
-            .and_then(|at| section[at..].find('>').map(|end| at + end + 1)),
-        section.rfind("</w:sectPr>"),
-    ) else {
+/// The page elements of a `w:sectPr`, without its header and footer
+/// references: those stay on the live section.
+fn page_elements(section: &str) -> Option<String> {
+    let open = section
+        .find("<w:sectPr")
+        .and_then(|at| section[at..].find('>').map(|end| at + end + 1))?;
+    let close = section.rfind("</w:sectPr>")?;
+    if open > close || section[..open].ends_with("/>") {
+        return None;
+    }
+    Some(
+        section[open..close]
+            .split_inclusive("/>")
+            .filter(|element| {
+                !element.contains("<w:headerReference") && !element.contains("<w:footerReference")
+            })
+            .collect(),
+    )
+}
+
+/// `section` with a `w:sectPrChange`. `earlier` is the page the change
+/// keeps; without it the change keeps `section`'s own page.
+fn with_section_change(section: &str, earlier: Option<&str>, mark: &FormatMark) -> String {
+    let Some(close) = section.rfind("</w:sectPr>") else {
         return section.to_string();
     };
-    if open > close || section[..open].ends_with("/>") {
+    let Some(old) = page_elements(earlier.unwrap_or(section)) else {
         return section.to_string();
-    }
-    // The page alone: a section's headers are no part of its change.
-    let old: String = section[open..close]
-        .split_inclusive("/>")
-        .filter(|element| {
-            !element.contains("<w:headerReference") && !element.contains("<w:footerReference")
-        })
-        .collect();
+    };
     format!(
         "{}<w:sectPrChange w:id=\"{}\" w:author=\"{}\"{}><w:sectPr>{old}</w:sectPr></w:sectPrChange>{}",
         &section[..close],

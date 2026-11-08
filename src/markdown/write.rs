@@ -4524,6 +4524,12 @@ impl<'o, 'a> Writer<'o, 'a> {
                 if let Some(page) = page {
                     self.document.pages.insert(number, page);
                 }
+                // The last declaration wins: one without `; was:` keeps
+                // the live page.
+                match view_notes::section_earlier_page(line) {
+                    Some(earlier) => self.document.earlier_pages.insert(number, earlier),
+                    None => self.document.earlier_pages.remove(&number),
+                };
                 if let Some((_, entry)) = line.trim().split_once(": ") {
                     self.stories(number, view_stories::section(entry));
                     if let Some(tag) = view_notes::section_format(entry) {
@@ -4637,6 +4643,10 @@ impl<'o, 'a> Writer<'o, 'a> {
                     if let Some(page) = view_notes::page_setup(value) {
                         self.document.pages.insert(1, page);
                     }
+                    match view_notes::earlier_page(value) {
+                        Some(earlier) => self.document.earlier_pages.insert(1, earlier),
+                        None => self.document.earlier_pages.remove(&1),
+                    };
                     if let Some(tag) = view_notes::section_format(value) {
                         let mark = self.format_mark(&tag);
                         self.document.section_formats.insert(1, mark);
