@@ -10072,7 +10072,7 @@ fn unclamped_col_widths(
                 *pref = PrefWidth::Dxa(col);
             }
         }
-        return content_autofit_widths(fonts, cols.len(), rows, &prefer, avail, true);
+        return content_autofit_widths(fonts, cols.len(), rows, &prefer, avail, true, None);
     }
     // An autofit table whose rows reach past its saved grid is laid out
     // again: its columns share the width it declares by their content, as
@@ -10086,8 +10086,13 @@ fn unclamped_col_widths(
         let target = declared_table_width(geom, avail);
         return fill_table_width(fonts, cols.len(), rows, geom, target, avail);
     }
-    if geom.content_autofit || span_content_outruns_grid(fonts, cols, rows, geom) {
-        return content_autofit_widths(fonts, cols.len(), rows, geom, avail, false);
+    if geom.content_autofit {
+        return content_autofit_widths(fonts, cols.len(), rows, geom, avail, false, None);
+    }
+    // A span's re-fit keeps a vertical cell's column at its grid width, as
+    // `autofit_to_words` does: its line runs along the row (#2119 review).
+    if span_content_outruns_grid(fonts, cols, rows, geom) {
+        return content_autofit_widths(fonts, cols.len(), rows, geom, avail, false, Some(cols));
     }
     let widths = table_col_widths(cols, geom, avail);
     // An autofit column is at least its longest word: Word widens a tcW
@@ -10325,7 +10330,8 @@ fn cell_fit_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
         {
             let (lo, hi) = if geom.content_autofit {
                 let gaps = 2.0 * geom.cell_spacing * cols.len() as f32;
-                let (mins, maxs) = content_autofit_extents(fonts, cols.len(), rows, geom, false);
+                let (mins, maxs) =
+                    content_autofit_extents(fonts, cols.len(), rows, geom, false, None);
                 (
                     mins.iter().sum::<f32>() + gaps,
                     maxs.iter().sum::<f32>() + gaps,
@@ -10337,7 +10343,7 @@ fn cell_fit_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
                     TblWidth::Pct(_) => {
                         let gaps = 2.0 * geom.cell_spacing * cols.len() as f32;
                         let (mins, _) =
-                            content_autofit_extents(fonts, cols.len(), rows, geom, false);
+                            content_autofit_extents(fonts, cols.len(), rows, geom, false, None);
                         mins.iter().sum::<f32>() + gaps
                     }
                 };
@@ -10366,8 +10372,9 @@ fn content_autofit_widths(
     geom: &TableGeom,
     avail: f32,
     pref_caps: bool,
+    vertical_grid: Option<&[f32]>,
 ) -> Vec<f32> {
-    let (mins, maxs) = content_autofit_extents(fonts, n, rows, geom, pref_caps);
+    let (mins, maxs) = content_autofit_extents(fonts, n, rows, geom, pref_caps, vertical_grid);
     let gap = 2.0 * geom.cell_spacing;
     // A legacy document's autofit spans the text plus the table's cell
     // margins, as its pct tables do (00046848's lines reach 525pt in a
@@ -10426,7 +10433,7 @@ fn fill_table_width(
     target: Option<f32>,
     avail: f32,
 ) -> Vec<f32> {
-    let (words, mut maxs) = content_autofit_extents(fonts, n, rows, geom, false);
+    let (words, mut maxs) = content_autofit_extents(fonts, n, rows, geom, false, None);
     let mut mins = words.clone();
     let mut held = vec![false; n];
     for j in 0..n {
@@ -10498,6 +10505,7 @@ fn content_autofit_extents(
     rows: &[Vec<TableCell>],
     geom: &TableGeom,
     pref_caps: bool,
+    vertical_grid: Option<&[f32]>,
 ) -> (Vec<f32>, Vec<f32>) {
     let mut mins = vec![0.0_f32; n];
     let mut maxs = vec![0.0_f32; n];
@@ -10517,6 +10525,15 @@ fn content_autofit_extents(
         // (ed36b607e8: a 5-twip column a row skips keeps Word's 0.25pt;
         // a cell's margins there pushed the row 10.5pt in).
         if cell.colspan != 1 || cell.col >= n || cell.grid_skip {
+            continue;
+        }
+        // With `vertical_grid`, a vertical cell holds its column at the
+        // grid width rather than at its unrotated line.
+        if cell.vertical
+            && let Some(&w) = vertical_grid.and_then(|grid| grid.get(cell.col))
+        {
+            mins[cell.col] = mins[cell.col].max(w);
+            maxs[cell.col] = maxs[cell.col].max(w);
             continue;
         }
         // The spacing inset in pad_l is the column's gap, counted below.
@@ -50617,6 +50634,42 @@ mod coverage_round_two_tests {
     }
 
     #[test]
+    fn a_span_refit_leaves_a_vertical_cells_column_at_its_width() {
+        // Vertical text runs along the row, not across the column
+        // (`autofit_to_words`, 1c99b5cd). A span that outruns the grid
+        // lays the table out again; that re-fit must not read a btLr
+        // cell's line as its column's width either (#2119 review).
+        let fonts = fonts();
+        let widths = |vertical_text: &str| {
+            let span = "AAAA ".repeat(25);
+            let Block::Table {
+                cols, rows, geom, ..
+            } = table(&format!(
+                "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+                 <w:tblGrid><w:gridCol w:w=\"600\"/><w:gridCol w:w=\"2400\"/></w:tblGrid>\
+                 <w:tr><w:tc><w:tcPr><w:tcW w:w=\"600\" w:type=\"dxa\"/><w:textDirection w:val=\"btLr\"/></w:tcPr>\
+                 <w:p><w:r><w:t>{vertical_text}</w:t></w:r></w:p></w:tc>\
+                 <w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>Value</w:t></w:r></w:p></w:tc></w:tr>\
+                 <w:tr><w:tc><w:tcPr><w:gridSpan w:val=\"2\"/></w:tcPr>\
+                 <w:p><w:r><w:t>{span}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+            ))
+            else {
+                panic!("table fixture")
+            };
+            assert!(rows[0][0].vertical, "btLr cell");
+            assert!(!geom.content_autofit, "a saved grid, not a content fit");
+            assert!(span_content_outruns_grid(&fonts, &cols, &rows, &geom));
+            unclamped_col_widths(&fonts, &cols, &rows, &geom, 468.0)
+        };
+        let short = widths("Q");
+        let long = widths("A very long vertical heading that runs along the row");
+        assert!(
+            (short[0] - long[0]).abs() < 0.5,
+            "the vertical column keeps one width whatever its text: {short:?} vs {long:?}"
+        );
+    }
+
+    #[test]
     fn table_cell_split_keeps_nested_tables_at_the_correct_paragraph_boundary() {
         let mut cell = cell("one");
         let mut second = cell.paras[0].clone();
@@ -65192,7 +65245,7 @@ mod complete_coordinate_layout_contract_tests {
                     }
                 }
             }
-            let widths = content_autofit_widths(&fonts, 3, &rows, &geom, 200.0, false);
+            let widths = content_autofit_widths(&fonts, 3, &rows, &geom, 200.0, false, None);
             for (actual, wanted) in widths.iter().zip(expected) {
                 assert!((actual - wanted).abs() < 0.0001, "{widths:?}");
             }
