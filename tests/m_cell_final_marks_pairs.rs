@@ -395,3 +395,146 @@ from! {
     from_m1: "m1", from_m2: "m2", from_me: "me", from_ms: "ms",
     from_s1: "s1", from_s2: "s2", from_se: "se", from_ss: "ss",
 }
+
+/// A two-cell table whose second cell holds `inner`, between two body
+/// paragraphs, as [`document`] builds from block codes.
+fn document_with(inner: &str) -> Vec<u8> {
+    let tc = |inner: &str| {
+        format!("<w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>{inner}</w:tc>")
+    };
+    docx(&format!(
+        "{}<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr>{}{}</w:tr></w:tbl>{}",
+        para("Before."),
+        tc(&para("Full.")),
+        tc(inner),
+        para("After.")
+    ))
+}
+
+/// Word-mode compare of two second cells, then Accept All and Reject All.
+fn settle_cells(from: &str, to: &str) -> (Vec<u8>, Vec<u8>) {
+    let out = compare_documents_with_settings(
+        &document_with(from),
+        &document_with(to),
+        &WmlComparerSettings::new(CompareMode::Word),
+    )
+    .expect("compare");
+    (
+        accept_revisions(&out).expect("accept"),
+        reject_revisions(&out).expect("reject"),
+    )
+}
+
+/// #2100 review: the paragraph that loses `One.` keeps its properties, so
+/// Reject All gives the original paragraph back with them.
+#[test]
+fn a_cell_gaining_empty_paragraphs_keeps_the_lost_paragraphs_properties() {
+    let centered =
+        |body: &str| format!(r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr>{body}</w:p>"#);
+    let from = centered("<w:r><w:t>One.</w:t></w:r>");
+    let to = format!("{}{}", centered(""), centered(""));
+    let (accepted, rejected) = settle_cells(&from, &to);
+    let rejected = second_cell_paragraphs(&rejected);
+    assert_eq!(rejected.len(), 1, "{rejected:?}");
+    assert!(
+        rejected[0].contains("One.") && rejected[0].contains(r#"<w:jc w:val="center""#),
+        "{rejected:?}"
+    );
+    assert_eq!(second_cell_paragraphs(&accepted).len(), 2);
+}
+
+/// #2100 review: a block content control inside a cell is still the cell's
+/// story; the gained empty paragraph stays there too.
+#[test]
+fn a_cell_control_gaining_an_empty_paragraph_keeps_it() {
+    let control =
+        |inner: &str| format!("<w:sdt><w:sdtPr/><w:sdtContent>{inner}</w:sdtContent></w:sdt>");
+    let (accepted, rejected) = settle_cells(&control(&para("One.")), &control("<w:p/><w:p/>"));
+    assert_eq!(
+        second_cell_paragraphs(&accepted).len(),
+        2,
+        "{:?}",
+        second_cell_paragraphs(&accepted)
+    );
+    let rejected = second_cell_paragraphs(&rejected);
+    assert_eq!(rejected.len(), 1, "{rejected:?}");
+    assert!(rejected[0].contains("One."), "{rejected:?}");
+}
+
+/// #2100 review: a cell that loses an empty Heading paragraph while gaining
+/// a List paragraph keeps the heading on Reject All.
+#[test]
+fn a_cell_losing_an_empty_heading_keeps_it_on_reject() {
+    let from = format!(
+        "{}{}",
+        para("One."),
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr></w:p>"#
+    );
+    let to = format!(
+        "{}{}",
+        para("One."),
+        r#"<w:p><w:pPr><w:pStyle w:val="ListParagraph"/></w:pPr><w:r><w:t>Item.</w:t></w:r></w:p>"#
+    );
+    let (accepted, rejected) = settle_cells(&from, &to);
+    let rejected = second_cell_paragraphs(&rejected);
+    assert_eq!(rejected.len(), 2, "{rejected:?}");
+    assert!(
+        rejected[1].contains("Heading1") && !rejected[1].contains("Item."),
+        "{rejected:?}"
+    );
+    let accepted = second_cell_paragraphs(&accepted);
+    assert_eq!(accepted.len(), 2, "{accepted:?}");
+    assert!(accepted[1].contains("Item."), "{accepted:?}");
+}
+
+/// #2100 review: a gained paragraph of preserved spaces is as blank as
+/// `<w:p/>`; Accept All keeps both paragraphs.
+#[test]
+fn a_cell_gaining_a_whitespace_paragraph_keeps_it() {
+    let spaces = r#"<w:p><w:r><w:t xml:space="preserve">   </w:t></w:r></w:p>"#;
+    let (accepted, rejected) = settle_cells(&para("One."), &format!("<w:p/>{spaces}"));
+    assert_eq!(
+        second_cell_paragraphs(&accepted).len(),
+        2,
+        "{:?}",
+        second_cell_paragraphs(&accepted)
+    );
+    let rejected = second_cell_paragraphs(&rejected);
+    assert_eq!(rejected.len(), 1, "{rejected:?}");
+    assert!(rejected[0].contains("One."), "{rejected:?}");
+}
+
+/// #2100 review, M385's shape: several inserted paragraphs ending in a List
+/// paragraph against deleted ones starting with an empty Heading.
+#[test]
+fn a_cell_trading_an_empty_heading_cluster_for_a_list_keeps_every_paragraph() {
+    let heading = r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr></w:p>"#;
+    let list =
+        r#"<w:p><w:pPr><w:pStyle w:val="ListParagraph"/></w:pPr><w:r><w:t>Item.</w:t></w:r></w:p>"#;
+    let from = format!("{heading}{}", para("Gone."));
+    let to = format!("{}{list}", para("New."));
+    let (accepted, rejected) = settle_cells(&from, &to);
+    let rejected = second_cell_paragraphs(&rejected);
+    assert_eq!(rejected.len(), 2, "{rejected:?}");
+    assert!(rejected[0].contains("Heading1"), "{rejected:?}");
+    assert!(rejected[1].contains("Gone."), "{rejected:?}");
+    let accepted = second_cell_paragraphs(&accepted);
+    assert_eq!(accepted.len(), 2, "{accepted:?}");
+}
+
+/// #2100 review: the blank gained paragraph first, spaces before the
+/// empty one.
+#[test]
+fn a_cell_gaining_spaces_then_an_empty_paragraph_keeps_both() {
+    let spaces = r#"<w:p><w:r><w:t xml:space="preserve">   </w:t></w:r></w:p>"#;
+    let (accepted, rejected) = settle_cells(&para("One."), &format!("{spaces}<w:p/>"));
+    assert_eq!(
+        second_cell_paragraphs(&accepted).len(),
+        2,
+        "{:?}",
+        second_cell_paragraphs(&accepted)
+    );
+    let rejected = second_cell_paragraphs(&rejected);
+    assert_eq!(rejected.len(), 1, "{rejected:?}");
+    assert!(rejected[0].contains("One."), "{rejected:?}");
+}
