@@ -8460,6 +8460,104 @@ fn fuse_story_tail_into_deleted(dom: &mut Dom, last_ins: NodeId, first_del: Node
     dom.remove(last_ins);
 }
 
+/// #1683, case 2. Word's Compare writes the revised body's last paragraph
+/// after the table it replaced, as the closing paragraph, with no revision
+/// on that mark. The redline left the inserted paragraph, mark included,
+/// before the deleted table, and the original's empty close after it.
+/// Move the insertion onto that close. A paragraph that also carries a
+/// deletion stays where it is (#1926).
+///
+/// Only when the inserted paragraph is the revision's own last one
+/// (`revised_xml`'s body closes on its text): a revision that ends on an
+/// empty paragraph pairs that one with the close, and Word keeps the
+/// inserted paragraph before the deleted table on its inserted mark
+/// (Word's nested_table_rowspan × numbered_list redline, CI on #2101).
+pub(crate) fn pair_closing_insert_across_deleted_table(
+    dom: &mut Dom,
+    body: NodeId,
+    revised_xml: &str,
+) {
+    // Range and proofing markers sit between blocks without being one
+    // (cursor on #2101); the body's own `w:sectPr` closes it.
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&child| {
+            !dom.name_is(child, &W::sect_pr())
+                && !crate::comparer::final_marks::is_inert_body_marker(dom, child)
+        })
+        .collect();
+    let Some((&close, before)) = kids.split_last() else {
+        return;
+    };
+    if !paragraph_has_live_empty_pilcrow(dom, close) {
+        return;
+    }
+    let Some(split) = before
+        .iter()
+        .rposition(|&child| !table_is_deleted(dom, child))
+    else {
+        return;
+    };
+    if split + 1 >= before.len() {
+        return;
+    }
+    let inserted = before[split];
+    if !para_is_pure_inserted(dom, inserted)
+        || !para_mark_revision(dom, inserted, &W::ins())
+        || para_has_no_text(dom, inserted)
+        || revised_body_close_text(revised_xml).as_deref()
+            != Some(paragraph_text(dom, inserted).as_str())
+    {
+        return;
+    }
+    // A whole story replaced keeps Word's order, every insertion before
+    // the deleted original: the inserted paragraph stays before the table
+    // on its inserted mark (Word's nested_table_rowspan × numbered_list
+    // redline, `tests/m_whole_story_final_marks.rs`). Only a revision that
+    // keeps something of the original before it pairs (CI on #2101).
+    let keeps_original = before[..split].iter().any(|&block| {
+        if dom.name_is(block, &W::p()) {
+            !para_is_pure_inserted(dom, block) && !para_is_pure_deleted(dom, block)
+        } else {
+            !table_is_deleted(dom, block)
+        }
+    });
+    if !keeps_original {
+        return;
+    }
+    for child in dom.elements(inserted, None) {
+        if !dom.name_is(child, &W::p_pr()) {
+            dom.add(close, child);
+        }
+    }
+    dom.remove(inserted);
+}
+
+/// The `w:t` text of `paragraph`, in order.
+fn paragraph_text(dom: &Dom, paragraph: NodeId) -> String {
+    let mut text = String::new();
+    dom.for_each_descendant_element(paragraph, Some(&W::t()), |t| {
+        text.push_str(&dom.value(t));
+    });
+    text
+}
+
+/// The text of the paragraph that closes `xml`'s body, past its `w:sectPr`
+/// and inert markers; `None` when the body closes on anything else.
+fn revised_body_close_text(xml: &str) -> Option<String> {
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(xml);
+    let root = dom.root(doc)?;
+    let body = dom.element(root, &W::body())?;
+    let close = dom.elements(body, None).into_iter().rev().find(|&child| {
+        !dom.name_is(child, &W::sect_pr())
+            && !crate::comparer::final_marks::is_inert_body_marker(&dom, child)
+    })?;
+    dom.name_is(close, &W::p())
+        .then(|| paragraph_text(&dom, close))
+}
+
 /// Every paragraph of the table is deleted, marks included, and nothing in it
 /// is live or inserted (the rows get their deleted marks later, from
 /// `mark_fully_revised_rows`).
