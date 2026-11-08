@@ -14652,6 +14652,24 @@ fn paragraph_plain_text(dom: &Dom, paragraph: NodeId) -> String {
 struct SectionRow {
     text: String,
     authored: bool,
+    /// A paragraph, table or block wrapper follows it in its body. A
+    /// break added there takes Word's middle model, even when what follows
+    /// is a blank paragraph or a table (#2126 review).
+    followed: bool,
+}
+
+fn followed_by_block(dom: &Dom, paragraph: NodeId) -> bool {
+    let mut next = dom.next_element(paragraph);
+    while let Some(node) = next {
+        if dom
+            .name(node)
+            .is_some_and(|name| matches!(name.local_name(), "p" | "tbl" | "sdt" | "customXml"))
+        {
+            return true;
+        }
+        next = dom.next_element(node);
+    }
+    false
 }
 
 fn section_rows(dom: &Dom, body: NodeId) -> Vec<SectionRow> {
@@ -14664,6 +14682,7 @@ fn section_rows(dom: &Dom, body: NodeId) -> Vec<SectionRow> {
             } else {
                 Some(SectionRow {
                     authored: authored_section_break(dom, paragraph),
+                    followed: followed_by_block(dom, paragraph),
                     text,
                 })
             }
@@ -14808,6 +14827,19 @@ fn track_middle_added_break(
     let blank = dom.new_element(W::p());
     let blank_ppr = dom.new_element(W::p_pr());
     dom.add(blank, blank_ppr);
+    // Accept All merges this paragraph into the carrier and keeps the
+    // carrier's properties, so it carries the paragraph's own (#2126
+    // review). Its mark, break and recorded change stay apart.
+    for child in dom.elements(ppr, None) {
+        if dom.name_is(child, &W::r_pr())
+            || dom.name_is(child, &W::sect_pr())
+            || dom.name_is(child, &W::p_pr_change())
+        {
+            continue;
+        }
+        let copy = dom.clone_subtree(child);
+        dom.add(blank_ppr, copy);
+    }
     let blank_rpr = dom.new_element(W::r_pr());
     dom.add(blank_ppr, blank_rpr);
     push_paragraph_mark(dom, blank_rpr, true, inserted_id, author, date);
@@ -14845,7 +14877,6 @@ fn track_added_section_breaks(
         return;
     }
     let mut next_id = next_revision_id(dom, result_root);
-    let last = result.len().saturating_sub(1);
     for index in (0..result.len()).rev() {
         if original[index].text != revised[index].text
             || original[index].text != paragraph_plain_text(dom, result[index])
@@ -14860,7 +14891,7 @@ fn track_added_section_breaks(
         }
         let author = settings.author_for_revisions.as_str();
         let date = settings.date_time_for_revisions.as_str();
-        if index == last {
+        if !original[index].followed {
             track_closing_added_break(dom, result[index], next_id, author, date);
             next_id = next_id.saturating_add(1);
         } else {

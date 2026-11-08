@@ -2561,3 +2561,107 @@ fn an_added_section_break_is_an_inserted_paragraph_mark() {
         vec![("ONE".to_string(), true), ("TWO".to_string(), false)]
     );
 }
+
+fn break_on_with(text: &str, ppr: &str) -> String {
+    format!(
+        r#"<w:p><w:pPr>{ppr}<w:sectPr><w:type w:val="nextPage"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+    )
+}
+
+fn texts_and_breaks(pkg: &[u8]) -> Vec<(String, bool)> {
+    section_break_marks(pkg)
+        .into_iter()
+        .map(|(text, has_break, _)| (text, has_break))
+        .collect()
+}
+
+#[test]
+fn an_added_break_before_a_kept_blank_or_table_rejects_to_the_original() {
+    // The last text paragraph is not the closing one when a blank paragraph
+    // or a table follows it on both sides: Reject All must keep that block,
+    // and Accept All must not add an empty paragraph (#2126 review).
+    let table = r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="2400"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>CELL</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    for tail in ["<w:p/>", table] {
+        let original = docx(&format!(r#"<w:p><w:r><w:t>ONE</w:t></w:r></w:p>{tail}"#));
+        let revised = docx(&format!("{}{tail}", break_on_with("ONE", "")));
+        let redline = compare_documents(&original, &revised, "Comparison").unwrap();
+        assert_word_valid_package(&redline);
+        let xml = part_string(&redline, "word/document.xml").unwrap();
+        assert_eq!(
+            texts_and_breaks(&reject_revisions(&redline).unwrap()),
+            texts_and_breaks(&original),
+            "reject before {tail}: {xml}"
+        );
+        assert_eq!(
+            texts_and_breaks(&accept_revisions(&redline).unwrap()),
+            texts_and_breaks(&revised),
+            "accept before {tail}: {xml}"
+        );
+        assert_eq!(
+            reject_revisions(&redline)
+                .ok()
+                .and_then(|pkg| part_string(&pkg, "word/document.xml"))
+                .map(|xml| xml.matches("<w:tbl>").count()),
+            Some(tail.matches("<w:tbl>").count()),
+            "the table survives reject: {xml}"
+        );
+    }
+}
+
+#[test]
+fn accepting_a_middle_added_break_keeps_the_paragraphs_properties() {
+    // The middle model moves the break onto a new empty paragraph that
+    // Accept All merges the text paragraph into; that paragraph's own
+    // properties must survive the merge (#2126 review).
+    let props = r#"<w:jc w:val="center"/>"#;
+    let original = docx(&format!(
+        r#"<w:p><w:pPr>{props}</w:pPr><w:r><w:t>ONE</w:t></w:r></w:p><w:p><w:r><w:t>TWO</w:t></w:r></w:p>"#
+    ));
+    let revised = docx(&format!(
+        "{}<w:p><w:r><w:t>TWO</w:t></w:r></w:p>",
+        break_on_with("ONE", props)
+    ));
+    let redline = compare_documents(&original, &revised, "Comparison").unwrap();
+    let accepted = accept_revisions(&redline).unwrap();
+    assert_eq!(
+        texts_and_breaks(&accepted),
+        vec![("ONE".to_string(), true), ("TWO".to_string(), false)]
+    );
+    let xml = part_string(&accepted, "word/document.xml").unwrap();
+    let one = &xml[..xml.find("ONE").expect("ONE")];
+    let one = &one[one
+        .rfind("<w:p>")
+        .or_else(|| one.rfind("<w:p "))
+        .expect("ONE's paragraph")..];
+    assert!(
+        one.contains(r#"<w:jc w:val="center""#),
+        "ONE keeps its centring after accept: {xml}"
+    );
+}
+
+#[test]
+fn added_break_marks_take_unused_revision_ids() {
+    // An input already at revision id u32::MAX must not hand the new
+    // paragraph marks that id twice over (#2126 review).
+    let max = u32::MAX;
+    let two = format!(
+        r#"<w:p><w:ins w:id="{max}" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>TWO</w:t></w:r></w:ins></w:p>"#
+    );
+    let original = docx(&format!(r#"<w:p><w:r><w:t>ONE</w:t></w:r></w:p>{two}"#));
+    let revised = docx(&format!("{}{two}", break_on_with("ONE", "")));
+    let redline = compare_documents(&original, &revised, "Comparison").unwrap();
+    let xml = part_string(&redline, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let mut ids: Vec<String> = dom
+        .descendants(root, None)
+        .into_iter()
+        .filter(|&node| dom.name_is(node, &W::ins()) || dom.name_is(node, &W::del()))
+        .filter_map(|node| dom.attribute(node, &W::id()).map(str::to_owned))
+        .collect();
+    let all = ids.len();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), all, "every revision id is unique: {xml}");
+}
