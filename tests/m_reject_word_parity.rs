@@ -1894,6 +1894,80 @@ fn reject_keeps_an_orphan_move_to_range_s_unwrapped_paragraph() {
     );
 }
 
+/// #1245: a paired move whose ranges hold untracked paragraphs: `normal`, a
+/// `moveFromRange` named `m1` around `movedaway`, `second`, then a
+/// `moveToRange` named `m1` around `landed`. Word 16's recorded Reject All
+/// moves the destination back (`normal, landed, second`); jubarte keeps the
+/// source. The bench corpus has none of this shape, so the difference is
+/// recorded in `docs/WORD_DIFFERENCES.md` instead of copied.
+const PAIRED_UNTRACKED_MOVE: &str = r#"<w:p><w:r><w:t>normal</w:t></w:r></w:p>
+<w:moveFromRangeStart w:id="1" w:name="m1" w:author="Alice" w:date="2026-01-01T00:00:00Z"/>
+<w:p><w:r><w:t>movedaway</w:t></w:r></w:p>
+<w:moveFromRangeEnd w:id="1"/>
+<w:p><w:r><w:t>second</w:t></w:r></w:p>
+<w:moveToRangeStart w:id="2" w:name="m1" w:author="Alice" w:date="2026-01-01T00:00:00Z"/>
+<w:p><w:r><w:t>landed</w:t></w:r></w:p>
+<w:moveToRangeEnd w:id="2"/>"#;
+
+/// The range markers are not a listed change, so selective reject leaves
+/// the probe as it stands.
+#[test]
+fn selective_reject_leaves_paired_untracked_move_ranges_alone() {
+    let selective = jubarte::changes::reject_changes(
+        &docx(PAIRED_UNTRACKED_MOVE),
+        &jubarte::changes::ChangeFilter::default(),
+    )
+    .expect("reject_changes");
+    assert_eq!(
+        paragraphs(&selective),
+        ["normal", "movedaway", "second", "landed"],
+        "reject_changes changed the untracked probe"
+    );
+}
+
+/// Reject All keeps the source paragraph and drops the destination
+/// (Word: `normal, landed, second`; recorded difference).
+#[test]
+fn reject_of_paired_untracked_move_ranges_keeps_the_source_paragraph() {
+    let rejected = reject_revisions(&docx(PAIRED_UNTRACKED_MOVE)).expect("reject_revisions");
+    assert_eq!(
+        paragraphs(&rejected),
+        ["normal", "movedaway", "second"],
+        "convert reject moved the destination back"
+    );
+}
+
+/// Accept All agrees with Word's recorded Accept All.
+#[test]
+fn accept_of_paired_untracked_move_ranges_matches_word() {
+    let accepted = accept_revisions(&docx(PAIRED_UNTRACKED_MOVE)).expect("accept_revisions");
+    assert_eq!(
+        paragraphs(&accepted),
+        ["normal", "second", "landed"],
+        "convert accept diverged from the recorded Word Accept All"
+    );
+}
+
+/// The divergence and the corpus count behind keeping it stay on record.
+#[test]
+fn word_differences_records_the_paired_untracked_move_reject() {
+    let record = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/docs/WORD_DIFFERENCES.md"
+    ));
+    assert!(
+        record.contains("#1245")
+            && record.contains("normal, landed, second")
+            && record.contains("normal, movedaway, second")
+            && record.contains("normal, movedaway, second, landed")
+            && record.contains("0 of 471")
+            && record.contains("22 move ranges")
+            && record.contains("0 of 975")
+            && record.contains("32 move ranges"),
+        "WORD_DIFFERENCES does not record the #1245 difference and the corpus count"
+    );
+}
+
 /// The first section's page setup: half-inch margins.
 const SECTION_ONE: &str = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr>"#;
 
