@@ -11,7 +11,10 @@ mod common;
 
 use common::docx::{docx, para, part_string};
 use common::validity::{assert_word_valid_package, check_word_valid_package};
-use jubarte::document_comparer::{accept_revisions, compare_documents, reject_revisions};
+use jubarte::comparer::WmlComparerSettings;
+use jubarte::document_comparer::{
+    accept_revisions, compare_documents, compare_documents_with_settings, reject_revisions,
+};
 use jubarte::edit::{
     EditPlan, EditResult, PlanSyntax, PrepareOptions, PrimaryRole, apply_plan, prepare,
 };
@@ -719,15 +722,7 @@ fn cell_paragraphs(bytes: &[u8]) -> Vec<String> {
 /// `w:trPr` means the comparer threw that row away.
 fn assert_rows_unrevised(bytes: &[u8], what: &str) {
     let xml = part_string(bytes, "word/document.xml").unwrap();
-    for (at, _) in xml.match_indices("<w:trPr") {
-        let rest = &xml[at..];
-        let end = rest.find('>').unwrap();
-        let props = if rest[..end].ends_with('/') {
-            &rest[..=end]
-        } else {
-            let close = rest.find("</w:trPr>").unwrap();
-            &rest[..close]
-        };
+    for props in row_properties(&xml) {
         assert!(
             !props.contains("<w:del") && !props.contains("<w:ins"),
             "{what}: a table row carries a revision: {props}"
@@ -1407,29 +1402,30 @@ fn one_cell_row(inner: &str) -> String {
     )
 }
 
-/// Deleting every paragraph of a row empties the row. Word's Compare keeps
+/// Deleting a row's only paragraph empties the row. Word's Compare keeps
 /// the row and deletes only its text (#1672): no `w:trPr` revision, Accept
-/// All matches the clean copy (the row, with an empty paragraph), Reject
-/// All gives the source back. A cell of several paragraphs keeps only its
-/// last mark. The same holds for one emptied row beside a row that stays.
+/// All matches the clean copy (the row, with an empty paragraph), and
+/// Reject All gives the source back.
 #[test]
-fn an_emptied_table_row_keeps_the_row_and_deletes_only_its_text() {
+fn an_emptied_one_paragraph_row_keeps_the_row() {
     let only = docx(&one_cell_row(&para("Only.")));
-    let two = docx(&one_cell_row(&format!("{}{}", para("One."), para("Two."))));
-    let rows = docx(&format!(
-        r#"<w:tbl><w:tblPr><w:tblW w:w="1000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1000" w:type="dxa"/></w:tcPr>{}</w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w="1000" w:type="dxa"/></w:tcPr>{}</w:tc></w:tr></w:tbl>"#,
-        para("Keep."),
-        para("Gone.")
-    ));
     for mode in MODES {
-        let only_plan = plan_of(mode, &[delete("p0")]);
-        let result = check_outputs(&only, &only_plan, &[""], &format!("{mode} only"));
+        let plan = plan_of(mode, &[delete("p0")]);
+        let result = check_outputs(&only, &plan, &[""], &format!("{mode} only"));
         assert_rows_unrevised(&result.redline, &format!("{mode} only"));
-        prepare(&only, &only_plan, &REDLINE_ROLE)
+        prepare(&only, &plan, &REDLINE_ROLE)
             .unwrap_or_else(|e| panic!("{mode} only redline: {e:?}"));
+    }
+}
 
-        let two_plan = plan_of(mode, &[delete("p0"), delete("p1")]);
-        let result = check_outputs(&two, &two_plan, &[""], &format!("{mode} two"));
+/// A cell of several paragraphs, all deleted, keeps its row and only its
+/// last mark (#1672): the earlier marks are deleted, the last one stays.
+#[test]
+fn an_emptied_row_of_several_paragraphs_keeps_only_its_last_mark() {
+    let two = docx(&one_cell_row(&format!("{}{}", para("One."), para("Two."))));
+    for mode in MODES {
+        let plan = plan_of(mode, &[delete("p0"), delete("p1")]);
+        let result = check_outputs(&two, &plan, &[""], &format!("{mode} two"));
         assert_rows_unrevised(&result.redline, &format!("{mode} two"));
         let paras = paragraphs_in(&normalized(
             &part_string(&result.redline, "word/document.xml").unwrap(),
@@ -1442,15 +1438,112 @@ fn an_emptied_table_row_keeps_the_row_and_deletes_only_its_text() {
             words(one).iter().any(|w| w == "-One.") && words(last).iter().any(|w| w == "-Two."),
             "{mode} two: {paras:?}"
         );
-        prepare(&two, &two_plan, &REDLINE_ROLE)
-            .unwrap_or_else(|e| panic!("{mode} two redline: {e:?}"));
+        prepare(&two, &plan, &REDLINE_ROLE).unwrap_or_else(|e| panic!("{mode} two redline: {e:?}"));
+    }
+}
 
-        let rows_plan = plan_of(mode, &[delete("p1")]);
-        let result = check_outputs(&rows, &rows_plan, &["Keep.", ""], &format!("{mode} rows"));
+/// One emptied row beside a row that stays keeps both rows (#1672).
+#[test]
+fn an_emptied_row_beside_a_kept_row_keeps_both() {
+    let rows = docx(&rows_table(&["Keep.", "Gone."]));
+    for mode in MODES {
+        let plan = plan_of(mode, &[delete("p1")]);
+        let result = check_outputs(&rows, &plan, &["Keep.", ""], &format!("{mode} rows"));
         assert_rows_unrevised(&result.redline, &format!("{mode} rows"));
-        prepare(&rows, &rows_plan, &REDLINE_ROLE)
+        prepare(&rows, &plan, &REDLINE_ROLE)
             .unwrap_or_else(|e| panic!("{mode} rows redline: {e:?}"));
     }
+}
+
+/// A one-column table, one row per entry; an empty entry is an empty row.
+fn rows_table(rows: &[&str]) -> String {
+    let rows: String = rows
+        .iter()
+        .map(|text| {
+            let body = if text.is_empty() {
+                "<w:p/>".to_string()
+            } else {
+                para(text)
+            };
+            format!(
+                r#"<w:tr><w:tc><w:tcPr><w:tcW w:w="1000" w:type="dxa"/></w:tcPr>{body}</w:tc></w:tr>"#
+            )
+        })
+        .collect();
+    format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="1000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid>{rows}</w:tbl>"#
+    )
+}
+
+/// The `w:trPr` of each row that carries a deleted or inserted row mark.
+fn revised_rows(bytes: &[u8]) -> (usize, usize) {
+    let xml = part_string(bytes, "word/document.xml").unwrap();
+    let props = row_properties(&xml);
+    let deleted = props.iter().filter(|p| p.contains("<w:del ")).count();
+    let inserted = props.iter().filter(|p| p.contains("<w:ins ")).count();
+    (deleted, inserted)
+}
+
+fn compare_with(source: &[u8], revised: &[u8], settings: &WmlComparerSettings) -> Vec<u8> {
+    compare_documents_with_settings(source, revised, settings).expect("compare")
+}
+
+/// #2106 review (sourcery, codex): a table that empties one row and adds
+/// another keeps the emptied row. Only the added row is a row insertion.
+#[test]
+fn an_emptied_row_survives_a_row_added_elsewhere() {
+    let source = docx(&rows_table(&["Remove text", "Keep"]));
+    let revised = docx(&rows_table(&["", "Keep", "Added"]));
+    let out = compare_with(&source, &revised, &WmlComparerSettings::default());
+    assert_eq!(revised_rows(&out), (0, 1), "only the added row is inserted");
+    assert_word_valid_package(&out);
+    assert_eq!(
+        texts(&accept_revisions(&out).unwrap()),
+        ["", "Keep", "Added"],
+        "Accept All"
+    );
+    assert_eq!(
+        texts(&reject_revisions(&out).unwrap()),
+        texts(&source),
+        "Reject All"
+    );
+}
+
+/// #2106 review (codex): a seven-row table that empties one row and edits
+/// two others keeps every row; the edits stay inside the cells.
+#[test]
+fn an_emptied_row_survives_ordinary_row_edits() {
+    let source = docx(&rows_table(&[
+        "Row zero text",
+        "Row one",
+        "Row two old",
+        "Row three",
+        "Row four old",
+        "Row five",
+        "Row six",
+    ]));
+    let revised = docx(&rows_table(&[
+        "",
+        "Row one",
+        "Row two new",
+        "Row three",
+        "Row four new",
+        "Row five",
+        "Row six",
+    ]));
+    let out = compare_with(&source, &revised, &WmlComparerSettings::default());
+    assert_eq!(revised_rows(&out), (0, 0), "no row is thrown away");
+    assert_word_valid_package(&out);
+    assert_eq!(
+        texts(&accept_revisions(&out).unwrap()),
+        texts(&revised),
+        "Accept All"
+    );
+    assert_eq!(
+        texts(&reject_revisions(&out).unwrap()),
+        texts(&source),
+        "Reject All"
+    );
 }
 
 /// Under keep, a replacement joins a final mark whose formatting change is

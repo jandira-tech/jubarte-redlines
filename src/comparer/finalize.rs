@@ -12267,12 +12267,11 @@ pub fn mark_fully_revised_rows(
                     && !para_mark_revision(dom, p, &W::move_from())
             }
         };
-        if dom
-            .elements(tr, Some(&tc_name))
-            .into_iter()
-            .flat_map(|tc| dom.descendants(tc, Some(&W::p())))
-            .any(survives_direction)
-        {
+        let p_name = W::p();
+        if dom.elements(tr, Some(&tc_name)).into_iter().any(|tc| {
+            dom.find_descendant_element(tc, Some(&p_name), survives_direction)
+                .is_some()
+        }) {
             continue;
         }
         let rev_name = if k { W::ins() } else { W::del() };

@@ -263,8 +263,9 @@ pub(crate) fn shared_word_row_sequences(
     }
     let old: Vec<_> = rows1.iter().map(|r| row_word_tokens(dom, r)).collect();
     let new: Vec<_> = rows2.iter().map(|r| row_word_tokens(dom, r)).collect();
-    // Content-free rows carry no signal to score. A row the target still
-    // has is paired by [`rows_present_but_emptied`] (#1672).
+    // Content-free rows carry no signal to score; the routes below pair
+    // them. A row whose paragraph mark survives is never stamped deleted
+    // (`mark_fully_revised_rows`, #1672).
     if !old.iter().any(|t| !t.is_empty()) || !new.iter().any(|t| !t.is_empty()) {
         return None;
     }
@@ -501,45 +502,6 @@ pub(crate) fn rows_preserving_horizontal_partitions(
     Some(out)
 }
 
-/// A row the target still has, with nothing left to score. Word keeps that
-/// row and deletes the cell's text (#1672). Shared-word alignment declines
-/// a content-free side, and one identical neighbour makes it decline the
-/// whole table; either used to delete every row. Pair the rows so the
-/// deletion stays in the cells. A row is deleted only when the target
-/// drops it, which is a different row count and does not come through here.
-fn rows_present_but_emptied(
-    dom: &Dom,
-    rows1: &[ComparisonUnit],
-    rows2: &[ComparisonUnit],
-) -> Option<Vec<CorrelatedSequence>> {
-    if rows1.is_empty() || rows1.len() != rows2.len() {
-        return None;
-    }
-    if table_has_merges(dom, rows1) || table_has_merges(dom, rows2) {
-        return None;
-    }
-    let mut saw_emptied = false;
-    for (left, right) in rows1.iter().zip(rows2.iter()) {
-        if left.sha1() == right.sha1() {
-            continue;
-        }
-        let left_tokens = row_word_tokens(dom, left);
-        let right_tokens = row_word_tokens(dom, right);
-        if !left_tokens.is_empty() && !right_tokens.is_empty() {
-            return None;
-        }
-        match (
-            horizontal_cell_partition(dom, left),
-            horizontal_cell_partition(dom, right),
-        ) {
-            (Some(left_cells), Some(right_cells)) if left_cells == right_cells => {}
-            _ => return None,
-        }
-        saw_emptied = true;
-    }
-    saw_emptied.then(|| positional_rows(rows1, rows2))
-}
-
 /// M4.D.2/D.3 — `DoLcsAlgorithmForTable` (WmlComparer.ts :8348):
 /// single-table-vs-single-table dispatch. Tries horizontal-partition
 /// preservation first, then a row-level LCS on same-row-count content
@@ -563,11 +525,6 @@ pub fn do_lcs_algorithm_for_table(
         return Some(rows);
     }
     if let Some(rows) = rows_preserving_horizontal_partitions_for(dom, rows1, rows2, settings) {
-        return Some(rows);
-    }
-    // An emptied row is still that row. Pair it before the same-row-count
-    // collapse, which refuses once the row's hash changes (#1672).
-    if let Some(rows) = rows_present_but_emptied(dom, rows1, rows2) {
         return Some(rows);
     }
 
