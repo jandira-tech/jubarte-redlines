@@ -67,6 +67,26 @@ class SecurityAdvisoryRecord(unittest.TestCase):
         self.assertIn("GHSA-m665-v7pm-7grj", security)
         self.assertIn("9.0.5", security)
 
+    def test_graph_drift_gate_can_fail_the_build(self) -> None:
+        script = (ROOT / "scripts/security-check.sh").read_text()
+        self.assertIn("check advisories bans", script)
+        policy = tomllib.loads((ROOT / "deny.toml").read_text())
+        self.assertEqual(policy["bans"]["multiple-versions"], "deny")
+
+    def test_graph_covers_the_wasm_target(self) -> None:
+        # A duplicate that only the browser build pulls in must reach the
+        # bans check too.
+        policy = tomllib.loads((ROOT / "deny.toml").read_text())
+        triples = {target["triple"] for target in policy["graph"]["targets"]}
+        self.assertIn("wasm32-unknown-unknown", triples)
+
+    def test_advisory_inventory_records_range_and_withdrawal(self) -> None:
+        security = (ROOT / "SECURITY.md").read_text()
+        self.assertIn("RUSTSEC-2025-0168", security)
+        self.assertIn(">=1.3, <2.3", security)
+        self.assertIn("RUSTSEC-2022-0048", security)
+        self.assertIn("withdrawn", security)
+
 
 if __name__ == "__main__":
     unittest.main()
