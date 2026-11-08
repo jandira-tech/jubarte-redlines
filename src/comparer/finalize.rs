@@ -8471,12 +8471,10 @@ pub(crate) fn keep_revised_empty_close(out_xml: &str, revised_xml: &str) -> Opti
     let revised_body = revised
         .root(revised_doc)
         .and_then(|root| revised.element(root, &W::body()))?;
-    let revised_kids: Vec<NodeId> = revised
+    let revised_last = revised
         .elements(revised_body, None)
         .into_iter()
-        .filter(|&child| !revised.name_is(child, &W::sect_pr()))
-        .collect();
-    let &revised_last = revised_kids.last()?;
+        .rfind(|&child| !revised.name_is(child, &W::sect_pr()))?;
     if !paragraph_has_live_empty_pilcrow(&revised, revised_last) {
         return None;
     }
@@ -8491,46 +8489,142 @@ pub(crate) fn keep_revised_empty_close(out_xml: &str, revised_xml: &str) -> Opti
         .filter(|&child| !dom.name_is(child, &W::sect_pr()))
         .collect();
     let (&last, before) = kids.split_last()?;
-    if !dom.name_is(last, &W::tbl()) {
+    // Only a table the revision added replaces the paragraph: one the
+    // source already ended on stays live under Reject All, and the close
+    // could not join away across it (cursor on #2102).
+    if !dom.name_is(last, &W::tbl()) || !table_is_inserted(&dom, last) {
         return None;
     }
     let &previous = before.last()?;
     if !dom.name_is(previous, &W::p())
-        || dom.descendants(previous, Some(&W::ins())).is_empty()
-        || dom.descendants(previous, Some(&W::del())).is_empty()
+        || dom
+            .find_descendant_element(previous, Some(&W::ins()), |_| true)
+            .is_none()
+        || dom
+            .find_descendant_element(previous, Some(&W::del()), |_| true)
+            .is_none()
         || para_mark_revision(&dom, previous, &W::del())
         || para_mark_revision(&dom, previous, &W::move_from())
         || para_mark_revision(&dom, previous, &W::move_to())
     {
         return None;
     }
-    if !para_mark_revision(&dom, previous, &W::ins()) {
+    let minted = !para_mark_revision(&dom, previous, &W::ins());
+    if minted {
         mint_replacement_mark(&mut dom, root, previous)?;
     }
-    let empty = dom.new_element(W::p());
+    let close = revised_close_copy(&mut dom, &revised, revised_last, previous)?;
     match dom.element(body, &W::sect_pr()) {
-        Some(sect) => dom.add_before_self(sect, empty),
-        None => dom.add(body, empty),
+        Some(sect) => dom.add_before_self(sect, close),
+        None => dom.add(body, close),
     }
     Some(dom.serialize_element(root))
+}
+
+/// Every row of `table` carries an inserted row mark.
+fn table_is_inserted(dom: &Dom, table: NodeId) -> bool {
+    let mut rows = 0usize;
+    let mut inserted = 0usize;
+    dom.for_each_descendant_element(table, Some(&W::tr()), |row| {
+        rows += 1;
+        if dom
+            .element(row, &W::tr_pr())
+            .is_some_and(|properties| dom.element(properties, &W::ins()).is_some())
+        {
+            inserted += 1;
+        }
+    });
+    rows > 0 && rows == inserted
+}
+
+/// The revised close, copied with its properties and inert runs (codex on
+/// #2102). Reject All joins the replaced paragraph's words into this mark,
+/// so a close whose properties differ records the replaced paragraph's in
+/// a `w:pPrChange`. Its `w14` ids stay behind, as they could repeat one
+/// the redline already holds, and so does a paragraph-level `w:sectPr`,
+/// whose header and footer references name the revised part's
+/// relationships, not the redline's.
+fn revised_close_copy(
+    dom: &mut Dom,
+    revised: &Dom,
+    revised_close: NodeId,
+    previous: NodeId,
+) -> Option<NodeId> {
+    let close = dom.import_subtree(revised, revised_close);
+    for name in [W14::name("paraId"), W14::name("textId")] {
+        dom.set_attribute_value(close, &name, None);
+    }
+    let Some(properties) = dom.element(close, &W::p_pr()) else {
+        return Some(close);
+    };
+    for child in dom.elements(properties, None) {
+        if dom.name_is(child, &W::sect_pr()) || dom.name_is(child, &W::p_pr_change()) {
+            dom.remove(child);
+        }
+    }
+    let formatting = |dom: &Dom, holder: Option<NodeId>| -> Vec<String> {
+        holder
+            .map(|holder| {
+                dom.elements(holder, None)
+                    .into_iter()
+                    .filter(|&c| !dom.name_is(c, &W::r_pr()) && !dom.name_is(c, &W::p_pr_change()))
+                    .map(|c| dom.serialize_element(c))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let previous_properties = dom.element(previous, &W::p_pr());
+    if formatting(dom, Some(properties)) == formatting(dom, previous_properties) {
+        return Some(close);
+    }
+    let mark = dom.find_descendant_element(previous, Some(&W::ins()), |_| true)?;
+    let author = dom.attribute(mark, &W::author())?.to_string();
+    let date = dom.attribute(mark, &W::date()).map(str::to_string);
+    let id = fresh_revision_id(dom, dom.parent(dom.parent(previous)?)?);
+    let change = dom.new_element(W::p_pr_change());
+    dom.set_attribute_value(change, &W::id(), Some(&id.to_string()));
+    dom.set_attribute_value(change, &W::author(), Some(&author));
+    if let Some(date) = date.as_deref() {
+        dom.set_attribute_value(change, &W::date(), Some(date));
+    }
+    let recorded = dom.new_element(W::p_pr());
+    if let Some(holder) = previous_properties {
+        for child in dom.elements(holder, None) {
+            if !dom.name_is(child, &W::r_pr())
+                && !dom.name_is(child, &W::p_pr_change())
+                && !dom.name_is(child, &W::sect_pr())
+            {
+                let copy = dom.clone_subtree(child);
+                dom.add(recorded, copy);
+            }
+        }
+    }
+    dom.add(change, recorded);
+    dom.add(properties, change);
+    Some(close)
+}
+
+/// A revision id no element under `root` uses.
+fn fresh_revision_id(dom: &Dom, root: NodeId) -> u64 {
+    let mut used = HashSet::new();
+    dom.for_each_descendant_element(root, None, |element| {
+        if let Some(id) = dom
+            .attribute(element, &W::id())
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            used.insert(id);
+        }
+    });
+    crate::revision_processor::RevisionIds::from_used(used).allocate()
 }
 
 /// An inserted mark on the paragraph a table replaced, copied from the
 /// paragraph's own insertion.
 fn mint_replacement_mark(dom: &mut Dom, root: NodeId, paragraph: NodeId) -> Option<()> {
-    let source = dom
-        .descendants(paragraph, Some(&W::ins()))
-        .into_iter()
-        .next()?;
+    let source = dom.find_descendant_element(paragraph, Some(&W::ins()), |_| true)?;
     let author = dom.attribute(source, &W::author())?.to_string();
     let date = dom.attribute(source, &W::date()).map(str::to_string);
-    let id = crate::revision_processor::RevisionIds::from_used(
-        dom.descendants(root, None)
-            .into_iter()
-            .filter_map(|element| dom.attribute(element, &W::id())?.parse().ok())
-            .collect(),
-    )
-    .allocate();
+    let id = fresh_revision_id(dom, root);
     let mark = dom.new_element(W::ins());
     dom.set_attribute_value(mark, &W::id(), Some(&id.to_string()));
     dom.set_attribute_value(mark, &W::author(), Some(&author));

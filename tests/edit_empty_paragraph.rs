@@ -2046,3 +2046,129 @@ fn an_append_keeps_another_authors_change_on_the_final_mark() {
     assert_eq!(error.code, "UNSUPPORTED_STRUCTURE", "{error:?}");
     assert!(error.message.contains("already tracked"), "{error:?}");
 }
+
+/// The #1678 table: one `Cell.` cell.
+fn issue_1678_table() -> String {
+    format!(
+        "{}{}</w:tc></w:tr></w:tbl>",
+        concat!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr>"#,
+            r#"<w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>"#,
+            r#"<w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>"#,
+        ),
+        para("Cell.")
+    )
+}
+
+/// `docx` with its main part moved to `word/main.xml`, a legal OPC path
+/// the officeDocument relationship names.
+fn at_nonstandard_main(docx: &[u8]) -> Vec<u8> {
+    use std::io::{Cursor, Read, Write};
+    let mut archive = zip::ZipArchive::new(Cursor::new(docx)).unwrap();
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default();
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).unwrap();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
+        let original = entry.name().expect("entry name").to_string();
+        let name = match original.as_str() {
+            "word/document.xml" => "word/main.xml".to_string(),
+            "word/_rels/document.xml.rels" => "word/_rels/main.xml.rels".to_string(),
+            _ => original.clone(),
+        };
+        if name == "[Content_Types].xml" || name == "_rels/.rels" {
+            bytes = String::from_utf8(bytes)
+                .unwrap()
+                .replace("/word/document.xml", "/word/main.xml")
+                .replace("word/document.xml", "word/main.xml")
+                .into_bytes();
+        }
+        out.start_file(name, options).unwrap();
+        out.write_all(&bytes).unwrap();
+    }
+    out.finish().unwrap().into_inner()
+}
+
+/// #2102 review: the revised close's own properties survive Accept All.
+#[test]
+fn issue_1678_the_kept_close_keeps_the_revised_properties() {
+    let source = docx(&format!("{}{}", para("One."), para("Two.")));
+    let revised = docx(&format!(
+        "{}{}{}{}",
+        para("One."),
+        para("New."),
+        issue_1678_table(),
+        r#"<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="480"/></w:pPr></w:p>"#
+    ));
+    let out = compare_documents(&source, &revised, "Redline").expect("compare");
+    assert!(check_word_valid_package(&out).ok());
+    let accepted = accept_revisions(&out).unwrap();
+    assert_eq!(texts(&accepted), texts(&revised), "Accept All");
+    assert_eq!(
+        texts(&reject_revisions(&out).unwrap()),
+        texts(&source),
+        "Reject All"
+    );
+    let close = paragraph_xml(&accepted, 3);
+    assert!(
+        close.contains(r#"w:jc w:val="center""#) && close.contains(r#"w:after="480""#),
+        "Accept All lost the revised close's properties: {close}"
+    );
+}
+
+/// #2102 review: a modified package whose main part sits at a legal
+/// nonstandard path keeps the close too.
+#[test]
+fn issue_1678_a_nonstandard_main_part_keeps_the_close() {
+    let source = docx(&format!("{}{}", para("One."), para("Two.")));
+    let revised = at_nonstandard_main(&docx(&format!(
+        "{}{}{}{}",
+        para("One."),
+        para("New."),
+        issue_1678_table(),
+        para("")
+    )));
+    let out = compare_documents(&source, &revised, "Redline").expect("compare");
+    assert!(check_word_valid_package(&out).ok());
+    assert_eq!(
+        texts(&accept_revisions(&out).unwrap()),
+        texts(&revised),
+        "Accept All"
+    );
+    assert_eq!(
+        texts(&reject_revisions(&out).unwrap()),
+        texts(&source),
+        "Reject All"
+    );
+}
+
+/// #2102 review: a table the source already ends on is no replacement of
+/// its last paragraph; Reject All gains no empty paragraph. Accept All
+/// stays as before #1678 (the revision's empty close is dropped): a body
+/// that ends in a table is no shape Word saves, as Word closes every body
+/// on a paragraph, so no Word redline decides it.
+#[test]
+fn issue_1678_a_table_the_source_had_is_no_replacement() {
+    let source = docx(&format!(
+        "{}{}{}",
+        para("One."),
+        para("Two."),
+        issue_1678_table()
+    ));
+    let revised = docx(&format!(
+        "{}{}{}{}",
+        para("One."),
+        para("New."),
+        issue_1678_table(),
+        para("")
+    ));
+    let out = compare_documents(&source, &revised, "Redline").expect("compare");
+    assert!(check_word_valid_package(&out).ok());
+    assert_eq!(
+        texts(&reject_revisions(&out).unwrap()),
+        texts(&source),
+        "Reject All\n{}",
+        part_string(&out, "word/document.xml").unwrap()
+    );
+}
