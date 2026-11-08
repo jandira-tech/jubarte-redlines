@@ -14547,7 +14547,7 @@ fn table_pref_width(dom: &Dom, table: NodeId) -> TblWidth {
     let Some(tw) = first_named(dom, pr, "tblW") else {
         return TblWidth::Grid;
     };
-    match attr_any(dom, tw, "type").unwrap_or("auto") {
+    match attr_any(dom, tw, "type").unwrap_or("dxa") {
         "pct" => {
             let fiftieths = attr_any(dom, tw, "w")
                 .and_then(parse_finite_f32)
@@ -14905,7 +14905,7 @@ fn cell_pref_width(dom: &Dom, cell: NodeId) -> PrefWidth {
     let Some(tw) = direct_named(dom, pr, "tcW") else {
         return PrefWidth::Auto;
     };
-    match attr_any(dom, tw, "type").unwrap_or("auto") {
+    match attr_any(dom, tw, "type").unwrap_or("dxa") {
         "pct" => match attr_any(dom, tw, "w").and_then(parse_finite_f32) {
             Some(fiftieths) if fiftieths >= 0.0 => PrefWidth::Pct(fiftieths / 5000.0),
             _ => PrefWidth::Auto,
@@ -50727,6 +50727,31 @@ mod coverage_round_two_tests {
     }
 
     #[test]
+    fn a_typeless_zero_width_is_still_no_preference() {
+        // A width with no type is dxa, but a zero one stays no preference
+        // on the table and on its cell (WORD_LAYOUT_RULES; #2121 review).
+        let geom_of = |tbl_w: &str, tc_w: &str| {
+            let Block::Table { geom, .. } = table(&format!(
+                "<w:tbl><w:tblPr><w:tblW {tbl_w}/></w:tblPr>\
+                 <w:tblGrid><w:gridCol w:w=\"2400\"/></w:tblGrid>\
+                 <w:tr><w:tc><w:tcPr><w:tcW {tc_w}/></w:tcPr><w:p/></w:tc></w:tr></w:tbl>"
+            )) else {
+                panic!("table fixture")
+            };
+            geom
+        };
+        let zero = geom_of("w:w=\"0\"", "w:w=\"0\"");
+        assert!(matches!(zero.width, TblWidth::Grid), "typeless zero tblW");
+        assert!(
+            matches!(zero.pref[..], [PrefWidth::Auto]),
+            "typeless zero tcW"
+        );
+        let set = geom_of("w:w=\"9000\"", "w:w=\"6000\"");
+        assert!(matches!(set.width, TblWidth::Dxa(w) if (w - 450.0).abs() < 0.01));
+        assert!(matches!(set.pref[..], [PrefWidth::Dxa(w)] if (w - 300.0).abs() < 0.01));
+    }
+
+    #[test]
     fn table_cell_split_keeps_nested_tables_at_the_correct_paragraph_boundary() {
         let mut cell = cell("one");
         let mut second = cell.paras[0].clone();
@@ -58931,8 +58956,13 @@ mod rendering_uncovered_contract_tests {
 
     #[test]
     fn malformed_nonpositive_cell_widths_are_auto_and_percent_indents_are_ignored() {
+        // A zero percent is a preference since #2120: Word splits the
+        // measure over a table whose cells all ask for it.
+        let (dom, root) =
+            xml("<w:tc><w:tcPr><w:tcW w:type=\"pct\" w:w=\"0\"/></w:tcPr><w:p/></w:tc>");
+        let cell = dom.element(root, &W::tc()).unwrap();
+        assert!(matches!(cell_pref_width(&dom, cell), PrefWidth::Pct(0.0)));
         for (kind, value) in [
-            ("pct", "0"),
             ("pct", "-50"),
             ("pct", "bad"),
             ("dxa", "0"),

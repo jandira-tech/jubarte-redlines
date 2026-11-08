@@ -3647,6 +3647,62 @@ fn a_zero_pct_autofit_table_splits_the_measure_when_its_rows_outrun_it() {
     );
 }
 
+fn typeless_width_gap(tbl_w: &str, cells: &[(&str, &str)]) -> (f32, f32) {
+    // Letter, Calibri 11, 1in margins, no borders.
+    let styles = "<w:docDefaults><w:rPrDefault><w:rPr>\
+        <w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/><w:sz w:val=\"22\"/>\
+        </w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>\
+        <w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/>\
+        </w:pPr></w:pPrDefault></w:docDefaults>";
+    let row: String = cells
+        .iter()
+        .map(|(text, tcw)| {
+            let pr = if tcw.is_empty() {
+                String::new()
+            } else {
+                format!("<w:tcPr><w:tcW {tcw}/></w:tcPr>")
+            };
+            format!("<w:tc>{pr}<w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>")
+        })
+        .collect();
+    let body = format!(
+        r#"<w:tbl><w:tblPr><w:tblW {tbl_w}/></w:tblPr><w:tblGrid><w:gridCol w:w="2400"/><w:gridCol w:w="2400"/></w:tblGrid><w:tr>{row}</w:tr></w:tbl><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#
+    );
+    let pdf =
+        docx_to_pdf(&docx_with_settings_and_styles(&body, "", styles)).expect("typeless width");
+    (
+        pdf_glyph_text_xy(&pdf, "LABEL:").expect("LABEL:").0,
+        pdf_glyph_text_xy(&pdf, "VALUE").expect("VALUE").0,
+    )
+}
+
+#[test]
+fn a_typeless_table_width_is_a_dxa_width() {
+    // Word convert, Letter. A tblW of 9000 twips with no type puts VALUE
+    // 225.89pt after LABEL. The saved 2400/2400 grid would leave about 120.
+    let (label, value) = typeless_width_gap(r#"w:w="9000""#, &[("LABEL:", ""), ("VALUE", "")]);
+    let word = 297.91 - 72.02;
+    assert!(
+        (value - label - word).abs() < 1.0,
+        "a table width with no type is a dxa width; LABEL {label}, VALUE {value}, Word gap {word}"
+    );
+}
+
+#[test]
+fn a_typeless_cell_width_is_a_dxa_width() {
+    // Word convert, Letter. Under a 9000 dxa table width, cell widths of
+    // 6000 and 3000 twips with no type put VALUE 300.05pt after LABEL.
+    let (label, value) = typeless_width_gap(
+        r#"w:w="9000" w:type="dxa""#,
+        &[("LABEL:", r#"w:w="6000""#), ("VALUE", r#"w:w="3000""#)],
+    );
+    let word = 372.07 - 72.02;
+    assert!(
+        (value - label - word).abs() < 1.0,
+        "a cell width with no type is a dxa width; LABEL {label}, VALUE {value}, Word gap {word}"
+    );
+}
+
 #[test]
 fn contextual_spacing_drops_only_the_flagged_paragraphs_share_of_the_gap() {
     // Word 16 probe_cx (2026-10-01), two Normal paragraphs, compat 15:
