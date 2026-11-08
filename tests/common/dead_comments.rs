@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
 // SPDX-License-Identifier: AGPL-3.0-only
@@ -123,6 +124,7 @@ pub fn package(body: &str, threaded: bool) -> Vec<u8> {
 }
 
 /// Exact comment identities, anchors and metadata keys after resolution.
+#[allow(dead_code)]
 pub fn assert_state(bytes: &[u8], modern: bool, expected: &[(u32, &str, Option<u32>)]) {
     use crate::common::docx::part_string;
     use jubarte::namespaces::W;

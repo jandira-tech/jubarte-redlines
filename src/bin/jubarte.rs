@@ -2583,6 +2583,7 @@ fn write_edited(
     // The PNG names are known only now: nothing is written over a file.
     // `--in-place` authorizes the input only. A PDF, a PNG page or a
     // failed-op plan that already exists still needs `--force`.
+    #[allow(clippy::nonminimal_bool)]
     if let Some((taken, _)) = outputs.iter().find(|(output, _)| {
         !job.force && !(job.in_place && output == job.file) && output.symlink_metadata().is_ok()
     }) {
