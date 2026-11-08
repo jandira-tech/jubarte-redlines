@@ -1011,7 +1011,7 @@ fn tar_c_string(bytes: &[u8]) -> Result<String, String> {
 
 /// Parsed as the tar crate does: cut at the first NUL, trim blanks on both
 /// sides, then read octal digits (an optional leading `+`, as
-/// `u64::from_str_radix` allows).
+/// `u64::from_str_radix` allows). An empty field is refused there too.
 fn tar_octal(bytes: &[u8]) -> Result<u64, String> {
     let end = bytes
         .iter()
@@ -1020,7 +1020,7 @@ fn tar_octal(bytes: &[u8]) -> Result<u64, String> {
     let text = bytes.get(..end).unwrap_or(&[]).trim_ascii();
     let text = text.strip_prefix(b"+").unwrap_or(text);
     if text.is_empty() {
-        return Ok(0);
+        return Err("update archive tar field is not octal".into());
     }
     let mut value = 0u64;
     for byte in text {
@@ -1683,6 +1683,23 @@ mod tests {
         let err = confine_update_zip(&archive, TAR_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
             .expect_err("a blank-led setuid mode was accepted");
         assert!(err.contains("setuid"), "got {err}");
+    }
+
+    /// #2093 review: the tar crate cuts a numeric field at its first NUL
+    /// and refuses what is left when it is empty. A NUL-led size must not
+    /// read as zero here, or the gate and the extractor walk different
+    /// entries.
+    #[test]
+    fn update_tar_nul_led_size_is_refused() {
+        let body = b"#!/jubarte";
+        let mut header = tar_header(TAR_MEMBER, b'0', 0o755, body.len() as u64, "");
+        header[124..136].copy_from_slice(b"\x0000000000012");
+        tar_reseal(&mut header);
+        let dir = tempfile::tempdir().unwrap();
+        let archive = tar_archive(dir.path(), &[(header, &body[..])]);
+        let err = confine_update_zip(&archive, TAR_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect_err("a NUL-led size field was accepted");
+        assert!(err.contains("octal"), "got {err}");
     }
 
     /// #2085 review: a `..` between backslashes is refused like one
