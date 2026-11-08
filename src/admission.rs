@@ -750,8 +750,32 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             if n <= cap {
                 check_xml_depth(&name, &buf, limits)?;
                 tally_xml_elements(&mut elements, &name, &buf, &limits)?;
-                if lower == "[content_types].xml" || lower == "_rels/.rels" {
+                // Content types and relationships are interpreted below
+                // (`main_part`) and by the package open. A second root or a
+                // foreign default namespace must fail here, before either
+                // reader relabels the records into the OPC namespace (#643).
+                if lower == "[content_types].xml" {
+                    crate::opc::metadata_document(
+                        &buf,
+                        "Types",
+                        "http://schemas.openxmlformats.org/package/2006/content-types",
+                    )
+                    .map_err(|why| {
+                        AdmissionError::new(K::InvalidXml, format!("{}: {why}", shown(&name)))
+                    })?;
                     kept.insert(lower, buf);
+                } else if lower.ends_with(".rels") {
+                    crate::opc::metadata_document(
+                        &buf,
+                        "Relationships",
+                        "http://schemas.openxmlformats.org/package/2006/relationships",
+                    )
+                    .map_err(|why| {
+                        AdmissionError::new(K::InvalidXml, format!("{}: {why}", shown(&name)))
+                    })?;
+                    if lower == "_rels/.rels" {
+                        kept.insert(lower, buf);
+                    }
                 }
             }
             n
@@ -1194,7 +1218,7 @@ fn percent_decode(name: &str) -> Option<String> {
 /// with a byte-order mark (SharePoint's `customXml` items often are) and
 /// Word opens it, so it is transcoded; other bytes decode lossily, as the
 /// rest of the engine reads them.
-fn part_text(xml: &[u8]) -> Cow<'_, str> {
+pub(crate) fn part_text(xml: &[u8]) -> Cow<'_, str> {
     let utf16 = |rest: &[u8], unit: fn([u8; 2]) -> u16| {
         let units = rest.as_chunks::<2>().0.iter().map(|&pair| unit(pair));
         Cow::Owned(
