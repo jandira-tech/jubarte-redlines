@@ -4,6 +4,8 @@
 
 //! Synthetic Word-shaped probes for issue #1141.
 
+#![allow(dead_code)]
+
 use crate::common::docx::{Part, W_NS, docx_with};
 
 pub const FAMILY: [&str; 4] = [
