@@ -10,7 +10,7 @@
 
 mod common;
 
-use common::docx::{Part, docx_with_sect, part_string};
+use common::docx::{Part, docx, docx_with_sect, part_string};
 use common::validity::assert_word_valid_package;
 use jubarte::document_comparer::{accept_revisions, compare_documents, reject_revisions};
 use jubarte::namespaces::W;
@@ -2442,4 +2442,226 @@ fn issue1711_direct_ruby_accept_preserves_reading_and_base_without_panicking() {
         assert!(xml.contains("rubyBase"));
         assert!(!xml.contains("<w:del "));
     }
+}
+
+/// Text, whether the paragraph carries a live section break, and the
+/// paragraph-mark revision (`ins`, `del`, or none).
+fn section_break_marks(pkg: &[u8]) -> Vec<(String, bool, &'static str)> {
+    let xml = part_string(pkg, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let body = dom.element(root, &W::body()).unwrap();
+    dom.elements(body, Some(&W::p()))
+        .into_iter()
+        .map(|paragraph| {
+            let text = dom
+                .descendants(paragraph, Some(&W::t()))
+                .into_iter()
+                .map(|t| dom.value(t))
+                .collect();
+            let ppr = dom.element(paragraph, &W::p_pr());
+            let has_break = ppr.is_some_and(|ppr| dom.element(ppr, &W::sect_pr()).is_some());
+            let mark = ppr
+                .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+                .map(|rpr| {
+                    if dom.element(rpr, &W::ins()).is_some() {
+                        "ins"
+                    } else if dom.element(rpr, &W::del()).is_some() {
+                        "del"
+                    } else {
+                        ""
+                    }
+                })
+                .unwrap_or("");
+            (text, has_break, mark)
+        })
+        .collect()
+}
+
+#[test]
+fn an_added_section_break_is_an_inserted_paragraph_mark() {
+    // Word compare, 2026-11-06. A next-page break added on the closing
+    // paragraph is an inserted mark on that paragraph, then an empty
+    // paragraph. The same break added before TWO deletes ONE's mark and
+    // inserts an empty paragraph that carries the break. Reject All of
+    // either redline returns the original: one section, the same paragraphs.
+    let break_on = |text: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:sectPr><w:type w:val="nextPage"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+        )
+    };
+    let one = compare_documents(
+        &docx(r#"<w:p><w:r><w:t>ONE</w:t></w:r></w:p>"#),
+        &docx(&break_on("ONE")),
+        "Comparison",
+    )
+    .unwrap();
+    assert_word_valid_package(&one);
+    assert_eq!(
+        section_break_marks(&one),
+        vec![("ONE".to_string(), true, "ins"), (String::new(), false, "")],
+        "{}",
+        part_string(&one, "word/document.xml").unwrap()
+    );
+    let one_rejected = reject_revisions(&one).unwrap();
+    assert_eq!(
+        section_break_marks(&one_rejected)
+            .into_iter()
+            .map(|(text, has_break, _)| (text, has_break))
+            .collect::<Vec<_>>(),
+        vec![("ONE".to_string(), false)]
+    );
+    // Accept keeps the empty paragraph after the inserted mark. That
+    // paragraph has no deletion of its own, so the break stays and the
+    // following paragraph stays.
+    let one_accepted = accept_revisions(&one).unwrap();
+    assert_eq!(
+        section_break_marks(&one_accepted)
+            .into_iter()
+            .map(|(text, has_break, _)| (text, has_break))
+            .collect::<Vec<_>>(),
+        vec![("ONE".to_string(), true), (String::new(), false)]
+    );
+
+    let two = compare_documents(
+        &docx(r#"<w:p><w:r><w:t>ONE</w:t></w:r></w:p><w:p><w:r><w:t>TWO</w:t></w:r></w:p>"#),
+        &docx(&format!(
+            "{}<w:p><w:r><w:t>TWO</w:t></w:r></w:p>",
+            break_on("ONE")
+        )),
+        "Comparison",
+    )
+    .unwrap();
+    assert_word_valid_package(&two);
+    assert_eq!(
+        section_break_marks(&two),
+        vec![
+            ("ONE".to_string(), false, "del"),
+            (String::new(), true, "ins"),
+            ("TWO".to_string(), false, ""),
+        ],
+        "{}",
+        part_string(&two, "word/document.xml").unwrap()
+    );
+    let two_rejected = reject_revisions(&two).unwrap();
+    assert_eq!(
+        section_break_marks(&two_rejected)
+            .into_iter()
+            .map(|(text, has_break, _)| (text, has_break))
+            .collect::<Vec<_>>(),
+        vec![("ONE".to_string(), false), ("TWO".to_string(), false)]
+    );
+    let two_accepted = accept_revisions(&two).unwrap();
+    assert_eq!(
+        section_break_marks(&two_accepted)
+            .into_iter()
+            .map(|(text, has_break, _)| (text, has_break))
+            .collect::<Vec<_>>(),
+        vec![("ONE".to_string(), true), ("TWO".to_string(), false)]
+    );
+}
+
+fn break_on_with(text: &str, ppr: &str) -> String {
+    format!(
+        r#"<w:p><w:pPr>{ppr}<w:sectPr><w:type w:val="nextPage"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+    )
+}
+
+fn texts_and_breaks(pkg: &[u8]) -> Vec<(String, bool)> {
+    section_break_marks(pkg)
+        .into_iter()
+        .map(|(text, has_break, _)| (text, has_break))
+        .collect()
+}
+
+#[test]
+fn an_added_break_before_a_kept_blank_or_table_rejects_to_the_original() {
+    // The last text paragraph is not the closing one when a blank paragraph
+    // or a table follows it on both sides: Reject All must keep that block,
+    // and Accept All must not add an empty paragraph (#2126 review).
+    let table = r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="2400"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>CELL</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    for tail in ["<w:p/>", table] {
+        let original = docx(&format!(r#"<w:p><w:r><w:t>ONE</w:t></w:r></w:p>{tail}"#));
+        let revised = docx(&format!("{}{tail}", break_on_with("ONE", "")));
+        let redline = compare_documents(&original, &revised, "Comparison").unwrap();
+        assert_word_valid_package(&redline);
+        let xml = part_string(&redline, "word/document.xml").unwrap();
+        assert_eq!(
+            texts_and_breaks(&reject_revisions(&redline).unwrap()),
+            texts_and_breaks(&original),
+            "reject before {tail}: {xml}"
+        );
+        assert_eq!(
+            texts_and_breaks(&accept_revisions(&redline).unwrap()),
+            texts_and_breaks(&revised),
+            "accept before {tail}: {xml}"
+        );
+        assert_eq!(
+            reject_revisions(&redline)
+                .ok()
+                .and_then(|pkg| part_string(&pkg, "word/document.xml"))
+                .map(|xml| xml.matches("<w:tbl>").count()),
+            Some(tail.matches("<w:tbl>").count()),
+            "the table survives reject: {xml}"
+        );
+    }
+}
+
+#[test]
+fn accepting_a_middle_added_break_keeps_the_paragraphs_properties() {
+    // The middle model moves the break onto a new empty paragraph that
+    // Accept All merges the text paragraph into; that paragraph's own
+    // properties must survive the merge (#2126 review).
+    let props = r#"<w:jc w:val="center"/>"#;
+    let original = docx(&format!(
+        r#"<w:p><w:pPr>{props}</w:pPr><w:r><w:t>ONE</w:t></w:r></w:p><w:p><w:r><w:t>TWO</w:t></w:r></w:p>"#
+    ));
+    let revised = docx(&format!(
+        "{}<w:p><w:r><w:t>TWO</w:t></w:r></w:p>",
+        break_on_with("ONE", props)
+    ));
+    let redline = compare_documents(&original, &revised, "Comparison").unwrap();
+    let accepted = accept_revisions(&redline).unwrap();
+    assert_eq!(
+        texts_and_breaks(&accepted),
+        vec![("ONE".to_string(), true), ("TWO".to_string(), false)]
+    );
+    let xml = part_string(&accepted, "word/document.xml").unwrap();
+    let one = &xml[..xml.find("ONE").expect("ONE")];
+    let one = &one[one
+        .rfind("<w:p>")
+        .or_else(|| one.rfind("<w:p "))
+        .expect("ONE's paragraph")..];
+    assert!(
+        one.contains(r#"<w:jc w:val="center""#),
+        "ONE keeps its centring after accept: {xml}"
+    );
+}
+
+#[test]
+fn added_break_marks_take_unused_revision_ids() {
+    // An input already at revision id u32::MAX must not hand the new
+    // paragraph marks that id twice over (#2126 review).
+    let max = u32::MAX;
+    let two = format!(
+        r#"<w:p><w:ins w:id="{max}" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>TWO</w:t></w:r></w:ins></w:p>"#
+    );
+    let original = docx(&format!(r#"<w:p><w:r><w:t>ONE</w:t></w:r></w:p>{two}"#));
+    let revised = docx(&format!("{}{two}", break_on_with("ONE", "")));
+    let redline = compare_documents(&original, &revised, "Comparison").unwrap();
+    let xml = part_string(&redline, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let mut ids: Vec<String> = dom
+        .descendants(root, None)
+        .into_iter()
+        .filter(|&node| dom.name_is(node, &W::ins()) || dom.name_is(node, &W::del()))
+        .filter_map(|node| dom.attribute(node, &W::id()).map(str::to_owned))
+        .collect();
+    let all = ids.len();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), all, "every revision id is unique: {xml}");
 }

@@ -7298,6 +7298,9 @@ fn compare_documents_impl(
         Some(&mut notes_ctx),
     )
     .map_err(crate::opc::refused)?;
+    // A break the revision adds is an inserted paragraph mark. The body
+    // comparison still leaves that break live, so Reject All would keep it.
+    track_added_section_breaks(&mut dom, result_root, body1, body2, settings);
     for root in [root1, root2] {
         dom.set_attribute_value(root, &crate::namespaces::PT::default_line(), None);
         dom.set_attribute_value(
@@ -14624,5 +14627,277 @@ mod story_diff_failure_tests {
             err.to_string()
                 .contains("STORY_DIFF_FAILED: word/footer1.xml")
         );
+    }
+}
+
+/// A section break the revised paragraph carries and the original paragraph
+/// does not. The final body section, hoisted into the last paragraph before
+/// the diff, is not one: it wears the hoist stamp.
+fn authored_section_break(dom: &Dom, paragraph: NodeId) -> bool {
+    let hoist = crate::namespaces::PT::name("BodySectPrHoist");
+    dom.element(paragraph, &W::p_pr()).is_some_and(|ppr| {
+        dom.elements(ppr, Some(&W::sect_pr()))
+            .into_iter()
+            .any(|section| dom.attribute(section, &hoist) != Some("1"))
+    })
+}
+
+fn paragraph_plain_text(dom: &Dom, paragraph: NodeId) -> String {
+    dom.descendants(paragraph, Some(&W::t()))
+        .into_iter()
+        .map(|text| dom.value(text))
+        .collect()
+}
+
+struct SectionRow {
+    text: String,
+    authored: bool,
+    /// A paragraph, table or block wrapper follows it in its body. A
+    /// break added there takes Word's middle model, even when what follows
+    /// is a blank paragraph or a table (#2126 review).
+    followed: bool,
+}
+
+fn followed_by_block(dom: &Dom, paragraph: NodeId) -> bool {
+    let mut next = dom.next_element(paragraph);
+    while let Some(node) = next {
+        if dom
+            .name(node)
+            .is_some_and(|name| matches!(name.local_name(), "p" | "tbl" | "sdt" | "customXml"))
+        {
+            return true;
+        }
+        next = dom.next_element(node);
+    }
+    false
+}
+
+fn section_rows(dom: &Dom, body: NodeId) -> Vec<SectionRow> {
+    dom.elements(body, Some(&W::p()))
+        .into_iter()
+        .filter_map(|paragraph| {
+            let text = paragraph_plain_text(dom, paragraph);
+            if text.is_empty() {
+                None
+            } else {
+                Some(SectionRow {
+                    authored: authored_section_break(dom, paragraph),
+                    followed: followed_by_block(dom, paragraph),
+                    text,
+                })
+            }
+        })
+        .collect()
+}
+
+fn has_paragraph_mark(dom: &Dom, paragraph: NodeId) -> bool {
+    dom.element(paragraph, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .is_some_and(|rpr| {
+            dom.elements(rpr, None).into_iter().any(|child| {
+                dom.name(child).is_some_and(|name| {
+                    matches!(name.local_name(), "ins" | "del" | "moveFrom" | "moveTo")
+                })
+            })
+        })
+}
+
+fn next_revision_id(dom: &Dom, root: NodeId) -> u32 {
+    let mut next = 0u32;
+    for node in dom.descendants_and_self(root, None) {
+        let Some(raw) = dom.attribute(node, &W::id()) else {
+            continue;
+        };
+        let Ok(id) = raw.parse::<u32>() else {
+            continue;
+        };
+        next = next.max(id.saturating_add(1));
+    }
+    next
+}
+
+fn paragraph_properties(dom: &mut Dom, paragraph: NodeId) -> NodeId {
+    if let Some(ppr) = dom.element(paragraph, &W::p_pr()) {
+        return ppr;
+    }
+    let ppr = dom.new_element(W::p_pr());
+    dom.add_first(paragraph, ppr);
+    ppr
+}
+
+fn run_properties_before_section(dom: &mut Dom, ppr: NodeId) -> NodeId {
+    if let Some(rpr) = dom.element(ppr, &W::r_pr()) {
+        return rpr;
+    }
+    let rpr = dom.new_element(W::r_pr());
+    let anchor = dom
+        .elements(ppr, None)
+        .into_iter()
+        .find(|&child| dom.name_is(child, &W::sect_pr()) || dom.name_is(child, &W::p_pr_change()));
+    if let Some(anchor) = anchor {
+        dom.add_before_self(anchor, rpr);
+    } else {
+        dom.add(ppr, rpr);
+    }
+    rpr
+}
+
+fn drop_empty_paragraph_change(dom: &mut Dom, ppr: NodeId) {
+    let Some(change) = dom.element(ppr, &W::p_pr_change()) else {
+        return;
+    };
+    let records_layout = dom.element(change, &W::p_pr()).is_some_and(|inner| {
+        dom.elements(inner, None)
+            .into_iter()
+            .any(|child| !dom.name_is(child, &W::r_pr()))
+    });
+    if !records_layout {
+        dom.remove(change);
+    }
+}
+
+fn push_paragraph_mark(
+    dom: &mut Dom,
+    rpr: NodeId,
+    inserted: bool,
+    id: u32,
+    author: &str,
+    date: &str,
+) {
+    let marked = dom.elements(rpr, None).into_iter().any(|child| {
+        dom.name(child)
+            .is_some_and(|name| matches!(name.local_name(), "ins" | "del" | "moveFrom" | "moveTo"))
+    });
+    if marked {
+        return;
+    }
+    let mark = dom.new_element(if inserted { W::ins() } else { W::del() });
+    let id_text = id.to_string();
+    dom.set_attribute_value(mark, &W::id(), Some(&id_text));
+    dom.set_attribute_value(mark, &W::author(), Some(author));
+    dom.set_attribute_value(mark, &W::date(), Some(date));
+    dom.add_first(rpr, mark);
+}
+
+fn following_paragraph(dom: &Dom, paragraph: NodeId) -> Option<NodeId> {
+    let parent = dom.parent(paragraph)?;
+    let siblings = dom.elements(parent, Some(&W::p()));
+    let index = siblings.iter().position(|&sibling| sibling == paragraph)?;
+    siblings.get(index + 1).copied()
+}
+
+fn paragraph_is_blank(dom: &Dom, paragraph: NodeId) -> bool {
+    paragraph_plain_text(dom, paragraph).is_empty()
+        && dom
+            .element(paragraph, &W::p_pr())
+            .is_none_or(|ppr| dom.element(ppr, &W::sect_pr()).is_none())
+}
+
+fn track_closing_added_break(dom: &mut Dom, paragraph: NodeId, id: u32, author: &str, date: &str) {
+    let ppr = paragraph_properties(dom, paragraph);
+    if dom.element(ppr, &W::sect_pr()).is_none() {
+        return;
+    }
+    drop_empty_paragraph_change(dom, ppr);
+    let rpr = run_properties_before_section(dom, ppr);
+    push_paragraph_mark(dom, rpr, true, id, author, date);
+    let followed_by_blank =
+        following_paragraph(dom, paragraph).is_some_and(|next| paragraph_is_blank(dom, next));
+    if !followed_by_blank {
+        let blank = dom.new_element(W::p());
+        dom.add_after_self(paragraph, blank);
+    }
+}
+
+fn track_middle_added_break(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    deleted_id: u32,
+    inserted_id: u32,
+    author: &str,
+    date: &str,
+) {
+    let ppr = paragraph_properties(dom, paragraph);
+    let Some(section) = dom.element(ppr, &W::sect_pr()) else {
+        return;
+    };
+    drop_empty_paragraph_change(dom, ppr);
+    let rpr = run_properties_before_section(dom, ppr);
+    push_paragraph_mark(dom, rpr, false, deleted_id, author, date);
+    let blank = dom.new_element(W::p());
+    let blank_ppr = dom.new_element(W::p_pr());
+    dom.add(blank, blank_ppr);
+    // Accept All merges this paragraph into the carrier and keeps the
+    // carrier's properties, so it carries the paragraph's own (#2126
+    // review). Its mark, break and recorded change stay apart.
+    for child in dom.elements(ppr, None) {
+        if dom.name_is(child, &W::r_pr())
+            || dom.name_is(child, &W::sect_pr())
+            || dom.name_is(child, &W::p_pr_change())
+        {
+            continue;
+        }
+        let copy = dom.clone_subtree(child);
+        dom.add(blank_ppr, copy);
+    }
+    let blank_rpr = dom.new_element(W::r_pr());
+    dom.add(blank_ppr, blank_rpr);
+    push_paragraph_mark(dom, blank_rpr, true, inserted_id, author, date);
+    dom.remove(section);
+    dom.add(blank_ppr, section);
+    dom.add_after_self(paragraph, blank);
+}
+
+/// Track a section break the revision adds, when the same paragraphs are
+/// still in order on both sides. The closing paragraph keeps the break
+/// under an inserted mark and an empty paragraph follows it. A break
+/// before a later paragraph deletes this mark and the break moves onto
+/// that new empty paragraph.
+fn track_added_section_breaks(
+    dom: &mut Dom,
+    result_root: NodeId,
+    original_body: NodeId,
+    revised_body: NodeId,
+    settings: &WmlComparerSettings,
+) {
+    if !settings.merge_replaced_paragraphs {
+        return;
+    }
+    let Some(result_body) = dom.element(result_root, &W::body()) else {
+        return;
+    };
+    let original = section_rows(dom, original_body);
+    let revised = section_rows(dom, revised_body);
+    let result: Vec<NodeId> = dom
+        .elements(result_body, Some(&W::p()))
+        .into_iter()
+        .filter(|&paragraph| !paragraph_plain_text(dom, paragraph).is_empty())
+        .collect();
+    if original.len() != revised.len() || original.len() != result.len() {
+        return;
+    }
+    let mut next_id = next_revision_id(dom, result_root);
+    for index in (0..result.len()).rev() {
+        if original[index].text != revised[index].text
+            || original[index].text != paragraph_plain_text(dom, result[index])
+        {
+            continue;
+        }
+        if !revised[index].authored || original[index].authored {
+            continue;
+        }
+        if has_paragraph_mark(dom, result[index]) {
+            continue;
+        }
+        let author = settings.author_for_revisions.as_str();
+        let date = settings.date_time_for_revisions.as_str();
+        if !original[index].followed {
+            track_closing_added_break(dom, result[index], next_id, author, date);
+            next_id = next_id.saturating_add(1);
+        } else {
+            let inserted_id = next_id.saturating_add(1);
+            track_middle_added_break(dom, result[index], next_id, inserted_id, author, date);
+            next_id = inserted_id.saturating_add(1);
+        }
     }
 }
