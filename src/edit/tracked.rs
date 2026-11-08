@@ -1599,7 +1599,13 @@ fn emit_text(
             (None, None) => return,
         };
         let (t, run) = chosen;
-        isolate(dom, run, t, &mut stamp.ids);
+        // An empty `w:t` covers no character. Peeling it off the piece the
+        // insertion attaches to moves Alice's id onto that empty run and
+        // mints a fresh id for the tab. `audit_tracked` then reports the
+        // original id as `FOREIGN_AUTHOR` (#1663).
+        if split_around_piece(dom, run, t) {
+            isolate(dom, run, t, &mut stamp.ids);
+        }
         let anchor = insertion_boundary_anchor(dom, run, before);
         (Some(run), Some(anchor), before)
     };
@@ -1963,6 +1969,20 @@ fn isolate_range(
             }
         }
     }
+}
+
+/// Whether `t` has a sibling the insertion must leave in another run.
+/// An empty `w:t` stays with `t`: it is not a character the insertion splits.
+fn split_around_piece(dom: &Dom, run: NodeId, t: NodeId) -> bool {
+    dom.elements(run, None).into_iter().any(|child| {
+        if child == t || dom.name_is(child, &W::r_pr()) {
+            return false;
+        }
+        if dom.name_is(child, &W::t()) {
+            return !dom.value(child).is_empty();
+        }
+        true
+    })
 }
 
 /// Whether `t` is the only child of `run` besides its `w:rPr`.
