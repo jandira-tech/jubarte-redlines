@@ -130,3 +130,100 @@ fn convert_round_trip_keeps_a_run_formatting_change() {
         "Reject All kept the bold: {rejected}\n{back}"
     );
 }
+
+/// A view's YAML header: one author, one page.
+const HEADER: &str = "---
+view: tracked                      # revisions as CriticMarkup, comments inline
+track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
+revisions: 1                       # 1 formatting
+authors:
+  document_owner: none             # no docProps/core.xml
+  AL: Ann Lee                      # 1 revision, 2026-03-02T10:00:00Z
+body: p0-p0, 0 tables, 1 page
+page: Letter portrait, margins 1in, header/footer 0.5in
+styles:
+  Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
+---
+
+";
+
+/// `body` (id lines and text) under [`HEADER`], converted to Word.
+fn markdown_to_document(body: &str) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.md"), format!("{HEADER}{body}")).unwrap();
+    run(
+        &["convert", "in.md", "-t", "docx", "-o", "out.docx"],
+        dir.path(),
+    );
+    document(&dir.path().join("out.docx"))
+}
+
+#[test]
+fn a_list_label_keeps_its_fmt_on_the_paragraph() {
+    // `num "(a)"` is the paragraph's own numbering: its `fmt` is that
+    // property's change, not the bold word's (#2116 review).
+    let xml = markdown_to_document("<!-- p0 num \"(a)\", fmt r10 @AL -->\nItem **bold** here.\n");
+    assert_eq!(xml.matches("<w:rPrChange").count(), 0, "{xml}");
+    assert_eq!(xml.matches("<w:pPrChange").count(), 1, "{xml}");
+}
+
+#[test]
+fn bold_math_does_not_swallow_the_paragraph_fmt() {
+    // Math is written outside any run: it cannot hold a run change, so
+    // the `fmt` stays the paragraph's (#2116 review).
+    let xml = markdown_to_document("<!-- p0 fmt r10 @AL -->\nSee **$x$** here.\n");
+    assert_eq!(
+        xml.matches("<w:rPrChange").count() + xml.matches("<w:pPrChange").count(),
+        1,
+        "the fmt was dropped: {xml}"
+    );
+}
+
+#[test]
+fn a_bold_field_keeps_one_run_change_on_its_result() {
+    // A field's begin, code and separate runs share one property string:
+    // the change goes on the result text, once (#2116 review).
+    let xml = markdown_to_document("<!-- p0 fmt r10 @AL -->\nPage **{PAGE}1{/}** here.\n");
+    assert_eq!(xml.matches("<w:rPrChange").count(), 1, "{xml}");
+    assert_eq!(xml.matches("<w:pPrChange").count(), 0, "{xml}");
+    let result = xml.find(">1</w:t>").expect("field result");
+    let run = xml[..result].rfind("<w:r>").unwrap();
+    assert!(xml[run..result].contains("<w:rPrChange"), "{xml}");
+}
+
+#[test]
+fn a_text_box_before_the_bold_run_does_not_take_its_change() {
+    // The box's own paragraphs open while the host's is open: the host's
+    // pending change must survive them (#2116 review).
+    let dir = tempfile::tempdir().unwrap();
+    let that = format!(
+        r#"<w:r><w:rPr><w:b/><w:bCs/><w:rPrChange w:id="4" w:author="{AUTHOR}" w:date="{DATE}"><w:rPr/></w:rPrChange></w:rPr><w:t>that</w:t></w:r>"#
+    );
+    let source = docx(&format!(
+        "<w:p>{}{}{}{}</w:p>",
+        r#"<w:r><w:t xml:space="preserve">See </w:t></w:r>"#,
+        r#"<w:r><w:pict xmlns:v="urn:schemas-microsoft-com:vml"><v:shape style="width:100pt;height:40pt"><v:textbox><w:txbxContent><w:p><w:r><w:t>Box</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r>"#,
+        that,
+        r#"<w:r><w:t xml:space="preserve"> today.</w:t></w:r>"#,
+    ));
+    std::fs::write(dir.path().join("boxed.docx"), source).unwrap();
+    run(
+        &["convert", "boxed.docx", "-t", "md", "-o", "boxed.md"],
+        dir.path(),
+    );
+    let markdown = std::fs::read_to_string(dir.path().join("boxed.md")).unwrap();
+    run(
+        &["convert", "boxed.md", "-t", "docx", "-o", "back.docx"],
+        dir.path(),
+    );
+    let back = document(&dir.path().join("back.docx"));
+    assert_eq!(
+        back.matches("<w:rPrChange").count() + back.matches("<w:pPrChange").count(),
+        1,
+        "the change was dropped: {back}\n{markdown}"
+    );
+    assert!(
+        that_run_has_format_change(&back),
+        "the change is not on the bold run: {back}\n{markdown}"
+    );
+}
