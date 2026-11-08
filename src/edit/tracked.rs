@@ -1974,7 +1974,7 @@ fn isolate_range(
 /// Whether `t` has a sibling the insertion must leave in another run.
 /// An empty `w:t` stays with `t`: it is not a character the insertion splits.
 fn split_around_piece(dom: &Dom, run: NodeId, t: NodeId) -> bool {
-    dom.elements(run, None).into_iter().any(|child| {
+    child_elements(dom, run).any(|child| {
         if child == t || dom.name_is(child, &W::r_pr()) {
             return false;
         }
@@ -1987,9 +1987,14 @@ fn split_around_piece(dom: &Dom, run: NodeId, t: NodeId) -> bool {
 
 /// Whether `t` is the only child of `run` besides its `w:rPr`.
 fn alone(dom: &Dom, run: NodeId, t: NodeId) -> bool {
-    dom.elements(run, None)
-        .into_iter()
-        .all(|c| c == t || dom.name_is(c, &W::r_pr()))
+    child_elements(dom, run).all(|c| c == t || dom.name_is(c, &W::r_pr()))
+}
+
+/// The element children of `run`, without collecting them.
+fn child_elements(dom: &Dom, run: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+    (0..dom.child_count(run))
+        .map(move |i| dom.child_at(run, i))
+        .filter(|&child| dom.is_element(child))
 }
 
 /// Move the children of `run` before `t` into a copy of the run placed
