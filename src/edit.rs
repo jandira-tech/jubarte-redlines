@@ -7319,13 +7319,13 @@ impl<'p> Transaction<'p> {
     /// those, including when the paragraph around them is deleted.
     fn empty_bookmark_markers(dom: &Dom, paragraph: NodeId) -> Vec<NodeId> {
         let children = dom.elements(paragraph, None);
-        let mut open: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut open: HashMap<&str, Vec<usize>> = HashMap::new();
         let mut kept = Vec::new();
         for (index, &child) in children.iter().enumerate() {
             if dom.name_is(child, &W::bookmark_start())
                 && let Some(id) = dom.attribute(child, &W::id())
             {
-                open.entry(id.to_string()).or_default().push(index);
+                open.entry(id).or_default().push(index);
             } else if dom.name_is(child, &W::bookmark_end())
                 && let Some(id) = dom.attribute(child, &W::id())
                 && let Some(start_at) = open.get_mut(id).and_then(Vec::pop)
@@ -7370,13 +7370,28 @@ impl<'p> Transaction<'p> {
 
     /// Move an empty bookmark onto the following paragraph, ahead of its
     /// content: Accept All joins the deleted mark forward and the bookmark
-    /// has nothing left to sit in.
+    /// has nothing left to sit in. A last paragraph (of the body or of a
+    /// cell that keeps another) has no following paragraph; Accept All then
+    /// leaves the bookmark at the end of the preceding one.
     fn rehome_empty_bookmarks(dom: &mut Dom, paragraph: NodeId) {
-        let Some(next) = dom
+        let p = W::p();
+        let next = dom
             .nodes_after_self(paragraph)
             .into_iter()
-            .find(|&node| dom.name_is(node, &W::p()))
-        else {
+            .find(|&node| dom.name_is(node, &p));
+        let Some(next) = next else {
+            let Some(previous) = dom
+                .nodes_before_self(paragraph)
+                .into_iter()
+                .rev()
+                .find(|&node| dom.name_is(node, &p))
+            else {
+                return;
+            };
+            for marker in Self::empty_bookmark_markers(dom, paragraph) {
+                dom.remove(marker);
+                dom.add(previous, marker);
+            }
             return;
         };
         let markers = Self::empty_bookmark_markers(dom, paragraph);

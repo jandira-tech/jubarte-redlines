@@ -358,3 +358,35 @@ fn deleted_paragraph_markers_match_word_on_accept_all() {
         "reject restores the bookmark"
     );
 }
+
+/// #2104 review: a deleted last paragraph has no following paragraph to
+/// carry its empty bookmark. Accept All keeps the bookmark, so the clean
+/// copy has to keep it too — in the last body paragraph and in the last
+/// paragraph of a cell that keeps another.
+#[test]
+fn a_deleted_last_paragraph_keeps_its_empty_bookmark() {
+    let empty = |text: &str| {
+        format!(
+            r#"<w:p><w:bookmarkStart w:id="9" w:name="empty"/><w:bookmarkEnd w:id="9"/><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:p>"#
+        )
+    };
+    let body = docx(&format!("{}{}", para("Keep."), empty("Gone.")));
+    assert_outputs_agree(&body, "p1", "last body empty bookmark");
+    let clean = apply_plan(&body, &plan("", "p1")).unwrap().clean;
+    assert!(
+        part_string(&clean, "word/document.xml")
+            .unwrap()
+            .contains(r#"w:name="empty""#),
+        "clean copy dropped the last paragraph's empty bookmark"
+    );
+
+    let in_cell = docx(&table(&format!("{}{}", para("Stay."), empty("Old."))));
+    assert_outputs_agree(&in_cell, "p3", "last cell empty bookmark");
+    let clean = apply_plan(&in_cell, &plan("", "p3")).unwrap().clean;
+    assert!(
+        part_string(&clean, "word/document.xml")
+            .unwrap()
+            .contains(r#"w:name="empty""#),
+        "clean copy dropped the cell's last empty bookmark"
+    );
+}

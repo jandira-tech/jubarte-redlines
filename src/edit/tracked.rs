@@ -2132,12 +2132,11 @@ fn enclose_nonempty_bookmark_ends(dom: &mut Dom, paragraph: NodeId) {
         if !dom.name_is(child, &W::bookmark_end()) {
             continue;
         }
-        let Some(id) = dom.attribute(child, &W::id()).map(str::to_string) else {
+        let Some(id) = dom.attribute(child, &W::id()) else {
             continue;
         };
         let Some(start_at) = children[..index].iter().rposition(|&start| {
-            dom.name_is(start, &W::bookmark_start())
-                && dom.attribute(start, &W::id()) == Some(id.as_str())
+            dom.name_is(start, &W::bookmark_start()) && dom.attribute(start, &W::id()) == Some(id)
         }) else {
             continue;
         };
