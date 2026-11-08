@@ -189,10 +189,11 @@ pub fn is_compound_file(bytes: &[u8]) -> bool {
 /// story, or that run backwards).
 pub fn read(bytes: &[u8]) -> Result<LegacyDocument> {
     let limit = crate::admission::InputLimits::default().max_compressed_bytes;
-    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limit {
-        return Err(LegacyDocError::new(
-            "the file exceeds the input byte budget",
-        ));
+    let size = bytes.len() as u64;
+    if size > limit {
+        return Err(LegacyDocError::new(format!(
+            "the file is {size} bytes; it exceeds the input byte budget of {limit}"
+        )));
     }
     let file = CompoundFile::open(bytes)?;
     let word = file.stream("WordDocument").ok_or_else(|| {
@@ -2219,7 +2220,12 @@ mod tests {
         bytes[..OLE_MAGIC.len()].copy_from_slice(OLE_MAGIC);
         match read(&bytes) {
             Ok(_) => panic!("read a document past the input byte budget"),
-            Err(err) => assert!(err.to_string().contains("input byte budget"), "{err}"),
+            Err(err) => {
+                let text = err.to_string();
+                assert!(text.contains("input byte budget"), "{text}");
+                assert!(text.contains(&(budget + 1).to_string()), "{text}");
+                assert!(text.contains(&budget.to_string()), "{text}");
+            }
         }
     }
 
