@@ -7,7 +7,7 @@ authors:
   document_owner: Jones, SA        # dc:creator
   AB: Aliyu Bamidele               # 1667 revisions, latest 2026-09-25T21:07:00-04:00
 body: p0-p737, 18 tables, 2 pages  # pages from Word's cached layout
-page: Letter portrait, margins top 0.945in, right 1.671in, bottom 2.416in, left 1.583in, header 0.5in, footer 1.878in; fmt r1667 @AB
+page: Letter portrait, margins top 0.945in, right 1.671in, bottom 2.416in, left 1.583in, header 0.5in, footer 1.878in; was: A4 portrait, margins 1in, header/footer 0.492in; fmt r1667 @AB
 styles:
   Normal: Times New Roman 11.5pt, after 2.6pt, line 0.98, indent -0.0035in, hanging 0.007in, justify  # default; unannotated paragraphs use it
   ListParagraph: Times New Roman 11.5pt, indent 0.5in, contextual spacing, named List Paragraph

@@ -57,6 +57,29 @@ fn sections(docx: &[u8]) -> Vec<String> {
         .collect()
 }
 
+/// The live `w:sectPr`s of `docx`'s document, in order: a
+/// `w:sectPrChange`'s saved section is not one of them.
+fn live_sections(docx: &[u8]) -> Vec<String> {
+    let mut document = part_string(docx, "word/document.xml").unwrap();
+    while let Some(at) = document.find("<w:sectPrChange") {
+        let end = document[at..].find("</w:sectPrChange>").unwrap() + at;
+        document.replace_range(at..end + "</w:sectPrChange>".len(), "");
+    }
+    document
+        .split("<w:sectPr")
+        .skip(1)
+        .map(|s| s.split("</w:sectPr>").next().unwrap().to_string())
+        .collect()
+}
+
+/// The saved `w:sectPr` of the last `w:sectPrChange` in `docx`.
+fn saved_section(docx: &[u8]) -> String {
+    let document = part_string(docx, "word/document.xml").unwrap();
+    let at = document.rfind("<w:sectPrChange").expect("a section change");
+    let rest = &document[at..];
+    rest[..rest.find("</w:sectPrChange>").unwrap()].to_string()
+}
+
 #[test]
 fn a_column_line_comes_back() {
     let source = two_sections(
@@ -276,7 +299,7 @@ fn rejecting_a_section_change_restores_the_earlier_page() {
     let markdown = view(&source);
     let again = write(&markdown);
     let rejected = reject_changes(&again, &ChangeFilter::default()).expect("reject");
-    let sects = sections(&rejected);
+    let sects = live_sections(&rejected);
     let last = sects.last().expect("a section");
     assert!(
         last.contains(r#"w:w="11906""#) && last.contains(r#"w:h="16838""#),
@@ -285,6 +308,12 @@ fn rejecting_a_section_change_restores_the_earlier_page() {
     assert!(
         !last.contains(r#"w:w="12240""#),
         "Letter survived reject:\n{last}"
+    );
+    assert!(
+        !part_string(&rejected, "word/document.xml")
+            .unwrap()
+            .contains("w:sectPrChange"),
+        "reject left the section change"
     );
 }
 
@@ -311,7 +340,7 @@ fn rejecting_ids_sections_restores_the_recorded_page() {
     assert_eq!(section, fixture_section, "the source view is the fixture");
     let again = write(&fixture);
     let rejected = reject_changes(&again, &ChangeFilter::default()).expect("reject");
-    let last = sections(&rejected).last().expect("a section").clone();
+    let last = live_sections(&rejected).last().expect("a section").clone();
     assert!(
         last.contains(r#"w:w="11900""#) && last.contains(r#"w:h="16840""#),
         "reject kept the new page:\n{last}"
@@ -323,5 +352,112 @@ fn rejecting_ids_sections_restores_the_recorded_page() {
     assert!(
         !last.contains(r#"w:w="12240""#),
         "Letter survived reject:\n{last}"
+    );
+    assert!(
+        !part_string(&rejected, "word/document.xml")
+            .unwrap()
+            .contains("w:sectPrChange"),
+        "reject left the section change"
+    );
+}
+
+const LETTER: &str = r#"<w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1417" w:right="1701" w:bottom="1417" w:left="1701" w:header="720" w:footer="720" w:gutter="0"/>"#;
+const EARLIER_A4: &str = r#"<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1701" w:right="1134" w:bottom="1701" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/>"#;
+
+/// Two sections; the last is `live` with a `w:sectPrChange` saving `saved`.
+fn changed_last_section(live: &str, saved: &str, extras: &[common::docx::Part<'_>]) -> Vec<u8> {
+    let body = format!(
+        "<w:p><w:pPr><w:sectPr>{PAGE}</w:sectPr></w:pPr><w:r><w:t>One</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>Two</w:t></w:r></w:p>"
+    );
+    let change = format!(
+        r#"<w:sectPrChange w:id="1" w:author="Alice" w:date="2026-10-17T09:00:00Z"><w:sectPr>{saved}</w:sectPr></w:sectPrChange>"#
+    );
+    docx_with_sect_pr(
+        &body,
+        extras,
+        &format!("<w:sectPr>{live}{change}</w:sectPr>"),
+    )
+}
+
+#[test]
+fn rejecting_a_section_change_keeps_its_title_page() {
+    // The change resized the page; the section's first page of its own
+    // was on before and after. Reject must not switch it off.
+    let source = changed_last_section(
+        &format!("{LETTER}<w:titlePg/>"),
+        &format!("{EARLIER_A4}<w:titlePg/>"),
+        &[],
+    );
+    let again = write(&view(&source));
+    assert!(
+        saved_section(&again).contains("<w:titlePg/>"),
+        "the saved section lost its title page:\n{}",
+        saved_section(&again)
+    );
+    let rejected = reject_changes(&again, &ChangeFilter::default()).expect("reject");
+    let last = live_sections(&rejected).last().expect("a section").clone();
+    assert!(
+        last.contains(r#"w:w="11906""#),
+        "reject kept Letter:\n{last}"
+    );
+    assert!(
+        last.contains("<w:titlePg"),
+        "reject dropped the title page:\n{last}"
+    );
+}
+
+#[test]
+fn a_later_section_declaration_without_an_earlier_page_drops_it() {
+    // The last declaration of a section wins: one that names no earlier
+    // page leaves the change keeping the live page.
+    let source = changed_last_section(LETTER, EARLIER_A4, &[]);
+    let markdown = view(&source);
+    let line = markdown
+        .lines()
+        .find(|line| line.contains("; was: "))
+        .expect("a section names its earlier page")
+        .to_string();
+    let was = line.find("; was: ").unwrap();
+    let after = line[was..].find(", fmt: ").expect("a format tag") + was;
+    let plain = format!("{}{}", &line[..was], &line[after..]);
+    let markdown = markdown.replacen(&line, &format!("{line}\n{plain}"), 1);
+    let again = write(&markdown);
+    let saved = saved_section(&again);
+    assert!(
+        saved.contains(r#"w:w="12240""#),
+        "a stale earlier page:\n{saved}"
+    );
+}
+
+#[test]
+fn header_text_naming_an_earlier_page_is_not_one() {
+    // The change keeps the live page; the header's own words merely read
+    // like a `; was:` clause.
+    let xml = format!(
+        r#"<w:hdr xmlns:w="{}"><w:p><w:r><w:t>Revision; was: A4 portrait; draft</w:t></w:r></w:p></w:hdr>"#,
+        "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    );
+    let header = common::docx::Part {
+        name: "word/header1.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+        xml: &xml,
+    };
+    let source = changed_last_section(
+        &format!(r#"<w:headerReference w:type="default" r:id="rIdX0"/>{LETTER}"#),
+        LETTER,
+        &[header],
+    );
+    let markdown = view(&source);
+    assert!(
+        markdown.contains("Revision; was: A4 portrait"),
+        "{markdown}"
+    );
+    let again = write(&markdown);
+    let saved = saved_section(&again);
+    assert!(
+        saved.contains(r#"w:w="12240""#) && !saved.contains(r#"w:w="11906""#),
+        "header text became the earlier page:\n{saved}"
     );
 }
