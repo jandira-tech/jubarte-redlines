@@ -95,20 +95,30 @@ pub enum Plan {
 }
 
 /// The release archive suffix this binary will look up (`macos-aarch64`,
-/// `linux-x86_64`, …), matching the names `release.yml` publishes. `None`
+/// `linux-x86_64`, `linux-musl-x86_64`, …), matching the names
+/// `release.yml` publishes. `None`
 /// for an OS / arch pair no archive is built for.
 #[must_use]
 pub fn asset_target() -> Option<&'static str> {
-    asset_target_for(std::env::consts::OS, std::env::consts::ARCH)
+    asset_target_for(
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        cfg!(target_env = "musl"),
+    )
 }
 
-fn asset_target_for(os: &str, arch: &str) -> Option<&'static str> {
-    Some(match (os, arch) {
-        ("macos", "aarch64") => "macos-aarch64",
-        ("macos", "x86_64") => "macos-x86_64",
-        ("linux", "aarch64") => "linux-aarch64",
-        ("linux", "x86_64") => "linux-x86_64",
-        ("windows", "x86_64") => "windows-x86_64",
+/// `musl` picks the static archive: a musl build must not replace itself
+/// with the glibc one, which needs a loader Alpine lacks. No archive name
+/// holds another, because `self_update` matches assets by substring.
+fn asset_target_for(os: &str, arch: &str, musl: bool) -> Option<&'static str> {
+    Some(match (os, arch, musl) {
+        ("macos", "aarch64", false) => "macos-aarch64",
+        ("macos", "x86_64", false) => "macos-x86_64",
+        ("linux", "aarch64", false) => "linux-aarch64",
+        ("linux", "x86_64", false) => "linux-x86_64",
+        ("linux", "aarch64", true) => "linux-musl-aarch64",
+        ("linux", "x86_64", true) => "linux-musl-x86_64",
+        ("windows", "x86_64", false) => "windows-x86_64",
         _ => return None,
     })
 }
@@ -1059,18 +1069,86 @@ mod tests {
 
     #[test]
     fn asset_targets_match_the_release_workflow_archives() {
-        assert_eq!(asset_target_for("macos", "aarch64"), Some("macos-aarch64"));
-        assert_eq!(asset_target_for("macos", "x86_64"), Some("macos-x86_64"));
-        assert_eq!(asset_target_for("linux", "aarch64"), Some("linux-aarch64"));
-        assert_eq!(asset_target_for("linux", "x86_64"), Some("linux-x86_64"));
-        assert_eq!(
-            asset_target_for("windows", "x86_64"),
-            Some("windows-x86_64")
-        );
+        let glibc = |os, arch| asset_target_for(os, arch, false);
+        assert_eq!(glibc("macos", "aarch64"), Some("macos-aarch64"));
+        assert_eq!(glibc("macos", "x86_64"), Some("macos-x86_64"));
+        assert_eq!(glibc("linux", "aarch64"), Some("linux-aarch64"));
+        assert_eq!(glibc("linux", "x86_64"), Some("linux-x86_64"));
+        assert_eq!(glibc("windows", "x86_64"), Some("windows-x86_64"));
         // No archive is published for these: refuse rather than pick a wrong one.
-        assert_eq!(asset_target_for("windows", "aarch64"), None);
-        assert_eq!(asset_target_for("freebsd", "x86_64"), None);
+        assert_eq!(glibc("windows", "aarch64"), None);
+        assert_eq!(glibc("freebsd", "x86_64"), None);
         assert!(asset_target().is_some(), "every CI host has an archive");
+    }
+
+    /// #2112: a static musl build updates to the musl archive. The glibc
+    /// archive needs a loader Alpine does not have.
+    #[test]
+    fn a_musl_build_looks_up_the_musl_archive() {
+        assert_eq!(
+            asset_target_for("linux", "x86_64", true),
+            Some("linux-musl-x86_64")
+        );
+        assert_eq!(
+            asset_target_for("linux", "aarch64", true),
+            Some("linux-musl-aarch64")
+        );
+        assert_eq!(asset_target_for("macos", "aarch64", true), None);
+    }
+
+    /// Every archive `release.yml` publishes (its `binaries` matrix).
+    const PUBLISHED_ARCHIVES: [&str; 7] = [
+        "linux-x86_64",
+        "linux-aarch64",
+        "linux-musl-x86_64",
+        "linux-musl-aarch64",
+        "macos-x86_64",
+        "macos-aarch64",
+        "windows-x86_64",
+    ];
+
+    /// `self_update` takes the first asset whose name *contains* the
+    /// target, so no archive name may hold another: each lookup, through
+    /// the crate's own matcher, lands on its own archive whatever the order.
+    #[test]
+    fn each_target_selects_its_own_archive_among_the_published_ones() {
+        for order in [
+            PUBLISHED_ARCHIVES.to_vec(),
+            PUBLISHED_ARCHIVES.iter().rev().copied().collect(),
+        ] {
+            let release = self_update::update::Release::builder()
+                .version("9.9.9")
+                .assets(order.iter().map(|name| {
+                    self_update::update::ReleaseAsset::new(
+                        format!("jubarte-9.9.9-{name}.zip"),
+                        format!("https://example.invalid/{name}"),
+                    )
+                }))
+                .build()
+                .expect("release");
+            for name in PUBLISHED_ARCHIVES {
+                let asset = release.asset_for(name, None).expect(name);
+                assert_eq!(asset.name(), format!("jubarte-9.9.9-{name}.zip"));
+            }
+        }
+    }
+
+    /// The overlap the test above guards against: a `-musl` suffix makes
+    /// the glibc lookup match the musl archive when it is listed first.
+    #[test]
+    fn a_suffixed_musl_name_would_steal_the_glibc_lookup() {
+        let release = self_update::update::Release::builder()
+            .version("9.9.9")
+            .assets(["linux-x86_64-musl", "linux-x86_64"].map(|name| {
+                self_update::update::ReleaseAsset::new(
+                    format!("jubarte-9.9.9-{name}.zip"),
+                    format!("https://example.invalid/{name}"),
+                )
+            }))
+            .build()
+            .expect("release");
+        let asset = release.asset_for("linux-x86_64", None).expect("asset");
+        assert_eq!(asset.name(), "jubarte-9.9.9-linux-x86_64-musl.zip");
     }
 
     #[test]
