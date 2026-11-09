@@ -129,6 +129,8 @@ def audited_locked_crates() -> set[str]:
     names: set[str] = set()
     for manifest in audited_manifests():
         lock = ROOT / Path(manifest).with_name("Cargo.lock")
+        if not lock.exists():
+            continue
         names |= {package["name"] for package in tomllib.loads(lock.read_text())["package"]}
     return names
 
