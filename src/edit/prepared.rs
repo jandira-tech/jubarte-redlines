@@ -1878,6 +1878,7 @@ fn produce(
         &clean,
         &redline,
         &report.removed_comments,
+        &tx.deleted_paragraph_ids(),
     )?;
     if role == PrimaryRole::Redline {
         check_redline_stories(tx, &clean, &redline)?;

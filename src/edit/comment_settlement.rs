@@ -187,10 +187,13 @@ impl AnchorChanges {
 /// Threads the redline still carries that the clean copy does not.
 /// A reply whose parent is also gone is listed on the root, in comment
 /// order. Threads already named by settlement stay on that receipt.
+/// `deleted` holds the ids of the paragraphs the plan deleted whole: a
+/// thread on any other paragraph lost only its words.
 pub(crate) fn threads_the_clean_copy_drops(
     clean: &[u8],
     redline: &[u8],
     already: &[RemovedComment],
+    deleted: &std::collections::HashSet<String>,
 ) -> Result<Vec<RemovedComment>, super::EditError> {
     let invalid =
         |error: crate::comments::CommentError| super::err(error.code(), None, error.to_string());
@@ -217,7 +220,7 @@ pub(crate) fn threads_the_clean_copy_drops(
                 .parent
                 .is_some_and(|parent| dropped.contains(&parent))
     }) {
-        let mut family = vec![root.id];
+        let mut family = std::collections::HashSet::from([root.id]);
         loop {
             let before = family.len();
             for comment in &on_redline {
@@ -227,7 +230,7 @@ pub(crate) fn threads_the_clean_copy_drops(
                         .parent
                         .is_some_and(|parent| family.contains(&parent))
                 {
-                    family.push(comment.id);
+                    family.insert(comment.id);
                 }
             }
             if family.len() == before {
@@ -239,12 +242,20 @@ pub(crate) fn threads_the_clean_copy_drops(
             .filter(|comment| comment.id != root.id && family.contains(&comment.id))
             .map(|comment| format!("c{}", comment.id))
             .collect();
-        let paragraph = root.paragraph.as_deref().unwrap_or("the document");
+        let why = match root.paragraph.as_deref() {
+            Some(paragraph) if deleted.contains(paragraph) => {
+                format!("anchor removed by the plan's deletion of {paragraph}")
+            }
+            Some(paragraph) => {
+                format!("anchor removed by the plan's deletion of its text in {paragraph}")
+            }
+            None => "anchor removed by the plan's deletions".to_string(),
+        };
         threads.push(RemovedComment {
             id: format!("c{}", root.id),
             author: root.author.clone(),
             replies,
-            why: format!("anchor removed by the plan's deletion of {paragraph}"),
+            why,
             decision: None,
         });
     }

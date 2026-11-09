@@ -5725,6 +5725,17 @@ impl<'p> Transaction<'p> {
             .collect()
     }
 
+    /// Ids of the paragraphs the plan deletes whole.
+    fn deleted_paragraph_ids(&self) -> HashSet<String> {
+        self.resolved
+            .iter()
+            .filter_map(|(_, resolved)| match resolved {
+                Resolved::DeleteParagraph { para } => Some(self.paragraph_id(*para)),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The id of a paragraph ([`crate::ids::paragraph_id`]).
     fn paragraph_id(&self, para: usize) -> String {
         let (story, local) = self.paragraph_story[para];

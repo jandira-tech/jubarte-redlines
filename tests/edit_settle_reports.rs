@@ -600,7 +600,10 @@ fn editing_mode_names_a_thread_its_clean_copy_drops() {
         r#"{"schema_version":1,"author":"Alice","date":"2026-10-19T12:00:00Z","operations":[{"kind":"delete_paragraph","paragraph":"p1"}]}"#,
     );
     let out = apply_plan(&source, &delete).unwrap();
-    assert!(list_comments(&out.clean).unwrap().is_empty(), "clean keeps a thread");
+    assert!(
+        list_comments(&out.clean).unwrap().is_empty(),
+        "clean keeps a thread"
+    );
     let dropped = serde_json::to_value(&out.report).unwrap()["clean_removed_comments"].clone();
     assert_eq!(
         dropped,
@@ -622,11 +625,18 @@ fn editing_mode_names_a_thread_its_clean_copy_drops() {
     std::fs::write(&input, &source).unwrap();
     let run = |editing: bool, name: &str| {
         let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"));
-        command.arg("edit").arg(&input).args(["-a", "Alice", "-p", "p1", "--delete"]);
+        command
+            .arg("edit")
+            .arg(&input)
+            .args(["-a", "Alice", "-p", "p1", "--delete"]);
         if editing {
             command.arg("--editing-mode");
         }
-        command.arg("-o").arg(dir.path().join(name)).output().unwrap()
+        command
+            .arg("-o")
+            .arg(dir.path().join(name))
+            .output()
+            .unwrap()
     };
     let editing = run(true, "em.docx");
     let stderr = String::from_utf8_lossy(&editing.stderr);
@@ -849,4 +859,34 @@ fn a_receipt_without_why_reads_with_an_empty_one() {
         serde_json::from_str(r#"{"id":"c0","author":"Bob","replies":["c1"]}"#).unwrap();
     assert_eq!(old.why, "");
     assert_eq!(old.replies, ["c1"]);
+}
+
+/// cursor 4500696077: a plan that deletes only a thread's anchored words
+/// keeps the paragraph, so the receipt does not blame a paragraph deletion.
+#[test]
+fn a_thread_on_deleted_words_is_not_blamed_on_its_paragraph() {
+    let base = docx(&(para("Services") + &para("The Provider shall perform the Services.")));
+    let bob = plan(
+        r#"{"schema_version":1,"author":"Bob","date":"2026-10-18T12:00:00Z","operations":[{"kind":"comment","paragraph":"p1","anchor":"Provider","text":"Bob's note."}]}"#,
+    );
+    let source = apply_plan(&base, &bob).unwrap().clean;
+    let delete = plan(
+        r#"{"schema_version":1,"author":"Alice","date":"2026-10-19T12:00:00Z","operations":[{"kind":"replace","paragraph":"p1","find":"The Provider shall","replacement":"Somebody shall"}]}"#,
+    );
+    let out = apply_plan(&source, &delete).unwrap();
+    assert!(
+        list_comments(&out.clean).unwrap().is_empty(),
+        "clean keeps a thread"
+    );
+    let dropped = serde_json::to_value(&out.report).unwrap()["clean_removed_comments"].clone();
+    assert_eq!(
+        dropped,
+        serde_json::json!([{
+            "id": "c0",
+            "author": "Bob",
+            "replies": [],
+            "why": "anchor removed by the plan's deletion of its text in p1"
+        }]),
+        "{dropped}"
+    );
 }

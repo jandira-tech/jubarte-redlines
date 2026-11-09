@@ -310,6 +310,7 @@ pub(super) fn result_v2_with_paragraphs(
         &clean,
         &redline,
         &report.removed_comments,
+        &tx.deleted_paragraph_ids(),
     )?;
     Ok((
         EditResult {
@@ -337,6 +338,7 @@ fn result_with_order(
         &clean,
         &redline,
         &report.removed_comments,
+        &tx.deleted_paragraph_ids(),
     )?;
     Ok(EditResult {
         clean,
