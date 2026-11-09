@@ -6116,6 +6116,20 @@ impl<'p> Transaction<'p> {
     }
 
     /// [`Self::removed_anchor`] for paragraph `para`.
+    /// The short id (`r4`) of the deletion or move [`Self::removed_anchor_in`]
+    /// would name.
+    fn removed_anchor_holder(&self, para: usize, find: &str) -> Option<String> {
+        let dom = &self.opened.dom;
+        let revision = hint::removed_holder(dom, self.paragraph_nodes[para], find)?;
+        let story = self
+            .stories
+            .iter()
+            .find(|story| dom.ancestors(revision, None).contains(&story.root));
+        let wid = dom.attribute(revision, &W::id()).unwrap_or_default();
+        let story_id = story.map_or("body", |story| story.id.as_str());
+        Some(crate::ids::ChangeId::new(story_id, wid).short())
+    }
+
     fn removed_anchor_in(&self, para: usize, find: &str) -> Option<String> {
         let dom = &self.opened.dom;
         hint::removed_holder(dom, self.paragraph_nodes[para], find)

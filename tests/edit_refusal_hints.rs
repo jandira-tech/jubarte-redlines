@@ -723,6 +723,79 @@ fn hint_quotes_the_active_plan_syntax() {
     assert!(!typed.contains("-p r4 --accept"), "{typed}");
 }
 
+#[test]
+fn typed_find_into_deleted_text_names_the_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), STEP2).unwrap();
+    let text = |out: &std::process::Output| {
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    };
+    let out = cli(
+        dir.path(),
+        &[
+            "edit",
+            "replace",
+            "in.docx",
+            "--at",
+            "p0",
+            "--find",
+            "bankers",
+            "--text",
+            "brokers",
+            "-a",
+            "Carol Diaz",
+            "-d",
+            DATE,
+            "-o",
+            "out.docx",
+        ],
+    );
+    let deleted = text(&out);
+    assert!(!out.status.success(), "{deleted}");
+    assert!(deleted.contains("UNSUPPORTED_STRUCTURE"), "{deleted}");
+    for want in [
+        "r4",
+        "Bob",
+        "bankers",
+        "--accept-change r4",
+        "--reject-change r4",
+    ] {
+        assert!(deleted.contains(want), "deleted lacks {want}: {deleted}");
+    }
+    assert!(!deleted.contains("resolve_revisions"), "{deleted}");
+    assert!(!deleted.contains("occurs 0 times"), "{deleted}");
+
+    let out = cli(
+        dir.path(),
+        &[
+            "edit",
+            "replace",
+            "in.docx",
+            "--at",
+            "p0",
+            "--find",
+            "lenders",
+            "--text",
+            "brokers",
+            "-a",
+            "Carol Diaz",
+            "-d",
+            DATE,
+            "-o",
+            "out.docx",
+        ],
+    );
+    let missing = text(&out);
+    assert!(!out.status.success(), "{missing}");
+    assert!(missing.contains("ANCHOR_NOT_FOUND"), "{missing}");
+    assert!(missing.contains("occurs 0 times"), "{missing}");
+    assert!(!missing.contains("UNSUPPORTED_STRUCTURE"), "{missing}");
+}
+
 /// A route line's fragment: what follows its label, without the cost.
 fn fragment(line: &str) -> &str {
     let rest = line.split_once(':').map_or(line, |(_, r)| r).trim_start();
@@ -948,4 +1021,43 @@ fn selection_errors_flags_unknown_have_no_plan_prefix() {
 #[test]
 fn selection_errors_flags_ambiguous_have_no_plan_prefix() {
     selection_errors_flags(true);
+}
+
+/// cursor 4500870143: a command that already accepts the deletion holding
+/// the words gets no hint naming that deletion: the words are gone from its
+/// working text, so the refusal is the plain miss.
+#[test]
+fn typed_find_into_a_deletion_the_command_accepts_is_a_plain_miss() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), STEP2).unwrap();
+    let out = cli(
+        dir.path(),
+        &[
+            "edit",
+            "replace",
+            "in.docx",
+            "--at",
+            "p0",
+            "--find",
+            "bankers",
+            "--text",
+            "brokers",
+            "--accept-change",
+            "r4",
+            "-a",
+            "Carol Diaz",
+            "-d",
+            DATE,
+            "-o",
+            "out.docx",
+        ],
+    );
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "{text}");
+    assert!(text.contains("ANCHOR_NOT_FOUND"), "{text}");
+    assert!(!text.contains("--accept-change r4"), "{text}");
 }

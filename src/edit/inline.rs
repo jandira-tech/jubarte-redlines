@@ -29,6 +29,42 @@ fn pair(p: &super::for_edit::TargetPair) -> Target {
     }
 }
 
+/// When `find` misses `target`'s working text, the refusal that names the
+/// deletion or move the words still sit in, in the typed command's syntax.
+/// `None` when the words are simply absent, the baseline cannot be opened,
+/// or the command already accepts or rejects that revision (`decided`):
+/// its working text settled it, so the miss is a plain one.
+fn deleted_text_hint(
+    source: &[u8],
+    author: &str,
+    existing: super::ExistingRevisions,
+    target: &str,
+    find: &str,
+    decided: &[&str],
+) -> Option<String> {
+    let plan = super::EditPlan {
+        schema_version: super::SCHEMA_VERSION,
+        source_sha256: None,
+        author: author.to_string(),
+        date: None,
+        initials: None,
+        resolve_revisions: None,
+        removed_anchor_comments: super::RemovedAnchorComments::Remove,
+        existing_revisions: existing,
+        operations: Vec::new(),
+        update_fields: false,
+        rewrite_others_comments: false,
+        others: super::Others::Allow,
+    };
+    let tx = super::Transaction::start_quoting(source, &plan, super::PlanSyntax::Typed).ok()?;
+    let para = (0..tx.paragraph_nodes.len()).find(|&para| tx.paragraph_id(para) == target)?;
+    let holder = tx.removed_anchor_holder(para, find)?;
+    if decided.contains(&holder.as_str()) {
+        return None;
+    }
+    tx.removed_anchor_in(para, find)
+}
+
 /// Compile against exact working text, preserving supplied payload characters.
 /// This performs no I/O and no mutation. Callers read UTF-8 payload files once
 /// and protect them as inputs during publication.
@@ -199,13 +235,35 @@ pub fn compile(
                                 "target has no one-to-one working paragraph",
                             )
                         })?;
-                    super::v2_resolve(
+                    if let Err(missed) = super::v2_resolve(
                         source,
                         super::Working::Settled(working),
                         &super::AnchorRefusal::new(&row.target.short_id, find)
                             .with_operation("/operations/0"),
                         *occurrence,
-                    )?;
+                    ) {
+                        if missed.code == "ANCHOR_NOT_FOUND"
+                            && let Some(hint) = deleted_text_hint(
+                                source,
+                                &inline.author,
+                                existing,
+                                &row.target.short_id,
+                                find,
+                                &accept
+                                    .iter()
+                                    .chain(&reject)
+                                    .map(|target| target.short_id.as_str())
+                                    .collect::<Vec<_>>(),
+                            )
+                        {
+                            return Err(Box::new(
+                                Error::new("UNSUPPORTED_STRUCTURE")
+                                    .with_message(hint)
+                                    .with_operation("/operations/0"),
+                            ));
+                        }
+                        return Err(missed);
+                    }
                 }
                 let index = match occurrence {
                     Some(n) => n - 1,
