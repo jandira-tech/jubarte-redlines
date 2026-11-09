@@ -135,25 +135,20 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
                 let replacement = tx.final_replacement(*para);
                 if let Some(moved) = moved_in(dom, node) {
                     // A mark stored in a formatting change is that change's
-                    // history. Name the change, which is what the listing offers.
-                    let recorded = dom.ancestors(moved, None).into_iter().find(|&ancestor| {
-                        dom.name(ancestor).is_some_and(|name| {
+                    // history. Name the outermost one: a history recorded
+                    // inside another is not listed on its own, so only the
+                    // outer change is what the listing offers.
+                    let mut recorded = None;
+                    let mut current = dom.parent(moved);
+                    while let Some(ancestor) = current {
+                        if dom.name(ancestor).is_some_and(|name| {
                             name.namespace_name() == W::URI
-                                && matches!(
-                                    name.local_name(),
-                                    "rPrChange"
-                                        | "pPrChange"
-                                        | "sectPrChange"
-                                        | "tblPrChange"
-                                        | "tblPrExChange"
-                                        | "tblGridChange"
-                                        | "trPrChange"
-                                        | "tcPrChange"
-                                        | "numberingChange"
-                                        | "cellMerge"
-                                )
-                        })
-                    });
+                                && crate::changes::FORMATTING.contains(&name.local_name())
+                        }) {
+                            recorded = Some(ancestor);
+                        }
+                        current = dom.parent(ancestor);
+                    }
                     Some(named(
                         "under keep, a paragraph that holds a move cannot be deleted yet: the move is",
                         recorded.unwrap_or(moved),

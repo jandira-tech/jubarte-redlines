@@ -35,28 +35,44 @@ fn plan(extra: serde_json::Value) -> EditPlan {
     EditPlan::from_json(&request.to_string()).unwrap()
 }
 
-#[test]
-fn a_recorded_move_refusal_names_the_formatting_change() {
-    let source = source();
+/// The refusal names `id` (and only it) and prints its accept route.
+fn assert_refusal_names(source: &[u8], id: &str, not: &[&str]) {
     let err = apply_plan(
-        &source,
+        source,
         &plan(json!({"operations":[{"kind":"delete_paragraph","paragraph":"p0"}]})),
     )
     .unwrap_err();
     let first = err.message.lines().next().unwrap_or("");
+    assert_eq!(err.code, "UNSUPPORTED_STRUCTURE", "{err:?}");
     assert!(
-        err.code == "UNSUPPORTED_STRUCTURE"
-            && first.contains("r7,")
-            && first.contains("reformatted")
-            && !first.contains("r8")
-            && err
-                .message
-                .contains(r#""resolve_revisions":{"accept":{"ids":["r7"]}}"#),
-        "the refusal named the recorded move instead of the formatting change: {first}"
+        first.contains(&format!("{id},")) && first.contains("reformatted"),
+        "the refusal did not name {id}: {first}"
     );
+    for other in not {
+        assert!(!first.contains(other), "the refusal named {other}: {first}");
+    }
+    assert!(
+        err.message.contains(&format!(
+            r#""resolve_revisions":{{"accept":{{"ids":["{id}"]}}}}"#
+        )),
+        "{}",
+        err.message
+    );
+    assert!(
+        list_changes(source).unwrap().iter().any(|c| c.id == id),
+        "the named change is not one the listing offers"
+    );
+}
 
+#[test]
+fn a_recorded_move_refusal_names_the_formatting_change() {
+    assert_refusal_names(&source(), "r7", &["r8"]);
+}
+
+#[test]
+fn accepting_the_named_formatting_change_settles_it() {
     let settled = apply_plan(
-        &source,
+        &source(),
         &plan(json!({"resolve_revisions":{"accept":{"ids":["r7"]}}})),
     )
     .expect("the refusal's accept of the formatting change runs");
@@ -72,4 +88,14 @@ fn a_recorded_move_refusal_names_the_formatting_change() {
             .iter()
             .all(|c| c.id != "r7")
     );
+}
+
+/// A formatting history recorded inside another is not listed on its own
+/// (`in_recorded_properties`): the refusal names the outer change.
+#[test]
+fn a_move_in_nested_formatting_history_names_the_outer_change() {
+    let source = docx(
+        r#"<w:p><w:pPr><w:pPrChange w:id="7" w:author="B"><w:pPr><w:rPr><w:rPrChange w:id="9" w:author="B"><w:rPr><w:moveTo w:id="8" w:author="B"/></w:rPr></w:rPrChange></w:rPr></w:pPr></w:pPrChange></w:pPr><w:r><w:t>x</w:t></w:r></w:p><w:p><w:r><w:t>y</w:t></w:r></w:p>"#,
+    );
+    assert_refusal_names(&source, "r7", &["r8", "r9"]);
 }
