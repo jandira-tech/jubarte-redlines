@@ -21,7 +21,6 @@ fn source() -> Vec<u8> {
     )
 }
 
-#[allow(clippy::needless_pass_by_value)]
 fn plan(extra: serde_json::Value) -> EditPlan {
     let mut request = json!({
         "schema_version": 1,

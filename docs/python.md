@@ -1993,7 +1993,7 @@ The body as Markdown with a ``[pN]`` id before each paragraph.
 #### `Document.edit`
 
 ```python
-Document.edit(self, plan: 'EditPlan | dict[str, object] | str') -> 'EditResult'
+Document.edit(self, plan: 'EditPlan | dict[str, object] | str', *, syntax: 'str | None' = None) -> 'EditResult'
 ```
 
 Apply a plan: clean copy, Word redline and report, or ``EditPlanError``.
@@ -2019,7 +2019,7 @@ Markdown text), as ``jubarte_redlines.diff`` gives them.
 #### `Document.preview`
 
 ```python
-Document.preview(self, plan: 'EditPlan | dict[str, object] | str') -> 'EditReport'
+Document.preview(self, plan: 'EditPlan | dict[str, object] | str', *, syntax: 'str | None' = None) -> 'EditReport'
 ```
 
 Resolve every operation and report, without producing documents.

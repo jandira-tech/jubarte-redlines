@@ -1,6 +1,6 @@
 ## Summary
 
-This pull request fixes static analysis errors and warnings identified by `cargo clippy` without modifying the core behavior or Word fidelity introduced by the base metadata retention PR.
+This pull request fixes static analysis errors and warnings identified by `cargo clippy` without modifying the core behavior or Word fidelity introduced by the base metadata retention PR. It also resolves a documentation drift caused by the new `--refresh-plan` flag in jubarte.
 
 Fixed findings:
 - **`clippy::join-absolute-paths` (Error)** in `src/bin/jubarte.rs:5163`: The test attempted to `std::fs::write` a UNC network path (`\\server\share\x.png`) to the test temp directory, which failed Windows path restrictions and was unnecessary. The network path rejection is now verified without hitting the filesystem.
@@ -8,6 +8,7 @@ Fixed findings:
 - **`dead_code`** in `tests/common/dead_comments.rs`: Ignored the dead code lint in the shared integration test module.
 - **`clippy::nonminimal-bool`** in `src/bin/jubarte.rs:2597`: Simplified logical checks inside the writer guard.
 - **`E0658` (`if let` guards)** in `src/markdown/xml.rs`: Downgraded experimental `if let` match guards into stable nested `if let` structures to support compilation on stable Rust.
+- **Documentation Drift**: Generated documentation for `--refresh-plan` to resolve CI failures from `scripts/gen_docs.sh`.
 
 The metadata retention algorithm `unchanged_xml` and `content_types_canonical` from the original diff are completely unchanged and verified.
 
