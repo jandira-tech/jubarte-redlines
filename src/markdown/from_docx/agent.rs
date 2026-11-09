@@ -1625,6 +1625,11 @@ pub(crate) fn spacing_clauses(spacing: &Element) -> Vec<String> {
         } else if let Some(t) = twips(word) {
             out.push(format!("{word} {}", exact_points(t)));
         }
+        if let Some(raw) = spacing.attr(&format!("{word}Lines"))
+            && let Some(count) = line_count(raw)
+        {
+            out.push(format!("{word} {count} lines"));
+        }
     }
     if let Some(line) = twips("line") {
         match spacing.attr("lineRule").unwrap_or("auto") {
@@ -1662,6 +1667,33 @@ fn line_ratio(line: f64) -> String {
         .trim_end_matches('0')
         .trim_end_matches('.')
         .to_string()
+}
+
+/// `w:beforeLines` / `w:afterLines` (hundredths of a line) with the fewest
+/// decimals that read back to the same count: `150` → `1.5`, `100` → `1`.
+fn line_count(raw: &str) -> Option<String> {
+    let n = crate::util::parse_finite_f64(raw)?;
+    if !(n.is_finite() && n >= 0.0) {
+        return None;
+    }
+    let hundredths = n.round();
+    let count = hundredths / 100.0;
+    let value = (0..=2)
+        .map(|places| format!("{count:.places$}"))
+        .find(|text| {
+            text.parse::<f64>()
+                .is_ok_and(|v| (v * 100.0).round() == hundredths)
+        })
+        .unwrap_or_else(|| format!("{count:.2}"));
+    // Only a fraction's trailing zeros go: `10` stays ten lines.
+    Some(if value.contains('.') {
+        value
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    } else {
+        value
+    })
 }
 
 /// Twips as inches with the fewest decimals (two at least, four at most)
@@ -3847,5 +3879,23 @@ mod tests {
     fn index_runs_collapse_consecutive_indices() {
         assert_eq!(runs(&[3, 4, 5, 9, 11, 12]), [(3, 5), (9, 9), (11, 12)]);
         assert!(runs(&[]).is_empty());
+    }
+
+    /// Whole line counts keep their zeros: `0` is no lines, `1000` is ten
+    /// (#2130 review, Bugbot).
+    #[test]
+    fn line_counts_keep_the_zeros_of_whole_counts() {
+        for (raw, want) in [
+            ("0", "0"),
+            ("100", "1"),
+            ("1000", "10"),
+            ("2000", "20"),
+            ("150", "1.5"),
+            ("1050", "10.5"),
+            ("125", "1.25"),
+            ("10", "0.1"),
+        ] {
+            assert_eq!(line_count(raw).as_deref(), Some(want), "{raw}");
+        }
     }
 }

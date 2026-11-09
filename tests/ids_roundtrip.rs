@@ -469,7 +469,7 @@ fn patterns() -> &'static Patterns {
         // `r12 @AC`, `header1.r1+2 @AC`, `Header_1:rev:4 @AC`, with a date.
         tag: Regex::new(r"^(\S+) @[A-Za-z0-9?]+(?: \S+)?$").unwrap(),
         comment_head: Regex::new(
-            r"^c(\d+)(?: @[A-Za-z0-9?]+)?(?: \S+)?(?: re c(\d+)| resolved)?(?: in r\d+(?:\+\d+)*)?: ",
+            r"^c(\d+)(?: @[A-Za-z0-9?]+)?(?: \S+)?(?: re c(\d+)| resolved)?(?: in r\d+(?:\+\d+)*)?(?:, [^:]+)?: ",
         )
         .unwrap(),
         reply: Regex::new(r" re c(\d+)").unwrap(),
@@ -558,7 +558,18 @@ fn printed(view: &str) -> Printed {
     }
     // The paragraph whose text the next lines are; `None` inside a table.
     let mut current: Option<usize> = None;
+    // Inside a text box's region, `<!-- p0 line 1 -->` names a box
+    // paragraph's own spacing, not a body paragraph (#2130).
+    let mut in_box = false;
     for line in body.lines() {
+        if line.starts_with("<!-- text-box d") {
+            in_box = true;
+        } else if line == "<!-- /text-box -->" {
+            in_box = false;
+        }
+        if in_box && pat.id_line.is_match(line) {
+            continue;
+        }
         // A note definition's own changes: `[^1]: text <!-- fmt footnotes.r7 @AC -->`,
         // also when the definition is wrapped: `{--[^1]: text--}{r18 @C} <!-- … -->`.
         if line.contains("[^")
@@ -1337,4 +1348,21 @@ fn read_and_changes_agree_on_every_group() {
         }
     }
     report(&fails);
+}
+
+/// A text box's spacing line is not a body paragraph, and a comment head
+/// may name its paragraphs' spacing (#2130's dialect).
+#[test]
+fn box_spacing_lines_and_comment_head_spacing_are_read() {
+    let view = "---\nview: tracked\n---\n\n<!-- p0 -->\nHost![][d1]\n\n<!-- text-box d1.0 -->\n\n<!-- p0 line 1 -->\nBoxed\n\n<!-- /text-box -->\n\n<!-- p1 -->\nAfter{>>c0 @NB, line 1: comment on text<<}\n";
+    let got = printed(view);
+    let ids: Vec<(usize, usize)> = got.paragraphs.iter().map(|(a, b, _)| (*a, *b)).collect();
+    assert_eq!(ids, [(0, 0), (1, 1)], "{:?}", got.paragraphs);
+    assert!(got.changes.is_empty(), "{:?}", got.changes);
+    assert_eq!(
+        got.comment_notes.get(&0),
+        Some(&1),
+        "{:?}",
+        got.comment_notes
+    );
 }
