@@ -84,7 +84,8 @@ pub(super) fn drop_wholly_deleted_comments(dom: &mut Dom, root: NodeId) {
                 .attribute(marker, &W::id())
                 .is_some_and(|id| dropped.contains(id))
             {
-                remove_marker(dom, marker);
+                // Before the thaw a live record is one being settled now.
+                remove_marker(dom, marker, false);
             }
         }
     }
@@ -233,18 +234,39 @@ pub(super) fn keep_wholly_deleted_comments(dom: &mut Dom, root: NodeId) -> Vec<S
                     continue;
                 }
                 if local == "commentReference" {
-                    // Copy just the reference and its run properties: a
-                    // shared text run must never carry deleted text along.
+                    let parent = dom.parent(marker).filter(|&p| dom.name(p) == Some(W::r()));
+                    // A run holding only the reference moves whole: its
+                    // properties, and any revision they record, stay one
+                    // copy.
+                    if let Some(run) = parent
+                        && dom
+                            .elements(run, None)
+                            .into_iter()
+                            .all(|e| e == marker || dom.name(e) == Some(W::r_pr()))
+                    {
+                        dom.remove(run);
+                        dom.add_before_self(point, run);
+                        continue;
+                    }
+                    // Otherwise copy just the reference and its run
+                    // properties: a shared text run must never carry deleted
+                    // text along. A revision the properties record stays on
+                    // the text run alone, so its id names one record.
                     let run = dom.new_element(W::r());
-                    if let Some(parent) = dom.parent(marker)
+                    if let Some(parent) = parent
                         && let Some(pr) = dom.element(parent, &W::r_pr())
                     {
                         let pr = dom.clone_subtree(pr);
+                        for record in dom.descendants(pr, None) {
+                            if is_tracked_revision(dom, record, true) {
+                                dom.remove(record);
+                            }
+                        }
                         dom.add(run, pr);
                     }
                     let reference = dom.clone_subtree(marker);
                     dom.add(run, reference);
-                    remove_marker(dom, marker);
+                    remove_marker(dom, marker, false);
                     dom.add_before_self(point, run);
                 } else {
                     dom.remove(marker);
@@ -279,9 +301,34 @@ fn removed_container(dom: &Dom, node: NodeId) -> Option<NodeId> {
     removed
 }
 
+/// Whether `node` is a tracked revision record: a frozen one (an
+/// unselected revision, renamed out of the wordprocessing namespace while
+/// the selected ones settle), or with `live` a wordprocessing one too.
+fn is_tracked_revision(dom: &Dom, node: NodeId, live: bool) -> bool {
+    dom.name(node).is_some_and(|name| {
+        let ns = name.namespace_name();
+        (ns == super::FROZEN_NS || (live && ns == W::URI))
+            && super::TRACKED_REVISION_LOCAL_SET.contains(name.local_name())
+    })
+}
+
+/// True when `run`'s properties carry a revision that outlives this
+/// settlement, which is all the run still holds once its reference marker
+/// goes. Before the thaw only a frozen record does: a live one is being
+/// settled, and the run would be left as bare properties. After the thaw
+/// (`live`) every record left is one that stays.
+fn properties_hold_a_revision(dom: &Dom, run: NodeId, live: bool) -> bool {
+    dom.elements(run, Some(&W::r_pr()))
+        .into_iter()
+        .flat_map(|props| dom.descendants(props, None))
+        .any(|node| is_tracked_revision(dom, node, live))
+}
+
 /// A reference-only run goes with its marker; a run containing other content
-/// keeps that content. Range markers normally are siblings of runs.
-fn remove_marker(dom: &mut Dom, marker: NodeId) {
+/// keeps that content, and so does one whose properties record a revision
+/// that stays ([`properties_hold_a_revision`], `live` after the thaw).
+/// Range markers normally are siblings of runs.
+fn remove_marker(dom: &mut Dom, marker: NodeId, live: bool) {
     let run = dom.parent(marker).filter(|&p| dom.name(p) == Some(W::r()));
     dom.remove(marker);
     if let Some(run) = run
@@ -289,6 +336,7 @@ fn remove_marker(dom: &mut Dom, marker: NodeId) {
             .elements(run, None)
             .into_iter()
             .all(|e| dom.name(e) == Some(W::r_pr()))
+        && !properties_hold_a_revision(dom, run, live)
     {
         dom.remove(run);
     }
@@ -484,7 +532,8 @@ pub(crate) fn prune_orphan_comments(
         for local in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
             for m in s.w(local) {
                 if !s.dom.attribute(m, &id).is_some_and(|v| kept.contains(v)) {
-                    remove_marker(&mut s.dom, m);
+                    // After the thaw: every record left stays.
+                    remove_marker(&mut s.dom, m, true);
                     changed = true;
                 }
             }
