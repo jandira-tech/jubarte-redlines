@@ -4888,25 +4888,21 @@ impl<'o, 'a> Writer<'o, 'a> {
             Some(label) => self.definitions.get(label).map(Vec::as_slice)?,
             None => &self.body,
         };
-        let mut found = None;
-        for item in story {
-            let Item::Run(Run {
+        // The latest piece of that change, searched from the end.
+        story.iter().rev().find_map(|item| match item {
+            Item::Run(Run {
                 change: Some((kind, serial)),
                 ..
-            }) = item
-            else {
-                continue;
-            };
-            if self
+            }) if self
                 .document
                 .revision_ids
                 .get(serial)
-                .is_some_and(|named| named.as_slice() == ids)
+                .is_some_and(|named| named.as_slice() == ids) =>
             {
-                found = Some(*kind);
+                Some(*kind)
             }
-        }
-        found
+            _ => None,
+        })
     }
 
     /// A nest read before any other piece of its outer change guessed that

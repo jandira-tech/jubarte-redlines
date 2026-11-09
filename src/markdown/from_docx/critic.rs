@@ -605,7 +605,7 @@ impl Critic {
     /// A header/footer scalar: fold revisions as in the body, preserving
     /// the story walker's escaped text, fields and drawings byte for byte.
     pub(crate) fn into_story(self) -> String {
-        let nodes = tidy(unnest(tree(&self.tokens)));
+        let nodes = tidy(unnest(tree(self.tokens)));
         let mut pieces = Vec::new();
         render(
             &nodes,
@@ -621,7 +621,7 @@ impl Critic {
     }
 
     pub(crate) fn into_inline(self) -> Inline {
-        let mut nodes = tidy(unnest(tree(&self.tokens)));
+        let mut nodes = tidy(unnest(tree(self.tokens)));
         if self.inline_end {
             space_into_last_change(&mut nodes);
         }
@@ -769,19 +769,17 @@ fn merges(
 /// sides print. A close that would cross other spans closes them first and
 /// opens them again after it, with the same attribution. Spans still open at
 /// the end close.
-fn tree(tokens: &[Token]) -> Vec<Node> {
+fn tree(tokens: Vec<Token>) -> Vec<Node> {
     let mut root = Vec::new();
     let mut open: Vec<Open> = Vec::new();
     let mut merged = [0usize; 3];
-    let mut index = 0;
-    while index < tokens.len() {
-        match &tokens[index] {
-            Token::Leaf(leaf) => {
-                children(&mut root, &mut open).push(Node::Leaf(leaf.clone()));
-            }
+    // Consumed one token at a time; `as_slice` is what follows, for the
+    // substitution lookahead, without cloning a leaf.
+    let mut tokens = tokens.into_iter();
+    while let Some(token) = tokens.next() {
+        match token {
+            Token::Leaf(leaf) => children(&mut root, &mut open).push(Node::Leaf(leaf)),
             Token::Open(mark, by) => {
-                let mark = *mark;
-                let by = by.clone();
                 let merges_into = open
                     .iter()
                     .rposition(|(m, ..)| *m == mark)
@@ -794,7 +792,7 @@ fn tree(tokens: &[Token]) -> Vec<Node> {
                                 &open[at].2,
                                 mark,
                                 &by,
-                                &tokens[index + 1..],
+                                tokens.as_slice(),
                             )
                     });
                 if merges_into {
@@ -805,7 +803,6 @@ fn tree(tokens: &[Token]) -> Vec<Node> {
             }
             Token::Close(mark) if merged[mark.index()] > 0 => merged[mark.index()] -= 1,
             Token::Close(mark) => {
-                let mark = *mark;
                 if let Some(at) = open.iter().rposition(|(m, ..)| *m == mark) {
                     let reopen: Vec<(Mark, Option<String>)> = open[at + 1..]
                         .iter()
@@ -816,7 +813,6 @@ fn tree(tokens: &[Token]) -> Vec<Node> {
                 }
             }
         }
-        index += 1;
     }
     close_from(&mut root, &mut open, 0);
     root
@@ -2672,7 +2668,7 @@ mod tests {
 
     #[test]
     fn tree_ignores_a_close_with_nothing_open() {
-        assert_eq!(tree(&[Token::Close(Ins)]), Vec::<Node>::new());
+        assert_eq!(tree(vec![Token::Close(Ins)]), Vec::<Node>::new());
     }
 
     #[test]

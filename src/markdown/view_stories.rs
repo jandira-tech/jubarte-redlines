@@ -384,7 +384,9 @@ fn established(read: &[Read], ids: &[u32]) -> Option<&'static str> {
 
 /// The next piece that names `ids` as its own change, past this one.
 fn next_own_kind(mut rest: &str, ids: &[u32]) -> Option<&'static str> {
-    while let Some(c) = rest.chars().next() {
+    // A piece opens with `{`, so the scan jumps from one to the next.
+    while let Some(at) = rest.find('{') {
+        rest = &rest[at..];
         if let Some((change, after)) = change(rest) {
             let (tags, _, after) = tags_after(after);
             if tags.first().is_some_and(|tag| tag.ids == ids) {
@@ -396,7 +398,7 @@ fn next_own_kind(mut rest: &str, ids: &[u32]) -> Option<&'static str> {
             rest = after;
             continue;
         }
-        rest = &rest[c.len_utf8()..];
+        rest = &rest[1..];
     }
     None
 }
