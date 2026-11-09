@@ -1022,3 +1022,42 @@ fn selection_errors_flags_unknown_have_no_plan_prefix() {
 fn selection_errors_flags_ambiguous_have_no_plan_prefix() {
     selection_errors_flags(true);
 }
+
+/// cursor 4500870143: a command that already accepts the deletion holding
+/// the words gets no hint naming that deletion: the words are gone from its
+/// working text, so the refusal is the plain miss.
+#[test]
+fn typed_find_into_a_deletion_the_command_accepts_is_a_plain_miss() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), STEP2).unwrap();
+    let out = cli(
+        dir.path(),
+        &[
+            "edit",
+            "replace",
+            "in.docx",
+            "--at",
+            "p0",
+            "--find",
+            "bankers",
+            "--text",
+            "brokers",
+            "--accept-change",
+            "r4",
+            "-a",
+            "Carol Diaz",
+            "-d",
+            DATE,
+            "-o",
+            "out.docx",
+        ],
+    );
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "{text}");
+    assert!(text.contains("ANCHOR_NOT_FOUND"), "{text}");
+    assert!(!text.contains("--accept-change r4"), "{text}");
+}

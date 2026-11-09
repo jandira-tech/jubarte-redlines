@@ -31,13 +31,16 @@ fn pair(p: &super::for_edit::TargetPair) -> Target {
 
 /// When `find` misses `target`'s working text, the refusal that names the
 /// deletion or move the words still sit in, in the typed command's syntax.
-/// `None` when the words are simply absent, or the baseline cannot be opened.
+/// `None` when the words are simply absent, the baseline cannot be opened,
+/// or the command already accepts or rejects that revision (`decided`):
+/// its working text settled it, so the miss is a plain one.
 fn deleted_text_hint(
     source: &[u8],
     author: &str,
     existing: super::ExistingRevisions,
     target: &str,
     find: &str,
+    decided: &[&str],
 ) -> Option<String> {
     let plan = super::EditPlan {
         schema_version: super::SCHEMA_VERSION,
@@ -55,6 +58,10 @@ fn deleted_text_hint(
     };
     let tx = super::Transaction::start_quoting(source, &plan, super::PlanSyntax::Typed).ok()?;
     let para = (0..tx.paragraph_nodes.len()).find(|&para| tx.paragraph_id(para) == target)?;
+    let holder = tx.removed_anchor_holder(para, find)?;
+    if decided.contains(&holder.as_str()) {
+        return None;
+    }
     tx.removed_anchor_in(para, find)
 }
 
@@ -242,6 +249,11 @@ pub fn compile(
                                 existing,
                                 &row.target.short_id,
                                 find,
+                                &accept
+                                    .iter()
+                                    .chain(&reject)
+                                    .map(|target| target.short_id.as_str())
+                                    .collect::<Vec<_>>(),
                             )
                         {
                             return Err(Box::new(
