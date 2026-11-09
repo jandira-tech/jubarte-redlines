@@ -2981,7 +2981,7 @@ impl Writer<'_> {
             None
         };
         if let Some(index) = index {
-            let page_break = agent::page_breaks(p) > self.inline_breaks.len();
+            let page_break = agent::page_breaks(p) > agent::mid_paragraph_page_breaks(p).len();
             let comments = if self.comments_inline {
                 Vec::new()
             } else {
@@ -3374,7 +3374,12 @@ impl Writer<'_> {
     /// Tracked changes around the paragraph and comment ranges still open from
     /// earlier paragraphs are opened again at its start.
     fn paragraph_inline(&mut self, p: &Element) -> (Critic, Vec<String>) {
-        self.inline_breaks = agent::mid_paragraph_page_breaks(p).into_iter().collect();
+        // A text box's paragraph is written inside this one: it takes its
+        // own breaks and gives this paragraph's back when it is done.
+        let outer = std::mem::replace(
+            &mut self.inline_breaks,
+            agent::mid_paragraph_page_breaks(p).into_iter().collect(),
+        );
         let mut inline = Critic::default();
         if self.flattening > 0 {
             inline.set_inline_end();
@@ -3428,6 +3433,7 @@ impl Writer<'_> {
         if self.in_comment {
             inline = inline.unattributed();
         }
+        self.inline_breaks = outer;
         (inline, extra)
     }
 

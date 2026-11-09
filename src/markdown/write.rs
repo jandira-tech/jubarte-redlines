@@ -1499,8 +1499,8 @@ fn html_is_page_break(html: &str) -> bool {
     let compact: String = html
         .chars()
         .filter(|c| !c.is_whitespace())
-        .collect::<String>()
-        .to_ascii_lowercase();
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
     compact.contains("type=\"page\"") || compact.contains("type='page'")
 }
 

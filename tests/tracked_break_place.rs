@@ -92,3 +92,19 @@ fn a_page_break_between_two_marks_of_one_change_keeps_those_marks() {
     assert_eq!(second, first);
     common::validity::assert_word_valid_package(&copy);
 }
+
+/// A text box earlier in the paragraph writes its own paragraph inside
+/// this one; the break after it still keeps its place between the runs.
+#[test]
+fn a_page_break_after_a_text_box_stays_between_its_runs() {
+    let docx = source(
+        r#"<w:r><w:t xml:space="preserve">K </w:t></w:r><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml" style="width:100pt;height:20pt"><v:textbox><w:txbxContent><w:p><w:r><w:t>box</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r><w:r><w:t>a</w:t></w:r><w:r><w:br w:type="page"/></w:r><w:r><w:t>b</w:t></w:r>"#,
+    );
+    let (first, copy, second) = written(&docx);
+    let xml = common::docx::part_string(&copy, "word/document.xml").expect("document");
+    assert!(
+        break_sits_between(&xml, ">a<", ">b<"),
+        "the break stays between a and b:\n{xml}\nview:\n{first}\nagain:\n{second}"
+    );
+    assert_eq!(second, first);
+}

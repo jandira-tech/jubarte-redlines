@@ -2041,10 +2041,10 @@ pub(crate) fn mid_paragraph_page_breaks(paragraph: &Element) -> Vec<*const Eleme
         if !page_break_only(element) {
             continue;
         }
-        let rest = order[index + 1..]
+        let mut rest = order[index + 1..]
             .iter()
             .skip_while(|(later, _)| *later > *depth);
-        if rest.clone().any(|(_, later)| shown_leaf(later)) {
+        if rest.any(|(_, later)| shown_leaf(later)) {
             breaks.push(std::ptr::from_ref(*element));
         }
     }
