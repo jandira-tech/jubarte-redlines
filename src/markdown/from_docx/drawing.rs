@@ -306,16 +306,12 @@ impl Pending {
     }
 }
 
-/// Drawing roots directly owned by this story. A nested text box is
-/// owned; a picture stays where it sits. Stop at drawings and at a
-/// different text-box owner, rather than collecting descendants of
-/// descendants.
+/// Drawing roots directly owned by this story. A plain inline picture
+/// ([`is_plain_inline`]) stays where it sits, in the story's payload;
+/// every other drawing (a nested box, a chart, an object, an anchored
+/// picture) is owned. Stop at drawings and at a different text-box owner,
+/// rather than collecting descendants of descendants.
 pub(crate) fn owned_drawings(story: &Element) -> Vec<&Element> {
-    fn holds_text_box(element: &Element) -> bool {
-        let mut boxes = Vec::new();
-        element.find_all("txbxContent", &mut boxes);
-        !boxes.is_empty()
-    }
     fn walk<'a>(node: &'a Element, out: &mut Vec<&'a Element>) {
         for child in node.elements() {
             if child.is("txbxContent") {
@@ -323,7 +319,7 @@ pub(crate) fn owned_drawings(story: &Element) -> Vec<&Element> {
             }
             let drawing = matches!(child.local(), "drawing" | "pict" | "object")
                 || (child.is("AlternateContent") && capturable_alternate(child));
-            if drawing && holds_text_box(child) {
+            if drawing && !is_plain_inline(child) {
                 out.push(child);
             } else if !drawing {
                 walk(child, out);
@@ -2041,6 +2037,22 @@ mod tests {
 
     fn element(xml: &str) -> Element {
         parse_xml(xml.as_bytes()).unwrap()
+    }
+
+    /// A text box story owns every nested drawing but a plain inline
+    /// picture, which stays in the box's payload: an anchored picture, a
+    /// chart, an object or a nested box is still a nested token.
+    #[test]
+    fn a_box_owns_its_nested_drawings_but_a_plain_inline_picture() {
+        let story = element(
+            r#"<w:txbxContent><w:p><w:r><w:drawing><wp:inline><a:blip/></wp:inline></w:drawing></w:r><w:r><w:drawing><wp:anchor><a:blip/></wp:anchor></w:drawing></w:r><w:r><w:drawing><wp:inline><c:chart/></wp:inline></w:drawing></w:r><w:r><w:object><v:shape/></w:object></w:r></w:p></w:txbxContent>"#,
+        );
+        let owned: Vec<String> = owned_drawings(&story).into_iter().map(serialize).collect();
+        assert_eq!(owned.len(), 3, "{owned:?}");
+        assert!(
+            owned.iter().all(|xml| !xml.contains("<wp:inline><a:blip")),
+            "{owned:?}"
+        );
     }
 
     #[test]
