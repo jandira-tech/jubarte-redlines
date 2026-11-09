@@ -134,9 +134,24 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
                 let node = tx.paragraph_nodes[*para];
                 let replacement = tx.final_replacement(*para);
                 if let Some(moved) = moved_in(dom, node) {
+                    // A mark stored in a formatting change is that change's
+                    // history. Name the outermost one: a history recorded
+                    // inside another is not listed on its own, so only the
+                    // outer change is what the listing offers.
+                    let mut recorded = None;
+                    let mut current = dom.parent(moved);
+                    while let Some(ancestor) = current {
+                        if dom.name(ancestor).is_some_and(|name| {
+                            name.namespace_name() == W::URI
+                                && crate::changes::FORMATTING.contains(&name.local_name())
+                        }) {
+                            recorded = Some(ancestor);
+                        }
+                        current = dom.parent(ancestor);
+                    }
                     Some(named(
                         "under keep, a paragraph that holds a move cannot be deleted yet: the move is",
-                        moved,
+                        recorded.unwrap_or(moved),
                     ))
                 } else if let Some(foreign) = untrackable_content(dom, node) {
                     let name = dom.name(foreign).expect("an element");

@@ -1868,7 +1868,8 @@ struct Carrier {
     change: Option<Change>,
 }
 
-const FORMATTING: &[&str] = &[
+/// Formatting changes: each records the properties it replaced.
+pub(crate) const FORMATTING: &[&str] = &[
     "rPrChange",
     "pPrChange",
     "sectPrChange",
