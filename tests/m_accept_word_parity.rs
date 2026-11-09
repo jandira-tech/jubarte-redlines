@@ -1221,3 +1221,153 @@ fn accept_keeps_an_orphan_move_to_range_s_unwrapped_paragraph() {
         &["normal", "arrived", "second"],
     );
 }
+
+/// Selective accept keeps a formatting change that lives on a
+/// reference-only run (#1404): exactly one copy, and none once settled.
+mod reference_run_revision {
+    use jubarte::changes::{ChangeFilter, accept_changes, list_changes};
+
+    /// A comment range around a deletion, and the reference in a run whose only
+    /// other content is a formatting change.
+    fn reference_run() -> Vec<u8> {
+        let rev = super::dead_comments::REV;
+        let body = format!(
+            r#"<w:p>{}<w:del w:id="7" {rev}><w:r><w:delText>gone</w:delText></w:r></w:del>{}<w:r><w:rPr><w:b/><w:rPrChange w:id="9" {rev}><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:commentReference w:id="0"/></w:r></w:p>"#,
+            super::dead_comments::start(0),
+            super::dead_comments::end(0),
+        );
+        super::dead_comments::package(&body, false)
+    }
+
+    fn ids(docx: &[u8]) -> Vec<String> {
+        list_changes(docx)
+            .expect("changes list")
+            .into_iter()
+            .map(|change| change.id)
+            .collect()
+    }
+
+    #[test]
+    fn selective_accept_keeps_a_formatting_change_on_a_reference_run() {
+        let source = reference_run();
+        let before = ids(&source);
+        assert!(
+            before.iter().any(|id| id == "r7") && before.iter().any(|id| id == "r9"),
+            "the reference run must list both changes before accept: {before:?}"
+        );
+        let accepted = accept_changes(&source, &ChangeFilter::ids(["r7"])).expect("accept r7");
+        let after = ids(&accepted);
+        assert!(
+            after.iter().any(|id| id == "r9"),
+            "unselected formatting change r9 is gone: {after:?}"
+        );
+    }
+
+    /// The document's runs that hold nothing but their properties.
+    fn empty_runs(docx: &[u8]) -> usize {
+        let xml = crate::common::docx::part_string(docx, "word/document.xml").unwrap();
+        let mut count = 0;
+        let mut rest = xml.as_str();
+        while let Some(at) = rest.find("<w:r>") {
+            let run = &rest[at..];
+            let end = run
+                .find("</w:r>")
+                .map_or(run.len(), |end| end + "</w:r>".len());
+            let body = &run["<w:r>".len()..end - "</w:r>".len()];
+            let props_only = body.is_empty()
+                || (body.starts_with("<w:rPr>")
+                    && body.ends_with("</w:rPr>")
+                    && body.matches("<w:rPr>").count() == body.matches("</w:rPr>").count()
+                    && {
+                        // Nothing after the outer rPr closes.
+                        let mut depth = 0i32;
+                        let mut closed_at = None;
+                        let mut i = 0;
+                        while i < body.len() {
+                            if body[i..].starts_with("<w:rPr>") {
+                                depth += 1;
+                                i += "<w:rPr>".len();
+                            } else if body[i..].starts_with("</w:rPr>") {
+                                depth -= 1;
+                                i += "</w:rPr>".len();
+                                if depth == 0 {
+                                    closed_at = Some(i);
+                                    break;
+                                }
+                            } else {
+                                i += 1;
+                            }
+                        }
+                        closed_at == Some(body.len())
+                    });
+            count += usize::from(props_only);
+            rest = &run[end..];
+        }
+        count
+    }
+
+    /// Accept All, and a selection of both changes, settle the formatting
+    /// change too: the reference run goes with its comment, and no run of bare
+    /// properties is left behind.
+    #[test]
+    fn settling_both_changes_leaves_no_run_of_bare_properties() {
+        let source = reference_run();
+        for (name, filter) in [
+            ("all", ChangeFilter::default()),
+            ("both", ChangeFilter::ids(["r7", "r9"])),
+        ] {
+            let accepted = accept_changes(&source, &filter).expect("accept");
+            assert_eq!(
+                empty_runs(&accepted),
+                0,
+                "{name}: {}",
+                crate::common::docx::part_string(&accepted, "word/document.xml").unwrap()
+            );
+            assert!(ids(&accepted).is_empty(), "{name}: {:?}", ids(&accepted));
+        }
+    }
+
+    /// Keeping the comment moves its reference: the unselected formatting
+    /// change still exists exactly once, so selecting it later is not
+    /// ambiguous.
+    #[test]
+    fn keeping_the_comment_keeps_one_copy_of_the_formatting_change() {
+        let source = reference_run();
+        let resolved =
+            jubarte::changes::accept_changes_keeping_comments(&source, &ChangeFilter::ids(["r7"]))
+                .expect("accept r7 keeping comments");
+        let xml =
+            crate::common::docx::part_string(&resolved.document, "word/document.xml").unwrap();
+        assert_eq!(xml.matches("<w:rPrChange").count(), 1, "{xml}");
+        assert_eq!(ids(&resolved.document), ["r9"], "{xml}");
+        assert!(xml.contains("<w:commentReference"), "{xml}");
+        let again =
+            accept_changes(&resolved.document, &ChangeFilter::ids(["r9"])).expect("accept r9");
+        assert!(ids(&again).is_empty());
+    }
+
+    /// The reference shares its run with text: the rescued reference gets a
+    /// copy of the properties without the revision record, which stays on
+    /// the text run alone.
+    #[test]
+    fn keeping_a_comment_from_a_shared_run_keeps_one_copy_of_its_formatting_change() {
+        let rev = super::dead_comments::REV;
+        let body = format!(
+            r#"<w:p>{}<w:del w:id="7" {rev}><w:r><w:delText>gone</w:delText></w:r></w:del>{}<w:r><w:rPr><w:b/><w:rPrChange w:id="9" {rev}><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t>tail</w:t><w:commentReference w:id="0"/></w:r></w:p>"#,
+            super::dead_comments::start(0),
+            super::dead_comments::end(0),
+        );
+        let source = super::dead_comments::package(&body, false);
+        let resolved =
+            jubarte::changes::accept_changes_keeping_comments(&source, &ChangeFilter::ids(["r7"]))
+                .expect("accept r7 keeping comments");
+        let xml =
+            crate::common::docx::part_string(&resolved.document, "word/document.xml").unwrap();
+        assert_eq!(xml.matches("<w:rPrChange").count(), 1, "{xml}");
+        assert_eq!(ids(&resolved.document), ["r9"], "{xml}");
+        assert!(
+            xml.contains("tail") && xml.contains("<w:commentReference"),
+            "{xml}"
+        );
+    }
+}
