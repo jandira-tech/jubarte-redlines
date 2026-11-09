@@ -307,7 +307,9 @@ pub(super) fn legacy_attribution_error(source: &str) -> Option<String> {
         let Some((payload, _)) = source[at + 3..].split_once("<<}") else {
             continue;
         };
-        let legacy_part = |part: &str| {
+        // The handle form: numbered ids (`r1`, `r1+2`, `header1.r3`) and
+        // one tag.
+        let tag_part = |part: &str| {
             let id = part.split(' ').next().unwrap_or("");
             let (story, id) = id
                 .rsplit_once('.')
@@ -325,11 +327,41 @@ pub(super) fn legacy_attribution_error(source: &str) -> Option<String> {
                 })
                 && super::view_notes::revision_tags(part).is_some_and(|tags| tags.len() == 1)
         };
-        if !payload.split(" on ").all(legacy_part) {
+        // The plain form, in the whole grammar the writer prints: any id it
+        // accepts (`noid`, the colon id) and a substitution's `; ` sides.
+        let plain_part = |part: &str| super::view_notes::plain_revision(part).is_some();
+        let chain = payload
+            .split(" on ")
+            .all(|part| tag_part(part) || plain_part(part));
+        let sides = !chain && payload.contains("; ") && payload.split("; ").all(plain_part);
+        if !chain && !sides {
             continue;
         }
         let old = &source[at..at + 3 + payload.len() + 3];
-        let new = format!("{{{}}}", payload.replace(" on ", " re "));
+        // A plain part is spelled as the writer spells it: in a nested note
+        // its author's parentheses go percent-wise, so the date's stay the
+        // only bare ones and the chain reads back.
+        let new = if chain {
+            let parts: Vec<&str> = payload.split(" on ").collect();
+            let nested = parts.len() > 1;
+            let spelled = parts
+                .iter()
+                .map(|&part| match () {
+                    _ if tag_part(part) => part.to_string(),
+                    _ if nested => super::from_docx::critic::spell_re_in_author(
+                        &super::from_docx::critic::escaped_author(part),
+                    ),
+                    _ => super::from_docx::critic::spell_re_in_author(part),
+                })
+                .collect::<Vec<_>>();
+            format!("{{{}}}", spelled.join(" re "))
+        } else {
+            let spelled = payload
+                .split("; ")
+                .map(super::from_docx::critic::spell_re_in_author)
+                .collect::<Vec<_>>();
+            format!("{{{}}}", spelled.join("; "))
+        };
         let line = source[..at].bytes().filter(|&c| c == b'\n').count() + 1;
         return Some(format!(
             "line {line}: old attribution `{old}` is no longer supported; write `{new}`. A comment with that text is written `{{>>c1 @X: r1 @ASR<<}}`."

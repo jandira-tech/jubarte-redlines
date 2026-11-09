@@ -178,7 +178,7 @@ pub(super) fn display(by: &str) -> String {
 /// A printed plain part (`r1+2 Name (date)`) with the name's parentheses,
 /// backslashes and `%` percent-spelled (`%28` and its kin, `%` itself
 /// `%25`, the spelling the internal tags use): only the date's stay bare.
-fn escaped_author(part: &str) -> String {
+pub(in crate::markdown) fn escaped_author(part: &str) -> String {
     let Some((ids, rest)) = part.split_once(' ') else {
         return part.to_string();
     };
@@ -206,7 +206,7 @@ fn escaped_author(part: &str) -> String {
 /// the same percent-spelling the internal tags use, and the date stays
 /// bare. A fold joins its own ` re ` after this, so that separator is
 /// untouched.
-fn spell_re_in_author(part: &str) -> String {
+pub(in crate::markdown) fn spell_re_in_author(part: &str) -> String {
     let Some((ids, rest)) = part.split_once(' ') else {
         return part.to_string();
     };
