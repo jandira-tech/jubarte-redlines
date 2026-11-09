@@ -3109,10 +3109,17 @@ fn check_del_text_under_del(pkg: &PartFs, out: &mut Vec<Finding>) {
 /// Any enclosing deletion counts, even through an insertion, but only
 /// within the run's own story (#1134, Word probe 2026-10-17).
 fn under_deletion(dom: &Dom, node: NodeId) -> bool {
-    dom.ancestors(node, None)
-        .into_iter()
-        .take_while(|&a| dom.name(a).is_none_or(|n| n.local_name() != "txbxContent"))
-        .any(|a| dom.name(a).is_some_and(|n| n == W::del()))
+    // Walks the parent links rather than collecting the ancestors: the
+    // checks call this once per `w:delText` of a move source.
+    let mut cur = dom.parent(node);
+    while let Some(p) = cur {
+        match dom.name(p) {
+            Some(n) if n.local_name() == "txbxContent" => return false,
+            Some(n) if n == W::del() => return true,
+            _ => cur = dom.parent(p),
+        }
+    }
+    false
 }
 
 /// True when a `w:del` or `w:moveFrom` covers `node` in its own story (a
