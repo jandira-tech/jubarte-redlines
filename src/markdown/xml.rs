@@ -376,6 +376,62 @@ fn hundredths_lines(value: &str) -> Option<u32> {
     (n.is_finite() && (0.0..=most).contains(&hundredths)).then_some(hundredths as u32)
 }
 
+/// `w:tab w:val` (ST_TabJc).
+pub(crate) const TAB_VALS: &[&str] = &["left", "center", "right", "decimal", "bar", "clear", "num"];
+
+/// `w:tab w:leader`, other than the default `none`.
+pub(crate) const TAB_LEADERS: &[&str] = &["dot", "hyphen", "underscore", "heavy", "middleDot"];
+
+/// A tab stop's `w:pos`, twips: Word keeps one within 22in either way.
+pub(crate) const TAB_POS_LIMIT: i64 = 31_680;
+
+/// `w:shd w:val` (ST_Shd).
+pub(crate) const SHD_VALS: &[&str] = &[
+    "nil",
+    "clear",
+    "solid",
+    "horzStripe",
+    "vertStripe",
+    "reverseDiagStripe",
+    "diagStripe",
+    "horzCross",
+    "diagCross",
+    "thinHorzStripe",
+    "thinVertStripe",
+    "thinReverseDiagStripe",
+    "thinDiagStripe",
+    "thinHorzCross",
+    "thinDiagCross",
+    "pct5",
+    "pct10",
+    "pct12",
+    "pct15",
+    "pct20",
+    "pct25",
+    "pct30",
+    "pct35",
+    "pct37",
+    "pct40",
+    "pct45",
+    "pct50",
+    "pct55",
+    "pct60",
+    "pct62",
+    "pct65",
+    "pct70",
+    "pct75",
+    "pct80",
+    "pct85",
+    "pct87",
+    "pct90",
+    "pct95",
+];
+
+/// `w:shd` `w:color` or `w:fill`: `auto`, or six hex digits.
+pub(crate) fn shading_colour(value: &str) -> bool {
+    value == "auto" || (value.len() == 6 && value.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
 /// A hyperlink's target.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Link {

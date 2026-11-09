@@ -582,3 +582,69 @@ fn a_story_indent_reads_strict_sides_and_outdents() {
     );
     assert_eq!(view(&again), first);
 }
+
+/// A header paragraph's own tab stops, spacing and shading print on its
+/// `pN:` entry and come back inside `w:pPr`, after its borders and before
+/// its indent and alignment.
+#[test]
+fn a_header_paragraph_keeps_its_tabs_spacing_and_shading() {
+    let paragraph = r#"<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="4" w:space="1" w:color="8496B0"/></w:pBdr><w:shd w:val="clear" w:fill="FFFF00"/><w:tabs><w:tab w:val="center" w:pos="4680"/><w:tab w:val="right" w:pos="9360"/></w:tabs><w:spacing w:before="120" w:after="0" w:line="240" w:lineRule="auto"/><w:ind w:left="720"/><w:jc w:val="center"/></w:pPr><w:r><w:t>Footer</w:t></w:r></w:p>"#;
+    let first = view(&with_header(paragraph));
+    let block = headers_block(&first);
+    assert!(block.contains("tabs: [center 4680, right 9360]"), "{first}");
+    assert!(
+        block.contains("spacing: \"before 6pt, after 0pt, line 1\""),
+        "{first}"
+    );
+    assert!(
+        block.contains("shading: {val: clear, fill: FFFF00}"),
+        "{first}"
+    );
+    let again = write(&first);
+    let xml = part_string(&again, "word/header1.xml").expect("a header part");
+    assert!(
+        xml.contains(
+            r#"<w:pBdr><w:bottom w:val="single" w:sz="4" w:space="1" w:color="8496B0"/></w:pBdr><w:shd w:val="clear" w:fill="FFFF00"/><w:tabs><w:tab w:val="center" w:pos="4680"/><w:tab w:val="right" w:pos="9360"/></w:tabs><w:spacing w:before="120" w:after="0" w:line="240" w:lineRule="auto"/><w:ind w:left="720"/><w:jc w:val="center"/>"#
+        ),
+        "{xml}"
+    );
+    assert_eq!(view(&again), first);
+
+    let stops = r#"<w:p><w:pPr><w:tabs><w:tab w:val="center" w:pos="4680"/><w:tab w:val="right" w:pos="9360"/></w:tabs></w:pPr><w:r><w:t>Left</w:t></w:r></w:p>"#;
+    let only = view(&with_header(stops));
+    assert!(
+        headers_block(&only).contains("tabs: [center 4680, right 9360]"),
+        "{only}"
+    );
+    let again = write(&only);
+    let xml = part_string(&again, "word/header1.xml").expect("a header part");
+    assert!(
+        xml.contains(
+            r#"<w:tabs><w:tab w:val="center" w:pos="4680"/><w:tab w:val="right" w:pos="9360"/></w:tabs>"#
+        ),
+        "{xml}"
+    );
+    assert_eq!(view(&again), only);
+}
+
+/// Strict and bidirectional tab stops say `start` and `end`: they read as
+/// `left` and `right`, as a story's indent and alignment do, and come back
+/// (#2132 review, Bugbot).
+#[test]
+fn a_header_tab_stop_at_start_or_end_reads_as_left_or_right() {
+    let stops = r#"<w:p><w:pPr><w:tabs><w:tab w:val="start" w:pos="720"/><w:tab w:val="end" w:leader="dot" w:pos="9360"/></w:tabs></w:pPr><w:r><w:t>Edge</w:t></w:r></w:p>"#;
+    let first = view(&with_header(stops));
+    assert!(
+        headers_block(&first).contains("tabs: [left 720, right dot 9360]"),
+        "{first}"
+    );
+    let again = write(&first);
+    let xml = part_string(&again, "word/header1.xml").expect("a header part");
+    assert!(
+        xml.contains(
+            r#"<w:tabs><w:tab w:val="left" w:pos="720"/><w:tab w:val="right" w:leader="dot" w:pos="9360"/></w:tabs>"#
+        ),
+        "{xml}"
+    );
+    assert_eq!(view(&again), first);
+}
