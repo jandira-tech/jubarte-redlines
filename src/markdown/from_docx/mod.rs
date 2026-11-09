@@ -721,9 +721,19 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
                 let saved_part = std::mem::replace(&mut writer.part, target.clone());
                 let saved_scopes =
                     std::mem::replace(&mut writer.scopes, drawing::ScopeMap::of(&root));
+                // A story numbers its own lists: a header repeats on every
+                // page, so it cannot go on with the body's count.
+                let saved_counters = std::mem::take(&mut writer.counters);
+                let saved_started = std::mem::take(&mut writer.started_nums);
                 let mut list = ListIndent::default();
                 writer.blocks(&root, &mut extra, &mut list);
                 writer.flush_empty(&mut extra);
+                // Notes of ranges the story closed after its last paragraph
+                // stay in it, as the body's do.
+                let trailing = writer.take_notes();
+                extra.push(&trailing, false);
+                writer.counters = saved_counters;
+                writer.started_nums = saved_started;
                 writer.part = saved_part;
                 writer.scopes = saved_scopes;
             }

@@ -733,3 +733,95 @@ fn a_header_or_footer_change_is_a_hunk_of_its_own() {
         ]
     );
 }
+
+/// Each header and footer starts clean: a comment whose range a header
+/// closes after its last paragraph does not open the footer's first
+/// paragraph (#2134 review, Bugbot).
+#[test]
+fn a_story_s_trailing_comment_note_stays_out_of_the_next_story() {
+    let (w, r) = (common::docx::W_NS, common::docx::R_NS);
+    let header = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="{w}" xmlns:r="{r}"><w:p><w:commentRangeStart w:id="0"/><w:r><w:t>Head</w:t></w:r></w:p><w:commentRangeEnd w:id="0"/></w:hdr>"#
+    );
+    let footer = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr xmlns:w="{w}" xmlns:r="{r}"><w:p><w:r><w:t xml:space="preserve">Keep </w:t></w:r><w:ins w:id="1" w:author="Claude" w:date="2026-09-25T12:00:00Z"><w:r><w:t>more</w:t></w:r></w:ins></w:p></w:ftr>"#
+    );
+    let comments = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="{w}" xmlns:r="{r}"><w:comment w:id="0" w:author="Ann" w:date="2026-01-01T00:00:00Z" w:initials="A"><w:p><w:r><w:t>Header note</w:t></w:r></w:p></w:comment></w:comments>"#
+    );
+    let docx = common::docx::docx_with_sect(
+        "<w:p><w:r><w:t>Body.</w:t></w:r></w:p>",
+        &[
+            common::docx::Part {
+                name: "word/header1.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &header,
+            },
+            common::docx::Part {
+                name: "word/footer1.xml",
+                content_type: FOOTER_CT,
+                rel_type: FOOTER_REL,
+                xml: &footer,
+            },
+            common::docx::Part {
+                name: "word/comments.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+                xml: &comments,
+            },
+        ],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/><w:footerReference w:type="default" r:id="rIdX1"/>"#,
+    );
+    let got = hunks(&docx);
+    let footer = got
+        .iter()
+        .find(|(at, _, _)| *at == story_at("footer1", 0))
+        .unwrap_or_else(|| panic!("no footer hunk: {got:?}"));
+    assert_eq!(footer.2, "Keep {+more+}", "{got:?}");
+}
+
+/// A header numbers its own list: it repeats on every page, so it does not
+/// go on with the body's count (#2134 review, Bugbot).
+#[test]
+fn a_header_list_does_not_continue_the_body_s_numbering() {
+    let (w, r) = (common::docx::W_NS, common::docx::R_NS);
+    let numbered = |text: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+        )
+    };
+    let header = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="{w}" xmlns:r="{r}"><w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t xml:space="preserve">Head </w:t></w:r><w:ins w:id="1" w:author="Claude" w:date="2026-09-25T12:00:00Z"><w:r><w:t>more</w:t></w:r></w:ins></w:p></w:hdr>"#
+    );
+    let numbering = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="{w}"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#
+    );
+    let docx = common::docx::docx_with_sect(
+        &format!("{}{}", numbered("One"), numbered("Two")),
+        &[
+            common::docx::Part {
+                name: "word/header1.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &header,
+            },
+            common::docx::Part {
+                name: "word/numbering.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering",
+                xml: &numbering,
+            },
+        ],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let got = hunks(&docx);
+    assert_eq!(
+        got,
+        [(
+            story_at("header1", 0),
+            false,
+            "1. Head {+more+}".to_string()
+        )]
+    );
+}
