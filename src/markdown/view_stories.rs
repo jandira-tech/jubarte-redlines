@@ -82,6 +82,11 @@ pub(super) struct ParaFormat {
     pub hanging: Option<i64>,
     pub left: Option<i64>,
     pub right: Option<i64>,
+    /// The same sides in hundredths of a character (`first-line: 2ch`).
+    pub first_line_chars: Option<i64>,
+    pub hanging_chars: Option<i64>,
+    pub left_chars: Option<i64>,
+    pub right_chars: Option<i64>,
     /// Its own tab stops (`w:tabs`).
     pub tabs: Vec<TabStop>,
     /// Its own spacing (`w:spacing`).
@@ -144,33 +149,41 @@ impl ParaFormat {
             Some(_) => return None,
             None => None,
         };
-        // An indent, `indent: {first-line: 0.25in, right: 0.25in}`: the id
-        // lines' sides in inches, within Word's 22in, each named once.
-        // Any other side or value does not read.
+        // An indent, `indent: {first-line: 0.25in, first-line: 2ch}`: the
+        // id lines' sides, inches within Word's 22in or hundredths of a
+        // character. The same side and unit twice does not read.
         let mut indent = [None; 4];
+        let mut chars = [None; 4];
         match entries.iter().find(|(k, _)| k == "indent") {
             Some((_, Value::Map(items))) => {
                 for (side, value) in items {
                     let slot = INDENT_SIDES.iter().position(|s| s == side)?;
-                    if indent[slot].is_some() {
-                        return None;
-                    }
                     let Value::Text(value) = value else {
                         return None;
                     };
-                    let inches: f64 = value.strip_suffix("in")?.parse().ok()?;
-                    let twips = (inches * 1440.0).round();
-                    if !(twips.is_finite() && twips.abs() <= 31_680.0) {
+                    if value.ends_with("ch") {
+                        if chars[slot].is_some() {
+                            return None;
+                        }
+                        chars[slot] = Some(super::xml::char_hundredths(value)?);
+                    } else if indent[slot].is_some() {
                         return None;
+                    } else {
+                        let inches: f64 = value.strip_suffix("in")?.parse().ok()?;
+                        let twips = (inches * 1440.0).round();
+                        if !(twips.is_finite() && twips.abs() <= 31_680.0) {
+                            return None;
+                        }
+                        // `as` cannot overflow: the bound is checked above.
+                        indent[slot] = Some(twips as i64);
                     }
-                    // `as` cannot overflow: the bound is checked above.
-                    indent[slot] = Some(twips as i64);
                 }
             }
             Some(_) => return None,
             None => {}
         }
         let [first_line, hanging, left, right] = indent;
+        let [first_line_chars, hanging_chars, left_chars, right_chars] = chars;
         let tabs = read_tabs(entries)?;
         let spacing = read_spacing(entries)?;
         let shading = read_shading(entries)?;
@@ -185,6 +198,10 @@ impl ParaFormat {
             hanging,
             left,
             right,
+            first_line_chars,
+            hanging_chars,
+            left_chars,
+            right_chars,
             tabs,
             spacing,
             shading,
@@ -2056,16 +2073,32 @@ fn story_part(
                 base.push_str(&spacing.markup());
             }
             let sides = [
-                ("left", format.left),
-                ("right", format.right),
-                ("firstLine", format.first_line),
-                ("hanging", format.hanging),
+                ("left", format.left, "leftChars", format.left_chars),
+                ("right", format.right, "rightChars", format.right_chars),
+                (
+                    "firstLine",
+                    format.first_line,
+                    "firstLineChars",
+                    format.first_line_chars,
+                ),
+                (
+                    "hanging",
+                    format.hanging,
+                    "hangingChars",
+                    format.hanging_chars,
+                ),
             ];
-            if sides.iter().any(|(_, value)| value.is_some()) {
+            if sides
+                .iter()
+                .any(|(_, twips, _, chars)| twips.is_some() || chars.is_some())
+            {
                 base.push_str("<w:ind");
-                for (name, value) in sides {
-                    if let Some(value) = value {
+                for (name, twips, chars_name, chars) in sides {
+                    if let Some(value) = twips {
                         let _ = write!(base, " w:{name}=\"{value}\"");
+                    }
+                    if let Some(value) = chars {
+                        let _ = write!(base, " w:{chars_name}=\"{value}\"");
                     }
                 }
                 base.push_str("/>");
