@@ -117,3 +117,34 @@ fn a_deleted_fraction_removes_its_comment() {
         "comment survived a deleted fraction: {left:?}"
     );
 }
+
+/// A bookmark around only a deleted field goes with it, as a comment does.
+#[test]
+fn a_bookmark_on_a_deleted_field_goes_with_it() {
+    let source = package(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r><w:bookmarkStart w:id="3" w:name="mark"/><w:del w:id="1" {REV}><w:r><w:fldChar w:fldCharType="begin"/></w:r></w:del><w:r><w:instrText xml:space="preserve"> DATE </w:instrText></w:r><w:del w:id="2" {REV}><w:r><w:fldChar w:fldCharType="end"/></w:r></w:del><w:bookmarkEnd w:id="3"/></w:p>"#
+    ));
+    let accepted = accept_changes(&source, &ChangeFilter::default()).expect("accept");
+    let xml = common::docx::part_string(&accepted, "word/document.xml").unwrap();
+    assert!(!xml.contains("bookmarkStart"), "{xml}");
+}
+
+/// Keeping comments, a range that held only a deleted field (its
+/// instruction between the deleted field characters) is wholly deleted:
+/// the comment is rescued, not dropped with the field.
+#[test]
+fn keeping_comments_rescues_one_on_a_deleted_field() {
+    let source = package(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r><w:commentRangeStart w:id="5"/><w:del w:id="1" {REV}><w:r><w:fldChar w:fldCharType="begin"/></w:r></w:del><w:r><w:instrText xml:space="preserve"> DATE </w:instrText></w:r><w:del w:id="2" {REV}><w:r><w:fldChar w:fldCharType="end"/></w:r></w:del><w:commentRangeEnd w:id="5"/><w:r><w:commentReference w:id="5"/></w:r></w:p>"#
+    ));
+    let resolved =
+        jubarte::changes::accept_changes_keeping_comments(&source, &ChangeFilter::default())
+            .expect("accept keeping comments");
+    // A rescued thread is published on the lowest free id (#1279).
+    assert_eq!(comment_ids(&resolved.document), [0]);
+    assert!(resolved.removed_comments.is_empty());
+    assert!(
+        resolved.kept_comments.iter().any(|kept| kept.id == "c5"),
+        "reported as kept"
+    );
+}
