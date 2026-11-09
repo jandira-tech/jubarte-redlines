@@ -89,18 +89,20 @@ impl AnchorChanges {
         let comments = crate::comments::list_comments(source)
             .map_err(|e| super::err("INVALID_DOCUMENT", None, e.to_string()))?;
         let groups = |ids: &[String]| {
+            // Receipts name each `w:id` as written. The reader parsed it.
+            let wanted: std::collections::HashSet<u32> =
+                ids.iter().filter_map(|id| id.parse().ok()).collect();
             comments
                 .iter()
                 .filter(|c| {
-                    ids.contains(&c.id.to_string())
-                        && !c.parent.is_some_and(|p| ids.contains(&p.to_string()))
+                    wanted.contains(&c.id) && !c.parent.is_some_and(|p| wanted.contains(&p))
                 })
                 .map(|root| {
                     let mut family = vec![root.id];
                     loop {
                         let before = family.len();
                         for c in &comments {
-                            if ids.contains(&c.id.to_string())
+                            if wanted.contains(&c.id)
                                 && !family.contains(&c.id)
                                 && c.parent.is_some_and(|p| family.contains(&p))
                             {
@@ -131,12 +133,18 @@ impl AnchorChanges {
                 crate::changes::member_wholes(source).map_err(invalid)?,
             )
         };
+        // Each pass by its comment's number, parsed once: the keys keep the
+        // `w:id` as written (`0005`).
+        let passes: std::collections::HashMap<u32, _> = self
+            .passes
+            .iter()
+            .filter_map(|(raw, pass)| Some((raw.parse::<u32>().ok()?, pass)))
+            .collect();
         let removed = groups(&self.removed)
             .into_iter()
             .map(|(c, replies)| {
-                let pass = self
-                    .passes
-                    .get(&c.id.to_string())
+                let pass = passes
+                    .get(&c.id)
                     .expect("every removed thread is recorded with its pass");
                 let id = format!("c{}", c.id);
                 let thread: Vec<String> = std::iter::once(id.clone())
