@@ -1127,6 +1127,14 @@ pub(super) fn story(
                 open = None;
             } else {
                 close_marks(context, &natural, &mut out, &mut open, &mut marks);
+                // The marks a change named after ` re ` sits in open
+                // around it, as they do before its first run: the run
+                // after the note's items finds its mark open already.
+                for outer in wrapping_chain(context.document, change).iter().rev() {
+                    spend(&mut natural, outer.1);
+                    context.open_revision(&mut out, outer.0, Some(outer.1));
+                    marks.push(*outer);
+                }
                 spend(&mut natural, change.1);
                 context.open_revision(&mut out, change.0, Some(change.1));
                 open = Some(change);
@@ -1839,7 +1847,7 @@ fn note_change(notes: &HashMap<u32, (Change, bool)>, item: &Item) -> Option<Chan
 }
 
 /// [`note_change`], and a range start that belongs to the same note when
-/// the next run is that change. The start then opens the mark, so it is
+/// the next run, or a link that change's mark holds, is that change. The start then opens the mark, so it is
 /// not left before a deletion the note sits in.
 fn note_item_change(document: &Document, items: &[Item], at: usize) -> Option<Change> {
     let item = items.get(at)?;
@@ -1854,16 +1862,20 @@ fn note_item_change(document: &Document, items: &[Item], at: usize) -> Option<Ch
     if !end_inside {
         return None;
     }
-    let next = items[at + 1..].iter().find(|item| {
+    let rest = &items[at + 1..];
+    let next = rest.iter().position(|item| {
         !matches!(
             item,
             Item::Bookmark(_) | Item::RangeStart(_) | Item::RangeEnd(_) | Item::CommentReference(_)
         )
     })?;
-    match next {
-        Item::Run(run) if run.change == Some(*change) => Some(*change),
-        _ => None,
-    }
+    // A link the change's mark holds (`field_link`) starts that change too.
+    let opens = match &rest[next] {
+        Item::Run(run) => run.change == Some(*change),
+        Item::LinkStart(..) => field_link(&rest[next + 1..], document) == Some(*change),
+        _ => false,
+    };
+    opens.then_some(*change)
 }
 
 /// Whether the next real item in `rest` is a run still inside a mark:

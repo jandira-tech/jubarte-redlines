@@ -4238,8 +4238,11 @@ impl<'o, 'a> Writer<'o, 'a> {
         if let Some(change) = self.change {
             let end_inside = match end_at {
                 None => true,
+                // Backwards: the change's run usually sits just before
+                // the end, so the scan stops there.
                 Some(at) => self.story()[..at]
                     .iter()
+                    .rev()
                     .any(|item| matches!(item, Item::Run(run) if run.change == Some(change))),
             };
             self.document.note_changes.insert(id, (change, end_inside));
