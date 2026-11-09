@@ -2247,10 +2247,31 @@ fn conventional_story(name: &str) -> bool {
 }
 
 /// `header`, `header1`, `footer2`: the kind, or the kind plus digits.
+/// Compared byte-wise, without lowering a copy of every part's stem.
 fn numbered_story(stem: &str, kind: &str) -> bool {
-    let stem = stem.to_ascii_lowercase();
-    stem.strip_prefix(kind)
-        .is_some_and(|rest| rest.is_empty() || rest.bytes().all(|b| b.is_ascii_digit()))
+    let (stem, kind) = (stem.as_bytes(), kind.as_bytes());
+    stem.len() >= kind.len() && {
+        let (prefix, rest) = stem.split_at(kind.len());
+        prefix.eq_ignore_ascii_case(kind) && rest.iter().all(u8::is_ascii_digit)
+    }
+}
+
+#[cfg(test)]
+mod numbered_story_tests {
+    #[test]
+    fn a_story_stem_is_its_kind_with_digits() {
+        for (stem, kind, expected) in [
+            ("header", "header", true),
+            ("Header12", "header", true),
+            ("FOOTER2", "footer", true),
+            ("header1a", "header", false),
+            ("head", "header", false),
+            ("headér1", "header", false),
+            ("footer", "header", false),
+        ] {
+            assert_eq!(super::numbered_story(stem, kind), expected, "{stem} {kind}");
+        }
+    }
 }
 
 /// A style's `w:name` holds no comma: the schema's pattern is `[^,]*`
