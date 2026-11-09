@@ -2654,20 +2654,20 @@ impl<'o, 'a> Writer<'o, 'a> {
         let Some((index, open)) = self.row.take() else {
             return;
         };
+        // Cells whose text is one change whole make a row change only in
+        // Markdown with no table line (plain views, hand-written tables).
+        // A table line names the row's own mark, so there a change that
+        // only fills the cells stays on their text (#1370).
         let row_change = match (open, self.row_cells) {
             (Some((kind, serial)), _) if self.change == Some((kind, serial)) => {
                 Some((kind, serial))
             }
-            (_, RowCells::Whole(kind, serial)) => Some((kind, serial)),
+            (_, RowCells::Whole(kind, serial)) if self.table_plan.is_none() => Some((kind, serial)),
             _ => None,
         };
-        // A row the table line names a mark of its own for has that mark,
-        // and its text keeps its own (`rev r80 @AL in t1.row1`). A row it
-        // says nothing of, whose cells' text is one change whole, had that
-        // change on the row in Word's file — an id two cells' runs share
-        // is nothing Word writes — so the writer puts it back there and
-        // the text carries it. Plain Markdown has no line either way, and
-        // keeps the inference.
+        // A row the table line names has that mark (`rev r80 @AL in
+        // t1.row1`), and its text keeps its own. The line's mark is
+        // written with the table's formats.
         let own = !self.resolved
             && self.table_plan.as_ref().is_some_and(|plan| {
                 plan.row_marks
