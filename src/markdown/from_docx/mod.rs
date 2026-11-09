@@ -423,6 +423,7 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
         notes: HashMap::new(),
         referenced: HashSet::new(),
         held_marks: HashMap::new(),
+        move_names: HashMap::new(),
         noted_at_end: HashSet::new(),
         noted_at_reference: HashSet::new(),
         open_comments: Vec::new(),
@@ -473,6 +474,7 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
     let body = document.child("body").unwrap_or(&document);
     let mut blocks = Blocks::new();
     let mut list = ListIndent::default();
+    move_range_names(&document, &mut writer.move_names);
     writer.blocks(body, &mut blocks, &mut list);
     writer.flush_empty(&mut blocks);
     // Notes of ranges that ended after the last paragraph.
@@ -733,6 +735,11 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
                 let saved_counters = std::mem::take(&mut writer.counters);
                 let saved_started = std::mem::take(&mut writer.started_nums);
                 let mut list = ListIndent::default();
+                // This story's own moves only: `root` is dropped after it,
+                // so its addresses must not outlive it in the map.
+                let mut story_moves = HashMap::new();
+                move_range_names(&root, &mut story_moves);
+                let saved_moves = std::mem::replace(&mut writer.move_names, story_moves);
                 writer.blocks(&root, &mut extra, &mut list);
                 writer.flush_empty(&mut extra);
                 // Notes of ranges the story closed after its last paragraph
@@ -743,6 +750,7 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
                 writer.started_nums = saved_started;
                 writer.part = saved_part;
                 writer.scopes = saved_scopes;
+                writer.move_names = saved_moves;
             }
         }
         let stories = extra.finish();
@@ -2449,29 +2457,94 @@ fn attribution(element: &Element, story: Option<&str>) -> Option<String> {
     ))
 }
 
-/// Tracked changes recorded in a properties element (`trPr`, `tcPr`, a
-/// paragraph mark's `rPr`), in document order.
-fn revision_marks(properties: &Element, story: Option<&str>) -> Vec<Change> {
-    properties
-        .elements()
-        .filter_map(|p| match p.local() {
-            "ins" | "moveTo" | "cellIns" => Some((Mark::Insertion, attribution(p, story))),
-            "del" | "moveFrom" | "cellDel" => Some((Mark::Deletion, attribution(p, story))),
-            _ => None,
-        })
-        .collect()
+/// `by` with the move sentinel and `name` before its date or the change it
+/// sits in, so the printed note can say ` move` and the writer can tell a
+/// move from a deletion or an insertion.
+fn with_move_sentinel(by: &str, name: &str) -> String {
+    let carried = by.ends_with(critic::CARRIED);
+    let by = by.strip_suffix(critic::CARRIED).unwrap_or(by);
+    let token = name.replace('%', "%25").replace(' ', "%20");
+    let payload = format!("{}{token}", critic::MOVE);
+    let mut out = match by.find([' ', '\u{E002}']) {
+        Some(at) => format!("{}{payload}{}", &by[..at], &by[at..]),
+        None => format!("{by}{payload}"),
+    };
+    if carried {
+        out.push_str(critic::CARRIED);
+    }
+    out
 }
 
-/// The tracked change on the mark that ends a paragraph, that is on the break
-/// between it and the next one. A mark inserted and then deleted counts as
-/// deleted, the later of the two changes.
-fn paragraph_mark(p: &Element, story: Option<&str>) -> Option<Change> {
-    let marks = p
-        .path(&["pPr", "rPr"])
-        .map(|rpr| revision_marks(rpr, story))
-        .unwrap_or_default();
-    let deleted = marks.iter().position(|(m, _)| *m == Mark::Deletion);
-    marks.into_iter().nth(deleted.unwrap_or(0))
+/// Record, for every `moveFrom`/`moveTo` under `root`, the name of the
+/// move range of its side still open where it starts, walking in document
+/// order across containers.
+fn move_range_names(root: &Element, names: &mut HashMap<*const Element, String>) {
+    fn walk(
+        e: &Element,
+        open: &mut [Vec<(String, String)>; 2],
+        names: &mut HashMap<*const Element, String>,
+    ) {
+        for child in e.elements() {
+            let side = match child.local() {
+                "moveFromRangeStart" | "moveFromRangeEnd" | "moveFrom" => 0,
+                "moveToRangeStart" | "moveToRangeEnd" | "moveTo" => 1,
+                _ => {
+                    walk(child, open, names);
+                    continue;
+                }
+            };
+            match child.local() {
+                "moveFromRangeStart" | "moveToRangeStart" => {
+                    if let Some(id) = child.attr("id") {
+                        open[side]
+                            .push((id.to_string(), child.attr("name").unwrap_or("").to_string()));
+                    }
+                }
+                "moveFromRangeEnd" | "moveToRangeEnd" => {
+                    if let Some(id) = child.attr("id") {
+                        open[side].retain(|(open_id, _)| open_id != id);
+                    }
+                }
+                _ => {
+                    if let Some((_, name)) = open[side].last() {
+                        names.insert(std::ptr::from_ref(child), name.clone());
+                    }
+                    walk(child, open, names);
+                }
+            }
+        }
+    }
+    walk(root, &mut [Vec::new(), Vec::new()], names);
+}
+
+/// The `w:name` of the move range still open before `child`.
+fn open_move_name(container: &Element, child: &Element) -> String {
+    let (start, end) = if child.local() == "moveFrom" {
+        ("moveFromRangeStart", "moveFromRangeEnd")
+    } else {
+        ("moveToRangeStart", "moveToRangeEnd")
+    };
+    let mut open: Vec<(String, String)> = Vec::new();
+    for sibling in container.elements() {
+        if std::ptr::eq(sibling, child) {
+            break;
+        }
+        if sibling.local() == start {
+            if let Some(id) = sibling.attr("id") {
+                open.push((
+                    id.to_string(),
+                    sibling.attr("name").unwrap_or("").to_string(),
+                ));
+            }
+        } else if sibling.local() == end
+            && let Some(id) = sibling.attr("id")
+        {
+            open.retain(|(open_id, _)| open_id != id);
+        }
+    }
+    open.last()
+        .map(|(_, name)| name.clone())
+        .unwrap_or_default()
 }
 
 /// A comment's `{>>…<<}` text: `Author (date): comment`. The date is Word's
@@ -2558,6 +2631,11 @@ struct Writer<'a> {
     /// Agent view: comment id → the `w:id` of the one insertion or
     /// deletion holding its reference ([`held_marks`]).
     held_marks: HashMap<String, u32>,
+    /// Each `moveFrom`/`moveTo` element's open range name, by address: the
+    /// range markers may sit outside the element's container (Word puts a
+    /// moved paragraph's at body level), so a story is walked once in
+    /// document order ([`move_range_names`]).
+    move_names: HashMap<*const Element, String>,
     /// Comments whose note followed their range's end, inside a paragraph
     /// and outside any change: there Word puts the reference, and the
     /// writer takes the note back as the range's own comment. Their
@@ -2711,7 +2789,10 @@ impl Writer<'_> {
                     }
                 }
                 "ins" | "moveTo" | "del" | "moveFrom" => {
-                    self.revised(self.change_of(child), |w| w.blocks(child, blocks, list));
+                    let (mark, by) = self.change_of(child);
+                    self.revised((mark, self.moved(by, container, child)), |w| {
+                        w.blocks(child, blocks, list);
+                    });
                 }
                 "commentRangeStart" | "commentRangeEnd" => self.comment_range(child, None),
                 "customXml" | "sdtContent" | "txbxContent" => self.blocks(child, blocks, list),
@@ -3387,6 +3468,7 @@ impl Writer<'_> {
                 }
                 "ins" | "moveTo" | "del" | "moveFrom" => {
                     let (mark, by) = self.change_of(child);
+                    let by = self.moved(by, container, child);
                     if self.dates {
                         out.open_dated(mark, by.as_deref(), child.revision_date());
                     } else {
@@ -4108,7 +4190,10 @@ impl Writer<'_> {
                     self.flattening -= 1;
                 }
                 "ins" | "moveTo" | "del" | "moveFrom" => {
-                    self.revised(self.change_of(child), |w| w.cell_parts(child, parts));
+                    let (mark, by) = self.change_of(child);
+                    self.revised((mark, self.moved(by, container, child)), |w| {
+                        w.cell_parts(child, parts);
+                    });
                 }
                 "commentRangeStart" | "commentRangeEnd" => self.comment_range(child, None),
                 "sdt" | "sdtContent" | "customXml" => self.cell_parts(child, parts),
@@ -4124,15 +4209,28 @@ impl Writer<'_> {
         if self.agent {
             return None;
         }
-        paragraph_mark(p, self.story.as_deref())
+        self.own_paragraph_mark(p)
             .map(|(mark, by)| (mark, by.filter(|_| !self.in_comment)))
+    }
+
+    /// The tracked change on the mark that ends a paragraph, that is on the
+    /// break between it and the next one. A mark inserted and then deleted
+    /// counts as deleted, the later of the two changes. A moved mark keeps
+    /// its move ([`Self::revision_marks`]).
+    fn own_paragraph_mark(&self, p: &Element) -> Option<Change> {
+        let marks = p
+            .path(&["pPr", "rPr"])
+            .map(|rpr| self.revision_marks(rpr))
+            .unwrap_or_default();
+        let deleted = marks.iter().position(|(m, _)| *m == Mark::Deletion);
+        marks.into_iter().nth(deleted.unwrap_or(0))
     }
 
     /// The tracked change on a note paragraph's mark. A note has no id
     /// lines, so the agent view prints it inline with its tag.
     fn note_mark(&self, p: &Element) -> Option<Change> {
         if !self.agent {
-            return paragraph_mark(p, self.story.as_deref());
+            return self.own_paragraph_mark(p);
         }
         let marks = p
             .path(&["pPr", "rPr"])
@@ -4168,6 +4266,20 @@ impl Writer<'_> {
         tagged
     }
 
+    /// A move's attribution, with the open range's name when `element` is one.
+    fn moved(&self, by: Option<String>, container: &Element, child: &Element) -> Option<String> {
+        let by = by?;
+        if !matches!(child.local(), "moveFrom" | "moveTo") {
+            return Some(by);
+        }
+        let name = self
+            .move_names
+            .get(&std::ptr::from_ref(child))
+            .cloned()
+            .unwrap_or_else(|| open_move_name(container, child));
+        Some(with_move_sentinel(&by, &name))
+    }
+
     /// A tracked change's mark with its attribution: the agent tag, or the
     /// `Author (date)` note of the plain conversion.
     fn change_of(&self, element: &Element) -> Change {
@@ -4179,11 +4291,12 @@ impl Writer<'_> {
         }
     }
 
-    /// [`revision_marks`] with agent tags when the agent view is on.
+    /// Tracked changes recorded in a properties element (`trPr`, `tcPr`, a
+    /// paragraph mark's `rPr`), in document order, with agent tags when the
+    /// agent view is on. A
+    /// moved mark (a moved paragraph's mark, row or cell) keeps the move
+    /// and its range's name, as a moved run does.
     fn revision_marks(&self, properties: &Element) -> Vec<Change> {
-        if !self.agent {
-            return revision_marks(properties, self.story.as_deref());
-        }
         properties
             .elements()
             .filter_map(|p| {
@@ -4192,7 +4305,12 @@ impl Writer<'_> {
                     "del" | "moveFrom" | "cellDel" => Mark::Deletion,
                     _ => return None,
                 };
-                Some((mark, Some(self.agent_tag(p))))
+                let by = if self.agent {
+                    Some(self.agent_tag(p))
+                } else {
+                    attribution(p, self.story.as_deref())
+                };
+                Some((mark, self.moved(by, properties, p)))
             })
             .collect()
     }
@@ -5713,7 +5831,7 @@ mod tests {
         // separate changes.
         assert_eq!(
             md(&docx(&body, &[])),
-            "Keep {++**new**++}{r2}{--_old_--}{r1}.\n\n{++destination++}{r3} / {--source--}{r3}\n"
+            "Keep {++**new**++}{r2}{--_old_--}{r1}.\n\n{++destination++}{r3 move} / {--source--}{r3 move}\n"
         );
     }
 
@@ -6296,7 +6414,7 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[])),
-            "I really love {++font-styles++}{r90 Ana (2026-01-02T03:04:00Z)}{--fonts--}{r91 Ana (2026-01-02T03:04:00Z)}\n\n{++one ++}{r90 Ana (2026-01-02T03:04:00Z)}{++insertion++}{r90 Ana (2026-01-02T03:04:00Z)}.\n\na{++ ++}{r90 Ana (2026-01-02T03:04:00Z)}\n\nx{--y--}{r91 Ana (2026-01-02T03:04:00Z) re r90 Ana (2026-01-02T03:04:00Z)}\n\n{++there++}{r4}{--here--}{r3}\n"
+            "I really love {++font-styles++}{r90 Ana (2026-01-02T03:04:00Z)}{--fonts--}{r91 Ana (2026-01-02T03:04:00Z)}\n\n{++one ++}{r90 Ana (2026-01-02T03:04:00Z)}{++insertion++}{r90 Ana (2026-01-02T03:04:00Z)}.\n\na{++ ++}{r90 Ana (2026-01-02T03:04:00Z)}\n\nx{--y--}{r91 Ana (2026-01-02T03:04:00Z) re r90 Ana (2026-01-02T03:04:00Z)}\n\n{++there++}{r4 move}{--here--}{r3 move}\n"
         );
     }
 
@@ -6583,7 +6701,7 @@ mod tests {
                     by("ins", "Ana Lima", t2, &r("b"))
                 ),
             ),
-            // Moves carry their own attribution.
+            // Moves carry their own attribution and stay moves.
             p("", &by("moveTo", "Bo Chen", t2, &r("moved here"))),
             // Missing date, missing author, neither, and a name that needs escaping.
             p(
@@ -6603,7 +6721,7 @@ mod tests {
             "{++styles++}{r7 Ana Lima (2026-09-29T14:05:00Z)}{--fonts--}{r7 Ana Lima (2026-09-29T14:05:00Z)}\n\n\
              {++new++}{r7 Bo Chen (2026-09-29T15:10:00Z)}{--old--}{r7 Ana Lima (2026-09-29T14:05:00Z)}\n\n\
              {++a++}{r7 Ana Lima (2026-09-29T14:05:00Z)}{++b++}{r7 Ana Lima (2026-09-29T15:10:00Z)}\n\n\
-             {++moved here++}{r7 Bo Chen (2026-09-29T15:10:00Z)}\n\n\
+             {++moved here++}{r7 Bo Chen (2026-09-29T15:10:00Z) move}\n\n\
              {++w++}{r7 Ana Lima}{--x--}{r7 (2026-09-29T14:05:00Z)}{++y++}{r7}{++z++}{r7 A <<\\} B (2026-09-29T14:05:00Z)}\n"
         );
     }

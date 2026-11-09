@@ -57,6 +57,8 @@ fn sole_ins_in_del() -> Vec<u8> {
 
 /// `w:ins` by Ana whose only content is a `w:moveFrom` by Ben: the same
 /// shape through the move's deletion projection.
+/// Its range is named `move`, so the note prints the `move` keyword and
+/// then the range's name: `move move`.
 fn sole_move_from_in_ins() -> Vec<u8> {
     docx(
         r#"<w:p><w:moveFromRangeStart w:id="7" w:name="move"/>\
@@ -282,7 +284,7 @@ fn an_insertion_that_is_a_deletions_only_content_names_it_in_the_note() {
 fn a_move_from_that_is_an_insertions_only_content_names_it_in_the_note() {
     assert_eq!(
         plain(&sole_move_from_in_ins()),
-        "{--two--}{r3 Ben Ode (2026-09-30T09:00:00Z) \
+        "{--two--}{r3 Ben Ode (2026-09-30T09:00:00Z) move move \
          re r1 Ana Lima (2026-09-29T14:05:00Z)}\n"
     );
 }
@@ -363,10 +365,20 @@ fn sole_nested_changes_round_trip_in_both_views() {
         let markdown = plain(&source);
         assert_eq!(plain(&written(&markdown)), markdown, "{markdown}");
         let docx = written(&markdown);
+        // The copy adds no finding the source lacks. A sole move-from is a
+        // half move: the source's own range has no destination, and the
+        // copy keeps that range with its name.
+        let shapes = |bytes: &[u8]| {
+            check_word_valid_package(bytes)
+                .errors
+                .iter()
+                .map(|error| error.split(" [").next().unwrap_or(error).to_string())
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        let (copy, kept) = (shapes(&docx), shapes(&source));
         assert!(
-            check_word_valid_package(&docx).ok(),
-            "{markdown}: {}",
-            check_word_valid_package(&docx).errors.join("\n")
+            copy.is_subset(&kept),
+            "{markdown}: {copy:?} beyond {kept:?}"
         );
     }
 }
@@ -1043,7 +1055,7 @@ fn assert_revision_tree(
         match reader.read_event().unwrap() {
             Event::Start(element) => {
                 let name = element.name().as_ref().to_string();
-                if matches!(name.as_str(), "w:ins" | "w:del") {
+                if matches!(name.as_str(), "w:ins" | "w:del" | "w:moveFrom" | "w:moveTo") {
                     let id = element
                         .attributes()
                         .map(Result::unwrap)
@@ -1298,8 +1310,9 @@ fn live_insertion_keeps_a_move_from() {
     let source = common::docx::replace_entry(&source, "word/document.xml", document.as_bytes());
     assert_nested_round_trip(
         &source,
-        &["{r4 @BO re r3 @AL}"],
-        &[("w:ins", "3", None), ("w:del", "4", Some("3"))],
+        // The range is named `move`: the keyword, then the name.
+        &["{r4 @BO move move re r3 @AL}"],
+        &[("w:ins", "3", None), ("w:moveFrom", "4", Some("3"))],
     );
 }
 
@@ -1678,7 +1691,7 @@ fn revision_by(author: &str, date: Option<&str>) -> (String, Option<String>) {
 }
 
 /// Expected attributions come from the source package, independently of
-/// the writer; move marks become insertions/deletions on the round trip.
+/// the writer. A move stays a move on the round trip.
 fn revision_attributes(xml: &str) -> Vec<(String, Option<String>)> {
     use quick_xml::{Reader, events::Event};
     let mut reader = Reader::from_str(xml);

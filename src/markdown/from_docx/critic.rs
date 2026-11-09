@@ -122,6 +122,11 @@ fn bare(by: &str) -> &str {
     by.strip_suffix(CARRIED).unwrap_or(by)
 }
 
+/// A move's range name sits behind this sentinel, on the change's own tag
+/// and before its date or the change it nests in. The printed note says
+/// ` move` and, when the range has one, the name (`r3 @B move move1`).
+pub(super) const MOVE: char = '\u{E004}';
+
 /// The sentinel an attribution's tag sits behind.
 fn sentinel(by: &str) -> &'static str {
     if bare(by).starts_with(PLAIN) {
@@ -151,9 +156,11 @@ pub(super) fn display(by: &str) -> String {
         return by.to_string();
     };
     let fold = tagged.contains(ON);
+    let plain = by.starts_with(PLAIN);
     let one = |part: &str| {
-        if by.starts_with(PLAIN) {
-            let printed = super::agent::format_plain_tag(part);
+        let (part, move_name) = strip_move_mark(part);
+        let printed = if plain {
+            let printed = super::agent::format_plain_tag(&part);
             let printed = if fold {
                 escaped_author(&printed)
             } else {
@@ -162,17 +169,46 @@ pub(super) fn display(by: &str) -> String {
             // Folded or not: an author that itself holds ` re ` before a
             // revision id spells that space, so the note's own ` re ` stays
             // the only separator.
-            return spell_re_in_author(&printed);
-        }
-        let (t, date) = tag_parts(part);
-        let mut out = super::agent::format_tag(t);
-        if let Some(date) = date {
-            out.push(' ');
-            out.push_str(date);
-        }
-        out
+            spell_re_in_author(&printed)
+        } else {
+            let (t, date) = tag_parts(&part);
+            let mut out = super::agent::format_tag(t);
+            if let Some(date) = date {
+                out.push(' ');
+                out.push_str(date);
+            }
+            out
+        };
+        append_move(printed, move_name)
     };
     tagged.split(ON).map(one).collect::<Vec<_>>().join(" re ")
+}
+
+/// The part without [`MOVE`], and the range name that sentinel held.
+fn strip_move_mark(part: &str) -> (String, Option<&str>) {
+    let Some(at) = part.find(MOVE) else {
+        return (part.to_string(), None);
+    };
+    let rest = &part[at + MOVE.len_utf8()..];
+    let end = rest.find([' ', '\u{E002}']).unwrap_or(rest.len());
+    let mut clean = String::with_capacity(part.len());
+    clean.push_str(&part[..at]);
+    clean.push_str(&rest[end..]);
+    (clean, Some(&rest[..end]))
+}
+
+/// ` printed` plus the move clause the writer reads back (` move`, or
+/// ` move move1` when the range is named).
+fn append_move(mut printed: String, name: Option<&str>) -> String {
+    let Some(name) = name else {
+        return printed;
+    };
+    printed.push_str(" move");
+    if !name.is_empty() {
+        printed.push(' ');
+        printed.push_str(name);
+    }
+    printed
 }
 
 /// A printed plain part (`r1+2 Name (date)`) with the name's parentheses,
