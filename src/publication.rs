@@ -22,6 +22,12 @@ enum Phase {
 trait Backend {
     type Staged;
     fn stage(&mut self, path: &Path) -> io::Result<Self::Staged>;
+    /// Whether `a` and `b` were staged in one directory, as the filesystem
+    /// resolved each parent (symlinks, `..`, the output root), not as spelled.
+    fn same_parent(&mut self, a: &Self::Staged, b: &Self::Staged) -> io::Result<bool>;
+    /// Record `staged`'s name among the names claimed in `holder`'s directory
+    /// (one parent); `true` when the volume already holds an equivalent name.
+    fn claim_name(&mut self, holder: &Self::Staged, staged: &Self::Staged) -> io::Result<bool>;
     fn step(&mut self, staged: &mut Self::Staged, phase: Phase, bytes: &[u8]) -> io::Result<()>;
     fn cleanup(&mut self, staged: &mut Self::Staged) -> io::Result<()>;
 }
@@ -80,46 +86,6 @@ fn finish(
     }
 }
 
-/// One destination, however it is spelled. A leading `.` and a `..` that
-/// stays inside the path name the same file, and so does a name that differs
-/// only by case.
-fn destination_key(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                if !normalized.pop() {
-                    normalized.push("..");
-                }
-            }
-            other => normalized.push(other.as_os_str()),
-        }
-    }
-    if normalized.as_os_str().is_empty() {
-        normalized.push(".");
-    }
-    let mut current = normalized;
-    for _ in 0..40 {
-        let Ok(target) = std::fs::read_link(&current) else {
-            break;
-        };
-        current = match current.parent() {
-            Some(dir) if target.is_relative() => dir.join(target),
-            _ => target,
-        };
-    }
-    let name = current
-        .file_name()
-        .map(|name| name.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
-    let parent = match current.parent() {
-        Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
-        _ => PathBuf::from("."),
-    };
-    std::fs::canonicalize(&parent).unwrap_or(parent).join(name)
-}
-
 fn transaction<B: Backend>(
     backend: &mut B,
     files: &[(PathBuf, &[u8])],
@@ -138,10 +104,35 @@ fn transaction<B: Backend>(
         }
     };
     let result = (|| {
+        // One staged file per distinct parent directory holds the names
+        // claimed there: a destination is the parent the filesystem resolved
+        // plus a name the volume treats as equal (case, normalization).
+        let mut holders: Vec<usize> = Vec::new();
         for (path, bytes) in files {
-            if staged
-                .iter()
-                .any(|(previous, _)| destination_key(previous) == destination_key(path))
+            let held = backend
+                .stage(path)
+                .map_err(|e| failure(e, path, &committed, false))?;
+            // Retain every staged file, including the one whose next step fails,
+            // until the explicit cleanup below has reported its outcome.
+            staged.push((path.clone(), held));
+            let index = staged.len() - 1;
+            let mut holder = None;
+            for &candidate in &holders {
+                if backend
+                    .same_parent(&staged[candidate].1, &staged[index].1)
+                    .map_err(|e| failure(e, path, &committed, false))?
+                {
+                    holder = Some(candidate);
+                    break;
+                }
+            }
+            let holder = holder.unwrap_or_else(|| {
+                holders.push(index);
+                index
+            });
+            if backend
+                .claim_name(&staged[holder].1, &staged[index].1)
+                .map_err(|e| failure(e, path, &committed, false))?
             {
                 return Err(failure(
                     io::Error::new(io::ErrorKind::InvalidInput, "duplicate output path"),
@@ -150,12 +141,6 @@ fn transaction<B: Backend>(
                     false,
                 ));
             }
-            let held = backend
-                .stage(path)
-                .map_err(|e| failure(e, path, &committed, false))?;
-            // Retain every staged file, including the one whose next step fails,
-            // until the explicit cleanup below has reported its outcome.
-            staged.push((path.clone(), held));
             let (_, held) = staged.last_mut().expect("just staged");
             for phase in [Phase::Write, Phase::Flush, Phase::Sync, Phase::Validate] {
                 backend
@@ -559,6 +544,41 @@ impl Backend for FsBackend<'_> {
     fn cleanup(&mut self, staged: &mut StagedFile) -> io::Result<()> {
         staged.cleanup()
     }
+    fn same_parent(&mut self, a: &StagedFile, b: &StagedFile) -> io::Result<bool> {
+        // `a`'s staging directory has a unique name; `b`'s parent handle sees
+        // it exactly when both handles are one directory.
+        let Some(name) = a.scratch_name.as_deref() else {
+            return Ok(false);
+        };
+        match b.parent.symlink_metadata(name) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+    fn claim_name(&mut self, holder: &StagedFile, staged: &StagedFile) -> io::Result<bool> {
+        // The names live in a private directory inside `holder`'s staging, on
+        // the destination's volume, so the volume itself decides equality.
+        // The handle is closed before return: staging cleanup removes it.
+        const NAMES: &str = "names";
+        let scratch = holder.scratch.as_ref().expect("open staging directory");
+        match scratch.create_dir(NAMES) {
+            Ok(()) => (),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
+            Err(error) => return Err(error),
+        }
+        let names = scratch.open_dir(NAMES)?;
+        match names.symlink_metadata(&staged.target) {
+            Ok(_) => return Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error),
+        }
+        names.open_with(
+            &staged.target,
+            cap_std::fs::OpenOptions::new().write(true).create_new(true),
+        )?;
+        Ok(false)
+    }
     fn step(&mut self, staged: &mut StagedFile, phase: Phase, bytes: &[u8]) -> io::Result<()> {
         use std::io::{Read, Seek, SeekFrom, Write};
         #[cfg(test)]
@@ -839,6 +859,7 @@ mod tests {
         count: usize,
         order: Vec<(usize, Phase)>,
         fail_stage: Option<usize>,
+        claimed: std::collections::BTreeSet<PathBuf>,
     }
     impl Memory {
         fn new(fail: Option<(usize, Phase)>) -> Self {
@@ -852,6 +873,7 @@ mod tests {
                 count: 0,
                 order: vec![],
                 fail_stage: None,
+                claimed: std::collections::BTreeSet::new(),
             }
         }
     }
@@ -867,6 +889,16 @@ mod tests {
         }
         fn cleanup(&mut self, _staged: &mut Self::Staged) -> io::Result<()> {
             Ok(())
+        }
+        fn same_parent(&mut self, a: &Self::Staged, b: &Self::Staged) -> io::Result<bool> {
+            Ok(a.1.parent() == b.1.parent())
+        }
+        fn claim_name(
+            &mut self,
+            _holder: &Self::Staged,
+            staged: &Self::Staged,
+        ) -> io::Result<bool> {
+            Ok(!self.claimed.insert(staged.1.clone()))
         }
         fn step(
             &mut self,
@@ -1088,31 +1120,176 @@ mod tests {
         assert!(transaction(&mut fs, &[]).is_ok());
     }
 
-    #[test]
-    fn aliased_destinations_publish_nothing() {
-        let temp = tempfile::tempdir().unwrap();
-        let previous = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp.path()).unwrap();
-        struct Restore(PathBuf);
-        impl Drop for Restore {
-            fn drop(&mut self) {
-                let _ = std::env::set_current_dir(&self.0);
-            }
-        }
-        let _restore = Restore(previous);
-        let first = PathBuf::from("a");
-        let second = PathBuf::from("./a");
-        assert_ne!(first, second);
-        let error = publish_paths(&[(first, b"1"), (second, b"2")], false).unwrap_err();
+    /// A refused set publishes nothing and leaves no staging behind.
+    fn refused(dir: &Path, files: &[(PathBuf, &[u8])], overwrite: bool) {
+        let error = publish_paths(files, overwrite).unwrap_err();
         assert!(
             error.source.to_string().contains("duplicate output path"),
             "{error}"
         );
         assert!(error.committed.is_empty(), "{error}");
-        assert!(
-            !temp.path().join("a").exists(),
-            "a refused set must not publish"
+        assert_no_partials(dir);
+    }
+
+    /// Whether `dir`'s volume treats `a` and `b` as one name.
+    fn one_name(dir: &Path, a: &str, b: &str) -> bool {
+        let probe = tempfile::tempdir_in(dir).unwrap();
+        std::fs::write(probe.path().join(a), b"").unwrap();
+        probe.path().join(b).exists()
+    }
+
+    #[test]
+    fn a_parent_step_spelling_of_one_destination_publishes_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("x")).unwrap();
+        let (a, stepped) = (temp.path().join("a"), temp.path().join("x/../a"));
+        assert_ne!(a, stepped);
+        refused(temp.path(), &[(a.clone(), b"1"), (stepped, b"2")], false);
+        assert!(!a.exists(), "a refused set must not publish");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_parent_reached_through_a_directory_symlink_is_one_destination() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("real")).unwrap();
+        std::os::unix::fs::symlink("real", temp.path().join("alias")).unwrap();
+        refused(
+            temp.path(),
+            &[
+                (temp.path().join("real/x"), b"1"),
+                (temp.path().join("alias/x"), b"2"),
+            ],
+            true,
         );
+        assert!(!temp.path().join("real/x").exists());
+    }
+
+    /// The kernel resolves `jump` before `..`: `left/jump/../out` is
+    /// `elsewhere/out`, not `left/out`.
+    #[cfg(unix)]
+    #[test]
+    fn a_parent_step_through_a_symlink_follows_the_filesystem() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("elsewhere/sub")).unwrap();
+        std::fs::create_dir(temp.path().join("left")).unwrap();
+        std::os::unix::fs::symlink(
+            temp.path().join("elsewhere/sub"),
+            temp.path().join("left/jump"),
+        )
+        .unwrap();
+        refused(
+            temp.path(),
+            &[
+                (temp.path().join("left/jump/../out"), b"1"),
+                (temp.path().join("elsewhere/out"), b"2"),
+            ],
+            true,
+        );
+        // `left/out` is a different file: it publishes beside `elsewhere/out`.
+        publish_paths(
+            &[
+                (temp.path().join("left/jump/../out"), b"1"),
+                (temp.path().join("left/out"), b"2"),
+            ],
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read(temp.path().join("elsewhere/out")).unwrap(),
+            b"1"
+        );
+        assert_eq!(std::fs::read(temp.path().join("left/out")).unwrap(), b"2");
+    }
+
+    /// Installing replaces a symlink's entry, never its referent: the link
+    /// and its target are two destinations.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_and_its_referent_are_two_destinations() {
+        let temp = tempfile::tempdir().unwrap();
+        let (link, target) = (temp.path().join("link"), temp.path().join("target"));
+        std::fs::write(&target, b"old").unwrap();
+        std::os::unix::fs::symlink("target", &link).unwrap();
+        publish_paths(
+            &[(link.clone(), b"by link"), (target.clone(), b"by target")],
+            true,
+        )
+        .unwrap();
+        assert!(!std::fs::symlink_metadata(&link).unwrap().is_symlink());
+        assert_eq!(std::fs::read(&link).unwrap(), b"by link");
+        assert_eq!(std::fs::read(&target).unwrap(), b"by target");
+    }
+
+    /// Names one only by case are one destination exactly when the volume
+    /// says so; a case-sensitive volume keeps both.
+    #[test]
+    fn case_follows_the_volume() {
+        let temp = tempfile::tempdir().unwrap();
+        let files = [
+            (temp.path().join("Report.txt"), &b"1"[..]),
+            (temp.path().join("report.txt"), &b"2"[..]),
+        ];
+        if one_name(temp.path(), "Report.txt", "report.txt") {
+            refused(temp.path(), &files, false);
+        } else {
+            publish_paths(&files, false).unwrap();
+        }
+    }
+
+    /// Composed and decomposed `é` are one name on a normalization-
+    /// insensitive volume (APFS) and two elsewhere.
+    #[test]
+    fn unicode_normalization_follows_the_volume() {
+        let temp = tempfile::tempdir().unwrap();
+        let (composed, decomposed) = ("caf\u{e9}", "cafe\u{301}");
+        let files = [
+            (temp.path().join(composed), &b"1"[..]),
+            (temp.path().join(decomposed), &b"2"[..]),
+        ];
+        if one_name(temp.path(), composed, decomposed) {
+            refused(temp.path(), &files, false);
+        } else {
+            publish_paths(&files, false).unwrap();
+        }
+    }
+
+    /// Distinct non-UTF-8 names stay distinct (APFS refuses them outright).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn distinct_non_utf8_names_are_two_destinations() {
+        use std::os::unix::ffi::OsStrExt;
+        let temp = tempfile::tempdir().unwrap();
+        let name = |byte: u8| temp.path().join(std::ffi::OsStr::from_bytes(&[b'x', byte]));
+        publish_paths(&[(name(0xff), b"1"), (name(0xfe), b"2")], false).unwrap();
+        assert_eq!(std::fs::read(name(0xff)).unwrap(), b"1");
+        assert_eq!(std::fs::read(name(0xfe)).unwrap(), b"2");
+    }
+
+    /// An output root resolves its names from the root, whatever the
+    /// process's working directory is.
+    #[cfg(unix)]
+    #[test]
+    fn an_output_root_resolves_aliases_from_the_root() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("real")).unwrap();
+        std::os::unix::fs::symlink("real", temp.path().join("alias")).unwrap();
+        let root = OutputRoot::open(temp.path()).unwrap();
+        let error = root
+            .publish(
+                &[
+                    (PathBuf::from("real/x"), b"1"),
+                    (PathBuf::from("alias/x"), b"2"),
+                ],
+                true,
+            )
+            .unwrap_err();
+        assert!(
+            error.source.to_string().contains("duplicate output path"),
+            "{error}"
+        );
+        assert!(error.committed.is_empty(), "{error}");
+        assert!(!temp.path().join("real/x").exists());
         assert_no_partials(temp.path());
     }
 }
