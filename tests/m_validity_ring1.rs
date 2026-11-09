@@ -3913,3 +3913,37 @@ fn a_cells_final_mark_inside_alternate_content_is_the_shown_branch() {
         found[0]
     );
 }
+
+/// A picture inside a branch's paragraph, or only in the branch Word hides,
+/// does not make the shown paragraph any less the cell's final block: its
+/// mark is still reported (#2128 review).
+#[test]
+fn a_picture_inside_an_alternate_paragraph_keeps_its_final_mark() {
+    const W14: &str = "http://schemas.microsoft.com/office/word/2010/wordml";
+    let w14 = format!(r#"xmlns:w14="{W14}""#);
+    let choice_path =
+        "w:body[0]/w:tbl[0]/w:tr[0]/w:tc[0]/mc:AlternateContent[0]/mc:Choice[0]/w:p[0]";
+    let with_picture = |text: &str, kind: Option<&str>| {
+        marked(text, kind).replace("</w:p>", "<w:r><w:drawing/></w:r></w:p>")
+    };
+    let inline = alternate_paragraphs(
+        &w14,
+        "w14",
+        &with_picture("Shown.", Some("ins")),
+        &marked("Hide.", None),
+    );
+    let hidden_picture = alternate_paragraphs(
+        &w14,
+        "w14",
+        &marked("Shown.", Some("ins")),
+        &with_picture("Hide.", None),
+    );
+    for (label, cell) in [
+        ("inline picture", inline),
+        ("hidden picture", hidden_picture),
+    ] {
+        let found = cell_final_marks(&table_package("", [&cell, &marked("B.", None)]));
+        assert_eq!(found.len(), 1, "{label}: {found:?}");
+        assert_eq!(found[0].location, choice_path, "{label}: {:?}", found[0]);
+    }
+}

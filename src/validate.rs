@@ -1957,10 +1957,17 @@ pub(crate) fn last_block_paragraph(dom: &Dom, container: NodeId) -> Option<NodeI
 /// Drawing and VML alternates stay whole, so their paragraphs are not
 /// blocks of the cell around them. Anything else is not alternate content.
 fn shown_alternate_branch(dom: &Dom, node: NodeId) -> Option<NodeId> {
-    if !dom.name_is(node, &MC::alternate_content())
-        || !dom.descendants(node, Some(&W::drawing())).is_empty()
-        || !dom.descendants(node, Some(&W::pict())).is_empty()
-    {
+    if !dom.name_is(node, &MC::alternate_content()) {
+        return None;
+    }
+    // A picture that is itself a branch's block (not one inside a branch's
+    // paragraph) leaves the branch Word shows in doubt, so it is skipped.
+    let pictured = |branch: NodeId| {
+        dom.elements(branch, None)
+            .into_iter()
+            .any(|child| dom.name_is(child, &W::drawing()) || dom.name_is(child, &W::pict()))
+    };
+    if dom.elements(node, None).into_iter().any(pictured) {
         return None;
     }
     let understood = crate::comparer::finalize::word_understands_namespace;
