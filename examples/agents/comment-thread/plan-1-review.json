@@ -7,21 +7,21 @@
     {
       "id": "consent",
       "kind": "comment",
-      "paragraph": "body:p:3",
+      "paragraph": "p3",
       "find": "prior written consent",
       "text": "Should consent be deemed given after 10 business days of silence?"
     },
     {
       "id": "section-4",
       "kind": "comment",
-      "paragraph": "body:p:2",
-      "through": "body:p:4",
+      "paragraph": "p2",
+      "through": "p4",
       "text": "Section 4 as a whole conflicts with the onward-transfer terms of the DPA."
     },
     {
       "id": "survival",
       "kind": "comment",
-      "paragraph": "body:p:8",
+      "paragraph": "p8",
       "find": "survive termination",
       "text": "Add 7(b) and 7(c)."
     }
