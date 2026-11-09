@@ -755,16 +755,27 @@ fn format_one_nest(own: &str, parent: Option<&str>) -> String {
     let mut out = format_tag(own);
     if let Some(parent) = parent {
         out.push_str(" re ");
-        out.push_str(&format_tag(parent));
+        out.push_str(&parent_label(&format_tag(parent)));
     }
     out
 }
 
+/// A printed parent tag kept inside its one `fmt` entry: the reader splits
+/// the clause on `; `, so a parent printing several tags (two marks, a
+/// spelled id) joins them with `, ` instead. The reader drops the parent.
+fn parent_label(printed: &str) -> String {
+    printed.replace("; ", ", ")
+}
+
 fn format_nested_tags(tags: &[(String, Option<String>)]) -> String {
-    tags.iter()
-        .map(|(own, parent)| format_one_nest(own, parent.as_deref()))
-        .collect::<Vec<_>>()
-        .join("; ")
+    let mut out = String::new();
+    for (index, (own, parent)) in tags.iter().enumerate() {
+        if index > 0 {
+            out.push_str("; ");
+        }
+        out.push_str(&format_one_nest(own, parent.as_deref()));
+    }
+    out
 }
 
 struct Counter {
@@ -1665,10 +1676,10 @@ pub(crate) fn story_unshown(
             let mut tag = format_tag(&tag);
             if let Some(parent) = carrier.parent {
                 tag.push_str(" re ");
-                tag.push_str(&format_tag(&format!(
+                tag.push_str(&parent_label(&format_tag(&format!(
                     "{story}#{}",
                     required_date_tag_of(parent, handles)
-                )));
+                ))));
             }
             if !fmt.iter().any(|(_, t)| *t == tag) {
                 fmt.push((carrier.at, tag));
@@ -3522,6 +3533,21 @@ pub(crate) fn note_label(note: &str) -> Option<&str> {
 mod tests {
     use super::*;
     use crate::markdown::from_docx::ooxml::parse_xml;
+
+    /// coderabbit 4504980747, 4504980748: a parent that prints as several
+    /// tags (two marks, or a spelled id) stays inside its one `fmt` entry,
+    /// so the reader finds only the formatting change itself.
+    #[test]
+    fn a_parent_printing_several_tags_stays_in_one_fmt_entry() {
+        let line = format_nested_tags(&[
+            ("95@TL".to_string(), Some("96@RC|97@SD".to_string())),
+            ("98@TL".to_string(), None),
+        ]);
+        let tags = crate::markdown::view_notes::formatting_tags(&line).expect("the clause reads");
+        let ids: Vec<Vec<u32>> = tags.iter().map(|tag| tag.ids.clone()).collect();
+        assert_eq!(ids, [vec![95], vec![98]], "{line}");
+        assert!(tags.iter().all(|tag| tag.handle == "TL"), "{line}");
+    }
 
     /// empryo review of #476: a nested item's indented id line opens its
     /// own block, and an indented page marker still attaches to the block

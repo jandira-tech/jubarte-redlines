@@ -441,11 +441,13 @@ pub(super) fn own_fmt_tag(text: &str) -> &str {
 /// carry the change it sits in (`r95 @TL re r96 @RC`); the clause keeps
 /// the formatting change.
 pub(super) fn formatting_tags(text: &str) -> Option<Vec<Tag>> {
-    let own = text
-        .split("; ")
-        .map(own_fmt_tag)
-        .collect::<Vec<_>>()
-        .join("; ");
+    let mut own = String::with_capacity(text.len());
+    for (index, part) in text.split("; ").enumerate() {
+        if index > 0 {
+            own.push_str("; ");
+        }
+        own.push_str(own_fmt_tag(part));
+    }
     revision_tags(&own)
 }
 
