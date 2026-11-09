@@ -3431,9 +3431,21 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.soft_break_resolved(true);
         if self.metadata.is_some() || self.image.is_some() || self.comment.is_some() {
             let fence = if display { "$$" } else { "$" };
-            let text = format!("{fence}{}{fence}", critic::restore(latex));
+            // With CriticMarkup off nothing in the latex is an encoded
+            // token: a stand-in there is its own character.
+            let critic = self.options.critic;
+            let latex = if critic {
+                critic::restore(latex)
+            } else {
+                latex.to_string()
+            };
+            let text = format!("{fence}{latex}{fence}");
             if let Some(metadata) = &mut self.metadata {
                 metadata.push_str(&text);
+            } else if let Some((_, _, alt, _)) = &mut self.image
+                && !critic
+            {
+                alt.push_str(&text);
             } else if let Some((_, _, alt, loose)) = &mut self.image {
                 let mut tokens = Vec::new();
                 self.pieces.feed(&text, |piece| match piece {
@@ -3449,10 +3461,12 @@ impl<'o, 'a> Writer<'o, 'a> {
         // An insertion or deletion inside the math (`$A={--π--}r^2$`) marks
         // its runs; any other CriticMarkup there is text. With CriticMarkup
         // off there is no encoded token to split, so the latex is kept.
+        // A stand-in the source held as a character is escaped, so the
+        // math keeps it as that character.
         let mut source = String::with_capacity(latex.len());
         if self.options.critic {
             Pieces::default().feed(latex, |piece| match piece {
-                Piece::Text(text) => source.push_str(text),
+                Piece::Text(text) => math::literal_markers(text, &mut source),
                 Piece::Token(Token::InsertStart) => source.push(math::INSERT_START),
                 Piece::Token(Token::InsertEnd) => source.push(math::INSERT_END),
                 Piece::Token(Token::DeleteStart) => source.push(math::DELETE_START),
@@ -3460,7 +3474,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 Piece::Token(token) => source.push_str(critic::delimiter(token)),
             });
         } else {
-            source.push_str(latex);
+            math::literal_markers(latex, &mut source);
         }
         self.push(Content::Math {
             latex: source,
