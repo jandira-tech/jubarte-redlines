@@ -56,7 +56,8 @@ pub(super) fn wholly_deleted_endpoints(
     {
         return HashSet::new();
     }
-    let range_deleted = super::move_from_range_deleted_elements(dom, root);
+    let mut range_deleted = super::move_from_range_deleted_elements(dom, root);
+    range_deleted.extend(super::custom_xml_move_from_deleted_elements(dom, root));
     let removed_by_range = |node| {
         range_deleted.contains(&node)
             || dom
@@ -96,7 +97,7 @@ pub(super) fn wholly_deleted_endpoints(
             }
             continue;
         } else if is_character(dom, e, &name) {
-            in_deleted_content(dom, e) || removed_by_range(e)
+            in_deleted_content(dom, e) || removed_by_range(e) || in_deleted_fraction(dom, e)
         } else {
             continue;
         };
@@ -113,7 +114,9 @@ pub(super) fn is_character(dom: &Dom, e: NodeId, name: &XName) -> bool {
     if name.namespace_name() == M::URI {
         return name.local_name() == "t" && !dom.value_str(e).is_empty();
     }
-    if name.namespace_name() != W::URI {
+    // An unselected deletion is renamed out of the wordprocessing namespace
+    // before this scan. Its text is still a character, and it survives.
+    if name.namespace_name() != W::URI && name.namespace_name() != super::FROZEN_NS {
         return false;
     }
     match name.local_name() {
@@ -124,6 +127,18 @@ pub(super) fn is_character(dom: &Dom, e: NodeId, name: &XName) -> bool {
         | "footnoteReference" | "endnoteReference" | "fldChar" | "ptab" => true,
         _ => false,
     }
+}
+
+/// A fraction whose control properties carry a deletion is removed whole,
+/// including numerator and denominator text that is not itself inside `w:del`.
+fn in_deleted_fraction(dom: &Dom, node: NodeId) -> bool {
+    dom.ancestors(node, Some(&M::name("f")))
+        .into_iter()
+        .any(|fraction| {
+            dom.elements(fraction, Some(&M::name("fPr")))
+                .into_iter()
+                .any(|props| super::has_path(dom, props, &M::name("ctrlPr"), &W::del()))
+        })
 }
 
 /// Is `e` inside deleted or moved-from content, or a deleted row?

@@ -1545,10 +1545,33 @@ pub fn accept_move_from_ranges(dom: &mut Dom, document: NodeId) -> NodeId {
 /// prepass uses the same deletion set before wrappers/anchors are hoisted,
 /// so range-only moved characters count as deleted just like wrapped ones.
 fn move_from_range_deleted_elements(dom: &Dom, document: NodeId) -> HashSet<NodeId> {
-    use std::collections::{HashMap, HashSet};
+    elements_inside_matched_ranges(
+        dom,
+        document,
+        &W::move_from_range_start(),
+        &W::move_from_range_end(),
+    )
+}
 
-    let mfrs = W::move_from_range_start();
-    let mfre = W::move_from_range_end();
+/// Elements wholly inside a matched custom-XML move-from range. Accept
+/// deletes those elements; the annotation prepass has to count them deleted
+/// before that transform runs.
+fn custom_xml_move_from_deleted_elements(dom: &Dom, document: NodeId) -> HashSet<NodeId> {
+    elements_inside_matched_ranges(
+        dom,
+        document,
+        &W::name("customXmlMoveFromRangeStart"),
+        &W::name("customXmlMoveFromRangeEnd"),
+    )
+}
+
+fn elements_inside_matched_ranges(
+    dom: &Dom,
+    document: NodeId,
+    start: &XName,
+    end: &XName,
+) -> HashSet<NodeId> {
+    use std::collections::{HashMap, HashSet};
 
     let mut start_tags_in_range: Vec<NodeId> = Vec::new();
     let mut end_tags_in_range: Vec<NodeId> = Vec::new();
@@ -1557,7 +1580,7 @@ fn move_from_range_deleted_elements(dom: &Dom, document: NodeId) -> HashSet<Node
 
     for tag in descendant_and_self_tags(dom, document) {
         let name = dom.name(tag.element).unwrap();
-        if name == mfrs {
+        if &name == start {
             let id = dom
                 .attribute(tag.element, &W::id())
                 .unwrap_or("")
@@ -1565,7 +1588,7 @@ fn move_from_range_deleted_elements(dom: &Dom, document: NodeId) -> HashSet<Node
             potential.insert(id, (Vec::new(), Vec::new()));
             continue;
         }
-        if name == mfre {
+        if &name == end {
             let id = dom.attribute(tag.element, &W::id()).unwrap_or("");
             if let Some((starts, ends)) = potential.remove(id) {
                 start_tags_in_range.extend(starts);
