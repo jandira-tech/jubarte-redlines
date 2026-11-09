@@ -125,7 +125,7 @@ pub fn package(body: &str, threaded: bool) -> Vec<u8> {
 }
 
 /// Exact comment identities, anchors and metadata keys after resolution.
-pub(crate) fn assert_state(bytes: &[u8], modern: bool, expected: &[(u32, &str, Option<u32>)]) {
+pub fn assert_state(bytes: &[u8], modern: bool, expected: &[(u32, &str, Option<u32>)]) {
     use crate::common::docx::part_string;
     use jubarte::namespaces::W;
     use jubarte::xmllinq::Dom;
