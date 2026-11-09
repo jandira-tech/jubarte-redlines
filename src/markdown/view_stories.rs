@@ -374,6 +374,49 @@ enum Read {
     Gap,
 }
 
+/// The kind of a piece these ids already name.
+fn established(read: &[Read], ids: &[u32]) -> Option<&'static str> {
+    read.iter().rev().find_map(|one| match one {
+        Read::Own(own, kind) if own.as_slice() == ids => Some(*kind),
+        _ => None,
+    })
+}
+
+/// The next piece that names `ids` as its own change, past this one.
+fn next_own_kind(mut rest: &str, ids: &[u32]) -> Option<&'static str> {
+    // A piece opens with `{`, so the scan jumps from one to the next.
+    while let Some(at) = rest.find('{') {
+        rest = &rest[at..];
+        if let Some((change, after)) = change(rest) {
+            let (tags, _, after) = tags_after(after);
+            if tags.first().is_some_and(|tag| tag.ids == ids) {
+                return Some(match change {
+                    Change::Insert(_) => "w:ins",
+                    Change::Delete(_) | Change::Substitute(..) => "w:del",
+                });
+            }
+            rest = after;
+            continue;
+        }
+        rest = &rest[1..];
+    }
+    None
+}
+
+/// The element a substitution's `re` continues. A change with one id is one
+/// mark, so the nest takes the kind of that change's piece before it, or
+/// else after it. A joined change (`r7+8`) can be a replacement whose old
+/// side is a deletion and whose new side holds the nest, so a deletion
+/// continues only when another deletion of it follows the nest.
+fn parent_kind(single: bool, previous: Option<&str>, later: Option<&str>) -> &'static str {
+    let deletion = if single {
+        previous.or(later) == Some("w:del")
+    } else {
+        previous == Some("w:del") && later == Some("w:del")
+    };
+    if deletion { "w:del" } else { "w:ins" }
+}
+
 /// The other of `w:ins` and `w:del`: each `re` level alternates them.
 fn other_mark(name: &str) -> &'static str {
     if name == "w:ins" { "w:del" } else { "w:ins" }
@@ -433,7 +476,20 @@ fn reads(text: &str, out: &mut Vec<Read>) {
                     if let Some(old) = old {
                         out.push(Read::Own(old.ids.clone(), "w:del"));
                     }
-                    let mut name = "w:ins";
+                    // A deletion continues when the change is a deletion on
+                    // both sides of the nest. The old side of a replacement
+                    // is a deletion whose new side is this nest, so that
+                    // parent stays an insertion.
+                    let mut name = parents
+                        .first()
+                        .map(|parent| {
+                            parent_kind(
+                                parent.ids.len() == 1,
+                                established(out, &parent.ids),
+                                next_own_kind(after, &parent.ids),
+                            )
+                        })
+                        .unwrap_or("w:ins");
                     for parent in &parents {
                         out.push(Read::Parent(parent.ids.clone(), name));
                         name = other_mark(name);
@@ -1067,6 +1123,8 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
     let mut plain = String::new();
     let mut last_revision = Vec::new();
     let mut noid_parent = Vec::new();
+    // The element each joined id was written as, so a later `re` keeps it.
+    let mut kinds: HashMap<Vec<u32>, &'static str> = HashMap::new();
     let mut rest = text;
     while let Some(c) = rest.chars().next() {
         if let Some(after) = rest.strip_prefix("{>>")
@@ -1100,6 +1158,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
             let (mut tags, mut parents, after) = tags_after(after);
             let mut changed = String::new();
             let mut wrappers = Vec::new();
+            let mut inserted_last = false;
             match change {
                 Change::Insert(inner) | Change::Delete(inner) => {
                     let name = if matches!(change, Change::Insert(_)) {
@@ -1125,6 +1184,9 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                         &mut noid_parent,
                     );
                     let tag = tags.first();
+                    if let Some(tag) = tag {
+                        kinds.insert(tag.ids.clone(), name);
+                    }
                     let pooled = tag.and_then(|tag| marks.take(tag));
                     let ids = match (&pooled, tag) {
                         (Some(pooled), _) => pooled.as_slice(),
@@ -1195,18 +1257,9 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                         old,
                         drawings,
                     );
-                    let mut parent_kind = "w:ins";
-                    for parent in &parents {
-                        let open = format!("<{}>", marks.parent(parent_kind, parent));
-                        changed = format!("{open}{changed}</{parent_kind}>");
-                        parent_kind = if parent_kind == "w:ins" {
-                            "w:del"
-                        } else {
-                            "w:ins"
-                        };
-                    }
+                    let mut inserted = String::new();
                     tracked(
-                        &mut changed,
+                        &mut inserted,
                         marks,
                         ("w:ins", false),
                         new_tag,
@@ -1214,9 +1267,44 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                         new,
                         drawings,
                     );
+                    let mut parent_kind = parents
+                        .first()
+                        .map(|parent| {
+                            parent_kind(
+                                parent.ids.len() == 1,
+                                kinds.get(&parent.ids).copied(),
+                                next_own_kind(after, &parent.ids),
+                            )
+                        })
+                        .unwrap_or("w:ins");
+                    let mut wrapped = Vec::new();
+                    for parent in &parents {
+                        let open = format!("<{}>", marks.parent(parent_kind, parent));
+                        let close = if parent_kind == "w:ins" {
+                            "</w:ins>"
+                        } else {
+                            "</w:del>"
+                        };
+                        // The deleted side sits in the parent. The inserted
+                        // side follows that element: text under a deletion
+                        // is refused even inside an insertion.
+                        changed = format!("{open}{changed}{close}");
+                        wrapped.push((open, close, true));
+                        parent_kind = other_mark(parent_kind);
+                    }
+                    wrapped.reverse();
+                    wrappers.extend(wrapped);
+                    inserted_last = !inserted.is_empty();
+                    changed.push_str(&inserted);
                 }
             }
             append_revision(&mut out, &changed, wrappers, &mut last_revision);
+            // A nest's inserted side ends the piece, so the close at the end
+            // of `out` is that insertion's, not the parent's: the parent's
+            // next piece opens its own element rather than joining it.
+            if inserted_last {
+                last_revision.clear();
+            }
             rest = after;
             continue;
         }

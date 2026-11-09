@@ -1894,6 +1894,10 @@ struct Writer<'o, 'a> {
     pieces: Pieces,
     change: Option<(Kind, u32)>,
     serial: u32,
+    /// Nests whose outer kind was guessed because no earlier piece of that
+    /// change had been read: the inner serial and the story it sits in.
+    /// [`Self::finish`] gives each the kind of the change's first piece.
+    guessed_wraps: Vec<(u32, Option<String>)>,
     slot: usize,
     span_start: Option<SpanStart>,
     closed: Option<u32>,
@@ -2099,6 +2103,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             pieces: Pieces::default(),
             change: None,
             serial: 0,
+            guessed_wraps: Vec::new(),
             slot: 0,
             span_start: None,
             closed: None,
@@ -3908,7 +3913,12 @@ impl<'o, 'a> Writer<'o, 'a> {
                     self.name_revision(inner, old_ids);
                 }
                 if let Some(tag) = tags.get(1) {
-                    let outer = (other(kind), self.tag_serial(tag));
+                    let established = self.established_kind(&tag.ids);
+                    if established.is_none() && !tag.ids.is_empty() {
+                        self.guessed_wraps.push((inner, self.target.clone()));
+                    }
+                    let parent = established.unwrap_or_else(|| other(kind));
+                    let outer = (parent, self.tag_serial(tag));
                     self.document.wraps.insert(inner, outer);
                     self.unshown_rebuilt(&[outer.1]);
                 }
@@ -3943,7 +3953,12 @@ impl<'o, 'a> Writer<'o, 'a> {
                 }
                 if let Some(part) = parts.get(1) {
                     self.serial += 1;
-                    let outer = (other(kind), self.serial);
+                    let established = self.established_kind(&part.ids);
+                    if established.is_none() && !part.ids.is_empty() {
+                        self.guessed_wraps.push((inner, self.target.clone()));
+                    }
+                    let parent = established.unwrap_or_else(|| other(kind));
+                    let outer = (parent, self.serial);
                     self.document
                         .attributions
                         .insert(outer.1, (part.author.clone(), part.date.clone()));
@@ -4861,6 +4876,71 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
     }
 
+    /// The kind of a change these ids already name in the story being written.
+    /// A substitution inside that change keeps its kind: the other of the
+    /// inner side would call a deletion an insertion and spend one of its
+    /// ids on the wrapper.
+    fn established_kind(&self, ids: &[u32]) -> Option<Kind> {
+        if ids.is_empty() {
+            return None;
+        }
+        let story: &[Item] = match &self.target {
+            Some(label) => self.definitions.get(label).map(Vec::as_slice)?,
+            None => &self.body,
+        };
+        // The latest piece of that change, searched from the end.
+        story.iter().rev().find_map(|item| match item {
+            Item::Run(Run {
+                change: Some((kind, serial)),
+                ..
+            }) if self
+                .document
+                .revision_ids
+                .get(serial)
+                .is_some_and(|named| named.as_slice() == ids) =>
+            {
+                Some(*kind)
+            }
+            _ => None,
+        })
+    }
+
+    /// A nest read before any other piece of its outer change guessed that
+    /// change's kind. The change's first piece in the same story settles it:
+    /// a substitution at the start of a deletion sits in that deletion.
+    fn settle_guessed_wraps(&mut self) {
+        for (inner, target) in std::mem::take(&mut self.guessed_wraps) {
+            let Some(&(_, outer)) = self.document.wraps.get(&inner) else {
+                continue;
+            };
+            let Some(ids) = self.document.revision_ids.get(&outer).cloned() else {
+                continue;
+            };
+            let story: &[Item] = match &target {
+                Some(label) => self.definitions.get(label).map_or(&[][..], Vec::as_slice),
+                None => &self.body,
+            };
+            let first = story.iter().find_map(|item| match item {
+                Item::Run(Run {
+                    change: Some((kind, serial)),
+                    ..
+                }) if *serial != inner
+                    && self
+                        .document
+                        .revision_ids
+                        .get(serial)
+                        .is_some_and(|named| *named == ids) =>
+                {
+                    Some(*kind)
+                }
+                _ => None,
+            });
+            if let (Some(kind), Some(wrap)) = (first, self.document.wraps.get_mut(&inner)) {
+                wrap.0 = kind;
+            }
+        }
+    }
+
     /// Remember where an explicit id was supplied, including a parent tag.
     fn name_revision(&mut self, serial: u32, ids: Vec<u32>) {
         self.document.revision_ids.insert(serial, ids);
@@ -5362,6 +5442,7 @@ impl<'o, 'a> Writer<'o, 'a> {
     fn finish(mut self) -> Document {
         self.end_paragraph();
         self.textless_paragraph();
+        self.settle_guessed_wraps();
         if let Some(comment) = self.comment.take() {
             // An unclosed comment cannot happen with complete spans; keep
             // its text anyway.
