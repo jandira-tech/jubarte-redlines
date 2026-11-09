@@ -190,7 +190,12 @@ pub(crate) fn char_units(hundredths: f64) -> String {
                 .is_ok_and(|v| (v * 100.0).round() == hundredths)
         })
         .unwrap_or_else(|| format!("{count:.2}"));
-    let value = value.trim_end_matches('0').trim_end_matches('.');
+    // Only a fraction's trailing zeros go: `10ch` stays ten.
+    let value = if value.contains('.') {
+        value.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        &value
+    };
     format!("{value}ch")
 }
 
@@ -3210,6 +3215,26 @@ fn cell_borders_at(
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
+
+    /// Whole character counts keep their zeros: `0ch` is a stated zero and
+    /// `10ch` is ten (#2133 review, Bugbot).
+    #[test]
+    fn char_units_keep_the_zeros_of_whole_counts() {
+        for (hundredths, want) in [
+            (0.0, "0ch"),
+            (100.0, "1ch"),
+            (1000.0, "10ch"),
+            (10000.0, "100ch"),
+            (150.0, "1.5ch"),
+            (1050.0, "10.5ch"),
+            (125.0, "1.25ch"),
+            (-200.0, "-2ch"),
+            (-1000.0, "-10ch"),
+        ] {
+            assert_eq!(char_units(hundredths), want, "{hundredths}");
+            assert_eq!(char_hundredths(want), Some(hundredths as i64), "{want}");
+        }
+    }
 
     #[test]
     fn a_run_splits_after_its_last_inner_space_else_before_its_last_character() {

@@ -3220,3 +3220,18 @@ fn a_character_unit_indent_is_kept() {
         "{xml}"
     );
 }
+
+/// Whole character counts round-trip with their zeros: `10ch` is not
+/// `1ch`, and a stated `0ch` stays stated (#2133 review, Bugbot).
+#[test]
+fn whole_character_indents_round_trip_with_their_zeros() {
+    let body = common::docx::docx(
+        r#"<w:p><w:pPr><w:ind w:leftChars="1000" w:firstLineChars="0"/></w:pPr><w:r><w:t>Ten</w:t></w:r></w:p>"#,
+    );
+    let (view, again, _) = docx_round_trip(&body);
+    assert!(view.contains("left 10ch"), "{view}");
+    assert!(view.contains("first-line 0ch"), "{view}");
+    let document = part_string(&again, "word/document.xml").unwrap();
+    assert!(document.contains(r#"w:leftChars="1000""#), "{document}");
+    assert!(document.contains(r#"w:firstLineChars="0""#), "{document}");
+}
