@@ -128,6 +128,8 @@ pub(super) struct Paragraph {
     /// The text box the paragraph anchors, whose blocks the view prints
     /// after its text with no id line of their own.
     pub text_box: Option<TextBox>,
+    /// The size names the runs, and the mark keeps the style.
+    pub mark_inherits: bool,
 }
 
 /// A minimal anchored text box: the change its anchor run carries, as the
@@ -2146,7 +2148,7 @@ fn paragraph_properties(
     }
     // CT_ParaRPr: the mark's change, then its size, then its formatting
     // change.
-    if let Some(size) = paragraph.size {
+    if let Some(size) = paragraph.size.filter(|_| !paragraph.mark_inherits) {
         let _ = write!(
             mark_properties,
             "<w:sz w:val=\"{size}\"/><w:szCs w:val=\"{size}\"/>"
