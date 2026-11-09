@@ -61,3 +61,32 @@ fn live_text_between_separate_tags_does_not_join_them() {
         .collect();
     assert_eq!(ids, ["r1".to_string(), "r2".to_string()]);
 }
+
+/// Prose that mentions ids is not a tag: an untagged substitution next to
+/// text that says `r1` and `r2` gives no warning.
+#[test]
+fn ids_in_prose_are_not_tags() {
+    let out = written("pay {~~old~>new~~} now, as r1 and r2 say\n");
+    assert!(
+        out.warnings
+            .iter()
+            .all(|warning| !warning.contains("touch")),
+        "{:?}",
+        out.warnings
+    );
+}
+
+/// The plain view's notes (`{r1 Ana Lima (date)}`) are tags too.
+#[test]
+fn plain_notes_that_touch_still_warn() {
+    let out = written(
+        "pay {--old--}{r1 Ana Lima (2026-10-01T09:00:00Z)}{++new++}{r2 Ana Lima (2026-10-01T09:00:00Z)} now\n",
+    );
+    assert!(
+        out.warnings
+            .iter()
+            .any(|warning| warning.starts_with("r1 and r2 touch")),
+        "{:?}",
+        out.warnings
+    );
+}

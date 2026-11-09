@@ -452,9 +452,14 @@ fn unique_revision_ids(package: &mut PartFs, markdown: &str, warnings: &mut Vec<
 fn warn_when_separate_tags_touch(package: &PartFs, markdown: &str, warnings: &mut Vec<String>) {
     let mut tags: Vec<(&str, BTreeSet<String>)> = Vec::new();
     let mut named = BTreeSet::new();
-    for word in markdown
-        .split(|c: char| c.is_whitespace() || matches!(c, '{' | '}' | ';' | ',' | '"' | '\''))
-    {
+    for (start, word) in tag_words(markdown) {
+        // Only a tag names a change: a note right after a span
+        // (`{--old--}{r1 @A}`, `{++new++}{r2 Ana Lima}`) or ids an author
+        // handle follows (`rev r1 @AC`). Ids in prose are text.
+        let end = start + word.len();
+        if !(markdown[..start].ends_with("}{") || markdown[end..].starts_with(" @")) {
+            continue;
+        }
         let Ok(ids) = crate::ids::parse_change_ids(word) else {
             continue;
         };
@@ -491,6 +496,23 @@ fn warn_when_separate_tags_touch(package: &PartFs, markdown: &str, warnings: &mu
             change.id
         ));
     }
+}
+
+/// The words of `markdown` with their byte offsets, split at whitespace and
+/// at the punctuation around tags.
+fn tag_words(markdown: &str) -> impl Iterator<Item = (usize, &str)> {
+    let boundary = |c: char| c.is_whitespace() || matches!(c, '{' | '}' | ';' | ',' | '"' | '\'');
+    let mut at = 0;
+    markdown
+        .split(boundary)
+        .map(move |word| {
+            let start = at;
+            at += word.len();
+            // The boundary after the word, when there is one.
+            at += markdown[at..].chars().next().map_or(0, char::len_utf8);
+            (start, word)
+        })
+        .filter(|(_, word)| !word.is_empty())
 }
 
 /// `r1 and r2`, or `r1, r2 and r3`.
