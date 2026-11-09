@@ -101,3 +101,26 @@ fn a_font_name_with_markup_stays_the_font_name() {
     assert!(!xml.contains("<w:ins "), "no change is forged\n{xml}");
     assert!(xml.contains(">a<") && xml.contains(">b<"), "{xml}");
 }
+
+/// cursor 4517245568: a page break with only a symbol after it prints in
+/// place, before the symbol, and comes back there: on the id line it came
+/// back after the symbol.
+#[test]
+fn a_page_break_before_a_symbol_stays_before_it() {
+    let docx = symbol_paragraph(
+        r#"<w:r><w:t>a</w:t></w:r><w:r><w:br w:type="page"/></w:r><w:r><w:sym w:font="Wingdings" w:char="F0FC"/></w:r>"#,
+    );
+    let first = view_of(&docx);
+    assert!(
+        first.contains(&format!(r#"a<br type="page"/>{SPAN}"#)),
+        "the break prints in place:\n{first}"
+    );
+    let copy = markdown_to_docx(&first, &DocxOptions::default())
+        .expect("the view writes")
+        .docx;
+    let xml = part_string(&copy, "word/document.xml").expect("document.xml");
+    let br = xml.find(r#"<w:br w:type="page"/>"#).expect("the break");
+    let sym = xml.find("<w:sym ").expect("the symbol");
+    assert!(br < sym, "the break comes back before the symbol\n{xml}");
+    assert_eq!(view_of(&copy), first);
+}
