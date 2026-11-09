@@ -1343,8 +1343,88 @@ fn tag_fields(line: &str) -> Vec<String> {
     out
 }
 
+/// Ranges of fenced code, in bytes. A line of three or more backticks or
+/// tildes, indented less than four columns, opens a fence, and a later bare
+/// line of at least that many of the same character closes it. An opening
+/// line may name a language; a backtick one names none holding a backtick.
+fn code_fenced(text: &str) -> Vec<std::ops::Range<usize>> {
+    let mut open: Option<(char, usize, usize)> = None;
+    let mut ranges = Vec::new();
+    let mut offset = 0usize;
+    for line in text.split_inclusive('\n') {
+        // Four columns of indent make indented code, not a fence.
+        let mut indent = 0usize;
+        for c in line.chars() {
+            match c {
+                ' ' => indent += 1,
+                '\t' => indent += 4 - indent % 4,
+                _ => break,
+            }
+        }
+        let trimmed = line.trim();
+        if indent < 4
+            && let Some((ch, len, bare)) = fence_mark(trimmed)
+        {
+            match open {
+                Some((och, olen, start)) if ch == och && bare && len >= olen => {
+                    ranges.push(start..offset + line.len());
+                    open = None;
+                }
+                // A backtick opener's info string holds no backtick
+                // (`` ```a``` `` is inline code).
+                None if ch != '`' || !trimmed[len..].contains('`') => {
+                    open = Some((ch, len, offset));
+                }
+                _ => {}
+            }
+        }
+        offset += line.len();
+    }
+    if let Some((_, _, start)) = open {
+        ranges.push(start..text.len());
+    }
+    ranges
+}
+
+/// Fenced ranges asked about positions in increasing order: a cursor
+/// walks the sorted ranges once, so a text with many fences and many
+/// lines stays linear.
+struct Fences<'a> {
+    ranges: &'a [std::ops::Range<usize>],
+    next: usize,
+}
+
+impl<'a> Fences<'a> {
+    fn new(ranges: &'a [std::ops::Range<usize>]) -> Self {
+        Self { ranges, next: 0 }
+    }
+
+    /// Whether `at` sits in a fence; `at` never goes back.
+    fn holds(&mut self, at: usize) -> bool {
+        while self
+            .ranges
+            .get(self.next)
+            .is_some_and(|range| range.end <= at)
+        {
+            self.next += 1;
+        }
+        self.ranges
+            .get(self.next)
+            .is_some_and(|range| range.contains(&at))
+    }
+}
+
+/// A fence marker: its character, how many, and whether nothing else is on
+/// the line, which is what closes a fence.
+fn fence_mark(trimmed: &str) -> Option<(char, usize, bool)> {
+    let ch = trimmed.chars().next().filter(|c| matches!(c, '`' | '~'))?;
+    let len = trimmed.chars().take_while(|&c| c == ch).count();
+    (len >= 3).then(|| (ch, len, trimmed.chars().skip(len).all(char::is_whitespace)))
+}
+
 /// The attribution braces (`{r5 @AC}`, comments skipped) in `text`, and with
-/// `lines` its `<!-- … -->` lines' contents.
+/// `lines` its `<!-- … -->` lines' contents. A comment inside a code fence
+/// is the fence's text.
 fn tag_spans(text: &str, lines: bool, out: &mut Vec<String>) {
     out.extend(
         crate::markdown::critic::attributed_notes(text)
@@ -1352,11 +1432,17 @@ fn tag_spans(text: &str, lines: bool, out: &mut Vec<String>) {
             .map(|(_, note)| note),
     );
     if lines {
+        let ranges = code_fenced(text);
+        let mut fenced = Fences::new(&ranges);
         let mut rest = text;
+        let mut base = 0usize;
         while let Some(at) = rest.find("<!-- ") {
             let after = &rest[at + 5..];
             let end = after.find(" -->").unwrap_or(after.len());
-            out.push(after[..end].to_string());
+            if !fenced.holds(base + at) {
+                out.push(after[..end].to_string());
+            }
+            base += at + 5 + end;
             rest = &after[end..];
         }
     }
@@ -2891,7 +2977,16 @@ pub(crate) fn collect_revisions(shown: &str) -> Vec<&'static str> {
             _ => add(&tags.iter().collect::<Vec<_>>(), kind),
         }
     }
-    for line in shown.lines() {
+    let ranges = code_fenced(shown);
+    let mut fenced = Fences::new(&ranges);
+    let mut offset = 0usize;
+    for line in shown.split_inclusive('\n') {
+        let at = offset;
+        offset += line.len();
+        if fenced.holds(at) {
+            continue;
+        }
+        let line = line.trim_end_matches(['\n', '\r']);
         if let Some(p) = view_notes::id_line(line) {
             if let Some(tag) = &p.break_ins {
                 add(&[tag], INSERTED_MARK);
@@ -3610,6 +3705,86 @@ mod tests {
         let line = "<!-- t0 1x1, cells p1-p1 by row, break-ins r3 @AC in p1, \
                     break-del r4 @AC in p1 -->";
         assert_eq!(collect_revisions(line), ["mark", "mark"]);
+    }
+
+    /// A code fence keeps a line that looks like an id line as text, so the
+    /// fallback count and a selection skip it. A cell paragraph that names
+    /// an insertion and a deletion still counts as two marks.
+    #[test]
+    fn a_fenced_id_line_does_not_count_and_both_cell_marks_do() {
+        let fenced = "```\n<!-- p3 rev r4 @AC -->\n```\n";
+        let fallback = with_logical(None, || shown_changes(fenced, true));
+        assert!(
+            fallback.is_empty(),
+            "fenced id line counted in the fallback: {fallback:?}"
+        );
+        let selected = with_logical(Some(vec![change("r4")]), || shown_changes(fenced, false));
+        assert!(
+            selected.is_empty(),
+            "fenced id line counted in a selection: {selected:?}"
+        );
+        let marks = "<!-- t0 1x1, cells p5-p5 by row, break-ins r1 @A in p5, \
+                     break-del r2 @A in p5 -->";
+        assert_eq!(collect_revisions(marks), ["mark", "mark"]);
+        assert_eq!(
+            with_logical(None, || shown_changes("<!-- p3 rev r4 @AC -->", true)),
+            ["ins"]
+        );
+        assert_eq!(
+            with_logical(Some(vec![change("r9")]), || shown_changes(fenced, true)),
+            ["ins"]
+        );
+    }
+
+    /// Four spaces before backticks make indented code, not a fence (as in
+    /// CommonMark and the reader's own literal scan): the id line after it
+    /// still counts, and a line of three spaces still opens one.
+    #[test]
+    fn an_indented_backtick_line_is_no_fence() {
+        let indented = "    ```\n<!-- p3 rev r4 @AC -->\n";
+        assert_eq!(
+            with_logical(None, || shown_changes(indented, true)),
+            ["ins"]
+        );
+        assert!(code_fenced(indented).is_empty());
+        let fenced = "   ```\n<!-- p3 rev r4 @AC -->\n   ```\n";
+        assert_eq!(code_fenced(fenced).len(), 1);
+        let inline = "```a```\n<!-- p3 rev r4 @AC -->\n";
+        assert!(code_fenced(inline).is_empty());
+    }
+
+    /// Positions asked in order walk the ranges once and still answer as a
+    /// scan of every range would.
+    #[test]
+    fn fences_answer_positions_in_order() {
+        let text = "a\n```\nb\n```\nc\n~~~\nd\n~~~\ne\n";
+        let ranges = code_fenced(text);
+        let mut fences = Fences::new(&ranges);
+        for at in 0..text.len() {
+            assert_eq!(
+                fences.holds(at),
+                ranges.iter().any(|range| range.contains(&at)),
+                "{at}"
+            );
+        }
+    }
+
+    fn change(id: &str) -> crate::changes::Change {
+        crate::changes::Change {
+            id: id.to_string(),
+            r#ref: id.to_string(),
+            kind: crate::changes::ChangeKind::Insertion,
+            target: "text",
+            author: None,
+            date: None,
+            text: String::new(),
+            paragraph: None,
+            move_name: None,
+            move_side: None,
+            inside: None,
+            holds_comments: Vec::new(),
+            members: Vec::new(),
+        }
     }
 
     /// A mark with no `w:id` prints `noid`, so one author's inserted and
