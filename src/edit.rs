@@ -6499,12 +6499,13 @@ impl<'p> Transaction<'p> {
     }
 
     /// The final paragraph of `node`'s container (a table cell or a story):
-    /// its last paragraph, through the content controls and custom XML
-    /// elements that may hold it, whatever table follows it in a cell. Its
-    /// mark is the one Word never deletes.
+    /// its last paragraph, through the content controls, custom XML
+    /// elements and the alternate-content branch Word shows that may hold
+    /// it, whatever table follows it in a cell. Its mark is the one Word
+    /// never deletes.
     pub(super) fn final_paragraph(&self, node: NodeId) -> Option<NodeId> {
         let dom = &self.opened.dom;
-        container_blocks(dom, self.paragraph_container(node))
+        crate::validate::container_blocks(dom, self.paragraph_container(node))
             .into_iter()
             .rev()
             .find(|&b| dom.name_is(b, &W::p()))
@@ -8275,25 +8276,6 @@ fn previous_block(dom: &Dom, node: NodeId) -> Option<NodeId> {
                 || matches!(name.local_name(), "p" | "tbl" | "sdt" | "customXml")
         })
     })
-}
-
-/// The blocks of `container`, a table cell or a story, in order: its
-/// paragraphs and tables, through the content controls and custom XML
-/// elements that hold blocks.
-fn container_blocks(dom: &Dom, container: NodeId) -> Vec<NodeId> {
-    let mut out = Vec::new();
-    for child in dom.elements(container, None) {
-        if dom.name_is(child, &W::p()) || dom.name_is(child, &W::tbl()) {
-            out.push(child);
-        } else if dom.name_is(child, &W::sdt()) {
-            if let Some(content) = dom.element(child, &W::sdt_content()) {
-                out.extend(container_blocks(dom, content));
-            }
-        } else if dom.name_is(child, &W::custom_xml()) {
-            out.extend(container_blocks(dom, child));
-        }
-    }
-    out
 }
 
 /// Position `pos` of the source projection after `edits` were applied.

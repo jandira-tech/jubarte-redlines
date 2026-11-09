@@ -1944,7 +1944,8 @@ pub(crate) fn revision_name(kind: &str) -> XName {
 }
 
 /// The last paragraph among a container's blocks, through block content
-/// controls and custom XML elements, not into nested tables.
+/// controls, custom XML elements, and the alternate-content branch Word
+/// shows, not into nested tables.
 pub(crate) fn last_block_paragraph(dom: &Dom, container: NodeId) -> Option<NodeId> {
     container_blocks(dom, container)
         .into_iter()
@@ -1952,8 +1953,35 @@ pub(crate) fn last_block_paragraph(dom: &Dom, container: NodeId) -> Option<NodeI
         .find(|&block| dom.name_is(block, &W::p()))
 }
 
+/// The branch of block-level text alternate content that Word shows.
+/// Drawing and VML alternates stay whole, so their paragraphs are not
+/// blocks of the cell around them. Anything else is not alternate content.
+fn shown_alternate_branch(dom: &Dom, node: NodeId) -> Option<NodeId> {
+    if !dom.name_is(node, &MC::alternate_content()) {
+        return None;
+    }
+    // A picture that is itself a branch's block (not one inside a branch's
+    // paragraph) leaves the branch Word shows in doubt, so it is skipped.
+    let pictured = |branch: NodeId| {
+        dom.elements(branch, None)
+            .into_iter()
+            .any(|child| dom.name_is(child, &W::drawing()) || dom.name_is(child, &W::pict()))
+    };
+    if dom.elements(node, None).into_iter().any(pictured) {
+        return None;
+    }
+    let understood = crate::comparer::finalize::word_understands_namespace;
+    dom.elements(node, Some(&MC::choice()))
+        .into_iter()
+        .find(|&choice| {
+            crate::comparer::finalize::choice_requires_understood(dom, choice, understood)
+        })
+        .or_else(|| dom.element(node, &MC::fallback()))
+}
+
 /// The paragraphs and tables of `container` in order, through block
-/// content controls and custom XML elements, not into nested tables.
+/// content controls, custom XML elements, and the alternate-content branch
+/// Word shows, not into nested tables.
 pub(crate) fn container_blocks(dom: &Dom, container: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
     for child in dom.elements(container, None) {
@@ -1965,6 +1993,8 @@ pub(crate) fn container_blocks(dom: &Dom, container: NodeId) -> Vec<NodeId> {
             }
         } else if dom.name_is(child, &W::custom_xml()) {
             out.extend(container_blocks(dom, child));
+        } else if let Some(branch) = shown_alternate_branch(dom, child) {
+            out.extend(container_blocks(dom, branch));
         }
     }
     out

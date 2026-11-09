@@ -2502,3 +2502,62 @@ fn a_table_after_a_deleted_middle_stays_unmoved() {
     assert!(!accepted_xml.contains("Deleted middle"), "{accepted_xml}");
     assert_eq!(accepted_xml.matches("<w:tbl>").count(), 1, "{accepted_xml}");
 }
+
+/// A cell's final paragraph can be the one in the alternate-content branch
+/// Word shows: deleting it keeps that paragraph, emptied, and its mark, as
+/// for any cell's final paragraph, in the redline and the clean copy alike
+/// (#2128 review, Sourcery).
+#[test]
+fn deleting_a_cells_final_paragraph_inside_alternate_content_keeps_its_mark() {
+    let w14 = r#"xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml""#;
+    let cell = format!(
+        r#"{}<mc:AlternateContent {w14}><mc:Choice Requires="w14">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent>"#,
+        para("Kept."),
+        para("Old."),
+        para("Old.")
+    );
+    let source = table_with_cell(&cell);
+    let ids: Vec<(String, String)> = paragraphs(&source)
+        .unwrap()
+        .into_iter()
+        .map(|p| (p.id.clone(), p.text))
+        .collect();
+    let old = ids
+        .iter()
+        .find(|(_, text)| text == "Old.")
+        .unwrap_or_else(|| panic!("no Old. paragraph: {ids:?}"))
+        .0
+        .clone();
+    for mode in MODES {
+        let result = apply_plan(&source, &plan_of(mode, &[delete(&old)]))
+            .unwrap_or_else(|e| panic!("{mode}: {e:?}"));
+        assert_word_valid_package(&result.redline);
+        assert_word_valid_package(&result.clean);
+        // The paragraphs Word shows: the fallback branch is hidden.
+        let shown_count = |bytes: &[u8]| {
+            let xml = part_string(bytes, "word/document.xml").unwrap();
+            let xml = match (xml.find("<mc:Fallback>"), xml.find("</mc:Fallback>")) {
+                (Some(a), Some(b)) => format!("{}{}", &xml[..a], &xml[b..]),
+                _ => xml,
+            };
+            xml.matches("<w:p>").count() + xml.matches("<w:p />").count()
+        };
+        let accepted = accept_revisions(&result.redline).unwrap();
+        assert_eq!(
+            shown_count(&accepted),
+            shown_count(&result.clean),
+            "{mode}: Accept All and the clean copy show different paragraphs"
+        );
+        for (bytes, output) in [(&result.redline, "redline"), (&result.clean, "clean")] {
+            let xml = part_string(bytes, "word/document.xml").unwrap();
+            let cell = &xml[..xml.rfind("</w:tc>").unwrap()];
+            let shown = &cell[..cell.find("</mc:Choice>").unwrap_or(cell.len())];
+            let start = shown.rfind("<w:p>").max(shown.rfind("<w:p />")).unwrap();
+            let last = &shown[start..];
+            assert!(
+                !last.contains("Kept.") && !last.contains("<w:rPr><w:del "),
+                "{mode}: {output}: the shown branch's final paragraph is gone or its mark deleted: {xml}"
+            );
+        }
+    }
+}

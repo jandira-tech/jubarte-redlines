@@ -3788,3 +3788,162 @@ fn probe_finite_and_unparsed_table_measures_are_not_non_finite() {
         );
     }
 }
+
+/// Block-level alternate content around a cell's paragraphs. `bind` is the
+/// `xmlns` declaration that puts `requires` in scope.
+fn alternate_paragraphs(bind: &str, requires: &str, choice: &str, fallback: &str) -> String {
+    format!(
+        r#"<mc:AlternateContent {bind}><mc:Choice Requires="{requires}">{choice}</mc:Choice><mc:Fallback>{fallback}</mc:Fallback></mc:AlternateContent>"#
+    )
+}
+
+/// A cell's final paragraph can sit in block-level alternate content. The
+/// mark that counts is the one on the branch Word shows: the first choice
+/// whose requirement it understands, otherwise the fallback. A mark on the
+/// other branch does not. An alternate that holds a drawing is not a run of
+/// paragraphs.
+#[test]
+fn a_cells_final_mark_inside_alternate_content_is_the_shown_branch() {
+    const W14: &str = "http://schemas.microsoft.com/office/word/2010/wordml";
+    let w14 = format!(r#"xmlns:w14="{W14}""#);
+    let unknown = r#"xmlns:zz="http://example.com/not-word""#;
+    let plain = |text: &str| marked(text, None);
+    let choice_path =
+        "w:body[0]/w:tbl[0]/w:tr[0]/w:tc[0]/mc:AlternateContent[0]/mc:Choice[0]/w:p[0]";
+    let fallback_path =
+        "w:body[0]/w:tbl[0]/w:tr[0]/w:tc[0]/mc:AlternateContent[0]/mc:Fallback[0]/w:p[0]";
+
+    for kind in ["ins", "del"] {
+        let cell =
+            alternate_paragraphs(&w14, "w14", &marked("Shown.", Some(kind)), &plain("Hide."));
+        let found = cell_final_marks(&table_package("", [&cell, &plain("B.")]));
+        assert_eq!(found.len(), 1, "{kind}: {found:?}");
+        let finding = &found[0];
+        assert_eq!(finding.location, choice_path, "{kind}: {finding:?}");
+        assert_eq!(finding.part, "word/document.xml");
+        assert_eq!(finding.severity, "error", "{finding:?}");
+        assert!(!finding.word_fatal && !finding.repairable, "{finding:?}");
+        assert!(
+            finding.message.contains(&format!("w:{kind}")),
+            "{finding:?}"
+        );
+    }
+
+    // The shown branch is plain. A mark on the fallback is not the cell's.
+    let hidden = alternate_paragraphs(&w14, "w14", &plain("Shown."), &marked("Hide.", Some("del")));
+    assert_eq!(
+        cell_final_marks(&table_package("", [&hidden, &plain("B.")])),
+        []
+    );
+
+    // An unknown requirement shows the fallback, and only that mark.
+    let fallback_mark = alternate_paragraphs(
+        unknown,
+        "zz",
+        &plain("Skip."),
+        &marked("Shown.", Some("ins")),
+    );
+    let found = cell_final_marks(&table_package("", [&fallback_mark, &plain("B.")]));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].location, fallback_path, "{:?}", found[0]);
+    let choice_mark = alternate_paragraphs(
+        unknown,
+        "zz",
+        &marked("Skip.", Some("ins")),
+        &plain("Shown."),
+    );
+    assert_eq!(
+        cell_final_marks(&table_package("", [&choice_mark, &plain("B.")])),
+        []
+    );
+
+    // A later understood choice wins over an earlier unknown one.
+    let later = format!(
+        r#"<mc:AlternateContent {w14} {unknown}><mc:Choice Requires="zz">{}</mc:Choice><mc:Choice Requires="w14">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent>"#,
+        plain("Skip."),
+        marked("Shown.", Some("ins")),
+        plain("Hide."),
+    );
+    let found = cell_final_marks(&table_package("", [&later, &plain("B.")]));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(
+        found[0].location,
+        "w:body[0]/w:tbl[0]/w:tr[0]/w:tc[0]/mc:AlternateContent[0]/mc:Choice[1]/w:p[0]",
+        "{:?}",
+        found[0]
+    );
+
+    // A revised row still covers the mark the shown branch carries.
+    let covered =
+        alternate_paragraphs(&w14, "w14", &marked("Shown.", Some("ins")), &plain("Hide."));
+    let row = table_package(
+        r#"<w:trPr><w:ins w:id="5" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></w:trPr>"#,
+        [&covered, &plain("B.")],
+    );
+    assert_eq!(cell_final_marks(&row), []);
+
+    // A drawing alternate is not the cell's paragraphs.
+    let drawing = alternate_paragraphs(
+        &w14,
+        "w14",
+        &format!("{}<w:drawing/>", marked("Shown.", Some("ins"))),
+        &plain("Hide."),
+    );
+    assert_eq!(
+        cell_final_marks(&table_package("", [&drawing, &plain("B.")])),
+        []
+    );
+
+    // A content control inside the shown branch still holds the paragraph.
+    let nested = alternate_paragraphs(
+        &w14,
+        "w14",
+        &format!(
+            "<w:sdt><w:sdtContent>{}</w:sdtContent></w:sdt>",
+            marked("Shown.", Some("del"))
+        ),
+        &plain("Hide."),
+    );
+    let found = cell_final_marks(&table_package("", [&nested, &plain("B.")]));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(
+        found[0].location,
+        "w:body[0]/w:tbl[0]/w:tr[0]/w:tc[0]/mc:AlternateContent[0]/mc:Choice[0]/w:sdt[0]/w:sdtContent[0]/w:p[0]",
+        "{:?}",
+        found[0]
+    );
+}
+
+/// A picture inside a branch's paragraph, or only in the branch Word hides,
+/// does not make the shown paragraph any less the cell's final block: its
+/// mark is still reported (#2128 review).
+#[test]
+fn a_picture_inside_an_alternate_paragraph_keeps_its_final_mark() {
+    const W14: &str = "http://schemas.microsoft.com/office/word/2010/wordml";
+    let w14 = format!(r#"xmlns:w14="{W14}""#);
+    let choice_path =
+        "w:body[0]/w:tbl[0]/w:tr[0]/w:tc[0]/mc:AlternateContent[0]/mc:Choice[0]/w:p[0]";
+    let with_picture = |text: &str, kind: Option<&str>| {
+        marked(text, kind).replace("</w:p>", "<w:r><w:drawing/></w:r></w:p>")
+    };
+    let inline = alternate_paragraphs(
+        &w14,
+        "w14",
+        &with_picture("Shown.", Some("ins")),
+        &marked("Hide.", None),
+    );
+    let hidden_picture = alternate_paragraphs(
+        &w14,
+        "w14",
+        &marked("Shown.", Some("ins")),
+        &with_picture("Hide.", None),
+    );
+    for (label, cell) in [
+        ("inline picture", inline),
+        ("hidden picture", hidden_picture),
+    ] {
+        let found = cell_final_marks(&table_package("", [&cell, &marked("B.", None)]));
+        assert_eq!(found.len(), 1, "{label}: {found:?}");
+        assert_eq!(found[0].location, choice_path, "{label}: {:?}", found[0]);
+    }
+}
