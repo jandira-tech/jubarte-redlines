@@ -29,3 +29,20 @@ fn a_move_between_two_insertions_is_not_called_faithful() {
         finding.message
     );
 }
+
+#[test]
+fn a_deletion_pair_and_a_move_to_nest_report_the_same_way() {
+    for body in [
+        r#"<w:p><w:del w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:moveFrom w:id="2" w:author="B" w:date="2026-01-01T00:00:00Z"><w:del w:id="3" w:author="C" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>Nest words</w:delText></w:r></w:del></w:moveFrom></w:del></w:p>"#,
+        r#"<w:p><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:moveTo w:id="2" w:author="B" w:date="2026-01-01T00:00:00Z"><w:ins w:id="3" w:author="C" w:date="2026-01-01T00:00:00Z"><w:r><w:t>Nest words</w:t></w:r></w:ins></w:moveTo></w:ins></w:p>"#,
+    ] {
+        let findings = validate(&docx(body)).unwrap();
+        let finding = findings
+            .iter()
+            .find(|f| f.code == "NESTED_SAME_REVISION")
+            .unwrap_or_else(|| panic!("nested revision: {findings:?}"));
+        assert_eq!(finding.severity, "warning", "{finding:?}");
+        assert!(!finding.message.contains("faithfully"), "{finding:?}");
+        assert!(finding.message.contains("Word opens it"), "{finding:?}");
+    }
+}

@@ -1082,8 +1082,8 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
             }
             // Only `ins`/`del` count as interleaving: Word's measured
             // reject-all misreading (#1134, 2026-10-17) alternates the two. A
-            // move between two same-kind revisions is unmeasured, so it
-            // reports as nested.
+            // move between two same-kind revisions is its own `move-nested`
+            // kind: Word opens it (#1395), but its reading is unmeasured.
             "ins" | "del"
                 if dom
                     .ancestors(n, None)
@@ -1091,17 +1091,24 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                     .take_while(|&a| !STORIES.contains(&local(dom, a).as_str()))
                     .any(|a| local(dom, a) == name) =>
             {
-                let between = |kind: &str| {
-                    dom.ancestors(n, None)
-                        .into_iter()
-                        .take_while(|&a| {
-                            !STORIES.contains(&local(dom, a).as_str()) && local(dom, a) != name
-                        })
-                        .any(|a| local(dom, a) == kind)
-                };
-                let relation = if between("ins") || between("del") {
+                // One walk up to the outer same-kind revision (or the story).
+                let (mut interleaved, mut moved) = (false, false);
+                let mut current = dom.parent(n);
+                while let Some(a) = current {
+                    let a_local = local(dom, a);
+                    if STORIES.contains(&a_local.as_str()) || a_local == name {
+                        break;
+                    }
+                    match a_local.as_str() {
+                        "ins" | "del" => interleaved = true,
+                        "moveFrom" | "moveTo" => moved = true,
+                        _ => {}
+                    }
+                    current = dom.parent(a);
+                }
+                let relation = if interleaved {
                     "interleaved"
-                } else if between("moveFrom") || between("moveTo") {
+                } else if moved {
                     "move-nested"
                 } else {
                     "nested"
