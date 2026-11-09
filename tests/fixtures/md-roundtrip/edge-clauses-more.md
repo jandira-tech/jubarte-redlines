@@ -29,7 +29,7 @@ Changed table:
 <!-- p6 -->
 Inserted row:
 
-<!-- t1 2x2, cells p7-p10 by row, widths 1.667in 1.667in, width auto -->
+<!-- t1 2x2, cells p7-p10 by row, widths 1.667in 1.667in, width auto, rev r108 @AL in t1.row1 -->
 |x0|y0|
 |-|-|
 |{++x1++}{r108 @AL}|{++y1++}{r108 @AL}|

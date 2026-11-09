@@ -91,3 +91,47 @@ fn a_deleted_row_stays_a_row_deletion() {
         "the written deletion is the row:\n{got}\nview:\n{view}"
     );
 }
+
+/// A plain (`--commonmark`) view prints no table lines. A row Word deleted
+/// (the row's mark and its runs') still comes back a row deletion there.
+#[test]
+fn a_plain_view_keeps_a_deleted_row() {
+    let source = table(&format!(
+        "<w:tr><w:trPr><w:del w:id=\"1\" w:author=\"A\" w:date=\"2026-10-01T09:00:00Z\"/></w:trPr>{}</w:tr><w:tr>{}</w:tr>",
+        cell(
+            "<w:p><w:del w:id=\"2\" w:author=\"A\" w:date=\"2026-10-01T09:00:00Z\"><w:r><w:delText>y1</w:delText></w:r></w:del></w:p>"
+        ),
+        cell("<w:p><w:r><w:t>kept</w:t></w:r></w:p>")
+    ));
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.docx"), &source).unwrap();
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+            .args(args)
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    run(&[
+        "-q",
+        "convert",
+        "a.docx",
+        "-o",
+        "a.md",
+        "--commonmark",
+        "--no-page-markers",
+    ]);
+    run(&["-q", "convert", "a.md", "-o", "b.docx"]);
+    let view = std::fs::read_to_string(dir.path().join("a.md")).unwrap();
+    let package = std::fs::read(dir.path().join("b.docx")).unwrap();
+    let got = described(&package);
+    assert!(
+        got.contains("Deletion table_row"),
+        "the plain view lost the row deletion:\n{got}\nview:\n{view}"
+    );
+}
