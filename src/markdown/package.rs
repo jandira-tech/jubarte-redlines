@@ -452,10 +452,17 @@ fn unique_revision_ids(package: &mut PartFs, markdown: &str, warnings: &mut Vec<
 fn warn_when_separate_tags_touch(package: &PartFs, markdown: &str, warnings: &mut Vec<String>) {
     let mut tags: Vec<(&str, BTreeSet<String>)> = Vec::new();
     let mut named = BTreeSet::new();
+    let comments = comment_spans(markdown);
+    let mut comment = comments.iter().peekable();
     for (start, word) in tag_words(markdown) {
         // Only a tag names a change: a note right after a span
         // (`{--old--}{r1 @A}`, `{++new++}{r2 Ana Lima}`) or ids an author
-        // handle follows (`rev r1 @AC`). Ids in prose are text.
+        // handle follows (`rev r1 @AC`). Ids in prose, a comment's text
+        // included, are text.
+        while comment.next_if(|span| span.end <= start).is_some() {}
+        if comment.peek().is_some_and(|span| span.contains(&start)) {
+            continue;
+        }
         let end = start + word.len();
         if !(markdown[..start].ends_with("}{") || markdown[end..].starts_with(" @")) {
             continue;
@@ -496,6 +503,22 @@ fn warn_when_separate_tags_touch(package: &PartFs, markdown: &str, warnings: &mu
             change.id
         ));
     }
+}
+
+/// The byte ranges of the `{>>…<<}` comments in `markdown`, in order. A
+/// comment without its closer runs to the end.
+fn comment_spans(markdown: &str) -> Vec<std::ops::Range<usize>> {
+    let mut spans = Vec::new();
+    let mut at = 0;
+    while let Some(open) = markdown[at..].find("{>>") {
+        let open = at + open;
+        let end = markdown[open..]
+            .find("<<}")
+            .map_or(markdown.len(), |close| open + close + 3);
+        spans.push(open..end);
+        at = end;
+    }
+    spans
 }
 
 /// The words of `markdown` with their byte offsets, split at whitespace and
