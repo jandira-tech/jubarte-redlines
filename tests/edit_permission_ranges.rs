@@ -1119,3 +1119,56 @@ fn issue1195_f3_nested_empty_permission_keeps_outer_counters() {
 fn issue1195_f3_nested_empty_bookmark_keeps_outer_counters() {
     nested_empty_range_keeps_only_inner("bookmark");
 }
+
+#[test]
+fn a_repeated_permission_id_changes_the_base_hash_on_a_revision_free_source() {
+    let edit_next = |body: String, paragraph: &str| {
+        let source = docx(&body);
+        let plan = EditPlan::from_json(&format!(
+            r#"{{"schema_version":1,"author":"Alice","date":"2026-10-18T12:00:00Z","operations":[{{"kind":"replace","paragraph":"{paragraph}","find":"Next","replacement":"Following"}}]}}"#
+        ))
+        .unwrap();
+        let result = apply_plan(&source, &plan).unwrap();
+        let xml = part_string(&source, "word/document.xml").unwrap();
+        assert!(!xml.contains("<w:ins") && !xml.contains("<w:del"), "{xml}");
+        result.report
+    };
+    let one = edit_next(
+        format!(
+            "<w:p>{START}{}{END}</w:p>{}",
+            run("Pay.", false, false, None),
+            para("Next.")
+        ),
+        "p1",
+    );
+    assert_eq!(
+        one.base_sha256, one.source_sha256,
+        "a revision-free source with one permission range keeps its base hash"
+    );
+    let two = edit_next(
+        format!(
+            "<w:p>{START}{}{END}</w:p><w:p>{START}{}{END}</w:p>{}",
+            run("Alice.", false, false, None),
+            run("Bob.", false, false, None),
+            para("Next.")
+        ),
+        "p2",
+    );
+    assert_ne!(
+        two.base_sha256, two.source_sha256,
+        "normalizing a repeated permission id changes the base hash"
+    );
+    let src = include_str!("../src/edit.rs");
+    let at = src
+        .find("pub base_sha256: String")
+        .expect("base hash field");
+    let docs = &src[at.saturating_sub(280)..at];
+    assert!(
+        docs.contains("flattened"),
+        "the base hash contract must keep the flattened-revision cause"
+    );
+    assert!(
+        docs.contains("permission"),
+        "the base hash contract must name a repeated permission id: {docs}"
+    );
+}
