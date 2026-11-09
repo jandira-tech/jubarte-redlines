@@ -2020,6 +2020,10 @@ fn shown_leaf(element: &Element) -> bool {
         "t" | "delText" => !element.text().is_empty(),
         "tab" | "ptab" | "noBreakHyphen" => true,
         "br" | "cr" => element.attr("type") != Some("page"),
+        // The view prints a symbol in place, `<sym …/>` (#1365).
+        "sym" => ["font", "char"]
+            .iter()
+            .all(|name| element.attr(name).is_some_and(|value| !value.is_empty())),
         _ => false,
     }
 }

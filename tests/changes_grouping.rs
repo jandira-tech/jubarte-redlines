@@ -1321,9 +1321,10 @@ fn a_text_box_copy_of_a_single_id_tag_writes_no_mark_of_its_own() {
 }
 
 /// #1363: content the view prints nothing for (a hidden run, a soft
-/// hyphen, a symbol) still keeps a deletion and the insertion after it two
-/// changes, as `changes` lists them; with nothing between them they are
-/// one substitution. A page break prints in place between them (#2167).
+/// hyphen) still keeps a deletion and the insertion after it two changes,
+/// as `changes` lists them; with nothing between them they are one
+/// substitution. A page break (#2167) and a symbol (#2169) print in place
+/// between them.
 #[test]
 fn a_deletion_and_an_insertion_apart_print_as_the_two_changes_they_are() {
     let between = [
@@ -1334,7 +1335,7 @@ fn a_deletion_and_an_insertion_apart_print_as_the_two_changes_they_are() {
         (r#"<w:r><w:softHyphen/></w:r>"#, ""),
         (
             r#"<w:r><w:sym w:font="Wingdings" w:char="F0FC"/></w:r>"#,
-            "",
+            r#"<sym font="Wingdings" char="F0FC"/>"#,
         ),
         (
             r#"<w:r><w:br w:type="page"/></w:r>"#,

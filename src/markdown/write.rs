@@ -1375,6 +1375,14 @@ fn html_attribute(html: &str, name: &str) -> Option<String> {
     None
 }
 
+/// Whether `html` is one `<sym …/>` tag and nothing else.
+fn is_symbol_tag(html: &str) -> bool {
+    html.starts_with('<')
+        && html.ends_with("/>")
+        && html.matches('<').count() == 1
+        && html_tag(html).is_some_and(|tag| tag.name == "sym" && tag.empty && !tag.closing)
+}
+
 /// Whether an HTML block is only comments (the view's id lines).
 fn comments_only(html: &str) -> bool {
     html.lines()
@@ -2656,6 +2664,16 @@ impl<'o, 'a> Writer<'o, 'a> {
             TagEnd::HtmlBlock => {
                 if let Some(block) = self.html_block.take() {
                     if self.box_boundary(block.trim()) {
+                        return;
+                    }
+                    // A paragraph of only a symbol starts with its tag, so
+                    // CommonMark reads it as an HTML block: it is that
+                    // paragraph, not dropped markup.
+                    if is_symbol_tag(block.trim()) {
+                        self.end_paragraph();
+                        self.begin_paragraph();
+                        self.inline_html(block.trim());
+                        self.end_paragraph();
                         return;
                     }
                     let view_lines = self.view
@@ -4341,6 +4359,16 @@ impl<'o, 'a> Writer<'o, 'a> {
                     self.push(Content::PageBreak);
                 } else {
                     self.line_break(empty);
+                }
+            }
+            return;
+        }
+        if name == "sym" {
+            if empty && !closing {
+                let font = html_attribute(html, "font").unwrap_or_default();
+                let value = html_attribute(html, "char").unwrap_or_default();
+                if !font.is_empty() && !value.is_empty() {
+                    self.push(Content::Symbol { font, value });
                 }
             }
             return;
