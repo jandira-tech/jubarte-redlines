@@ -1366,7 +1366,7 @@ fn alternate_boxes(nested: bool) -> Vec<u8> {
         format!("{drawing}{second}")
     };
     let body = format!(
-        r#"<w:p><w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice Requires="wps">{choice}</mc:Choice><mc:Fallback>{choice}</mc:Fallback></mc:AlternateContent></w:r></w:p>"#
+        r#"<w:p><w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><mc:Choice Requires="wps">{choice}</mc:Choice><mc:Fallback>{choice}</mc:Fallback></mc:AlternateContent></w:r></w:p>"#
     );
     docx_with(&body, &[])
 }
