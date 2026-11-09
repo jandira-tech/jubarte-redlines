@@ -226,3 +226,91 @@ fn a_nested_deletion_of_another_author_stays_a_deletion() {
     assert_eq!(described(&copy), described(&docx(&paragraph)));
     common::validity::assert_word_valid_package(&copy);
 }
+
+/// `Keep `, change 7 by B holding `pieces`, then ` tail.`, in each story.
+fn stories(outer: &str, pieces: &str) -> [(&'static str, Vec<u8>); 3] {
+    let paragraph = format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Keep </w:t></w:r>{}<w:r><w:t xml:space="preserve"> tail.</w:t></w:r></w:p>"#,
+        mark(outer, 7, "B", pieces),
+    );
+    [
+        ("body", docx(&paragraph)),
+        ("header", header_of(&paragraph)),
+        ("footnote", footnote_of(&paragraph)),
+    ]
+}
+
+/// Every story writes the nest back the same way: the replacement as it was,
+/// and one outer change of the source's kind holding `text`.
+fn every_story_keeps(outer: &str, pieces: &str, kind: &str, text: &str) {
+    for (name, doc) in stories(outer, pieces) {
+        let (first, copy, _) = written(&doc);
+        let (source, back) = (described(&doc), described(&copy));
+        let replacement = |changes: &[String]| {
+            changes
+                .iter()
+                .find(|change| change.contains("Replacement"))
+                .map(|change| {
+                    // Its text and members: the outer change it sits in may
+                    // come back as two marks (`r7+8`) around the nest.
+                    let rest = change.split_once(' ').map_or("", |(_, rest)| rest);
+                    let (text, members) = rest.split_once(" inside ").unwrap_or((rest, ""));
+                    let members = members.split_once(" [").map_or("", |(_, m)| m);
+                    format!("{text} [{members}")
+                })
+        };
+        assert_eq!(replacement(&back), replacement(&source), "{name}\n{first}");
+        let outers: Vec<&String> = back.iter().filter(|c| !c.contains("Replacement")).collect();
+        assert_eq!(
+            outers.len(),
+            1,
+            "{name}: one outer change\n{back:?}\n{first}"
+        );
+        assert!(
+            outers[0].contains(&format!("{kind} \"{text}\"")),
+            "{name}: {:?}\n{first}",
+            outers[0]
+        );
+        common::validity::assert_word_valid_package(&copy);
+    }
+}
+
+/// cursor 4499627131: a nest at either end of a deletion sits in that
+/// deletion in every story, as in the body: the header's guess from a later
+/// deletion alone called it an insertion, and the body's from an earlier
+/// piece alone did at the start.
+#[test]
+fn a_substitution_at_either_end_of_a_deletion_stays_in_it() {
+    let nest = format!(
+        "{}{}",
+        mark("del", 3, "A", &text_run("del", "a")),
+        mark("ins", 4, "A", &text_run("ins", "b")),
+    );
+    every_story_keeps(
+        "del",
+        &format!("{}{nest}", text_run("del", "x")),
+        "Deletion",
+        "xa",
+    );
+    every_story_keeps(
+        "del",
+        &format!("{nest}{}", text_run("del", "x")),
+        "Deletion",
+        "ax",
+    );
+}
+
+/// cursor 4499627126: the outer insertion's text after the nest stays the
+/// outer author's; the header spliced it into the nested insertion
+/// (`a → bz`).
+#[test]
+fn text_after_a_nest_stays_in_the_outer_insertion() {
+    let pieces = format!(
+        "{}{}{}{}",
+        text_run("ins", "x"),
+        mark("del", 3, "A", &text_run("del", "a")),
+        mark("ins", 4, "A", &text_run("ins", "b")),
+        text_run("ins", "z"),
+    );
+    every_story_keeps("ins", &pieces, "Insertion", "xaz");
+}
