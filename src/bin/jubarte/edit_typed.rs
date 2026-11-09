@@ -183,7 +183,7 @@ fn regeneration_action(
                 plan.source.sha256
             )])
             .with_purpose(
-                "refresh before_sha256 for the stale rows and keep each original row's text and attached_comment; the original plan file is not changed",
+                "write a complete copy of the plan with a fresh before_sha256 for the stale rows; every other part of the plan is kept as written; the original plan file is not changed",
             ),
     )
 }

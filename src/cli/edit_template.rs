@@ -104,8 +104,10 @@ pub struct TemplateOptions {
     /// Result records ending in a terminal result; never a plan encoding.
     #[arg(long)]
     pub jsonl: bool,
-    /// Carry this plan's text, comments and attribution onto the generated rows.
-    /// The rows still take a fresh before_sha256 from the source.
+    /// Refresh this plan: write it back whole (every operation, scope,
+    /// decisions, the `others` guard, attribution), with each rewrite of
+    /// the generated rows taking a fresh before_sha256 from the source. The
+    /// plan must be bound to this source.
     #[arg(long, value_name = "PLAN.json")]
     pub refresh_plan: Option<PathBuf>,
 }

@@ -2581,32 +2581,54 @@ mod generator {
         );
         let regenerated: Value =
             serde_json::from_slice(&std::fs::read(regenerated_path).unwrap()).unwrap();
+        // The refreshed plan is the whole plan: every authored row comes
+        // back in order; only the stale rows take a fresh before_sha256.
         let rows = regenerated["operations"].as_array().unwrap();
-        assert_eq!(rows.len(), expected.len());
-        let targets: Vec<_> = rows
-            .iter()
-            .map(|row| row["target"]["short_id"].as_str().unwrap())
-            .collect();
-        assert_eq!(targets.join(","), ids);
-        for (row, text) in rows.iter().zip(expected) {
-            let id = row["target"]["short_id"].as_str().unwrap();
-            let authored = q["operations"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|operation| operation["target"]["short_id"].as_str() == Some(id))
-                .unwrap();
+        let authored = q["operations"].as_array().unwrap();
+        assert_eq!(rows.len(), authored.len());
+        let stale: Vec<&str> = ids.split(',').collect();
+        assert_eq!(stale.len(), expected.len());
+        for (row, authored) in rows.iter().zip(authored) {
+            assert_eq!(row["target"], authored["target"]);
             assert_eq!(row["text"], authored["text"]);
             assert_eq!(row["attached_comment"], authored["attached_comment"]);
-            assert_eq!(row["before_sha256"], source_sha256(text.as_bytes()));
+            let id = row["target"]["short_id"].as_str().unwrap();
+            match stale.iter().position(|s| *s == id) {
+                Some(at) => {
+                    assert_eq!(row["before_sha256"], source_sha256(expected[at].as_bytes()))
+                }
+                None => assert_eq!(row, authored, "a row that was not stale changed"),
+            }
         }
-        for field in ["source", "policy", "resolve_revisions", "author", "date"] {
+        for field in [
+            "source",
+            "policy",
+            "resolve_revisions",
+            "author",
+            "date",
+            "scope",
+        ] {
             assert_eq!(
                 regenerated[field], q[field],
                 "regeneration must preserve {field}"
             );
         }
-        assert!(run(s, &regenerated).is_ok());
+        // The refresh carries the plan as authored. Two rewrites of one
+        // paragraph conflicted before the hashes went stale, and still do.
+        let mut targets: Vec<_> = authored
+            .iter()
+            .map(|row| row["target"].to_string())
+            .collect();
+        let rows_before = targets.len();
+        targets.sort();
+        targets.dedup();
+        match run(s, &regenerated) {
+            Ok(_) => assert_eq!(targets.len(), rows_before, "a conflicting plan applied"),
+            Err(e) => {
+                assert!(targets.len() < rows_before, "refreshed plan refused: {e:?}");
+                assert_eq!(e.code, "CONFLICT", "{e:?}");
+            }
+        }
         assert_eq!(std::fs::read(&input).unwrap(), s);
         assert_eq!(std::fs::read_to_string(&plan_path).unwrap(), original_plan);
         assert_eq!(
@@ -2636,7 +2658,7 @@ mod generator {
             let action = regenerate_stale_rows(&s, &q, "p0", &["Payment is due within 30 days."]);
             assert_eq!(
                 action["purpose"],
-                "refresh before_sha256 for the stale rows and keep each original row's text and attached_comment; the original plan file is not changed"
+                "write a complete copy of the plan with a fresh before_sha256 for the stale rows; every other part of the plan is kept as written; the original plan file is not changed"
             );
         }
     }

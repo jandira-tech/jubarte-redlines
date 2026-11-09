@@ -197,3 +197,103 @@ fn recovery_output_avoids_the_refused_commands_paths() {
         );
     }
 }
+
+/// Follow the suggested recovery and read back the plan it wrote.
+fn followed_plan(dir: &Path) -> Value {
+    let argv = argv_of(&recovery(dir, &[]));
+    let regenerated = output_of(&argv);
+    let followed: Vec<_> = argv.iter().skip(1).map(String::as_str).collect();
+    let (code, out, err) = run(dir, &followed);
+    assert_eq!(code, 0, "{out}{err}");
+    serde_json::from_str(&std::fs::read_to_string(dir.join(regenerated)).unwrap()).unwrap()
+}
+
+#[test]
+fn recovery_keeps_the_plans_others_guard() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut plan = stale_plan(dir.path(), "Keeper", "2026-10-17T12:00:00Z");
+    plan["others"] = json!("keep");
+    std::fs::write(
+        dir.path().join("plan.json"),
+        serde_json::to_vec_pretty(&plan).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(followed_plan(dir.path())["others"], "keep");
+}
+
+#[test]
+fn recovery_keeps_the_operations_that_were_not_stale() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("source.docx"),
+        docx(r#"<w:p><w:r><w:t>Current terms.</w:t></w:r></w:p><w:p><w:r><w:t>Second clause.</w:t></w:r></w:p>"#),
+    )
+    .unwrap();
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "template",
+            "source.docx",
+            "-o",
+            "plan.json",
+            "--author",
+            "Keeper",
+            "--datetime",
+            "2026-10-17T12:00:00Z",
+        ],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let mut plan: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("plan.json")).unwrap())
+            .unwrap();
+    plan["operations"][0]["text"] = json!("Authored terms");
+    plan["operations"][0]["before_sha256"] = json!(source_sha256(b"stale baseline"));
+    plan["operations"][1]["text"] = json!("Authored second");
+    std::fs::write(
+        dir.path().join("plan.json"),
+        serde_json::to_vec_pretty(&plan).unwrap(),
+    )
+    .unwrap();
+    let refreshed = followed_plan(dir.path());
+    let operations = refreshed["operations"].as_array().unwrap();
+    assert_eq!(operations.len(), 2, "{refreshed}");
+    assert_eq!(operations[0]["text"], "Authored terms");
+    assert_eq!(
+        operations[0]["before_sha256"],
+        source_sha256(b"Current terms.")
+    );
+    assert_eq!(operations[1]["text"], "Authored second");
+    assert_eq!(
+        operations[1]["before_sha256"],
+        plan["operations"][1]["before_sha256"]
+    );
+}
+
+#[test]
+fn a_plan_for_another_source_is_not_carried() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut plan = stale_plan(dir.path(), "Keeper", "2026-10-17T12:00:00Z");
+    plan["source"]["sha256"] = json!(source_sha256(b"another document"));
+    std::fs::write(
+        dir.path().join("other.json"),
+        serde_json::to_vec_pretty(&plan).unwrap(),
+    )
+    .unwrap();
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "template",
+            "source.docx",
+            "--refresh-plan",
+            "other.json",
+            "-o",
+            "refreshed.json",
+            "--json",
+        ],
+    );
+    assert_ne!(code, 0, "{out}{err}");
+    assert!(out.contains("STALE_SOURCE"), "{out}{err}");
+    assert!(!dir.path().join("refreshed.json").exists());
+}
