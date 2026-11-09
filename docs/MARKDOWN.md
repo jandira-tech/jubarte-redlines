@@ -804,9 +804,10 @@ names `Ana (consultant)`). In a note that names another change after
 `)` as `%29`, `%` itself as `%25` (`r3 Ben Ode (…) re r1 Ana %28consultant%29
 (…)`) — so only the dates' parentheses are bare and the parts of the
 note split without doubt: the last ` re ` whose left side parses as one
-part and whose right side as the chain the rest names wins, so a name
-holding ` re r1 Kim` of its own stays one name. A part with a bare
-parenthesis in its name makes the note no fold: it reads as the change's
+part and whose right side as the chain the rest names wins. A name that
+itself holds ` re ` before a revision id spells that space `%20`
+(`Bo%20re r1 Kim`), folded or not, and the reader spells the space back. A part
+with a bare parenthesis in its name makes the note no fold: it reads as the change's
 plain attribution, or as a comment.
 
 A tag names the logical change its piece belongs to, the one `jubarte

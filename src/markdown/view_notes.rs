@@ -526,7 +526,9 @@ pub(super) fn plain_revision(text: &str) -> Option<PlainRevision> {
         Some((author, date, "")) => (author.unwrap_or_default(), date.to_string()),
         Some(_) => return None,
         None if rest.contains([':', '(', ')']) || rest.starts_with('@') => return None,
-        None => (rest.trim().to_string(), String::new()),
+        // A dateless author is spelled as a dated one is (`Bo%20re r1
+        // Kim`), so it is read back the same way.
+        None => (super::write::unescaped(rest.trim()), String::new()),
     };
     let ids = crate::ids::parse_change_ids(id)
         .map(|ids| {
