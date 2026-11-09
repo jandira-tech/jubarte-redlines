@@ -470,3 +470,38 @@ fn a_deleted_paragraph_deletes_comment_references_that_follow_its_text() {
         "reject dropped a thread: {restored}"
     );
 }
+
+/// The comparer leaves reference runs after a deleted paragraph's text
+/// outside the deletion. Only a comment held wholly by that paragraph joins
+/// it: one whose range starts in a kept paragraph keeps its reference
+/// outside, so Accept keeps that thread on the kept text. The #2172 review
+/// pass maps every comment's anchors in one walk; this pins what that map
+/// decides.
+#[test]
+fn a_comment_that_starts_in_a_kept_paragraph_keeps_its_reference() {
+    let body = format!(
+        "<w:p><w:commentRangeStart w:id=\"0\"/><w:r><w:t>Intro.</w:t></w:r></w:p><w:p><w:r><w:t>The Provider shall perform the Services.</w:t></w:r><w:commentRangeStart w:id=\"1\"/><w:r><w:commentReference w:id=\"1\"/></w:r><w:commentRangeEnd w:id=\"1\"/><w:r><w:commentReference w:id=\"0\"/></w:r><w:commentRangeEnd w:id=\"0\"/></w:p>{}",
+        para("Next paragraph.")
+    );
+    let source = with_comments(&body, &[(0, "Spans two."), (1, "Here only.")]);
+    let result = apply_plan(&source, &plan("", "p1")).unwrap();
+    let xml = part_string(&result.redline, "word/document.xml").unwrap();
+    let paragraph = paragraph_holding(&xml, "The Provider shall perform the Services.");
+    assert_eq!(
+        live_comment_references(&paragraph),
+        1,
+        "only the paragraph's own comment joins the deletion: {paragraph}"
+    );
+    assert!(
+        paragraph.contains(r#"<w:commentReference w:id="0"/>"#),
+        "{paragraph}"
+    );
+    let report = check_word_valid_package(&result.redline);
+    assert!(report.ok(), "redline: {:?}", report.errors);
+    let accepted = accept_revisions(&result.redline).unwrap();
+    let left = part_string(&accepted, "word/comments.xml").unwrap_or_default();
+    assert!(
+        left.contains("Spans two.") && !left.contains("Here only."),
+        "accept keeps the spanning thread and drops the paragraph's own: {left}"
+    );
+}
