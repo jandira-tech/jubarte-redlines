@@ -133,14 +133,18 @@ impl AnchorChanges {
                 crate::changes::member_wholes(source).map_err(invalid)?,
             )
         };
+        // Each pass by its comment's number, parsed once: the keys keep the
+        // `w:id` as written (`0005`).
+        let passes: std::collections::HashMap<u32, _> = self
+            .passes
+            .iter()
+            .filter_map(|(raw, pass)| Some((raw.parse::<u32>().ok()?, pass)))
+            .collect();
         let removed = groups(&self.removed)
             .into_iter()
             .map(|(c, replies)| {
-                let pass = self
-                    .passes
-                    .iter()
-                    .find(|(raw, _)| raw.parse::<u32>().ok() == Some(c.id))
-                    .map(|(_, pass)| pass)
+                let pass = passes
+                    .get(&c.id)
                     .expect("every removed thread is recorded with its pass");
                 let id = format!("c{}", c.id);
                 let thread: Vec<String> = std::iter::once(id.clone())

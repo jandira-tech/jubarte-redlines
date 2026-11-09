@@ -55,3 +55,34 @@ fn a_comment_id_with_leading_zeros_is_named_when_accept_removes_it() {
         "padded comment id missing from the warning: {stderr}"
     );
 }
+
+/// The warning `accept` prints for `docx`.
+fn accept_warning(docx: &[u8]) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("source.docx");
+    let output = dir.path().join("resolved.docx");
+    std::fs::write(&input, docx).unwrap();
+    let ran = Command::new(BIN)
+        .args([
+            "accept",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+            "--quiet",
+        ])
+        .output()
+        .unwrap();
+    // The comment goes, and its family with it, from a Word-valid result.
+    dead_comments::assert_state(&std::fs::read(&output).unwrap(), false, &[]);
+    String::from_utf8_lossy(&ran.stderr).into_owned()
+}
+
+/// The padded comment's reason names the change that held it, as the
+/// same comment spelled `0` does: the whole reason, not only the id.
+#[test]
+fn a_padded_comment_id_keeps_the_reason_that_names_its_holder() {
+    let plain = accept_warning(&dead_comments::probe('b'));
+    let padded = accept_warning(&padded(&dead_comments::probe('b')));
+    assert!(plain.contains("comment c0"), "{plain}");
+    assert_eq!(padded, plain.replace("comment c0", "comment c5"), "{plain}");
+}

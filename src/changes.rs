@@ -2062,7 +2062,12 @@ fn held_comment_marks(dom: &Dom, e: NodeId, target: &str) -> Vec<String> {
         .unwrap_or_default()
     {
         if let Some(id) = dom.attribute(mark, &W::id()) {
-            let id = format!("c{id}");
+            // The comment's own id, as the comment list reads it: a padded
+            // `w:id` (`0005`) is comment `c5`.
+            let id = match id.parse::<u32>() {
+                Ok(number) => format!("c{number}"),
+                Err(_) => format!("c{id}"),
+            };
             if !held.contains(&id) {
                 held.push(id);
             }
