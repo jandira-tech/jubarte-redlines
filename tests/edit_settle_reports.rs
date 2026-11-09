@@ -589,6 +589,73 @@ fn editing_mode_refuses_a_reply_on_a_paragraph_the_plan_deletes() {
     assert_thread_on_deleted_text(&std::fs::read(&output).unwrap());
 }
 
+/// Editing mode publishes the clean copy, which has no thread left on a
+/// deleted paragraph. The report names that thread, and the receipt is the
+/// line editing mode prints. Suggesting mode keeps the thread and prints
+/// nothing about it.
+#[test]
+fn editing_mode_names_a_thread_its_clean_copy_drops() {
+    let source = commented(true);
+    let delete = plan(
+        r#"{"schema_version":1,"author":"Alice","date":"2026-10-19T12:00:00Z","operations":[{"kind":"delete_paragraph","paragraph":"p1"}]}"#,
+    );
+    let out = apply_plan(&source, &delete).unwrap();
+    assert!(
+        list_comments(&out.clean).unwrap().is_empty(),
+        "clean keeps a thread"
+    );
+    let dropped = serde_json::to_value(&out.report).unwrap()["clean_removed_comments"].clone();
+    assert_eq!(
+        dropped,
+        serde_json::json!([{
+            "id": "c0",
+            "author": "Bob",
+            "replies": ["c1"],
+            "why": "anchor removed by the plan's deletion of p1"
+        }]),
+        "{dropped}"
+    );
+    assert!(
+        out.report.removed_comments.is_empty(),
+        "settlement already names this thread: {:?}",
+        out.report.removed_comments
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.docx");
+    std::fs::write(&input, &source).unwrap();
+    let run = |editing: bool, name: &str| {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"));
+        command
+            .arg("edit")
+            .arg(&input)
+            .args(["-a", "Alice", "-p", "p1", "--delete"]);
+        if editing {
+            command.arg("--editing-mode");
+        }
+        command
+            .arg("-o")
+            .arg(dir.path().join(name))
+            .output()
+            .unwrap()
+    };
+    let editing = run(true, "em.docx");
+    let stderr = String::from_utf8_lossy(&editing.stderr);
+    assert!(editing.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(
+            "removed c0 (Bob) and its reply c1: anchor removed by the plan's deletion of p1"
+        ),
+        "{stderr}"
+    );
+    let suggesting = run(false, "sg.docx");
+    let tracked = String::from_utf8_lossy(&suggesting.stderr);
+    assert!(suggesting.status.success(), "{tracked}");
+    assert!(
+        !tracked.contains("removed c0"),
+        "suggesting mode named a thread it kept: {tracked}"
+    );
+}
+
 /// Two identical paragraphs, Bob's comment on the first: deleting it and
 /// replying to Bob, the comparer strikes the twin instead, so the reply
 /// would sit on text that stays. The refusal says so about the reply and
@@ -792,4 +859,34 @@ fn a_receipt_without_why_reads_with_an_empty_one() {
         serde_json::from_str(r#"{"id":"c0","author":"Bob","replies":["c1"]}"#).unwrap();
     assert_eq!(old.why, "");
     assert_eq!(old.replies, ["c1"]);
+}
+
+/// cursor 4500696077: a plan that deletes only a thread's anchored words
+/// keeps the paragraph, so the receipt does not blame a paragraph deletion.
+#[test]
+fn a_thread_on_deleted_words_is_not_blamed_on_its_paragraph() {
+    let base = docx(&(para("Services") + &para("The Provider shall perform the Services.")));
+    let bob = plan(
+        r#"{"schema_version":1,"author":"Bob","date":"2026-10-18T12:00:00Z","operations":[{"kind":"comment","paragraph":"p1","anchor":"Provider","text":"Bob's note."}]}"#,
+    );
+    let source = apply_plan(&base, &bob).unwrap().clean;
+    let delete = plan(
+        r#"{"schema_version":1,"author":"Alice","date":"2026-10-19T12:00:00Z","operations":[{"kind":"replace","paragraph":"p1","find":"The Provider shall","replacement":"Somebody shall"}]}"#,
+    );
+    let out = apply_plan(&source, &delete).unwrap();
+    assert!(
+        list_comments(&out.clean).unwrap().is_empty(),
+        "clean keeps a thread"
+    );
+    let dropped = serde_json::to_value(&out.report).unwrap()["clean_removed_comments"].clone();
+    assert_eq!(
+        dropped,
+        serde_json::json!([{
+            "id": "c0",
+            "author": "Bob",
+            "replies": [],
+            "why": "anchor removed by the plan's deletion of its text in p1"
+        }]),
+        "{dropped}"
+    );
 }

@@ -1829,6 +1829,56 @@ def test_editing_mode_refuses_a_reply_on_a_paragraph_it_deletes(
     assert not output.exists()
 
 
+def test_editing_mode_names_a_thread_its_clean_copy_drops(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    commented = tmp_path / "commented.docx"
+    assert (
+        main(
+            [
+                "add",
+                str(letter),
+                "-p",
+                "p1",
+                "--anchor",
+                "his or her",
+                "--content",
+                "Gendered?",
+                "-a",
+                "Jubarte",
+                "-o",
+                str(commented),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    edited = tmp_path / "edited.docx"
+    assert (
+        main(
+            [
+                "edit",
+                str(commented),
+                "-a",
+                "Alice",
+                "-p",
+                "p1",
+                "--delete",
+                "--editing-mode",
+                "-o",
+                str(edited),
+            ]
+        )
+        == 0
+    )
+    editing = capsys.readouterr().err
+    assert "removed c0 (Jubarte): anchor removed by the plan's deletion of p1" in editing
+    suggesting = tmp_path / "suggesting.docx"
+    assert main(["edit", str(commented), "-a", "Alice", "-p", "p1", "--delete", "-o", str(suggesting)]) == 0
+    tracked = capsys.readouterr().err
+    assert "removed c0" not in tracked
+
+
 def test_edit_takes_the_text_a_comment_covers(
     letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
