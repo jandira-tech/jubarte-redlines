@@ -340,7 +340,10 @@ pub(crate) fn renumber_rescued_comments(pkg: &mut PartFs, kept: &[String]) {
     if story_order.is_empty() {
         return;
     }
-    let Some(mut comments_xml) = Parsed::load(pkg, FAMILY[0].0) else {
+    let Some(comments_part) = super::comments_part(pkg) else {
+        return;
+    };
+    let Some(mut comments_xml) = Parsed::load(pkg, &comments_part) else {
         return;
     };
     for c in comments_xml.w("comment") {
@@ -419,8 +422,15 @@ pub(crate) fn renumber_rescued_comments(pkg: &mut PartFs, kept: &[String]) {
 /// Drop the comments Accept / Reject All left without a reference, prune the
 /// comment family and `people.xml` (module docs). Return their ids, so
 /// callers can report precisely what went.
-pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) -> Vec<String> {
-    let Some(mut comments) = Parsed::load(pkg, FAMILY[0].0) else {
+pub(crate) fn prune_orphan_comments(
+    pkg: &mut PartFs,
+    story_parts: &[String],
+    comments_part: Option<&str>,
+) -> Vec<String> {
+    let Some(comments_part) = comments_part else {
+        return Vec::new();
+    };
+    let Some(mut comments) = Parsed::load(pkg, comments_part) else {
         return Vec::new();
     };
     // The comments part itself is not an anchor story: a `commentReference`
@@ -429,7 +439,7 @@ pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) ->
     // `word_save::tidy` instead.
     let stories: Vec<Parsed> = story_parts
         .iter()
-        .filter(|p| p.as_str() != FAMILY[0].0)
+        .filter(|p| p.as_str() != comments_part)
         .filter_map(|p| Parsed::load(pkg, p))
         .collect();
     let id = W::id();
@@ -489,7 +499,16 @@ pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) ->
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
     if kept.is_empty() {
-        for (part, _, rel_type) in FAMILY {
+        let parts: Vec<String> = (0..FAMILY.len())
+            .map(|index| {
+                if index == 0 {
+                    comments_part.to_string()
+                } else {
+                    family_part(pkg, index)
+                }
+            })
+            .collect();
+        for (part, (_, _, rel_type)) in parts.iter().zip(FAMILY) {
             remove_part(pkg, &main, part, rel_type);
         }
     } else if dropped {
@@ -554,13 +573,22 @@ fn marker(dom: &mut Dom, local: &str, cid: &str) -> NodeId {
     m
 }
 
+/// The comment family's part `index` (`FAMILY` order) as the main
+/// document's relationship names it, which need not be the conventional
+/// name (`word/commentsExtended1.xml`); the conventional name otherwise.
+fn family_part(pkg: &PartFs, index: usize) -> String {
+    let (conventional, _, rel_type) = FAMILY[index];
+    let kind = rel_type.rsplit('/').next().unwrap_or(rel_type);
+    super::related_part(pkg, kind).unwrap_or_else(|| conventional.to_string())
+}
+
 /// Drop the commentsExtended / commentsIds entries of the dropped comments'
 /// paragraphs and the commentsExtensible entries of their durable ids.
 fn prune_by_para(pkg: &mut PartFs, dropped_paras: &HashSet<String>) {
     if dropped_paras.is_empty() {
         return;
     }
-    if let Some(mut ext) = Parsed::load(pkg, FAMILY[1].0) {
+    if let Some(mut ext) = Parsed::load(pkg, &family_part(pkg, 1)) {
         let key = W15::name("paraId");
         for e in ext.dom.descendants(ext.root, Some(&W15::name("commentEx"))) {
             if ext
@@ -574,7 +602,7 @@ fn prune_by_para(pkg: &mut PartFs, dropped_paras: &HashSet<String>) {
         ext.store(pkg);
     }
     let mut durable: HashSet<String> = HashSet::new();
-    if let Some(mut ids) = Parsed::load(pkg, FAMILY[2].0) {
+    if let Some(mut ids) = Parsed::load(pkg, &family_part(pkg, 2)) {
         let (key, dur) = (XName::get("paraId", CID), XName::get("durableId", CID));
         for e in ids
             .dom
@@ -593,7 +621,7 @@ fn prune_by_para(pkg: &mut PartFs, dropped_paras: &HashSet<String>) {
         }
         ids.store(pkg);
     }
-    if let Some(mut cex) = Parsed::load(pkg, FAMILY[3].0) {
+    if let Some(mut cex) = Parsed::load(pkg, &family_part(pkg, 3)) {
         let key = XName::get("durableId", CEX);
         for e in cex
             .dom

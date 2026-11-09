@@ -2665,3 +2665,144 @@ fn added_break_marks_take_unused_revision_ids() {
     ids.dedup();
     assert_eq!(ids.len(), all, "every revision id is unique: {xml}");
 }
+
+/// A comments part stored under another name still loses a comment whose
+/// only anchor accept deletes. A `commentReference` inside that part keeps
+/// no comment alive either.
+#[test]
+fn a_renamed_comments_part_loses_an_orphan_on_accept() {
+    let part = |body: &str| {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:comments xmlns:w="{}" xmlns:r="{}">{body}</w:comments>"#,
+            common::docx::W_NS,
+            common::docx::R_NS,
+        )
+    };
+    let noted = r#"<w:comment w:id="0" w:author="Ann" w:date="2026-01-01T00:00:00Z" w:initials="A"><w:p><w:r><w:t>Noted</w:t></w:r></w:p></w:comment>"#;
+    let source = common::docx::docx_with(
+        r#"<w:p><w:del w:id="1" w:author="Ann" w:date="2026-01-01T00:00:00Z"><w:commentRangeStart w:id="0"/><w:r><w:delText>Gone</w:delText></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r></w:del></w:p>"#,
+        &[Part {
+            name: "word/comments1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &part(noted),
+        }],
+    );
+    assert!(
+        part_string(&source, "word/comments1.xml")
+            .unwrap()
+            .contains(r#"w:id="0""#)
+    );
+    let accepted = accept_revisions(&source).unwrap();
+    let after = part_string(&accepted, "word/comments1.xml").unwrap_or_default();
+    assert!(
+        !after.contains("<w:comment "),
+        "comments:\n{after}\ndocument:\n{}",
+        part_string(&accepted, "word/document.xml").unwrap_or_default()
+    );
+    assert_word_valid_package(&accepted);
+
+    let echoed = r#"<w:comment w:id="0" w:author="Ann" w:date="2026-01-01T00:00:00Z" w:initials="A"><w:p><w:r><w:commentReference w:id="0"/></w:r><w:r><w:t>Noted</w:t></w:r></w:p></w:comment>"#;
+    let echoed_src = common::docx::docx_with(
+        r#"<w:p><w:r><w:t>Host</w:t></w:r></w:p>"#,
+        &[Part {
+            name: "word/comments1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &part(echoed),
+        }],
+    );
+    let echoed_out = accept_revisions(&echoed_src).unwrap();
+    let echoed_xml = part_string(&echoed_out, "word/comments1.xml").unwrap_or_default();
+    assert!(!echoed_xml.contains("<w:comment "), "{echoed_xml}");
+    assert_word_valid_package(&echoed_out);
+}
+
+/// The whole comment family under other names: the extended part of a
+/// renamed comments part loses the entry of the comment accept drops, and
+/// goes with the family when no comment is left (#2131 sweep).
+#[test]
+fn a_renamed_comment_family_prunes_its_extended_part_too() {
+    let w = common::docx::W_NS;
+    let w15 = "http://schemas.microsoft.com/office/word/2012/wordml";
+    let comment = |id: u32, para: &str| {
+        format!(
+            r#"<w:comment w:id="{id}" w:author="Ann" w:date="2026-01-01T00:00:00Z" w:initials="A"><w:p w14:paraId="{para}" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w:r><w:t>Noted {id}</w:t></w:r></w:p></w:comment>"#
+        )
+    };
+    let comments = |ids: &[(u32, &str)]| {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:comments xmlns:w="{w}" xmlns:r="{}">{}</w:comments>"#,
+            common::docx::R_NS,
+            ids.iter().map(|(i, p)| comment(*i, p)).collect::<String>()
+        )
+    };
+    let extended = |paras: &[&str]| {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w15:commentsEx xmlns:w15="{w15}">{}</w15:commentsEx>"#,
+            paras
+                .iter()
+                .map(|p| format!(r#"<w15:commentEx w15:paraId="{p}" w15:done="0"/>"#))
+                .collect::<String>()
+        )
+    };
+    let gone = |id: u32| {
+        format!(
+            r#"<w:del w:id="{}" w:author="Ann" w:date="2026-01-01T00:00:00Z"><w:commentRangeStart w:id="{id}"/><w:r><w:delText>Gone</w:delText></w:r><w:commentRangeEnd w:id="{id}"/><w:r><w:commentReference w:id="{id}"/></w:r></w:del>"#,
+            id + 10
+        )
+    };
+    let kept = r#"<w:commentRangeStart w:id="1"/><w:r><w:t>Kept</w:t></w:r><w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="1"/></w:r>"#;
+    let package = |body: &str, ids: &[(u32, &str)], paras: &[&str]| {
+        let (c, e) = (comments(ids), extended(paras));
+        common::docx::docx_with(
+            body,
+            &[
+                Part {
+                    name: "word/comments1.xml",
+                    content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+                    rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+                    xml: &c,
+                },
+                Part {
+                    name: "word/commentsExtended1.xml",
+                    content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml",
+                    rel_type: "http://schemas.microsoft.com/office/2011/relationships/commentsExtended",
+                    xml: &e,
+                },
+            ],
+        )
+    };
+
+    // One of two comments loses its anchor: its entry goes, the other stays.
+    let two = package(
+        &format!("<w:p>{}{kept}</w:p>", gone(0)),
+        &[(0, "0000000A"), (1, "0000000B")],
+        &["0000000A", "0000000B"],
+    );
+    let accepted = accept_revisions(&two).unwrap();
+    let ext = part_string(&accepted, "word/commentsExtended1.xml").unwrap_or_default();
+    assert!(!ext.contains("0000000A"), "{ext}");
+    assert!(ext.contains("0000000B"), "{ext}");
+    // No Ring-1 gate here: `check_comment_family_packaging` knows only the
+    // conventional part names, so it flags this renamed family in the
+    // source as much as in the output (a validator gap, not this fix's).
+
+    // The only comment loses its anchor: the extended part goes too.
+    let one = package(
+        &format!("<w:p>{}<w:r><w:t>Host</w:t></w:r></w:p>", gone(0)),
+        &[(0, "0000000A")],
+        &["0000000A"],
+    );
+    let accepted = accept_revisions(&one).unwrap();
+    assert_eq!(part_string(&accepted, "word/comments1.xml"), None);
+    assert_eq!(
+        part_string(&accepted, "word/commentsExtended1.xml"),
+        None,
+        "the extended part outlives its comments"
+    );
+    assert_word_valid_package(&accepted);
+}

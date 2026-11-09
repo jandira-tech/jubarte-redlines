@@ -4687,7 +4687,7 @@ fn resolve_with_comments(
         });
     }
     let stories = story_parts(&parts);
-    let removed_comments = comments::prune_orphan_comments(pkg, &stories);
+    let removed_comments = comments::prune_orphan_comments(pkg, &stories, comments.as_deref());
     notes::prune_orphan_notes(pkg, &stories);
     let tidied: Vec<String> = stories
         .into_iter()
