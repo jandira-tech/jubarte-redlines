@@ -1844,6 +1844,14 @@ fn produce(
         error.outcomes[op].code = Some(error.code.clone());
         return Err(error);
     }
+    // After the reply check: a deletion with no new comment can still land
+    // on a later copy of the same paragraph. Refuse that before publishing.
+    if let Some((op, message)) = identical_paragraph_kept(tx, &redline)? {
+        let mut error = tx.conflict(op, &message);
+        error.code = "UNSUPPORTED_STRUCTURE".into();
+        error.outcomes[op].code = Some(error.code.clone());
+        return Err(error);
+    }
     // A deleted text's comment wraps its deletion, as a strike's does.
     let lifted: Vec<u32> = tx
         .deletion_comments
@@ -1874,6 +1882,85 @@ fn produce(
         redline,
         report,
     })
+}
+
+/// A whole-paragraph deletion whose named paragraph still shows the same
+/// non-empty text. The comparer struck another copy. An empty paragraph
+/// is skipped: nothing distinguishes it from its twin.
+fn identical_paragraph_kept(
+    tx: &Transaction<'_>,
+    redline: &[u8],
+) -> Result<Option<(usize, String)>, EditError> {
+    let deletions: Vec<(usize, usize)> = tx
+        .resolved
+        .iter()
+        .filter_map(|(op, resolved)| match resolved {
+            Resolved::DeleteParagraph { para } => Some((*op, *para)),
+            _ => None,
+        })
+        .collect();
+    if deletions.is_empty() {
+        return Ok(None);
+    }
+    let opened = crate::inspect::Opened::open(redline)
+        .map_err(|error| err("PACKAGE_WRITE", None, error.to_string()))?;
+    let mut texts: HashMap<usize, Vec<String>> = HashMap::new();
+    for (op, para) in deletions {
+        let source = match tx.projections.get(para) {
+            Some(projection) if !projection.text.is_empty() => projection.text.as_str(),
+            _ => continue,
+        };
+        let Some(&(story, local)) = tx.paragraph_story.get(para) else {
+            continue;
+        };
+        if let std::collections::hash_map::Entry::Vacant(slot) = texts.entry(story) {
+            slot.insert(visible_paragraphs(&opened, tx, story)?);
+        }
+        let still_there = texts
+            .get(&story)
+            .and_then(|paragraphs| paragraphs.get(local))
+            .is_some_and(|text| text == source);
+        if !still_there {
+            continue;
+        }
+        let keep = match tx.syntax {
+            super::PlanSyntax::Flags | super::PlanSyntax::Typed => "--existing-revisions keep",
+            super::PlanSyntax::V1 | super::PlanSyntax::V2 => r#""existing_revisions": "keep""#,
+        };
+        return Ok(Some((
+            op,
+            format!(
+                "the comparer deleted an identical paragraph instead of the one named; pass {keep} to write the deletion as given"
+            ),
+        )));
+    }
+    Ok(None)
+}
+
+/// Visible text of each paragraph in `story`, in the order a plan addresses.
+fn visible_paragraphs(
+    opened: &crate::inspect::Opened,
+    tx: &Transaction<'_>,
+    story: usize,
+) -> Result<Vec<String>, EditError> {
+    if story == 0 {
+        return Ok(body_paragraph_nodes(&opened.dom, opened.body)
+            .into_iter()
+            .map(|paragraph| project_paragraph(&opened.dom, paragraph).text)
+            .collect());
+    }
+    let Some(part) = tx.stories.get(story).map(|story| story.part.clone()) else {
+        return Ok(Vec::new());
+    };
+    if opened.pkg.part_bytes(&part).is_none() {
+        return Ok(Vec::new());
+    }
+    let (dom, _, root) = crate::inspect::parse_part(&opened.pkg, &part)
+        .map_err(|error| err("PACKAGE_WRITE", None, error.to_string()))?;
+    Ok(crate::inspect::story_paragraph_nodes(&dom, root)
+        .into_iter()
+        .map(|paragraph| project_paragraph(&dom, paragraph).text)
+        .collect())
 }
 
 /// An [`EditError`] as `super::err` builds it.
