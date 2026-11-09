@@ -6009,17 +6009,17 @@ impl<'p> Transaction<'p> {
                         .or_else(|| property("tag"))
                         .unwrap_or_default()
                 ));
-            } else if dom.name_is(node, &W::name("smartTag")) {
+            } else if dom.name_is(node, &W::smart_tag()) {
                 inner = Some(
                     "a smart tag (`w:smartTag`); edit the text on either side of it, or comment on it"
                         .into(),
                 );
-            } else if dom.name_is(node, &W::name("customXml")) {
+            } else if dom.name_is(node, &W::custom_xml()) {
                 inner = Some(
                     "custom XML markup (`w:customXml`); edit the text on either side of it, or comment on it"
                         .into(),
                 );
-            } else if dom.name_is(node, &W::name("dir")) || dom.name_is(node, &W::name("bdo")) {
+            } else if dom.name_is(node, &W::dir()) || dom.name_is(node, &W::bdo()) {
                 inner = Some(
                     "a direction override (`w:dir`/`w:bdo`); edit the text on either side of it, or comment on it"
                         .into(),
