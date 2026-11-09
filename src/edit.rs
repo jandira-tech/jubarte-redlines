@@ -8004,6 +8004,212 @@ fn lift_deletion_comments(redline: &[u8], ids: &[u32]) -> Result<Vec<u8>, EditEr
         .map_err(|e| err("PACKAGE_WRITE", None, e.to_string()))
 }
 
+/// A paragraph the plan deleted whole: its mark carries the plan author's
+/// deletion. Comment reference runs the comparer left beside that deletion
+/// join it, so Accept drops the thread instead of parking an empty one on
+/// the next paragraph.
+fn enclose_deleted_paragraph_comment_references(
+    redline: &[u8],
+    author: &str,
+) -> Result<Vec<u8>, EditError> {
+    let mut red = Opened::open(redline).map_err(|e| err("PACKAGE_WRITE", None, e.to_string()))?;
+    let body_changed = enclose_comment_references(&mut red.dom, red.body, author);
+    let stories = red.story_parts();
+    let mut rewritten = Vec::new();
+    for (_, _, part) in &stories {
+        let Some(xml) = red.pkg.part_string(part) else {
+            continue;
+        };
+        let document = red.dom.parse_xdocument(&xml);
+        let Some(root) = red.dom.root(document) else {
+            continue;
+        };
+        if enclose_comment_references(&mut red.dom, root, author) {
+            rewritten.push((part.clone(), red.dom.serialize_document(document)));
+        }
+    }
+    if !body_changed && rewritten.is_empty() {
+        return Ok(redline.to_vec());
+    }
+    if body_changed {
+        let main = red.main.clone();
+        let xml = red.dom.serialize_document(red.document);
+        red.pkg.set_part(&main, xml.into_bytes());
+    }
+    for (part, xml) in rewritten {
+        red.pkg.set_part(&part, xml.into_bytes());
+    }
+    red.pkg
+        .to_zip()
+        .map_err(|e| err("PACKAGE_WRITE", None, e.to_string()))
+}
+
+/// Move comment-reference runs that belong only to `root`'s wholly deleted
+/// paragraphs into that paragraph's content deletion. Returns whether the
+/// tree changed.
+fn enclose_comment_references(dom: &mut Dom, root: NodeId, author: &str) -> bool {
+    let moves = comment_reference_moves(dom, root, author);
+    let changed = !moves.is_empty();
+    for (run, del) in moves {
+        dom.remove(run);
+        dom.add(del, run);
+    }
+    changed
+}
+
+/// The reference runs `enclose_comment_references` moves, each with the
+/// deletion it joins. One walk of `root` maps every comment to the
+/// paragraphs holding its anchors, so each reference is checked without
+/// walking the story again.
+fn comment_reference_moves(dom: &Dom, root: NodeId, author: &str) -> Vec<(NodeId, NodeId)> {
+    let mut deleted = Vec::new();
+    dom.for_each_descendant_element(root, Some(&W::p()), |paragraph| {
+        // A paragraph already inside a deletion (a text box in a deleted
+        // run) goes with that deletion.
+        if deleted_mark_author(dom, paragraph) == Some(author) && !inside_deletion(dom, paragraph) {
+            deleted.push(paragraph);
+        }
+    });
+    if deleted.is_empty() {
+        return Vec::new();
+    }
+    let anchors = comment_anchor_paragraphs(dom, root);
+    let mut moves = Vec::new();
+    for paragraph in deleted {
+        let Some(del) = content_deletion(dom, paragraph, author) else {
+            continue;
+        };
+        let mut seen = HashSet::new();
+        for index in 0..dom.child_count(paragraph) {
+            let run = dom.child_at(paragraph, index);
+            if !dom.name_is(run, &W::r()) {
+                continue;
+            }
+            let Some(id) = reference_id(dom, run) else {
+                continue;
+            };
+            if !seen.insert(id) {
+                continue;
+            }
+            // Every anchor of the comment sits in this paragraph.
+            let only_here = anchors
+                .get(id)
+                .is_some_and(|held| held.iter().all(|&at| at == Some(paragraph)));
+            if only_here {
+                moves.push((run, del));
+            }
+        }
+    }
+    moves
+}
+
+/// Each comment id under `root`, with the paragraph holding each of its
+/// anchors (`None` for an anchor outside any paragraph).
+fn comment_anchor_paragraphs(dom: &Dom, root: NodeId) -> HashMap<&str, Vec<Option<NodeId>>> {
+    let (start, end, reference) = (
+        W::comment_range_start(),
+        W::comment_range_end(),
+        W::comment_reference(),
+    );
+    let mut anchors: HashMap<&str, Vec<Option<NodeId>>> = HashMap::new();
+    dom.for_each_descendant_element(root, None, |marker| {
+        if !(dom.name_is(marker, &start)
+            || dom.name_is(marker, &end)
+            || dom.name_is(marker, &reference))
+        {
+            return;
+        }
+        if let Some(id) = dom.attribute(marker, &W::id()) {
+            anchors
+                .entry(id)
+                .or_default()
+                .push(enclosing_paragraph(dom, marker));
+        }
+    });
+    anchors
+}
+
+/// The nearest `w:p` around `node`.
+fn enclosing_paragraph(dom: &Dom, node: NodeId) -> Option<NodeId> {
+    let mut current = dom.parent(node);
+    while let Some(at) = current {
+        if dom.name_is(at, &W::p()) {
+            return Some(at);
+        }
+        current = dom.parent(at);
+    }
+    None
+}
+
+/// Author of the paragraph mark's `w:del` or `w:moveFrom`, when it has one.
+fn deleted_mark_author(dom: &Dom, paragraph: NodeId) -> Option<&str> {
+    let props = dom
+        .element(paragraph, &W::p_pr())
+        .and_then(|props| dom.element(props, &W::r_pr()))?;
+    let mark = (0..dom.child_count(props))
+        .map(|index| dom.child_at(props, index))
+        .find(|&child| is_deletion(dom, child))?;
+    dom.attribute(mark, &W::author())
+}
+
+/// The plan author's content `w:del` in `paragraph`, preferring the last
+/// one that holds deleted text.
+fn content_deletion(dom: &Dom, paragraph: NodeId, author: &str) -> Option<NodeId> {
+    let mut last = None;
+    for index in (0..dom.child_count(paragraph)).rev() {
+        let del = dom.child_at(paragraph, index);
+        if !dom.name_is(del, &W::del()) || dom.attribute(del, &W::author()) != Some(author) {
+            continue;
+        }
+        let holds_text = dom
+            .find_descendant_element(del, Some(&W::del_text()), |text| {
+                !dom.value(text).is_empty()
+            })
+            .is_some();
+        if holds_text {
+            return Some(del);
+        }
+        last.get_or_insert(del);
+    }
+    last
+}
+
+/// `w:id` when `run` is only a comment reference (properties allowed).
+fn reference_id(dom: &Dom, run: NodeId) -> Option<&str> {
+    let mut id = None;
+    for index in 0..dom.child_count(run) {
+        let child = dom.child_at(run, index);
+        if !dom.is_element(child) {
+            continue;
+        }
+        if dom.name_is(child, &W::r_pr()) {
+            continue;
+        }
+        if !dom.name_is(child, &W::comment_reference()) || id.is_some() {
+            return None;
+        }
+        id = dom.attribute(child, &W::id());
+    }
+    id
+}
+
+/// `node`, or an element around it, is a `w:del` or a `w:moveFrom`.
+fn inside_deletion(dom: &Dom, node: NodeId) -> bool {
+    let mut current = Some(node);
+    while let Some(at) = current {
+        if is_deletion(dom, at) {
+            return true;
+        }
+        current = dom.parent(at);
+    }
+    false
+}
+
+/// `node` is a `w:del` or a `w:moveFrom`.
+fn is_deletion(dom: &Dom, node: NodeId) -> bool {
+    dom.name_is(node, &W::del()) || dom.name_is(node, &W::move_from())
+}
+
 /// Whether comment `id`'s range in `redline` holds text that is not deleted.
 fn comment_holds_kept_text(redline: &[u8], id: u32) -> bool {
     let Ok(opened) = Opened::open(redline) else {
