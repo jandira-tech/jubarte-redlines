@@ -486,18 +486,21 @@ fn story_of(dom: &Dom, n: NodeId) -> Option<NodeId> {
         .find(|&a| STORIES.contains(&local(dom, a).as_str()))
 }
 
-/// `D` (deleted), `I` (inserted) or `-`, from the nearest revision container in
-/// `n`'s own story.
+/// `D` (deleted), `I` (inserted) or `-`. A deletion in `n`'s own story wins,
+/// even through an insertion or a move destination, as validate's repair
+/// (`under_deletion`) reads it. Otherwise an insertion or move destination
+/// counts.
 fn state(dom: &Dom, n: NodeId) -> char {
+    let mut inserted = false;
     for a in dom.ancestors(n, None) {
         match local(dom, a).as_str() {
             "del" | "moveFrom" => return 'D',
-            "ins" | "moveTo" => return 'I',
-            s if STORIES.contains(&s) => return '-',
+            "ins" | "moveTo" => inserted = true,
+            s if STORIES.contains(&s) => break,
             _ => {}
         }
     }
-    '-'
+    if inserted { 'I' } else { '-' }
 }
 
 /// The deletion around a text box's anchor, in the story that holds it.
