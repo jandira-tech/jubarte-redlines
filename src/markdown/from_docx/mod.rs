@@ -14,7 +14,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 mod agent;
-mod critic;
+pub(in crate::markdown) mod critic;
 pub(crate) mod drawing;
 mod header;
 mod media;

@@ -48,3 +48,34 @@ fn a_free_plain_note_away_from_a_closer_still_converts() {
         );
     }
 }
+
+/// The plain grammar's fallback ids (`noid`, the colon id) and a
+/// substitution's two `; `-joined parts are the old wrapper too.
+#[test]
+fn old_plain_wrappers_with_fallback_ids_or_two_sides_are_refused() {
+    for (source, new) in [
+        ("{++x++}{>>noid Alice<<}", "{noid Alice}"),
+        ("{++x++}{>>body:rev:x9 Alice<<}", "{body:rev:x9 Alice}"),
+        (
+            "{~~a~>b~~}{>>r1 Ann (2026-10-01T09:00:00Z); r2 Bo (2026-10-02T09:00:00Z)<<}",
+            "{r1 Ann (2026-10-01T09:00:00Z); r2 Bo (2026-10-02T09:00:00Z)}",
+        ),
+    ] {
+        let error = error_of(source);
+        assert!(
+            error.contains("line 1") && error.contains(new),
+            "{source}: {error}"
+        );
+    }
+}
+
+/// A nested replacement spells each author as the nested grammar needs:
+/// bare parentheses in a name would leave the chain unreadable.
+#[test]
+fn a_nested_replacement_spells_author_parentheses() {
+    let error = error_of(
+        "{++x++}{>>r1 Ana (consultant) (2026-10-01T09:00:00Z) on r3 Bob (2026-10-02T09:00:00Z)<<}",
+    );
+    let new = "{r1 Ana %28consultant%29 (2026-10-01T09:00:00Z) re r3 Bob (2026-10-02T09:00:00Z)}";
+    assert!(error.contains(new), "{error}");
+}
