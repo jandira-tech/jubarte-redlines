@@ -1321,18 +1321,27 @@ fn a_text_box_copy_of_a_single_id_tag_writes_no_mark_of_its_own() {
 }
 
 /// #1363: content the view prints nothing for (a hidden run, a soft
-/// hyphen, a symbol, a page break) still keeps a deletion and the
-/// insertion after it two changes, as `changes` lists them; with nothing
-/// between them they are one substitution.
+/// hyphen, a symbol) still keeps a deletion and the insertion after it two
+/// changes, as `changes` lists them; with nothing between them they are
+/// one substitution. A page break prints in place between them (#2167).
 #[test]
 fn a_deletion_and_an_insertion_apart_print_as_the_two_changes_they_are() {
     let between = [
-        r#"<w:r><w:rPr><w:vanish/></w:rPr><w:t>note</w:t></w:r>"#,
-        r#"<w:r><w:softHyphen/></w:r>"#,
-        r#"<w:r><w:sym w:font="Wingdings" w:char="F0FC"/></w:r>"#,
-        r#"<w:r><w:br w:type="page"/></w:r>"#,
+        (
+            r#"<w:r><w:rPr><w:vanish/></w:rPr><w:t>note</w:t></w:r>"#,
+            "",
+        ),
+        (r#"<w:r><w:softHyphen/></w:r>"#, ""),
+        (
+            r#"<w:r><w:sym w:font="Wingdings" w:char="F0FC"/></w:r>"#,
+            "",
+        ),
+        (
+            r#"<w:r><w:br w:type="page"/></w:r>"#,
+            r#"<br type="page"/>"#,
+        ),
     ];
-    for gap in between {
+    for (gap, printed) in between {
         let doc = docx(&p(&[
             kept("pay "),
             del(1, "old", BOB, DATE),
@@ -1343,7 +1352,11 @@ fn a_deletion_and_an_insertion_apart_print_as_the_two_changes_they_are() {
         assert_eq!(ids(&doc), ["r1", "r2"], "{gap}");
         let view = agent(&doc);
         let line = body(&view).lines().nth(1).unwrap_or_default();
-        assert_eq!(line, "pay {--old--}{r1 @B}{++new++}{r2 @B} now", "{gap}");
+        assert_eq!(
+            line,
+            format!("pay {{--old--}}{{r1 @B}}{printed}{{++new++}}{{r2 @B}} now"),
+            "{gap}"
+        );
         assert!(
             view.contains("2 marks shown as 2 changes: 1 insertion, 1 deletion"),
             "{gap}\n{view}"

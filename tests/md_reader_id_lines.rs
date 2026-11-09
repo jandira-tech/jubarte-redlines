@@ -1194,7 +1194,8 @@ fn an_empty_run_parts_no_marks_and_hidden_text_or_a_page_break_does() {
     // and a deletion: their order remains unchanged in text and count. The
     // empty run holds nothing, so the marks are one replacement (#1359);
     // the hidden text and the break were there before the marks, which
-    // stay two changes though the view prints neither between them.
+    // stay two changes. The view prints no hidden text, but the break has
+    // text after it, so it prints in place (#2167).
     let mark = |kind: &str, id: u32, text: &str| {
         let t = if kind == "del" { "delText" } else { "t" };
         format!(
@@ -1237,7 +1238,7 @@ fn an_empty_run_parts_no_marks_and_hidden_text_or_a_page_break_does() {
     for line in [
         "A {++new++}{r10+11 @AL}{--old--}{r10+11 @AL}",
         "A {++new++}{r12 @AL}{--old--}{r13 @AL}",
-        "A {++new++}{r14 @AL}{--old--}{r15 @AL}",
+        "A {++new++}{r14 @AL}<br type=\"page\"/>{--old--}{r15 @AL}",
     ] {
         assert!(view.lines().any(|l| l == line), "{line} in {view}");
     }

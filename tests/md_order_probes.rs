@@ -129,7 +129,7 @@ const SEEN: &[(&str, &str, &str)] = &[
     ),
     (
         "page-br",
-        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
+        "A {++new++}{r1 @AL}<br type=\"page\"/>{--old--}{r2 @AL} Z",
         "1 insertion, 1 deletion",
     ),
     (
@@ -286,15 +286,15 @@ const SETTLED_LATER: &[(&str, &str)] = &[
     ("fn-cross", "footnote comment"),
     ("fn-inside", "footnote comment"),
     // Content between the marks that the view does not print in place
-    // (hidden text, a soft hyphen, a symbol, a page break) is not written
-    // back there: the marks then touch, and are one replacement (#1359).
+    // (hidden text, a soft hyphen, a symbol) is not written back there:
+    // the marks then touch, and are one replacement (#1359). A page break
+    // prints in place, `<br type="page"/>`, and comes back there (#2167).
     ("direct-vanish", "unprinted content between the marks"),
     ("style-vanish", "unprinted content between the marks"),
     ("style-basedon", "unprinted content between the marks"),
     ("style-vanish-tab", "unprinted content between the marks"),
     ("soft-hyphen", "unprinted content between the marks"),
     ("sym", "unprinted content between the marks"),
-    ("page-br", "unprinted content between the marks"),
     ("hdr-direct-vanish", "unprinted content between the marks"),
     ("hdr-style-vanish", "unprinted content between the marks"),
     ("fn-direct-vanish", "unprinted content between the marks"),

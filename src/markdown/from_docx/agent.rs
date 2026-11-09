@@ -2004,6 +2004,53 @@ fn is_page_break(e: &Element) -> bool {
     e.is("br") && e.attr("type") == Some("page")
 }
 
+/// A run whose only content is a page break.
+fn page_break_only(run: &Element) -> bool {
+    run.local() == "r"
+        && run.elements().any(is_page_break)
+        && run.elements().all(|child| {
+            matches!(child.local(), "rPr" | "lastRenderedPageBreak") || is_page_break(child)
+        })
+}
+
+/// Text the view prints: a later one means a page break is not the
+/// paragraph's last content.
+fn shown_leaf(element: &Element) -> bool {
+    match element.local() {
+        "t" | "delText" => !element.text().is_empty(),
+        "tab" | "ptab" | "noBreakHyphen" => true,
+        "br" | "cr" => element.attr("type") != Some("page"),
+        _ => false,
+    }
+}
+
+/// Page-break runs of `paragraph` that have text after them. The view
+/// prints each in place (`<br type="page"/>`); a break that ends the
+/// paragraph stays on its id line.
+pub(crate) fn mid_paragraph_page_breaks(paragraph: &Element) -> Vec<*const Element> {
+    let mut order = Vec::new();
+    fn walk<'a>(element: &'a Element, depth: usize, order: &mut Vec<(usize, &'a Element)>) {
+        order.push((depth, element));
+        for child in element.elements() {
+            walk(child, depth + 1, order);
+        }
+    }
+    walk(paragraph, 0, &mut order);
+    let mut breaks = Vec::new();
+    for (index, (depth, element)) in order.iter().enumerate() {
+        if !page_break_only(element) {
+            continue;
+        }
+        let mut rest = order[index + 1..]
+            .iter()
+            .skip_while(|(later, _)| *later > *depth);
+        if rest.any(|(_, later)| shown_leaf(later)) {
+            breaks.push(std::ptr::from_ref(*element));
+        }
+    }
+    breaks
+}
+
 pub(crate) fn has_page_break(p: &Element) -> bool {
     holds(p, &is_page_break)
 }
