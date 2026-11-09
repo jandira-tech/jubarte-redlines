@@ -487,15 +487,15 @@ fn story_of(dom: &Dom, n: NodeId) -> Option<NodeId> {
 }
 
 /// `D` (deleted), `I` (inserted) or `-`. A deletion in `n`'s own story wins,
-/// even through an insertion. Otherwise the nearest insertion or move
-/// destination counts.
+/// even through an insertion or a move destination, as validate's repair
+/// (`under_deletion`) reads it. Otherwise an insertion or move destination
+/// counts.
 fn state(dom: &Dom, n: NodeId) -> char {
     let mut inserted = false;
     for a in dom.ancestors(n, None) {
         match local(dom, a).as_str() {
             "del" | "moveFrom" => return 'D',
-            "moveTo" => return 'I',
-            "ins" => inserted = true,
+            "ins" | "moveTo" => inserted = true,
             s if STORIES.contains(&s) => break,
             _ => {}
         }
