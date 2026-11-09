@@ -1399,12 +1399,7 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
             // Only a change's own printed id shows it. A container's tag
             // does not: accepting an inserted row keeps the row and leaves
             // a change inside it tracked, so that change needs its own id.
-            let unplaced: Vec<String> = facts
-                .changes
-                .iter()
-                .filter(|c| !printed.contains(&c.id))
-                .map(|c| agent::unplaced_entry(c, &handles))
-                .collect();
+            let unplaced = agent::unplaced_entries(&facts.changes, &printed, &handles);
             facts.unplaced = unplaced;
             if !facts.unplaced.is_empty() {
                 head = header::render(&facts);

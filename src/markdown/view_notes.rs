@@ -728,6 +728,7 @@ pub(super) fn unplaced(value: &str) -> Vec<(usize, &'static str, Tag)> {
     else {
         return Vec::new();
     };
+    let mut seen = HashSet::new();
     list.split(", ")
         .filter_map(|entry| {
             let (entry, _) = scalar_and_comment(entry.trim());
@@ -738,7 +739,14 @@ pub(super) fn unplaced(value: &str) -> Vec<(usize, &'static str, Tag)> {
                 Some(("ins", tag)) => ("ins", tag),
                 _ => ("ins", tag),
             };
-            Some((crate::ids::short_number(at, 'p')?, kind, first_tag(tag)?))
+            let tag = first_tag(tag)?;
+            let number = crate::ids::short_number(at, 'p')?;
+            // A later paragraph of the same mark (kind, ids, author and
+            // date) is the rest of that row or cell, not a second mark. A
+            // mark without an id names nothing to fold on.
+            (tag.ids.is_empty()
+                || seen.insert((kind, tag.ids.clone(), tag.handle.clone(), tag.date.clone())))
+            .then_some((number, kind, tag))
         })
         .collect()
 }
@@ -1781,6 +1789,20 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
 
 #[cfg(test)]
 mod tests {
+    /// A row's later paragraph repeats its entry and reads as one mark,
+    /// but marks without an id, or a repeated `w:id` by another author,
+    /// stay separate marks.
+    #[test]
+    fn only_a_repeated_entry_of_one_mark_folds() {
+        use super::unplaced;
+        assert_eq!(unplaced("[ins r5 @AC in p0, ins r5 @AC in p1]").len(), 1);
+        assert_eq!(
+            unplaced("[ins noid @AC in p0, ins noid @AC in p2]").len(),
+            2
+        );
+        assert_eq!(unplaced("[ins r5 @AC in p0, ins r5 @BD in p1]").len(), 2);
+    }
+
     #[test]
     fn note_formats_reads_each_parts_separator_changes() {
         let kinds = |value: &str| -> Vec<(&str, Vec<u32>)> {
