@@ -6342,7 +6342,7 @@ pub(super) fn named(text: &str) -> Option<(Option<String>, &str, &str)> {
 /// A name with its percent-spelled parentheses (`%28`, `%29`), backslash
 /// (`%5C`), space (`%20`) and `%` (`%25`) read back off, as a note writes
 /// them; anything else a `%` starts stays as it is.
-fn unescaped(name: &str) -> String {
+pub(super) fn unescaped(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     let mut rest = name;
     while let Some(at) = rest.find('%') {

@@ -53,3 +53,19 @@ fn a_nested_author_holding_re_and_an_id_stays_nested() {
     );
     assert!(markdown.contains(" re "), "{markdown}");
 }
+
+/// Without a date the note has no date group, and the author still comes
+/// back with its space, not with the `%20` the writer spelled.
+#[test]
+fn a_dateless_author_holding_re_and_an_id_keeps_its_space() {
+    let source = docx(
+        r#"<w:p><w:del w:id="3" w:author="Bo re r1 Kim"><w:r><w:delText>kept</w:delText></w:r></w:del></w:p>"#,
+    );
+    let markdown = plain(&source);
+    let document = part_string(&written(&markdown), "word/document.xml").unwrap();
+    assert!(
+        document.contains(r#"w:author="Bo re r1 Kim""#),
+        "{markdown}: {document}"
+    );
+    assert!(!document.contains("%20"), "{markdown}: {document}");
+}
