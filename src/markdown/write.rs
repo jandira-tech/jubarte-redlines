@@ -3504,8 +3504,10 @@ impl<'o, 'a> Writer<'o, 'a> {
             return;
         }
         if let Some(comment) = &mut self.comment {
+            // Text stays text: a character that reads as a change's
+            // stand-in is escaped, so only a real mark opens a change.
             if let Some(last) = comment.paragraphs.last_mut() {
-                last.push_str(text);
+                critic::push_escaped(last, text);
             }
             return;
         }
@@ -4113,7 +4115,7 @@ impl<'o, 'a> Writer<'o, 'a> {
     fn note_reference(&mut self, label: &str) {
         if let Some(comment) = &mut self.comment {
             if let Some(last) = comment.paragraphs.last_mut() {
-                last.push_str(&format!("[^{}]", critic::decode(label)));
+                critic::push_escaped(last, &format!("[^{}]", critic::decode(label)));
             }
             return;
         }

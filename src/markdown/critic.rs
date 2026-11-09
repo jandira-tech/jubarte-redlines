@@ -93,7 +93,7 @@ const STAND_INS: [(Token, char); 20] = [
 ];
 
 /// Put before a stand-in character (or itself) that was in the source.
-const ESCAPE: char = '\u{F0000}';
+pub(super) const ESCAPE: char = '\u{F0000}';
 
 /// A span's opening delimiter, its closing one, and the separator a
 /// substitution needs between them.
@@ -129,7 +129,7 @@ pub(super) fn token_of(c: char) -> Option<Token> {
     STAND_INS.iter().find(|(_, s)| *s == c).map(|(t, _)| *t)
 }
 
-fn push_escaped(out: &mut String, text: &str) {
+pub(super) fn push_escaped(out: &mut String, text: &str) {
     for c in text.chars() {
         if c == ESCAPE || token_of(c).is_some() {
             out.push(ESCAPE);
@@ -2967,7 +2967,11 @@ pub(super) fn resolve_with_policy(
             }
         }
         Piece::Token(token) => {
-            if remove_deleted_lines && matches!(token, Token::DeleteStart | Token::SubstituteStart)
+            // A deletion inside a note is the note's own: it removes no
+            // document text.
+            if remove_deleted_lines
+                && state != In::Comment
+                && matches!(token, Token::DeleteStart | Token::SubstituteStart)
             {
                 removed_text = true;
             }
@@ -3504,6 +3508,12 @@ mod tests {
             ]
         );
         assert_eq!(resolve("{>>a {++b++}<<}", true), "");
+        // cursor 4498793195: a deletion inside a note is the note's own,
+        // so accepted clauses treat its line as they treat the plain note.
+        assert_eq!(
+            accept_clauses("one\n\n{>>see {--x--}<<}\n\ntwo"),
+            accept_clauses("one\n\n{>>see x<<}\n\ntwo")
+        );
         assert_eq!(resolve("{==x==}{>>see {++this++}<<}", true), "x");
         // A comment inside a change does not end it.
         let text = "x{++a{>>n<<}b++}{~~c~>{==d==}{>>m<<}e~~}";
