@@ -536,7 +536,11 @@ fn build_with(
 ) -> (Patch, Vec<Paragraphs>) {
     let critic = critic.replace("\r\n", "\n");
     let owner = &options.owner;
-    let authors = super::view_notes::authors(&critic);
+    // Only the front matter holds the table: a body paragraph that looks
+    // like one names no one.
+    let authors = super::write::split_front_matter(&critic)
+        .map(|(yaml, _)| super::view_notes::authors(yaml))
+        .unwrap_or_default();
     let blocks = blocks(detach_breaks(join_marks(attribute(
         segments(&critic),
         &authors,
@@ -758,8 +762,9 @@ fn segments(critic: &str) -> Vec<Segment> {
 /// names the change. A number alone names no one: the owner made it.
 /// An agent tag (`r1 @A`) names the person in the document's `authors:`
 /// table, or the patch owner when that handle is absent, and is not a
-/// comment. A substitution whose sides two authors made is followed by two
-/// such notes, the deletion's then the insertion's.
+/// comment; a nested one (`r3 @BO re r1 @AL`) names the change by its
+/// first tag. A substitution whose sides two authors made is followed by
+/// two such notes, the deletion's then the insertion's.
 fn attribute(
     segments: Vec<Segment>,
     authors: &HashMap<String, super::view_notes::Author>,
@@ -768,7 +773,16 @@ fn attribute(
     let mut out: Vec<Segment> = Vec::with_capacity(segments.len());
     // Whether the last edit has taken its (first) note.
     let mut named_edit = false;
+    // The side of the last edit an undated tag of an author dated
+    // `first..last` named, by handle: it takes the last day at the end.
+    let mut ranged: HashMap<String, (usize, Side)> = HashMap::new();
     for segment in segments {
+        // Where the edit a note names sits: the last segment before it that
+        // is no note.
+        let at = out
+            .iter()
+            .rposition(|s| !matches!(s, Segment::Note(..)))
+            .unwrap_or_default();
         if let Segment::Note(text, true) = &segment
             && let Some(Segment::Edit(edit)) = out
                 .iter_mut()
@@ -789,24 +803,45 @@ fn attribute(
                 named_edit = true;
                 continue;
             }
-            if let Some(tags) = super::view_notes::revision_tags(text.trim())
-                && let Some(first) = tags.first()
+            if let Some(tags) = super::view_notes::revision_tags(text.trim()).or_else(|| {
+                super::view_notes::nested_revision_tags(text.trim())
+                    .map(|nest| nest.into_iter().take(1).collect())
+            }) && let Some(first) = tags.first()
             {
+                let mut range = |tag: &super::view_notes::Tag, side: Side| {
+                    if tag.date.is_none() && authors.get(&tag.handle).is_some_and(ranged_only) {
+                        ranged.insert(tag.handle.clone(), (at, side));
+                    }
+                };
                 let both_sides = !edit.old_marked.is_empty() && !edit.new_marked.is_empty();
                 if tags.len() == 2 && both_sides {
                     edit.by = Some(tag_attribution(&tags[0], authors, owner));
                     edit.new_by = Some(tag_attribution(&tags[1], authors, owner));
+                    range(&tags[0], Side::Old);
+                    range(&tags[1], Side::New);
                     named_edit = true;
                     continue;
                 }
                 let resolved = Some(tag_attribution(first, authors, owner));
                 if !named_edit || (!both_sides && edit.by.is_none()) {
                     edit.by = resolved;
+                    // One tag on a substitution: the deletion is the mark
+                    // written last, as the reader writes the insertion
+                    // first.
+                    range(
+                        first,
+                        if edit.old_marked.is_empty() {
+                            Side::New
+                        } else {
+                            Side::Old
+                        },
+                    );
                     named_edit = true;
                     continue;
                 }
                 if both_sides && edit.new_by.is_none() {
                     edit.new_by = resolved;
+                    range(first, Side::New);
                     continue;
                 }
             }
@@ -840,12 +875,50 @@ fn attribute(
         }
         out.push(segment);
     }
+    for (handle, (at, side)) in ranged {
+        let Some((_, last)) = authors.get(&handle).and_then(|known| known.range.as_ref()) else {
+            continue;
+        };
+        let Some(Segment::Edit(edit)) = out.get_mut(at) else {
+            continue;
+        };
+        let last = format!("{last}T23:59:59Z");
+        let both_sides = !edit.old_marked.is_empty() && !edit.new_marked.is_empty();
+        match side {
+            Side::New if both_sides => {
+                if let Some((_, date)) = &mut edit.new_by {
+                    *date = last;
+                }
+            }
+            Side::Old if both_sides && edit.new_by.is_none() => {
+                // The insertion keeps the first day; the deletion takes
+                // the last.
+                edit.new_by = edit.by.clone();
+                if let Some((_, date)) = &mut edit.by {
+                    *date = last;
+                }
+            }
+            _ => {
+                if let Some((_, date)) = &mut edit.by {
+                    *date = last;
+                }
+            }
+        }
+    }
     out
 }
 
-/// Who an agent tag names: the `authors:` row for its handle, or the patch
-/// owner when the handle is not in that table. A date on the tag wins;
-/// otherwise the row's date, or the owner's.
+/// Whether an author row dates its marks only by a range of days
+/// (`2026-03-02..2026-03-04`), with no single date or latest one.
+fn ranged_only(known: &super::view_notes::Author) -> bool {
+    known.range.is_some() && known.date.is_none() && known.latest.is_none()
+}
+
+/// Who an agent tag names, as the view reader reads it: the `authors:` row
+/// for its handle, `??` no one, and the patch owner a handle the table
+/// lacks. A date on the tag wins; otherwise the row's date, latest date or
+/// first day of its range. A known row with none of them leaves the change
+/// undated; only an unknown handle takes the owner's date.
 fn tag_attribution(
     tag: &super::view_notes::Tag,
     authors: &HashMap<String, super::view_notes::Author>,
@@ -853,23 +926,29 @@ fn tag_attribution(
 ) -> (String, String) {
     let known = authors.get(&tag.handle);
     let author = match known {
-        Some(person) if !person.name.is_empty() => person.name.clone(),
-        _ => owner.author.clone(),
+        _ if tag.handle == super::view_notes::UNNAMED => String::new(),
+        Some(person) => person.name.clone(),
+        None => owner.author.clone(),
     };
     if let Some(date) = &tag.date {
         return (author, date.clone());
     }
-    let dated = known.and_then(|person| {
-        person.date.clone().or_else(|| {
-            person.latest.clone().or_else(|| {
+    let date = match known {
+        Some(person) => person
+            .date
+            .clone()
+            .or_else(|| person.latest.clone())
+            .or_else(|| {
                 person
                     .range
                     .as_ref()
                     .map(|(first, _)| format!("{first}T00:00:00Z"))
             })
-        })
-    });
-    (author, dated.unwrap_or_else(|| owner.date.clone()))
+            .unwrap_or_default(),
+        None if tag.handle == super::view_notes::UNNAMED => String::new(),
+        None => owner.date.clone(),
+    };
+    (author, date)
 }
 
 /// The side a one-sided change is on, and whether it is only paragraph

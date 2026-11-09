@@ -566,7 +566,7 @@ fn scholar(markdown: &str, stories: bool) -> String {
 }
 
 /// A YAML front matter block's text and the Markdown after it.
-fn split_front_matter(markdown: &str) -> Option<(&str, &str)> {
+pub(super) fn split_front_matter(markdown: &str) -> Option<(&str, &str)> {
     let rest = markdown
         .strip_prefix("---\n")
         .or_else(|| markdown.strip_prefix("---\r\n"))?;
