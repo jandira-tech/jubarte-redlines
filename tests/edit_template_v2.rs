@@ -2595,7 +2595,7 @@ mod generator {
             let id = row["target"]["short_id"].as_str().unwrap();
             match stale.iter().position(|s| *s == id) {
                 Some(at) => {
-                    assert_eq!(row["before_sha256"], source_sha256(expected[at].as_bytes()))
+                    assert_eq!(row["before_sha256"], source_sha256(expected[at].as_bytes()));
                 }
                 None => assert_eq!(row, authored, "a row that was not stale changed"),
             }
