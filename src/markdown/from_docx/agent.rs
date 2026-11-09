@@ -715,31 +715,67 @@ fn mark_tags_by(
 /// its own properties, its list number), a text box Word stores twice read
 /// once.
 pub(crate) fn format_change_tags(p: &Element, handles: &Handles) -> Vec<String> {
-    format_change_tags_by(p, handles, tag_of)
+    format_change_nests(p, handles, tag_of)
+        .into_iter()
+        .map(|(own, _)| own)
+        .collect()
 }
 
-fn format_change_tags_by(
+/// Each formatting change in `p`, with the insertion, deletion or move
+/// that encloses it when one does. The change's own tag stays first.
+fn format_change_nests(
     p: &Element,
     handles: &Handles,
     tag: fn(&Element, &Handles) -> String,
-) -> Vec<String> {
+) -> Vec<(String, Option<String>)> {
     fn walk(
         e: &Element,
         handles: &Handles,
         tag: fn(&Element, &Handles) -> String,
-        out: &mut Vec<String>,
+        parent: &Option<String>,
+        out: &mut Vec<(String, Option<String>)>,
     ) {
         for child in shown_children(e) {
             if child.is("rPrChange") || child.is("pPrChange") || child.is("numberingChange") {
-                out.push(tag(child, handles));
+                out.push((tag(child, handles), parent.clone()));
+            } else if matches!(child.local(), "ins" | "del" | "moveFrom" | "moveTo") {
+                walk(child, handles, tag, &Some(tag(child, handles)), out);
             } else {
-                walk(child, handles, tag, out);
+                walk(child, handles, tag, parent, out);
             }
         }
     }
     let mut found = Vec::new();
-    walk(p, handles, tag, &mut found);
+    walk(p, handles, tag, &None, &mut found);
     found
+}
+
+/// One formatting tag, then ` re ` and the change it sits in.
+fn format_one_nest(own: &str, parent: Option<&str>) -> String {
+    let mut out = format_tag(own);
+    if let Some(parent) = parent {
+        out.push_str(" re ");
+        out.push_str(&parent_label(&format_tag(parent)));
+    }
+    out
+}
+
+/// A printed parent tag kept inside its one `fmt` entry: the reader splits
+/// the clause on `; `, so a parent printing several tags (two marks, a
+/// spelled id) joins them with `, ` instead. The reader drops the parent.
+fn parent_label(printed: &str) -> String {
+    printed.replace("; ", ", ")
+}
+
+fn format_nested_tags(tags: &[(String, Option<String>)]) -> String {
+    let mut out = String::new();
+    for (index, (own, parent)) in tags.iter().enumerate() {
+        if index > 0 {
+            out.push_str("; ");
+        }
+        out.push_str(&format_one_nest(own, parent.as_deref()));
+    }
+    out
 }
 
 struct Counter {
@@ -1569,53 +1605,87 @@ pub(crate) fn story_unshown(
 ) -> (Vec<StoryRev>, Vec<StoryFmt>) {
     // `at` is the carrier's paragraph, counted as [`paragraphs`] does, so a
     // formatting change lands on the paragraph it is in (`in footer1.p1`).
+    struct Carrier<'e> {
+        at: Option<usize>,
+        formatting: bool,
+        inserted: bool,
+        element: &'e Element,
+        parent: Option<&'e Element>,
+    }
     fn walk<'e>(
         e: &'e Element,
         at: Option<usize>,
         counted: bool,
+        parent: Option<&'e Element>,
         next: &mut usize,
-        out: &mut Vec<(Option<usize>, bool, bool, &'e Element)>,
+        out: &mut Vec<Carrier<'e>>,
     ) {
         for child in shown_children(e) {
             let local = child.local();
             if local == "p" && counted {
                 let index = *next;
                 *next += 1;
-                walk(child, Some(index), counted, next, out);
+                walk(child, Some(index), counted, parent, next, out);
                 continue;
             }
-            if matches!(local, "ins" | "del" | "moveFrom" | "moveTo") {
-                out.push((at, false, matches!(local, "ins" | "moveTo"), child));
-            } else if local.ends_with("PrChange")
-                || matches!(local, "tblGridChange" | "numberingChange")
-            {
-                out.push((at, true, true, child));
-                continue;
-            } else if matches!(local, "cellIns" | "cellDel" | "cellMerge") {
-                out.push((at, false, local == "cellIns", child));
+            let revision = matches!(local, "ins" | "del" | "moveFrom" | "moveTo");
+            let formatting =
+                local.ends_with("PrChange") || matches!(local, "tblGridChange" | "numberingChange");
+            let cell = matches!(local, "cellIns" | "cellDel" | "cellMerge");
+            if revision || formatting || cell {
+                let inserted = if revision {
+                    matches!(local, "ins" | "moveTo")
+                } else {
+                    !cell || local == "cellIns"
+                };
+                out.push(Carrier {
+                    at,
+                    formatting,
+                    inserted,
+                    element: child,
+                    parent,
+                });
             }
-            walk(child, at, counted && local != "txbxContent", next, out);
+            if formatting {
+                continue;
+            }
+            let nearer = if revision { Some(child) } else { parent };
+            walk(
+                child,
+                at,
+                counted && local != "txbxContent",
+                nearer,
+                next,
+                out,
+            );
         }
     }
     let mut carriers = Vec::new();
-    walk(root, None, true, &mut 0, &mut carriers);
+    walk(root, None, true, None, &mut 0, &mut carriers);
     let printed = printed_wids(shown, story);
     let (mut rev, mut fmt) = (Vec::new(), Vec::new());
-    for (at, formatting, inserted, carrier) in carriers {
-        let Some(id) = carrier.attr("id") else {
+    for carrier in carriers {
+        let Some(id) = carrier.element.attr("id") else {
             continue;
         };
         if printed.contains(id) || skip.contains(id) {
             continue;
         }
-        let tag = format!("{story}#{}", required_date_tag_of(carrier, handles));
-        if formatting {
-            let tag = format_tag(&tag);
+        let tag = format!("{story}#{}", required_date_tag_of(carrier.element, handles));
+        if carrier.formatting {
+            let mut tag = format_tag(&tag);
+            if let Some(parent) = carrier.parent {
+                tag.push_str(" re ");
+                tag.push_str(&parent_label(&format_tag(&format!(
+                    "{story}#{}",
+                    required_date_tag_of(parent, handles)
+                ))));
+            }
             if !fmt.iter().any(|(_, t)| *t == tag) {
-                fmt.push((at, tag));
+                fmt.push((carrier.at, tag));
             }
         } else {
-            rev.push((inserted, tag));
+            rev.push((carrier.inserted, tag));
         }
     }
     (unshown_sides(rev), fmt)
@@ -2231,9 +2301,9 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     if !del.is_empty() {
         clauses.push(format!("break-del {}", format_tags(&del)));
     }
-    let fmt = format_change_tags_by(p, handles, required_date_tag_of);
+    let fmt = format_change_nests(p, handles, required_date_tag_of);
     if !fmt.is_empty() {
-        clauses.push(format!("fmt {}", format_tags(&fmt)));
+        clauses.push(format!("fmt {}", format_nested_tags(&fmt)));
     }
     let unshown: Vec<&(bool, String)> = f
         .unshown
@@ -2746,9 +2816,11 @@ pub(crate) fn table_line(
                     // A cell's paragraph has no id line to carry its own
                     // formatting changes.
                     fmt.extend(
-                        format_change_tags_by(p, handles, required_date_tag_of)
+                        format_change_nests(p, handles, required_date_tag_of)
                             .iter()
-                            .map(|t| format!("{} in p{i}", format_tag(t))),
+                            .map(|(own, parent)| {
+                                format!("{} in p{i}", format_one_nest(own, parent.as_deref()))
+                            }),
                     );
                 }
                 let ids: Vec<String> = comments.map_or_else(Vec::new, |known| {
@@ -3461,6 +3533,21 @@ pub(crate) fn note_label(note: &str) -> Option<&str> {
 mod tests {
     use super::*;
     use crate::markdown::from_docx::ooxml::parse_xml;
+
+    /// coderabbit 4504980747, 4504980748: a parent that prints as several
+    /// tags (two marks, or a spelled id) stays inside its one `fmt` entry,
+    /// so the reader finds only the formatting change itself.
+    #[test]
+    fn a_parent_printing_several_tags_stays_in_one_fmt_entry() {
+        let line = format_nested_tags(&[
+            ("95@TL".to_string(), Some("96@RC|97@SD".to_string())),
+            ("98@TL".to_string(), None),
+        ]);
+        let tags = crate::markdown::view_notes::formatting_tags(&line).expect("the clause reads");
+        let ids: Vec<Vec<u32>> = tags.iter().map(|tag| tag.ids.clone()).collect();
+        assert_eq!(ids, [vec![95], vec![98]], "{line}");
+        assert!(tags.iter().all(|tag| tag.handle == "TL"), "{line}");
+    }
 
     /// empryo review of #476: a nested item's indented id line opens its
     /// own block, and an indented page marker still attaches to the block
