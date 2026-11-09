@@ -64,3 +64,40 @@ fn a_symbol_inside_an_insertion_round_trips() {
         r#"<w:r><w:t>a</w:t></w:r><w:ins w:id="1" w:author="A" w:date="2026-10-01T09:00:00Z"><w:r><w:sym w:font="Wingdings" w:char="F0FC"/></w:r></w:ins><w:r><w:t>b</w:t></w:r>"#,
     ));
 }
+
+/// cursor 4499761867: a paragraph that holds only the symbol starts with
+/// the tag, which CommonMark reads as an HTML block; the symbol still comes
+/// back.
+#[test]
+fn a_paragraph_of_only_a_symbol_round_trips() {
+    keeps_the_symbol(&symbol_paragraph(
+        r#"<w:r><w:sym w:font="Wingdings" w:char="F0FC"/></w:r>"#,
+    ));
+}
+
+/// cursor 4499778454, jules 4499916208: a font name with quotes, markup or
+/// CriticMarkup delimiters stays the font name. It ends neither the
+/// attribute nor the tag, and it forges no change.
+#[test]
+fn a_font_name_with_markup_stays_the_font_name() {
+    let font = r#"A"B&lt;i&gt; {++x++} \`*_[|]~"#;
+    let docx = symbol_paragraph(&format!(
+        r#"<w:r><w:t>a</w:t></w:r><w:r><w:sym w:font="{}" w:char="F0FC"/></w:r><w:r><w:t>b</w:t></w:r>"#,
+        font.replace('"', "&quot;")
+    ));
+    let first = view_of(&docx);
+    assert!(!first.contains("{++"), "no change is forged:\n{first}");
+    let copy = markdown_to_docx(&first, &DocxOptions::default())
+        .expect("the view writes")
+        .docx;
+    let second = view_of(&copy);
+    assert_eq!(second, first, "the view comes back\n{first}\n---\n{second}");
+    let xml = part_string(&copy, "word/document.xml").expect("document.xml");
+    assert_eq!(xml.matches("<w:sym ").count(), 1, "{xml}");
+    assert!(
+        xml.contains(r#"w:font="A&quot;B&lt;i&gt; {++x++} \`*_[|]~""#),
+        "the font name comes back whole\n{xml}"
+    );
+    assert!(!xml.contains("<w:ins "), "no change is forged\n{xml}");
+    assert!(xml.contains(">a<") && xml.contains(">b<"), "{xml}");
+}

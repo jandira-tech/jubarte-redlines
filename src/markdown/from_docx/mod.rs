@@ -2260,7 +2260,28 @@ fn symbol_token(child: &Element, fields: &[Field]) -> Option<String> {
     }
     let font = child.attr("font").filter(|font| !font.is_empty())?;
     let value = child.attr("char").filter(|value| !value.is_empty())?;
-    Some(format!(r#"<sym font="{font}" char="{value}"/>"#))
+    Some(format!(
+        r#"<sym font="{}" char="{}"/>"#,
+        attribute_text(font),
+        attribute_text(value)
+    ))
+}
+
+/// `value` for a quoted attribute of a tag the view prints: every
+/// character but a letter, a digit, a space, `-` and `.` as a character
+/// reference, so the value ends neither the attribute nor the tag, and
+/// neither Markdown nor CriticMarkup reads a delimiter in it.
+fn attribute_text(value: &str) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        if c.is_alphanumeric() || matches!(c, ' ' | '-' | '.') {
+            out.push(c);
+        } else {
+            let _ = write!(out, "&#x{:X};", u32::from(c));
+        }
+    }
+    out
 }
 
 /// The `fldChar begin` of each field in `p` whose `separate` and `end` are
