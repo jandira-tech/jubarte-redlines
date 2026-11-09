@@ -292,7 +292,7 @@ pub(super) fn assemble(
         let part = sibling(&main, "comments.xml");
         package.set_part(
             &part,
-            xml::comments_part(&context, &document.comments).into_bytes(),
+            xml::comments_part(&mut context, &document.comments).into_bytes(),
         );
         package.add_content_type_override(
             &format!("/{part}"),

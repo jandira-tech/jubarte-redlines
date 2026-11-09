@@ -2688,14 +2688,141 @@ pub(crate) fn drawing_xml(picture: &Picture, rel: &str, id: u32, out: &mut Strin
     );
 }
 
+/// The runs of one comment paragraph. A tracked change the note carried
+/// is a `w:ins` or `w:del` of the comment's author. Braces that were
+/// already text stay text.
+/// `carried` holds the marks still open at the end of the paragraph
+/// before: a change that spans a comment's paragraph break reopens here,
+/// and the marks still open at this paragraph's end go on to the next.
+fn comment_text_runs(
+    context: &mut Context<'_>,
+    text: &str,
+    author: &str,
+    date: &str,
+    carried: &mut Vec<Kind>,
+) -> String {
+    let mut out = String::new();
+    let mut buf = String::new();
+    let mut open: Vec<Kind> = Vec::new();
+    for kind in std::mem::take(carried) {
+        open_comment_mark(context, &mut out, &mut open, kind, author, date);
+    }
+    let reopened = out.len();
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        // The writer escaped a stand-in that was the note's own text.
+        if c == super::critic::ESCAPE {
+            buf.extend(chars.next());
+            continue;
+        }
+        match super::critic::token_of(c) {
+            Some(super::critic::Token::InsertStart) => {
+                flush_comment_text(&mut buf, &mut out, open.last().copied());
+                open_comment_mark(context, &mut out, &mut open, Kind::Insert, author, date);
+            }
+            Some(super::critic::Token::DeleteStart)
+            | Some(super::critic::Token::SubstituteStart) => {
+                flush_comment_text(&mut buf, &mut out, open.last().copied());
+                open_comment_mark(context, &mut out, &mut open, Kind::Delete, author, date);
+            }
+            Some(super::critic::Token::SubstituteSeparator) => {
+                flush_comment_text(&mut buf, &mut out, open.last().copied());
+                close_comment_mark(&mut out, &mut open);
+                open_comment_mark(context, &mut out, &mut open, Kind::Insert, author, date);
+            }
+            Some(
+                super::critic::Token::InsertEnd
+                | super::critic::Token::DeleteEnd
+                | super::critic::Token::SubstituteEnd,
+            ) => {
+                flush_comment_text(&mut buf, &mut out, open.last().copied());
+                close_comment_mark(&mut out, &mut open);
+            }
+            _ => buf.push(c),
+        }
+    }
+    flush_comment_text(&mut buf, &mut out, open.last().copied());
+    carried.clone_from(&open);
+    if out.len() == reopened {
+        // Nothing but the reopened marks: no empty change in this one.
+        return String::new();
+    }
+    while !open.is_empty() {
+        close_comment_mark(&mut out, &mut open);
+    }
+    out
+}
+
+fn flush_comment_text(buf: &mut String, out: &mut String, open: Option<Kind>) {
+    if buf.is_empty() {
+        return;
+    }
+    let element = if open == Some(Kind::Delete) {
+        "w:delText"
+    } else {
+        "w:t"
+    };
+    let _ = write!(
+        out,
+        "<w:r><{element} xml:space=\"preserve\">{}</{element}></w:r>",
+        escape(buf)
+    );
+    buf.clear();
+}
+
+fn open_comment_mark(
+    context: &mut Context<'_>,
+    out: &mut String,
+    open: &mut Vec<Kind>,
+    kind: Kind,
+    author: &str,
+    date: &str,
+) {
+    let id = context.revision_id(None);
+    let name = match kind {
+        Kind::Insert => "w:ins",
+        Kind::Delete => "w:del",
+    };
+    let _ = write!(
+        out,
+        "<{name} w:id=\"{id}\" w:author=\"{}\"{}>",
+        escape(author),
+        legacy_date_attribute(date)
+    );
+    open.push(kind);
+}
+
+fn close_comment_mark(out: &mut String, open: &mut Vec<Kind>) {
+    match open.pop() {
+        Some(Kind::Insert) => out.push_str("</w:ins>"),
+        Some(Kind::Delete) => out.push_str("</w:del>"),
+        None => {}
+    }
+}
+
+fn comment_runs(
+    context: &mut Context<'_>,
+    text: &str,
+    author: &str,
+    date: &str,
+    carried: &mut Vec<Kind>,
+) -> String {
+    let runs = comment_text_runs(context, text, author, date, carried);
+    if runs.is_empty() {
+        "<w:r><w:t xml:space=\"preserve\"></w:t></w:r>".to_string()
+    } else {
+        runs
+    }
+}
+
 /// A comments part holding `comments`.
-pub(super) fn comments_part(context: &Context<'_>, comments: &[Comment]) -> String {
+pub(super) fn comments_part(context: &mut Context<'_>, comments: &[Comment]) -> String {
     let default_style = context
         .document
         .style_specs
         .iter()
-        .find(|s| s.default)
-        .map_or("Normal", |s| s.id.as_str());
+        .find(|spec| spec.default)
+        .map_or_else(|| "Normal".to_string(), |spec| spec.id.clone());
     let mut out = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
          <w:comments xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">",
@@ -2731,6 +2858,30 @@ pub(super) fn comments_part(context: &Context<'_>, comments: &[Comment]) -> Stri
                 );
             }
         }
+        let (author, date) = comment
+            .by
+            .as_ref()
+            .map(|(author, date)| (author.clone(), date.clone()))
+            .unwrap_or_else(|| (context.author.clone(), context.date.clone()));
+        let texts: Vec<&str> = comment
+            .paragraphs
+            .iter()
+            .map(|paragraph| paragraph.trim())
+            .collect();
+        let mut carried = Vec::new();
+        let first = comment_runs(
+            context,
+            texts.first().copied().unwrap_or(""),
+            &author,
+            &date,
+            &mut carried,
+        );
+        let later: Vec<String> = texts
+            .iter()
+            .skip(1)
+            .filter(|text| !text.is_empty())
+            .map(|text| comment_runs(context, text, &author, &date, &mut carried))
+            .collect();
         // Word's CommentText unless the `comments:` line names another;
         // the document's default style needs no `w:pStyle`.
         let style = comment
@@ -2757,22 +2908,14 @@ pub(super) fn comments_part(context: &Context<'_>, comments: &[Comment]) -> Stri
                 format!("<w:pPr>{inner}</w:pPr>")
             }
         };
-        let mut paragraphs = comment.paragraphs.iter().map(|p| p.trim());
-        let first = paragraphs.next().unwrap_or_default();
         let _ = write!(
             out,
-            "<w:p>{}<w:r><w:rPr><w:rStyle w:val=\"CommentReference\"/></w:rPr><w:annotationRef/></w:r>\
-             <w:r><w:t xml:space=\"preserve\">{}</w:t></w:r></w:p>",
+            "<w:p>{}<w:r><w:rPr><w:rStyle w:val=\"CommentReference\"/></w:rPr><w:annotationRef/></w:r>{}</w:p>",
             ppr(0),
-            escape(first)
+            first
         );
-        for (at, paragraph) in paragraphs.filter(|p| !p.is_empty()).enumerate() {
-            let _ = write!(
-                out,
-                "<w:p>{}<w:r><w:t xml:space=\"preserve\">{}</w:t></w:r></w:p>",
-                ppr(at + 1),
-                escape(paragraph)
-            );
+        for (at, runs) in later.iter().enumerate() {
+            let _ = write!(out, "<w:p>{}{}</w:p>", ppr(at + 1), runs);
         }
         out.push_str("</w:comment>");
     }
