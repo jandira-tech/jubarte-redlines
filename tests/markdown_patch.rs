@@ -593,3 +593,235 @@ fn a_substitution_by_two_authors_names_each_side() {
     );
     assert_eq!(patch.hunks[0].changes.len(), 1);
 }
+
+const HEADER_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml";
+const HEADER_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
+const FOOTER_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml";
+const FOOTER_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer";
+
+fn story_at(name: &str, index: usize) -> Locator {
+    Locator::Paragraph {
+        story: name.to_string(),
+        index,
+    }
+}
+
+/// Three header or footer paragraphs, the last deleted with the mark before it.
+fn deleted_last_paragraphs() -> String {
+    let by = r#"w:author="Claude" w:date="2026-09-25T12:00:00Z""#;
+    format!(
+        r#"<w:p><w:r><w:t>Heading</w:t></w:r></w:p><w:p><w:pPr><w:rPr><w:del w:id="1" {by}/></w:rPr></w:pPr><w:r><w:t>Kept.</w:t></w:r></w:p><w:p><w:del w:id="2" {by}><w:r><w:delText>Last.</w:delText></w:r></w:del></w:p>"#
+    )
+}
+
+fn story_docx(
+    part_name: &str,
+    content_type: &str,
+    rel_type: &str,
+    root: &str,
+    paragraphs: &str,
+    reference: &str,
+) -> Vec<u8> {
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:{root} xmlns:w="{}" xmlns:r="{}">{paragraphs}</w:{root}>"#,
+        common::docx::W_NS,
+        common::docx::R_NS,
+    );
+    common::docx::docx_with_sect(
+        "<w:p><w:r><w:t>Body.</w:t></w:r></w:p>",
+        &[common::docx::Part {
+            name: part_name,
+            content_type,
+            rel_type,
+            xml: &xml,
+        }],
+        reference,
+    )
+}
+
+/// A header or footer change is a hunk at that story's paragraph. A redline
+/// whose only change is in the body stays a body hunk.
+#[test]
+fn a_header_or_footer_change_is_a_hunk_of_its_own() {
+    let header = story_docx(
+        "word/header1.xml",
+        HEADER_CT,
+        HEADER_REL,
+        "hdr",
+        &deleted_last_paragraphs(),
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    assert_eq!(
+        hunks(&header),
+        [(story_at("header1", 2), true, "[-Last.-]".to_string())]
+    );
+    let footer = story_docx(
+        "word/footer1.xml",
+        FOOTER_CT,
+        FOOTER_REL,
+        "ftr",
+        r#"<w:p><w:r><w:t xml:space="preserve">Keep </w:t></w:r><w:ins w:id="1" w:author="Claude" w:date="2026-09-25T12:00:00Z"><w:r><w:t>more</w:t></w:r></w:ins></w:p>"#,
+        r#"<w:footerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    assert_eq!(
+        hunks(&footer),
+        [(story_at("footer1", 0), false, "Keep {+more+}".to_string())]
+    );
+    assert_eq!(
+        hunks(&last_paragraph_change(false)),
+        [(body(2), true, "[-Last.-]".to_string())]
+    );
+    // An unchanged header is not a hunk and does not move the body's.
+    let by = r#"w:author="Claude" w:date="2026-09-25T12:00:00Z""#;
+    let body_xml = format!(
+        r#"<w:p><w:r><w:t>Heading</w:t></w:r></w:p><w:p><w:pPr><w:rPr><w:del w:id="1" {by}/></w:rPr></w:pPr><w:r><w:t>Kept.</w:t></w:r></w:p><w:p><w:del w:id="2" {by}><w:r><w:delText>Last.</w:delText></w:r></w:del></w:p>"#
+    );
+    let letterhead = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="{}" xmlns:r="{}"><w:p><w:r><w:t>Letterhead</w:t></w:r></w:p></w:hdr>"#,
+        common::docx::W_NS,
+        common::docx::R_NS,
+    );
+    let with_letterhead = common::docx::docx_with_sect(
+        &body_xml,
+        &[common::docx::Part {
+            name: "word/header1.xml",
+            content_type: HEADER_CT,
+            rel_type: HEADER_REL,
+            xml: &letterhead,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    assert_eq!(
+        hunks(&with_letterhead),
+        [(body(2), true, "[-Last.-]".to_string())]
+    );
+    // `header2` sorts before `header10`, whichever relationship comes first.
+    let header_xml = |text: &str| {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="{}" xmlns:r="{}"><w:p><w:del w:id="1" {by}><w:r><w:delText>{text}</w:delText></w:r></w:del></w:p></w:hdr>"#,
+            common::docx::W_NS,
+            common::docx::R_NS,
+        )
+    };
+    let ten = header_xml("Ten.");
+    let two = header_xml("Two.");
+    let numbered = common::docx::docx_with_sect(
+        "<w:p><w:r><w:t>Body.</w:t></w:r></w:p>",
+        &[
+            common::docx::Part {
+                name: "word/header10.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &ten,
+            },
+            common::docx::Part {
+                name: "word/header2.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &two,
+            },
+        ],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/><w:headerReference w:type="even" r:id="rIdX1"/>"#,
+    );
+    assert_eq!(
+        hunks(&numbered),
+        [
+            (story_at("header2", 0), true, "[-Two.-]".to_string()),
+            (story_at("header10", 0), true, "[-Ten.-]".to_string()),
+        ]
+    );
+}
+
+/// Each header and footer starts clean: a comment whose range a header
+/// closes after its last paragraph does not open the footer's first
+/// paragraph (#2134 review, Bugbot).
+#[test]
+fn a_story_s_trailing_comment_note_stays_out_of_the_next_story() {
+    let (w, r) = (common::docx::W_NS, common::docx::R_NS);
+    let header = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="{w}" xmlns:r="{r}"><w:p><w:commentRangeStart w:id="0"/><w:r><w:t>Head</w:t></w:r></w:p><w:commentRangeEnd w:id="0"/></w:hdr>"#
+    );
+    let footer = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr xmlns:w="{w}" xmlns:r="{r}"><w:p><w:r><w:t xml:space="preserve">Keep </w:t></w:r><w:ins w:id="1" w:author="Claude" w:date="2026-09-25T12:00:00Z"><w:r><w:t>more</w:t></w:r></w:ins></w:p></w:ftr>"#
+    );
+    let comments = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="{w}" xmlns:r="{r}"><w:comment w:id="0" w:author="Ann" w:date="2026-01-01T00:00:00Z" w:initials="A"><w:p><w:r><w:t>Header note</w:t></w:r></w:p></w:comment></w:comments>"#
+    );
+    let docx = common::docx::docx_with_sect(
+        "<w:p><w:r><w:t>Body.</w:t></w:r></w:p>",
+        &[
+            common::docx::Part {
+                name: "word/header1.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &header,
+            },
+            common::docx::Part {
+                name: "word/footer1.xml",
+                content_type: FOOTER_CT,
+                rel_type: FOOTER_REL,
+                xml: &footer,
+            },
+            common::docx::Part {
+                name: "word/comments.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+                xml: &comments,
+            },
+        ],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/><w:footerReference w:type="default" r:id="rIdX1"/>"#,
+    );
+    let got = hunks(&docx);
+    let footer = got
+        .iter()
+        .find(|(at, _, _)| *at == story_at("footer1", 0))
+        .unwrap_or_else(|| panic!("no footer hunk: {got:?}"));
+    assert_eq!(footer.2, "Keep {+more+}", "{got:?}");
+}
+
+/// A header numbers its own list: it repeats on every page, so it does not
+/// go on with the body's count (#2134 review, Bugbot).
+#[test]
+fn a_header_list_does_not_continue_the_body_s_numbering() {
+    let (w, r) = (common::docx::W_NS, common::docx::R_NS);
+    let numbered = |text: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+        )
+    };
+    let header = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="{w}" xmlns:r="{r}"><w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t xml:space="preserve">Head </w:t></w:r><w:ins w:id="1" w:author="Claude" w:date="2026-09-25T12:00:00Z"><w:r><w:t>more</w:t></w:r></w:ins></w:p></w:hdr>"#
+    );
+    let numbering = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="{w}"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#
+    );
+    let docx = common::docx::docx_with_sect(
+        &format!("{}{}", numbered("One"), numbered("Two")),
+        &[
+            common::docx::Part {
+                name: "word/header1.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &header,
+            },
+            common::docx::Part {
+                name: "word/numbering.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering",
+                xml: &numbering,
+            },
+        ],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let got = hunks(&docx);
+    assert_eq!(
+        got,
+        [(
+            story_at("header1", 0),
+            false,
+            "1. Head {+more+}".to_string()
+        )]
+    );
+}

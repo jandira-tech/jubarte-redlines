@@ -61,6 +61,9 @@ pub(crate) struct Options {
     pub(crate) dates: bool,
     /// With `ids`: which blocks to print.
     pub(crate) select: Option<super::Select>,
+    /// Header and footer paragraphs follow the body, in the same critic
+    /// markup. The public read leaves this unset.
+    pub(crate) stories: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -698,6 +701,51 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
         }
     }
     let mut markdown = blocks.finish();
+    if options.stories {
+        // Inspect lists headers, then footers, each part shorter-name first,
+        // and the patch searches paragraphs in that order. The blocks go
+        // before the note definitions, which are appended below.
+        let mut extra = Blocks::new();
+        for suffix in ["/header", "/footer"] {
+            let mut targets = rels.targets_of_type(suffix);
+            targets.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(b)));
+            for target in targets {
+                let Ok(Some(root)) = package.xml(&target) else {
+                    continue;
+                };
+                writer.open_comments.clear();
+                writer.hidden_ranges.clear();
+                writer.revisions.clear();
+                writer.lead = None;
+                writer.story = None;
+                let saved_part = std::mem::replace(&mut writer.part, target.clone());
+                let saved_scopes =
+                    std::mem::replace(&mut writer.scopes, drawing::ScopeMap::of(&root));
+                // A story numbers its own lists: a header repeats on every
+                // page, so it cannot go on with the body's count.
+                let saved_counters = std::mem::take(&mut writer.counters);
+                let saved_started = std::mem::take(&mut writer.started_nums);
+                let mut list = ListIndent::default();
+                writer.blocks(&root, &mut extra, &mut list);
+                writer.flush_empty(&mut extra);
+                // Notes of ranges the story closed after its last paragraph
+                // stay in it, as the body's do.
+                let trailing = writer.take_notes();
+                extra.push(&trailing, false);
+                writer.counters = saved_counters;
+                writer.started_nums = saved_started;
+                writer.part = saved_part;
+                writer.scopes = saved_scopes;
+            }
+        }
+        let stories = extra.finish();
+        if !stories.is_empty() {
+            if !markdown.is_empty() {
+                markdown.push_str("\n\n");
+            }
+            markdown.push_str(&stories);
+        }
+    }
     if let Some(pages) = options.pages.as_ref().filter(|_| options.ids) {
         let pages: Vec<&str> = pages.iter().map(String::as_str).collect();
         markdown = crate::markdown::paginate(&markdown, &pages);
