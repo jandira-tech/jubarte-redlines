@@ -3067,7 +3067,8 @@ fn check_para_text_id_bounds(pkg: &PartFs, out: &mut Vec<Finding>) {
 /// settled by Ring-3 probe 2026-07-16 (delText-under-moveFrom failed open).
 /// The nearest deletion owns the text: an insertion inside the move source
 /// does not shelter `w:delText` (Word refuses it), a `w:del` inside it does
-/// (Word opens it; probes M1/M5, 2026-10-18).
+/// (Word opens it; probes M1/M5, 2026-10-18). A deletion outside the move
+/// source owns the text as well, so that `w:delText` stays.
 fn check_del_text_under_del(pkg: &PartFs, out: &mut Vec<Finding>) {
     for name in xml_parts(pkg) {
         let Some((dom, root)) = parse_part(pkg, &name) else {
@@ -3091,7 +3092,7 @@ fn check_del_text_under_del(pkg: &PartFs, out: &mut Vec<Finding>) {
         let move_from = W::move_from();
         for mf in dom.descendants(root, Some(&move_from)) {
             for dt in dom.descendants(mf, Some(&W::del_text())) {
-                if ancestor_has(&dom, dt, mf, "del") {
+                if ancestor_has(&dom, dt, mf, "del") || under_deletion(&dom, dt) {
                     continue;
                 }
                 out.push(Finding::new(
@@ -3108,10 +3109,17 @@ fn check_del_text_under_del(pkg: &PartFs, out: &mut Vec<Finding>) {
 /// Any enclosing deletion counts, even through an insertion, but only
 /// within the run's own story (#1134, Word probe 2026-10-17).
 fn under_deletion(dom: &Dom, node: NodeId) -> bool {
-    dom.ancestors(node, None)
-        .into_iter()
-        .take_while(|&a| dom.name(a).is_none_or(|n| n.local_name() != "txbxContent"))
-        .any(|a| dom.name(a).is_some_and(|n| n == W::del()))
+    // Walks the parent links rather than collecting the ancestors: the
+    // checks call this once per `w:delText` of a move source.
+    let mut cur = dom.parent(node);
+    while let Some(p) = cur {
+        match dom.name(p) {
+            Some(n) if n.local_name() == "txbxContent" => return false,
+            Some(n) if n == W::del() => return true,
+            _ => cur = dom.parent(p),
+        }
+    }
+    false
 }
 
 /// True when a `w:del` or `w:moveFrom` covers `node` in its own story (a
@@ -3980,8 +3988,9 @@ fn edit_part(pkg: &mut PartFs, part: &str, f: impl FnOnce(&mut Dom, NodeId)) {
 }
 
 /// `w:t` and `w:instrText` under a deletion become `w:delText` and
-/// `w:delInstrText`; `w:delText` under a move source, and deleted text no
-/// deletion covers, become live text again.
+/// `w:delInstrText`. `w:delText` under a move source becomes live text
+/// again only when no deletion in that story covers it, as does deleted
+/// text no deletion covers.
 fn fix_deleted_text(dom: &mut Dom, root: NodeId) {
     let mut renames: Vec<(NodeId, XName)> = Vec::new();
     for (live, deleted) in [("t", "delText"), ("instrText", "delInstrText")] {
@@ -3993,7 +4002,7 @@ fn fix_deleted_text(dom: &mut Dom, root: NodeId) {
     }
     for mf in dom.descendants(root, Some(&W::move_from())) {
         for dt in dom.descendants(mf, Some(&W::del_text())) {
-            if !ancestor_has(dom, dt, mf, "del") {
+            if !ancestor_has(dom, dt, mf, "del") && !under_deletion(dom, dt) {
                 renames.push((dt, W::t()));
             }
         }
