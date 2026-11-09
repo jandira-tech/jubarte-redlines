@@ -1237,12 +1237,12 @@ def test_in_place_refusal_leaves_the_input_byte_identical(
     letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     before = letter.read_bytes()
-    code, _out, err = _cli(
+    code, out, err = _cli(
         ["edit", str(letter), "-p", "p1", "--anchor", "absent words", "--content", "x", "--in-place"],
         capsys,
     )
     assert code == 3, err
-    assert "absent words" in err or "absent words" in _out
+    assert "absent words" in err or "absent words" in out
     assert letter.read_bytes() == before
     assert not (tmp_path / "letter_modified.docx").exists()
 
