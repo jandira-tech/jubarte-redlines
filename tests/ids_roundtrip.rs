@@ -363,7 +363,7 @@ fn stories() -> &'static [u8] {
                     run(" and ")
                 ),
                 3 => format!(
-                    r#"{}<w:r><mc:AlternateContent xmlns:mc="{MC_NS}"><mc:Choice Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r>"#,
+                    r#"{}<w:r><mc:AlternateContent xmlns:mc="{MC_NS}" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><mc:Choice Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r>"#,
                     run("Lead"),
                     drawing(boxed("40")),
                     pict(boxed("41"))

@@ -995,7 +995,7 @@ fn drawing_box(inner: &str) -> String {
 #[test]
 fn history_numbering_and_fallback_rows_follow_the_listing() {
     let body = format!(
-        r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/><w:numberingChange w:id="5" w:author="Ann Counsel" w:original="%1."/></w:numPr></w:pPr><w:r><w:rPr><w:b/><w:rPrChange w:id="10" w:author="Ann Counsel"><w:rPr><w:del w:id="11" w:author="Ann Counsel"/></w:rPr></w:rPrChange></w:rPr><w:t>Item</w:t></w:r></w:p><w:tbl><w:tblGrid><w:gridCol/></w:tblGrid><w:tr><w:trPr><w:del w:id="6" w:author="Ann Counsel"/></w:trPr><w:tc><w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing/></mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/><w:numberingChange w:id="5" w:author="Ann Counsel" w:original="%1."/></w:numPr></w:pPr><w:r><w:rPr><w:b/><w:rPrChange w:id="10" w:author="Ann Counsel"><w:rPr><w:del w:id="11" w:author="Ann Counsel"/></w:rPr></w:rPrChange></w:rPr><w:t>Item</w:t></w:r></w:p><w:tbl><w:tblGrid><w:gridCol/></w:tblGrid><w:tr><w:trPr><w:del w:id="6" w:author="Ann Counsel"/></w:trPr><w:tc><w:p><w:r><mc:AlternateContent><mc:Choice xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" Requires="wps"><w:drawing/></mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>"#,
         pict_box("<w:r><w:t>Old</w:t></w:r>")
     );
     let bytes = docx(&body);
@@ -1048,7 +1048,7 @@ fn a_styles_only_author_gets_a_handle() {
 #[test]
 fn changes_printed_nowhere_else_are_unplaced() {
     let body = format!(
-        r#"<w:p><w:r><w:t>Lead</w:t></w:r><w:r><mc:AlternateContent><mc:Choice Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r></w:p><w:p><w:r><w:t>ping r3 @ops; 21 @AC</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>Lead</w:t></w:r><w:r><mc:AlternateContent><mc:Choice xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r></w:p><w:p><w:r><w:t>ping r3 @ops; 21 @AC</w:t></w:r></w:p>"#,
         drawing_box(&format!(
             r#"<w:r><w:t>Box</w:t></w:r><w:del w:id="3" w:author="Ann Counsel"><w:r><w:drawing/></w:r></w:del><w:del w:id="22"><w:r><w:drawing/></w:r></w:del>{}"#,
             ins(20, "Ann Counsel", "Choice")
@@ -5799,7 +5799,7 @@ fn pr392_yaml_source_round_trips_reserved_scalars_and_control_characters() {
 #[test]
 fn pr392_alternate_content_carries_one_payload_and_names_every_listed_author() {
     let choice = format!(
-        r#"<mc:Choice Requires="wps"><w:drawing><w:txbxContent><w:p>{}</w:p></w:txbxContent></w:drawing></mc:Choice>"#,
+        r#"<mc:Choice xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" Requires="wps"><w:drawing><w:txbxContent><w:p>{}</w:p></w:txbxContent></w:drawing></mc:Choice>"#,
         ins(1, "Ann Counsel", "Chosen")
     );
     let fallback = format!(
@@ -6141,7 +6141,7 @@ fn an_empty_table_row_keeps_its_place_in_the_agent_view() {
 #[test]
 fn a_fallback_only_author_gets_a_handle() {
     let body = format!(
-        r#"<w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r></w:p>"#,
+        r#"<w:p><w:r><mc:AlternateContent><mc:Choice xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r></w:p>"#,
         drawing_box(r#"<w:r><w:t>Box</w:t></w:r>"#),
         pict_box(&format!(
             r#"<w:r><w:t>Box</w:t></w:r>{}"#,
@@ -6272,7 +6272,7 @@ fn a_revision_id_holding_a_plus_prints_as_one_change() {
 #[test]
 fn undated_peer_keeps_a_dated_unplaced_change_timestamp() {
     let alternate = format!(
-        r#"<mc:AlternateContent><mc:Choice Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent>"#,
+        r#"<mc:AlternateContent><mc:Choice xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent>"#,
         drawing_box(&run("Choice")),
         pict_box(&ins(3, "Alice", "Fallback")),
     );
