@@ -506,3 +506,115 @@ fn review_typed_v1_primary_digest_describes_the_redline_bytes() {
         "the digest describes the primary bytes the CLI publishes"
     );
 }
+
+fn keep_plan(operation: &str) -> EditPlan {
+    plan(&format!(
+        r#"{{"schema_version":1,"author":"Ed Itor","date":"2026-10-17T12:00:00Z","existing_revisions":"keep","operations":[{operation}]}}"#
+    ))
+}
+
+/// A finding the source already had stays a baseline finding when an edit
+/// only places a block before it. The cell's final mark is inserted and its
+/// row is not; a table placed before that table moves the mark's element
+/// chain. A deleted run's live text is Word-fatal; a paragraph placed before
+/// it moves that chain too. Both edits land, and each finding is disclosed
+/// with the baseline.
+#[test]
+fn a_baseline_finding_an_edit_moves_stays_disclosed() {
+    let cell = r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:rPr><w:ins w:id="11" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></w:rPr></w:pPr><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let deleted = r#"<w:p><w:del w:id="4" w:author="Ann" w:date="2026-09-01T00:00:00Z"><w:r><w:t>Gone</w:t></w:r></w:del></w:p>"#;
+    let cases = [
+        (
+            "cell mark",
+            docx(&(para("Before.") + cell)),
+            r#"{"kind":"insert_table","paragraph":"p0","position":"before","rows":[["New"]]}"#,
+            "CELL_FINAL_MARK_REVISION",
+        ),
+        (
+            "deleted text",
+            docx(&(deleted.to_string() + &para("After."))),
+            r#"{"kind":"insert_paragraph","paragraph":"p0","position":"before","runs":[{"text":"Added."}]}"#,
+            "TEXT_INSIDE_DELETION",
+        ),
+    ];
+    let mut refused = Vec::new();
+    for (label, source, operation, code) in cases {
+        let findings = jubarte::validate::validate(&source).unwrap();
+        assert!(
+            findings.iter().any(|f| f.code == code),
+            "{label}: the source has no {code}"
+        );
+        match prepare(&source, &keep_plan(operation), &DEFAULT) {
+            Ok(prepared) => {
+                assert!(
+                    prepared.checks.baseline.iter().any(|f| f.code == code),
+                    "{label}: the baseline lost {code}"
+                );
+                assert!(
+                    prepared.checks.introduced.iter().all(|f| f.code != code),
+                    "{label}: {code} was called introduced"
+                );
+            }
+            Err(error) => refused.push(format!("{label}: {} {}", error.code, error.message)),
+        }
+    }
+    assert!(refused.is_empty(), "{refused:?}");
+}
+
+fn assert_moved_finding_stays_baseline(label: &str, source: &[u8], operation: &str, code: &str) {
+    let findings = jubarte::validate::validate(source).unwrap();
+    assert!(
+        findings.iter().any(|f| f.code == code),
+        "{label}: the source has no {code}: {findings:?}"
+    );
+    let prepared = prepare(source, &keep_plan(operation), &DEFAULT)
+        .unwrap_or_else(|error| panic!("{label}: refused: {} {}", error.code, error.message));
+    assert!(
+        prepared.checks.baseline.iter().any(|f| f.code == code),
+        "{label}: the baseline lost {code}"
+    );
+    assert!(
+        prepared.checks.introduced.iter().all(|f| f.code != code),
+        "{label}: {code} was called introduced"
+    );
+}
+
+/// An element with no text, paragraph id or revision still relocates when
+/// it is the only such sibling on both sides (#2127 review).
+#[test]
+fn a_moved_finding_on_a_uniquely_empty_paragraph_stays_baseline() {
+    let open_field = r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r></w:p>"#;
+    assert_moved_finding_stays_baseline(
+        "empty paragraph",
+        &docx(&(open_field.to_string() + &para("After."))),
+        r#"{"kind":"insert_paragraph","paragraph":"p0","position":"before","runs":[{"text":"Added."}]}"#,
+        "FIELD_UNBALANCED",
+    );
+}
+
+/// Validation reads a Strict package as Transitional, so its locations are
+/// Transitional paths; relocation reads both packages the same way (#2127
+/// review).
+#[test]
+fn a_moved_finding_in_a_strict_source_stays_baseline() {
+    // FIELD_UNBALANCED comes from triage, which reads Strict as
+    // Transitional. (Ring 1 reads the raw package and finds no Strict
+    // TEXT_INSIDE_DELETION at all.)
+    let open_field =
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:t>Open</w:t></w:r></w:p>"#;
+    let transitional = docx(&(open_field.to_string() + &para("After.")));
+    let document = common::docx::part_string(&transitional, "word/document.xml")
+        .unwrap()
+        .replace(
+            "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+            "http://purl.oclc.org/ooxml/wordprocessingml/main",
+        );
+    let strict =
+        common::docx::replace_entry(&transitional, "word/document.xml", document.as_bytes());
+    assert_moved_finding_stays_baseline(
+        "strict open field",
+        &strict,
+        r#"{"kind":"insert_paragraph","paragraph":"p0","position":"before","runs":[{"text":"Added."}]}"#,
+        "FIELD_UNBALANCED",
+    );
+}
