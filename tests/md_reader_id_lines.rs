@@ -3102,3 +3102,55 @@ fn a_note_a_comment_and_a_text_box_keep_their_own_spacing() {
     assert!(document.contains(r#"w:beforeLines="150""#), "{document}");
     assert!(document.contains(r#"w:afterLines="100""#), "{document}");
 }
+
+/// Whole line counts round-trip with their zeros: ten lines is not one,
+/// and zero lines is a clause, not an empty word (#2130 review, Bugbot).
+#[test]
+fn whole_line_counts_round_trip_with_their_zeros() {
+    let lines = common::docx::docx(
+        r#"<w:p><w:pPr><w:spacing w:beforeLines="1000" w:afterLines="0"/></w:pPr><w:r><w:t>Lines</w:t></w:r></w:p>"#,
+    );
+    let (view, again, _) = docx_round_trip(&lines);
+    assert!(view.contains("before 10 lines"), "{view}");
+    assert!(view.contains("after 0 lines"), "{view}");
+    let document = part_string(&again, "word/document.xml").unwrap();
+    assert!(document.contains(r#"w:beforeLines="1000""#), "{document}");
+    assert!(document.contains(r#"w:afterLines="0""#), "{document}");
+}
+
+/// An empty text-box paragraph that states its spacing stays in the box:
+/// its id line does not leave a paragraph of its own in the body after the
+/// box (Strict01's empty cover-page box, `md_fixed_point`).
+#[test]
+fn an_empty_text_box_paragraph_keeps_its_spacing_in_the_box() {
+    let boxed = common::docx::docx(concat!(
+        r#"<w:p><w:r><w:t>Host</w:t></w:r>"#,
+        r#"<w:r><w:pict xmlns:v="urn:schemas-microsoft-com:vml"><v:shape style="width:100pt;height:40pt"><v:textbox><w:txbxContent>"#,
+        r#"<w:p><w:pPr><w:spacing w:line="240" w:lineRule="auto"/></w:pPr></w:p>"#,
+        r#"</w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>After</w:t></w:r></w:p>"#,
+    ));
+    let (view, again, _) = docx_round_trip(&boxed);
+    let document = part_string(&again, "word/document.xml").unwrap();
+    let body = document.replace(
+        &document
+            [document.find("<w:txbxContent>").unwrap()..document.find("</w:txbxContent>").unwrap()],
+        "",
+    );
+    assert_eq!(
+        body.matches("<w:p>").count() + body.matches("<w:p ").count(),
+        2,
+        "{view}\n{document}"
+    );
+    let txbx = &document[document.find("<w:txbxContent>").unwrap()..];
+    assert!(txbx.contains(r#"w:line="240""#), "{view}\n{document}");
+    let (again_view, _, _) = docx_round_trip(&again);
+    assert_eq!(
+        again_view
+            .lines()
+            .filter(|l| l.starts_with("<!-- p"))
+            .count(),
+        view.lines().filter(|l| l.starts_with("<!-- p")).count(),
+        "{view}\n---\n{again_view}"
+    );
+}

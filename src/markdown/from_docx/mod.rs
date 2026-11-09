@@ -2959,7 +2959,10 @@ impl Writer<'_> {
                 agent::id_line(p, &facts, &self.handles)
             ));
             self.line_indent = 0;
-        } else if self.in_box && self.agent {
+        } else if self.in_box && self.agent && written {
+            // An empty box paragraph prints no id line: with no text after
+            // it, the writer would read the line as a body paragraph after
+            // the box (Strict01's empty cover-page box).
             let clauses = ppr
                 .and_then(|pr| pr.child("spacing"))
                 .map(agent::spacing_clauses)

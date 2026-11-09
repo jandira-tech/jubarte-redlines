@@ -1685,12 +1685,15 @@ fn line_count(raw: &str) -> Option<String> {
                 .is_ok_and(|v| (v * 100.0).round() == hundredths)
         })
         .unwrap_or_else(|| format!("{count:.2}"));
-    Some(
+    // Only a fraction's trailing zeros go: `10` stays ten lines.
+    Some(if value.contains('.') {
         value
             .trim_end_matches('0')
             .trim_end_matches('.')
-            .to_string(),
-    )
+            .to_string()
+    } else {
+        value
+    })
 }
 
 /// Twips as inches with the fewest decimals (two at least, four at most)
@@ -3876,5 +3879,23 @@ mod tests {
     fn index_runs_collapse_consecutive_indices() {
         assert_eq!(runs(&[3, 4, 5, 9, 11, 12]), [(3, 5), (9, 9), (11, 12)]);
         assert!(runs(&[]).is_empty());
+    }
+
+    /// Whole line counts keep their zeros: `0` is no lines, `1000` is ten
+    /// (#2130 review, Bugbot).
+    #[test]
+    fn line_counts_keep_the_zeros_of_whole_counts() {
+        for (raw, want) in [
+            ("0", "0"),
+            ("100", "1"),
+            ("1000", "10"),
+            ("2000", "20"),
+            ("150", "1.5"),
+            ("1050", "10.5"),
+            ("125", "1.25"),
+            ("10", "0.1"),
+        ] {
+            assert_eq!(line_count(raw).as_deref(), Some(want), "{raw}");
+        }
     }
 }
