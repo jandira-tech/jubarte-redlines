@@ -247,6 +247,37 @@ fn a_note_inside_its_deletion_needs_no_in() {
     );
 }
 
+/// The same paragraph written back stays one deletion: the range start,
+/// the deleted text, the range end and the reference share r13.
+#[test]
+fn a_note_inside_its_deletion_comes_back_as_one_deletion() {
+    let source = with_p1(
+        false,
+        &format!(
+            r#"<w:r><w:t xml:space="preserve">Kept. </w:t></w:r><w:del w:id="13" w:author="Dan" w:date="2026-10-18T12:02:00Z"><w:commentRangeStart w:id="0"/><w:r><w:delText>Gone.</w:delText></w:r><w:commentRangeEnd w:id="0"/><w:r>{REF}<w:commentReference w:id="0"/></w:r></w:del>"#
+        ),
+    );
+    let options = ReadOptions {
+        page_markers: false,
+        track_changes: TrackChanges::All,
+        ..ReadOptions::default()
+    };
+    let view = read(&source, &options).unwrap().markdown;
+    let back = markdown_to_docx(&view, &DocxOptions::default()).unwrap();
+    assert!(back.warnings.is_empty(), "{:?}", back.warnings);
+    let xml = part_string(&back.docx, "word/document.xml").unwrap();
+    assert_eq!(xml.matches("<w:del ").count(), 1, "{xml}");
+    assert!(xml.contains(r#"w:id="13""#), "{xml}");
+    let ids: Vec<_> = list_changes(&back.docx)
+        .unwrap()
+        .iter()
+        .map(|change| change.id.clone())
+        .collect();
+    assert_eq!(ids, ["r13"], "{xml}");
+    assert_eq!(holds(&back.docx, "r13").0, serde_json::json!(["c0"]));
+    assert_eq!(view_p1(&back.docx), view_p1(&source));
+}
+
 #[test]
 fn a_note_in_a_change_the_paragraph_lacks_keeps_its_mark_outside() {
     let view = "---\nauthors:\n  B: Bob # 1 comment, 2026-10-18T12:00:00Z\n---\n\n{==Kept.==}{>>c0 @B in r13: Bob's note.<<}\n";
@@ -889,4 +920,69 @@ fn a_thread_on_deleted_words_is_not_blamed_on_its_paragraph() {
         }]),
         "{dropped}"
     );
+}
+
+/// cursor 4500732618: the deletion is the only content of Eve's insertion,
+/// so the view names it `re r12`. The range start opening the deletion's
+/// mark still opens the insertion's mark around it.
+#[test]
+fn a_note_inside_a_wrapped_deletion_keeps_the_wrapping_insertion() {
+    let source = with_p1(
+        false,
+        &format!(
+            r#"<w:r><w:t xml:space="preserve">Kept. </w:t></w:r><w:ins w:id="12" w:author="Eve" w:date="2026-10-18T12:01:00Z"><w:del w:id="13" w:author="Dan" w:date="2026-10-18T12:02:00Z"><w:commentRangeStart w:id="0"/><w:r><w:delText>Gone.</w:delText></w:r><w:commentRangeEnd w:id="0"/><w:r>{REF}<w:commentReference w:id="0"/></w:r></w:del></w:ins>"#
+        ),
+    );
+    let options = ReadOptions {
+        page_markers: false,
+        track_changes: TrackChanges::All,
+        ..ReadOptions::default()
+    };
+    let view = read(&source, &options).unwrap().markdown;
+    assert!(view.contains("re r12"), "{view}");
+    let back = markdown_to_docx(&view, &DocxOptions::default()).unwrap();
+    assert!(back.warnings.is_empty(), "{:?}", back.warnings);
+    let xml = part_string(&back.docx, "word/document.xml").unwrap();
+    let ids = |docx: &[u8]| {
+        let mut ids: Vec<_> = list_changes(docx)
+            .unwrap()
+            .iter()
+            .map(|change| change.id.clone())
+            .collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(ids(&back.docx), ids(&source), "{xml}");
+    let ins = xml.find("<w:ins ").expect("the insertion");
+    let del = xml.find("<w:del ").expect("the deletion");
+    assert!(ins < del, "the insertion wraps the deletion: {xml}");
+    assert_eq!(view_p1(&back.docx), view_p1(&source));
+}
+
+/// cursor 4500732622: the range's first content is a link inside the
+/// deletion. The range start still opens the deletion's mark, so the
+/// paragraph comes back as one deletion.
+#[test]
+fn a_note_whose_range_starts_at_a_deleted_link_comes_back_as_one_deletion() {
+    let source = with_p1(
+        false,
+        &format!(
+            r##"<w:r><w:t xml:space="preserve">Kept. </w:t></w:r><w:del w:id="13" w:author="Dan" w:date="2026-10-18T12:02:00Z"><w:commentRangeStart w:id="0"/><w:hyperlink w:anchor="top"><w:r><w:delText>Gone.</w:delText></w:r></w:hyperlink><w:commentRangeEnd w:id="0"/><w:r>{REF}<w:commentReference w:id="0"/></w:r></w:del>"##
+        ),
+    );
+    let options = ReadOptions {
+        page_markers: false,
+        track_changes: TrackChanges::All,
+        ..ReadOptions::default()
+    };
+    let view = read(&source, &options).unwrap().markdown;
+    let back = markdown_to_docx(&view, &DocxOptions::default()).unwrap();
+    let xml = part_string(&back.docx, "word/document.xml").unwrap();
+    let ids: Vec<_> = list_changes(&back.docx)
+        .unwrap()
+        .iter()
+        .map(|change| change.id.clone())
+        .collect();
+    assert_eq!(ids, ["r13"], "view:\n{view}\n{xml}");
+    assert_eq!(view_p1(&back.docx), view_p1(&source), "{xml}");
 }

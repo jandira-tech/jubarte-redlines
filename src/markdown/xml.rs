@@ -350,14 +350,16 @@ impl Spacing {
         match (word, value) {
             ("before", "auto") => (self.before, self.before_auto) = (None, true),
             ("after", "auto") => (self.after, self.after_auto) = (None, true),
-            ("before", _) if let Some(lines) = hundredths_lines(value) => {
-                self.before_lines = Some(lines);
-            }
-            ("after", _) if let Some(lines) = hundredths_lines(value) => {
-                self.after_lines = Some(lines);
-            }
-            ("before", _) => (self.before, self.before_auto) = (Some(points(value)?), false),
-            ("after", _) => (self.after, self.after_auto) = (Some(points(value)?), false),
+            // No `if let` guards: they are not stable on the declared
+            // rust-version (1.94, E0658).
+            ("before", _) => match hundredths_lines(value) {
+                Some(lines) => self.before_lines = Some(lines),
+                None => (self.before, self.before_auto) = (Some(points(value)?), false),
+            },
+            ("after", _) => match hundredths_lines(value) {
+                Some(lines) => self.after_lines = Some(lines),
+                None => (self.after, self.after_auto) = (Some(points(value)?), false),
+            },
             ("line", _) => {
                 self.line = Some(match value.split_once(' ') {
                     Some((height, "exact")) => (points(height)?, "exact"),
@@ -1075,7 +1077,7 @@ pub(super) fn story(
             Item::LinkEnd => fields.last().copied().flatten(),
             _ => None,
         };
-        let in_note = note_change(&context.document.note_changes, item);
+        let in_note = note_item_change(context.document, items, at);
         // A range or bookmark with no run left before the paragraph ends
         // sits inside the mark a suspended change holds, after the inner
         // ones end: only the open mark closes, the suspended ones wait.
@@ -1127,6 +1129,14 @@ pub(super) fn story(
                 open = None;
             } else {
                 close_marks(context, &natural, &mut out, &mut open, &mut marks);
+                // The marks a change named after ` re ` sits in open
+                // around it, as they do before its first run: the run
+                // after the note's items finds its mark open already.
+                for outer in wrapping_chain(context.document, change).iter().rev() {
+                    spend(&mut natural, outer.1);
+                    context.open_revision(&mut out, outer.0, Some(outer.1));
+                    marks.push(*outer);
+                }
                 spend(&mut natural, change.1);
                 context.open_revision(&mut out, change.0, Some(change.1));
                 open = Some(change);
@@ -1838,6 +1848,38 @@ fn note_change(notes: &HashMap<u32, (Change, bool)>, item: &Item) -> Option<Chan
     }
 }
 
+/// [`note_change`], and a range start that belongs to the same note when
+/// the next run, or a link that change's mark holds, is that change. The start then opens the mark, so it is
+/// not left before a deletion the note sits in.
+fn note_item_change(document: &Document, items: &[Item], at: usize) -> Option<Change> {
+    let item = items.get(at)?;
+    if let Some(change) = note_change(&document.note_changes, item) {
+        return Some(change);
+    }
+    let Item::RangeStart(slot) = item else {
+        return None;
+    };
+    let id = document.slots.get(*slot).copied().flatten()?;
+    let (change, end_inside) = document.note_changes.get(&id)?;
+    if !end_inside {
+        return None;
+    }
+    let rest = &items[at + 1..];
+    let next = rest.iter().position(|item| {
+        !matches!(
+            item,
+            Item::Bookmark(_) | Item::RangeStart(_) | Item::RangeEnd(_) | Item::CommentReference(_)
+        )
+    })?;
+    // A link the change's mark holds (`field_link`) starts that change too.
+    let opens = match &rest[next] {
+        Item::Run(run) => run.change == Some(*change),
+        Item::LinkStart(..) => field_link(&rest[next + 1..], document) == Some(*change),
+        _ => false,
+    };
+    opens.then_some(*change)
+}
+
 /// Whether the next real item in `rest` is a run still inside a mark:
 /// `open`'s own, one a nested change suspended (`marks`), whose other
 /// pieces name the same ids, or a change `open` resumes after, which the
@@ -2102,12 +2144,11 @@ fn close_marks(
 /// The marks each numbered change opens in `items` when no change splits:
 /// a run that does not continue the open mark, a paragraph mark, a row.
 fn natural_marks(document: &Document, items: &[Item]) -> HashMap<u32, usize> {
-    let notes = &document.note_changes;
     let mut marks = HashMap::new();
     let mut open: Option<Change> = None;
     let mut fields: Vec<Option<Change>> = Vec::new();
     for (at, item) in items.iter().enumerate() {
-        if let Some(change) = note_change(notes, item) {
+        if let Some(change) = note_item_change(document, items, at) {
             if open != Some(change) {
                 *marks.entry(change.1).or_default() += 1;
             }

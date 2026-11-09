@@ -4231,12 +4231,21 @@ impl<'o, 'a> Writer<'o, 'a> {
                 end_at = Some(start);
             }
         }
-        // A note inside a change: its reference, and its range end where
-        // that stays here, are in the change's mark.
+        // A note inside a change: its reference, and its range end when
+        // that end is still inside the change, stay in the change's mark.
+        // A highlight that closes inside the change is such an end; the
+        // reference must not open a second piece of the same deletion.
         if let Some(change) = self.change {
-            self.document
-                .note_changes
-                .insert(id, (change, end_at.is_none()));
+            let end_inside = match end_at {
+                None => true,
+                // Backwards: the change's run usually sits just before
+                // the end, so the scan stops there.
+                Some(at) => self.story()[..at]
+                    .iter()
+                    .rev()
+                    .any(|item| matches!(item, Item::Run(run) if run.change == Some(change))),
+            };
+            self.document.note_changes.insert(id, (change, end_inside));
         }
         let story = self.story();
         match end_at {
