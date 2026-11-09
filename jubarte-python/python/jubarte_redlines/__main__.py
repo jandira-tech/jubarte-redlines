@@ -820,13 +820,15 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
         raise SystemExit(EXIT_USAGE)
     dry_run = bool(getattr(args, "dry_run", False))
     pdf, png = bool(getattr(args, "pdf", False)), bool(getattr(args, "png", False))
+    # A flags command quotes flags. A `--plan` file quotes the plan's JSON.
+    syntax = None if getattr(args, "plan", None) is not None else "flags"
     try:
         if dry_run:
-            sys.stdout.write(doc.preview(plan_text).to_jsonl())
+            sys.stdout.write(doc.preview(plan_text, syntax=syntax).to_jsonl())
             return EXIT_OK
         # The plan first: a refused plan prints its whole report, whatever
         # the outputs (D15).
-        result = doc.edit(plan_text)
+        result = doc.edit(plan_text, syntax=syntax)
     except EditPlanError as exc:
         _print_refusal(exc)
         return EXIT_PLAN_REFUSED

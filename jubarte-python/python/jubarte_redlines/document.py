@@ -282,7 +282,7 @@ class Document:
         """The body as Markdown with a ``[pN]`` id before each paragraph."""
         return _native.markdown(self._data)
 
-    def edit(self, plan: EditPlan | dict[str, object] | str) -> EditResult:
+    def edit(self, plan: EditPlan | dict[str, object] | str, *, syntax: str | None = None) -> EditResult:
         """Apply a plan: clean copy, Word redline and report, or ``EditPlanError``.
 
         Every operation is resolved against this snapshot before anything is
@@ -294,7 +294,12 @@ class Document:
         and theirs still tracked, the redline adds the plan's edits as new
         revisions beside theirs, and ``diff`` shows the plan's edits only.
         """
-        ok, clean, redline, payload = _native.edit_json(self._data, plan_json(plan))
+        wire = plan_json(plan)
+        ok, clean, redline, payload = (
+            _native.edit_json(self._data, wire)
+            if syntax is None
+            else _native.edit_json(self._data, wire, syntax)
+        )
         if not ok:
             raise EditPlanError._from_json(payload)
         assert clean is not None and redline is not None
@@ -328,9 +333,14 @@ class Document:
             raise TypeError("other must be a Document or Markdown text")
         return diff(self, other, author=author, date=date, columns=columns, format=format, context=context, accept_changes=accept_changes, full_lines=full_lines)
 
-    def preview(self, plan: EditPlan | dict[str, object] | str) -> EditReport:
+    def preview(self, plan: EditPlan | dict[str, object] | str, *, syntax: str | None = None) -> EditReport:
         """Resolve every operation and report, without producing documents."""
-        ok, payload = _native.preview_json(self._data, plan_json(plan))
+        wire = plan_json(plan)
+        ok, payload = (
+            _native.preview_json(self._data, wire)
+            if syntax is None
+            else _native.preview_json(self._data, wire, syntax)
+        )
         if not ok:
             raise EditPlanError._from_json(payload)
         return _decode_report(payload)
