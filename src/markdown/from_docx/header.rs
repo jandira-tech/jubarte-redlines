@@ -1219,7 +1219,12 @@ pub(crate) fn story_style(kind: &str) -> &'static str {
 pub(crate) fn tab_stops(tabs: &Element) -> Vec<String> {
     tabs.children_named("tab")
         .filter_map(|tab| {
-            let val = tab.attr("val")?;
+            // Strict and bidirectional text say `start` and `end`.
+            let val = match tab.attr("val")? {
+                "start" => "left",
+                "end" => "right",
+                val => val,
+            };
             if !crate::markdown::xml::TAB_VALS.contains(&val) {
                 return None;
             }

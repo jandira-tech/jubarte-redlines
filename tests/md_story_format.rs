@@ -626,3 +626,25 @@ fn a_header_paragraph_keeps_its_tabs_spacing_and_shading() {
     );
     assert_eq!(view(&again), only);
 }
+
+/// Strict and bidirectional tab stops say `start` and `end`: they read as
+/// `left` and `right`, as a story's indent and alignment do, and come back
+/// (#2132 review, Bugbot).
+#[test]
+fn a_header_tab_stop_at_start_or_end_reads_as_left_or_right() {
+    let stops = r#"<w:p><w:pPr><w:tabs><w:tab w:val="start" w:pos="720"/><w:tab w:val="end" w:leader="dot" w:pos="9360"/></w:tabs></w:pPr><w:r><w:t>Edge</w:t></w:r></w:p>"#;
+    let first = view(&with_header(stops));
+    assert!(
+        headers_block(&first).contains("tabs: [left 720, right dot 9360]"),
+        "{first}"
+    );
+    let again = write(&first);
+    let xml = part_string(&again, "word/header1.xml").expect("a header part");
+    assert!(
+        xml.contains(
+            r#"<w:tabs><w:tab w:val="left" w:pos="720"/><w:tab w:val="right" w:leader="dot" w:pos="9360"/></w:tabs>"#
+        ),
+        "{xml}"
+    );
+    assert_eq!(view(&again), first);
+}
