@@ -350,14 +350,16 @@ impl Spacing {
         match (word, value) {
             ("before", "auto") => (self.before, self.before_auto) = (None, true),
             ("after", "auto") => (self.after, self.after_auto) = (None, true),
-            ("before", _) if let Some(lines) = hundredths_lines(value) => {
-                self.before_lines = Some(lines);
-            }
-            ("after", _) if let Some(lines) = hundredths_lines(value) => {
-                self.after_lines = Some(lines);
-            }
-            ("before", _) => (self.before, self.before_auto) = (Some(points(value)?), false),
-            ("after", _) => (self.after, self.after_auto) = (Some(points(value)?), false),
+            // No `if let` guards: they are not stable on the declared
+            // rust-version (1.94, E0658).
+            ("before", _) => match hundredths_lines(value) {
+                Some(lines) => self.before_lines = Some(lines),
+                None => (self.before, self.before_auto) = (Some(points(value)?), false),
+            },
+            ("after", _) => match hundredths_lines(value) {
+                Some(lines) => self.after_lines = Some(lines),
+                None => (self.after, self.after_auto) = (Some(points(value)?), false),
+            },
             ("line", _) => {
                 self.line = Some(match value.split_once(' ') {
                     Some((height, "exact")) => (points(height)?, "exact"),
