@@ -119,3 +119,36 @@ fn a_strict_nested_text_box_is_reported() {
         "a single strict text box is not a nest: {lone:?}"
     );
 }
+
+/// A repairable finding Ring-1 now reports on a Strict package is one
+/// `repair` fixes too: live text inside a deletion becomes `w:delText`.
+#[test]
+fn a_strict_finding_that_repairs_is_repaired() {
+    let document = format!(
+        r#"<w:document xmlns:w="{STRICT_W}"><w:body><w:p><w:del w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>gone</w:t></w:r></w:del></w:p></w:body></w:document>"#
+    );
+    let bytes = zip_with_document(&document);
+    let found = jubarte::validate::validate(&bytes).unwrap();
+    assert!(
+        found.iter().any(|f| f.code == "TEXT_INSIDE_DELETION"),
+        "{found:?}"
+    );
+    let repaired = jubarte::validate::repair(&bytes).unwrap();
+    assert!(
+        repaired
+            .repaired
+            .iter()
+            .any(|f| f.code == "TEXT_INSIDE_DELETION"),
+        "repaired {:?}, remaining {:?}",
+        repaired.repaired,
+        repaired.remaining
+    );
+    assert!(
+        !repaired
+            .remaining
+            .iter()
+            .any(|f| f.code == "TEXT_INSIDE_DELETION"),
+        "{:?}",
+        repaired.remaining
+    );
+}

@@ -3775,7 +3775,8 @@ pub(crate) fn namespace_in_scope<'a>(
 /// paragraph ids brought into Word's range, cells given a last paragraph,
 /// orphan comment anchors dropped. The result is validated again to fill
 /// `remaining`. A package with no repairable finding comes back as its
-/// own bytes.
+/// own bytes; an ISO Strict package with one is repaired, and written
+/// back, Transitional.
 ///
 /// # Errors
 ///
@@ -3802,10 +3803,15 @@ pub fn repair(docx: &[u8]) -> Result<Repaired, ValidateError> {
         parts.dedup();
         parts
     };
+    // Ring-1 reads a Strict part under its Transitional names, and the
+    // repairs below edit those names: a Strict package is repaired, and
+    // written back, Transitional, as accept and reject write it.
+    let transitional = crate::strict_translation::strict_to_transitional_docx(docx)
+        .map_err(|e| ValidateError::Package(e.to_string()))?;
     let bytes = if has("DUPLICATE_DOCPR_ID") {
-        crate::comparer::fixups::fix_up_drawing_ids_in_package(docx)?
+        crate::comparer::fixups::fix_up_drawing_ids_in_package(&transitional)?
     } else {
-        docx.to_vec()
+        transitional
     };
     let mut pkg = PartFs::open(&bytes)?;
     for part in parts_with(&["MC_UNBOUND_PREFIX"]) {
