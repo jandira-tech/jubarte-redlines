@@ -1210,7 +1210,7 @@ pub(super) fn story(
                             spend(&mut natural, by);
                             open = change;
                         } else {
-                            out.push_str(&element_close(context, kind, Some(by)));
+                            element_close(context, kind, Some(by), &mut out);
                             context.finish_move_range(&mut out, kind, by);
                         }
                     }
@@ -1414,7 +1414,7 @@ pub(super) fn story(
                 {
                     // The change goes on in a new mark: no empty marks yet.
                     // The range stays open across the split.
-                    out.push_str(&element_close(context, kind, Some(by)));
+                    element_close(context, kind, Some(by), &mut out);
                     context.open_revision(&mut out, kind, Some(by));
                     open = run.change;
                 }
@@ -2038,8 +2038,11 @@ fn ends_inserted_side(document: &Document, rest: &[Item], open: Option<Change>) 
         )
 }
 
-fn element_close(context: &Context<'_>, kind: Kind, by: Option<u32>) -> String {
-    format!("</{}>", context.element_name(kind, by))
+/// Write the closing tag of a mark of `kind` into `out`.
+fn element_close(context: &Context<'_>, kind: Kind, by: Option<u32>, out: &mut String) {
+    out.push_str("</");
+    out.push_str(context.element_name(kind, by));
+    out.push('>');
 }
 
 /// A real `w:del` among `marks`. A move's source is not one: its text is `w:t`.
@@ -2058,7 +2061,7 @@ fn close_mark(
     let Some((kind, by)) = open.take() else {
         return;
     };
-    out.push_str(&element_close(context, kind, Some(by)));
+    element_close(context, kind, Some(by), out);
     if natural.get(&by).copied().unwrap_or(0) == 0 {
         // A paragraph mark written at its paragraph's end takes its own.
         let deferred = context
@@ -2693,7 +2696,7 @@ fn box_xml(context: &mut Context<'_>, items: &[Item], relate: &mut dyn Relate, o
             Item::Run(run) => {
                 if open != run.change {
                     if let Some((kind, by)) = open.take() {
-                        out.push_str(&close_tag(context, kind, by));
+                        close_tag(context, kind, by, out);
                     }
                     if let Some(change @ (kind, _)) = run.change {
                         let wrap = context.revision(kind, Some(change.1));
@@ -2713,7 +2716,7 @@ fn box_xml(context: &mut Context<'_>, items: &[Item], relate: &mut dyn Relate, o
                 context.pending_run_format.pop();
                 context.run_sizes.pop();
                 if let Some((kind, by)) = open.take() {
-                    out.push_str(&close_tag(context, kind, by));
+                    close_tag(context, kind, by, out);
                 }
                 out.push_str("</w:p>");
             }
@@ -2722,9 +2725,10 @@ fn box_xml(context: &mut Context<'_>, items: &[Item], relate: &mut dyn Relate, o
     }
 }
 
-/// The closing tag of a mark of `kind`. A box never opens a move range.
-fn close_tag(context: &Context<'_>, kind: Kind, by: u32) -> String {
-    element_close(context, kind, Some(by))
+/// Write the closing tag of a mark of `kind`. A box never opens a move
+/// range.
+fn close_tag(context: &Context<'_>, kind: Kind, by: u32, out: &mut String) {
+    element_close(context, kind, Some(by), out);
 }
 
 /// A `w:drawing` holding `picture` inline, embedded through `rel`, with

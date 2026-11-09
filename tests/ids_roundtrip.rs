@@ -466,8 +466,9 @@ fn patterns() -> &'static Patterns {
             r"\{(?:>>)?((?:(?:[a-z0-9_.]+\.)?(?:r[0-9]+(?:\+[0-9]+)*|c[0-9]+|noid)|[A-Za-z_][A-Za-z0-9_]*:rev:[0-9]+)\b[^{}]*?)(?:<<)?\}",
         )
         .unwrap(),
-        // `r12 @AC`, `header1.r1+2 @AC`, `Header_1:rev:4 @AC`, with a date.
-        tag: Regex::new(r"^(\S+) @[A-Za-z0-9?]+(?: \S+)?$").unwrap(),
+        // `r12 @AC`, `header1.r1+2 @AC`, `Header_1:rev:4 @AC`, with a date
+        // or a bare `move`, then a move range's name: `r3 @AC move move1`.
+        tag: Regex::new(r"^(\S+) @[A-Za-z0-9?]+(?: \S+)?(?: move \S+)?$").unwrap(),
         comment_head: Regex::new(
             r"^c(\d+)(?: @[A-Za-z0-9?]+)?(?: \S+)?(?: re c(\d+)| resolved)?(?: in r\d+(?:\+\d+)*)?(?:, [^:]+)?: ",
         )
