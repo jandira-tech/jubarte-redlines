@@ -243,7 +243,7 @@ styles:
 
 <!-- p187 NoSpacing empty, break-del r342 @SW -->
 
-<!-- p188 size 11pt, bullet, break-del r344+343 @SW -->
+<!-- p188 size 11pt, mark style, bullet, break-del r344+343 @SW -->
 ## - {--Other--}{r344+343 @SW}
 
 <!-- p189 NoSpacing break-del r346+345 @SW -->

@@ -318,3 +318,30 @@ fn a_mark_that_inherits_its_style_keeps_no_size_of_its_own() {
     assert_eq!(got[0].1.as_deref(), None, "{}", document(&again));
     assert_eq!(got[1], (vec!["18".into()], Some("18".into())));
 }
+
+/// `mark style` reads in any clause position, as every other clause does:
+/// first on the id line it is not a paragraph style named `mark` (#2129
+/// review, Bugbot).
+#[test]
+fn mark_style_first_on_the_id_line_still_keeps_the_mark_off_the_size() {
+    let source = docx(
+        r#"<w:p><w:r><w:rPr><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr><w:t>Nine</w:t></w:r></w:p>"#,
+    );
+    let shown = view(&source);
+    assert!(
+        shown.contains("<!-- p0 size 9pt, mark style -->"),
+        "{shown}"
+    );
+    let reordered = shown.replace(
+        "<!-- p0 size 9pt, mark style -->",
+        "<!-- p0 mark style, size 9pt -->",
+    );
+    let again = write(&reordered);
+    let got = sizes(&document(&again));
+    assert_eq!(got[0], (vec!["18".into()], None), "{}", document(&again));
+    assert!(
+        !document(&again).contains("w:pStyle"),
+        "{}",
+        document(&again)
+    );
+}
