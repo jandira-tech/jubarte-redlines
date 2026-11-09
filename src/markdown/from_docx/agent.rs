@@ -882,13 +882,28 @@ pub(crate) fn comment_anchors(e: &Element, out: &mut HashSet<String>) {
 /// counts once.
 pub(super) fn shown_children(e: &Element) -> Vec<&Element> {
     if e.is("AlternateContent") {
-        e.child("Choice")
-            .or_else(|| e.child("Fallback"))
-            .into_iter()
-            .collect()
+        shown_branch(e).into_iter().collect()
     } else {
         e.elements().collect()
     }
+}
+
+/// The branch Word shows. A Choice whose Requires names a namespace Word
+/// does not know is passed over for a later Choice, then the Fallback.
+pub(super) fn shown_branch(alternate: &Element) -> Option<&Element> {
+    alternate
+        .elements()
+        .find(|child| child.is("Choice") && requires_understood(child))
+        .or_else(|| alternate.child("Fallback"))
+}
+
+fn requires_understood(choice: &Element) -> bool {
+    crate::comparer::finalize::requires_list_understood(choice.attr("Requires"), |prefix| {
+        choice
+            .namespaces
+            .get(prefix)
+            .is_some_and(|uri| crate::comparer::finalize::word_understands_namespace(uri))
+    })
 }
 
 /// Whether `e` holds text the view shows: Word's Fallback copy of a text
@@ -1103,8 +1118,8 @@ pub(crate) struct LineFacts<'a> {
 /// the writer gives the clause's size; a hidden run (`hidden` names the
 /// hidden character styles) prints nothing. A run whose `w:szCs` differs
 /// from its `w:sz` states no one size: the writer gives both the clause's.
-/// A text box sits inside a run, and Word's Fallback copy and math hold
-/// runs of their own.
+/// A text box sits inside a run, math holds runs of its own, and of an
+/// `mc:AlternateContent` only the branch Word shows counts.
 pub(crate) fn own_size(p: &Element, hidden: &HashSet<String>) -> Option<u32> {
     fn half_points(value: &str) -> Option<u32> {
         let half = crate::util::parse_finite_f64(value)
@@ -1132,7 +1147,12 @@ pub(crate) fn own_size(p: &Element, hidden: &HashSet<String>) -> Option<u32> {
     fn walk(element: &Element, hidden: &HashSet<String>, sizes: &mut Vec<Option<u32>>) {
         for child in element.elements() {
             match child.local() {
-                "pPr" | "Fallback" | "oMath" | "oMathPara" => {}
+                "pPr" | "oMath" | "oMathPara" => {}
+                "AlternateContent" => {
+                    if let Some(branch) = shown_branch(child) {
+                        walk(branch, hidden, sizes);
+                    }
+                }
                 "r" => {
                     if shown(child) && !hidden_run(child.child("rPr"), hidden) {
                         sizes.push(size(child.child("rPr")));
@@ -3583,6 +3603,18 @@ mod tests {
     }
 
     const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+
+    #[test]
+    fn own_size_reads_the_branch_word_shows() {
+        let paragraph = |requires: &str| {
+            parse_xml(format!(r#"<w:p {W} xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:zz="urn:example:future"><w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:t>a</w:t></w:r><mc:AlternateContent><mc:Choice Requires="{requires}"><w:r><w:rPr><w:sz w:val="40"/></w:rPr><w:t>b</w:t></w:r></mc:Choice><mc:Fallback><w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:t>b</w:t></w:r></mc:Fallback></mc:AlternateContent></w:p>"#).as_bytes()).unwrap()
+        };
+        let hidden = HashSet::new();
+        // Word does not know `zz`: it shows the Fallback, so every run is 10pt.
+        assert_eq!(own_size(&paragraph("zz"), &hidden), Some(20));
+        // Word knows `wps`: it shows the Choice's 20pt run beside a 10pt one.
+        assert_eq!(own_size(&paragraph("wps"), &hidden), None);
+    }
 
     fn body(inner: &str) -> Element {
         parse_xml(format!("<w:body {W}>{inner}</w:body>").as_bytes()).unwrap()
