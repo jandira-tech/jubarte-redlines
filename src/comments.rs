@@ -133,6 +133,15 @@ pub fn list_comments(docx: &[u8]) -> Result<Vec<CommentRecord>, CommentError> {
     comments_in(&mut Opened::open(docx)?)
 }
 
+/// [`list_comments`] under `limits`, for a command that already admitted
+/// the same bytes at that budget.
+pub(crate) fn list_comments_within(
+    docx: &[u8],
+    limits: crate::admission::InputLimits,
+) -> Result<Vec<CommentRecord>, CommentError> {
+    comments_in(&mut Opened::open_within(docx, limits)?)
+}
+
 /// [`list_comments`] of a package already open. The scan marks up the
 /// body's DOM, so read what else `opened` holds first.
 pub(crate) fn comments_in(opened: &mut Opened) -> Result<Vec<CommentRecord>, CommentError> {

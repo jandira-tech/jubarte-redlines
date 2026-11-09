@@ -1319,7 +1319,8 @@ fn removed_comment_report(
     resolution: Resolution,
 ) -> Result<(Vec<crate::comments::CommentRecord>, Vec<String>), ChangeError> {
     let comments =
-        crate::comments::list_comments(docx).map_err(|e| ChangeError::Package(e.to_string()))?;
+        crate::comments::list_comments_within(docx, crate::admission::InputLimits::compare())
+            .map_err(|e| ChangeError::Package(e.to_string()))?;
     let listed = list_changes_tolerant(docx)?;
     let wholes = member_wholes(docx)?;
     let filter = filter.normalized()?;
