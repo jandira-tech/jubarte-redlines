@@ -18,21 +18,23 @@ fn build_scripts_are_a_closed_inventory() {
         .iter()
         .position(|line| line.trim() == "[bans.build]")
         .unwrap_or_else(|| panic!("deny.toml has no [bans.build] inventory"));
-    let start = header.saturating_sub(8);
-    let end = (header + 24).min(lines.len());
-    let window = lines[start..end].join("\n");
+    // The comment block right above the header, through the section's end.
+    let start = lines[..header]
+        .iter()
+        .rposition(|line| !line.trim_start().starts_with('#'))
+        .map_or(0, |index| index + 1);
+    let section_end = lines
+        .iter()
+        .enumerate()
+        .skip(header + 1)
+        .find(|(_, line)| line.trim_start().starts_with('['))
+        .map_or(lines.len(), |(index, _)| index);
+    let window = lines[start..section_end].join("\n");
     let lower = window.to_ascii_lowercase();
     assert!(
         lower.contains("inventory") && lower.contains("not a sandbox"),
         "the build-script section must say this inventory is not a sandbox:\n{window}"
     );
-    let section_end = lines
-        .iter()
-        .enumerate()
-        .skip(header + 1)
-        .find(|(_, line)| line.starts_with('['))
-        .map(|(index, _)| index)
-        .unwrap_or(lines.len());
     let section = lines[header..section_end].join("\n");
     let names = quoted_allow_names(&section);
     assert!(
