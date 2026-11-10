@@ -204,6 +204,9 @@ fn atom_hash(dom: &Dom, content: NodeId, settings: &WmlComparerSettings) -> Atom
     AtomHash::of_bytes(format!("{local}{text}").as_bytes())
 }
 
+/// Open fields that still receive a copy of one instruction.
+const MAX_OPEN_FIELDS: usize = 32;
+
 /// Salts every atom of a complex field with the codes of the fields around it.
 ///
 /// Word replaces a field whose code changed as a whole, nested fields included.
@@ -215,6 +218,9 @@ fn atom_hash(dom: &Dom, content: NodeId, settings: &WmlComparerSettings) -> Atom
 /// leaves fields half deleted (98bf5f3d×a3701d36). So begin, code, separate,
 /// end and result all carry the whole chain of codes, outermost first: a
 /// field's shell matches only when every enclosing code is the same.
+///
+/// Sibling begins do not deepen the XML, so an instruction is copied onto
+/// at most [`MAX_OPEN_FIELDS`] fields that have not reached their result.
 fn salt_field_results(dom: &Dom, list: &mut [ComparisonUnitAtom]) {
     let fld_char = W::fld_char();
     let fld_char_type = W::name("fldCharType");
@@ -232,22 +238,35 @@ fn salt_field_results(dom: &Dom, list: &mut [ComparisonUnitAtom]) {
     let mut codes: Vec<String> = Vec::new();
     let mut code_of: Vec<Option<usize>> = vec![None; list.len()];
     // Open fields, innermost last: (index into codes, inside the result).
+    // Begins past the cap are counted so their separate and end stay paired,
+    // and they do not take a copy of the instruction.
     let mut open: Vec<(usize, bool)> = Vec::new();
+    let mut past: usize = 0;
     for (i, atom) in list.iter().enumerate() {
         let el = atom.content_element;
         match kind(el) {
             Some("begin") => {
-                code_of[i] = Some(codes.len());
-                open.push((codes.len(), false));
-                codes.push(String::new());
+                if open.len() >= MAX_OPEN_FIELDS {
+                    past += 1;
+                } else {
+                    code_of[i] = Some(codes.len());
+                    open.push((codes.len(), false));
+                    codes.push(String::new());
+                }
             }
             Some("separate") => {
-                if let Some(field) = open.last_mut() {
+                if past == 0
+                    && let Some(field) = open.last_mut()
+                {
                     field.1 = true;
                 }
             }
             Some("end") => {
-                open.pop();
+                if past > 0 {
+                    past -= 1;
+                } else {
+                    open.pop();
+                }
             }
             _ => {
                 if dom.name(el).is_some_and(|n| n == instr || n == del_instr) {
@@ -263,26 +282,44 @@ fn salt_field_results(dom: &Dom, list: &mut [ComparisonUnitAtom]) {
         return;
     }
     // Pass 2: salt every atom inside a field with the chain of open codes.
+    // The chain text is kept and only the atom's own hash is appended.
     let mut chain: Vec<usize> = Vec::new();
+    let mut salted = String::new();
+    let mut prefix = 0usize;
+    let mut prefixed = usize::MAX;
+    let mut past = 0usize;
     for (i, atom) in list.iter_mut().enumerate() {
         let ty = kind(atom.content_element);
-        if ty == Some("begin")
-            && let Some(c) = code_of[i]
-        {
-            chain.push(c);
+        if ty == Some("begin") {
+            if let Some(c) = code_of[i] {
+                chain.push(c);
+            } else {
+                past += 1;
+            }
         }
         if !chain.is_empty() {
-            let mut salted = String::from("FIELD");
-            for &c in &chain {
+            if prefixed != chain.len() {
+                salted.clear();
+                salted.push_str("FIELD");
+                for &c in &chain {
+                    salted.push('|');
+                    salted.push_str(codes[c].trim());
+                }
                 salted.push('|');
-                salted.push_str(codes[c].trim());
+                prefix = salted.len();
+                prefixed = chain.len();
             }
-            salted.push('|');
+            salted.truncate(prefix);
             salted.push_str(&atom.sha1_hash.to_hex_string());
             atom.sha1_hash = AtomHash::of_bytes(salted.as_bytes());
         }
         if ty == Some("end") {
-            chain.pop();
+            if past > 0 {
+                past -= 1;
+            } else {
+                chain.pop();
+                prefixed = usize::MAX;
+            }
         }
     }
 }
@@ -1152,6 +1189,41 @@ mod coverage_atomizer_field_chain_boundaries {
                 assert_eq!(dom.value(atoms[6].content_element), "X");
             }
         }
+    }
+
+    /// Sibling field begins do not deepen the XML, and one instruction is
+    /// copied onto every field that has not reached its result. The copy
+    /// stops at 32 open fields.
+    #[test]
+    fn a_nested_field_instruction_is_copied_only_to_the_open_bound() {
+        const BOUND: usize = 32;
+        const DEPTH: usize = 40;
+        let begins = "<w:r><w:fldChar w:fldCharType='begin'/></w:r>".repeat(DEPTH);
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            "<w:body xmlns:w='{ns}'><w:p>{begins}<w:r><w:instrText>CODE</w:instrText></w:r><w:r><w:t>Z</w:t></w:r></w:p></w:body>",
+            ns = W::URI
+        ));
+        let body = dom.root(doc).unwrap();
+        let settings = WmlComparerSettings::default();
+        let atoms = create_comparison_unit_atom_list(&mut dom, body, &settings);
+        let z = atoms
+            .iter()
+            .find(|atom| dom.value(atom.content_element) == "Z")
+            .expect("the result text");
+        let base = atom_hash(&dom, z.content_element, &settings);
+        let salted = |copies: usize| {
+            let codes = std::iter::repeat_n("CODE", copies)
+                .collect::<Vec<_>>()
+                .join("|");
+            AtomHash::of_bytes(format!("FIELD|{codes}|{}", base.to_hex_string()).as_bytes())
+        };
+        assert_ne!(salted(BOUND), salted(DEPTH));
+        assert_eq!(
+            z.sha1_hash,
+            salted(BOUND),
+            "one instruction copied onto {DEPTH} open fields"
+        );
     }
 
     #[test]
