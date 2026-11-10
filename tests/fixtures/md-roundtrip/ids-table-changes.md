@@ -58,7 +58,7 @@ footers:
 |{=={--` import { DocxEditor } from '@eigenpal/docx-js-editor'                `--}{r37+36 @AS}==}<br>{=={--` import '@eigenpal/docx-js-editor/styles.css'                `--}{r39+38 @AS}==}<br><br>{=={--` function App({ file }: { file: ArrayBuffer }) {                `--}{r42+41 @AS}==}<br>{=={--` return (                `--}{r44+43 @AS}==}<br>{=={--` <DocxEditor                `--}{r46+45 @AS}==}<br>{=={--` documentBuffer={file}                `--}{r48+47 @AS}==}<br>{=={--` onSave={(buffer) => uploadToServer(buffer)}                `--}{r50+49 @AS}==}<br>{=={--` />                `--}{r52+51 @AS}==}<br>{=={--` )                `--}{r54+53 @AS}==}<br>{=={--` }                `--}{r56+55 @AS}==}|
 |-|
 
-<!-- p24 before 8pt, break-del r57 @AS, rev-del r58 @AS -->
+<!-- p24 before 8pt, break-del r57 @AS, rev-del r58 @AS, holds del r58 c17 end c16 ref c17 ref -->
 {>>c16 @AS: Horrible.<<}{>>c17 @AS re c16: Terrible.<<}
 
 <!-- p25 before 15pt, after 4pt, size 16pt, mark style, break-del r60+59 @AS -->
@@ -196,7 +196,7 @@ footers:
 |{=={--` import { DocxEditor } from '@eigenpal/docx-js-editor'                `--}{r228+227 @AS}==}<br>{=={--` import '@eigenpal/docx-js-editor/styles.css'                `--}{r230+229 @AS}==}<br><br>{=={--` function App({ file }: { file: ArrayBuffer }) {                `--}{r233+232 @AS}==}<br>{=={--` return (                `--}{r235+234 @AS}==}<br>{=={--` <DocxEditor                `--}{r237+236 @AS}==}<br>{=={--` documentBuffer={file}                `--}{r239+238 @AS}==}<br>{=={--` onSave={(buffer) => uploadToServer(buffer)}                `--}{r241+240 @AS}==}<br>{=={--` />                `--}{r243+242 @AS}==}<br>{=={--` )                `--}{r245+244 @AS}==}<br>{=={--` }                `--}{r247+246 @AS}==}|
 |-|
 
-<!-- p120 before 8pt, break-del r248 @AS, rev-del r249 @AS -->
+<!-- p120 before 8pt, break-del r248 @AS, rev-del r249 @AS, holds del r249 c208 end c207 ref c208 ref -->
 {>>c207 @AS: Horrible.<<}{>>c208 @AS re c207: Terrible.<<}
 
 <!-- p121 before 15pt, after 4pt, size 16pt, mark style, break-del r251+250 @AS -->

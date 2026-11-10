@@ -1406,8 +1406,12 @@ pub(crate) fn held_comment_clauses(p: &Element, shown: &str) -> Vec<String> {
     // marks fall, inside the spans printed there. A range start a revision
     // holds that prints nothing has no span to fall in: it keeps its clause.
     events.retain(|event| {
-        if inside.contains(&event.comment) {
-            return event.kind == 0 && !printed.contains(&event.revision.to_string());
+        if let Some(&reply) = inside.get(&event.comment) {
+            return match event.kind {
+                0 => !printed.contains(&event.revision.to_string()),
+                1 => reply,
+                _ => false,
+            };
         }
         match event.kind {
             0 => !printed.contains(&event.revision.to_string()),
@@ -1451,8 +1455,8 @@ pub(crate) fn held_comment_clauses(p: &Element, shown: &str) -> Vec<String> {
 
 /// Comments whose `{>>cN` sits inside an open critic span, and the revisions
 /// a note head names with `in rN`.
-fn comment_note_places(shown: &str) -> (HashSet<u32>, HashMap<u32, Vec<u32>>) {
-    let (mut inside, mut held) = (HashSet::new(), HashMap::new());
+fn comment_note_places(shown: &str) -> (HashMap<u32, bool>, HashMap<u32, Vec<u32>>) {
+    let (mut inside, mut held) = (HashMap::new(), HashMap::new());
     let (mut del, mut ins, mut sub) = (0usize, 0usize, 0usize);
     let mut at = 0;
     while at < shown.len() {
@@ -1481,8 +1485,11 @@ fn comment_note_places(shown: &str) -> (HashSet<u32>, HashMap<u32, Vec<u32>>) {
                 .next()
                 .and_then(|word| crate::ids::parse_comment_id(word).ok())
             {
+                // A reply (`re c0`) prints no scope of its own, so its range
+                // end has no `==}` to fall in: only its reference is placed.
+                let reply = head.split_whitespace().any(|word| word == "re");
                 if del + ins + sub > 0 {
-                    inside.insert(comment);
+                    inside.insert(comment, reply);
                 }
                 if let Some(ids) = head_held_revisions(head) {
                     held.insert(comment, ids);
