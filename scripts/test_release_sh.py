@@ -3175,7 +3175,7 @@ class Lessons0140(unittest.TestCase):
         row = self.one_row("Ring-2 validity ratchet")
         for needle in ("scripts/stage_ring2_sources.py", "NEUROTIC_DOCX_BENCH",
                        "../neurotic_docx_bench", "word_based_pairs.csv", "RENAMED.csv",
-                       "_scratch/ring2_sources", "not run", "maintainer"):
+                       ".scratch/ring2_sources", "not run", "maintainer"):
             self.assertIn(needle, row)
         self.assertLess(row.index("scripts/stage_ring2_sources.py"),
                         row.index("scripts/redline-sweep.sh"))

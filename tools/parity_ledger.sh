@@ -16,7 +16,7 @@
 #     bin   -> jubarte binary (default: target/release/jubarte)
 #
 # Prints mean/median score and writes scores JSON + a per-pair table under
-# _scratch/ledger/. Requires: the neurotic_docx_bench checkout + soffice.
+# .scratch/ledger/. Requires: the neurotic_docx_bench checkout + soffice.
 set -euo pipefail
 
 CRATE="$(cd "$(dirname "$0")/.." && pwd)"
@@ -35,7 +35,7 @@ fi
 SRC="$BENCH/corpus/word_based/docx_source"
 ORACLE="$BENCH/corpus/word_based/pdf_redlines_word"
 MAP="$BENCH/corpus/word_based/centralized_mapping.csv"
-WORK="$CRATE/_scratch/ledger"
+WORK="$CRATE/.scratch/ledger"
 DOCX="$WORK/docx"; PDF="$WORK/render"
 rm -rf "$WORK"; mkdir -p "$DOCX"
 

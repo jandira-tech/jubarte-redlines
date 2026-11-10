@@ -38,8 +38,8 @@ ROUNDS="${4:-2}"
 
 CRATE="$(cd "$(dirname "$0")/../.." && pwd)"
 OOXML="${OOXML_DIR:-$CRATE/..}"
-PDENSE_A="${PDENSE_A:-$CRATE/_scratch/perf/pdense_A_15000.docx}"
-PDENSE_B="${PDENSE_B:-$CRATE/_scratch/perf/pdense_B_15000.docx}"
+PDENSE_A="${PDENSE_A:-$CRATE/.scratch/perf/pdense_A_15000.docx}"
+PDENSE_B="${PDENSE_B:-$CRATE/.scratch/perf/pdense_B_15000.docx}"
 RFP17="${RFP17:-$OOXML/RFP17-071-Addendum-1-MWSU-CSR-816-271-4200.docx}"
 # Complicated real fixtures — MUST always be on the matrix (do not remove):
 RFP17_REDLINE="${RFP17_REDLINE:-$OOXML/redline_RFP17_vs_individual-contractor.docx}"

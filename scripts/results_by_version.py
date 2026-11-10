@@ -37,8 +37,8 @@ REPO = Path(__file__).resolve().parent.parent
 ROOT = Path(os.environ.get('NEUROTIC_DOCX_BENCH', '/Users/arthrod/temp/T/neurotic_docx_bench'))
 RES = ROOT / 'results'
 GROK = ROOT / 'grok_run'
-LOOP = Path(os.environ.get('JUBARTE_LOOP', '/Users/arthrod/temp/T/jubarte-loop'))
-# Word-truth A/B runs kept outside the bench (jubarte-loop/word_ab_ext.sh); same file names.
+LOOP = Path(os.environ.get('JUBARTE_LOOP', REPO / '.scratch' / 'jubarte-loop'))
+# Word-truth A/B runs kept outside the bench (.scratch/jubarte-loop/word_ab_ext.sh); same file names.
 WORDAB = LOOP / 'wordab' / 'results' / 'redline_wordpdf'
 DXSUITE = Path(os.environ.get('DOCXIDE_SUITE', '/Users/arthrod/temp/T/docxide_suite'))
 

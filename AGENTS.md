@@ -28,6 +28,22 @@ The names used at each boundary are intentional:
 Do not call this engine `ooxmlsdk-redline`; that is the retired name for an
 older location. The `ooxmlsdk` project is a separate SDK dependency and oracle.
 
+## Scratch work goes in `.scratch/`
+
+Every piece of scratch work lives under `.scratch/` at the repository root,
+which `.gitignore` excludes. That covers probes, logs, staged sources, sweep
+and parity outputs, downloaded installers, release work folders and temporary
+clones. Give each job its own subfolder (for example
+`.scratch/jubarte-loop/release_<ver>/`).
+
+- Do not put scratch anywhere else: not in `/tmp` (a reboot wipes it, and
+  Word cannot read it from its sandbox), not in `_scratch/`, `parity/_scratch`
+  or other ad-hoc folders in this tree, and not in sibling folders beside the
+  checkout.
+- A tool's built-in work folder can stay where the tool puts it (`target/`
+  under mbx, a test's own temporary directory). What an agent stages, runs or
+  saves by hand goes in `.scratch/`.
+
 ## Priorities and verification
 
 Microsoft Word parity is the primary correctness target. Preserve Word-valid,
@@ -102,7 +118,7 @@ repository's root:
   pairs the batch drops, run it again with `--no-one-redline-osascript`; it
   skips outputs that already exist. Run `check_redline_identity.py` on every
   set of redlines before scoring them.
-- Keep the watchdog (`jubarte-loop/word_watchdog.sh`) pointed at the paths the
+- Keep the watchdog (the bench's `scripts/word_watchdog.sh`) pointed at the paths the
   current job actually grows. Batch mode reports progress only in its `--log`,
   not in its output folder. A watchdog on the wrong folder kills a busy Word.
   A Word freeze is normal; the watchdog clears it.
