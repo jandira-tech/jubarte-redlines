@@ -3426,14 +3426,14 @@ fn page_elements(section: &str) -> Option<String> {
     if open > close || section[..open].ends_with("/>") {
         return None;
     }
-    Some(
-        section[open..close]
-            .split_inclusive("/>")
-            .filter(|element| {
-                !element.contains("<w:headerReference") && !element.contains("<w:footerReference")
-            })
-            .collect(),
-    )
+    let page = &section[open..close];
+    let mut elements = String::with_capacity(page.len());
+    for element in page.split_inclusive("/>") {
+        if !element.contains("<w:headerReference") && !element.contains("<w:footerReference") {
+            elements.push_str(element);
+        }
+    }
+    Some(elements)
 }
 
 /// `section` with a `w:sectPrChange`. `earlier` is the page the change

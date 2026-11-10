@@ -158,6 +158,9 @@ def main() -> None:
         for name, xml in parts:
             info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
+            # ZipInfo records the host OS (0 on Windows, 3 elsewhere) and the
+            # plans pin this file's sha256: pin the OS too.
+            info.create_system = 3
             z.writestr(info, xml)
     print(out)
 
