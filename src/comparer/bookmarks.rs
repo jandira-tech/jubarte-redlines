@@ -464,11 +464,12 @@ fn inject_side(
     let identical = merged == src;
     let mut hint = 0usize;
     let id_attr = W::id();
-    let mut used: HashSet<String> = dom
-        .descendants(result_root, None)
-        .into_iter()
-        .filter_map(|n| dom.attribute(n, &id_attr).map(str::to_string))
-        .collect();
+    let mut used: HashSet<String> = HashSet::new();
+    dom.for_each_descendant_element(result_root, None, |n| {
+        if let Some(id) = dom.attribute(n, &id_attr) {
+            used.insert(id.to_string());
+        }
+    });
     // Placing endpoints adds no paragraph: list them once, when a start
     // without text first needs them.
     let mut paragraphs: Option<Vec<NodeId>> = None;
