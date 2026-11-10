@@ -35,9 +35,13 @@ const CEX: &str = "http://schemas.microsoft.com/office/word/2018/wordml/cex";
 const PEOPLE_REL: &str = "http://schemas.microsoft.com/office/2011/relationships/people";
 /// Characters of context kept on either side of an anchor.
 const CONTEXT: usize = 80;
-/// Bytes of anchor text one listing may own. Each comment otherwise copies
-/// the whole range, and the text listing prints 40 characters of it.
-const ANCHOR_BYTE_BUDGET: usize = 256 * 1024;
+/// Bytes of anchor text one listing may hold (#2067). Every comment copies
+/// its whole range exactly, since `edit -p cN.text` resolves inside it, so
+/// thousands of comments on one long range would copy it thousands of times.
+/// Past this a listing refuses with `INPUT_LIMIT`, as a part past
+/// [`crate::admission::InputLimits::max_part_bytes`] does, instead of
+/// holding a truncated anchor.
+const ANCHOR_BYTE_BUDGET: usize = 64 * 1024 * 1024;
 /// First sentinel code point used to locate range markers in a projection
 /// (supplementary private use area B, which no Word symbol font uses).
 const SENTINEL: u32 = 0x10_0000;
@@ -75,8 +79,7 @@ pub struct CommentRecord {
     /// ends in a later paragraph than it starts; `None` otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_paragraph: Option<String>,
-    /// The anchored text, paragraphs joined by `\n`. Exact while the
-    /// listing still has anchor budget; a later anchor is the prefix that fit.
+    /// The anchored text, exact; paragraphs joined by `\n`.
     pub anchor_text: String,
     /// Up to 80 characters before the anchor in its first paragraph.
     pub before: String,
@@ -149,12 +152,20 @@ pub(crate) fn list_comments_within(
 /// [`list_comments`] of a package already open. The scan marks up the
 /// body's DOM, so read what else `opened` holds first.
 pub(crate) fn comments_in(opened: &mut Opened) -> Result<Vec<CommentRecord>, CommentError> {
+    comments_within_budget(opened, ANCHOR_BYTE_BUDGET)
+}
+
+/// [`comments_in`] with `budget` bytes of anchor text for the listing.
+fn comments_within_budget(
+    opened: &mut Opened,
+    budget: usize,
+) -> Result<Vec<CommentRecord>, CommentError> {
     let family = CommentFamily::load(&opened.pkg, &opened.main).map_err(CommentError::Package)?;
     if family.is_empty() {
         return Ok(Vec::new());
     }
     let mut anchors = Anchors {
-        budget: ANCHOR_BYTE_BUDGET,
+        budget,
         ..Anchors::default()
     };
     anchors.scan("body", &mut opened.dom, opened.body, true);
@@ -162,15 +173,15 @@ pub(crate) fn comments_in(opened: &mut Opened) -> Result<Vec<CommentRecord>, Com
         let (mut dom, _, root) = crate::inspect::parse_part(&opened.pkg, &part)?;
         anchors.scan(&id, &mut dom, root, false);
     }
-    Ok(family
+    family
         .order()
         .into_iter()
         .map(|id| {
             let mut record = family.record(id);
-            anchors.fill(&mut record);
-            record
+            anchors.fill(&mut record)?;
+            Ok(record)
         })
-        .collect())
+        .collect()
 }
 
 /// `jubarte comments`' listing: one line per comment, `c{id}\t{paragraph}
@@ -367,13 +378,28 @@ impl Anchors {
         self.stories.push((story_id.to_string(), texts));
     }
 
-    fn fill(&mut self, record: &mut CommentRecord) {
-        let mut budget = self.budget;
-        self.write_anchor(record, &mut budget);
-        self.budget = budget;
+    /// Writes `record`'s anchor, exact, and charges it to the listing's
+    /// budget; refuses with `INPUT_LIMIT` once the anchors pass it.
+    fn fill(&mut self, record: &mut CommentRecord) -> Result<(), CommentError> {
+        self.write_anchor(record);
+        let held = record.anchor_text.len();
+        if held > self.budget {
+            return Err(CommentError::Admission(
+                crate::admission::AdmissionError::new(
+                    crate::admission::AdmissionErrorKind::InputLimit,
+                    format!(
+                        "comment anchors pass the {} bytes one listing may hold: c{} \
+                         covers {held} bytes with {} left",
+                        ANCHOR_BYTE_BUDGET, record.id, self.budget
+                    ),
+                ),
+            ));
+        }
+        self.budget -= held;
+        Ok(())
     }
 
-    fn write_anchor(&self, record: &mut CommentRecord, budget: &mut usize) {
+    fn write_anchor(&self, record: &mut CommentRecord) {
         let id = record.id.to_string();
         let start = self.starts.get(&id).copied();
         let end = self.ends.get(&id).copied();
@@ -386,7 +412,7 @@ impl Anchors {
                 // real marks and neither may be dropped.
                 record.paragraph = Some(paragraph_id(story, first));
                 record.last_paragraph = Some(paragraph_id(end_story, last));
-                record.anchor_text = take_anchor(budget, &self.stories[story].1[first][s..]);
+                record.anchor_text = self.stories[story].1[first][s..].to_string();
                 record.before = tail(&self.stories[story].1[first][..s], CONTEXT);
                 record.after = self.stories[end_story].1[last][e..]
                     .chars()
@@ -405,16 +431,15 @@ impl Anchors {
                 record.paragraph = Some(paragraph_id(story, first));
                 record.last_paragraph = (last > first).then(|| paragraph_id(story, last));
                 if first == last {
-                    record.anchor_text = take_anchor(budget, &texts[first][s..e]);
+                    record.anchor_text = texts[first][s..e].to_string();
                 } else {
-                    let mut anchor = String::new();
-                    append_anchor(budget, &mut anchor, &texts[first][s..]);
+                    let mut anchor = texts[first][s..].to_string();
                     for text in &texts[first + 1..last] {
-                        append_anchor(budget, &mut anchor, "\n");
-                        append_anchor(budget, &mut anchor, text);
+                        anchor.push('\n');
+                        anchor.push_str(text);
                     }
-                    append_anchor(budget, &mut anchor, "\n");
-                    append_anchor(budget, &mut anchor, &texts[last][..e]);
+                    anchor.push('\n');
+                    anchor.push_str(&texts[last][..e]);
                     record.anchor_text = anchor;
                 }
                 record.before = tail(&texts[first][..s], CONTEXT);
@@ -427,27 +452,6 @@ impl Anchors {
             }
         }
     }
-}
-
-/// Copy `text` into a new string, charging its bytes to `budget`.
-fn take_anchor(budget: &mut usize, text: &str) -> String {
-    let mut out = String::new();
-    append_anchor(budget, &mut out, text);
-    out
-}
-
-/// Append the prefix of `text` that still fits in `budget`.
-fn append_anchor(budget: &mut usize, out: &mut String, text: &str) {
-    if *budget == 0 || text.is_empty() {
-        return;
-    }
-    let end = if text.len() <= *budget {
-        text.len()
-    } else {
-        text.floor_char_boundary(*budget)
-    };
-    out.push_str(&text[..end]);
-    *budget -= end;
 }
 
 /// The last `n` characters of `text`.
@@ -1622,18 +1626,13 @@ mod public_memory_anchor_boundary_tests {
         assert_eq!(select_comments(records.clone(), None, false), records);
     }
 
-    /// Many comments on one range each used to own a full copy of it. The
-    /// listing keeps at most 256 KiB of anchor text.
-    #[test]
-    fn many_comments_on_one_range_keep_one_anchor_budget() {
-        const BUDGET: usize = 256 * 1024;
-        let text = "A".repeat(80_000);
+    /// `count` comments on one paragraph of `text`.
+    fn comments_on_one_range(text: &str, count: usize) -> Vec<u8> {
         let mut body = String::new();
-        let count = 4;
         for id in 1..=count {
             body.push_str(&format!("<w:commentRangeStart w:id='{id}'/>"));
         }
-        body.push_str(&paragraph(&text));
+        body.push_str(&paragraph(text));
         for id in 1..=count {
             body.push_str(&format!("<w:commentRangeEnd w:id='{id}'/>"));
         }
@@ -1655,16 +1654,47 @@ mod public_memory_anchor_boundary_tests {
             "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
             "comments.xml",
         );
-        let listed = list_comments(&pkg.to_zip().unwrap()).unwrap();
+        pkg.to_zip().unwrap()
+    }
+
+    /// Four comments on one 80 KB range: 320 KB of anchors in all, past the
+    /// 256 KiB a listing once kept, and each one is still the exact text it
+    /// covers.
+    #[test]
+    fn many_comments_on_one_range_keep_exact_anchors() {
+        const BUDGET: usize = 256 * 1024;
+        let text = "A".repeat(80_000);
+        let count = 4;
+        let listed = list_comments(&comments_on_one_range(&text, count)).unwrap();
         assert_eq!(listed.len(), count);
-        let total: usize = listed.iter().map(|c| c.anchor_text.len()).sum();
+        // `edit -p cN.text` resolves inside this text, and inspect, WASM
+        // and Python print it: every anchor stays exact.
+        for comment in &listed {
+            assert_eq!(comment.anchor_text, text, "c{}", comment.id);
+        }
+        assert!(count * text.len() > BUDGET);
+    }
+
+    /// Past its budget a listing refuses with `INPUT_LIMIT` and names the
+    /// comment that passed it, rather than hold a truncated anchor.
+    #[test]
+    fn anchors_past_the_budget_refuse_with_input_limit() {
+        let text = "A".repeat(80_000);
+        let bytes = comments_on_one_range(&text, 4);
+        let mut opened = Opened::open(&bytes).unwrap();
+        let refused = comments_within_budget(&mut opened, 200_000).unwrap_err();
+        assert_eq!(refused.code(), "INPUT_LIMIT");
         assert!(
-            total <= BUDGET,
-            "owned {total} bytes of one {len}-byte range",
-            len = text.len()
+            refused
+                .to_string()
+                .contains("c3 covers 80000 bytes with 40000 left"),
+            "{refused}"
         );
-        assert_eq!(listed[0].anchor_text, text);
-        assert!(listed.iter().any(|c| c.anchor_text.len() < text.len()));
+        let mut opened = Opened::open(&bytes).unwrap();
+        assert_eq!(
+            comments_within_budget(&mut opened, 320_000).unwrap().len(),
+            4
+        );
     }
 }
 
