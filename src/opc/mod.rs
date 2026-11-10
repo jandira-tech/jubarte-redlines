@@ -505,7 +505,7 @@ fn read_content_types_counted(xml: &[u8]) -> Result<(ContentTypes, usize), OpcEr
 /// The loaded `[Content_Types].xml` to write back while the model is
 /// unchanged, or `None` when the model collapsed one of its records.
 fn content_types_kept(xml: Vec<u8>, types: &ContentTypes, records: usize) -> Option<Vec<u8>> {
-    (types.defaults.len() + types.overrides.len() == records).then_some(xml)
+    (types.defaults.len().checked_add(types.overrides.len()) == Some(records)).then_some(xml)
 }
 
 /// Populate parts and local relationships without invoking upstream's whole-package
