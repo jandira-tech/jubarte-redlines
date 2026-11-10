@@ -919,6 +919,64 @@ fn body_level_markers_stay_at_body_level() {
     check_beside_covering(&source, &after, &["fooX", "final"], Some("fooX"));
 }
 
+/// An edit that is not beside a body-level bookmark still leaves that
+/// bookmark between the paragraphs, with the source's id. Accept All of
+/// the redline puts the markers where the clean copy has them.
+#[test]
+fn a_far_edit_keeps_a_body_level_bookmark_at_body_level() {
+    let shapes = [
+        (
+            format!(
+                "<w:p>{}</w:p>{}{START}<w:p>{}</w:p>{END}{}",
+                r("edit here"),
+                para("gap"),
+                r("one"),
+                para("final")
+            ),
+            insert("after", "here", " X"),
+        ),
+        (
+            format!(
+                "{START}<w:p>{}</w:p><w:p>{}</w:p><w:p>{}</w:p>{END}{}",
+                r("one"),
+                r("two"),
+                r("three"),
+                para("final")
+            ),
+            insert_in("p1", "after", "two", "X"),
+        ),
+    ];
+    for (body, operation) in shapes {
+        let source = docx(&body);
+        let places = marker_places(&source);
+        assert!(
+            places.iter().all(|(_, paragraph, _)| paragraph.is_none()),
+            "{places:?}"
+        );
+        for policy in POLICIES {
+            let plan = EditPlan::from_json(&format!(
+                r#"{{"schema_version":1,"author":"{EDITOR}","date":"2026-10-19T12:00:00Z","existing_revisions":"{policy}","operations":[{operation}]}}"#
+            ))
+            .unwrap();
+            let result = apply_plan(&source, &plan).unwrap();
+            let xml = part_string(&result.redline, "word/document.xml").unwrap();
+            assert_eq!(marker_places(&result.redline), places, "{policy}: {xml}");
+            assert!(
+                xml.contains(r#"w:id="7" w:name="Clause""#),
+                "{policy}: {xml}"
+            );
+            let accepted = accept_revisions(&result.redline).unwrap();
+            assert_eq!(
+                marker_places(&accepted),
+                marker_places(&result.clean),
+                "{policy}"
+            );
+            assert_eq!(covered(&accepted), covered(&result.clean), "{policy}");
+            assert_word_valid_package(&result.redline);
+        }
+    }
+}
+
 #[test]
 fn an_insert_beside_a_comment_range_stays_outside_it() {
     let source = with_comment(&format!(

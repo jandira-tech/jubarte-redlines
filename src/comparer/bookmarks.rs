@@ -47,6 +47,8 @@ type EndpointAttributes = Vec<(XName, String)>;
 /// One source range and its character interval in the source projection.
 struct Marker {
     name: String,
+    /// Source `w:id`, kept when the result does not already use it.
+    source_id: String,
     /// Source-order occurrence distinguishes repeated permission ids.
     ordinal: usize,
     /// Permission endpoints retain every source attribute, including their ids.
@@ -196,6 +198,7 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
             let marker = Marker {
                 ordinal: *ordinal,
                 name: bm.to_string(),
+                source_id: id.to_string(),
                 permission: permission.then(|| (dom.attributes(n), Vec::new())),
                 start: text.len(),
                 end: text.len(),
@@ -375,8 +378,28 @@ fn leave_foreign_controls(dom: &mut Dom, m: &Marker, start: NodeId, end: NodeId,
     }
 }
 
+/// The source id when the result does not already use it. Otherwise the
+/// next id above every id already taken.
+fn bookmark_id(preferred: &str, used: &mut HashSet<String>, next_id: &mut u32) -> String {
+    if !preferred.is_empty() && used.insert(preferred.to_string()) {
+        if let Ok(n) = preferred.parse::<u32>()
+            && n >= *next_id
+        {
+            *next_id = n + 1;
+        }
+        return preferred.to_string();
+    }
+    loop {
+        let id = next_id.to_string();
+        *next_id += 1;
+        if used.insert(id.clone()) {
+            return id;
+        }
+    }
+}
+
 /// The `w:bookmarkStart`/`w:bookmarkEnd` pair for `m` under `id`.
-fn new_markers(dom: &mut Dom, m: &Marker, id: u32) -> (NodeId, NodeId) {
+fn new_markers(dom: &mut Dom, m: &Marker, id: &str) -> (NodeId, NodeId) {
     if let Some((start_attrs, end_attrs)) = &m.permission {
         let start = dom.new_element(W::perm_start());
         dom.set_attributes(start, start_attrs.clone());
@@ -387,16 +410,15 @@ fn new_markers(dom: &mut Dom, m: &Marker, id: u32) -> (NodeId, NodeId) {
         }
         return (start, end);
     }
-    let id = id.to_string();
     let start = dom.new_element(W::bookmark_start());
-    dom.set_attribute_value(start, &W::id(), Some(&id));
+    dom.set_attribute_value(start, &W::id(), Some(id));
     dom.set_attribute_value(start, &W::name("name"), Some(&m.name));
     if let Some((first, last)) = &m.cols {
         dom.set_attribute_value(start, &W::name("colFirst"), Some(first));
         dom.set_attribute_value(start, &W::name("colLast"), Some(last));
     }
     let end = dom.new_element(W::bookmark_end());
-    dom.set_attribute_value(end, &W::id(), Some(&id));
+    dom.set_attribute_value(end, &W::id(), Some(id));
     (start, end)
 }
 
@@ -441,6 +463,13 @@ fn inject_side(
     let merged: Vec<char> = merged_text.chars().collect();
     let identical = merged == src;
     let mut hint = 0usize;
+    let id_attr = W::id();
+    let mut used: HashSet<String> = HashSet::new();
+    dom.for_each_descendant_element(result_root, None, |n| {
+        if let Some(id) = dom.attribute(n, &id_attr) {
+            used.insert(id.to_string());
+        }
+    });
     // Placing endpoints adds no paragraph: list them once, when a start
     // without text first needs them.
     let mut paragraphs: Option<Vec<NodeId>> = None;
@@ -468,8 +497,8 @@ fn inject_side(
             };
             (s, e)
         };
-        let (start, end) = new_markers(dom, m, *next_id);
-        *next_id += 1;
+        let id = bookmark_id(&m.source_id, &mut used, next_id);
+        let (start, end) = new_markers(dom, m, &id);
         if s < e {
             // Text offsets alone cannot distinguish the two paragraph sides
             // of a boundary. Restore the source side of a trailing start or
@@ -969,6 +998,7 @@ mod tests {
             let container = dom.elements(owner, None)[0];
             let marker = Marker {
                 name: "Clause".into(),
+                source_id: String::new(),
                 ordinal: 0,
                 permission: None,
                 paired: true,
