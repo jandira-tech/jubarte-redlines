@@ -412,6 +412,31 @@ fn assign_fresh_durable_ids(
     }
 }
 
+/// The id for a new `element` under `root`, after `last`, the highest id
+/// taken so far: `last + 1`, which is free. Past `i32::MAX` it is the
+/// smallest id from `floor` up that no `element` holds: staying at the top
+/// would give two lists one id (#2042).
+fn next_free_id(
+    dom: &Dom,
+    root: NodeId,
+    element: &XName,
+    id: &XName,
+    last: i32,
+    floor: i32,
+) -> i32 {
+    if let Some(next) = last.checked_add(1) {
+        return next.max(floor);
+    }
+    let taken: std::collections::HashSet<i32> = dom
+        .elements(root, Some(element))
+        .into_iter()
+        .filter_map(|e| get_int_attribute(dom, e, id))
+        .collect();
+    (floor..=i32::MAX)
+        .find(|candidate| !taken.contains(candidate))
+        .unwrap_or(last)
+}
+
 /// E.1 — `CopyMissingNumberingFromOneDocToAnother` (WmlComparer.ts :2143):
 /// content-dedup (an `abstractNum` whose normalized content already exists
 /// is REUSED, under its own id when that one matches), id-remapped
@@ -502,8 +527,16 @@ pub fn copy_missing_numbering(
             .into_iter()
             .any(|e| get_int_attribute(dom, e, &abstract_num_id) == Some(from_id));
         let target_id = if same_id_taken {
-            max_abstract_num_id = max_abstract_num_id.saturating_add(1);
-            max_abstract_num_id
+            let fresh = next_free_id(
+                dom,
+                to_root,
+                &abstract_num,
+                &abstract_num_id,
+                max_abstract_num_id,
+                0,
+            );
+            max_abstract_num_id = max_abstract_num_id.max(fresh);
+            fresh
         } else {
             // retained ids must advance the watermark, or a later collision
             // can allocate max+1 == an already-retained id (PR #53 review)
@@ -533,8 +566,16 @@ pub fn copy_missing_numbering(
                         .into_iter()
                         .any(|b| get_int_attribute(dom, b, &num_pic_bullet_id) == Some(from_pic));
                     let id = if taken {
-                        max_pic_id = max_pic_id.saturating_add(1);
-                        max_pic_id
+                        let fresh = next_free_id(
+                            dom,
+                            to_root,
+                            &num_pic_bullet,
+                            &num_pic_bullet_id,
+                            max_pic_id,
+                            0,
+                        );
+                        max_pic_id = max_pic_id.max(fresh);
+                        fresh
                     } else {
                         max_pic_id = max_pic_id.max(from_pic);
                         from_pic
@@ -579,13 +620,15 @@ pub fn copy_missing_numbering(
             if same_list.is_some() && same_list == list_signature(dom, n, from_root) {
                 continue;
             }
-            max_num_id = max_num_id.saturating_add(1);
+            // numId 0 is "no list", so a fresh num starts at 1
+            let fresh = next_free_id(dom, to_root, &num, &num_id_attr, max_num_id, 1);
+            max_num_id = max_num_id.max(fresh);
             let cloned = dom.clone_subtree(n);
-            dom.set_attribute_value(cloned, &num_id_attr, Some(&max_num_id.to_string()));
+            dom.set_attribute_value(cloned, &num_id_attr, Some(&fresh.to_string()));
             if let Some(e) = dom.element(cloned, &abstract_num_id) {
                 dom.set_attribute_value(e, &W::val(), Some(&mapped.to_string()));
             }
-            num_remap.insert(from_num_id.to_string(), max_num_id.to_string());
+            num_remap.insert(from_num_id.to_string(), fresh.to_string());
             add_numbering_child_in_schema_order(dom, to_root, cloned);
         } else {
             // retained numId — advance the watermark so a later collision
@@ -617,12 +660,16 @@ pub fn synthesize_dangling_numbering(dom: &mut Dom, numbering_root: NodeId, dang
     if dangling.is_empty() {
         return;
     }
+    let abstract_num = W::abstract_num();
+    let abstract_num_id = W::abstract_num_id();
     let fresh_aid = dom
-        .elements(numbering_root, Some(&W::name("abstractNum")))
+        .elements(numbering_root, Some(&abstract_num))
         .into_iter()
-        .filter_map(|e| get_int_attribute(dom, e, &W::abstract_num_id()))
+        .filter_map(|e| get_int_attribute(dom, e, &abstract_num_id))
         .max()
-        .map_or(0, |m| m.saturating_add(1));
+        .map_or(0, |m| {
+            next_free_id(dom, numbering_root, &abstract_num, &abstract_num_id, m, 0)
+        });
     let mut lvls = String::new();
     for ilvl in 0..9 {
         lvls.push_str(&format!(
@@ -1994,6 +2041,78 @@ mod deterministic_note_boundary_tests {
         let (remap, _) = copy_missing_numbering(&mut dom, before, after);
         assert_eq!(remap.get("1").map(String::as_str), Some("3"));
         assert_eq!(remap.get("2").map(String::as_str), Some("4"));
+    }
+
+    /// Ids at the top of the `i32` range: the next one past `i32::MAX` is
+    /// the smallest free id, never `i32::MAX` again (#2042). A duplicate
+    /// `abstractNumId`, `numId` or `numPicBulletId` makes two lists one.
+    #[test]
+    fn ids_past_the_top_of_the_range_are_the_smallest_free_ones() {
+        let top = i32::MAX;
+        let pic = |id: i32| {
+            format!("<w:numPicBullet w:numPicBulletId=\"{id}\"><w:pict/></w:numPicBullet>")
+        };
+        let bullet = |id: i32| {
+            format!(
+                "<w:abstractNum w:abstractNumId=\"{id}\"><w:lvl w:ilvl=\"0\"><w:numFmt w:val=\"bullet\"/><w:lvlText w:val=\"o\"/><w:lvlPicBulletId w:val=\"{top}\"/></w:lvl></w:abstractNum>"
+            )
+        };
+        let mut dom = Dom::new();
+        let before = parse(
+            &mut dom,
+            &format!(
+                "<w:numbering>{}{}<w:abstractNum w:abstractNumId=\"0\"><w:lvl w:ilvl=\"0\"><w:numFmt w:val=\"upperRoman\"/></w:lvl></w:abstractNum>{}</w:numbering>",
+                pic(top),
+                decimal(top.unsigned_abs()),
+                num(top.unsigned_abs(), top.unsigned_abs())
+            ),
+        );
+        let after = parse(
+            &mut dom,
+            &format!(
+                "<w:numbering>{}{}{}</w:numbering>",
+                pic(top),
+                bullet(top),
+                num(top.unsigned_abs(), top.unsigned_abs())
+            ),
+        );
+        let (remap, copied) = copy_missing_numbering(&mut dom, before, after);
+        let ids = |dom: &Dom, element: &str, attribute: &str| {
+            let mut ids: Vec<String> = dom
+                .elements(before, Some(&W::name(element)))
+                .into_iter()
+                .filter_map(|e| dom.attribute(e, &W::name(attribute)).map(str::to_string))
+                .collect();
+            ids.sort();
+            ids
+        };
+        // abstractNumId 0 is taken, so the copy gets 1.
+        assert_eq!(
+            ids(&dom, "abstractNum", "abstractNumId"),
+            ["0", "1", "2147483647"]
+        );
+        // numId 0 means "no list": the fresh num starts at 1.
+        assert_eq!(ids(&dom, "num", "numId"), ["1", "2147483647"]);
+        assert_eq!(remap.get("2147483647").map(String::as_str), Some("1"));
+        assert_eq!(
+            ids(&dom, "numPicBullet", "numPicBulletId"),
+            ["0", "2147483647"]
+        );
+        assert_eq!(copied.len(), 1);
+
+        let mut dom = Dom::new();
+        let numbering = parse(
+            &mut dom,
+            &format!("<w:numbering>{}</w:numbering>", decimal(top.unsigned_abs())),
+        );
+        synthesize_dangling_numbering(&mut dom, numbering, &["5".to_string()]);
+        let mut fresh: Vec<&str> = dom
+            .elements(numbering, Some(&W::abstract_num()))
+            .into_iter()
+            .filter_map(|e| dom.attribute(e, &W::abstract_num_id()))
+            .collect();
+        fresh.sort_unstable();
+        assert_eq!(fresh, ["0", "2147483647"]);
     }
 }
 
