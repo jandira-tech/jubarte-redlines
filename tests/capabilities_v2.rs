@@ -305,7 +305,9 @@ fn parser_operations() -> Value {
         {"kind":"reply_comment","target":c,"text":"reply"},
         {"kind":"resolve_comment","target":c,"done":false},
         {"kind":"edit_comment","target":c,"text":"new"},
-        {"kind":"delete_comment","target":c,"include_replies":false}
+        {"kind":"delete_comment","target":c,"include_replies":false},
+        {"kind":"strike","target":{"short_id":"r1","long_id":"document.w:ins.w:id.1"}},
+        {"kind":"restore","target":{"short_id":"r2","long_id":"document.w:del.w:id.2"}}
     ])
 }
 
@@ -395,7 +397,30 @@ fn v2_operation(kind: &str, view: &ForEdit) -> Value {
         "delete_comment" => {
             json!({"kind": "delete_comment", "target": comment(), "include_replies": false})
         }
+        "strike" | "restore" => visible_revision_operation(kind),
         other => panic!("no v2 base operation for {other}"),
+    }
+}
+
+/// An insertion and a deletion another author left, so strike and restore
+/// have a revision to name. Text edits stay on the comment fixture.
+fn visible_revision_source() -> Vec<u8> {
+    docx(
+        r#"<w:p><w:ins w:id="1" w:author="Bob" w:date="2026-10-17T09:00:00Z"><w:r><w:t>added</w:t></w:r></w:ins><w:del w:id="2" w:author="Bob" w:date="2026-10-17T09:00:00Z"><w:r><w:delText>gone</w:delText></w:r></w:del><w:r><w:t>stay</w:t></w:r></w:p>"#,
+    )
+}
+
+fn visible_revision_operation(kind: &str) -> Value {
+    match kind {
+        "strike" => json!({
+            "kind": "strike",
+            "target": {"short_id": "r1", "long_id": "document.w:ins.w:id.1"}
+        }),
+        "restore" => json!({
+            "kind": "restore",
+            "target": {"short_id": "r2", "long_id": "document.w:del.w:id.2"}
+        }),
+        other => panic!("no visible revision operation for {other}"),
     }
 }
 
@@ -442,7 +467,11 @@ fn cli_v2_rows_match_prepare_v2_and_bindings_stay_on_v1() {
             continue;
         }
         let kind = profile["operation"].as_str().unwrap();
-        let operation = v2_operation(kind, &view);
+        let (source, operation) = if matches!(kind, "strike" | "restore") {
+            (visible_revision_source(), visible_revision_operation(kind))
+        } else {
+            (source.clone(), v2_operation(kind, &view))
+        };
         for row in profile["support"].as_array().unwrap() {
             // v2 has a track policy: a v1-only refusal must not leak into
             // a v2 row.

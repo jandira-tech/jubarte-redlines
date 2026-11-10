@@ -675,8 +675,10 @@ fn hint_quotes_the_active_plan_syntax() {
         "{v2}"
     );
     assert!(!v2.contains("--accept"), "{v2}");
-    // A v2 plan has no restore yet.
-    assert!(!v2.contains("restore"), "{v2}");
+    assert!(
+        v2.contains(r#""kind":"restore""#) || v2.contains(r#"\"kind\":\"restore\""#),
+        "{v2}"
+    );
     assert!(
         !v2.contains(r#"{"ids":["r4"]}"#) && !v2.contains(r#"{\"ids\":[\"r4\"]}"#),
         "{v2}"
@@ -839,23 +841,24 @@ fn every_v2_route_pastes_into_the_plan_it_refused() {
     let e = apply_v2(STEP2, &q).unwrap_err();
     assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{e}");
     let lines: Vec<&str> = e.message.lines().collect();
-    assert_eq!(lines.len(), 4, "{e}");
+    assert_eq!(lines.len(), 5, "{e}");
+    assert!(lines[1].contains(r#""kind":"restore""#), "{e}");
     // Reject: their word comes back, and the replacement lands on it.
     let mut rejected = q.clone();
-    rejected["resolve_revisions"] = decisions(lines[2]);
+    rejected["resolve_revisions"] = decisions(lines[3]);
     let out = apply_v2(STEP2, &rejected).unwrap_or_else(|x| panic!("{x}: {e}"));
     let text = jubarte::inspect::paragraphs(&out.clean).unwrap()[0]
         .text
         .clone();
     assert!(text.contains("pay the brokers"), "{text}");
     // Accept, with the comment route on the operation's own target.
-    let mut comment: Value = serde_json::from_str(fragment(lines[3]))
-        .unwrap_or_else(|x| panic!("not JSON ({x}): {}", lines[3]));
+    let mut comment: Value = serde_json::from_str(fragment(lines[4]))
+        .unwrap_or_else(|x| panic!("not JSON ({x}): {}", lines[4]));
     assert_eq!(comment["target"], target, "{e}");
     comment["find"] = json!("pay");
     comment["text"] = json!("Why?");
     let mut accepted = q.clone();
-    accepted["resolve_revisions"] = decisions(lines[1]);
+    accepted["resolve_revisions"] = decisions(lines[2]);
     accepted["operations"] = json!([comment]);
     apply_v2(STEP2, &accepted).unwrap_or_else(|x| panic!("{x}: {e}"));
 }
@@ -921,7 +924,13 @@ fn a_header_revision_routes_by_its_header_ids() {
     let e = apply_plan_json_with(&source, &request.to_json(), &options).unwrap_err();
     assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{e}");
     let lines: Vec<&str> = e.message.lines().collect();
-    let accept = decisions(lines[1]);
+    // The visible route leads. The accept route is the one whose list is filled.
+    let accept_line = lines
+        .iter()
+        .copied()
+        .find(|line| fragment(line).contains(r#""accept":[{""#))
+        .unwrap_or_else(|| panic!("no accept route: {e}"));
+    let accept = decisions(accept_line);
     assert_eq!(
         accept["accept"][0],
         json!({"short_id":"header1.r6","long_id":"header1.w:del.w:id.6"}),
