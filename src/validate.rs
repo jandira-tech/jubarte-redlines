@@ -2787,8 +2787,8 @@ fn check_relationship_integrity(pkg: &PartFs, out: &mut Vec<Finding>) {
 }
 
 /// A target that is not an OPC part: an absolute URI, a Windows path, or a
-/// UNC share. A doubled slash in front of a package root (`//word/...`)
-/// still names a part.
+/// UNC share. A doubled slash in front of a package root (`//word/...`, in
+/// any ASCII case, as part names are) still names a part.
 fn external_uri_target(target: &str) -> bool {
     if target.starts_with("http://")
         || target.starts_with("https://")
@@ -2803,10 +2803,9 @@ fn external_uri_target(target: &str) -> bool {
     };
     let host = rest.split('/').next().unwrap_or("");
     !host.is_empty()
-        && !matches!(
-            host,
-            "word" | "docProps" | "customXml" | "_rels" | "ppt" | "xl"
-        )
+        && !["word", "docProps", "customXml", "_rels", "ppt", "xl"]
+            .iter()
+            .any(|root| host.eq_ignore_ascii_case(root))
 }
 
 /// Internal targets must name a part at their resolved package path.
@@ -5951,20 +5950,23 @@ mod validation_owner_boundary_tests {
             "an external template target was dropped"
         );
 
-        let mut doubled = package();
-        doubled.add_document_relationship(
-            "word/document.xml",
-            "urn:test/part",
+        // Part names are case-insensitive, so `//Word/` is a package root too.
+        for target in [
             "//word/no-such.xml",
-        );
-        let mut findings = Vec::new();
-        check_relationship_integrity(&doubled, &mut findings);
-        assert!(
-            findings
-                .iter()
-                .any(|finding| finding.code == "MISSING_REL_TARGET"),
-            "a doubled package path still names a part"
-        );
+            "//Word/no-such.xml",
+            "//DOCPROPS/no-such.xml",
+        ] {
+            let mut doubled = package();
+            doubled.add_document_relationship("word/document.xml", "urn:test/part", target);
+            let mut findings = Vec::new();
+            check_relationship_integrity(&doubled, &mut findings);
+            assert!(
+                findings
+                    .iter()
+                    .any(|finding| finding.code == "MISSING_REL_TARGET"),
+                "{target}: a doubled package path still names a part"
+            );
+        }
     }
 
     #[test]
