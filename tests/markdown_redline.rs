@@ -360,10 +360,8 @@ fn a_strict_patch_refuses_a_link_rewrite_it_cannot_apply_exactly() {
     let source = with_link(
         r#"<w:p><w:r><w:t>Start.</w:t></w:r></w:p><w:p><w:hyperlink r:id="rId9"><w:r><w:t>old link</w:t></w:r></w:hyperlink></w:p><w:p><w:r><w:t>End.</w:t></w:r></w:p>"#,
     );
-    match apply_markdown_strict(
-        &source,
-        "Start.\n\n[new link](https://example.com)\n\nEnd.\n",
-    ) {
+    let markdown = "Start.\n\n[new link](https://example.com)\n\nEnd.\n";
+    match apply_markdown_strict(&source, markdown) {
         Err(error) => {
             let rendered = error.to_string();
             assert!(!rendered.is_empty(), "the refusal must say why");
@@ -374,4 +372,27 @@ fn a_strict_patch_refuses_a_link_rewrite_it_cannot_apply_exactly() {
             patched.warnings
         ),
     }
+    // The same edit through the best-effort path is broadened, not refused:
+    // the paragraph is replaced whole and reads as written.
+    let patched = apply_markdown(&source, markdown).unwrap();
+    assert_eq!(texts(&patched.docx), ["Start.", "new link", "End."]);
+}
+
+/// A strict patch refuses a table row it cannot add, where the best-effort
+/// path leaves the row out and only warns.
+#[test]
+fn a_strict_patch_refuses_a_table_row_it_cannot_add() {
+    let source = contract();
+    let added = CONTRACT_MD.replace("| Goods | 10000 |", "| Goods | 10000 |\n| Freight | 500 |");
+    match apply_markdown_strict(&source, &added) {
+        Err(error) => {
+            let rendered = error.to_string();
+            assert!(rendered.contains("Freight"), "{rendered}");
+        }
+        Ok(patched) => panic!(
+            "a row that cannot be added was left out: warnings {:?}",
+            patched.warnings
+        ),
+    }
+    assert!(!apply_markdown(&source, &added).unwrap().warnings.is_empty());
 }

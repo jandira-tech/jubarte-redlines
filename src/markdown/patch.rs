@@ -126,6 +126,15 @@ pub fn apply_markdown(docx: &[u8], markdown: &str) -> Result<Patched, MarkdownEr
 /// with no document when any edit cannot be applied as written.
 /// A refused rewrite stays refused: it is not replaced by a whole
 /// paragraph, and it is not left out of an otherwise applied result.
+///
+/// Footnote text is outside the body-only editor in both paths, so it
+/// stays the warning [`apply_markdown`] gives, not a refusal.
+///
+/// # Errors
+///
+/// [`MarkdownError::Package`] when the source fails to admit or list its
+/// paragraphs, when the edit-plan engine refuses any edit, or when the
+/// Markdown adds a table row or cell, which the editor cannot add.
 pub fn apply_markdown_strict(docx: &[u8], markdown: &str) -> Result<Patched, MarkdownError> {
     apply_markdown_exact(docx, markdown, true)
 }
@@ -169,10 +178,15 @@ fn apply_markdown_exact(
         if let Edit::Insert(b, _) = edit
             && blocks[*b].kind == Kind::Cell
         {
-            warnings.push(format!(
+            let left_out = format!(
                 "table cell {:?} not applied: rows and columns are not added",
                 blocks[*b].text()
-            ));
+            );
+            // A strict patch leaves nothing out: the row is the refusal.
+            if strict {
+                return Err(MarkdownError::Package(left_out));
+            }
+            warnings.push(left_out);
         }
     }
 
