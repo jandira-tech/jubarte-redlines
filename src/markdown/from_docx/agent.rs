@@ -3257,16 +3257,42 @@ fn numbers_after(line: &str, key: &str) -> Vec<usize> {
         .collect()
 }
 
+/// The lines around the branch of a block-level `mc:AlternateContent`
+/// that Word shows: read-only text, no edit address.
+pub(crate) const ALTERNATE_START: &str = "<!-- alternate -->";
+pub(crate) const ALTERNATE_END: &str = "<!-- /alternate -->";
+
 /// Splits a rendered body on blank lines into blocks keyed by their id
 /// lines; a page marker attaches to the block after it; a block with no id
-/// line (notes, footnote definitions) attaches to the block before it.
+/// line (notes, footnote definitions) attaches to the block before it. An
+/// `<!-- alternate -->` region is a block of its own with no span, so it
+/// never rides along with the paragraph before it.
 fn blocks_of(body: &str) -> Vec<Block> {
     let mut blocks: Vec<Block> = Vec::new();
     let mut page: Option<String> = None;
+    let mut in_alternate = false;
     for chunk in body.split("\n\n").filter(|c| !c.trim().is_empty()) {
         // A nested list item's id line, and a page marker between nested
         // items, are indented with the item.
         let first = chunk.lines().next().unwrap_or("").trim_start();
+        if in_alternate {
+            in_alternate = first != ALTERNATE_END;
+            if let Some(last) = blocks.last_mut() {
+                last.text.push_str("\n\n");
+                last.text.push_str(chunk);
+            }
+            continue;
+        }
+        if first == ALTERNATE_START {
+            in_alternate = true;
+            blocks.push(Block {
+                text: chunk.to_string(),
+                span: None,
+                table: None,
+                page: page.take(),
+            });
+            continue;
+        }
         if first.starts_with("<!-- page ") {
             page = Some(first.to_string());
             continue;
