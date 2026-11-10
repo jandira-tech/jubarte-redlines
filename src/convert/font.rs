@@ -12,7 +12,7 @@
 //! ([`font_report_json`]). The bundled catalogue itself is internal.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::{self, Write as _};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -924,7 +924,7 @@ pub(crate) struct Face<'a> {
     /// own (redline 0006f790: 21% of samples in `ShapePlan::new`).
     plans: Mutex<HashMap<PlanKey, Arc<rustybuzz::ShapePlan>>>,
     /// Shaped text in font units by (text, kern); see `shaped_units`.
-    shaped: Mutex<HashMap<(String, bool), ShapedUnits>>,
+    shaped: Mutex<BoundedCache<(String, bool), ShapedUnits>>,
 }
 
 /// Glyph ids and x advances in font units.
@@ -1084,7 +1084,10 @@ impl<'a> Face<'a> {
             bytes,
             buzz,
             plans: Mutex::new(HashMap::new()),
-            shaped: Mutex::new(HashMap::new()),
+            shaped: Mutex::new(BoundedCache::new(
+                MAX_SHAPED_CACHE_BYTES,
+                shaped_payload_bytes,
+            )),
             pdf_name,
             upem,
             descent,
@@ -1368,16 +1371,7 @@ impl<'a> Face<'a> {
             if cache.len() > 50_000 {
                 cache.clear();
             }
-            let add = shaped_payload_bytes(&units);
-            if add <= MAX_SHAPED_CACHE_BYTES {
-                drop_greatest_until(
-                    &mut cache,
-                    add,
-                    MAX_SHAPED_CACHE_BYTES,
-                    shaped_payload_bytes,
-                );
-                cache.insert(memo, Arc::clone(&units));
-            }
+            cache.insert(memo, Arc::clone(&units));
         }
         units
     }
@@ -3075,30 +3069,69 @@ fn shaped_payload_bytes(units: &ShapedUnits) -> usize {
         .saturating_mul(std::mem::size_of::<(u16, i32, u32)>())
 }
 
-fn face_cache() -> &'static Mutex<HashMap<String, SharedFaces>> {
-    static CACHE: LazyLock<Mutex<HashMap<String, SharedFaces>>> =
-        LazyLock::new(|| Mutex::new(HashMap::new()));
+fn face_cache() -> &'static Mutex<BoundedCache<String, SharedFaces>> {
+    static CACHE: Mutex<BoundedCache<String, SharedFaces>> =
+        Mutex::new(BoundedCache::new(MAX_FACE_CACHE_BYTES, shared_payload));
     &CACHE
 }
 
-/// Drop the greatest keys until `add` more bytes fit in `max`.
-fn drop_greatest_until<K, V, F>(cache: &mut HashMap<K, V>, add: usize, max: usize, bytes: F)
-where
-    K: Clone + Ord + std::hash::Hash,
-    F: Fn(&V) -> usize,
-{
-    let mut kept = cache
-        .values()
-        .map(&bytes)
-        .fold(0usize, usize::saturating_add);
-    while kept.saturating_add(add) > max {
-        let Some(victim) = cache.keys().max().cloned() else {
-            break;
-        };
-        let Some(removed) = cache.remove(&victim) else {
-            break;
-        };
-        kept = kept.saturating_sub(bytes(&removed));
+/// A map whose values' bytes stay inside `max`. It keeps the running
+/// total, so a store costs a lookup and not a walk over every entry. Past
+/// the budget the greatest key goes first, so what stays does not depend
+/// on hash order.
+struct BoundedCache<K, V> {
+    map: BTreeMap<K, V>,
+    bytes: usize,
+    max: usize,
+    size: fn(&V) -> usize,
+}
+
+impl<K: Ord, V> BoundedCache<K, V> {
+    const fn new(max: usize, size: fn(&V) -> usize) -> Self {
+        Self {
+            map: BTreeMap::new(),
+            bytes: 0,
+            max,
+            size,
+        }
+    }
+
+    fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.map.get(key)
+    }
+
+    fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    fn clear(&mut self) {
+        self.map.clear();
+        self.bytes = 0;
+    }
+
+    /// Store `value` under `key`, replacing what the key held. The
+    /// greatest keys go until it fits. A value larger than the whole
+    /// budget is not stored, and the key is then absent.
+    fn insert(&mut self, key: K, value: V) {
+        if let Some(old) = self.map.remove(&key) {
+            self.bytes = self.bytes.saturating_sub((self.size)(&old));
+        }
+        let add = (self.size)(&value);
+        if add > self.max {
+            return;
+        }
+        while self.bytes.saturating_add(add) > self.max {
+            let Some((_, gone)) = self.map.pop_last() else {
+                break;
+            };
+            self.bytes = self.bytes.saturating_sub((self.size)(&gone));
+        }
+        self.bytes = self.bytes.saturating_add(add);
+        self.map.insert(key, value);
     }
 }
 
@@ -3124,8 +3157,6 @@ fn cached_faces(key: &str, load: impl FnOnce() -> Vec<((bool, bool), Vec<u8>)>) 
         return faces;
     }
     if let Ok(mut cache) = face_cache().lock() {
-        cache.remove(key);
-        drop_greatest_until(&mut cache, add, MAX_FACE_CACHE_BYTES, shared_payload);
         cache.insert(key.to_string(), faces.clone());
     }
     faces
@@ -6247,7 +6278,11 @@ mod deeper_boundary_tests {
             let empty: ShapedUnits = Vec::new().into();
             let entries =
                 (0..initial).map(|i| ((format!("reserved-{i}"), false), Arc::clone(&empty)));
-            face.shaped.lock().unwrap().extend(entries);
+            let mut cache = face.shaped.lock().unwrap();
+            for (key, units) in entries {
+                cache.insert(key, units);
+            }
+            drop(cache);
             let shaped = face.shape("A", 12.0);
             assert_eq!(
                 shaped,
@@ -6259,10 +6294,10 @@ mod deeper_boundary_tests {
             let cache = face.shaped.lock().unwrap();
             assert_eq!(cache.len(), expected, "initial={initial}");
             assert_eq!(
-                cache.contains_key(&("reserved-0".into(), false)),
+                cache.get(&("reserved-0".to_string(), false)).is_some(),
                 initial <= 50_000
             );
-            assert_eq!(cache[&("A".into(), false)].len(), 1);
+            assert_eq!(cache.get(&("A".to_string(), false)).unwrap().len(), 1);
         }
     }
 
@@ -6987,32 +7022,40 @@ mod residual_embedded_style_contract_tests {
         }
     }
 
-    /// A shaped entry past the byte budget is dropped when the next word is
-    /// stored, and two face payloads that cannot both fit leave the earlier
-    /// key to be read again. A face inside the budget stays.
+    /// Two shaped entries that cannot both fit leave only the later one,
+    /// an entry larger than the whole budget is not stored, and the next
+    /// word still fits beside what stays. A face payload that no longer
+    /// fits is read again; a face inside the budget stays.
     #[test]
     fn a_cache_past_its_byte_budget_drops_what_no_longer_fits() {
         let face = Face::bundled(FaceId::SansRegular);
-        let glyphs = MAX_SHAPED_CACHE_BYTES / std::mem::size_of::<(u16, i32, u32)>() + 1;
-        let oversized: ShapedUnits = vec![(0u16, 0i32, 0u32); glyphs].into();
-        face.shaped
-            .lock()
-            .unwrap()
-            .insert(("zzzz-shaped".into(), false), Arc::clone(&oversized));
+        let glyph = std::mem::size_of::<(u16, i32, u32)>();
+        let half: ShapedUnits =
+            vec![(0u16, 0i32, 0u32); MAX_SHAPED_CACHE_BYTES / glyph / 2 + 1].into();
+        let oversized: ShapedUnits =
+            vec![(0u16, 0i32, 0u32); MAX_SHAPED_CACHE_BYTES / glyph + 1].into();
+        let mut cache = face.shaped.lock().unwrap();
+        cache.insert(("zzzz-a".into(), false), Arc::clone(&half));
+        cache.insert(("zzzz-b".into(), false), Arc::clone(&half));
+        cache.insert(("zzzz-c".into(), false), oversized);
+        drop(cache);
         let _ = face.shape("A", 12.0);
         let cache = face.shaped.lock().unwrap();
         let retained = cache
+            .map
             .values()
             .map(shaped_payload_bytes)
             .fold(0, usize::saturating_add);
+        assert_eq!(cache.bytes, retained, "the running total drifted");
         assert!(
             retained <= MAX_SHAPED_CACHE_BYTES,
             "shaped cache kept {retained} bytes past {MAX_SHAPED_CACHE_BYTES}"
         );
-        assert!(
-            !cache.contains_key(&("zzzz-shaped".into(), false)),
-            "the oversized shaped entry stayed"
-        );
+        let held = |key: &str| cache.get(&(key.to_string(), false)).is_some();
+        assert!(!held("zzzz-a"), "the entry that no longer fit stayed");
+        assert!(held("zzzz-b"), "the entry that still fits was dropped");
+        assert!(!held("zzzz-c"), "the oversized shaped entry was stored");
+        assert!(held("A"), "the next word was not stored");
         drop(cache);
 
         let half = MAX_FACE_CACHE_BYTES / 2 + 1;
@@ -7030,16 +7073,37 @@ mod residual_embedded_style_contract_tests {
             panic!("a face inside the budget was read again")
         });
         assert_eq!(kept[0].1.len(), half);
-        let face_bytes = face_cache()
-            .lock()
-            .unwrap()
+        let faces = face_cache().lock().unwrap();
+        let face_bytes = faces
+            .map
             .values()
             .map(shared_payload)
             .fold(0, usize::saturating_add);
+        assert_eq!(faces.bytes, face_bytes, "the running total drifted");
         assert!(
             face_bytes <= MAX_FACE_CACHE_BYTES,
             "face cache kept {face_bytes} bytes"
         );
+    }
+
+    /// Replacing a key and clearing keep the running total equal to the
+    /// bytes the map holds.
+    #[test]
+    fn a_bounded_cache_counts_replacements_and_clears() {
+        let mut cache: BoundedCache<u8, Vec<u8>> = BoundedCache::new(10, Vec::len);
+        let held =
+            |cache: &BoundedCache<u8, Vec<u8>>| cache.map.values().map(Vec::len).sum::<usize>();
+        cache.insert(1, vec![0; 4]);
+        cache.insert(2, vec![0; 4]);
+        cache.insert(1, vec![0; 2]);
+        assert_eq!((cache.bytes, held(&cache)), (6, 6));
+        cache.insert(3, vec![0; 6]);
+        assert_eq!(cache.map.keys().copied().collect::<Vec<_>>(), [1, 3]);
+        assert_eq!((cache.bytes, held(&cache)), (8, 8));
+        cache.insert(4, vec![0; 11]);
+        assert_eq!((cache.bytes, cache.get(&4)), (8, None));
+        cache.clear();
+        assert_eq!((cache.bytes, cache.len()), (0, 0));
     }
 }
 
