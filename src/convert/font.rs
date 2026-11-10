@@ -3313,6 +3313,9 @@ fn index_file_takes_appends(path: &Path) -> bool {
     for line in lines {
         match line {
             Ok(line) if line.is_empty() => {}
+            // A torn or foreign line: rewrite the file rather than append
+            // after it, so `save` drops it.
+            Ok(line) if parse_index_line(&line).is_none() => return false,
             Ok(_) => {
                 families += 1;
                 if families >= MAX_FONT_INDEX_ENTRIES {
@@ -3423,6 +3426,12 @@ fn parse_font_index(text: &str) -> HashMap<String, IndexEntry> {
     if lines.next() != Some(FONT_INDEX_HEADER) {
         return HashMap::new();
     }
+    lines.filter_map(parse_index_line).collect()
+}
+
+/// One family line of the index (`key`, folders, faces), or `None` for a
+/// line another writer tore or an older release wrote.
+fn parse_index_line(line: &str) -> Option<(String, IndexEntry)> {
     let opt = |s: &str| (s != "-").then(|| s.parse().ok()).flatten();
     let items = |s: &'_ str| -> Vec<Vec<String>> {
         s.split(ITEM_SEP)
@@ -3430,42 +3439,42 @@ fn parse_font_index(text: &str) -> HashMap<String, IndexEntry> {
             .map(|i| i.split(FIELD_SEP).map(str::to_string).collect())
             .collect()
     };
-    let mut out = HashMap::new();
-    for line in lines {
-        let mut cols = line.split('\t');
-        let (Some(key), Some(dirs), Some(faces), None) =
-            (cols.next(), cols.next(), cols.next(), cols.next())
-        else {
-            continue;
-        };
-        let dirs: Option<Vec<(PathBuf, Option<u128>)>> = items(dirs)
-            .into_iter()
-            .map(|f| match f.as_slice() {
-                [d, m] => Some((PathBuf::from(d), opt(m))),
-                _ => None,
-            })
-            .collect();
-        let faces: Option<Vec<IndexedFace>> = items(faces)
-            .into_iter()
-            .map(|f| match f.as_slice() {
-                [path, index, bold, italic, len, mtime] => Some(IndexedFace {
-                    style: (bold == "1", italic == "1"),
-                    source: FaceSource {
-                        path: PathBuf::from(path),
-                        index: opt(index).and_then(|i: u128| u32::try_from(i).ok()),
-                    },
-                    stamp: opt(len)
-                        .and_then(|l: u128| u64::try_from(l).ok())
-                        .zip(opt(mtime)),
-                }),
-                _ => None,
-            })
-            .collect();
-        if let (Some(dirs), Some(faces)) = (dirs, faces) {
-            out.insert(key.to_string(), IndexEntry { dirs, faces });
-        }
-    }
-    out
+    let mut cols = line.split('\t');
+    let (Some(key), Some(dirs), Some(faces), None) =
+        (cols.next(), cols.next(), cols.next(), cols.next())
+    else {
+        return None;
+    };
+    let dirs: Option<Vec<(PathBuf, Option<u128>)>> = items(dirs)
+        .into_iter()
+        .map(|f| match f.as_slice() {
+            [d, m] => Some((PathBuf::from(d), opt(m))),
+            _ => None,
+        })
+        .collect();
+    let faces: Option<Vec<IndexedFace>> = items(faces)
+        .into_iter()
+        .map(|f| match f.as_slice() {
+            [path, index, bold, italic, len, mtime] => Some(IndexedFace {
+                style: (bold == "1", italic == "1"),
+                source: FaceSource {
+                    path: PathBuf::from(path),
+                    index: opt(index).and_then(|i: u128| u32::try_from(i).ok()),
+                },
+                stamp: opt(len)
+                    .and_then(|l: u128| u64::try_from(l).ok())
+                    .zip(opt(mtime)),
+            }),
+            _ => None,
+        })
+        .collect();
+    Some((
+        key.to_string(),
+        IndexEntry {
+            dirs: dirs?,
+            faces: faces?,
+        },
+    ))
 }
 
 /// Loads Word's East Asian fallback faces (YaHei, Yu Gothic, Malgun
