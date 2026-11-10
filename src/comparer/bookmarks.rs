@@ -443,10 +443,18 @@ fn leave_inline_revision(dom: &mut Dom, endpoint: NodeId, after: bool) {
 }
 
 /// A bookmark endpoint on the edge of an insertion `author` wrote moves out
-/// of that insertion. A start goes before the insertion and an end goes
-/// after it, then past the matching deletion beside it, so the new words
-/// and the old words both stay inside the range.
-fn lift_authored_insertion_edge(dom: &mut Dom, endpoint: NodeId, author: &str, after: bool) {
+/// of that insertion. A start goes before the insertion. An end goes after
+/// it, then past the deletion right after it, which is the old text Compare
+/// writes after the new (ins → del), so the new words and the old words
+/// both stay inside the range. An endpoint whose `partner` is inside the
+/// same insertion stays: lifting it alone would cross the revision.
+fn lift_authored_insertion_edge(
+    dom: &mut Dom,
+    endpoint: NodeId,
+    partner: NodeId,
+    author: &str,
+    after: bool,
+) {
     let Some(revision) = dom
         .ancestors(endpoint, None)
         .into_iter()
@@ -458,6 +466,9 @@ fn lift_authored_insertion_edge(dom: &mut Dom, endpoint: NodeId, author: &str, a
         return;
     };
     let inside = dom.descendants(revision, None);
+    if inside.contains(&partner) {
+        return;
+    }
     let Some(at) = inside.iter().position(|&node| node == endpoint) else {
         return;
     };
@@ -478,37 +489,21 @@ fn lift_authored_insertion_edge(dom: &mut Dom, endpoint: NodeId, author: &str, a
         dom.add_after_self(revision, endpoint);
     } else {
         dom.add_before_self(revision, endpoint);
+        return;
     }
-    loop {
-        let neighbor = if after {
-            dom.next_element(endpoint)
-        } else {
-            dom.nodes_before_self(endpoint)
-                .into_iter()
-                .rev()
-                .find(|&node| dom.is_element(node))
-        };
-        let Some(neighbor) = neighbor else {
-            break;
-        };
-        let same_author = (dom.name_is(neighbor, &W::ins()) || dom.name_is(neighbor, &W::del()))
-            && dom.attribute(neighbor, &W::author()) == Some(author);
-        if !same_author {
-            break;
-        }
+    let paired = dom.next_element(endpoint).filter(|&next| {
+        dom.name_is(next, &W::del()) && dom.attribute(next, &W::author()) == Some(author)
+    });
+    if let Some(deletion) = paired {
         dom.remove(endpoint);
-        if after {
-            dom.add_after_self(neighbor, endpoint);
-        } else {
-            dom.add_before_self(neighbor, endpoint);
-        }
+        dom.add_after_self(deletion, endpoint);
     }
 }
 
 /// Lift a bookmark's two endpoints off the edges of `author`'s insertions.
 fn lift_pair(dom: &mut Dom, start: NodeId, end: NodeId, author: &str) {
-    lift_authored_insertion_edge(dom, start, author, false);
-    lift_authored_insertion_edge(dom, end, author, true);
+    lift_authored_insertion_edge(dom, start, end, author, false);
+    lift_authored_insertion_edge(dom, end, start, author, true);
 }
 
 /// Place one side's bookmarks on the merged body's projection of that side.
