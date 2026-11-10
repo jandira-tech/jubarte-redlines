@@ -35,6 +35,13 @@ const CEX: &str = "http://schemas.microsoft.com/office/word/2018/wordml/cex";
 const PEOPLE_REL: &str = "http://schemas.microsoft.com/office/2011/relationships/people";
 /// Characters of context kept on either side of an anchor.
 const CONTEXT: usize = 80;
+/// Bytes of anchor text one listing may hold (#2067). Every comment copies
+/// its whole range exactly, since `edit -p cN.text` resolves inside it, so
+/// thousands of comments on one long range would copy it thousands of times.
+/// Past this a listing refuses with `INPUT_LIMIT`, as a part past
+/// [`crate::admission::InputLimits::max_part_bytes`] does, instead of
+/// holding a truncated anchor.
+const ANCHOR_BYTE_BUDGET: usize = 64 * 1024 * 1024;
 /// First sentinel code point used to locate range markers in a projection
 /// (supplementary private use area B, which no Word symbol font uses).
 const SENTINEL: u32 = 0x10_0000;
@@ -145,25 +152,36 @@ pub(crate) fn list_comments_within(
 /// [`list_comments`] of a package already open. The scan marks up the
 /// body's DOM, so read what else `opened` holds first.
 pub(crate) fn comments_in(opened: &mut Opened) -> Result<Vec<CommentRecord>, CommentError> {
+    comments_within_budget(opened, ANCHOR_BYTE_BUDGET)
+}
+
+/// [`comments_in`] with `budget` bytes of anchor text for the listing.
+fn comments_within_budget(
+    opened: &mut Opened,
+    budget: usize,
+) -> Result<Vec<CommentRecord>, CommentError> {
     let family = CommentFamily::load(&opened.pkg, &opened.main).map_err(CommentError::Package)?;
     if family.is_empty() {
         return Ok(Vec::new());
     }
-    let mut anchors = Anchors::default();
+    let mut anchors = Anchors {
+        budget,
+        ..Anchors::default()
+    };
     anchors.scan("body", &mut opened.dom, opened.body, true);
     for (id, _, part) in opened.story_parts() {
         let (mut dom, _, root) = crate::inspect::parse_part(&opened.pkg, &part)?;
         anchors.scan(&id, &mut dom, root, false);
     }
-    Ok(family
+    family
         .order()
         .into_iter()
         .map(|id| {
             let mut record = family.record(id);
-            anchors.fill(&mut record);
-            record
+            anchors.fill(&mut record)?;
+            Ok(record)
         })
-        .collect())
+        .collect()
 }
 
 /// `jubarte comments`' listing: one line per comment, `c{id}\t{paragraph}
@@ -251,6 +269,8 @@ struct Anchors {
     ends: HashMap<String, (usize, usize, usize)>,
     /// Comment id → (story, paragraph) of the reference.
     references: HashMap<String, (usize, usize)>,
+    /// Bytes of anchor text this listing may still own.
+    budget: usize,
 }
 
 impl Anchors {
@@ -358,7 +378,28 @@ impl Anchors {
         self.stories.push((story_id.to_string(), texts));
     }
 
-    fn fill(&self, record: &mut CommentRecord) {
+    /// Writes `record`'s anchor, exact, and charges it to the listing's
+    /// budget; refuses with `INPUT_LIMIT` once the anchors pass it.
+    fn fill(&mut self, record: &mut CommentRecord) -> Result<(), CommentError> {
+        self.write_anchor(record);
+        let held = record.anchor_text.len();
+        if held > self.budget {
+            return Err(CommentError::Admission(
+                crate::admission::AdmissionError::new(
+                    crate::admission::AdmissionErrorKind::InputLimit,
+                    format!(
+                        "comment anchors pass the {} bytes one listing may hold: c{} \
+                         covers {held} bytes with {} left",
+                        ANCHOR_BYTE_BUDGET, record.id, self.budget
+                    ),
+                ),
+            ));
+        }
+        self.budget -= held;
+        Ok(())
+    }
+
+    fn write_anchor(&self, record: &mut CommentRecord) {
         let id = record.id.to_string();
         let start = self.starts.get(&id).copied();
         let end = self.ends.get(&id).copied();
@@ -1583,6 +1624,77 @@ mod public_memory_anchor_boundary_tests {
             Vec::new()
         );
         assert_eq!(select_comments(records.clone(), None, false), records);
+    }
+
+    /// `count` comments on one paragraph of `text`.
+    fn comments_on_one_range(text: &str, count: usize) -> Vec<u8> {
+        let mut body = String::new();
+        for id in 1..=count {
+            body.push_str(&format!("<w:commentRangeStart w:id='{id}'/>"));
+        }
+        body.push_str(&paragraph(text));
+        for id in 1..=count {
+            body.push_str(&format!("<w:commentRangeEnd w:id='{id}'/>"));
+        }
+        let mut comments = format!("<w:comments xmlns:w='{}'>", W::URI);
+        for id in 1..=count {
+            comments.push_str(&format!(
+                "<w:comment w:id='{id}' w:author='A' w:date='2025-01-01T00:00:00Z'><w:p><w:r><w:t>n</w:t></w:r></w:p></w:comment>"
+            ));
+        }
+        comments.push_str("</w:comments>");
+        let mut pkg = package(&body);
+        pkg.set_part("word/comments.xml", comments.into_bytes());
+        pkg.add_content_type_override(
+            "/word/comments.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+        );
+        pkg.add_document_relationship(
+            "word/document.xml",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            "comments.xml",
+        );
+        pkg.to_zip().unwrap()
+    }
+
+    /// Four comments on one 80 KB range: 320 KB of anchors in all, past the
+    /// 256 KiB a listing once kept, and each one is still the exact text it
+    /// covers.
+    #[test]
+    fn many_comments_on_one_range_keep_exact_anchors() {
+        const BUDGET: usize = 256 * 1024;
+        let text = "A".repeat(80_000);
+        let count = 4;
+        let listed = list_comments(&comments_on_one_range(&text, count)).unwrap();
+        assert_eq!(listed.len(), count);
+        // `edit -p cN.text` resolves inside this text, and inspect, WASM
+        // and Python print it: every anchor stays exact.
+        for comment in &listed {
+            assert_eq!(comment.anchor_text, text, "c{}", comment.id);
+        }
+        assert!(count * text.len() > BUDGET);
+    }
+
+    /// Past its budget a listing refuses with `INPUT_LIMIT` and names the
+    /// comment that passed it, rather than hold a truncated anchor.
+    #[test]
+    fn anchors_past_the_budget_refuse_with_input_limit() {
+        let text = "A".repeat(80_000);
+        let bytes = comments_on_one_range(&text, 4);
+        let mut opened = Opened::open(&bytes).unwrap();
+        let refused = comments_within_budget(&mut opened, 200_000).unwrap_err();
+        assert_eq!(refused.code(), "INPUT_LIMIT");
+        assert!(
+            refused
+                .to_string()
+                .contains("c3 covers 80000 bytes with 40000 left"),
+            "{refused}"
+        );
+        let mut opened = Opened::open(&bytes).unwrap();
+        assert_eq!(
+            comments_within_budget(&mut opened, 320_000).unwrap().len(),
+            4
+        );
     }
 }
 
