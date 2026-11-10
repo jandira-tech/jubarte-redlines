@@ -7,6 +7,7 @@
 """Integration checks for the temporary zip 9 oracle dependency patch."""
 
 import re
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
@@ -97,6 +98,12 @@ class SecurityAdvisoryRecord(unittest.TestCase):
             [],
         )
 
+    def test_locked_crates_skip_a_lock_a_fresh_checkout_lacks(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            (root / "Cargo.lock").write_text('[[package]]\nname = "zip"\nversion = "1.0.0"\n')
+            self.assertEqual(audited_locked_crates(root), {"zip"})
+
     def test_inventory_refuses_a_crate_the_advisory_is_not_on(self) -> None:
         policy = {"advisories": {"ignore": [{"id": "RUSTSEC-1-1", "reason": "serde is locked"}]}}
         security = "**RUSTSEC-1-1** — `serde` is a direct dependency.\n"
@@ -124,11 +131,18 @@ def audited_manifests() -> list[str]:
     return match.group(1).split()
 
 
-def audited_locked_crates() -> set[str]:
-    """Every crate name locked by a workspace the security check audits."""
+def audited_locked_crates(root: Path = ROOT) -> set[str]:
+    """Every crate name locked by a workspace the security check audits.
+
+    `fuzz/Cargo.lock` is gitignored, so a fresh checkout has none until its
+    first resolve. A lock that is absent adds no names: an ignored advisory
+    that only that graph reaches then shows up as a problem, never as a
+    pass."""
     names: set[str] = set()
     for manifest in audited_manifests():
-        lock = ROOT / Path(manifest).with_name("Cargo.lock")
+        lock = root / Path(manifest).with_name("Cargo.lock")
+        if not lock.is_file():
+            continue
         names |= {package["name"] for package in tomllib.loads(lock.read_text())["package"]}
     return names
 
