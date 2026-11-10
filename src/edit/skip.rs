@@ -408,7 +408,9 @@ fn control_paragraph(control: &ControlSelector) -> Option<(&str, &str)> {
 /// An operation that leaves every paragraph in place. A run of these does
 /// not move a positional name, so the plan of the fixes can keep it.
 /// Anything else, including a kind added later, can add or remove a
-/// paragraph and is applied again so the name is read from the output.
+/// paragraph and is applied again so the name is read from the output:
+/// `strike` and `restore` among them, since a paragraph mark's revision
+/// joins or splits two paragraphs.
 fn keeps_its_paragraphs(kind: &OperationKind) -> bool {
     matches!(
         kind,
@@ -422,8 +424,6 @@ fn keeps_its_paragraphs(kind: &OperationKind) -> bool {
             | OperationKind::ResolveComment { .. }
             | OperationKind::EditComment { .. }
             | OperationKind::DeleteComment { .. }
-            | OperationKind::Strike { .. }
-            | OperationKind::Restore { .. }
             | OperationKind::List { .. }
             | OperationKind::FormatRun { .. }
             | OperationKind::PageSetup { .. }
@@ -580,4 +580,41 @@ fn rename_positions(
         notes[o].push(format!("{shown} is {renamed} in the output"));
     }
     notes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plan(ops: &str) -> EditPlan {
+        EditPlan::from_json(&format!(
+            r#"{{"schema_version":1,"author":"Ann","existing_revisions":"keep","operations":{ops}}}"#
+        ))
+        .unwrap()
+    }
+
+    /// Text-only survivors run once: the second application is skipped
+    /// (#1292). Survivors that can move a paragraph keep it.
+    #[test]
+    fn only_survivors_that_keep_every_paragraph_skip_the_second_run() {
+        let replace = r#"{"kind":"replace","paragraph":"p0","find":"a","replacement":"b"}"#;
+        let none = BTreeSet::new();
+        assert!(places_stay(&plan(&format!("[{replace}]")), &none));
+        for mover in [
+            r#"{"kind":"strike","revision":"r1"}"#,
+            r#"{"kind":"restore","revision":"r1"}"#,
+            r#"{"kind":"insert_paragraph","paragraph":"p0","position":"after","runs":[{"text":"x"}]}"#,
+            r#"{"kind":"delete_paragraph","paragraph":"p0"}"#,
+        ] {
+            assert!(
+                !places_stay(&plan(&format!("[{replace},{mover}]")), &none),
+                "{mover}"
+            );
+            // A skipped mover lands nowhere, so it moves nothing.
+            assert!(
+                places_stay(&plan(&format!("[{replace},{mover}]")), &BTreeSet::from([1])),
+                "{mover}"
+            );
+        }
+    }
 }

@@ -1562,80 +1562,73 @@ fn consume_keeps_a_plan_that_did_not_land_whole() {
     assert!(!whole.path().join("plan.json").exists());
 }
 
-/// Nanoseconds this thread has spent on a CPU (`/proc` schedstat).
-fn thread_cpu_nanos() -> u128 {
-    let text = std::fs::read_to_string("/proc/thread-self/schedstat").expect("schedstat");
-    text.split_whitespace()
-        .next()
-        .expect("schedstat field")
-        .parse()
-        .expect("schedstat nanos")
-}
-
-fn thread_cpu(work: impl FnOnce()) -> u128 {
-    let start = thread_cpu_nanos();
-    work();
-    thread_cpu_nanos() - start
-}
-
 /// Survivors that only replace text leave every paragraph where it is, so
-/// the plan of the fixes must not apply them again. The skipped paragraph
-/// keeps the positional name the plan gave it.
+/// the plan of the fixes keeps the positional name the plan gave the
+/// skipped paragraph and notes no move.
 #[test]
-fn a_positional_skip_applies_the_survivors_once_when_nothing_moves() {
-    let body: String = (0..32)
+fn a_positional_skip_keeps_its_name_when_nothing_moves() {
+    let body: String = (0..4)
         .map(|i| format!(r#"<w:p><w:r><w:t>Paragraph {i} stays here.</w:t></w:r></w:p>"#))
         .collect();
     let source = docx(&body);
-    let mut ops = Vec::new();
-    for i in 0..24 {
-        ops.push(json!({
-            "kind": "replace",
-            "paragraph": format!("p{i}"),
-            "find": "stays",
-            "replacement": "remains",
-        }));
-    }
-    ops.push(json!({
-        "kind": "replace",
-        "paragraph": "p31",
-        "find": "absent",
-        "replacement": "present",
-    }));
-    let ops = Value::Array(ops);
+    let ops = json!([
+        {"kind":"replace","paragraph":"p0","find":"stays","replacement":"remains"},
+        {"kind":"replace","paragraph":"p1","find":"stays","replacement":"remains"},
+        {"kind":"replace","paragraph":"p3","find":"absent","replacement":"present"},
+    ]);
     let original = plan(&ops);
     let prepared = prepare(&source, &original, &skipping()).unwrap();
     assert_eq!(prepared.skipped.len(), 1);
     let clean = texts(&prepared.result.clean);
     assert_eq!(clean[0], "Paragraph 0 remains here.");
-    assert_eq!(clean[31], "Paragraph 31 stays here.");
-    let mut survivors = ops.as_array().unwrap().clone();
-    survivors.pop();
-    let once = thread_cpu(|| {
-        prepare(
-            &source,
-            &plan(&Value::Array(survivors)),
-            &PrepareOptions::default(),
-        )
-        .unwrap();
-    });
-    let fixes = thread_cpu(|| {
-        let failed: Value = serde_json::from_str(&failed_plan_json(
-            &source,
-            &original,
-            &prepared.skipped,
-            DATE,
-            &source_sha256(&prepared.result.redline),
-            ExistingRevisions::Keep,
-            true,
-        ))
-        .unwrap();
-        assert_eq!(failed["operations"][0]["paragraph"], "p31");
-        let why = failed["operations"][0]["why"].as_str().unwrap();
-        assert!(!why.contains("in the output"), "{why}");
-    });
-    assert!(
-        fixes.saturating_mul(3) < once,
-        "the fixes plan applied the survivors again: fixes {fixes} ns, one application {once} ns"
+    assert_eq!(clean[3], "Paragraph 3 stays here.");
+    let failed: Value = serde_json::from_str(&failed_plan_json(
+        &source,
+        &original,
+        &prepared.skipped,
+        DATE,
+        &source_sha256(&prepared.result.redline),
+        ExistingRevisions::Keep,
+        true,
+    ))
+    .unwrap();
+    assert_eq!(failed["operations"][0]["paragraph"], "p3");
+    let why = failed["operations"][0]["why"].as_str().unwrap();
+    assert!(!why.contains("in the output"), "{why}");
+}
+
+/// Striking an inserted paragraph mark joins two paragraphs in the clean
+/// copy, so a positional name after it moves up one (cursor 4501287505).
+#[test]
+fn a_struck_paragraph_mark_moves_the_names_after_it() {
+    let source = docx(
+        r#"<w:p><w:pPr><w:rPr><w:ins w:id="9" w:author="Bob Lee" w:date="2026-10-01T09:00:00Z"/></w:rPr></w:pPr><w:r><w:t>one</w:t></w:r></w:p><w:p><w:r><w:t>two</w:t></w:r></w:p><w:p><w:r><w:t>three stays</w:t></w:r></w:p>"#,
     );
+    let request = json!({"schema_version":1,"author":"Carol Diaz","date":DATE,
+    "existing_revisions":"keep","operations":[
+        {"kind":"strike","revision":"r9"},
+        {"kind":"replace","paragraph":"p2","find":"absent","replacement":"present"},
+    ]});
+    let original = EditPlan::from_json(&request.to_string()).unwrap();
+    let prepared = prepare(&source, &original, &skipping()).unwrap();
+    assert_eq!(prepared.skipped.len(), 1, "{:?}", prepared.result.report);
+    let clean = texts(&prepared.result.clean);
+    assert_eq!(
+        clean,
+        ["onetwo", "three stays"],
+        "the strike joins p0 and p1"
+    );
+    let failed: Value = serde_json::from_str(&failed_plan_json(
+        &source,
+        &original,
+        &prepared.skipped,
+        DATE,
+        &source_sha256(&prepared.result.clean),
+        original.existing_revisions,
+        false,
+    ))
+    .unwrap();
+    assert_eq!(failed["operations"][0]["paragraph"], "p1", "{failed}");
+    let why = failed["operations"][0]["why"].as_str().unwrap();
+    assert!(why.ends_with("; p2 is p1 in the output"), "{why}");
 }
