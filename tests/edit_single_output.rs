@@ -3060,3 +3060,31 @@ fn in_place_follows_a_symlink_and_keeps_its_mode() {
         "{err}"
     );
 }
+
+/// A dangling link where an output goes is an existing output: without
+/// `--force` the edit is refused up front with `OUTPUT_EXISTS` (exit 2),
+/// and nothing is written, through the link or beside it. `Path::exists`
+/// follows the link and reports nothing there (#2229). With it, the edit
+/// ran in full, PDF included, and only the publish step refused (exit 1).
+#[cfg(unix)]
+#[test]
+fn a_dangling_link_at_an_output_is_an_existing_output() {
+    for (link, target, extra) in [
+        ("r.docx", "missing.docx", &[][..]),
+        ("r.pdf", "missing.pdf", &["--pdf"][..]),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path();
+        letter(dir);
+        std::os::unix::fs::symlink(target, dir.join(link)).unwrap();
+        let mut args = EDIT.to_vec();
+        args.extend(["-o", "r.docx"]);
+        args.extend(extra);
+        let (code, _, err) = run(dir, &args);
+        assert_eq!(code, 2, "{link}: {err}");
+        assert!(err.contains("OUTPUT_EXISTS:"), "{link}: {err}");
+        assert!(err.contains(link), "{link}: {err}");
+        assert!(!dir.join(target).exists(), "{link}: wrote through the link");
+        assert_eq!(written(dir), [link], "{link}");
+    }
+}
