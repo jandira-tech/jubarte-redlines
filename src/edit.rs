@@ -1984,6 +1984,23 @@ pub(crate) fn guard_keep_others(
     ))
 }
 
+/// The blockers a refusal names: the first [`BLOCKERS_SHOWN`] revision
+/// ids, then a count of the rest (`jubarte changes` lists them all).
+fn blocker_list(revisions: &[String]) -> String {
+    let shown = revisions
+        .iter()
+        .take(BLOCKERS_SHOWN)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    match revisions.len().saturating_sub(BLOCKERS_SHOWN) {
+        0 => shown,
+        rest => format!("{shown} and {rest} more"),
+    }
+}
+
+const BLOCKERS_SHOWN: usize = 20;
+
 /// Settle `source` (opened as `probe`) as `plan` asks: accept and reject
 /// what `resolve_revisions` selects, then apply `existing_revisions` to the
 /// changes left.
@@ -2036,7 +2053,7 @@ fn settle(
                 None,
                 format!(
                     "the document already holds tracked changes; blockers: {}; {KEEP_REVISIONS}",
-                    revisions.join(", ")
+                    blocker_list(&revisions)
                 ),
             ));
         }
