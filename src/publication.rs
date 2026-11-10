@@ -444,6 +444,68 @@ impl Drop for StagedFile {
         let _ = self.cleanup();
     }
 }
+
+/// Attributes that belong to the destination and must move onto the staged
+/// inode. A kernel security label stays behind: the kernel applies it, and
+/// refusing the replacement because that label cannot be reset would fail
+/// an ordinary publish.
+#[cfg(unix)]
+fn copy_replaced_xattrs(from: &cap_std::fs::File, to: &cap_std::fs::File) -> io::Result<()> {
+    use std::os::unix::io::{AsRawFd, RawFd};
+    use xattr::FileExt;
+
+    struct Handle<'a>(&'a cap_std::fs::File);
+
+    impl AsRawFd for Handle<'_> {
+        fn as_raw_fd(&self) -> RawFd {
+            self.0.as_raw_fd()
+        }
+    }
+
+    impl xattr::FileExt for Handle<'_> {}
+
+    let from = Handle(from);
+    let to = Handle(to);
+    let names = match from.list_xattr() {
+        Ok(names) => names,
+        Err(error) if error.kind() == io::ErrorKind::Unsupported => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for name in names {
+        if !replaced_xattr(&name) {
+            continue;
+        }
+        if let Some(value) = from.get_xattr(&name)? {
+            to.set_xattr(&name, &value)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+fn replaced_xattr(name: &std::ffi::OsStr) -> bool {
+    let bytes = name.as_encoded_bytes();
+    bytes.starts_with(b"user.") || bytes.starts_with(b"system.posix_acl_")
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn replaced_xattr(name: &std::ffi::OsStr) -> bool {
+    let bytes = name.as_encoded_bytes();
+    !bytes.starts_with(b"system.") && !macos_kernel_label(bytes)
+}
+
+/// A label the macOS kernel owns: userspace gets EPERM writing
+/// `com.apple.rootless` or a `com.apple.system.` name, and the kernel sets
+/// `com.apple.provenance` and `com.apple.macl` on the new inode itself.
+#[cfg(all(unix, not(target_os = "linux")))]
+fn macos_kernel_label(name: &[u8]) -> bool {
+    name.starts_with(b"com.apple.system.")
+        || matches!(
+            name,
+            b"com.apple.rootless" | b"com.apple.provenance" | b"com.apple.macl"
+        )
+}
+
 impl Backend for FsBackend<'_> {
     type Staged = StagedFile;
     fn stage(&mut self, path: &Path) -> io::Result<StagedFile> {
@@ -497,6 +559,14 @@ impl Backend for FsBackend<'_> {
             Err(e) if e.kind() == io::ErrorKind::NotFound => (),
             Err(e) => return Err(e),
         }
+        // Open the destination before `parent` and `target` move into the
+        // staged file. The attributes are read from this handle.
+        #[cfg(unix)]
+        let source = if permissions.is_some() {
+            Some(parent.open(&target)?)
+        } else {
+            None
+        };
         let builder = DirBuilder::new();
         #[cfg(unix)]
         let builder = {
@@ -533,11 +603,14 @@ impl Backend for FsBackend<'_> {
                 )?,
         );
         if let Some(permissions) = permissions {
-            staged
-                .file
-                .as_ref()
-                .expect("open staging file")
-                .set_permissions(permissions)?;
+            let file = staged.file.as_ref().expect("open staging file");
+            file.set_permissions(permissions)?;
+            // Mode bits are on the staged inode. Attributes are not, and the
+            // later rename drops whatever still sits on the old inode.
+            #[cfg(unix)]
+            if let Some(source) = source.as_ref() {
+                copy_replaced_xattrs(source, file)?;
+            }
         }
         Ok(staged)
     }
@@ -799,6 +872,51 @@ mod tests {
             report.contains("symlink"),
             "swapped symlink was not reported: {report}"
         );
+    }
+
+    /// A forced replacement keeps a user attribute that lived on the old inode.
+    #[cfg(unix)]
+    #[test]
+    fn a_forced_replacement_keeps_the_destination_user_xattr() {
+        let temp = tempfile::tempdir().unwrap();
+        let output = temp.path().join("output");
+        std::fs::write(&output, b"old").unwrap();
+        // The crate the copy itself uses, so Linux and macOS both run it.
+        match xattr::set(&output, "user.jubarte", b"kept") {
+            Ok(()) => {}
+            // A file system with no user attributes has nothing to keep.
+            Err(error) if error.kind() == std::io::ErrorKind::Unsupported => return,
+            Err(error) => panic!("could not set the user attribute: {error}"),
+        }
+        let report = publish_paths(&[(output.clone(), b"new")], true).unwrap();
+        assert!(report.warnings.is_empty(), "{report:?}");
+        assert_eq!(std::fs::read(&output).unwrap(), b"new");
+        assert_eq!(
+            xattr::get(&output, "user.jubarte").unwrap().as_deref(),
+            Some(b"kept".as_slice()),
+            "overwrite dropped the destination extended attribute"
+        );
+    }
+
+    /// macOS labels the kernel owns stay behind: userspace cannot write
+    /// `com.apple.rootless` or `com.apple.system.*` (EPERM), and the kernel
+    /// sets `com.apple.provenance` and `com.apple.macl` itself. Copying them
+    /// would fail an ordinary forced publish. Other names still move.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_kernel_labels_are_left_for_the_kernel() {
+        use std::ffi::OsStr;
+        for name in [
+            "com.apple.rootless",
+            "com.apple.system.Security",
+            "com.apple.provenance",
+            "com.apple.macl",
+        ] {
+            assert!(!replaced_xattr(OsStr::new(name)), "{name} must stay behind");
+        }
+        for name in ["user.jubarte", "com.apple.quarantine", "com.example.tag"] {
+            assert!(replaced_xattr(OsStr::new(name)), "{name} must move");
+        }
     }
 
     #[test]
