@@ -1,0 +1,4 @@
+## 2024-10-24 - [Uncaught Exception Denial of Service in MCP Path resolution]
+**Vulnerability:** Uncaught `ValueError` leading to Denial of Service (DoS) during path resolution.
+**Learning:** Even when the resolved path safely points inside a sandboxed root (like `/tmp/root`), an absolute lexical path that ignores the root prefix (`/tmp/root/../root/foo.docx`) causes `relative_to(root)` to throw a `ValueError` because it relies on strict string matching. Since this `relative_to()` check ran outside the application's main exception boundary (`engine()`), it caused the entire server process to crash.
+**Prevention:** Always wrap standard library methods that rely on strict string matching (like `pathlib.Path.relative_to`) in a `try...except ValueError` block when processing user input, and map these exceptions to graceful application errors (e.g., `ToolError`) instead of leaving them uncaught.

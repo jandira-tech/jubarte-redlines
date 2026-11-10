@@ -230,7 +230,7 @@ jobs:
         run: |
           pipx install ruff==0.17.2
           pipx install zizmor==1.31.1
-          pipx install actionlint-py==1.7.12.25
+          for i in 1 2 3; do pipx install actionlint-py==1.7.12.25 && break || sleep 5; done
 
       # 🥕 Stage 2: five checks over what the PR changes, each with its own
       # status. ruff, shellcheck, the parsers and the workflow tools read only
