@@ -2625,8 +2625,9 @@ fn edited_revisions(tx: &Transaction<'_>) -> Edited {
 }
 
 /// What `ranges` (projection bytes) take from `run`: its words outside
-/// them, its `w:t` and `w:delText` text in document order as its
-/// formatting change lists it, and how many characters and atoms inside.
+/// them, its `w:t` and `w:delText` text and its own tabs and breaks in
+/// document order as its formatting change lists it, and how many
+/// characters and atoms inside.
 fn rewrite(
     dom: &Dom,
     projection: &crate::inspect::Projection,
@@ -2636,7 +2637,29 @@ fn rewrite(
     use crate::inspect::Piece;
     let inside = |at: usize| ranges.iter().any(|&(start, end)| start <= at && at < end);
     let mut out = Rewrite::default();
+    let (tab, br) = (W::name("tab"), W::name("br"));
     for node in dom.descendants(run, None) {
+        // A tab or break of the run reads as `\t` or `\n` in the change's
+        // text; one the ranges take counts with the atoms below.
+        let glyph = if dom.name_is(node, &tab) {
+            Some('\t')
+        } else if dom.name_is(node, &br) {
+            Some('\n')
+        } else {
+            None
+        };
+        if let Some(glyph) = glyph {
+            let piece = Piece::Glyph { element: node, run };
+            let taken = projection
+                .segments
+                .iter()
+                .find(|s| s.piece == piece)
+                .is_some_and(|s| inside(s.start));
+            if dom.parent(node) == Some(run) && !taken {
+                out.words.push(glyph);
+            }
+            continue;
+        }
         if !dom.name_is(node, &W::t()) && !dom.name_is(node, &W::del_text()) {
             continue;
         }
@@ -4202,9 +4225,10 @@ mod tests {
 
     #[test]
     fn history_guard_keeps_a_record_while_an_atom_of_its_run_remains() {
-        // Carol replaces all of Alice's words; the tab of her run stays hers.
+        // Carol replaces all of Alice's words; the tab of her run stays hers
+        // and is what her record's text still reads.
         let source = paragraph(&alice_with_tab(5, "abc"));
-        let edited = rewriting("r5", "", 3);
+        let edited = rewriting("r5", "\t", 3);
         let guard = |candidate: &[u8]| {
             preserve_direct_history(&source, candidate, &edited, "Carol Diaz", &BTreeMap::new())
         };
