@@ -2688,7 +2688,10 @@ fn check_relationship_integrity(pkg: &PartFs, out: &mut Vec<Finding>) {
         ));
     }
     for name in pkg.parts() {
-        if !name.ends_with(".xml") || name.ends_with(".rels") {
+        // Part names are case-insensitive, so `document.XML` owns its
+        // references as `document.xml` does.
+        let extension = name.rsplit_once('.').map_or("", |(_, ext)| ext);
+        if !extension.eq_ignore_ascii_case("xml") {
             continue;
         }
         let rels = pkg.read_rels_for(&name);
@@ -6023,6 +6026,46 @@ mod validation_owner_boundary_tests {
                     || !finding.message.contains("notepad")),
             "a share whose name is not a package root was read as a part"
         );
+    }
+
+    /// A referenced target behind a mixed-case doubled root, and a
+    /// referenced target from an owner whose extension is `.XML`, are the
+    /// Word-fatal, error-severity finding on their owner, not the unused
+    /// relationship warning.
+    #[test]
+    fn a_referenced_missing_target_is_fatal_on_its_owner_in_any_case() {
+        let body = |id: &str| {
+            format!(
+                "<w:document xmlns:w='{}' xmlns:r='{}'><w:body><w:p><w:r><w:drawing r:embed=\"{id}\"/></w:r></w:p></w:body></w:document>",
+                W::URI,
+                R::URI
+            )
+            .into_bytes()
+        };
+        for (owner, target) in [
+            ("word/document.xml", "//Word/media/no-such.bin"),
+            ("word/extra.XML", "media/no-such.bin"),
+        ] {
+            let mut pkg = package();
+            let id = pkg.add_document_relationship(owner, "urn:test:payload", target);
+            pkg.set_part(owner, body(&id));
+            let mut findings = Vec::new();
+            check_relationship_integrity(&pkg, &mut findings);
+            let missing: Vec<_> = findings
+                .iter()
+                .filter(|f| f.code == "MISSING_REL_TARGET" && f.message.contains(target))
+                .collect();
+            assert_eq!(missing.len(), 1, "{owner} -> {target}: {findings:?}");
+            let finding = missing[0];
+            assert_eq!(finding.part, owner, "{target}");
+            assert!(finding.word_fatal, "{owner} -> {target} is not Word-fatal");
+            assert_eq!(finding.severity, "error", "{owner} -> {target}");
+            assert!(
+                finding
+                    .message
+                    .contains(&format!("relationship '{id}' on '{owner}'"))
+            );
+        }
     }
 
     #[test]
