@@ -75,6 +75,10 @@ fn a_heading_keeps_a_runs_own_bold_and_italic() {
         "{back}"
     );
     assert!(
+        back.lines().any(|line| line == "## **Executive Summary**"),
+        "{back}"
+    );
+    assert!(
         back.lines().any(|line| line == "### _Lean title_"),
         "{back}"
     );

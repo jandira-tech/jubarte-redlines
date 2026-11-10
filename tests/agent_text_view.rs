@@ -3778,7 +3778,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     );
     captures(
         &before,
-        r"<!-- p1[^>]*-->\n## \{\+\+Payment\+\+\}\{r\d+\+\d+ @J\}¶\{r\d+\+\d+ @J\}\n",
+        r"<!-- p1[^>]*-->\n## \{\+\+\*\*Payment\*\*\+\+\}\{r\d+\+\d+ @J\}¶\{r\d+\+\d+ @J\}\n",
     );
     let xml = common::docx::part_string(
         &std::fs::read(dir.path().join("before/clean.docx")).unwrap(),
