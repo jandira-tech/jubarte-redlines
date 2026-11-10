@@ -815,7 +815,13 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
     let mut merged: Vec<(Marks, String)> = Vec::new();
     for span in spans {
         let style = if emphasis {
-            span.marks
+            // A body paragraph prints bold and italic as they show: a run
+            // bold by its paragraph style joins one bold by a toggle.
+            Marks {
+                own_bold: false,
+                own_italic: false,
+                ..span.marks
+            }
         } else {
             // A heading keeps the run's own bold and italic. Underline,
             // highlight, strike and code are marks of their own, and they

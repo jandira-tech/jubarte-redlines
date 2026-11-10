@@ -1888,6 +1888,8 @@ struct Style {
     /// case, while the legend preserves this exact spelling.
     exact_name: String,
     based_on: Option<String>,
+    /// `w:type`; a style without one is a paragraph style.
+    kind: String,
     outline: Option<usize>,
     num: Option<(String, usize)>,
     bold: Option<bool>,
@@ -1936,6 +1938,7 @@ impl Styles {
                         .path(&["basedOn"])
                         .and_then(|n| n.attr("val"))
                         .map(str::to_string),
+                    kind: style.attr("type").unwrap_or("paragraph").to_string(),
                     outline: ppr
                         .and_then(|p| p.child("outlineLvl"))
                         .and_then(|o| o.attr("val"))
@@ -1991,15 +1994,19 @@ impl Styles {
             .find_map(|style| style.jc.as_deref())
     }
 
-    /// The style and its `basedOn` ancestors, nearest first.
+    /// The style and its `basedOn` ancestors, nearest first. A `basedOn`
+    /// naming a style of another type ends the chain: Word ignores it, as
+    /// ECMA-376 §17.7.4.3 says (a character style based on a bold
+    /// paragraph style prints plain).
     fn chain(&self, id: &str) -> Vec<&Style> {
-        let mut out = Vec::new();
+        let mut out: Vec<&Style> = Vec::new();
         let mut current = Some(id.to_string());
         while let Some(id) = current {
             if out.len() >= 16 {
                 break;
             }
             match self.by_id.get(&id) {
+                Some(style) if out.first().is_some_and(|first| first.kind != style.kind) => break,
                 Some(style) => {
                     out.push(style);
                     current = style.based_on.clone();
