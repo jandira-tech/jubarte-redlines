@@ -265,8 +265,8 @@ attribution texts under `LICENSES/`.
 Cloud Agent VMs are Ubuntu. They use the rustup `cargo` on `PATH` (stable,
 which satisfies the 1.94 MSRV). Trust `rustc --version`, not a leftover
 `RUST_VERSION` from the base image. The self-hosted mbx cache at
-`http://mbx-cache:7543` is on the runners' private network, so these VMs
-leave `mbx setup` unused and run Cargo directly.
+`http://mbx-cache:7543` is on the runners' private network, which these
+VMs cannot reach, so they leave `mbx setup` unused and run Cargo directly.
 
 `$CARGO_HOME/config.toml` (usually `/usr/local/cargo/config.toml`) sets
 `[profile.dev] debug = "line-tables-only"`, the same limit CI sets with
