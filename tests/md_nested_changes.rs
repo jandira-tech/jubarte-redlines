@@ -2986,6 +2986,15 @@ fn style_change_carrier_docdefaults_is_not_written() {
         "{:?}",
         out.warnings
     );
+    // An untyped defaults tag is not written at all, so no warning may say
+    // it was written as rPr (cursor 4502337068).
+    assert!(
+        !out.warnings
+            .iter()
+            .any(|warning| warning.contains("docDefaults") && warning.contains("written as rPr")),
+        "{:?}",
+        out.warnings
+    );
 }
 
 #[test]

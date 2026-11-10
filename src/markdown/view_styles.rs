@@ -94,7 +94,8 @@ pub(super) fn style_change_warnings(
 ) -> Vec<String> {
     let mut out = Vec::new();
     for (holder, tags) in legacy {
-        if tags.is_empty() {
+        // The defaults are never written; their own warning below says so.
+        if tags.is_empty() || holder == "docDefaults" {
             continue;
         }
         let verb = if tags.len() == 1 { "has" } else { "have" };
