@@ -743,6 +743,35 @@ fn alternate_content_table_shows_the_branch_word_renders() {
     assert!(!after_t0.contains("Alice"), "{view}");
 }
 
+/// The alternate block is its own block: selecting the paragraph before it
+/// does not carry the table along (cursor 4501815863).
+#[test]
+fn alternate_content_table_is_not_part_of_the_paragraph_before_it() {
+    let source = alternate_tables(true);
+    let out = read_table_fixture(&source, false, &["-p", "p0"]);
+    assert!(out.status.success(), "{out:?}");
+    let view = String::from_utf8_lossy(&out.stdout);
+    assert!(view.contains("Intro."), "{view}");
+    assert!(!view.contains("Alice"), "{view}");
+    assert!(!view.contains("<!-- alternate -->"), "{view}");
+}
+
+/// Plain Markdown shows the table Word renders without the view's
+/// alternate labels (cursor 4501815870).
+#[test]
+fn plain_markdown_shows_the_alternate_table_without_labels() {
+    let source = alternate_tables(true);
+    let md = jubarte::markdown::docx_to_markdown(
+        &source,
+        &jubarte::markdown::MarkdownOptions::default(),
+    )
+    .expect("markdown")
+    .markdown;
+    assert!(md.contains("Alice"), "{md}");
+    assert!(!md.contains("Bob"), "{md}");
+    assert!(!md.contains("alternate"), "{md}");
+}
+
 fn alternate_edit_plan() -> EditPlan {
     EditPlan::from_json(r#"{"schema_version":1,"author":"Alice","date":"2026-10-18T00:00:00Z","operations":[{"kind":"rewrite","paragraph":"t0.row0.cell0","text":"Updated"}]}"#).unwrap()
 }
