@@ -6202,9 +6202,10 @@ impl<'p> Transaction<'p> {
         self.removed_anchor_in(para, find)
     }
 
-    /// [`Self::removed_anchor`] for paragraph `para`.
     /// The short id (`r4`) of the deletion or move [`Self::removed_anchor_in`]
-    /// would name.
+    /// would name. Only the typed inline actions ask (`edit::inline`, a
+    /// `cli` module), so a library built without `cli` leaves it out.
+    #[cfg(feature = "cli")]
     fn removed_anchor_holder(&self, para: usize, find: &str) -> Option<String> {
         let dom = &self.opened.dom;
         let revision = hint::removed_holder(dom, self.paragraph_nodes[para], find)?;
@@ -6217,6 +6218,7 @@ impl<'p> Transaction<'p> {
         Some(crate::ids::ChangeId::new(story_id, wid).short())
     }
 
+    /// [`Self::removed_anchor`] for paragraph `para`.
     fn removed_anchor_in(&self, para: usize, find: &str) -> Option<String> {
         let dom = &self.opened.dom;
         hint::removed_holder(dom, self.paragraph_nodes[para], find)
