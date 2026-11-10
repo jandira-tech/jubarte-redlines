@@ -173,7 +173,7 @@ fn unit_para_has_numpr(dom: &Dom, u: &ComparisonUnit) -> bool {
     let mut found = false;
     u.try_for_each_atom(&mut |atom| {
         for &ae in atom.ancestor_elements.iter() {
-            if !dom.name_is(ae, &p_name.clone()) {
+            if !dom.name_is(ae, &p_name) {
                 continue;
             }
             if let Some(ppr) = dom.element(ae, &W::p_pr()) {
@@ -194,7 +194,7 @@ fn unit_para_ilvl(dom: &Dom, u: &ComparisonUnit) -> Option<u32> {
     let mut out: Option<u32> = None;
     u.try_for_each_atom(&mut |atom| {
         for &ae in atom.ancestor_elements.iter() {
-            if !dom.name_is(ae, &p_name.clone()) {
+            if !dom.name_is(ae, &p_name) {
                 continue;
             }
             out = (|| {
@@ -2665,9 +2665,9 @@ pub fn do_lcs_algorithm(
                     };
                     let mut body_para = None;
                     for &ae in first_atom.ancestor_elements.iter() {
-                        if dom.name_is(ae, &p_name.clone())
+                        if dom.name_is(ae, &p_name)
                             && let Some(par) = dom.parent(ae)
-                            && dom.name_is(par, &body_name.clone())
+                            && dom.name_is(par, &body_name)
                         {
                             body_para = Some((ae, par));
                             break;
@@ -2677,8 +2677,7 @@ pub fn do_lcs_algorithm(
                         return false;
                     };
                     for child in dom.elements(body, None) {
-                        let nm = dom.name(child);
-                        if nm == Some(p_name.clone()) || nm == Some(tbl_name.clone()) {
+                        if dom.name_is(child, &p_name) || dom.name_is(child, &tbl_name) {
                             return child == para;
                         }
                     }
@@ -2703,7 +2702,7 @@ pub fn do_lcs_algorithm(
                     let mut body_block = None;
                     for &ae in last_atom.ancestor_elements.iter() {
                         if let Some(par) = dom.parent(ae)
-                            && dom.name_is(par, &body_name.clone())
+                            && dom.name_is(par, &body_name)
                         {
                             body_block = Some((ae, par));
                             break;
@@ -2721,9 +2720,8 @@ pub fn do_lcs_algorithm(
                         if !seen {
                             continue;
                         }
-                        let nm = dom.name(child);
-                        if nm != Some(p_name.clone()) {
-                            if nm == Some(W::sect_pr()) {
+                        if !dom.name_is(child, &p_name) {
+                            if dom.name_is(child, &W::sect_pr()) {
                                 continue;
                             }
                             return false;
@@ -8753,7 +8751,7 @@ pub fn set_after_unids(dom: &mut Dom, unknown: &CorrelatedSequence) {
     let mut relevant = Vec::new();
     for &ae in first1.ancestor_elements.iter() {
         relevant.push(ae);
-        if dom.name_is(ae, &take_thru.clone()) {
+        if dom.name_is(ae, &take_thru) {
             break;
         }
     }
@@ -8789,7 +8787,7 @@ pub fn set_after_unids(dom: &mut Dom, unknown: &CorrelatedSequence) {
             if nm != dom.name(*src) {
                 break;
             }
-            if nm == Some(footnotes.clone()) || nm == Some(endnotes.clone()) {
+            if dom.name_is(anc, &footnotes) || dom.name_is(anc, &endnotes) {
                 continue;
             }
             if dom.attribute(anc, &PT::unid()).is_none() {
