@@ -62,6 +62,8 @@ highlight = "all"
 # Deny path/git deps in published graph (keep builds reproducible).
 allow-wildcard-paths = true
 skip = [
+    # 0.2 via ring/rustls, 0.3 and 0.4 via tempfile and uuid.
+    { name = "getrandom" },
     # rustix 0.38 still needs 2.x; newer rustix needs 3.x.
     { name = "io-lifetimes" },
     # flate2 and zip do not share one miniz_oxide major.
@@ -72,6 +74,10 @@ skip = [
     { name = "syn" },
     # windows crates still mix 0.52 and 0.61.
     { name = "windows-sys" },
+    # The Windows target triples pull a second windows-targets set beside the host one.
+    { name = "windows-targets" },
+    { name = "windows_x86_64_gnu" },
+    { name = "windows_x86_64_msvc" },
 ]
 
 [sources]
@@ -97,7 +103,6 @@ allow-build-scripts = [
     "alloca",
     "cap-primitives",
     "cap-std",
-    "constant_time_eq",
     "crc32fast",
     "crossbeam-deque",
     "crossbeam-epoch",
