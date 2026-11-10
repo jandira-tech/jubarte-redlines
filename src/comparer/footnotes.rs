@@ -364,38 +364,6 @@ fn list_signature(dom: &mut Dom, num: NodeId, numbering: NodeId) -> Option<Strin
 
 const NUMBERING_CID: &str = "http://schemas.microsoft.com/office/word/2016/wordml/cid";
 
-fn level_overrides(dom: &Dom, num: NodeId) -> String {
-    dom.elements(num, Some(&W::name("lvlOverride")))
-        .into_iter()
-        .map(|o| dom.serialize_element(o))
-        .collect()
-}
-
-/// The destination already holds this instance when the numId, the raw
-/// abstractNumId, and the level overrides match. The abstract definition's
-/// body is not part of that identity: copying it under a new id and
-/// remapping the num would renumber paragraphs that never changed.
-fn same_num_identity(
-    dom: &Dom,
-    to_root: NodeId,
-    from_num: NodeId,
-    from_num_id: i32,
-    from_ref: i32,
-) -> bool {
-    let Some(existing) = dom
-        .elements(to_root, Some(&W::name("num")))
-        .into_iter()
-        .find(|&e| get_int_attribute(dom, e, &W::name("numId")) == Some(from_num_id))
-    else {
-        return false;
-    };
-    let existing_ref = dom
-        .element(existing, &W::abstract_num_id())
-        .and_then(|e| get_int_attribute(dom, e, &W::val()));
-    existing_ref == Some(from_ref)
-        && level_overrides(dom, existing) == level_overrides(dom, from_num)
-}
-
 fn numbering_durable_id(dom: &Dom, num: NodeId) -> Option<(XName, String)> {
     for index in 0..dom.attr_count(num) {
         let (name, value) = dom.attr_at(num, index);
@@ -594,9 +562,6 @@ pub fn copy_missing_numbering(
             continue;
         };
         let mapped = *abstract_map.get(&from_ref).unwrap_or(&from_ref);
-        if same_num_identity(dom, to_root, n, from_num_id, from_ref) {
-            continue;
-        }
         let existing = dom
             .elements(to_root, Some(&num))
             .into_iter()

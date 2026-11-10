@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! A copied list definition keeps a unique durable id, and a num both
-//! documents already share stays the source's num.
+//! documents share over the same definition stays the source's num.
 
 mod common;
 
@@ -51,15 +51,32 @@ fn roots(
 fn compare_keeps_shared_numbering_by_identity() {
     let (mut dom, to, from) = roots(
         &format!("{}{}", abstract_num("decimal"), num("1", "100")),
-        &format!("{}{}", abstract_num("bullet"), num("1", "100")),
+        &format!("{}{}", abstract_num("decimal"), num("1", "100")),
     );
     let (remap, _) = copy_missing_numbering(&mut dom, to, from);
     assert!(
         remap.is_empty(),
-        "the same numId, abstractNumId and overrides stay put: {remap:?}"
+        "the same num over the same definition stays put: {remap:?}"
     );
     let xml = dom.serialize_element(to);
     assert_eq!(xml.matches("<w:num ").count(), 1, "{xml}");
+}
+
+/// A num whose definition changed is a list edit, not a shared num: Word
+/// moves the unchanged items onto the revised list with a `pPrChange`
+/// (m_list_definition_change), so the comparer copies it under a fresh
+/// id with its own durable id (cursor 4501780818).
+#[test]
+fn a_changed_definition_under_the_same_ids_is_copied() {
+    let (mut dom, to, from) = roots(
+        &format!("{}{}", abstract_num("decimal"), num("1", "100")),
+        &format!("{}{}", abstract_num("bullet"), num("1", "100")),
+    );
+    let (remap, _) = copy_missing_numbering(&mut dom, to, from);
+    assert_eq!(remap.get("1").map(String::as_str), Some("2"), "{remap:?}");
+    let xml = dom.serialize_element(to);
+    assert_eq!(xml.matches("<w:num ").count(), 2, "{xml}");
+    assert_eq!(xml.matches("durableId=\"100\"").count(), 1, "{xml}");
 }
 
 #[test]
