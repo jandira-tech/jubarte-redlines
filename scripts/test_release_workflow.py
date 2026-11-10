@@ -554,7 +554,7 @@ class LinuxLibcFloor(unittest.TestCase):
 def overlapping_archive_names(text: str) -> list[tuple[str, str]]:
     """Pairs of binary archive names where one holds the other.
 
-    `jubarte update` (self_update 1.3) takes the first release asset whose
+    `jubarte self-update` (self_update 1.3) takes the first release asset whose
     name *contains* its target, so `linux-x86_64` would also match a
     `linux-x86_64-musl` archive, and so would every installed binary.
     """
