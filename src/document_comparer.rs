@@ -5332,26 +5332,37 @@ fn refuse_past_story_budget(
 }
 
 /// Refuse a story the atomizer cannot flatten, in one walk: a subdocument,
-/// an altChunk, a content part or custom XML markup (word_exp N4 panicked
-/// the atomizer, 2026-10-31), or an element with two direct `w:sectPr`
-/// (the atomizer's last-sectPr move expects one). `story` names the part or
-/// side in the error.
+/// an altChunk, a content part, or a customXml range marker (word_exp N4
+/// panicked the atomizer, 2026-10-31), or an element with two direct
+/// `w:sectPr` (the atomizer's last-sectPr move expects one). A `w:customXml`
+/// element is not a refusal: the atomizer unwraps it and keeps its content
+/// (#1674). `story` names the part or side in the error.
 fn refuse_unatomizable(dom: &Dom, root: NodeId, story: &str) -> Result<(), OpcError> {
     let content_part = W::name("contentPart");
     let sect_pr = W::sect_pr();
+    let custom_xml = W::custom_xml();
+    // The atomizer unwraps `w:customXml` first, so a sectPr's parent is
+    // its nearest ancestor that is not one: two sectPr meet there.
+    let unwrapped_parent = |mut node: NodeId| loop {
+        let parent = dom.parent(node)?;
+        if !dom.name_is(parent, &custom_xml) {
+            return Some(parent);
+        }
+        node = parent;
+    };
     let mut sect_parents = std::collections::HashSet::new();
     let mut bad = None;
     dom.find_descendant_element(root, None, |e| {
         if dom.name_is(e, &sect_pr) {
-            if let Some(parent) = dom.parent(e)
+            if let Some(parent) = unwrapped_parent(e)
                 && !sect_parents.insert(parent)
             {
                 bad = Some("Document contains two sectPr in one story element".to_string());
             }
         } else if dom.name_is(e, &content_part)
-            || dom
-                .name(e)
-                .is_some_and(|name| crate::comparer::tables::INVALID_ELEMENTS.contains(&name))
+            || dom.name(e).is_some_and(|name| {
+                crate::comparer::tables::INVALID_ELEMENTS.contains(&name) && name != custom_xml
+            })
         {
             let name = dom
                 .name(e)
@@ -7849,6 +7860,16 @@ fn compare_documents_impl(
                 }
             }
         }
+        // #1678: a table that replaced the body's last paragraph keeps the
+        // revised document's empty close. After M491, which only removes a
+        // misplaced copy of that paragraph.
+        if let (Some(revised_xml), Some(produced_xml)) =
+            (pkg2.part_string(&main2), out.part_string(&main1))
+            && let Some(kept) =
+                crate::comparer::finalize::keep_revised_empty_close(&produced_xml, &revised_xml)
+        {
+            out.set_part(&main1, kept.into_bytes());
+        }
     }
 
     // Word-parity: strip pStyle/rStyle that styles.xml does not define. LO maps
@@ -8903,6 +8924,16 @@ fn sweep_comparison_chrome(
                     settings,
                 },
             );
+            // After every mark-writing pass and before the cells settle:
+            // the inserted paragraph and the deleted table are both
+            // finished here (#1683, case 2).
+            if let Some(body) = vd.element(root, &W::body()) {
+                crate::comparer::finalize::pair_closing_insert_across_deleted_table(
+                    vd,
+                    body,
+                    revised_xml,
+                );
+            }
         }
     }
     // A cell's final mark carries no revision its row does not

@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import tempfile
@@ -319,7 +318,11 @@ class CriterionAbab(unittest.TestCase):
         )
         for call in calls:
             self.assertIn(f"CRITERION_HOME={self.state}/criterion_home", call)
-        self.assertNotIn("/tmp", next(iter(calls)))
+            # The state directory is a tempfile. On Linux that path is under
+            # /tmp, so remove it before checking that criterion was not aimed
+            # at the system temp directory (#2056). Every call, not the first.
+            outside_state = call.replace(str(self.state), "")
+            self.assertNotIn("/tmp", outside_state, call)
         # six offline comparisons: both self-noise checks and all four B-vs-A
         cmps = [c.split("|")[1] for c in calls if "--load-baseline" in c]
         self.assertEqual(len(cmps), 6, calls)

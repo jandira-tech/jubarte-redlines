@@ -49,6 +49,14 @@
 //! the structured [`LegacyDocument`]; [`doc_to_markdown`] and
 //! [`doc_to_docx`] for the two written outputs.
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Inspections of the legacy field-code stack. The scan must stay linear
+/// in the story length: an all-false stack is not walked per character.
+#[cfg(test)]
+static FIELD_CODE_STEPS: AtomicUsize = AtomicUsize::new(0);
+
 use std::fmt;
 
 /// The first bytes of an OLE compound file.
@@ -171,13 +179,22 @@ pub fn is_compound_file(bytes: &[u8]) -> bool {
 ///
 /// # Errors
 ///
-/// [`LegacyDocError`] when the bytes are not a compound file, hold no
-/// `WordDocument` stream (an encrypted `.docx`, a spreadsheet), predate
-/// Word 97, are encrypted, or whose tables point outside their streams
-/// (the piece table, the style sheet, the property bin tables and their
-/// pages, the list tables, the section table) or contradict themselves
-/// (pieces that do not cover the main story, or that run backwards).
+/// [`LegacyDocError`] when the file exceeds the input byte budget
+/// ([`crate::admission::InputLimits::max_compressed_bytes`]), the bytes
+/// are not a compound file, hold no `WordDocument` stream (an encrypted
+/// `.docx`, a spreadsheet), predate Word 97, are encrypted, or whose
+/// tables point outside their streams (the piece table, the style sheet,
+/// the property bin tables and their pages, the list tables, the section
+/// table) or contradict themselves (pieces that do not cover the main
+/// story, or that run backwards).
 pub fn read(bytes: &[u8]) -> Result<LegacyDocument> {
+    let limit = crate::admission::InputLimits::default().max_compressed_bytes;
+    let size = bytes.len() as u64;
+    if size > limit {
+        return Err(LegacyDocError::new(format!(
+            "the file is {size} bytes; it exceeds the input byte budget of {limit}"
+        )));
+    }
     let file = CompoundFile::open(bytes)?;
     let word = file.stream("WordDocument").ok_or_else(|| {
         LegacyDocError::new(
@@ -572,10 +589,39 @@ fn render_spans(spans: &[Span]) -> String {
     out.trim().to_string()
 }
 
+// Characters examined while deciding whether a `.` or `)` still has an
+// all-ASCII-digit prefix. Re-reading that prefix at every delimiter is
+// quadratic; one pass is one step per character. The tests reject the
+// rescan. The count is per thread, so tests running together do not
+// share it.
+#[cfg(test)]
+thread_local! {
+    pub(super) static LIST_PREFIX_STEPS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Count `steps` characters of the prefix decision. Test-only; an empty
+/// inline function in production builds, so the runtime cost is zero.
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[inline]
+fn count_list_prefix_steps(steps: usize) {
+    LIST_PREFIX_STEPS.with(|total| total.set(total.get() + steps));
+}
+
+#[cfg(not(test))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[inline]
+fn count_list_prefix_steps(_steps: usize) {}
+
 /// Escape one line of text so Markdown reads it back as the same text.
 fn escape_line(text: &str) -> String {
     let text = text.trim();
     let mut out = String::with_capacity(text.len());
+    // Whether every character before the current one is an ASCII digit.
+    // `1.` or `1)` opens a list only then. Carrying the answer decides each
+    // delimiter in constant time instead of re-reading the prefix (#1503).
+    let mut prefix_is_digits = true;
     for (index, ch) in text.char_indices() {
         let at_start = index == 0;
         let escape = match ch {
@@ -584,8 +630,7 @@ fn escape_line(text: &str) -> String {
             '-' | '+' | '=' => at_start,
             '.' | ')' => {
                 // `1.` or `1)` at the start of a line opens a list.
-                let before = text.get(..index).unwrap_or("");
-                !before.is_empty() && before.chars().all(|c| c.is_ascii_digit())
+                prefix_is_digits && !at_start
             }
             _ => false,
         };
@@ -593,6 +638,9 @@ fn escape_line(text: &str) -> String {
             out.push('\\');
         }
         out.push(ch);
+        // One character of the pass: keep the all-digits answer current.
+        count_list_prefix_steps(1);
+        prefix_is_digits &= ch.is_ascii_digit();
     }
     out
 }
@@ -1184,6 +1232,14 @@ struct StoryChar {
 /// A piece that points past the `WordDocument` stream: a truncated or
 /// corrupt file, refused rather than converted short.
 fn main_text(word: &[u8], pieces: &[Piece], ccp_text: u32) -> Result<Vec<StoryChar>> {
+    // The same ceiling `read` uses for a story (`InputLimits::max_story_units`).
+    // Aliased pieces can describe billions of logical characters from one
+    // physical range; refuse that before allocating one record per character.
+    if u64::from(ccp_text) > crate::admission::InputLimits::default().max_story_units {
+        return Err(LegacyDocError::new(
+            "the main story exceeds the logical character budget",
+        ));
+    }
     let past = || LegacyDocError::new("a text piece points past the WordDocument stream");
     // The pieces run from CP 0 through the main story without a gap, or
     // the document would come out quietly shorter than it is.
@@ -1630,8 +1686,10 @@ impl Story<'_> {
         let mut out = Vec::new();
         let mut spans: Vec<Span> = Vec::new();
         // Field nesting: true while inside a field's code (before its
-        // separator).
+        // separator). `code_frames` is how many of those are still code,
+        // so the check below does not walk the stack per character.
         let mut fields: Vec<bool> = Vec::new();
+        let mut code_frames: u32 = 0;
         // Each finished row and whether it is marked as a header.
         let mut rows: Vec<(Vec<String>, bool)> = Vec::new();
         let mut row: Vec<String> = Vec::new();
@@ -1639,20 +1697,26 @@ impl Story<'_> {
 
         for story in chars {
             // Inside any field's code, even a nested field's result is code.
-            let in_code = fields.iter().any(|&code| code);
+            let in_code = code_frames != 0;
             let text = match story.ch {
                 '\u{13}' => {
                     fields.push(true);
+                    code_frames = code_frames.saturating_add(1);
                     continue;
                 }
                 '\u{14}' => {
-                    if let Some(top) = fields.last_mut() {
+                    if let Some(top) = fields.last_mut()
+                        && *top
+                    {
                         *top = false;
+                        code_frames = code_frames.saturating_sub(1);
                     }
                     continue;
                 }
                 '\u{15}' => {
-                    fields.pop();
+                    if fields.pop() == Some(true) {
+                        code_frames = code_frames.saturating_sub(1);
+                    }
                     continue;
                 }
                 _ if in_code => continue,
@@ -1793,6 +1857,47 @@ mod tests {
             "a\\_b \\* c \\[x\\] \\#2 \\$5"
         );
         assert_eq!(escape_line("  well-known  "), "well-known");
+    }
+
+    #[test]
+    fn escapes_list_delimiters_only_after_sole_digit_runs() {
+        // `1.` or `1)` opens a list only when nothing but digits precedes
+        // it; a delimiter after that first one is literal text.
+        assert_eq!(escape_line("12) not a list"), "12\\) not a list");
+        assert_eq!(escape_line("1.2."), "1\\.2.");
+        assert_eq!(escape_line("3.14)"), "3\\.14)");
+        assert_eq!(escape_line("."), ".");
+        assert_eq!(escape_line(")."), ").");
+        // Only ASCII digits count: `٣` does not open a list.
+        assert_eq!(escape_line("٣."), "٣.");
+    }
+
+    #[test]
+    fn list_prefix_scan_stays_linear() {
+        // 8_000 digits, then 4_000 `1.` pairs. Re-reading the digit prefix
+        // at every delimiter examines tens of millions of characters; one
+        // pass examines each character a constant number of times.
+        let digits = 8_000;
+        let pairs = 4_000;
+        let mut text = "7".repeat(digits);
+        text.push('.');
+        text.push_str(&"1.".repeat(pairs - 1));
+        let chars = text.chars().count();
+        let delimiters = text.chars().filter(|&c| matches!(c, '.' | ')')).count();
+        assert_eq!(delimiters, pairs);
+        LIST_PREFIX_STEPS.with(|steps| steps.set(0));
+        let escaped = escape_line(&text);
+        let steps = LIST_PREFIX_STEPS.with(std::cell::Cell::get);
+        const C: usize = 4;
+        let bound = C * chars;
+        assert!(
+            steps <= bound,
+            "escaping {delimiters} delimiters examined {steps} characters; \
+             a single pass examines at most {bound}"
+        );
+        // Only the first delimiter follows a pure digit run.
+        let expected = format!("{}\\.{}", "7".repeat(digits), "1.".repeat(pairs - 1));
+        assert_eq!(escaped, expected);
     }
 
     #[test]
@@ -2044,6 +2149,84 @@ mod tests {
             })
             .collect();
         assert_eq!(texts, ["aoneb"]);
+    }
+
+    #[test]
+    fn an_all_false_field_stack_is_not_walked_per_character() {
+        let (papx, chpx) = (FkpIndex { runs: Vec::new() }, FkpIndex { runs: Vec::new() });
+        let lists = Lists::default();
+        let depth = 40u32;
+        let mut text = String::new();
+        for _ in 0..depth {
+            text.push('\u{13}');
+            text.push('\u{14}');
+        }
+        text.push_str(&"x".repeat(depth as usize));
+        text.push('\r');
+        let chars = story_chars(&text);
+        let story = Story {
+            papx: &papx,
+            chpx: &chpx,
+            styles: &[],
+            lists: &lists,
+            section_marks: Vec::new(),
+        };
+        FIELD_CODE_STEPS.store(0, Ordering::Relaxed);
+        let blocks = story.blocks(&chars);
+        let steps = FIELD_CODE_STEPS.load(Ordering::Relaxed);
+        assert!(
+            steps <= chars.len(),
+            "field-code check inspected {steps} stack entries for {} characters",
+            chars.len()
+        );
+        let rendered: Vec<String> = blocks
+            .iter()
+            .map(|b| match b {
+                Block::Paragraph(p) => p.text(),
+                Block::Table(_) => "table".into(),
+            })
+            .collect();
+        assert_eq!(rendered, ["x".repeat(depth as usize)]);
+    }
+
+    #[test]
+    fn a_main_story_past_the_logical_budget_is_refused() {
+        let budget = crate::admission::InputLimits::default().max_story_units;
+        let n = u32::try_from(budget).unwrap().saturating_add(1);
+        let word = vec![b'A'; usize::try_from(n).unwrap()];
+        let pieces = [Piece {
+            cp_start: 0,
+            cp_end: n,
+            fc: 0,
+            compressed: true,
+            modifier: CharModifier::default(),
+        }];
+        match main_text(&word, &pieces, n) {
+            Ok(chars) => panic!(
+                "materialized {} logical characters past the budget",
+                chars.len()
+            ),
+            Err(err) => assert!(
+                err.to_string().contains("logical character budget"),
+                "{err}"
+            ),
+        }
+    }
+
+    #[test]
+    fn a_doc_past_the_input_byte_budget_is_refused() {
+        let budget = crate::admission::InputLimits::default().max_compressed_bytes;
+        let mut bytes = vec![0u8; usize::try_from(budget).unwrap().saturating_add(1)];
+        bytes[..OLE_MAGIC.len()].copy_from_slice(OLE_MAGIC);
+        match read(&bytes) {
+            Ok(_) => panic!("read a document past the input byte budget"),
+            Err(err) => {
+                let text = err.to_string();
+                assert!(text.contains("input byte budget"), "{text}");
+                assert!(text.contains(&(budget + 1).to_string()), "{text}");
+                assert!(text.contains(&budget.to_string()), "{text}");
+            }
+        }
     }
 
     /// A supplementary character split across two Unicode pieces is one

@@ -194,6 +194,7 @@ before|you|Ring-3 Word open probe, the macOS release gate before any crates.io p
 before|you|lane validity: every validator error signature in the redlines the release ships already exists in one of its two sources or in Word's own redline of the pair; the tool reports WORD, OWN and UNREADABLE SOURCE, and only an OWN signature fails the gate — it is read, then fixed|python3 scripts/lane_validity.py release_info/sample_redline_@V@_*.csv --root ../neurotic_docx_bench --redlines parity/_scratch/sweep_<date> (the Ring-3 sweep's folder)
 before|you|bench hygiene while scoring: one scoring job at a time; Word only through the bench scripts (--timeout 300, WD_MAX=300); probe documents pass tools/validate-docx first; nothing in /tmp|pgrep -fl '[w]ord_pdf.py'; pgrep -fl '[w]ord_redline.py'; pgrep -fl '[j]ubarte_release_info' (each empty before a scoring job starts)
 0|auto|Preflight: main branch, clean tree, tools, gh credentials; crates.io + npm credentials and UV_PUBLISH_TOKEN only with --local-publish|scripts/release.sh step 0 (its die lines)
+0|auto|mbx auto-gc is paused for the run when it is on, and restored on exit (failed or not); an owner who turned it off keeps it off; no mbx, nothing happens|scripts/release.sh step 0
 0|auto|The release tree is never the canonical checkout (~/T/jubarte-redlines through any link, or JUBARTE_CANONICAL_CHECKOUT); HEAD's check runs that did not pass are printed as a CHECK NOW for the releaser to triage, and so is a HEAD with no check run or none that succeeded (#1763); the run goes on (#1751)|scripts/release.sh step 0 (canonical_checkout, head_ci_report)
 0|auto|The app's step can run: its checkout (jubarte-app/ or JUBARTE_APP_DIR) carries scripts/release-engine.sh, a CHANGELOG section naming jubarte-redlines @V@, and is on main, in sync, clean, with the site's release script and its tools — proved before anything is published, not found out at step 13|jubarte-app/scripts/release-engine.sh @V@ --engine-dir "$PWD" --preflight
 1|auto|Version sync: every manifest, the 4 tracked Cargo.locks (., jubarte-python, jubarte-wasm, jubarte-rust-inproc; fuzz/ tracks none), the 4 library READMEs; a half-bumped tree from an interrupted run dies naming the file|scripts/release.sh step 1 (the half_bumped loop)
@@ -228,8 +229,7 @@ after|you|App Store, all of MAC_APP_STORE_RELEASE.md: upload the pkg, wait for V
 after|you|notarize: Developer ID sign inside-out (nested bundles deepest first, then bare dylibs, then every Mach-O), notarize, staple, validate each artifact — the DMG lands at src-tauri/target/release/bundle/dmg/Jubarte_@V@_aarch64.dmg|ENTITLEMENTS=<entitlements-direct.plist> jubarte-app/scripts/notarize-direct.sh @V@ <app dir> (keychain profile notarytool-cicero)
 after|you|benchmark lane upload: after the full-corpus run, the site fixtures restage uploads to the Hugging Face dataset, pins fixtures.lock to the @V@ lane and deploys — the release's own figures are on jubarte.pro since step 13; the pages this second deploy rewrites are read again (the use-cases strips now come from the @V@ lane, the full-corpus tables moved)|(cd jubarte-app/jubarte-site && scripts/release.sh bench @V@ --redline-tool jubarte-@V@) — its fixtures stage uploads and pins
 after|you|RESULTS.md: the full-corpus run that feeds the bench RESULTS.md still runs for @V@|(cd ../neurotic_docx_bench && uv run scripts/release_jubarte.py @V@)
-after|you|bench rerun: the same release-info flow re-runs WITHOUT --binary, on the release's own binary, now that the GitHub release exists|(cd ../neurotic_docx_bench && uv run python -m neurotic_docx_bench.jubarte_release_info @V@ --engine-dir <engine>)
-after|you|reproduces: the released binary (downloaded from the GitHub release) reproduces the candidate's outputs on the release samples|python3 scripts/identity.py <released binary> <candidate> <out dir> release_info/sample_*_@V@_*.csv --root ../neurotic_docx_bench
+after|you|reproduces: the released binary (downloaded from the GitHub release) reproduces the candidate's outputs on the release samples; this is the post-release proof, the release-info flow is not re-run on the released binary (outputs identical to the scored candidate's score the same)|python3 scripts/identity.py <released binary> <candidate> <out dir> release_info/sample_*_@V@_*.csv --root ../neurotic_docx_bench
 after|you|self-update serves the release: jubarte self-update --version @V@ installs the archive, verifies it against the release's SHA256SUMS.txt (and its signature once keys/ holds a public key), and the replaced binary answers @V@ — the path every prebuilt user takes|jubarte self-update --version @V@ --yes; jubarte --version
 after|you|the public pages of @V@ are read once, human eyes: docs.rs built the release's docs (step 12 warns while it has not), and each registry page shows the README cut for v@V@ with its note where the channel accepts one|open https://docs.rs/jubarte-redlines/@V@ https://crates.io/crates/jubarte-redlines/@V@ https://pypi.org/project/jubarte-redlines/@V@/ https://www.npmjs.com/package/jubarte-wasm/v/@V@ https://www.npmjs.com/package/jubarte-redlines/v/@V@
 after|you|handoff: the release's running log and handoff notes are written down — nothing a releaser must remember lives only in a head or a chat|the release work folder's STATE.md, kept current to the end
@@ -353,7 +353,16 @@ TAG="v$VER"
 
 say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 step() { printf '  - %s\n' "$*"; }
-die()  { printf '\033[31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
+# Step 0 sets this only after it has paused an auto-gc that was on.
+# Idempotent: die and the EXIT trap both call it (#2036).
+_JUBARTE_MBX_GC_PAUSED=0
+restore_mbx_auto_gc() {
+  if [ "${_JUBARTE_MBX_GC_PAUSED:-}" = 1 ]; then
+    _JUBARTE_MBX_GC_PAUSED=0
+    mbx settings set gc.auto true >/dev/null 2>&1 || true
+  fi
+}
+die()  { printf '\033[31mERROR: %s\033[0m\n' "$*" >&2; restore_mbx_auto_gc; exit 1; }
 
 # Run a cargo packaging command without its one warning per tests/*.rs and
 # examples/*.rs the crate's `include` leaves out of the package (431 lines in
@@ -800,11 +809,25 @@ PY
 # with its own release pull request, step 13). A failed gate removes its
 # layout unless JUBARTE_APP_GATE_KEEP asks to keep it.
 app_test_gate() {
-  local gate
+  local gate saved body
   gate=$(mktemp -d "${TMPDIR:-/tmp}/jubarte-app-gate.XXXXXX")
   # remove the layout on interrupt, and on every exit that did not ask to
-  # keep it — the EXIT trap also catches die's `exit 1` below
-  trap '[ -n "${JUBARTE_APP_GATE_KEEP:-}" ] || rm -rf "$gate"' EXIT
+  # keep it — the EXIT trap also catches die's `exit 1` below.
+  # Chain a trap already installed (mbx auto-gc, #2036) instead of
+  # replacing it. bash 3.2 unsets a function's locals before EXIT, so the
+  # previous body is a script-level function, as patch_public_additions does.
+  saved=$(trap -p EXIT || true)
+  _jubarte_app_gate_prev_exit() { :; }
+  if [ -n "$saved" ]; then
+    body=${saved#trap -- }
+    body=${body% EXIT}
+    eval "_jubarte_app_gate_prev_exit() { eval $body; }"
+  fi
+  # The trap names a script-level copy of the layout path: a set -e death
+  # unwinds the function's locals before EXIT runs, and set -u would then
+  # abort the trap on "$gate" before the chained restore (#2071 review).
+  _JUBARTE_APP_GATE_DIR=$gate
+  trap '[ -n "${JUBARTE_APP_GATE_KEEP:-}" ] || rm -rf "$_JUBARTE_APP_GATE_DIR"; _jubarte_app_gate_prev_exit' EXIT
   git archive HEAD | tar -x -C "$gate"
   mkdir "$gate/jubarte-app"
   git -C "$APP_REPO" archive HEAD | tar -x -C "$gate/jubarte-app"
@@ -817,11 +840,11 @@ app_test_gate() {
     echo "── the app's cargo test, tail of $gate/cargo-test.log ──" >&2
     tail -n 40 "$gate/cargo-test.log" >&2
     rm -rf "$gate"
-    trap - EXIT
+    if [ -n "$saved" ]; then eval "$saved"; else trap - EXIT; fi
     die "the app's cargo test fails against the engine at HEAD (tail above) — fix the app on its main (or take the engine API break out), then rerun; the tag and every publish are still ahead. JUBARTE_APP_GATE_KEEP=1 keeps the throwaway layout"
   fi
   rm -rf "$gate"
-  trap - EXIT
+  if [ -n "$saved" ]; then eval "$saved"; else trap - EXIT; fi
   step "the app's cargo test passes against the engine at HEAD (fresh jubarte-app layout)"
 }
 
@@ -833,6 +856,21 @@ say "0. Preflight"
   || die "this is the canonical checkout ($(pwd -P)), the owner's working tree — release from a clean worktree of main: git worktree add <dir> main (AGENTS.md)"
 [ "$(git branch --show-current)" = "main" ] \
   || die "release from main only (current: $(git branch --show-current))"
+
+# mbx auto-gc can prune binding targets mid-run (#2036). Pause it only
+# when it is on, and only after the branch check, so a not-main preflight
+# never flips the machine's setting. The EXIT trap covers a set -e death,
+# which does not call die. An owner who turned it off keeps it off. No
+# mbx on PATH: nothing happens.
+if command -v mbx >/dev/null 2>&1; then
+  _jubarte_mbx_gc=$(mbx settings get gc.auto 2>/dev/null | tr -d '[:space:]' || true)
+  if [ "$_jubarte_mbx_gc" = "true" ]; then
+    mbx settings set gc.auto false
+    _JUBARTE_MBX_GC_PAUSED=1
+    trap restore_mbx_auto_gc EXIT
+  fi
+fi
+unset _jubarte_mbx_gc || true
 
 git fetch --quiet origin main
 [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] \

@@ -172,6 +172,23 @@ not an entry in the RustSec database `cargo-deny` reads
 (`scripts/security-check.sh`), so the daily advisory watch reported
 nothing until the version was checked by hand.
 
+**RUSTSEC-2025-0168** — `self_update` extraction APIs. Affected
+`self_update >=1.3, <2.3`. This tree depends on 1.3.1, which is inside
+that range. `src/update.rs` registers `verify_archive` and refuses a zip
+member that repeats or inflates past the download budget, and a tar member
+that is a link, carries setuid, setgid or sticky bits, or escapes the
+extract directory, before that crate unpacks the archive.
+
+**RUSTSEC-2022-0048** — withdrawn. It is not an active advisory and it is
+not an ignore in `deny.toml`.
+
+**RUSTSEC-2026-0206** — `rustybuzz` is a direct dependency in `Cargo.lock`.
+The `deny.toml` ignore is this reachable crate, not an absent call path.
+
+**RUSTSEC-2026-0192** — `ttf-parser` is a direct dependency in `Cargo.lock`
+and is also reached through `rustybuzz`. The `deny.toml` ignore is this
+reachable crate, not an absent call path.
+
 ## Security checks
 
 Install `cargo-deny` 0.20.2 and Gitleaks 8.30.1, then run:
