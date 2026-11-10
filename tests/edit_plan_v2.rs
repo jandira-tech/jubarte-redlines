@@ -75,6 +75,103 @@ fn production_schema_and_parser_reject_design_malformed_cases() {
         );
     }
 }
+
+#[test]
+fn a_v2_plan_names_a_v1_field_the_way_a_v1_plan_does() {
+    let bad = r#"{"schema_version":2,"author":"Ann","operations":[{"kind":"delete","paragraph":{"index":0},"find":"thirty"}]}"#;
+    assert_eq!(
+        PlanV2::from_json(bad).unwrap_err().to_string(),
+        r#"INVALID_PLAN (op-1): delete: unknown field "paragraph"; did you mean "target"? fields: find, occurrence, target"#
+    );
+    for written in ["paragraphs", "anchor"] {
+        let bad = format!(
+            r#"{{"schema_version":2,"author":"Ann","operations":[{{"kind":"delete","{written}":{{"index":0}},"find":"thirty"}}]}}"#
+        );
+        assert_eq!(
+            PlanV2::from_json(&bad).unwrap_err().to_string(),
+            format!(
+                r#"INVALID_PLAN (op-1): delete: unknown field "{written}"; did you mean "target"? fields: find, occurrence, target"#
+            ),
+            "{written}"
+        );
+    }
+    let good = with_ops(json!([{
+        "kind": "delete",
+        "target": {"short_id": "p0", "long_id": "document.w:p.j:short.p0"},
+        "find": "thirty"
+    }]));
+    PlanV2::from_json(&good.to_string()).unwrap();
+}
+
+/// Another schema version is refused as such, before v2's field names
+/// apply to its operations.
+#[test]
+fn another_schema_version_is_unsupported_before_its_fields_are_named() {
+    let mut plan = with_ops(json!([{"kind":"delete","paragraph":{"index":0},"find":"thirty"}]));
+    plan["schema_version"] = json!(3);
+    let error = PlanV2::from_json(&plan.to_string()).unwrap_err();
+    assert_eq!(error.code, "UNSUPPORTED_SCHEMA", "{error}");
+}
+
+/// The message names the operation that holds the field, and that kind's
+/// own fields, past a valid operation and past a malformed one.
+#[test]
+fn a_later_operation_names_its_own_kind_index_and_fields() {
+    let t = json!({"short_id": "p0", "long_id": "document.w:p.j:short.p0"});
+    let comment = json!({"kind":"comment","paragraph":{"index":0},"text":"why"});
+    for first in [
+        json!({"kind":"delete","target":t,"find":"thirty"}),
+        json!({"target":t,"find":"thirty"}),
+    ] {
+        let plan = with_ops(json!([first, comment]));
+        assert_eq!(
+            PlanV2::from_json(&plan.to_string())
+                .unwrap_err()
+                .to_string(),
+            r#"INVALID_PLAN (op-2): comment: unknown field "paragraph"; did you mean "target"? fields: find, occurrence, target, text, through"#,
+            "{first}"
+        );
+    }
+}
+
+/// The field list an unknown-field message prints is the one serde
+/// accepts for that kind: a field added to `Operation` must be added there.
+#[test]
+fn every_kind_lists_the_fields_serde_accepts() {
+    use jubarte::edit::v2::Operation;
+    for kind in [
+        "replace",
+        "insert",
+        "delete",
+        "rewrite",
+        "insert_paragraph",
+        "delete_paragraph",
+        "comment",
+        "reply_comment",
+        "resolve_comment",
+        "edit_comment",
+        "delete_comment",
+    ] {
+        let op = json!({"kind": kind, "qqqqqqqq": 1});
+        let serde = serde_json::from_value::<Operation>(op.clone())
+            .unwrap_err()
+            .to_string();
+        let expected = serde
+            .split("expected")
+            .nth(1)
+            .unwrap_or_else(|| panic!("{serde}"));
+        let mut accepted: Vec<&str> = expected.split('`').skip(1).step_by(2).collect();
+        accepted.sort_unstable();
+        let message = PlanV2::from_json(&with_ops(json!([op])).to_string())
+            .unwrap_err()
+            .to_string();
+        let listed = message
+            .split("fields: ")
+            .nth(1)
+            .unwrap_or_else(|| panic!("{message}"));
+        assert_eq!(listed, accepted.join(", "), "{kind}: {serde}");
+    }
+}
 #[test]
 fn eleven_kinds_and_explicit_policies_round_trip() {
     let t = json!({"short_id":"p0","long_id":"document.w:p.j:short.p0"});
