@@ -1900,9 +1900,8 @@ fn style_prop_signature(dom: &Dom, node: NodeId) -> String {
         return String::new();
     };
     let mut out = n.clark();
-    let mut attrs: Vec<(String, String)> = dom
-        .attributes(node)
-        .into_iter()
+    let mut attrs: Vec<(String, &str)> = dom
+        .attributes_iter(node)
         .filter(|(a, _)| {
             !a.local_name().to_ascii_lowercase().starts_with("rsid")
                 && !dom.is_namespace_declaration(a)
@@ -1914,11 +1913,14 @@ fn style_prop_signature(dom: &Dom, node: NodeId) -> String {
         out.push('\u{1}');
         out.push_str(&a);
         out.push('=');
-        out.push_str(&v);
+        out.push_str(v);
     }
-    for c in dom.elements(node, None) {
-        out.push('\u{2}');
-        out.push_str(&style_prop_signature(dom, c));
+    for i in 0..dom.child_count(node) {
+        let c = dom.child_at(node, i);
+        if dom.is_element(c) {
+            out.push('\u{2}');
+            out.push_str(&style_prop_signature(dom, c));
+        }
     }
     out
 }
@@ -2131,7 +2133,11 @@ fn effective_chain_props(
     let mut slots: Slots = Slots::new();
 
     let absorb = |props: &mut Props, slots: &mut Slots, block: NodeId| {
-        for c in dom.elements(block, None) {
+        for i in 0..dom.child_count(block) {
+            let c = dom.child_at(block, i);
+            if !dom.is_element(c) {
+                continue;
+            }
             let Some(n) = dom.name(c) else { continue };
             if is_style_prop_noise(&n) {
                 continue;
@@ -2141,9 +2147,9 @@ fn effective_chain_props(
                 continue;
             }
             let slot = slots.entry(n.clark()).or_default();
-            for (a, v) in dom.attributes(c) {
+            for (a, v) in dom.attributes_iter(c) {
                 if a.local_name().to_ascii_lowercase().starts_with("rsid")
-                    || dom.is_namespace_declaration(&a)
+                    || dom.is_namespace_declaration(a)
                 {
                     continue;
                 }
@@ -2158,7 +2164,7 @@ fn effective_chain_props(
                         }
                     }
                 }
-                slot.insert(a.clark(), v);
+                slot.insert(a.clark(), v.to_string());
             }
         }
     };

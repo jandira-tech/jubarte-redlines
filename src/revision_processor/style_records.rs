@@ -192,10 +192,9 @@ fn prop_slots(dom: &Dom, prop: NodeId) -> Vec<(Slot, Vec<(String, String)>)> {
         return Vec::new();
     }
     let attrs: Vec<(String, String)> = dom
-        .attributes(prop)
-        .into_iter()
+        .attributes_iter(prop)
         .filter(|(a, _)| !dom.is_namespace_declaration(a))
-        .map(|(a, v)| (a.local_name().to_string(), v))
+        .map(|(a, v)| (a.local_name().to_string(), v.to_string()))
         .collect();
     let slot = |group: &str| Slot {
         ns: ns.to_string(),
@@ -452,11 +451,16 @@ pub(crate) fn complete_from_original_chain(
     block_local: &str,
     recorded: &dyn Fn(NodeId) -> bool,
 ) -> bool {
-    let by_id: HashMap<String, NodeId> = dom
-        .elements(a_root, Some(&W::name("style")))
-        .into_iter()
-        .filter_map(|s| Some((dom.attribute(s, &W::name("styleId"))?.to_string(), s)))
-        .collect();
+    let style = W::name("style");
+    let mut by_id = HashMap::new();
+    for i in 0..dom.child_count(a_root) {
+        let s = dom.child_at(a_root, i);
+        if dom.name_is(s, &style)
+            && let Some(style_id) = dom.attribute(s, &W::style_id())
+        {
+            by_id.insert(style_id.to_string(), s);
+        }
+    }
     // (style owning the layer, None for the docDefaults; the layer)
     let mut layers: Vec<(Option<NodeId>, NodeId)> = Vec::new();
     if let Some(dd) = dom
@@ -479,7 +483,11 @@ pub(crate) fn complete_from_original_chain(
     type Declaration = (Option<NodeId>, NodeId, Vec<(String, String)>);
     let mut effective: HashMap<Slot, Declaration> = HashMap::new();
     for (owner, layer) in layers {
-        for prop in dom.elements(layer, None) {
+        for i in 0..dom.child_count(layer) {
+            let prop = dom.child_at(layer, i);
+            if !dom.is_element(prop) {
+                continue;
+            }
             for (slot, attrs) in prop_slots(dom, prop) {
                 effective.insert(slot, (owner, prop, attrs));
             }
@@ -596,7 +604,11 @@ fn effective_rpr(
         let Some(block) = dom.element(s, &W::r_pr()) else {
             continue;
         };
-        for prop in dom.elements(block, None) {
+        for i in 0..dom.child_count(block) {
+            let prop = dom.child_at(block, i);
+            if !dom.is_element(prop) {
+                continue;
+            }
             for (slot, attrs) in prop_slots(dom, prop) {
                 drop_slot(dom, out, &slot);
                 if slot.group.is_empty() {
