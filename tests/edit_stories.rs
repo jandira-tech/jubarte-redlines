@@ -436,3 +436,61 @@ fn capabilities_advertise_exactly_the_story_kinds_edit_accepts() {
     assert_word_valid_package(&result.clean);
     assert_word_valid_package(&result.redline);
 }
+
+/// A header edit, and a reword of a comment, change those parts only. The
+/// main document's bytes stay the bytes the package was opened with.
+#[test]
+fn a_header_edit_and_a_comment_reword_leave_the_main_document_bytes() {
+    let source = letter();
+    let before = part_string(&source, "word/document.xml").unwrap();
+    let header = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"replace","paragraph":"header1","find":"Confidential","replacement":"Privileged"}]"#,
+        ),
+    )
+    .unwrap();
+    assert!(header.report.ok, "{:?}", header.report.operations);
+    assert_ne!(
+        part_string(&header.clean, "word/header1.xml").as_deref(),
+        part_string(&source, "word/header1.xml").as_deref(),
+        "the header edit did not change the header"
+    );
+    assert_eq!(
+        part_string(&header.clean, "word/document.xml").as_deref(),
+        Some(before.as_str()),
+        "a header edit rewrote the main document"
+    );
+
+    let commented = docx_with_sect(&para("The cap is 10."), &[], "");
+    let with_comment = apply_plan(
+        &commented,
+        &plan(
+            &commented,
+            r#"[{"kind":"comment","paragraph":"p0","find":"cap","text":"Too low"}]"#,
+        ),
+    )
+    .unwrap();
+    let marked = part_string(&with_comment.clean, "word/document.xml").unwrap();
+    let id = jubarte::comments::list_comments(&with_comment.clean).unwrap()[0].id;
+    let reworded = apply_plan(
+        &with_comment.clean,
+        &plan(
+            &with_comment.clean,
+            &format!(r#"[{{"kind":"edit_comment","comment_id":{id},"text":"Still too low"}}]"#),
+        ),
+    )
+    .unwrap();
+    assert!(reworded.report.ok, "{:?}", reworded.report.operations);
+    let comments = part_string(&reworded.clean, "word/comments.xml").unwrap_or_default();
+    assert!(
+        comments.contains("Still too low"),
+        "the reword did not reach the comment: {comments}"
+    );
+    assert_eq!(
+        part_string(&reworded.clean, "word/document.xml").as_deref(),
+        Some(marked.as_str()),
+        "a comment reword rewrote the main document"
+    );
+}
