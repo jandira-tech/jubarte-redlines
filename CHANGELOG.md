@@ -46,7 +46,7 @@ The crafted-input hardening pass continues from 0.17.0. Each item below is refus
 
 ### Changed
 
-- **Linux release binaries run on glibc 2.28 and later** (#2112, #2030). The `linux-x86_64` and `linux-aarch64` CLI archives are built in the manylinux_2_28 images, and `scripts/check_glibc_floor.py` fails the release job when a binary needs a newer symbol. 0.17.0's needed glibc 2.43 and failed in Ubuntu 24.04 containers. Static `linux-musl-x86_64` and `linux-musl-aarch64` archives are published beside them. `jubarte self-update` keeps fetching the glibc archive.
+- **Linux release binaries run on glibc 2.28 and later** (#2112, #2030). The `linux-x86_64` and `linux-aarch64` CLI archives are built in the manylinux_2_28 images, and `scripts/check_glibc_floor.py` fails the release job when a binary needs a newer symbol. 0.17.0's needed glibc 2.43 and failed in Ubuntu 24.04 containers. Static `linux-musl-x86_64` and `linux-musl-aarch64` archives are published beside them. `jubarte self-update` fetches the archive of the build it runs: a glibc binary the glibc archive, a musl binary the musl one.
 - **The dependency gate refuses a duplicated crate** (#2088, #654). `scripts/security-check.sh` runs `cargo deny check bans` on its five manifests with `multiple-versions = "deny"`. Each ignored advisory is now recorded beside the locked crate that reaches it (#2089, #605).
 
 - **`deny.toml` lists the crates whose build scripts may run** (#2216, #2220, #784), across the five graphs `scripts/security-check.sh` checks. The list is an inventory, not a sandbox.
