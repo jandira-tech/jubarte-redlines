@@ -510,13 +510,13 @@ fn check_operation_fields(plan: &serde_json::Value) -> Result<(), EditError> {
     };
     for (i, operation) in operations.iter().enumerate() {
         let Some(map) = operation.as_object() else {
-            return Ok(());
+            continue;
         };
         let Some(kind) = map.get("kind").and_then(serde_json::Value::as_str) else {
-            return Ok(());
+            continue;
         };
         let Some(fields) = operation_fields(kind) else {
-            return Ok(());
+            continue;
         };
         let Some(key) = map
             .keys()
@@ -531,6 +531,15 @@ fn check_operation_fields(plan: &serde_json::Value) -> Result<(), EditError> {
     }
     Ok(())
 }
+
+fn unsupported(version: u64) -> EditError {
+    super::err(
+        "UNSUPPORTED_SCHEMA",
+        None,
+        format!("schema_version {version} is not supported (expected 2)"),
+    )
+}
+
 fn require(condition: bool, message: &str) -> Result<(), EditError> {
     if condition {
         Ok(())
@@ -586,10 +595,25 @@ impl PlanV2 {
     /// Successful parsing does not verify this request against source bytes.
     pub fn from_json(json: &str) -> Result<Self, EditError> {
         let json = super::without_byte_order_mark(json);
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(json) {
-            check_operation_fields(&value)?;
-        }
-        let plan: Self = serde_json::from_str(json).map_err(|e| invalid(e.to_string()))?;
+        let plan: Self = match serde_json::from_str(json) {
+            Ok(plan) => plan,
+            // Only a plan serde refuses is read again, to name the field
+            // the way a first-version plan's unknown field is named. Another
+            // version is refused as such before v2's fields apply to it.
+            Err(e) => {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(json) {
+                    if let Some(version) = value
+                        .get("schema_version")
+                        .and_then(serde_json::Value::as_u64)
+                        .filter(|&version| version != 2)
+                    {
+                        return Err(unsupported(version));
+                    }
+                    check_operation_fields(&value)?;
+                }
+                return Err(invalid(e.to_string()));
+            }
+        };
         plan.validate()?;
         Ok(plan)
     }
@@ -598,14 +622,7 @@ impl PlanV2 {
     /// value. This performs no source resolution and no document mutation.
     pub fn validate(&self) -> Result<(), EditError> {
         if self.schema_version != 2 {
-            return Err(super::err(
-                "UNSUPPORTED_SCHEMA",
-                None,
-                format!(
-                    "schema_version {} is not supported (expected 2)",
-                    self.schema_version
-                ),
-            ));
+            return Err(unsupported(self.schema_version));
         }
         require(
             hash(&self.source.sha256),
