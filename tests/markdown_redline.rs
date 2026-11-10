@@ -13,7 +13,7 @@ use common::validity::assert_word_valid_package;
 use jubarte::comparer::{WmlComparerRevisionType, WmlComparerSettings};
 use jubarte::document_comparer::{accept_revisions, get_revisions, reject_revisions};
 use jubarte::inspect;
-use jubarte::markdown::{RedlineOptions, Source, apply_markdown, redline};
+use jubarte::markdown::{RedlineOptions, Source, apply_markdown, apply_markdown_strict, redline};
 use jubarte::opc::PartFs;
 
 fn texts(docx: &[u8]) -> Vec<String> {
@@ -351,4 +351,48 @@ fn a_whole_replacement_does_not_take_the_links_character_style() {
     let at = xml.find("new link").unwrap();
     let run = &xml[xml[..at].rfind("<w:r>").unwrap()..at];
     assert!(!run.contains("Hyperlink"), "{run}");
+}
+
+/// A strict patch fails with no document when a rewrite cannot be applied
+/// as written. The best-effort path may still replace the paragraph whole.
+#[test]
+fn a_strict_patch_refuses_a_link_rewrite_it_cannot_apply_exactly() {
+    let source = with_link(
+        r#"<w:p><w:r><w:t>Start.</w:t></w:r></w:p><w:p><w:hyperlink r:id="rId9"><w:r><w:t>old link</w:t></w:r></w:hyperlink></w:p><w:p><w:r><w:t>End.</w:t></w:r></w:p>"#,
+    );
+    let markdown = "Start.\n\n[new link](https://example.com)\n\nEnd.\n";
+    match apply_markdown_strict(&source, markdown) {
+        Err(error) => {
+            let rendered = error.to_string();
+            assert!(!rendered.is_empty(), "the refusal must say why");
+        }
+        Ok(patched) => panic!(
+            "a rewrite inside a link was applied: texts {:?}, warnings {:?}",
+            texts(&patched.docx),
+            patched.warnings
+        ),
+    }
+    // The same edit through the best-effort path is broadened, not refused:
+    // the paragraph is replaced whole and reads as written.
+    let patched = apply_markdown(&source, markdown).unwrap();
+    assert_eq!(texts(&patched.docx), ["Start.", "new link", "End."]);
+}
+
+/// A strict patch refuses a table row it cannot add, where the best-effort
+/// path leaves the row out and only warns.
+#[test]
+fn a_strict_patch_refuses_a_table_row_it_cannot_add() {
+    let source = contract();
+    let added = CONTRACT_MD.replace("| Goods | 10000 |", "| Goods | 10000 |\n| Freight | 500 |");
+    match apply_markdown_strict(&source, &added) {
+        Err(error) => {
+            let rendered = error.to_string();
+            assert!(rendered.contains("Freight"), "{rendered}");
+        }
+        Ok(patched) => panic!(
+            "a row that cannot be added was left out: warnings {:?}",
+            patched.warnings
+        ),
+    }
+    assert!(!apply_markdown(&source, &added).unwrap().warnings.is_empty());
 }
