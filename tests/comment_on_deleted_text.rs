@@ -286,3 +286,35 @@ fn a_comment_on_words_the_plan_deletes_is_refused() {
         body(&kept.redline)
     );
 }
+
+/// cursor 4500964471, jules 4501073475: a comment around more than the
+/// deleted words keeps the words that stay, so it is not refused. Only a
+/// comment wholly on deleted words has nowhere to sit.
+#[test]
+fn a_comment_around_a_deletion_is_kept() {
+    for existing in ["refuse", "keep"] {
+        let out = apply_plan(
+            &net_source(),
+            &net_plan(
+                existing,
+                r#"[{"kind":"delete","paragraph":"p0","find":"thirty "},{"kind":"comment","paragraph":"p0","find":"net thirty days","text":"why"}]"#,
+            ),
+        )
+        .unwrap_or_else(|e| panic!("{existing}: {e}"));
+        assert_eq!(list_comments(&out.redline).unwrap().len(), 1, "{existing}");
+        // A replace that drops a word keeps its own comment on the rest.
+        let replaced = apply_plan(
+            &net_source(),
+            &net_plan(
+                existing,
+                r#"[{"kind":"replace","paragraph":"p0","find":"net thirty days","replacement":"net days","comment":"shorter"}]"#,
+            ),
+        )
+        .unwrap_or_else(|e| panic!("{existing} replace: {e}"));
+        assert_eq!(
+            list_comments(&replaced.redline).unwrap().len(),
+            1,
+            "{existing}"
+        );
+    }
+}

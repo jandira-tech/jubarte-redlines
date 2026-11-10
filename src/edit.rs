@@ -6313,8 +6313,10 @@ impl<'p> Transaction<'p> {
                 }
             }
         }
-        // A separate comment on words a deletion removes has nowhere to sit
-        // on those words. The deletion's own comment keeps the note there.
+        // A separate comment wholly on words a deletion removes has nowhere
+        // to sit on those words. The deletion's own comment keeps the note
+        // there. A comment around more than the deletion keeps the words
+        // that stay; one that crosses its edge is refused below.
         for (i, r) in &self.resolved {
             let Resolved::CommentRange {
                 para, start, end, ..
@@ -6329,7 +6331,12 @@ impl<'p> Transaction<'p> {
                     end: e,
                     replacement,
                     ..
-                } if p == para && replacement.is_empty() && *e > *s && *start < *e && *s < *end => {
+                } if p == para
+                    && replacement.is_empty()
+                    && *e > *s
+                    && *s <= *start
+                    && *end <= *e =>
+                {
                     Some(*j)
                 }
                 _ => None,
