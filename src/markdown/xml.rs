@@ -340,20 +340,14 @@ impl Spacing {
         match (word, value) {
             ("before", "auto") => (self.before, self.before_auto) = (None, true),
             ("after", "auto") => (self.after, self.after_auto) = (None, true),
-            ("before", _) => {
-                if let Some(lines) = hundredths_lines(value) {
-                    self.before_lines = Some(lines);
-                } else {
-                    (self.before, self.before_auto) = (Some(points(value)?), false);
-                }
+            ("before", _) if let Some(lines) = hundredths_lines(value) => {
+                self.before_lines = Some(lines);
             }
-            ("after", _) => {
-                if let Some(lines) = hundredths_lines(value) {
-                    self.after_lines = Some(lines);
-                } else {
-                    (self.after, self.after_auto) = (Some(points(value)?), false);
-                }
+            ("after", _) if let Some(lines) = hundredths_lines(value) => {
+                self.after_lines = Some(lines);
             }
+            ("before", _) => (self.before, self.before_auto) = (Some(points(value)?), false),
+            ("after", _) => (self.after, self.after_auto) = (Some(points(value)?), false),
             ("line", _) => {
                 self.line = Some(match value.split_once(' ') {
                     Some((height, "exact")) => (points(height)?, "exact"),

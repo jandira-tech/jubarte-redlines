@@ -21,7 +21,7 @@ fn source() -> Vec<u8> {
     )
 }
 
-fn plan(extra: &serde_json::Value) -> EditPlan {
+fn plan(extra: serde_json::Value) -> EditPlan {
     let mut request = json!({
         "schema_version": 1,
         "author": "Carol Diaz",
@@ -40,7 +40,7 @@ fn a_recorded_move_refusal_names_the_formatting_change() {
     let source = source();
     let err = apply_plan(
         &source,
-        &plan(&json!({"operations":[{"kind":"delete_paragraph","paragraph":"p0"}]})),
+        &plan(json!({"operations":[{"kind":"delete_paragraph","paragraph":"p0"}]})),
     )
     .unwrap_err();
     let first = err.message.lines().next().unwrap_or("");
@@ -57,7 +57,7 @@ fn a_recorded_move_refusal_names_the_formatting_change() {
 
     let settled = apply_plan(
         &source,
-        &plan(&json!({"resolve_revisions":{"accept":{"ids":["r7"]}}})),
+        &plan(json!({"resolve_revisions":{"accept":{"ids":["r7"]}}})),
     )
     .expect("the refusal's accept of the formatting change runs");
     let text: Vec<_> = paragraphs(&settled.redline)
