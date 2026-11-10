@@ -142,6 +142,19 @@ def test_a_symlink_escaping_root_is_refused(tmp_path: Path) -> None:
     assert "outside root" in error_text(bad)
 
 
+def test_a_path_outside_root_that_links_into_it_is_refused(tmp_path: Path) -> None:
+    # The link resolves inside root, but the path the tool would open is
+    # the link's own, outside it: refused as outside root, not a crash.
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "in.docx").write_bytes(make_document("inside text"))
+    link = tmp_path / "link.docx"
+    link.symlink_to(root / "in.docx")
+    (bad,) = call(root, ("docx_text", {"path": str(link)}))
+    assert bad.is_error
+    assert "outside root" in error_text(bad), error_text(bad)
+
+
 def test_outputs_outside_root_are_refused(tmp_path: Path) -> None:
     root = tmp_path / "root"
     root.mkdir()
