@@ -160,6 +160,49 @@ fn refuse_policy_returns_blockers_not_a_usable_hash() {
     assert_eq!(error.code, "EXISTING_REVISIONS");
 }
 
+/// A policy that cannot form a working basis names the revisions that
+/// block it. The error is the result: there is no rewrite hash.
+#[test]
+fn refuse_policy_names_the_blocking_revisions() {
+    let request = ForEditRequest {
+        existing_revisions: ExistingRevisions::Refuse,
+        ..ForEditRequest::default()
+    };
+    let error = for_edit(&source(), &request).unwrap_err();
+    assert_eq!(error.code, "EXISTING_REVISIONS");
+    assert!(
+        error.message.contains("r7") && error.message.contains("r8"),
+        "the diagnostic names the revisions that block a working basis: {error}"
+    );
+    assert!(
+        !error.message.contains("before_sha256"),
+        "a refused basis is not a usable rewrite hash: {error}"
+    );
+}
+
+/// A document with many revisions names the first blockers and counts the
+/// rest, so the refusal stays a readable diagnostic.
+#[test]
+fn refuse_policy_caps_a_long_blocker_list() {
+    let body: String = (1..=30)
+        .map(|i| {
+            format!(
+                r#"<w:p><w:del w:id="{i}" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>gone {i}</w:delText></w:r></w:del></w:p>"#
+            )
+        })
+        .collect();
+    let request = ForEditRequest {
+        existing_revisions: ExistingRevisions::Refuse,
+        ..ForEditRequest::default()
+    };
+    let error = for_edit(&docx(&body), &request).unwrap_err();
+    assert_eq!(error.code, "EXISTING_REVISIONS");
+    assert!(error.message.contains("r1,"), "{error}");
+    assert!(error.message.contains("r20"), "{error}");
+    assert!(!error.message.contains("r21"), "{error}");
+    assert!(error.message.contains("and 10 more"), "{error}");
+}
+
 #[test]
 fn accept_change_reshapes_the_working_text_and_hash() {
     let request = ForEditRequest {

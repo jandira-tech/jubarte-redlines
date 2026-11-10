@@ -1984,6 +1984,23 @@ pub(crate) fn guard_keep_others(
     ))
 }
 
+/// The blockers a refusal names: the first [`BLOCKERS_SHOWN`] revision
+/// ids, then a count of the rest (`jubarte changes` lists them all).
+fn blocker_list(revisions: &[String]) -> String {
+    let shown = revisions
+        .iter()
+        .take(BLOCKERS_SHOWN)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    match revisions.len().saturating_sub(BLOCKERS_SHOWN) {
+        0 => shown,
+        rest => format!("{shown} and {rest} more"),
+    }
+}
+
+const BLOCKERS_SHOWN: usize = 20;
+
 /// Settle `source` (opened as `probe`) as `plan` asks: accept and reject
 /// what `resolve_revisions` selects, then apply `existing_revisions` to the
 /// changes left.
@@ -2020,17 +2037,24 @@ fn settle(
         None => (source, probe),
     };
     // The listed changes of the body, headers, footers and notes; a style's
-    // recorded formatting does not make the text tracked.
-    let has_revisions = crate::changes::changes_in(&probe.pkg)
-        .iter()
-        .any(|c| !c.id.starts_with(STYLES_STORY));
+    // recorded formatting does not make the text tracked. A refusal names
+    // those revisions: they are the blockers, and no rewrite hash is returned.
+    let revisions: Vec<String> = crate::changes::changes_in(&probe.pkg)
+        .into_iter()
+        .filter(|c| !c.id.starts_with(STYLES_STORY))
+        .map(|c| c.id)
+        .collect();
+    let has_revisions = !revisions.is_empty();
     let (base, opened, flattened) = match (has_revisions, plan.existing_revisions) {
         (false, _) | (true, ExistingRevisions::Keep) => (source.to_vec(), probe, false),
         (true, ExistingRevisions::Refuse) => {
             return Err(err(
                 "EXISTING_REVISIONS",
                 None,
-                format!("the document already holds tracked changes; {KEEP_REVISIONS}"),
+                format!(
+                    "the document already holds tracked changes; blockers: {}; {KEEP_REVISIONS}",
+                    blocker_list(&revisions)
+                ),
             ));
         }
         (true, policy) => {
