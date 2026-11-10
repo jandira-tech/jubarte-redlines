@@ -2313,7 +2313,7 @@ fn target(dom: &Dom, e: NodeId, local: &str) -> &'static str {
 /// so a kept deletion keeps its text only when that text sits out too.
 fn deleted_text(dom: &Dom, e: NodeId) -> Vec<NodeId> {
     let del = W::del();
-    if dom.name(e) != Some(del.clone()) {
+    if dom.name(e).as_ref() != Some(&del) {
         return Vec::new();
     }
     let (text, instr) = (W::del_text(), W::del_instr_text());
