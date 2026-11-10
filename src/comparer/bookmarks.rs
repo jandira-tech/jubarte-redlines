@@ -505,6 +505,12 @@ fn lift_authored_insertion_edge(dom: &mut Dom, endpoint: NodeId, author: &str, a
     }
 }
 
+/// Lift a bookmark's two endpoints off the edges of `author`'s insertions.
+fn lift_pair(dom: &mut Dom, start: NodeId, end: NodeId, author: &str) {
+    lift_authored_insertion_edge(dom, start, author, false);
+    lift_authored_insertion_edge(dom, end, author, true);
+}
+
 /// Place one side's bookmarks on the merged body's projection of that side.
 fn inject_side(
     dom: &mut Dom,
@@ -587,8 +593,7 @@ fn inject_side(
             dom.add_before_self(end, start);
         }
         if b_side && m.permission.is_none() {
-            lift_authored_insertion_edge(dom, start, author, false);
-            lift_authored_insertion_edge(dom, end, author, true);
+            lift_pair(dom, start, end, author);
         }
         if let Some(gap) = m.textless {
             let end = (s >= e).then_some(end);
@@ -1112,6 +1117,102 @@ mod tests {
                 "source boundary side must be retained"
             );
         }
+    }
+
+    /// The paragraph's shape: `[` and `]` for the bookmark's endpoints,
+    /// `+(…)` and `-(…)` for insertions and deletions, a run as its text.
+    fn shape(dom: &Dom, node: NodeId) -> String {
+        dom.elements(node, None)
+            .into_iter()
+            .map(|child| {
+                let name = dom.name(child).unwrap();
+                match name.local_name() {
+                    "bookmarkStart" => "[".to_string(),
+                    "bookmarkEnd" => "]".to_string(),
+                    "ins" => format!("+({})", shape(dom, child)),
+                    "del" => format!("-({})", shape(dom, child)),
+                    "r" => dom
+                        .descendants(child, None)
+                        .into_iter()
+                        .filter(|&n| dom.name_is(n, &W::t()) || dom.name_is(n, &W::del_text()))
+                        .map(|n| dom.value(n).trim().to_string())
+                        .collect(),
+                    other => other.to_string(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// Lift the bookmark in `inner` (a paragraph's content, `{s}`/`{e}`
+    /// for its endpoints, `+x`/`-x` for Ed's insertion or deletion of x)
+    /// and return the paragraph's shape.
+    fn lifted(inner: &str) -> String {
+        let run = |text: &str, leaf: &str| format!("<w:r><w:{leaf}>{text}</w:{leaf}></w:r>");
+        let mut xml = String::new();
+        for token in inner.split('|') {
+            xml += &match token {
+                "{s}" => r#"<w:bookmarkStart w:id="1" w:name="B"/>"#.to_string(),
+                "{e}" => r#"<w:bookmarkEnd w:id="1"/>"#.to_string(),
+                t if t.starts_with("+(") => {
+                    let body: String = t[2..t.len() - 1]
+                        .split(',')
+                        .map(|part| match part {
+                            "{s}" => r#"<w:bookmarkStart w:id="1" w:name="B"/>"#.to_string(),
+                            "{e}" => r#"<w:bookmarkEnd w:id="1"/>"#.to_string(),
+                            text => run(text, "t"),
+                        })
+                        .collect();
+                    format!(r#"<w:ins w:id="9" w:author="Ed">{body}</w:ins>"#)
+                }
+                t if t.starts_with('-') => format!(
+                    r#"<w:del w:id="8" w:author="Ed">{}</w:del>"#,
+                    run(&t[1..], "delText")
+                ),
+                text => run(text, "t"),
+            };
+        }
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(r#"<w:p xmlns:w="{}">{xml}</w:p>"#, W::URI));
+        let p = dom.root(doc).unwrap();
+        let start = dom.descendants(p, Some(&W::bookmark_start()))[0];
+        let end = dom.descendants(p, Some(&W::bookmark_end()))[0];
+        lift_pair(&mut dom, start, end, "Ed");
+        shape(&dom, p)
+    }
+
+    /// The end on an insertion's trailing edge goes past the insertion and
+    /// the deletion it replaces (#1293).
+    #[test]
+    fn an_end_on_the_insertion_edge_leaves_past_its_deletion() {
+        assert_eq!(lifted("{s}|a |+(B,{e})|-b| c"), "[ a +(B) -(b) ] c");
+    }
+
+    /// A range over a prefix of an insertion, or an empty one on its edge,
+    /// stays whole inside it: lifting one endpoint would cross the revision.
+    #[test]
+    fn a_pair_inside_one_insertion_stays_inside() {
+        assert_eq!(lifted("+({s},X,{e},Y)"), "+([ X ] Y)");
+        assert_eq!(lifted("+({s},{e},X)"), "+([ ] X)");
+        assert_eq!(lifted("+(X,{s},{e})"), "+(X [ ])");
+    }
+
+    /// The end passes only the deletion paired with its insertion, not the
+    /// next change beside it.
+    #[test]
+    fn an_end_passes_only_its_own_deletion() {
+        assert_eq!(
+            lifted("{s}|a |+(B,{e})|-b|+( new)"),
+            "[ a +(B) -(b) ] +(new)"
+        );
+        assert_eq!(lifted("{s}|a |+(B,{e})|-b|-c"), "[ a +(B) -(b) ] -(c)");
+    }
+
+    /// A start leaves before its insertion and takes no change before it:
+    /// the insertion's own deletion follows it (Compare writes ins → del).
+    #[test]
+    fn a_start_takes_no_change_before_its_insertion() {
+        assert_eq!(lifted("-x|+({s},B)|-b| c|{e}"), "-(x) [ +(B) -(b) c ]");
     }
 
     #[test]
