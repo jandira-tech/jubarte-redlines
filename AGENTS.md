@@ -118,7 +118,7 @@ repository's root:
   pairs the batch drops, run it again with `--no-one-redline-osascript`; it
   skips outputs that already exist. Run `check_redline_identity.py` on every
   set of redlines before scoring them.
-- Keep the watchdog (`jubarte-loop/word_watchdog.sh`) pointed at the paths the
+- Keep the watchdog (the bench's `scripts/word_watchdog.sh`) pointed at the paths the
   current job actually grows. Batch mode reports progress only in its `--log`,
   not in its output folder. A watchdog on the wrong folder kills a busy Word.
   A Word freeze is normal; the watchdog clears it.

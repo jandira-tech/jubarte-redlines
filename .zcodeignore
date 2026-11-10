@@ -55,6 +55,7 @@ test-results/
 
 # Local sweep / agent scratch
 _scratch/
+.scratch/
 .omo/
 .qodo/
 .sisyphus/
