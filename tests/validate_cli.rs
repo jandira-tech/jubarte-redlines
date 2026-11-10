@@ -703,3 +703,38 @@ fn validate_repair_refuses_its_own_input() {
         }
     }
 }
+
+/// `--original` and `--baseline` are inputs too: a repair that names one
+/// of them is refused, even with `--force`, and the file stays as it was.
+#[test]
+fn validate_repair_refuses_the_original_and_the_baseline() {
+    let dir = tempfile::tempdir().unwrap();
+    let broken = docx(DELETED);
+    std::fs::write(dir.path().join("broken.docx"), &broken).unwrap();
+    let earlier = docx(&para("earlier"));
+    for flag in ["--original", "--baseline"] {
+        let other = dir.path().join("earlier.docx");
+        std::fs::write(&other, &earlier).unwrap();
+        let args = [
+            "validate",
+            "broken.docx",
+            flag,
+            "earlier.docx",
+            "--author",
+            "A",
+            "--repair",
+            "earlier.docx",
+            "--force",
+        ];
+        let (code, out, err) = run(dir.path(), &args);
+        assert_eq!(code, 2, "{args:?}: {out}{err}");
+        // clap refuses --baseline with --repair before any alias check
+        let refusal = if flag == "--original" {
+            "OUTPUT_ALIAS"
+        } else {
+            "cannot be used with"
+        };
+        assert!(err.contains(refusal), "{args:?}: {err}");
+        assert_eq!(std::fs::read(&other).unwrap(), earlier, "{args:?}");
+    }
+}

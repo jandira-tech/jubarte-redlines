@@ -4380,8 +4380,11 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
     let before = job.original.map(read_package).transpose()?;
     if let Some(out) = job.repair {
         // A repair always writes a separate file. --force replaces another
-        // output; it never authorizes the input under this name or another.
-        refuse_output_alias(out, &[(job.file, "the input")])?;
+        // output; it never authorizes an input (the document or --original;
+        // clap refuses --baseline with --repair) under this name or another.
+        let mut inputs = vec![(job.file, "the input")];
+        inputs.extend(job.original.map(|p| (p, "the original")));
+        refuse_output_alias(out, &inputs)?;
         ensure_writable(out, job.force)?;
         let fixed = repair(&docx).map_err(|e| e.to_string())?;
         publish_file(out, &fixed.docx, job.force)?;
