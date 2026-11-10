@@ -179,3 +179,142 @@ fn compare_keeps_a_point_comment_at_a_paragraph_start_inside_the_paragraph() {
     );
     assert_eq!(list_comments(&redline).unwrap().len(), 1);
 }
+
+fn net_plan(existing: &str, operations: &str) -> EditPlan {
+    EditPlan::from_json(&format!(
+        r#"{{"schema_version":1,"author":"A","existing_revisions":"{existing}","operations":{operations}}}"#
+    ))
+    .unwrap()
+}
+
+fn net_source() -> Vec<u8> {
+    docx(&para("net net thirty days net"))
+}
+
+/// A deletion's own comment wraps the struck words: the range holds the
+/// deletion, and the reference follows the range.
+fn comment_wraps_struck_words(redline: &[u8], words: &str) -> bool {
+    let body = body(redline);
+    let Some(start) = body.find("<w:commentRangeStart") else {
+        return false;
+    };
+    let Some(del) = body.find("<w:del ") else {
+        return false;
+    };
+    let Some(deleted) = body.find("<w:delText") else {
+        return false;
+    };
+    let Some(close) = body.find("</w:del>") else {
+        return false;
+    };
+    let Some(end) = body.find("<w:commentRangeEnd") else {
+        return false;
+    };
+    let Some(reference) = body.find("<w:commentReference") else {
+        return false;
+    };
+    start < del
+        && del < deleted
+        && deleted < close
+        && close < end
+        && end < reference
+        && body[deleted..close].contains(words)
+}
+
+#[test]
+fn a_comment_on_words_the_plan_deletes_is_refused() {
+    let overlapping = [
+        r#"[{"kind":"delete","paragraph":"p0","find":"thirty "},{"kind":"comment","paragraph":"p0","find":"thirty ","text":"why"}]"#,
+        r#"[{"kind":"delete","paragraph":"p0","find":"net ","occurrence":2},{"kind":"comment","paragraph":"p0","find":"net ","occurrence":2,"text":"why"}]"#,
+    ];
+    for existing in ["refuse", "keep"] {
+        for operations in overlapping {
+            let e = apply_plan(&net_source(), &net_plan(existing, operations)).unwrap_err();
+            assert_eq!(e.code, "OVERLAPPING_EDITS", "{existing} {operations}: {e}");
+            assert_eq!(
+                e.message, r#"op-2 comments on words op-1 deletes; give op-1 a "comment" instead"#,
+                "{existing} {operations}: {e}"
+            );
+        }
+        let beside = apply_plan(
+            &net_source(),
+            &net_plan(
+                existing,
+                r#"[{"kind":"delete","paragraph":"p0","find":"thirty "},{"kind":"comment","paragraph":"p0","find":"days","text":"why"}]"#,
+            ),
+        )
+        .unwrap();
+        assert_word_valid_package(&beside.redline);
+        assert_eq!(
+            list_comments(&beside.redline).unwrap()[0].anchor_text,
+            "days",
+            "{existing}"
+        );
+    }
+    // The deletion's own comment is the route the refusal names. A sentence
+    // whose words occur once keeps that comment on the struck words in both
+    // modes. On the repeated paragraph the comparer already refuses `refuse`.
+    let unique = docx(&para("Payment is due in thirty days."));
+    for existing in ["refuse", "keep"] {
+        let owned = apply_plan(
+            &unique,
+            &net_plan(
+                existing,
+                r#"[{"kind":"delete","paragraph":"p0","find":"thirty ","comment":"why"}]"#,
+            ),
+        )
+        .unwrap();
+        assert_word_valid_package(&owned.redline);
+        assert!(
+            comment_wraps_struck_words(&owned.redline, "thirty"),
+            "{existing}: {}",
+            body(&owned.redline)
+        );
+    }
+    let kept = apply_plan(
+        &net_source(),
+        &net_plan(
+            "keep",
+            r#"[{"kind":"delete","paragraph":"p0","find":"thirty ","comment":"why"}]"#,
+        ),
+    )
+    .unwrap();
+    assert_word_valid_package(&kept.redline);
+    assert!(
+        comment_wraps_struck_words(&kept.redline, "thirty"),
+        "{}",
+        body(&kept.redline)
+    );
+}
+
+/// cursor 4500964471, jules 4501073475: a comment around more than the
+/// deleted words keeps the words that stay, so it is not refused. Only a
+/// comment wholly on deleted words has nowhere to sit.
+#[test]
+fn a_comment_around_a_deletion_is_kept() {
+    for existing in ["refuse", "keep"] {
+        let out = apply_plan(
+            &net_source(),
+            &net_plan(
+                existing,
+                r#"[{"kind":"delete","paragraph":"p0","find":"thirty "},{"kind":"comment","paragraph":"p0","find":"net thirty days","text":"why"}]"#,
+            ),
+        )
+        .unwrap_or_else(|e| panic!("{existing}: {e}"));
+        assert_eq!(list_comments(&out.redline).unwrap().len(), 1, "{existing}");
+        // A replace that drops a word keeps its own comment on the rest.
+        let replaced = apply_plan(
+            &net_source(),
+            &net_plan(
+                existing,
+                r#"[{"kind":"replace","paragraph":"p0","find":"net thirty days","replacement":"net days","comment":"shorter"}]"#,
+            ),
+        )
+        .unwrap_or_else(|e| panic!("{existing} replace: {e}"));
+        assert_eq!(
+            list_comments(&replaced.redline).unwrap().len(),
+            1,
+            "{existing}"
+        );
+    }
+}

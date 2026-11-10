@@ -6313,6 +6313,46 @@ impl<'p> Transaction<'p> {
                 }
             }
         }
+        // A separate comment wholly on words a deletion removes has nowhere
+        // to sit on those words. The deletion's own comment keeps the note
+        // there. A comment around more than the deletion keeps the words
+        // that stay; one that crosses its edge is refused below. v2 refuses
+        // this shape after the conflict checks, as COMMENT_ANCHOR_REMOVED.
+        for (i, r) in self.resolved.iter().filter(|_| !v2) {
+            let Resolved::CommentRange {
+                para, start, end, ..
+            } = r
+            else {
+                continue;
+            };
+            let Some(deleter) = self.resolved.iter().find_map(|(j, text)| match text {
+                Resolved::Text {
+                    para: p,
+                    start: s,
+                    end: e,
+                    replacement,
+                    ..
+                } if p == para
+                    && replacement.is_empty()
+                    && *e > *s
+                    && *s <= *start
+                    && *end <= *e =>
+                {
+                    Some(*j)
+                }
+                _ => None,
+            }) else {
+                continue;
+            };
+            let message = {
+                let delete_id = &self.outcomes[deleter].id;
+                let comment_id = &self.outcomes[*i].id;
+                format!(
+                    "{comment_id} comments on words {delete_id} deletes; give {delete_id} a \"comment\" instead"
+                )
+            };
+            return Err(self.conflict(*i, &message));
+        }
         // A comment boundary strictly inside a changed range has no position
         // in the edited text. Containing or touching an edit is fine.
         for (i, r) in &self.resolved {
