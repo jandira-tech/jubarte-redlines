@@ -3534,16 +3534,16 @@ fn markdown_text(path: &Path, bytes: Vec<u8>) -> Result<String, String> {
 /// collection themselves (#617).
 type ImageRefusals = std::rc::Rc<std::cell::RefCell<Vec<(String, &'static str)>>>;
 
+/// A UNC share (`\\server\share`, `//server/share`) or a device path
+/// (`\\?\`, `//./`), including after `%XX` decoding. Windows reads `/` and
+/// `\` alike, so any two leading separators (`/\`, `\/` too) name a share.
+fn network_or_device_path(name: &str) -> bool {
+    matches!(name.as_bytes(), [b'/' | b'\\', b'/' | b'\\', ..])
+}
+
 /// `path` names a URL (`scheme:…`): a scheme is a letter, then letters,
 /// digits and `+-.`, up to its `:`. A decoded absolute path (`C:\…`) is
 /// not a scheme; the containment check judges it.
-/// A UNC share (`\\server\share`, `//server/share`) or a device path
-/// (`\\?\`, `//./`), including after `%XX` decoding.
-fn network_or_device_path(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    bytes.starts_with(br"\\") || bytes.starts_with(b"//")
-}
-
 fn url_scheme(path: &str) -> bool {
     let Some((scheme, _)) = path.split_once(':') else {
         return false;
@@ -5163,7 +5163,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         let unc = r"\\server\share\x.png";
-        std::fs::write(root.join(unc), b"secret").unwrap();
+        // On Unix `\` is an ordinary byte, so the name is one file inside the
+        // root, and the refusal is proven to come before resolution. On
+        // Windows that path would be the share itself, which a test must
+        // never contact, so the file is written only on Unix.
+        #[cfg(unix)]
+        {
+            let mut in_root = root.clone().into_os_string();
+            in_root.push("/");
+            in_root.push(unc);
+            std::fs::write(in_root, b"secret").unwrap();
+        }
         assert_eq!(
             image_policy(&root, unc),
             Err("a network path"),
@@ -5175,6 +5185,11 @@ mod tests {
             "//./device/x.png",
             "%5C%5Cserver%5Cshare%5Cx.png",
             "%2F%2Fserver%2Fshare%2Fx.png",
+            // Windows reads `/` and `\` alike, so a mixed pair is a share too.
+            r"/\server\share\x.png",
+            r"\/server/share/x.png",
+            "%2F%5Cserver%5Cshare%5Cx.png",
+            "%5C%2Fserver%2Fshare%2Fx.png",
         ] {
             assert_eq!(image_policy(&root, name), Err("a network path"), "{name}");
         }
