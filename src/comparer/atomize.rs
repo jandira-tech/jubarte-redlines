@@ -116,11 +116,17 @@ fn revision_tracking_element_from_ancestors(
     ancestors: &[NodeId],
 ) -> Option<NodeId> {
     if dom.name_is(content, &W::p_pr()) {
-        for rpr in dom.elements(content, Some(&W::r_pr())) {
-            for e in dom.elements(rpr, None) {
-                let n = dom.name(e).unwrap();
-                if n == W::del() || n == W::ins() {
-                    return Some(e);
+        for i in 0..dom.child_count(content) {
+            let rpr = dom.child_at(content, i);
+            if dom.name_is(rpr, &W::r_pr()) {
+                for j in 0..dom.child_count(rpr) {
+                    let e = dom.child_at(rpr, j);
+                    if dom.is_element(e) {
+                        let n = dom.name(e).unwrap();
+                        if n == W::del() || n == W::ins() {
+                            return Some(e);
+                        }
+                    }
                 }
             }
         }
@@ -404,7 +410,11 @@ fn annotate_element_with_props(
     settings: &WmlComparerSettings,
     path: &mut Vec<NodeId>,
 ) {
-    for item in dom.elements(element, None) {
+    for i in 0..dom.child_count(element) {
+        let item = dom.child_at(element, i);
+        if !dom.is_element(item) {
+            continue;
+        }
         let skip = match (child_property_names, dom.name(item)) {
             (Some(props), Some(n)) => props.contains(&n),
             _ => false,
@@ -592,7 +602,9 @@ fn recurse(
     // fldSimple 3 → 0 while GT keeps every field; every rendered page showed
     // "Pg  Left aligned" with empty numbers). Non-empty fldSimple still
     // recurses (its result runs diff normally).
-    if name == W::fld_simple() && dom.elements(element, None).is_empty() {
+    if name == W::fld_simple()
+        && (0..dom.child_count(element)).all(|i| !dom.is_element(dom.child_at(element, i)))
+    {
         let chain = chain_with(path, element);
         push_atom(dom, element, &chain, list, settings);
         return;
@@ -688,9 +700,12 @@ fn coalesce_recurse(dom: &mut Dom, atoms: &[ComparisonUnitAtom], level: usize) -
             });
             let r = dom.new_element(W::r());
             // rPr from ancestor run
-            for rpr in dom.elements(ancestor, Some(&W::r_pr())) {
-                let cloned = dom.clone_subtree(rpr);
-                dom.add(r, cloned);
+            for i in 0..dom.child_count(ancestor) {
+                let rpr = dom.child_at(ancestor, i);
+                if dom.name_is(rpr, &W::r_pr()) {
+                    let cloned = dom.clone_subtree(rpr);
+                    dom.add(r, cloned);
+                }
             }
             for (cname, gc) in &by_name {
                 if *cname == W::t() || *cname == W::del_text() {
