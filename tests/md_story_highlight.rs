@@ -135,3 +135,54 @@ fn a_footer_keeps_the_other_character_marks() {
     assert!(xml.contains(">2<"), "{xml}");
     assert_eq!(view(&again), first);
 }
+
+/// A bold run of `w:fldChar` and `w:instrText` pieces, then optional result
+/// text, as Word writes a formatted page number.
+fn bold_page_field(result: &str) -> String {
+    let b = "<w:rPr><w:b/></w:rPr>";
+    let shown = if result.is_empty() {
+        String::new()
+    } else {
+        format!("<w:r>{b}<w:t>{result}</w:t></w:r>")
+    };
+    format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Page </w:t></w:r><w:r>{b}<w:fldChar w:fldCharType="begin"/></w:r><w:r>{b}<w:instrText xml:space="preserve"> PAGE </w:instrText></w:r><w:r>{b}<w:fldChar w:fldCharType="separate"/></w:r>{shown}<w:r>{b}<w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+    )
+}
+
+fn footer_view(paragraphs: &str) -> (String, String) {
+    let source = with_part(
+        "word/footer1.xml",
+        "ftr",
+        "footer",
+        FOOTER,
+        FOOTER_REL,
+        paragraphs,
+    );
+    let first = view(&source);
+    let footers = block(&first, "footers:");
+    (first, footers)
+}
+
+#[test]
+fn a_bold_field_keeps_its_code_outside_the_marks() {
+    let (first, footers) = footer_view(&bold_page_field("1"));
+    assert!(footers.contains("{PAGE}<b>1</b>{/}"), "{footers}");
+    assert!(!footers.contains("<b>{"), "{footers}");
+    assert!(!footers.contains("}</b>"), "{footers}");
+    let again = write(&first);
+    let xml = part_string(&again, "word/footer1.xml").expect("a footer part");
+    assert!(xml.contains("PAGE"), "{xml}");
+    assert!(xml.contains("<w:b/>"), "{xml}");
+    assert_eq!(view(&again), first);
+}
+
+#[test]
+fn a_bold_field_with_no_result_stays_a_bare_code() {
+    let (first, footers) = footer_view(&bold_page_field(""));
+    assert!(footers.contains("Page {PAGE}"), "{footers}");
+    assert!(!footers.contains("{/}"), "{footers}");
+    assert!(!footers.contains("<b>"), "{footers}");
+    let again = write(&first);
+    assert_eq!(view(&again), first);
+}

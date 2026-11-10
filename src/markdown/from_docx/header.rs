@@ -2075,8 +2075,15 @@ pub(crate) fn story_text_with(
                     if super::agent::hidden_run(run.child("rPr"), hidden) {
                         continue;
                     }
+                    // A field's pieces print its code (`{PAGE}`, `{/}`),
+                    // which marks must not wrap: the code is no text, and
+                    // a wrapped separate moves the end past a result-less
+                    // field's start, so it would gain `{/}`.
+                    let field_piece = run.elements().any(|child| {
+                        matches!(child.local(), "fldChar" | "instrText" | "delInstrText")
+                    });
                     let wrap = match s.view {
-                        StoryView::Tagged(..) => character_wrap(run),
+                        StoryView::Tagged(..) if !field_piece => character_wrap(run),
                         _ => None,
                     };
                     let before = s.out.len();
@@ -2086,9 +2093,7 @@ pub(crate) fn story_text_with(
                     if let Some((open, close)) = wrap
                         && s.out.len() > before
                     {
-                        let inner = s.out.split_off(before);
-                        s.out.push_str(&open);
-                        s.out.push_str(&inner);
+                        s.out.insert_str(before, &open);
                         s.out.push_str(&close);
                     }
                 }
