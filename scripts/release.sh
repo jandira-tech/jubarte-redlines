@@ -1519,7 +1519,7 @@ if [ "$YES" = 0 ]; then
   [ "$a" = "v$VER" ] || die "aborted — nothing pushed; local commits/tag remain"
 fi
 
-# shellcheck source=scripts/push_main.sh
+# shellcheck source=scripts/push_main.sh disable=SC1091
 . scripts/push_main.sh
 push_main "release/$TAG" "chore(release): $TAG" \
   "The release commits of jubarte $TAG, from scripts/release.sh. Merged at once with a merge commit: the tag names the commit the gates ran on." \
