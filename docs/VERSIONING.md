@@ -69,10 +69,10 @@ shell needs a store build that embeds the new engine.
    - Optional: permanent ABBA matrix if the change claimed a wall win  
    - **Ring 2 (OpenXmlValidator):** `scripts/redline-sweep.sh … --validate` → no NEW keys vs `tools/validity_baseline.tsv` (local; requires `dotnet`)
    - **Ring 3 (real Word open probe, macOS release gate):** before any crates.io publish or bench-pin promotion, run
-     `scripts/redline-sweep.sh release_info/sample_redline_<ver>_*.csv ../neurotic_docx_bench parity/_scratch/sweep_<date> --probe`
+     `scripts/redline-sweep.sh release_info/sample_redline_<ver>_*.csv ../neurotic_docx_bench .scratch/sweep_<date> --probe`
      (Word only through the bench's `scripts/word_pdf.py` and `word_watchdog.sh`; `NEUROTIC_DOCX_BENCH` names the bench).
      Required: `probe_fail=0`. A failure that Word's own redline of the pair shares (`probe.log` says so) is still a failure, and only the owner waives it.
-     Never use `/tmp` for Word probe paths (sandbox); use `parity/_scratch`.
+     Never use `/tmp` for Word probe paths (sandbox); use `.scratch/`.
    - **Criterion release gate:** `scripts/criterion_abab.sh <previous tag> ../jubarte-loop/release_<ver>/gates [candidate dir-or-rev]` benches the previous release's tag and the candidate interleaved A B A B into one `CRITERION_HOME` under the release's state dir (never `/tmp`, never a saved baseline) and compares the saved runs offline with `--load-baseline` for context. The verdict reads each case's saved mean point estimates (`<group>/<bench>/<a1|a2|b1|b2>/estimates.json`): **delta = mean(b1,b2)/mean(a1,a2) − 1** is a regression only past both the **>5%** bar and that case's **self-noise this run** (max of |a2/a1−1|, |b2/b1−1|); a delta past 5% that a self-noise above 5% swallows is **UNDECIDABLE** — rerun on a quieter machine — and the gate fails on either, on a failed cargo call, on missing estimates, or on a case benched on one side only (#1797)
    - **Criterion local gate (perf-affecting PRs):** `cargo bench --bench redline -- --baseline m233_head` — a **>5%** regression on any case blocks merge.
    - **Speed vs quality (B-fixes):** median generate time > **+10%** vs the M233 baseline (see `docs/SPEED_REVIEW.md`) triggers a perf review before merge.

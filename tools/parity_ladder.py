@@ -73,7 +73,7 @@ _BENCH_ROOT = Path(
 DEFAULT_CORPUS = str(_BENCH_ROOT / "corpus" / "word_based")
 DEFAULT_BIN = os.path.join(CRATE, "target", "release", "jubarte")
 BASELINE = os.path.join(HERE, "parity_baseline.tsv")
-OUT_DIR = os.path.join(CRATE, "_scratch", "parity_ladder")
+OUT_DIR = os.path.join(CRATE, ".scratch", "parity_ladder")
 
 REVISION_ELEMENTS = {
     "ins", "del", "moveFrom", "moveTo", "moveFromRangeStart", "moveFromRangeEnd",
