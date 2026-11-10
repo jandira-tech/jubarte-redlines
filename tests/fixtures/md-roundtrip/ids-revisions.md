@@ -12,7 +12,7 @@ styles:
   Normal: Times New Roman 11.5pt, after 2.6pt, line 0.98, indent -0.0035in, hanging 0.007in, justify  # default; unannotated paragraphs use it
   ListParagraph: Times New Roman 11.5pt, indent 0.5in, contextual spacing, named List Paragraph
   table: TableGrid0, named TableGrid
-style_changes: {Normal: styles.r0 @AB}  # tracked changes to the styles
+style_changes: {Normal: pPr styles.r0 @AB; rPr styles.r0 @AB}  # tracked changes to the styles
 notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 headers:
   default: {id: header1, text: "{--![][image1]![Picture 3][d2]--}{header1.r1654 @AB}"}

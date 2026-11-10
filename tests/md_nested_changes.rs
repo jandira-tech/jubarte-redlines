@@ -2858,7 +2858,7 @@ fn issue_1137_agent_without_hash(bytes: &[u8]) -> String {
 #[test]
 fn issue_1137_distinct_style_tags_name_distinct_property_records() {
     let out = issue_1137_checked(
-        &issue_1137_style_view("styles.r7 @A; styles.r9 @B"),
+        &issue_1137_style_view("pPr styles.r7 @A; rPr styles.r9 @B"),
         "word/styles.xml",
         0,
         0,
@@ -2889,21 +2889,146 @@ fn issue_1137_paired_style_records_reach_a_fixed_point() {
         0,
         0,
     );
-    assert_eq!(issue_1137_style_records(&first.docx).len(), 2);
-    assert!(first.warnings.is_empty(), "{:?}", first.warnings);
+    assert_eq!(issue_1137_style_records(&first.docx).len(), 1);
+    assert!(
+        first
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("no kind")),
+        "{:?}",
+        first.warnings
+    );
     assert_eq!(
         issue_1137_style_records(&first.docx)
             .iter()
             .map(|(_, id, _)| id.as_str())
             .collect::<Vec<_>>(),
-        ["1", "1"]
+        ["1"]
     );
     let view = issue_1137_agent_without_hash(&first.docx);
     let second = issue_1137_checked(&view, "word/styles.xml", 0, 0);
     let records = issue_1137_style_records(&second.docx);
-    assert_eq!(records.len(), 2, "{records:?}");
+    assert_eq!(records.len(), 1, "{records:?}");
     assert!(second.warnings.is_empty(), "{:?}", second.warnings);
     assert_eq!(issue_1137_agent_without_hash(&second.docx), view);
+}
+
+fn style_change_carrier_view(map: &str) -> String {
+    format!(
+        "---\nview: tracked\nauthors:\n  A: Alice\n  B: Bob\n  AS: Ana Silva\nstyle_changes: {{{map}}}\n---\nBody.\n"
+    )
+}
+
+#[test]
+fn style_change_carrier_three_untyped_marks_write_one_run() {
+    let out = issue_1137_checked(
+        &style_change_carrier_view("Normal: styles.r7 @A; styles.r8 @A; styles.r9 @B"),
+        "word/styles.xml",
+        0,
+        0,
+    );
+    assert_eq!(
+        issue_1137_style_records(&out.docx),
+        [(
+            "rPrChange".to_string(),
+            "7".to_string(),
+            "Alice".to_string()
+        )]
+    );
+    assert!(
+        out.warnings
+            .iter()
+            .any(|warning| warning.contains("not written")),
+        "{:?}",
+        out.warnings
+    );
+}
+
+#[test]
+fn style_change_carrier_typed_kinds_write_one_of_each() {
+    let out = issue_1137_checked(
+        &style_change_carrier_view("Normal: pPr styles.r7 @A; rPr styles.r9 @B"),
+        "word/styles.xml",
+        0,
+        0,
+    );
+    assert_eq!(
+        issue_1137_style_records(&out.docx),
+        [
+            (
+                "pPrChange".to_string(),
+                "7".to_string(),
+                "Alice".to_string()
+            ),
+            ("rPrChange".to_string(), "9".to_string(), "Bob".to_string())
+        ]
+    );
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+}
+
+#[test]
+fn style_change_carrier_docdefaults_is_not_written() {
+    let out = issue_1137_checked(
+        &style_change_carrier_view("docDefaults: styles.r7 @A"),
+        "word/styles.xml",
+        0,
+        0,
+    );
+    let xml = part_string(&out.docx, "word/styles.xml").unwrap();
+    assert!(
+        !xml.contains("rPrChange") && !xml.contains("pPrChange"),
+        "{xml}"
+    );
+    assert!(
+        out.warnings
+            .iter()
+            .any(|warning| { warning.contains("docDefaults") && warning.contains("not written") }),
+        "{:?}",
+        out.warnings
+    );
+    // An untyped defaults tag is not written at all, so no warning may say
+    // it was written as rPr (cursor 4502337068).
+    assert!(
+        !out.warnings
+            .iter()
+            .any(|warning| warning.contains("docDefaults") && warning.contains("written as rPr")),
+        "{:?}",
+        out.warnings
+    );
+}
+
+#[test]
+fn style_change_carrier_kept_output_trips_neither_check() {
+    let out = markdown_to_docx(
+        &style_change_carrier_view(
+            "Normal: pPr styles.r80 @AS; pPr styles.r81 @AS, docDefaults: rPr styles.r7 @AS",
+        ),
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    let report = check_word_valid_package(&out.docx);
+    assert!(
+        report.findings.iter().all(|finding| {
+            finding.code != "STYLE_CHANGE_SIBLINGS" && finding.code != "DOC_DEFAULTS_CHANGE"
+        }),
+        "{:?}",
+        report.findings
+    );
+    assert_eq!(
+        issue_1137_style_records(&out.docx),
+        [(
+            "pPrChange".to_string(),
+            "80".to_string(),
+            "Ana Silva".to_string()
+        )]
+    );
+    assert!(
+        out.warnings
+            .iter()
+            .any(|warning| warning.contains("not written")),
+        "{:?}",
+        out.warnings
+    );
 }
 
 #[test]

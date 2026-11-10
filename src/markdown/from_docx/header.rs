@@ -1544,9 +1544,9 @@ fn section_changes(section: &SectionFact, handles: &Handles) -> Option<String> {
     (!tags.is_empty()).then(|| super::agent::format_tags(&tags))
 }
 
-/// `Normal: styles.r0 @AS, Heading1: styles.r3 @AS`: the styles part's
+/// `Normal: pPr styles.r0 @AS; rPr styles.r3 @AS`: the styles part's
 /// tracked changes by the style that holds them (`docDefaults` for the
-/// document defaults), in the tracked view.
+/// document defaults), each tag naming the property it was read from.
 fn style_changes(styles: &Element, handles: &Handles) -> Vec<(String, String)> {
     let mut found = Vec::new();
     for holder in styles.elements() {
@@ -1559,35 +1559,72 @@ fn style_changes(styles: &Element, handles: &Handles) -> Vec<(String, String)> {
             _ => continue,
         };
         let mut carriers = Vec::new();
-        collect(holder, &mut carriers);
+        collect_style_carriers(holder, &mut carriers);
         let mut tags: Vec<String> = Vec::new();
-        for carrier in carriers {
+        for (carrier, kind) in carriers {
             let tag = format!(
-                "styles#{}",
-                super::agent::required_date_tag_of(carrier, handles)
+                "{kind} {}",
+                super::agent::format_tag(&format!(
+                    "styles#{}",
+                    super::agent::required_date_tag_of(carrier, handles)
+                ))
             );
             if !tags.contains(&tag) {
                 tags.push(tag);
             }
         }
         if !tags.is_empty() {
-            found.push((name, super::agent::format_tags(&tags)));
+            found.push((name, tags.join("; ")));
         }
     }
     found
 }
 
-/// The elements under `e` that record a tracked change.
-fn collect<'e>(e: &'e Element, out: &mut Vec<&'e Element>) {
-    for child in e.elements() {
+/// Direct property carriers, then any other id-bearing carrier. A change's
+/// historical payload is not a current property.
+fn collect_style_carriers<'e>(holder: &'e Element, out: &mut Vec<(&'e Element, &'static str)>) {
+    if holder.local() == "docDefaults" {
+        push_direct(holder.path(&["pPrDefault", "pPr"]), "pPrChange", "pPr", out);
+        push_direct(holder.path(&["rPrDefault", "rPr"]), "rPrChange", "rPr", out);
+    } else {
+        for paragraph in holder.children_named("pPr") {
+            push_direct(Some(paragraph), "pPrChange", "pPr", out);
+        }
+        for run in holder.children_named("rPr") {
+            push_direct(Some(run), "rPrChange", "rPr", out);
+        }
+    }
+    collect_other(holder, out);
+}
+
+fn push_direct<'e>(
+    parent: Option<&'e Element>,
+    change: &str,
+    kind: &'static str,
+    out: &mut Vec<(&'e Element, &'static str)>,
+) {
+    let Some(parent) = parent else {
+        return;
+    };
+    for carrier in parent.elements() {
+        if carrier.local() == change && carrier.attr("id").is_some() {
+            out.push((carrier, kind));
+        }
+    }
+}
+
+fn collect_other<'e>(element: &'e Element, out: &mut Vec<(&'e Element, &'static str)>) {
+    for child in element.elements() {
         let local = child.local();
         if (local.ends_with("Change") || matches!(local, "ins" | "del"))
             && child.attr("id").is_some()
         {
-            out.push(child);
+            if !out.iter().any(|(seen, _)| std::ptr::eq(*seen, child)) {
+                out.push((child, "other"));
+            }
             continue;
         }
-        collect(child, out);
+        collect_other(child, out);
     }
 }
 
@@ -1766,10 +1803,18 @@ fn part_two(out: &mut String, f: &Facts) {
             .iter()
             .map(|(style, tags)| format!("{}: {}", scalar(style, true), scalar(tags, true)))
             .collect();
+        let loss = ordered.iter().any(|(style, tags)| {
+            style == "docDefaults" || tags.split("; ").any(|tag| tag.starts_with("other "))
+        });
+        let note = if loss {
+            "tracked changes to the styles; docDefaults and other changes are not written back"
+        } else {
+            "tracked changes to the styles"
+        };
         kv(
             out,
             &format!("style_changes: {{{}}}", list.join(", ")),
-            Some("tracked changes to the styles"),
+            Some(note),
         );
     }
     let (rev, fmt) = &f.note_changes;

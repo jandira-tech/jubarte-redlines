@@ -23,7 +23,7 @@ use super::critic::{self, Piece, Pieces, Token};
 use super::diff::{continues, marker_len, opens_amount, table_row, table_row_change};
 use super::xml::{
     Change, Comment, Content, Document, FormatMark, Indent, Item, Kind, Label, LabelUse, Link,
-    List, Note, Paragraph, Picture, Run, RunFormat, TableFormats, TextBox,
+    List, Note, Paragraph, Picture, Run, RunFormat, StyleChangeKind, TableFormats, TextBox,
 };
 use super::{DocxOptions, MarkdownError, PageSize, TrackChanges, WrittenDocx, package};
 use super::{math, view_notes, view_stories, view_styles};
@@ -216,6 +216,17 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
     document.warnings.splice(..0, critic_warnings);
     document.index_wrapping_parents();
     document
+}
+
+/// A style-change tag's property word, the revision tag after it, and
+/// whether the property word was missing (an older view, written as a run).
+fn style_change_tag(raw: &str) -> (StyleChangeKind, &str, bool) {
+    match raw.split_once(' ') {
+        Some(("pPr", rest)) => (StyleChangeKind::Paragraph, rest, false),
+        Some(("rPr", rest)) => (StyleChangeKind::Run, rest, false),
+        Some(("other", rest)) => (StyleChangeKind::Other, rest, false),
+        _ => (StyleChangeKind::Run, raw, true),
+    }
 }
 
 /// Keep rejected dollar pairs as text before any Markdown pass consumes them.
@@ -4840,27 +4851,60 @@ impl<'o, 'a> Writer<'o, 'a> {
                     }
                 }
                 "style_changes" => {
-                    // `{Normal: styles.r0 @AS, …}`: the view names who
-                    // changed a style's formatting, not what it was.
+                    // `{Normal: pPr styles.r0 @AS, …}`: the view names who
+                    // changed a style's formatting, and which property.
                     if !self.resolved
                         && let Some(map) = value
                             .strip_prefix('{')
                             .and_then(|map| map.strip_suffix('}'))
                     {
+                        let mut grouped: Vec<(String, Vec<(StyleChangeKind, FormatMark)>)> =
+                            Vec::new();
+                        let mut legacy: Vec<(String, Vec<String>)> = Vec::new();
                         for entry in map.split(", ") {
                             let Some((holder, tags)) = entry.split_once(": ") else {
                                 continue;
                             };
                             let holder = holder.trim_matches(|c| c == '"' || c == '\'');
                             let tags = tags.trim_matches(|c| c == '"' || c == '\'');
-                            let Some(tags) = view_notes::revision_tags(tags) else {
+                            let mut marks = Vec::new();
+                            let mut assumed = Vec::new();
+                            for raw in tags.split("; ") {
+                                let (kind, rest, bare) = style_change_tag(raw);
+                                let Some(parsed) = view_notes::revision_tags(rest) else {
+                                    continue;
+                                };
+                                if bare {
+                                    assumed.push(rest.to_string());
+                                }
+                                for tag in parsed {
+                                    marks.push((kind, self.format_mark(&tag)));
+                                }
+                            }
+                            if marks.is_empty() {
                                 continue;
-                            };
-                            let marks = tags.iter().map(|tag| self.format_mark(tag)).collect();
-                            self.document
-                                .style_changes
-                                .push((holder.to_string(), marks));
+                            }
+                            if !assumed.is_empty() {
+                                if let Some((_, known)) =
+                                    legacy.iter_mut().find(|(name, _)| name == holder)
+                                {
+                                    known.extend(assumed);
+                                } else {
+                                    legacy.push((holder.to_string(), assumed));
+                                }
+                            }
+                            if let Some((_, known)) =
+                                grouped.iter_mut().find(|(name, _)| name == holder)
+                            {
+                                known.extend(marks);
+                            } else {
+                                grouped.push((holder.to_string(), marks));
+                            }
                         }
+                        self.document
+                            .warnings
+                            .extend(view_styles::style_change_warnings(&grouped, &legacy));
+                        self.document.style_changes.extend(grouped);
                     }
                 }
                 "view" => {

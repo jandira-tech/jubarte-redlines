@@ -690,7 +690,7 @@ Every change `jubarte changes` lists prints its tag somewhere in the
 tracked view, so an agent can name it. Changes with no body text show in
 the header: a section's own change on `page:` (`page: Letter portrait; fmt
 r9 @AC`) or as `fmt:` in its `sections:` entry; style changes as
-`style_changes: {Normal: styles.r3 @AS}`, a key of its own beside
+`style_changes: {Normal: rPr styles.r3 @AS}`, a key of its own beside
 `styles:`, so no style id can collide with it; a header's or footer's
 changes its text does not tag as `rev:`/`fmt:` in its entry; and changes in
 notes no definition shows (Word's separators) as `notes: {fmt: …}`;
@@ -704,14 +704,20 @@ note's own changes its text cannot show close its definition line:
 `[^1]: Source <!-- fmt footnotes.r7 @AC -->`. A first-page header or footer
 prints as `first: {…, inactive}` when different-first-page is off.
 
-A style's two `style_changes` tags name its paragraph-property and
-run-property records, in that order. A single tag writes both records
-with the same id, as Word does; reading them back prints one tag. Both
-forms keep their record count and ids on further round trips. Duplicate
-revision ids are checked and repaired within each record type in a part;
-the accepted paragraph-property/run-property pairing is preserved. Run
-revisions and row/paragraph-mark revisions also have separate id scopes,
-even when their XML element names are the same.
+A `style_changes` tag names its property, then the change: `pPr` for the
+style's paragraph properties and `rPr` for its run properties
+(`Normal: pPr styles.r7 @AS; rPr styles.r9 @AS`). The first tag of each
+kind is written; further tags of that kind are not, and the writer says
+so. A tag with no property word is an older view: it is written as `rPr`,
+with a warning. `other` names a carrier the view can show and the writer
+does not put back. `docDefaults` stays in the view, because the document
+defaults have no change slot, and is not written; the header comment says
+so. Previous properties are not kept. One `pPr` tag and one `rPr` tag
+stay one of each on a further round trip. Duplicate revision ids are
+checked and repaired within each record type in a part; the accepted
+paragraph-property/run-property pairing is preserved. Run revisions and
+row/paragraph-mark revisions also have separate id scopes, even when
+their XML element names are the same.
 
 A header's or footer's paragraphs take Word's Header or Footer style unless
 the entry names theirs: `style: Normal` for all, or `styles: [Footer,
