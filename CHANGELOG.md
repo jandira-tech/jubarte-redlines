@@ -15,9 +15,168 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-10
+
+### Added
+
+- **`apply_markdown_strict`** (#2208, #865). It refuses a Markdown patch that the engine cannot apply exactly, and returns no document. `apply_markdown` keeps its best-effort retry, which replaces the paragraph whole.
+
+### Security
+
+The crafted-input hardening pass continues from 0.17.0. Each item below is refused before the work it would have amplified.
+
+- **Unsafe OPC part names are refused on open** (#2078, #646). A package that names `word/%2e%2e/evil.bin`, `word/doc%75ment2.xml`, `word/evil.xml.`, a percent-encoded `[Content_Types].xml`, or a part that is an ancestor of another part is refused. The check reads the central-directory names before any payload is inflated. Relationship targets that use `../` still resolve, as ordinary Word packages need.
+- **A foreign namespace or a second root in `[Content_Types].xml` or a `.rels` part is refused** (#2080, #643). These parts were matched by local name, so a root in `xmlns="urn:not-opc"`, or a second root, still had its records used. `admit` and `PartFs::open` refuse it before the records are read.
+- **A ZIP name flagged UTF-8 that is not UTF-8 is refused** (#2081, #640). `word/media/\xff.bin` used to open as `word/media/�.bin`, and two such names collapsed into one duplicate. A valid UTF-8 name and a flag-clear CP437 name are unchanged.
+- **In-scope namespace bindings are capped at 64 KiB** (#2077, #658), shadowed rebinds included. The same declarations, parsed one closed element at a time, still succeed.
+- **`jubarte self-update` bounds the archive it unpacks** (#2084, #656; #2085, #1305). A download over 128 MiB, a zip that lists the binary twice, or a member that inflates past 128 MiB is refused. In a `.tar.gz`, so is a symlink or hardlink at the binary's path, a setuid, setgid or sticky mode, and an entry that climbs out of the extract directory. Every refusal comes before extraction, so the installed binary stays.
+- **A redaction the leak scan cannot certify is refused** (#2086, #616). `scrub::leak_scan` returns a receipt, `Complete` or `Incomplete` (a part that starts with a UTF-32 or UTF-16BE byte-order mark). Redact completion refuses `Incomplete` with `REDACTION_INCOMPLETE`, naming the part and the encoding but not the redacted text.
+- **Legacy `.doc` input is bounded** (#2091, #852; #2087, #1603; #2076, #1503; #2043). A `.doc` over 64 MiB is refused before its allocation tables are walked. A main story over 2,000,000 logical characters is refused before it is expanded. Chicago list labels stop at 256 marks. Field-code nesting, list-mark escaping and the empty-paragraph placeholder search each take one pass over the text, where crafted text made them quadratic.
+- **`pulldown-cmark` is locked at 0.13.6** (#2063, #2055) in all four lockfiles, past the release RUSTSEC-2026-0433 names.
+
+- **An image path that names a network share or a device is refused before it is resolved** (#2206, #2064): `\\server\share`, `//server/share`, `\\?\…`, `//./…`, mixed separators and percent-encoded spellings. `canonicalize` never contacts a share. Files inside the resource root are still read.
+- **The MCP server refuses a path outside its root that links into it** (#2228). An absolute path outside root that resolved inside it, through a symlink or `..`, used to pass the check and then fail with an uncaught error. It now gets `ToolError: … is outside root …`.
+- **The `--regex` compile size limit is pinned at 10 MiB** (#2225), the regex crate's own default, so a dependency upgrade cannot loosen it. Patterns are not capped by length: the regex crate matches in linear time, and a 13-byte pattern such as `a{1000}{1000}` is what the size limit refuses.
+- **Crafted input is bounded in five more places.**
+  - An instruction inside unseparated fields is copied onto at most 32 open fields (#2202, #2068).
+  - A comment listing keeps at most 256 KiB of anchor text (#2203, #2067). Past that it returns `INPUT_LIMIT`.
+  - The font index keeps at most 256 families and appends a miss instead of rewriting the file (#2204, #2066). A torn or foreign line makes the next miss rewrite the index (#2248).
+  - A dotted or dashed border stops when its offset no longer advances, or after 4096 segments (#2205, #2065).
+  - The font caches keep 4 MiB of shaped glyphs per face and 64 MiB of face bytes for the process (#2215, #685). The largest key is evicted first, so what stays does not depend on hash order.
+
+### Changed
+
+- **Linux release binaries run on glibc 2.28 and later** (#2112, #2030). The `linux-x86_64` and `linux-aarch64` CLI archives are built in the manylinux_2_28 images, and `scripts/check_glibc_floor.py` fails the release job when a binary needs a newer symbol. 0.17.0's needed glibc 2.43 and failed in Ubuntu 24.04 containers. Static `linux-musl-x86_64` and `linux-musl-aarch64` archives are published beside them. `jubarte self-update` keeps fetching the glibc archive.
+- **The dependency gate refuses a duplicated crate** (#2088, #654). `scripts/security-check.sh` runs `cargo deny check bans` on its five manifests with `multiple-versions = "deny"`. Each ignored advisory is now recorded beside the locked crate that reaches it (#2089, #605).
+
+- **`deny.toml` lists the crates whose build scripts may run** (#2216, #2220, #784), across the five graphs `scripts/security-check.sh` checks. The list is an inventory, not a sandbox.
+- **`jubarte validate` no longer reports `MISSING_REL_TARGET` for a target that is not a package part** (#2217, #2219, #855): a `file:` URI, a Windows path or a UNC share. A doubled slash in front of a package root (`//word/…`, in any case) still names a part. An owner part named `.XML` in any case is now checked too.
+
 ### Fixed
 
-- The release script pauses mbx's automatic cache collection for the whole run and turns it back on when the run ends, failed or not. A collection in the middle of the 0.17.0 run removed the Python and WASM build directories (#2036).
+#### Compare and redline
+
+- **A table stays matched when the paragraph before it is deleted** (#2105, #1675). The comparer used to delete the table and insert a copy.
+- **An emptied table row is kept, and only its text is deleted** (#2106, #1672), as Word's Compare does.
+- **An empty paragraph a table cell gains or loses is kept** (#2100, #1686), so Accept All and Reject All no longer come out one block short.
+- **A body that ends in a table pairs its inserted mark and its closing paragraph the way Word does** (#2101, #1683). **The empty close after a table that replaces the last paragraph is kept** (#2102, #1678).
+- **A paragraph mark whose formatting changes is recorded as `w:rPrChange`** (#2103, #1677), so Reject All restores the source mark's bold.
+- **An empty bookmark survives its paragraph's deletion** (#2104, #1676). It moves onto the following paragraph, or stays in an emptied cell.
+- **A section break the revision adds is an inserted paragraph mark** (#2126, #1718), so Reject All drops it and returns one section.
+- **A two-word swap keeps the middle word, and a word inserted before a hyperlink takes the leading space** (#2114, #2002), as Word Compare does.
+- **`w:customXml` is unwrapped before compare** (#2074, #1674), as Word drops it on open. Its content is compared. `altChunk`, `subDoc`, content parts and customXml range markers are still refused.
+- **A numbering id past `i32::MAX` takes the smallest free id** (#2042). The fresh id used to saturate at `i32::MAX`, so two lists or picture bullets merged.
+- **A glossary's schema-invalid table shapes are repaired** (#2117, #1996): an empty `w:shd/@w:fill`, a `w:gridCol/@w:type`, and cell-margin children out of order. Compare, accept and reject copied them byte for byte, and the Office validator refused them.
+
+- **A deleted paragraph's comment references are deleted with it** (#2172, #1345). Accept All used to keep the empty comment on the next paragraph.
+
+#### Accept, reject and edit
+
+- **Accept drops a deleted field's result with the field** (#2109, #1285), as Word's Accept All does.
+- **A selective resolve that would leave a revised final mark is refused** (#2096, #1693) with `ChangeError::ExposedFinalMark`.
+- **Reject of a paired move whose ranges hold untracked paragraphs** stays as jubarte writes it; the difference from Word is recorded in `docs/WORD_DIFFERENCES.md` (#2111, #1245).
+- **Inserting after a tab keeps another author's formatting record on the tab** (#2107, #1663). `audit_tracked` no longer reports a spurious `FOREIGN_AUTHOR`.
+- **A baseline finding whose element an edit only moves stays disclosed** (#2127, #1701), instead of being reported as introduced. Findings follow a paragraph id, a revision id or unique text, not a sibling index.
+- **Accept prunes an orphan comment when the comments part has an unconventional name** (#2131, #1469).
+- **`validate` reports a revised cell-final mark inside block-level alternate content** on the branch Word shows (#2128, #1699).
+- **A Strict `wne:txbxContent` is a text box** for the revision processor (#2075, #1318).
+
+- **A comment id written with leading zeros is still the comment that accept removes, warns about and reports** (#2141, #1405).
+- **Selective accept keeps a reference-only run that still holds an unselected formatting change** (#2142, #1404). **A comment range counts as wholly deleted exactly when accept removes every character in it** (#2143, #1403).
+- **Refusals name what blocks them.**
+  - A move recorded inside a formatting change names that formatting change (#2154, #1391).
+  - A rewrite inside a smart tag, custom XML or a direction override names the wrapper (#2179, #1302).
+  - A typed `edit replace --at --find` that hits another author's deletion names that revision (#2178, #1313).
+  - A refused working basis lists its blocking revisions, up to 20 (#2193, #954).
+  - A flags command is refused in flags grammar (#2171, #1346).
+  - A schema 2 plan that writes a v1 field name is told the v2 name (#2181, #1299).
+- **A schema 2 plan can strike and restore** (#2187, #1287).
+- **Refreshing a stale plan keeps its authored text and comments** (#2156, #1389).
+- **A `--skip-failed` plan no longer applies its surviving operations twice** (#2185, #1292). That happened when the skipped operation named a paragraph by position.
+- **A plan that comments on words it also deletes is refused** (#2180, #1301). The comment used to land as a point at the end of the paragraph.
+- **Deleting one of two identical paragraphs is refused** on the comparer route with `UNSUPPORTED_STRUCTURE` (#2173, #1344). That route used to strike the wrong copy.
+- **An edit beside a body-level bookmark, or beside one with a page setup, keeps the bookmark and its id** (#2183, #1296; #2184, #1293).
+- **Inserting after a paragraph whose mark is a pending deletion says what accepting that mark does** (#2189, #1270). **Editing mode names the comment threads its clean copy drops** (#2174, #1343).
+- **A cloned list gets its own durable id** (#2190, #1267). A num both documents share is not copied again.
+- **The removed-comment report runs under the compare budget** (#2159, #1388), so a valid accept is not refused by the stricter inspect limit.
+- **Repair and legacy `.doc` conversion print their confirmation again** (#2155, #1390). **The edit report says both reasons the base hash can change** (#2153, #1392).
+
+#### Package writing
+
+- **Unchanged `[Content_Types].xml` and `.rels` parts keep their loaded bytes** (#2209, #858), so attributes and elements the model does not store survive.
+- **A header-only edit or a comment reword leaves `word/document.xml` byte for byte** (#2210, #857).
+- **An `edit --plan` commit takes a lock and re-reads the plan** (#2213, #698). It refuses with `PlanChanged` when the plan changed since it was read.
+- **A forced publish keeps the destination's extended attributes** (#2207, #1386), the POSIX ACL included. If a kept attribute cannot be written, the publish fails.
+- **A publish that names one destination twice is refused** (#2160, #1387). That covers spellings that differ through a symlinked parent, `..`, case folding or Unicode normalization.
+- **`validate --repair` refuses to overwrite its own input**, `--force` or not (#2192, #969).
+
+#### Validate
+
+- **A nested text box is reported in an ISO Strict document** (#2146, #1400), and only in a story Word renders: the same markup in custom XML is not reported (#2147, #1399).
+- **`mc:AlternateContent` shows the branch Word shows** (#2149, #1397). A Choice whose `Requires` names a namespace Word does not understand falls back.
+- **Repair leaves deleted text in a move source nested in an insertion inside a deletion** (#2150, #1396), so a second repair changes nothing.
+- **A move between two revisions is reported as a shape Word opens**, not as one Word reads faithfully (#2151, #1395).
+- **A field code inside an insertion inside a deletion counts as deleted** (#2152, #1394).
+
+#### Markdown and the views
+
+- **Each change keeps its own date across a Markdown round trip** (#2115, #2001). `convert -t md` writes a per-tag timestamp when an author's changes do not share one instant.
+- **A run's tracked formatting comes back as `w:rPrChange`** (#2116, #2000), so Reject All drops it.
+- **A section change keeps its earlier page** (#2108, #1475) after `; was:`, so Reject restores it.
+- **A style-inherited mark size stays off the mark** (#2129, #1491); the view names it `mark style`.
+- **Note, comment and text-box paragraphs keep their own spacing** (#2130, #1482), with line counts (`before 1.5 lines`).
+- **Header and footer paragraphs keep their tab stops, spacing and shading** (#2132, #1426). **A character-unit indent is kept beside its twip indent** (#2133, #1425), printed as `2ch`.
+- **A header or footer change is its own hunk** in `jubarte diff`, Python `diff` and WASM `diffDocuments` (#2134, #1417).
+- **An agent-view tag after a change attributes the change** (#2137, #1410) to the person in `authors:`, or to the patch owner, where it used to print as a comment.
+- **An author whose name holds ` re ` before a revision id** (`Bo re r1 Kim`) stays one author (#2136, #1412); the note spells that space `%20`.
+- **The old plain-view wrapper `{>>r1 Alice (…)<<}` after a change closer is refused** with its replacement (#2138, #1408).
+- **Lines inside a code fence are not counted as changes** (#2139, #1407).
+- **The agent examples use settled paragraph ids** (`p3`), not the retired `body:p:N` the CLI refuses (#2135, #1416).
+
+- **Header and footer text keeps its highlights and character marks** (#2199, #551). **A heading run keeps the bold and italic it states itself** (#2201, #546).
+- **A page break between runs stays in place, inside or between tracked changes** (#2167, #1368). **A symbol run stays in the view** (#2169, #1365). **Tabs and breaks stay in a change's text** (#2188, #1271).
+- **Revisions keep their scope across a round trip.**
+  - A nested substitution keeps both of its sides (#2168, #1367).
+  - A move beside a change keeps its range names (#2170, #1357).
+  - A note inside its deletion stays in that deletion (#2177, #1341).
+  - A cell-filling deletion stays on the text (#2165, #1370).
+  - A nested row is named on each paragraph it holds (#2163, #1376).
+  - A formatting change names the insertion around it (#2161, #1377).
+  - A comment body keeps its tracked changes (#2164, #1372).
+  - A comment event held inside a revision stays in it (#2197, #584).
+- **Separately tagged changes that touch draw a warning** (#2166, #1369), because they read back as one change.
+- **A style change writes one carrier per property** (#2196, #585).
+- **A block-level alternate-content table shows the table Word draws** (#2191, #1208).
+- **A picture inside a text box, or inside a nested text box's fallback, is kept** (#2145, #1401; #2148, #1398).
+- **A localized Footnote Text style becomes `FootnoteText` only when that id is free** (#2144, #1402).
+- **A formula's literal stand-in stays Office Math when CriticMarkup is off** (#2140, #1406).
+
+#### PDF and layout
+
+- **A table with a different style keeps its own centre** (#2118, #1914) instead of joining the table before it.
+- **Autofit tables follow Word's width rules** (#2119, #1733; #2120, #1731; #2121, #1730; #2122, #1728; #2123, #1727). A widthless span wider than its grid widens the table. All-zero-percent cells split an overfull measure evenly. A width with no type is twips. A word wider than its column re-fits the table. A cell width that every row repeats replaces the saved grid.
+
+#### Fonts
+
+- **A font folder that cannot be read is not remembered as empty** (#2073, #2051), so its fonts appear once it becomes readable. Index generation 3 drops the entries generation 2 may have recorded.
+
+#### Release tooling
+
+- **The release-info check reads a fixed set at its own size** (#2070, #2053).
+- **The release script pauses mbx's automatic cache collection for the whole run** and turns it back on when the run ends, failed or not (#2071, #2036). A collection in the middle of the 0.17.0 run removed the Python and WASM build directories.
+
+- **`scripts/test_oracle_dependency.py` runs on a fresh checkout** (#2251). It skips a lockfile that is not there, and fuzz's lockfile is gitignored.
+- **The example letter's zip records one host OS** (#2231), so `agent_example_plans_apply` stops failing with `STALE_SOURCE` on Windows.
+
+### Performance
+
+- Markup counting, attribute copying, comment walks and style-chain resolution no longer allocate per element (#2028, #2029, #2039, #2038), and neither do the logical-change walk and the Markdown XML builder (#2227, #2231, #2253). Output is byte-identical.
+
+<!-- changelog-skip: #2062 test-only: criterion-abab /tmp assertion -->
+<!-- changelog-skip: #2031 docs-only: self-update command name in two docs -->
+<!-- changelog-skip: #2053 release tooling, cited with #2070 -->
+<!-- changelog-skip: #2240 test-only: wps fixtures after #2149 -->
+<!-- changelog-skip: #2243 test-only: inserted-row view after #2165 -->
 
 ## [0.17.0] - 2026-11-01
 
@@ -4965,6 +5124,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.18.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.18.0
 [0.17.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.17.0
 [0.16.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.16.0
 [0.15.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.15.0
