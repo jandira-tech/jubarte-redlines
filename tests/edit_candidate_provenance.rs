@@ -89,13 +89,10 @@ fn a_plans_own_operation_ids_name_it() {
     );
 }
 
-/// Neither operation alone is refused: the replacement alone is emitted
-/// and keeps the bookmark's end outside it; the page setup sends the plan
-/// through the comparer, which takes the end into the insertion. The page
-/// setup brings the refusal in, so it is the operation named; the
-/// replacement it needs is named beside it.
+/// A page setup no longer pulls the bookmark's end into the insertion, so
+/// the replacement and the page setup publish together.
 #[test]
-fn operations_refused_together_are_named_together() {
+fn a_page_setup_and_a_replacement_beside_a_bookmark_publish_together() {
     let source = docx(
         r#"<w:p><w:bookmarkStart w:id="7" w:name="Clause"/><w:r><w:t>alpha beta</w:t></w:r><w:bookmarkEnd w:id="7"/></w:p>"#,
     );
@@ -103,17 +100,18 @@ fn operations_refused_together_are_named_together() {
         r#"{"schema_version":1,"author":"Ed Itor","date":"2026-10-17T12:00:00Z","operations":[{"kind":"replace","paragraph":"p0","find":"beta","replacement":"BETA"},{"kind":"page_setup","section":"all","orientation":"landscape"}]}"#,
     )
     .unwrap();
-    let error = prepare(&source, &plan, &DEFAULT).unwrap_err();
-    assert_eq!(error.code, "CANDIDATE_INVALID", "{error:?}");
+    let prepared = prepare(&source, &plan, &DEFAULT).expect("both operations publish");
+    let red = common::docx::part_string(&prepared.result.redline, "word/document.xml").unwrap();
     assert!(
-        error.message.contains("BOOKMARK_CROSSES_REVISION"),
-        "{error:?}"
+        red.contains(r#"w:orient="landscape""#) && red.contains(r#"w:name="Clause""#),
+        "{red}"
     );
-    assert_eq!(error.operation.as_deref(), Some("op-2"), "{error:?}");
     assert!(
-        error.message.contains("op-2 (page_setup)")
-            && error.message.contains("together with op-1 (replace on p0)"),
-        "{error:?}"
+        jubarte::validate::validate(&prepared.result.redline)
+            .unwrap()
+            .iter()
+            .all(|finding| finding.code != "BOOKMARK_CROSSES_REVISION"),
+        "{red}"
     );
 }
 
@@ -218,11 +216,10 @@ fn the_operation_named_is_the_one_behind_the_quoted_id() {
     );
 }
 
-/// The crossing quoted is `ClauseA`'s, in `p0`: the page setup brings it
-/// in together with the replacement in `p0`, not with the one in `p1`,
-/// which crosses `ClauseB` instead.
+/// Replacements in two bookmarked paragraphs and a page setup publish
+/// together. Each bookmark stays outside the insertion of its own word.
 #[test]
-fn the_operation_needed_is_the_one_behind_the_quoted_bookmark() {
+fn a_page_setup_keeps_each_paragraph_bookmark_outside_its_insertion() {
     let source = docx(
         r#"<w:p><w:bookmarkStart w:id="7" w:name="ClauseA"/><w:r><w:t>alpha beta</w:t></w:r><w:bookmarkEnd w:id="7"/></w:p><w:p><w:bookmarkStart w:id="8" w:name="ClauseB"/><w:r><w:t>gamma delta</w:t></w:r><w:bookmarkEnd w:id="8"/></w:p>"#,
     );
@@ -230,16 +227,18 @@ fn the_operation_needed_is_the_one_behind_the_quoted_bookmark() {
         r#"{"schema_version":1,"author":"Bob","date":"2026-10-17T12:00:00Z","operations":[{"kind":"replace","paragraph":"p1","find":"delta","replacement":"DELTA"},{"kind":"replace","paragraph":"p0","find":"beta","replacement":"BETA"},{"kind":"page_setup","section":"all","orientation":"landscape"}]}"#,
     )
     .unwrap();
-    let error = prepare(&source, &plan, &DEFAULT).unwrap_err();
-    assert_eq!(error.code, "CANDIDATE_INVALID", "{error:?}");
-    assert!(error.message.contains("ClauseA"), "{error:?}");
-    assert_eq!(error.operation.as_deref(), Some("op-3"), "{error:?}");
+    let prepared = prepare(&source, &plan, &DEFAULT).expect("the three operations publish");
+    let red = common::docx::part_string(&prepared.result.redline, "word/document.xml").unwrap();
     assert!(
-        error
-            .message
-            .contains("op-3 (page_setup) introduces it, together with op-2 (replace on p0)")
-            && !error.message.contains("op-1"),
-        "{error:?}"
+        red.contains(r#"w:name="ClauseA""#) && red.contains(r#"w:name="ClauseB""#),
+        "{red}"
+    );
+    assert!(
+        jubarte::validate::validate(&prepared.result.redline)
+            .unwrap()
+            .iter()
+            .all(|finding| finding.code != "BOOKMARK_CROSSES_REVISION"),
+        "{red}"
     );
 }
 
