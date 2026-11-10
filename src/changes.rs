@@ -2325,21 +2325,25 @@ fn deleted_text(dom: &Dom, e: NodeId) -> Vec<NodeId> {
 }
 
 /// Inserted, deleted or moved text under `e`. A tab is `\t` and a break
-/// is `\n`, in the same order as the text nodes around them.
+/// is `\n`, in the same order as the text nodes around them. Only a run's
+/// own `w:tab` and `w:br` count: a tab stop (`w:pPr/w:tabs/w:tab`) is
+/// layout, not text.
 fn text_of(dom: &Dom, e: NodeId) -> String {
+    let (t, del, tab, br, run) = (W::t(), W::del_text(), W::name("tab"), W::name("br"), W::r());
     let mut out = String::new();
-    for node in dom.descendants(e, None) {
+    dom.for_each_descendant_element(e, None, |node| {
         let Some(name) = dom.name(node) else {
-            continue;
+            return;
         };
-        if name == W::t() || name == W::del_text() {
+        let in_run = || dom.parent(node).is_some_and(|p| dom.name_is(p, &run));
+        if name == t || name == del {
             out.push_str(&dom.value(node));
-        } else if name.local_name() == "tab" && name.namespace_name() == W::URI {
+        } else if name == tab && in_run() {
             out.push('\t');
-        } else if name.local_name() == "br" && name.namespace_name() == W::URI {
+        } else if name == br && in_run() {
             out.push('\n');
         }
-    }
+    });
     out
 }
 
