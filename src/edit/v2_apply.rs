@@ -863,6 +863,27 @@ impl SourceModel {
             paragraph_story: &self.loaded.paragraph_story,
         }
     }
+    /// The paragraphs, in document order, that hold a tracked-revision
+    /// element of change `short_id` in its own story.
+    fn revision_paragraphs(&self, short_id: &str) -> Vec<usize> {
+        let Some(cid) = crate::ids::change_id(short_id) else {
+            return Vec::new();
+        };
+        let known = crate::revision_processor::tracked_revisions_elements();
+        let dom = &self.opened.dom;
+        let id_attr = W::id();
+        (0..self.loaded.paragraph_nodes.len())
+            .filter(|&g| self.loaded.stories[self.loaded.paragraph_story[g].0].id == cid.story)
+            .filter(|&g| {
+                dom.find_descendant_element(self.loaded.paragraph_nodes[g], None, |n| {
+                    dom.attribute(n, &id_attr) == Some(cid.wid.as_str())
+                        && dom.name(n).is_some_and(|name| known.contains(&name))
+                })
+                .is_some()
+            })
+            .collect()
+    }
+
     fn entity(&self, target: &Target) -> Result<Entity, EditError> {
         let bad = || {
             err(
@@ -1456,6 +1477,17 @@ impl SourceModel {
                         "revision is not a direct operation target",
                     ));
                 }
+                // The paragraphs that hold the revision are what a selected
+                // scope must authorize; one held by none is never in scope.
+                let held = self.revision_paragraphs(&id);
+                if !scope.all && held.is_empty() {
+                    return Err(err(
+                        "OUT_OF_SCOPE",
+                        None,
+                        "the revision sits in no paragraph a selected scope can name",
+                    ));
+                }
+                paragraphs.extend(held);
                 revision_id = Some(id);
             }
         }
@@ -2521,13 +2553,14 @@ fn edited_revisions(tx: &Transaction<'_>) -> Edited {
             let node = tx.paragraph_nodes[*para];
             if let Some(del) = super::visible::revision_in(dom, node, "del", wid) {
                 let story = &tx.stories[tx.paragraph_story[*para].0].id;
-                for ancestor in dom.ancestors(del, None) {
-                    if super::hint::Held::of(dom, ancestor) != Some(super::hint::Held::Inserted) {
-                        continue;
-                    }
-                    if let Some(id) = dom.attribute(ancestor, &W::id()) {
+                let mut up = dom.parent(del);
+                while let Some(ancestor) = up {
+                    if super::hint::Held::of(dom, ancestor) == Some(super::hint::Held::Inserted)
+                        && let Some(id) = dom.attribute(ancestor, &W::id())
+                    {
                         ids.insert(crate::ids::ChangeId::new(story, id).short());
                     }
+                    up = dom.parent(ancestor);
                 }
             }
             continue;

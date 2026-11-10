@@ -151,6 +151,8 @@ fn every_kind_lists_the_fields_serde_accepts() {
         "resolve_comment",
         "edit_comment",
         "delete_comment",
+        "strike",
+        "restore",
     ] {
         let op = json!({"kind": kind, "qqqqqqqq": 1});
         let serde = serde_json::from_value::<Operation>(op.clone())

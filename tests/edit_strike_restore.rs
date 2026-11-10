@@ -1776,3 +1776,46 @@ fn a_v2_plan_strikes_and_restores_with_the_same_output() {
         }
     }
 }
+
+/// A selected scope bounds a v2 strike or restore like any other edit: only
+/// the paragraph that holds the revision authorizes it (cursor 4501563441).
+#[test]
+fn a_v2_strike_outside_the_selected_scope_is_refused() {
+    let generated = jubarte::edit::template::generate(
+        STEP1,
+        &jubarte::edit::template::TemplateRequest {
+            view: jubarte::edit::for_edit::ForEditRequest::default(),
+            author: CAROL.into(),
+            date: DATE.into(),
+        },
+    )
+    .unwrap();
+    let shell: Value = serde_json::from_str(&generated.plan.to_json()).unwrap();
+    let targets: Vec<Value> = shell["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|op| op["target"].clone())
+        .filter(|t| t["short_id"].as_str().is_some_and(|id| id.starts_with('p')))
+        .collect();
+    assert!(targets.len() > 1, "{shell}");
+    let mut allowed = Vec::new();
+    for target in &targets {
+        let mut plan = shell.clone();
+        plan["scope"] = json!({"kind": "selected", "targets": [target]});
+        plan["operations"] = json!([{
+            "kind": "strike",
+            "target": {"short_id": "r1", "long_id": "document.w:ins.w:id.1"}
+        }]);
+        let plan = jubarte::edit::v2::PlanV2::from_json(&plan.to_string()).unwrap();
+        match jubarte::edit::v2_apply::apply_plan(STEP1, &plan) {
+            Ok(_) => allowed.push(target["short_id"].clone()),
+            Err(e) => assert_eq!(e.code, "OUT_OF_SCOPE", "{target}: {e}"),
+        }
+    }
+    assert_eq!(
+        allowed.len(),
+        1,
+        "only r1's paragraph authorizes it: {allowed:?}"
+    );
+}
