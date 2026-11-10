@@ -326,19 +326,40 @@ fn docx_error(what: &str) -> LegacyDocError {
 /// A word that stands in for an empty paragraph's text on its way through
 /// the Markdown writer: letters and digits only (nothing to escape, and the
 /// writer drops private-use characters), and in none of the document's text.
+/// The text is read once: every number that follows the stem in it is
+/// taken (`…123` takes words 1, 12 and 123; `…05` takes word 0 only), and
+/// the word is the stem with the smallest free number. Cells are read one
+/// by one: the Markdown puts a `|` between them, so a word split across two
+/// cells never reaches the writer whole.
 fn empty_placeholder(document: &LegacyDocument) -> String {
-    let texts: Vec<String> = document
-        .blocks
-        .iter()
-        .map(|block| match block {
-            Block::Paragraph(paragraph) => paragraph.text(),
-            Block::Table(table) => table.rows.iter().flatten().cloned().collect(),
-        })
-        .collect();
-    (0u32..)
-        .map(|n| format!("jubarteemptyparagraph{n}"))
-        .find(|candidate| texts.iter().all(|text| !text.contains(candidate.as_str())))
-        .unwrap_or_default()
+    const STEM: &str = "jubarteemptyparagraph";
+    let mut taken = std::collections::HashSet::new();
+    let mut note = |text: &str| {
+        for (at, _) in text.match_indices(STEM) {
+            let after = text[at..].strip_prefix(STEM).unwrap_or_default();
+            let digits = after.chars().map_while(|c| c.to_digit(10));
+            let mut number = 0u32;
+            for (index, digit) in digits.enumerate() {
+                // A word's number has no leading zero.
+                if index == 1 && number == 0 {
+                    break;
+                }
+                let Some(next) = number.checked_mul(10).and_then(|n| n.checked_add(digit)) else {
+                    break;
+                };
+                number = next;
+                taken.insert(number);
+            }
+        }
+    };
+    for block in &document.blocks {
+        match block {
+            Block::Paragraph(paragraph) => note(&paragraph.text()),
+            Block::Table(table) => table.rows.iter().flatten().for_each(|cell| note(cell)),
+        }
+    }
+    let free = (0u32..).find(|n| !taken.contains(n)).unwrap_or_default();
+    format!("{STEM}{free}")
 }
 
 /// How many placeholders an empty paragraph is written with: one a line.
@@ -2399,6 +2420,95 @@ mod tests {
             "{body}"
         );
         assert!(crate::validate::ring1(&package).is_empty());
+    }
+
+    #[test]
+    fn the_empty_placeholder_is_in_no_paragraph_and_no_cell() {
+        let table = |rows: &[&[&str]]| {
+            Block::Table(Table {
+                rows: rows
+                    .iter()
+                    .map(|row| row.iter().map(|cell| (*cell).to_string()).collect())
+                    .collect(),
+                header_rows: 1,
+            })
+        };
+        let document = LegacyDocument {
+            blocks: vec![
+                Block::Paragraph(plain("see jubarteemptyparagraph0")),
+                table(&[&["a", "jubarteemptyparagraph1 b"]]),
+                Block::Paragraph(plain("")),
+            ],
+        };
+        assert_eq!(empty_placeholder(&document), "jubarteemptyparagraph2");
+
+        // Cells never touch in the Markdown (a `|` stands between them), so
+        // a word split across two cells is no collision.
+        let split = LegacyDocument {
+            blocks: vec![
+                table(&[&["jubarteempty", "paragraph0"]]),
+                Block::Paragraph(plain("")),
+            ],
+        };
+        assert_eq!(empty_placeholder(&split), "jubarteemptyparagraph0");
+        let docx = document_to_docx(&split).unwrap();
+        let package = crate::opc::PartFs::open(&docx).unwrap();
+        assert!(crate::validate::ring1(&package).is_empty());
+        let body = package.part_string("word/document.xml").unwrap();
+        for text in [">jubarteempty<", ">paragraph0<"] {
+            assert!(body.contains(text), "{text}: {body}");
+        }
+        assert!(!body.contains("jubarteemptyparagraph0"), "{body}");
+        let after_table = body.split("</w:tbl>").nth(1).unwrap_or("");
+        assert!(after_table.contains("<w:p></w:p>"), "{body}");
+    }
+
+    #[test]
+    fn the_empty_placeholder_is_the_first_word_no_text_holds() {
+        // The definition, tried word by word: what the one pass must equal.
+        let reference = |texts: &[&str]| {
+            (0u32..)
+                .map(|n| format!("jubarteemptyparagraph{n}"))
+                .find(|word| texts.iter().all(|text| !text.contains(word.as_str())))
+                .unwrap_or_default()
+        };
+        for texts in [
+            &["plain text"][..],
+            &["jubarteemptyparagraph0"],
+            // "05" holds word 0 but not word 5.
+            &["jubarteemptyparagraph05", "jubarteemptyparagraph1"],
+            // "123" holds words 1, 12 and 123.
+            &["jubarteemptyparagraph123", "jubarteemptyparagraph0"],
+            &["xjubarteemptyparagraphjubarteemptyparagraph0y"],
+            &["jubarteemptyparagraph", "jubarteemptyparagraphx0"],
+            &["jubarteemptyparagraph99999999999", "jubarteemptyparagraph0"],
+            &[
+                "jubarteemptyparagraph0 jubarteemptyparagraph2",
+                "jubarteemptyparagraph1",
+            ],
+            &["Ünïcödé jubarteemptyparagraph0é jubarteemptyparagraph1"],
+        ] {
+            let document = LegacyDocument {
+                blocks: texts
+                    .iter()
+                    .map(|text| Block::Paragraph(plain(text)))
+                    .collect(),
+            };
+            assert_eq!(empty_placeholder(&document), reference(texts), "{texts:?}");
+        }
+    }
+
+    #[test]
+    fn the_empty_placeholder_reads_the_text_once() {
+        // A .doc can hold the words themselves; trying them one by one
+        // against all of its text is quadratic.
+        let words: Vec<String> = (0..20_000)
+            .map(|n| format!("jubarteemptyparagraph{n}"))
+            .collect();
+        let document = LegacyDocument {
+            blocks: vec![Block::Paragraph(plain(&words.join(" ")))],
+        };
+        assert_eq!(empty_placeholder(&document), "jubarteemptyparagraph20000");
     }
 
     /// Story characters for one table: `|` ends a cell, `/` ends a row
