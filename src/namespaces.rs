@@ -270,6 +270,9 @@ impl W {
     cached_xname!(W::URI, cell_merge, "cellMerge");
     cached_xname!(W::URI, hyperlink, "hyperlink");
     cached_xname!(W::URI, smart_tag, "smartTag");
+    // Direction overrides: a refusal names them as the run's wrapper.
+    cached_xname!(W::URI, dir, "dir");
+    cached_xname!(W::URI, bdo, "bdo");
     cached_xname!(W::URI, r_pr_change, "rPrChange");
     cached_xname!(W::URI, p_pr_change, "pPrChange");
     cached_xname!(W::URI, numbering_change, "numberingChange");
