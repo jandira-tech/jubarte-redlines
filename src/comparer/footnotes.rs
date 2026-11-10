@@ -362,6 +362,56 @@ fn list_signature(dom: &mut Dom, num: NodeId, numbering: NodeId) -> Option<Strin
     Some(normalized_abstract_num_signature(dom, definition) + &overrides)
 }
 
+const NUMBERING_CID: &str = "http://schemas.microsoft.com/office/word/2016/wordml/cid";
+
+fn numbering_durable_id(dom: &Dom, num: NodeId) -> Option<(XName, String)> {
+    for index in 0..dom.attr_count(num) {
+        let (name, value) = dom.attr_at(num, index);
+        if name.local_name() == "durableId" && name.namespace_name() == NUMBERING_CID {
+            return Some((name.clone(), value.to_string()));
+        }
+    }
+    None
+}
+
+/// Original nums keep their durable id. A copy that brought one takes the
+/// next decimal id past the highest parsed value, so a shared id is not
+/// repeated. A copy that arrived without one stays without one.
+fn assign_fresh_durable_ids(
+    dom: &mut Dom,
+    numbering: NodeId,
+    original: &std::collections::HashSet<NodeId>,
+) {
+    let nums = dom.elements(numbering, Some(&W::name("num")));
+    let mut used = std::collections::HashSet::new();
+    let mut max_id = 0u32;
+    for &n in &nums {
+        if let Some((_, value)) = numbering_durable_id(dom, n)
+            && let Ok(parsed) = value.parse::<u32>()
+        {
+            used.insert(parsed);
+            max_id = max_id.max(parsed);
+        }
+    }
+    let mut next = max_id;
+    for n in nums {
+        if original.contains(&n) {
+            continue;
+        }
+        let Some((name, _)) = numbering_durable_id(dom, n) else {
+            continue;
+        };
+        loop {
+            next = next.saturating_add(1);
+            if !used.contains(&next) || next == u32::MAX {
+                break;
+            }
+        }
+        dom.set_attribute_value(n, &name, Some(&next.to_string()));
+        used.insert(next);
+    }
+}
+
 /// E.1 — `CopyMissingNumberingFromOneDocToAnother` (WmlComparer.ts :2143):
 /// content-dedup (an `abstractNum` whose normalized content already exists
 /// is REUSED, under its own id when that one matches), id-remapped
@@ -389,6 +439,8 @@ pub fn copy_missing_numbering(
 ) -> (std::collections::HashMap<String, String>, Vec<NodeId>) {
     let abstract_num = W::abstract_num();
     let num = W::name("num");
+    let original_nums: std::collections::HashSet<NodeId> =
+        dom.elements(to_root, Some(&num)).into_iter().collect();
     let abstract_num_id = W::abstract_num_id();
     let num_id_attr = W::name("numId");
     let mut num_remap: std::collections::HashMap<String, String> = std::collections::HashMap::new();
@@ -548,6 +600,7 @@ pub fn copy_missing_numbering(
             add_numbering_child_in_schema_order(dom, to_root, cloned);
         }
     }
+    assign_fresh_durable_ids(dom, to_root, &original_nums);
     (num_remap, copied_bullets)
 }
 

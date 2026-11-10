@@ -218,7 +218,7 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 36] = [
+const RING1_CODES: [&str; 37] = [
     "DATA_BINDING_WITHOUT_STORE",
     "MOVE_RANGE_COUNT_MISMATCH",
     "MOVE_RANGE_NAME_MISSING",
@@ -255,6 +255,7 @@ const RING1_CODES: [&str; 36] = [
     "DELETED_SECTION_PAGE_FIELD",
     "INSERTED_TEXT_BEFORE_DELETED_TABLE",
     "NON_FINITE_MEASURE",
+    "DUPLICATE_DURABLE_ID",
 ];
 
 /// Why a package could not be validated at all (a finding is never an
@@ -1528,6 +1529,7 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_deleted_section_page_fields(pkg, &mut out);
     check_inserted_text_before_deleted_tables(pkg, &mut out);
     check_non_finite_measures(pkg, &mut out);
+    check_duplicate_num_durable_ids(pkg, &mut out);
     out
 }
 
@@ -2751,6 +2753,41 @@ fn check_picture_bullets(pkg: &PartFs, out: &mut Vec<Finding>) {
             ));
         }
     }
+}
+
+/// Two `w:num` elements that share one numbering `w16cid:durableId`. A copy
+/// takes a fresh id, and the editor writes none, so a repeat is a warning.
+fn check_duplicate_num_durable_ids(pkg: &PartFs, out: &mut Vec<Finding>) {
+    const PART: &str = "word/numbering.xml";
+    const CID: &str = "http://schemas.microsoft.com/office/word/2016/wordml/cid";
+    let Some((dom, root)) = parse_part(pkg, PART) else {
+        return;
+    };
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut reported: HashSet<String> = HashSet::new();
+    for num in dom.elements(root, Some(&W::name("num"))) {
+        let Some(id) = num_durable_id(&dom, num, CID) else {
+            continue;
+        };
+        if !seen.insert(id.to_string()) && reported.insert(id.to_string()) {
+            out.push(Finding::new(
+                "DUPLICATE_DURABLE_ID",
+                PART,
+                element_path(&dom, num),
+                format!("w:num repeats durableId '{id}'"),
+            ));
+        }
+    }
+}
+
+fn num_durable_id<'a>(dom: &'a Dom, num: NodeId, namespace: &str) -> Option<&'a str> {
+    for index in 0..dom.attr_count(num) {
+        let (name, value) = dom.attr_at(num, index);
+        if name.local_name() == "durableId" && name.namespace_name() == namespace {
+            return Some(value);
+        }
+    }
+    None
 }
 
 fn check_revision_and_drawing_ids(pkg: &PartFs, out: &mut Vec<Finding>) {
