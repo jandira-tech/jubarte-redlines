@@ -490,7 +490,20 @@ fn replaced_xattr(name: &std::ffi::OsStr) -> bool {
 
 #[cfg(all(unix, not(target_os = "linux")))]
 fn replaced_xattr(name: &std::ffi::OsStr) -> bool {
-    !name.as_encoded_bytes().starts_with(b"system.")
+    let bytes = name.as_encoded_bytes();
+    !bytes.starts_with(b"system.") && !macos_kernel_label(bytes)
+}
+
+/// A label the macOS kernel owns: userspace gets EPERM writing
+/// `com.apple.rootless` or a `com.apple.system.` name, and the kernel sets
+/// `com.apple.provenance` and `com.apple.macl` on the new inode itself.
+#[cfg(all(unix, not(target_os = "linux")))]
+fn macos_kernel_label(name: &[u8]) -> bool {
+    name.starts_with(b"com.apple.system.")
+        || matches!(
+            name,
+            b"com.apple.rootless" | b"com.apple.provenance" | b"com.apple.macl"
+        )
 }
 
 impl Backend for FsBackend<'_> {
@@ -868,42 +881,42 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let output = temp.path().join("output");
         std::fs::write(&output, b"old").unwrap();
-        set_user_xattr(&output, "kept");
+        // The crate the copy itself uses, so Linux and macOS both run it.
+        match xattr::set(&output, "user.jubarte", b"kept") {
+            Ok(()) => {}
+            // A file system with no user attributes has nothing to keep.
+            Err(error) if error.kind() == std::io::ErrorKind::Unsupported => return,
+            Err(error) => panic!("could not set the user attribute: {error}"),
+        }
         let report = publish_paths(&[(output.clone(), b"new")], true).unwrap();
         assert!(report.warnings.is_empty(), "{report:?}");
         assert_eq!(std::fs::read(&output).unwrap(), b"new");
         assert_eq!(
-            user_xattr(&output).as_deref(),
+            xattr::get(&output, "user.jubarte").unwrap().as_deref(),
             Some(b"kept".as_slice()),
             "overwrite dropped the destination extended attribute"
         );
     }
 
-    #[cfg(unix)]
-    fn set_user_xattr(path: &Path, value: &str) {
-        let status = std::process::Command::new("python3")
-            .args([
-                "-c",
-                "import os, sys; os.setxattr(sys.argv[1], 'user.jubarte', sys.argv[2].encode())",
-            ])
-            .arg(path)
-            .arg(value)
-            .status()
-            .expect("python3 sets the attribute");
-        assert!(status.success(), "could not set the user attribute");
-    }
-
-    #[cfg(unix)]
-    fn user_xattr(path: &Path) -> Option<Vec<u8>> {
-        let output = std::process::Command::new("python3")
-            .args([
-                "-c",
-                "import os, sys; sys.stdout.buffer.write(os.getxattr(sys.argv[1], 'user.jubarte'))",
-            ])
-            .arg(path)
-            .output()
-            .expect("python3 reads the attribute");
-        output.status.success().then_some(output.stdout)
+    /// macOS labels the kernel owns stay behind: userspace cannot write
+    /// `com.apple.rootless` or `com.apple.system.*` (EPERM), and the kernel
+    /// sets `com.apple.provenance` and `com.apple.macl` itself. Copying them
+    /// would fail an ordinary forced publish. Other names still move.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_kernel_labels_are_left_for_the_kernel() {
+        use std::ffi::OsStr;
+        for name in [
+            "com.apple.rootless",
+            "com.apple.system.Security",
+            "com.apple.provenance",
+            "com.apple.macl",
+        ] {
+            assert!(!replaced_xattr(OsStr::new(name)), "{name} must stay behind");
+        }
+        for name in ["user.jubarte", "com.apple.quarantine", "com.example.tag"] {
+            assert!(replaced_xattr(OsStr::new(name)), "{name} must move");
+        }
     }
 
     #[test]
