@@ -40,16 +40,8 @@ allow = [
     "ISC",
     "Zlib",
     "Unicode-3.0",
-    "Unicode-DFS-2016",
-    "AGPL-3.0",
     "AGPL-3.0-only",
-    "AGPL-3.0-or-later",
-    "MPL-2.0",
-    "CC0-1.0",
     "0BSD",
-    "OpenSSL",
-    "BSL-1.0",
-    "bzip2-1.0.6",
     # webpki-roots (Mozilla's CA root list), pulled in by `self-update`'s
     # rustls client: a permissive data license.
     "CDLA-Permissive-2.0",
