@@ -2324,14 +2324,27 @@ fn deleted_text(dom: &Dom, e: NodeId) -> Vec<NodeId> {
         .collect()
 }
 
-/// Inserted, deleted or moved text under `e`.
+/// Inserted, deleted or moved text under `e`. A tab is `\t` and a break
+/// is `\n`, in the same order as the text nodes around them. Only a run's
+/// own `w:tab` and `w:br` count: a tab stop (`w:pPr/w:tabs/w:tab`) is
+/// layout, not text.
 fn text_of(dom: &Dom, e: NodeId) -> String {
-    let (t, del) = (W::t(), W::del_text());
-    dom.descendants(e, None)
-        .into_iter()
-        .filter(|&d| dom.name(d).is_some_and(|n| n == t || n == del))
-        .map(|d| dom.value(d))
-        .collect()
+    let (t, del, tab, br, run) = (W::t(), W::del_text(), W::name("tab"), W::name("br"), W::r());
+    let mut out = String::new();
+    dom.for_each_descendant_element(e, None, |node| {
+        let Some(name) = dom.name(node) else {
+            return;
+        };
+        let in_run = || dom.parent(node).is_some_and(|p| dom.name_is(p, &run));
+        if name == t || name == del {
+            out.push_str(&dom.value(node));
+        } else if name == tab && in_run() {
+            out.push('\t');
+        } else if name == br && in_run() {
+            out.push('\n');
+        }
+    });
+    out
 }
 
 /// The text of the run or paragraph whose properties a change records.
