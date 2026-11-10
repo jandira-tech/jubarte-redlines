@@ -1402,21 +1402,12 @@ pub(crate) fn held_comment_clauses(p: &Element, shown: &str) -> Vec<String> {
     }
     let (inside, held_refs) = comment_note_places(shown);
     let printed = printed_wids(shown, "body");
-    // A note printed inside a change sits where its reference is, so it
-    // places the events of the revision that holds the reference. An event
-    // another revision holds keeps its clause.
-    let note_revision: HashMap<u32, u32> = events
-        .iter()
-        .filter(|event| event.kind == 2)
-        .map(|event| (event.comment, event.revision))
-        .collect();
+    // A note printed inside a change places its events where the view's
+    // marks fall, inside the spans printed there. A range start a revision
+    // holds that prints nothing has no span to fall in: it keeps its clause.
     events.retain(|event| {
-        if inside.contains(&event.comment)
-            && note_revision
-                .get(&event.comment)
-                .is_none_or(|&revision| revision == event.revision)
-        {
-            return false;
+        if inside.contains(&event.comment) {
+            return event.kind == 0 && !printed.contains(&event.revision.to_string());
         }
         match event.kind {
             0 => !printed.contains(&event.revision.to_string()),
@@ -1426,6 +1417,11 @@ pub(crate) fn held_comment_clauses(p: &Element, shown: &str) -> Vec<String> {
             _ => true,
         }
     });
+    // A clause names a set of events, not their order: start, end, then
+    // reference, each kind in document order, so the clause reads the same
+    // after a round trip that writes one comment's end and reference
+    // together.
+    events.sort_by_key(|event| event.kind);
     let mut groups: Vec<(bool, u32, String)> = Vec::new();
     for event in events {
         let word = match event.kind {

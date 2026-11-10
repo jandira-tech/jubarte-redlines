@@ -1136,10 +1136,11 @@ pub(super) fn story(
         if let Some(change) = in_note
             && open != Some(change)
         {
-            if let Some(depth) = marks
-                .iter()
-                .rposition(|outer| continues_change(context.document, change, *outer))
-            {
+            // A suspended mark of the change itself (a `holds` event after
+            // its nested changes) holds the items as a piece of it does.
+            if let Some(depth) = marks.iter().rposition(|outer| {
+                *outer == change || continues_change(context.document, change, *outer)
+            }) {
                 // The note sits in a piece of a change a nested one
                 // suspended: the marks above that piece's change close,
                 // and the note's items and the piece's runs go inside its
