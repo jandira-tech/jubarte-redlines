@@ -5338,7 +5338,7 @@ fn refuse_past_story_budget(
 /// element is not a refusal: the atomizer unwraps it and keeps its content
 /// (#1674). `story` names the part or side in the error.
 fn refuse_unatomizable(dom: &Dom, root: NodeId, story: &str) -> Result<(), OpcError> {
-    let content_part = W::name("contentPart");
+    let content_part = W::content_part();
     let sect_pr = W::sect_pr();
     let custom_xml = W::custom_xml();
     // The atomizer unwraps `w:customXml` first, so a sectPr's parent is

@@ -203,6 +203,8 @@ impl W {
     cached_xname!(W::URI, comment_range_start, "commentRangeStart");
     cached_xname!(W::URI, comment_range_end, "commentRangeEnd");
     cached_xname!(W::URI, comment_reference, "commentReference");
+    cached_xname!(W::URI, comment, "comment");
+    cached_xname!(W::URI, content_part, "contentPart");
     cached_xname!(W::URI, perm_start, "permStart");
     cached_xname!(W::URI, perm_end, "permEnd");
     cached_xname!(W::URI, p_pr, "pPr");
