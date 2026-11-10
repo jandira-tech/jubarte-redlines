@@ -6316,8 +6316,9 @@ impl<'p> Transaction<'p> {
         // A separate comment wholly on words a deletion removes has nowhere
         // to sit on those words. The deletion's own comment keeps the note
         // there. A comment around more than the deletion keeps the words
-        // that stay; one that crosses its edge is refused below.
-        for (i, r) in &self.resolved {
+        // that stay; one that crosses its edge is refused below. v2 refuses
+        // this shape after the conflict checks, as COMMENT_ANCHOR_REMOVED.
+        for (i, r) in self.resolved.iter().filter(|_| !v2) {
             let Resolved::CommentRange {
                 para, start, end, ..
             } = r
