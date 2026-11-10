@@ -600,11 +600,7 @@ pub fn remove_existing_powertools_markup(dom: &mut Dom, root: NodeId) {
 ///
 /// Returns `Err(String)` naming the offending local name on failure.
 pub fn test_for_invalid_content(dom: &Dom, root: NodeId) -> Result<(), String> {
-    let invalid = [
-        W::name("altChunk"),
-        W::name("subDoc"),
-        W::name("contentPart"),
-    ];
+    let invalid = [W::name("altChunk"), W::name("subDoc"), W::content_part()];
     // DOM-ITER-03: stop at first hit without allocating the full descendant list.
     let mut bad: Option<String> = None;
     dom.for_each_descendant_element(root, None, |d| {
