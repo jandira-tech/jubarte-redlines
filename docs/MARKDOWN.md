@@ -984,6 +984,12 @@ result a field always ends with `{/}` (`{PAGE}{NUMPAGES}{/}{/}`), and
 story text that would read as a field (`{SELLER}`, `{1999}`, `{/}`) is
 escaped (`\{SELLER}`).
 
+A header or footer run keeps the character marks the body prints.
+`<b>`, `<i>`, `<u>`, `<s>`, `<code>`, `<sup>` and `<sub>` name bold,
+italic, underline, strike, code and vertical alignment. A highlight is
+`<mark class="hl-cyan">` (yellow is `<mark>`). Converting the view back
+writes those marks on the story's runs.
+
 Not read back yet: `source:` names no base document, an untagged note
 after a tagged one on the same anchor is a new comment, not a reply, and
 the applier (`jubarte compare contract.docx view.md`, `apply_markdown`)

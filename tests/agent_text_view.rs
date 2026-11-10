@@ -844,7 +844,7 @@ fn changes_without_text_name_their_ids() {
     );
     assert!(
         lines.contains(
-            &r#"  default: {id: header1, text: Title, style: Normal, fmt: "header1.r4 @AC 2026-01-01T00:00:00Z in header1"}"#
+            &r#"  default: {id: header1, text: <b>Title</b>, style: Normal, fmt: "header1.r4 @AC 2026-01-01T00:00:00Z in header1"}"#
         ),
         "{out}"
     );
@@ -958,7 +958,7 @@ fn rows_inactive_headers_and_separators_name_their_changes() {
     let lines = header_lines(&out);
     assert!(
         lines.iter().any(|l| l.starts_with(
-            "  first: {id: header1, text: Cover, style: Normal, inactive, fmt: header1.r4 @AC in header1}"
+            "  first: {id: header1, text: <b>Cover</b>, style: Normal, inactive, fmt: header1.r4 @AC in header1}"
         ) && l.ends_with("# defined, but different first page is off")),
         "{out}"
     );

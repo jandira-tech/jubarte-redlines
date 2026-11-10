@@ -2075,8 +2075,26 @@ pub(crate) fn story_text_with(
                     if super::agent::hidden_run(run.child("rPr"), hidden) {
                         continue;
                     }
+                    // A field's pieces print its code (`{PAGE}`, `{/}`),
+                    // which marks must not wrap: the code is no text, and
+                    // a wrapped separate moves the end past a result-less
+                    // field's start, so it would gain `{/}`.
+                    let field_piece = run.elements().any(|child| {
+                        matches!(child.local(), "fldChar" | "instrText" | "delInstrText")
+                    });
+                    let wrap = match s.view {
+                        StoryView::Tagged(..) if !field_piece => character_wrap(run),
+                        _ => None,
+                    };
+                    let before = s.out.len();
                     for child in run.elements() {
                         run_content(child, s, draw);
+                    }
+                    if let Some((open, close)) = wrap
+                        && s.out.len() > before
+                    {
+                        s.out.insert_str(before, &open);
+                        s.out.push_str(&close);
                     }
                 }
                 _ => {}
@@ -2241,6 +2259,67 @@ fn escape_field_codes(text: &str) -> std::borrow::Cow<'_, str> {
         out.push(c);
     }
     std::borrow::Cow::Owned(out)
+}
+
+/// The character marks a story run prints: open tags, then their closers.
+/// Direct run properties only. Yellow is a bare `<mark>`; any other named
+/// colour keeps `class="hl-…"`. Bold, italic, underline, strike, code and
+/// vertical alignment use the same tags as the body.
+fn character_wrap(run: &Element) -> Option<(String, String)> {
+    let rpr = run.child("rPr")?;
+    let bold = rpr.toggle("b") == Some(true);
+    let italic = rpr.toggle("i") == Some(true);
+    let underline = rpr.child("u").is_some_and(super::is_underlined);
+    let strike = rpr.toggle("strike") == Some(true);
+    let highlight = rpr
+        .child("highlight")
+        .and_then(|mark| mark.attr("val"))
+        .and_then(super::highlight_color);
+    let code = rpr.child("rStyle").and_then(|style| style.attr("val")) == Some("VerbatimChar")
+        || super::font_of(rpr).is_some_and(|font| super::is_monospace(&font));
+    let raised = rpr.child("vertAlign").and_then(|align| align.attr("val"));
+    let sup = raised == Some("superscript");
+    let sub = raised == Some("subscript");
+    if !(bold || italic || underline || strike || highlight.is_some() || code || sup || sub) {
+        return None;
+    }
+    let mut open = String::new();
+    let mut close = String::new();
+    let push = |open: &mut String, close: &mut String, start: &str, end: &str| {
+        open.push_str(start);
+        close.insert_str(0, end);
+    };
+    if bold {
+        push(&mut open, &mut close, "<b>", "</b>");
+    }
+    if italic {
+        push(&mut open, &mut close, "<i>", "</i>");
+    }
+    if underline {
+        push(&mut open, &mut close, "<u>", "</u>");
+    }
+    match highlight {
+        Some("yellow") => push(&mut open, &mut close, "<mark>", "</mark>"),
+        Some(colour) => push(
+            &mut open,
+            &mut close,
+            &format!("<mark class=\"hl-{colour}\">"),
+            "</mark>",
+        ),
+        None => {}
+    }
+    if strike {
+        push(&mut open, &mut close, "<s>", "</s>");
+    }
+    if code {
+        push(&mut open, &mut close, "<code>", "</code>");
+    }
+    if sup {
+        push(&mut open, &mut close, "<sup>", "</sup>");
+    } else if sub {
+        push(&mut open, &mut close, "<sub>", "</sub>");
+    }
+    Some((open, close))
 }
 
 #[cfg(test)]
