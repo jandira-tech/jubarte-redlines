@@ -460,13 +460,13 @@ fn new_markup(original: &[u8], edited: &[u8]) -> Result<Vec<AuthorMark>, Validat
     let mut revisions = Vec::new();
     check_foreign_revisions(original, edited, None, &wholes, &mut revisions)?;
     let mut out = Vec::new();
-    let mut counted: HashSet<(String, String)> = HashSet::new();
+    let mut counted: HashSet<(&str, &str)> = HashSet::new();
     for finding in &revisions {
         if let Some((id, author)) = new_foreign(finding) {
             // The finding names the change as `changes` lists it, or one
             // mark of it; the map names the change either way.
-            let change = wholes.whole(false, id).to_string();
-            if counted.insert((change, author.to_string())) {
+            let change = wholes.whole(false, id);
+            if counted.insert((change, author)) {
                 add(&mut out, author, false);
             }
         }
