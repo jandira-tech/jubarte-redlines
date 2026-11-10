@@ -46,7 +46,7 @@ The crafted-input hardening pass continues from 0.17.0. Each item below is refus
 
 ### Changed
 
-- **Linux release binaries run on glibc 2.28 and later** (#2112, #2030). The `linux-x86_64` and `linux-aarch64` CLI archives are built in the manylinux_2_28 images, and `scripts/check_glibc_floor.py` fails the release job when a binary needs a newer symbol. 0.17.0's needed glibc 2.43 and failed in Ubuntu 24.04 containers. Static `linux-musl-x86_64` and `linux-musl-aarch64` archives are published beside them. `jubarte self-update` fetches the archive of the build it runs: a glibc binary the glibc archive, a musl binary the musl one.
+- **Linux release binaries run on glibc 2.28 and later** (#2112, #2030). The `linux-x86_64` and `linux-aarch64` CLI archives are built in the manylinux_2_28 images, and `scripts/check_glibc_floor.py` fails the release job when a binary needs a newer symbol. 0.17.0's needed glibc 2.43, so it failed on Ubuntu 24.04, Debian 12 and RHEL 9. Static `linux-musl-x86_64` and `linux-musl-aarch64` archives are published beside them; they are not timed against the bench yet, so the glibc archives stay the recommended install. `jubarte self-update` fetches the archive of the build it runs: a glibc binary the glibc archive, a musl binary the musl one.
 - **The dependency gate refuses a duplicated crate** (#2088, #654). `scripts/security-check.sh` runs `cargo deny check bans` on its five manifests with `multiple-versions = "deny"`. Each ignored advisory is now recorded beside the locked crate that reaches it (#2089, #605).
 
 - **`deny.toml` lists the crates whose build scripts may run** (#2216, #2220, #784), across the five graphs `scripts/security-check.sh` checks. The list is an inventory, not a sandbox.
@@ -87,14 +87,14 @@ The crafted-input hardening pass continues from 0.17.0. Each item below is refus
   - A move recorded inside a formatting change names that formatting change (#2154, #1391).
   - A rewrite inside a smart tag, custom XML or a direction override names the wrapper (#2179, #1302).
   - A typed `edit replace --at --find` that hits another author's deletion names that revision (#2178, #1313).
-  - A refused working basis lists its blocking revisions, up to 20 (#2193, #954).
+  - A refused working basis lists its blocking revisions, up to 20 (#2193, part of #954).
   - A flags command is refused in flags grammar (#2171, #1346).
   - A schema 2 plan that writes a v1 field name is told the v2 name (#2181, #1299).
 - **A schema 2 plan can strike and restore** (#2187, #1287).
 - **Refreshing a stale plan keeps its authored text and comments** (#2156, #1389).
 - **A `--skip-failed` plan no longer applies its surviving operations twice** (#2185, #1292). That happened when the skipped operation named a paragraph by position.
 - **A plan that comments on words it also deletes is refused** (#2180, #1301). The comment used to land as a point at the end of the paragraph.
-- **Deleting one of two identical paragraphs is refused** on the comparer route with `UNSUPPORTED_STRUCTURE` (#2173, #1344). That route used to strike the wrong copy.
+- **Deleting one of two identical paragraphs is refused when the comparer would strike the other copy** (#2173, #1344), with `UNSUPPORTED_STRUCTURE`. It used to strike the later copy and leave the paragraph's comment on the one that stayed. When the twin sits before the named paragraph, the deletion is still written.
 - **An edit beside a body-level bookmark, or beside one with a page setup, keeps the bookmark and its id** (#2183, #1296; #2184, #1293).
 - **Inserting after a paragraph whose mark is a pending deletion says what accepting that mark does** (#2189, #1270). **Editing mode names the comment threads its clean copy drops** (#2174, #1343).
 - **A cloned list gets its own durable id** (#2190, #1267). A num both documents share is not copied again.
@@ -154,7 +154,7 @@ The crafted-input hardening pass continues from 0.17.0. Each item below is refus
 #### PDF and layout
 
 - **A table with a different style keeps its own centre** (#2118, #1914) instead of joining the table before it.
-- **Autofit tables follow Word's width rules** (#2119, #1733; #2120, #1731; #2121, #1730; #2122, #1728; #2123, #1727). A widthless span wider than its grid widens the table. All-zero-percent cells split an overfull measure evenly. A width with no type is twips. A word wider than its column re-fits the table. A cell width that every row repeats replaces the saved grid.
+- **Autofit tables follow Word's width rules** (#2119, #1733; #2120, #1731; #2121, #1730; #2122, #1728; #2123, #1727). A widthless span wider than its grid widens the table. All-zero-percent cells split an overfull measure evenly. A width with no type is twips. A word wider than its column re-fits the table. A twip cell width that every row repeats replaces the saved grid, and a repeated percent width shares the page only when the text is wider than its share.
 
 #### Fonts
 
@@ -163,14 +163,14 @@ The crafted-input hardening pass continues from 0.17.0. Each item below is refus
 #### Release tooling
 
 - **The release-info check reads a fixed set at its own size** (#2070, #2053).
-- **The release script pauses mbx's automatic cache collection for the whole run** and turns it back on when the run ends, failed or not (#2071, #2036). A collection in the middle of the 0.17.0 run removed the Python and WASM build directories.
+- **The release script pauses mbx's automatic cache collection for the whole run** when it is on, and turns it back on when the run ends, failed or not (#2071, #2036). An owner who turned it off keeps it off. A collection in the middle of the 0.17.0 run removed the Python and WASM build directories.
 
 - **`scripts/test_oracle_dependency.py` runs on a fresh checkout** (#2251). It skips a lockfile that is not there, and fuzz's lockfile is gitignored.
 - **The example letter's zip records one host OS** (#2231), so `agent_example_plans_apply` stops failing with `STALE_SOURCE` on Windows.
 
 ### Performance
 
-- Markup counting, attribute copying, comment walks and style-chain resolution no longer allocate per element (#2028, #2029, #2039, #2038), and neither do the logical-change walk and the Markdown XML builder (#2227, #2231, #2253). Output is byte-identical.
+- Markup counting, attribute copying, comment walks and style-chain resolution no longer allocate per element (#2028, #2029, #2039, #2038, #2253), and neither do the logical-change walk and the Markdown XML builder (#2227, #2231). Output is byte-identical.
 
 <!-- changelog-skip: #2062 test-only: criterion-abab /tmp assertion -->
 <!-- changelog-skip: #2031 docs-only: self-update command name in two docs -->
