@@ -49,7 +49,7 @@ Gaps a provider's sandbox may still hit:
   Debian 10, Ubuntu 20.04), and `linux-musl-x86_64` and
   `linux-musl-aarch64` static archives for Alpine and distroless ship
   beside them. A host older than glibc 2.28 still falls back to an sdist
-  build. `jubarte update` fetches the archive of the libc it was built
+  build. `jubarte self-update` fetches the archive of the libc it was built
   for. The musl build has not been timed against the bench, so it is
   not the recommended install.
 - **No Windows arm64 wheel or binary.** Use `cargo install jubarte-redlines`

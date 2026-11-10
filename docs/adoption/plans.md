@@ -124,7 +124,7 @@ A skill that needs LibreOffice's pixels keeps LibreOffice.
 - Static musl CLI archives `linux-musl-x86_64` and `linux-musl-aarch64`
   join the GitHub release from the first release after #2112, beside the
   glibc archives (`linux-x86_64`, `linux-aarch64`), now built in the
-  manylinux_2_28 image. `jubarte update` fetches the archive of the libc
+  manylinux_2_28 image. `jubarte self-update` fetches the archive of the libc
   it was built for. The musl build has not been timed against the bench,
   so it is not the recommended install. A `manylinux2014` wheel (glibc
   2.17) is still open.
