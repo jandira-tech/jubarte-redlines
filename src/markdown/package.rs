@@ -1018,35 +1018,34 @@ pub(super) fn word_table_style_name(id: &str) -> Option<String> {
 /// by its tint and darkened by its shade; `auto` for a colour the theme
 /// does not hold.
 fn with_theme_colours(xml: &str, theme: &str) -> String {
-    xml.split_inclusive('>')
-        .map(|tag| {
-            if !tag.contains("\"@\"") {
-                return tag.to_string();
+    let mut result = String::with_capacity(xml.len());
+    for tag in xml.split_inclusive('>') {
+        if !tag.contains("\"@\"") {
+            result.push_str(tag);
+            continue;
+        }
+        let attribute = |name: &str| {
+            tag.split_once(&format!(" w:{name}=\""))
+                .and_then(|(_, rest)| rest.split_once('"'))
+                .map(|(value, _)| value)
+        };
+        let mut out = tag.to_string();
+        for (key, colour, tint, shade) in [
+            ("color", "themeColor", "themeTint", "themeShade"),
+            ("val", "themeColor", "themeTint", "themeShade"),
+            ("fill", "themeFill", "themeFillTint", "themeFillShade"),
+        ] {
+            let unresolved = format!(" w:{key}=\"@\"");
+            if out.contains(&unresolved) {
+                let hex = attribute(colour)
+                    .and_then(|name| theme_colour(theme, name, attribute(tint), attribute(shade)))
+                    .unwrap_or_else(|| "auto".to_string());
+                out = out.replace(&unresolved, &format!(" w:{key}=\"{hex}\""));
             }
-            let attribute = |name: &str| {
-                tag.split_once(&format!(" w:{name}=\""))
-                    .and_then(|(_, rest)| rest.split_once('"'))
-                    .map(|(value, _)| value)
-            };
-            let mut out = tag.to_string();
-            for (key, colour, tint, shade) in [
-                ("color", "themeColor", "themeTint", "themeShade"),
-                ("val", "themeColor", "themeTint", "themeShade"),
-                ("fill", "themeFill", "themeFillTint", "themeFillShade"),
-            ] {
-                let unresolved = format!(" w:{key}=\"@\"");
-                if out.contains(&unresolved) {
-                    let hex = attribute(colour)
-                        .and_then(|name| {
-                            theme_colour(theme, name, attribute(tint), attribute(shade))
-                        })
-                        .unwrap_or_else(|| "auto".to_string());
-                    out = out.replace(&unresolved, &format!(" w:{key}=\"{hex}\""));
-                }
-            }
-            out
-        })
-        .collect()
+        }
+        result.push_str(&out);
+    }
+    result
 }
 
 /// The theme colour `name` (`accent1`, `text1`), tinted and shaded as Word
@@ -2001,6 +2000,26 @@ mod tests {
         }
         // No DrawingML binding: Word's own prefix.
         assert_eq!(drawing_prefix("<theme/>"), "a:");
+    }
+
+    /// Only a tag holding an `@` colour changes: from its own theme
+    /// attributes, `auto` for a colour the theme lacks; every other tag,
+    /// and the text between tags, is copied as it is (#2231).
+    #[test]
+    fn theme_colours_resolve_only_the_tags_that_ask() {
+        let theme = "<a:theme xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+                     <a:accent1><a:srgbClr val=\"112233\"/></a:accent1></a:theme>";
+        let xml = "<w:p><w:r><w:rPr><w:color w:val=\"@\" w:themeColor=\"accent1\"/>\
+                   <w:shd w:fill=\"@\" w:themeFill=\"accent6\"/><w:b/></w:rPr>\
+                   <w:t>a \"@\" &gt; b</w:t></w:r></w:p>";
+        assert_eq!(
+            with_theme_colours(xml, theme),
+            "<w:p><w:r><w:rPr><w:color w:val=\"112233\" w:themeColor=\"accent1\"/>\
+             <w:shd w:fill=\"auto\" w:themeFill=\"accent6\"/><w:b/></w:rPr>\
+             <w:t>a \"@\" &gt; b</w:t></w:r></w:p>"
+        );
+        assert_eq!(with_theme_colours("", theme), "");
+        assert_eq!(with_theme_colours("text, no tag", theme), "text, no tag");
     }
 
     #[test]
