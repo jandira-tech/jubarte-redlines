@@ -1097,8 +1097,10 @@ pub(super) fn story(
             Item::LinkEnd => fields.last().copied().flatten(),
             _ => None,
         };
-        let in_note = note_item_change(context.document, items, at)
-            .or_else(|| held_event_change(context.document, item));
+        // A `holds` clause names the event's revision outright, so it wins
+        // over the change a note's place implies.
+        let in_note = held_event_change(context.document, item)
+            .or_else(|| note_item_change(context.document, items, at));
         // A range or bookmark with no run left before the paragraph ends
         // sits inside the mark a suspended change holds, after the inner
         // ones end: only the open mark closes, the suspended ones wait.

@@ -198,3 +198,69 @@ fn held_comment_probe_p3_end_stays_in_its_deletion() {
 fn held_comment_probe_p1b_reference_stays_in_its_insertion() {
     keeps(&probe_p1b());
 }
+
+/// The note prints inside `w:del 70` (`{--{>>c0 …<<} more--}`) with the
+/// range end and the reference, while the range start sits alone in
+/// `w:del 72`. The note places only its own revision's events, so the start
+/// keeps its `holds` clause and comes back in 72 (cursor 4502623026). The
+/// reference's own trip is #2247's (a deletion the scope close splits).
+#[test]
+fn held_comment_start_keeps_its_own_revision_when_the_note_is_in_another() {
+    let source = package(
+        &format!(
+            r#"<w:p><w:r><w:t>lead </w:t></w:r><w:del w:id="72" {WHEN}><w:commentRangeStart w:id="0"/></w:del><w:r><w:t>kept</w:t></w:r><w:del w:id="70" {WHEN}><w:r><w:delText>gone</w:delText></w:r><w:commentRangeEnd w:id="0"/>{}<w:r><w:delText> more</w:delText></w:r></w:del></w:p>"#,
+            comment_ref(0)
+        ),
+        &[(0, "Zoe Stone", "Check.")],
+    );
+    let options = ReadOptions {
+        page_markers: false,
+        ..ReadOptions::default()
+    };
+    let view = read(&source, &options).unwrap().markdown;
+    assert!(
+        view.contains("{--{>>c0"),
+        "the note sits inside the deletion:\n{view}"
+    );
+    assert!(view.contains("holds del r72 c0 start"), "{view}");
+    let back = markdown_to_docx(&view, &DocxOptions::default()).unwrap();
+    let events = events(&back.docx);
+    assert!(
+        events.iter().any(|e| e == "start 0 in del 72"),
+        "{events:?}\n{view}"
+    );
+}
+
+/// `w:del 70` holds c0's note in p0 and, again under id 70, only c1's
+/// range start in p1. The start binds to p1's own mark, not to the change
+/// p0's note is bound to: p1 gets one carrier of 70, not two (cursor
+/// 4502623030).
+#[test]
+fn held_revision_stays_in_its_own_paragraph() {
+    let source = package(
+        &format!(
+            r#"<w:p><w:r><w:t>one </w:t></w:r><w:del w:id="70" {WHEN}><w:r><w:delText>gone</w:delText></w:r><w:commentRangeStart w:id="0"/><w:commentRangeEnd w:id="0"/>{}<w:r><w:delText> more</w:delText></w:r></w:del></w:p><w:p><w:r><w:t>two </w:t></w:r><w:del w:id="70" {WHEN}><w:commentRangeStart w:id="1"/></w:del><w:r><w:t>kept</w:t></w:r><w:commentRangeEnd w:id="1"/>{}</w:p>"#,
+            comment_ref(0),
+            comment_ref(1)
+        ),
+        &[(0, "Zoe Stone", "Check."), (1, "Bob Hale", "Reply.")],
+    );
+    let options = ReadOptions {
+        page_markers: false,
+        ..ReadOptions::default()
+    };
+    let view = read(&source, &options).unwrap().markdown;
+    let back = markdown_to_docx(&view, &DocxOptions::default()).unwrap();
+    let xml = part_string(&back.docx, "word/document.xml").unwrap();
+    let second = xml.split("<w:p>").nth(2).unwrap_or("");
+    let second = second.split("</w:p>").next().unwrap_or("");
+    let carriers = second.matches("<w:del ").count();
+    assert_eq!(carriers, 1, "p1:\n{second}\nview:\n{view}");
+    assert!(
+        events(&back.docx)
+            .iter()
+            .any(|e| e.starts_with("start 1 in del")),
+        "{:?}\n{view}",
+        events(&back.docx)
+    );
+}

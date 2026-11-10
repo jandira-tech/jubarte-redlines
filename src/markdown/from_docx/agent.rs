@@ -1402,8 +1402,20 @@ pub(crate) fn held_comment_clauses(p: &Element, shown: &str) -> Vec<String> {
     }
     let (inside, held_refs) = comment_note_places(shown);
     let printed = printed_wids(shown, "body");
+    // A note printed inside a change sits where its reference is, so it
+    // places the events of the revision that holds the reference. An event
+    // another revision holds keeps its clause.
+    let note_revision: HashMap<u32, u32> = events
+        .iter()
+        .filter(|event| event.kind == 2)
+        .map(|event| (event.comment, event.revision))
+        .collect();
     events.retain(|event| {
-        if inside.contains(&event.comment) {
+        if inside.contains(&event.comment)
+            && note_revision
+                .get(&event.comment)
+                .is_none_or(|&revision| revision == event.revision)
+        {
             return false;
         }
         match event.kind {

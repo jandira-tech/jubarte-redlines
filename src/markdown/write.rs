@@ -5492,11 +5492,22 @@ impl<'o, 'a> Writer<'o, 'a> {
                 return Some((kind, serial));
             }
         }
+        // Only a note this paragraph holds: a change bound to another
+        // paragraph's note would leave this paragraph's mark written empty,
+        // a second carrier of the same id.
+        let here: HashSet<u32> = self.body[start..end]
+            .iter()
+            .filter_map(|item| match item {
+                Item::CommentReference(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
         let noted: Vec<Change> = self
             .document
             .note_changes
-            .values()
-            .map(|(change, _)| *change)
+            .iter()
+            .filter(|(comment, _)| here.contains(comment))
+            .map(|(_, (change, _))| *change)
             .filter(|(own, _)| *own == kind)
             .collect();
         for change in noted {

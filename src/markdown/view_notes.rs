@@ -1302,7 +1302,7 @@ pub(super) fn empty_paragraphs(line: &str) -> Option<usize> {
 
 /// The words that open an id line's clauses (`center`, `left 0.5in`,
 /// `break-ins r3 @AC`): any other word after the id is a style.
-const CLAUSE_WORDS: [&str; 26] = [
+const CLAUSE_WORDS: [&str; 27] = [
     "empty",
     "outline",
     "center",
