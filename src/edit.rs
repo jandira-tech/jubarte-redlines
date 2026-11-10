@@ -4752,6 +4752,17 @@ impl<'p> Transaction<'p> {
                 };
                 let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
                 outcome.context = Some(format!("{{+¶ {}}}", excerpt(&joined, 60)));
+                // Accepting a deleted mark joins its paragraph to the one
+                // after it. The new paragraph is that one, inserted after
+                // the mark's paragraph or before the paragraph right after
+                // it; leave the mark.
+                let marked = match position {
+                    Side::After => Some(para),
+                    Side::Before => self.paragraph_right_before(para),
+                };
+                if let Some(note) = marked.and_then(|m| self.pending_deleted_mark_note(m)) {
+                    outcome.message = Some(note);
+                }
                 Ok((
                     Resolved::InsertParagraph {
                         anchor: para,
@@ -5734,6 +5745,41 @@ impl<'p> Transaction<'p> {
                 _ => None,
             })
             .collect()
+    }
+
+    /// The paragraph whose mark sits right before `para`: its previous
+    /// sibling, when that is a paragraph of the same story.
+    fn paragraph_right_before(&self, para: usize) -> Option<usize> {
+        let before = para.checked_sub(1)?;
+        (self.opened.dom.next_element(self.paragraph_nodes[before])
+            == Some(self.paragraph_nodes[para])
+            && self.paragraph_story[before].0 == self.paragraph_story[para].0)
+            .then_some(before)
+    }
+
+    /// The report when `para`'s mark is a pending `w:del`: accepting it
+    /// merges `para` with a paragraph inserted after it. `None` when the
+    /// mark is not a deletion.
+    fn pending_deleted_mark_note(&self, para: usize) -> Option<String> {
+        let node = self.paragraph_nodes[para];
+        let dom = &self.opened.dom;
+        let rpr = dom
+            .element(node, &W::p_pr())
+            .and_then(|ppr| dom.element(ppr, &W::r_pr()))?;
+        let del = dom.elements(rpr, None).into_iter().find(|&child| {
+            dom.name(child)
+                .is_some_and(|name| name.namespace_name() == W::URI && name.local_name() == "del")
+        })?;
+        let wid = dom.attribute(del, &W::id())?;
+        let (story, _) = self.paragraph_story[para];
+        let rev = crate::ids::ChangeId::new(&self.stories[story].id, wid).short();
+        let author = dom
+            .attribute(del, &W::author())
+            .unwrap_or("an unnamed author");
+        let pid = self.paragraph_id(para);
+        Some(format!(
+            "{pid}'s paragraph mark is a pending deletion by {author} ({rev}); if it is accepted, {pid} and the new paragraph merge; restore {rev} to keep them apart"
+        ))
     }
 
     /// The id of a paragraph ([`crate::ids::paragraph_id`]).
