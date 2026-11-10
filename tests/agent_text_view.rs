@@ -6544,6 +6544,45 @@ fn read_find_invalid_regex_is_diagnosed_by_shared_search() {
 }
 
 #[test]
+fn read_find_regex_that_compiles_too_large_is_refused_as_usage() {
+    // A short pattern can still expand into a huge program; length alone
+    // does not bound it. The compile size limit refuses it before any
+    // matching runs.
+    let dir = tempfile::tempdir().unwrap();
+    search_fixture(dir.path());
+    let out = jubarte(
+        &["read", "search.docx", "--regex", "a{1000}{1000}"],
+        dir.path(),
+    );
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(err.contains("--regex does not compile"), "{err}");
+    assert!(err.contains("exceeds size limit"), "{err}");
+}
+
+#[test]
+fn read_find_long_regex_alternation_still_matches() {
+    // An agent searching for many defined terms at once writes a long
+    // alternation. Its length is no risk, so it must keep working.
+    let dir = tempfile::tempdir().unwrap();
+    search_fixture(dir.path());
+    let mut terms: Vec<String> = (0..60)
+        .map(|i| format!("Defined Term Number {i}"))
+        .collect();
+    terms.push("Liability Cap".to_string());
+    let pattern = terms.join("|");
+    assert!(pattern.len() > 1000, "{}", pattern.len());
+    assert_eq!(
+        ok(&["read", "search.docx", "--regex", &pattern], dir.path()),
+        ok(
+            &["read", "search.docx", "--regex", "Liability Cap"],
+            dir.path()
+        )
+    );
+}
+
+#[test]
 fn read_find_regex_word_boundary_in_view() {
     let dir = tempfile::tempdir().unwrap();
     search_fixture(dir.path());
