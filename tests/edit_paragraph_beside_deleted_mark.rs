@@ -72,3 +72,13 @@ fn insert_elsewhere_stays_silent() {
     assert_eq!(message_of("p3", "before"), None);
     assert_eq!(message_of("p2", "after"), None);
 }
+
+/// Inserting before the paragraph after the deleted mark puts the new
+/// paragraph in the same place, so it reports the same merge
+/// (cursor 4501670434).
+#[test]
+fn insert_before_the_next_paragraph_reports_the_merge() {
+    let expected = "p3's paragraph mark is a pending deletion by Trainer 1 (r88); if it is accepted, p3 and the new paragraph merge; restore r88 to keep them apart";
+    assert_eq!(message_of("p4", "before").as_deref(), Some(expected));
+    assert_eq!(message_of("p0", "before"), None);
+}

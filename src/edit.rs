@@ -4752,11 +4752,15 @@ impl<'p> Transaction<'p> {
                 };
                 let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
                 outcome.context = Some(format!("{{+¶ {}}}", excerpt(&joined, 60)));
-                // Accepting a deleted mark joins this paragraph to the one
-                // after it. The new paragraph is that one; leave the mark.
-                if *position == Side::After
-                    && let Some(note) = self.pending_deleted_mark_note(para)
-                {
+                // Accepting a deleted mark joins its paragraph to the one
+                // after it. The new paragraph is that one, inserted after
+                // the mark's paragraph or before the paragraph right after
+                // it; leave the mark.
+                let marked = match position {
+                    Side::After => Some(para),
+                    Side::Before => self.paragraph_right_before(para),
+                };
+                if let Some(note) = marked.and_then(|m| self.pending_deleted_mark_note(m)) {
                     outcome.message = Some(note);
                 }
                 Ok((
@@ -5741,6 +5745,16 @@ impl<'p> Transaction<'p> {
                 _ => None,
             })
             .collect()
+    }
+
+    /// The paragraph whose mark sits right before `para`: its previous
+    /// sibling, when that is a paragraph of the same story.
+    fn paragraph_right_before(&self, para: usize) -> Option<usize> {
+        let before = para.checked_sub(1)?;
+        (self.opened.dom.next_element(self.paragraph_nodes[before])
+            == Some(self.paragraph_nodes[para])
+            && self.paragraph_story[before].0 == self.paragraph_story[para].0)
+            .then_some(before)
     }
 
     /// The report when `para`'s mark is a pending `w:del`: accepting it
