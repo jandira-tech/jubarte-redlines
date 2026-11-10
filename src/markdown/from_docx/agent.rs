@@ -1146,6 +1146,9 @@ pub(crate) struct LineFacts<'a> {
     /// Comment threads whose range runs on past this paragraph, inline or
     /// hidden: `in c5`.
     pub spans: &'a [String],
+    /// Comment events a revision holds that the rendered note does not
+    /// already place (`holds del r70 c0 start`).
+    pub holds: &'a [String],
     /// The paragraph has no text but keeps its own line for its marks,
     /// revisions or comments: `<!-- p4 -->` followed by `¶{r3 @AC}`.
     pub empty: bool,
@@ -1333,6 +1336,195 @@ fn printed_wids(shown: &str, story: &str) -> HashSet<String> {
         }
     }
     printed
+}
+
+/// `holds` clauses for comment events that sit in an insertion or a deletion
+/// and that the rendered note does not already place. A note inside `{--`,
+/// `{++` or `{~~` carries its events. `in rN` carries the reference. A range
+/// start is named only when the revision's id is not printed in the text.
+pub(crate) fn held_comment_clauses(p: &Element, shown: &str) -> Vec<String> {
+    struct Event {
+        inserted: bool,
+        revision: u32,
+        comment: u32,
+        kind: u8,
+    }
+    fn walk(
+        e: &Element,
+        stack: &mut Vec<(bool, u32)>,
+        seen: &mut HashSet<(u32, u8)>,
+        out: &mut Vec<Event>,
+    ) {
+        for child in shown_children(e) {
+            let local = child.local();
+            if local == "pPr"
+                || local == "rPr"
+                || local.ends_with("PrChange")
+                || local == "txbxContent"
+            {
+                continue;
+            }
+            if local == "ins" || local == "del" {
+                let id = child.attr("id").and_then(|id| id.parse::<u32>().ok());
+                if let Some(id) = id {
+                    stack.push((local == "ins", id));
+                }
+                walk(child, stack, seen, out);
+                if id.is_some() {
+                    stack.pop();
+                }
+                continue;
+            }
+            if let Some(&(inserted, revision)) = stack.last()
+                && let Some(kind) = match local {
+                    "commentRangeStart" => Some(0),
+                    "commentRangeEnd" => Some(1),
+                    "commentReference" => Some(2),
+                    _ => None,
+                }
+                && let Some(comment) = child.attr("id").and_then(|id| id.parse().ok())
+                && seen.insert((comment, kind))
+            {
+                out.push(Event {
+                    inserted,
+                    revision,
+                    comment,
+                    kind,
+                });
+            }
+            walk(child, stack, seen, out);
+        }
+    }
+    let mut events = Vec::new();
+    walk(p, &mut Vec::new(), &mut HashSet::new(), &mut events);
+    if events.is_empty() {
+        return Vec::new();
+    }
+    let (inside, held_refs) = comment_note_places(shown);
+    let printed = printed_wids(shown, "body");
+    // A note printed inside a change places its events where the view's
+    // marks fall, inside the spans printed there. A range start a revision
+    // holds that prints nothing has no span to fall in: it keeps its clause.
+    events.retain(|event| {
+        if let Some(&reply) = inside.get(&event.comment) {
+            return match event.kind {
+                0 => !printed.contains(&event.revision.to_string()),
+                1 => reply,
+                _ => false,
+            };
+        }
+        match event.kind {
+            0 => !printed.contains(&event.revision.to_string()),
+            2 => !held_refs
+                .get(&event.comment)
+                .is_some_and(|ids| ids.contains(&event.revision)),
+            _ => true,
+        }
+    });
+    // A clause names a set of events, not their order: start, end, then
+    // reference, each kind in document order, so the clause reads the same
+    // after a round trip that writes one comment's end and reference
+    // together.
+    events.sort_by_key(|event| event.kind);
+    let mut groups: Vec<(bool, u32, String)> = Vec::new();
+    for event in events {
+        let word = match event.kind {
+            0 => "start",
+            1 => "end",
+            _ => "ref",
+        };
+        let piece = format!("c{} {word}", event.comment);
+        match groups.iter_mut().find(|(inserted, revision, _)| {
+            *inserted == event.inserted && *revision == event.revision
+        }) {
+            Some((_, _, pieces)) => {
+                pieces.push(' ');
+                pieces.push_str(&piece);
+            }
+            None => groups.push((event.inserted, event.revision, piece)),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(inserted, revision, pieces)| {
+            let kind = if inserted { "ins" } else { "del" };
+            format!("holds {kind} r{revision} {pieces}")
+        })
+        .collect()
+}
+
+/// Comments whose `{>>cN` sits inside an open critic span, and the revisions
+/// a note head names with `in rN`.
+fn comment_note_places(shown: &str) -> (HashMap<u32, bool>, HashMap<u32, Vec<u32>>) {
+    let (mut inside, mut held) = (HashMap::new(), HashMap::new());
+    let (mut del, mut ins, mut sub) = (0usize, 0usize, 0usize);
+    let mut at = 0;
+    while at < shown.len() {
+        let rest = &shown[at..];
+        if let Some(next) = critic_span(rest) {
+            match next {
+                ("{--", 3) => del += 1,
+                ("--}", 3) => del = del.saturating_sub(1),
+                ("{++", 3) => ins += 1,
+                ("++}", 3) => ins = ins.saturating_sub(1),
+                ("{~~", 3) => sub += 1,
+                ("~~}", 3) => sub = sub.saturating_sub(1),
+                _ => {}
+            }
+            at += 3;
+            continue;
+        }
+        if let Some(body) = rest.strip_prefix("{>>") {
+            let head_end = body
+                .find(": ")
+                .or_else(|| body.find("<<}"))
+                .unwrap_or(body.len());
+            let head = &body[..head_end];
+            if let Some(comment) = head
+                .split_whitespace()
+                .next()
+                .and_then(|word| crate::ids::parse_comment_id(word).ok())
+            {
+                // A reply (`re c0`) prints no scope of its own, so its range
+                // end has no `==}` to fall in: only its reference is placed.
+                let reply = head.split_whitespace().any(|word| word == "re");
+                if del + ins + sub > 0 {
+                    inside.insert(comment, reply);
+                }
+                if let Some(ids) = head_held_revisions(head) {
+                    held.insert(comment, ids);
+                }
+            }
+            at += rest.find("<<}").map_or(3, |end| end + 3);
+            continue;
+        }
+        at += rest.chars().next().map_or(1, char::len_utf8);
+    }
+    (inside, held)
+}
+
+/// The critic opener or closer `rest` begins with, when it begins with one.
+fn critic_span(rest: &str) -> Option<(&'static str, usize)> {
+    for marker in ["{--", "--}", "{++", "++}", "{~~", "~~}"] {
+        if rest.starts_with(marker) {
+            return Some((marker, marker.len()));
+        }
+    }
+    None
+}
+
+/// The body revision ids at the end of a note head (`c0 @B in r13`).
+fn head_held_revisions(head: &str) -> Option<Vec<u32>> {
+    let words: Vec<&str> = head.split_whitespace().collect();
+    let [.., "in", change] = words.as_slice() else {
+        return None;
+    };
+    let ids = crate::ids::parse_change_ids(change).ok()?;
+    Some(
+        ids.into_iter()
+            .filter_map(|id| id.wid.parse().ok())
+            .collect(),
+    )
 }
 
 /// The ids (`r12`, `header1.r1`) of every change the view prints a tag for:
@@ -2437,6 +2629,9 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     if !f.spans.is_empty() {
         let ids: Vec<String> = f.spans.iter().map(|c| format!("c{c}")).collect();
         clauses.push(format!("in {}", ids.join(" ")));
+    }
+    if !f.resolved {
+        clauses.extend(f.holds.iter().cloned());
     }
     line(&head, &clauses)
 }
@@ -3878,6 +4073,7 @@ mod tests {
             mark_inherits: false,
             unshown: &[],
             size: None,
+            holds: &[],
         };
         let line = id_line(p, &facts, &Handles::default());
         assert_eq!(line, "<!-- p0 first-line 0.25in, left 1in, right 0.5in -->");
@@ -3909,6 +4105,7 @@ mod tests {
                 mark_inherits: false,
                 unshown: &[],
                 size: None,
+                holds: &[],
             };
             let line = id_line(p, &facts, &Handles::default());
             assert_eq!(line, "<!-- p0 right 0.5in -->", "{start}: {line}");

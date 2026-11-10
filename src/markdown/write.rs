@@ -3032,6 +3032,11 @@ impl<'o, 'a> Writer<'o, 'a> {
                     unshown.extend(marks.into_iter().map(|mark| (*inserted, mark)));
                 }
                 paragraph.unshown = unshown;
+                paragraph.holds = line
+                    .holds
+                    .iter()
+                    .map(|event| (event.inserted, event.revision, event.comment, event.event))
+                    .collect();
             }
             let mark = line
                 .break_ins
@@ -5411,6 +5416,236 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
     }
 
+    /// A `holds` clause puts those comment events back inside the revision
+    /// it names. A shown run of that revision keeps its serial. An unshown
+    /// mark is opened once and then dropped, so it is not also written empty.
+    fn place_held_events(&mut self) {
+        let ats: Vec<usize> = self
+            .body
+            .iter()
+            .enumerate()
+            .filter_map(|(at, item)| match item {
+                Item::Paragraph(paragraph) if !paragraph.holds.is_empty() => Some(at),
+                _ => None,
+            })
+            .collect();
+        for at in ats {
+            let Item::Paragraph(paragraph) = &self.body[at] else {
+                continue;
+            };
+            let holds = paragraph.holds.clone();
+            let mut at = at;
+            let mut end = self.body[at..]
+                .iter()
+                .position(|item| matches!(item, Item::ParagraphEnd))
+                .map_or(self.body.len(), |skip| at + skip);
+            let mut bound: HashMap<(bool, u32), Change> = HashMap::new();
+            for (inserted, revision, comment, event) in holds {
+                let Some(id) = self
+                    .document
+                    .comments
+                    .iter()
+                    .find(|row| row.number == Some(comment))
+                    .map(|row| row.id)
+                else {
+                    continue;
+                };
+                // The clause names an event of this paragraph. A range end
+                // the view placed before it (where an outer scope closes)
+                // moves in, before the comment's reference; any other event
+                // outside the paragraph is not held, so no mark opens
+                // outside a paragraph.
+                if !self.holds_event(at, end, id, event) {
+                    let earlier = self.body[..at]
+                        .iter()
+                        .rposition(|item| matches!(item, Item::RangeEnd(e) if *e == id));
+                    let reference = self.body[at..end]
+                        .iter()
+                        .position(|item| matches!(item, Item::CommentReference(r) if *r == id))
+                        .map(|skip| at + skip);
+                    let (1, Some(from), Some(to)) = (event, earlier, reference) else {
+                        continue;
+                    };
+                    let item = self.body.remove(from);
+                    at -= 1;
+                    end -= 1;
+                    self.body.insert(to - 1, item);
+                }
+                let key = (inserted, revision);
+                let change = bound.get(&key).copied().or_else(|| {
+                    let change = self.held_revision(at, end, inserted, revision)?;
+                    bound.insert(key, change);
+                    Some(change)
+                });
+                if let Some(change) = change {
+                    self.document.event_holds.insert((id, event), change);
+                }
+            }
+            self.gather_held_events(at, end);
+        }
+    }
+
+    /// Whether the paragraph `start..end` holds comment `id`'s event (0
+    /// range start, 1 range end, 2 reference).
+    fn holds_event(&self, start: usize, end: usize, id: u32, event: u8) -> bool {
+        self.body[start..end]
+            .iter()
+            .any(|item| match (item, event) {
+                (Item::RangeStart(slot), 0) => {
+                    self.document.slots.get(*slot).copied().flatten() == Some(id)
+                }
+                (Item::RangeEnd(e), 1) | (Item::CommentReference(e), 2) => *e == id,
+                _ => false,
+            })
+    }
+
+    /// The change an anchor goes inside: a `holds` clause's, or the change
+    /// a note is bound to (its reference, and its range end when the end
+    /// goes inside too).
+    fn anchor_change(&self, item: &Item) -> Option<Change> {
+        let document = &self.document;
+        let (id, event) = match item {
+            Item::RangeStart(slot) => (document.slots.get(*slot).copied().flatten()?, 0),
+            Item::RangeEnd(id) => (*id, 1),
+            Item::CommentReference(id) => (*id, 2),
+            _ => return None,
+        };
+        document.event_holds.get(&(id, event)).copied().or_else(|| {
+            let (change, end_inside) = document.note_changes.get(&id)?;
+            match event {
+                1 if *end_inside => Some(*change),
+                2 => Some(*change),
+                _ => None,
+            }
+        })
+    }
+
+    /// A range start that goes inside no change, between anchors one change
+    /// holds, moves before them: left between, it closes that change's mark,
+    /// and the anchors after it reopen the change as a second carrier of
+    /// its id.
+    fn gather_held_events(&mut self, start: usize, end: usize) {
+        let anchor = |item: &Item| {
+            matches!(
+                item,
+                Item::Bookmark(_)
+                    | Item::RangeStart(_)
+                    | Item::RangeEnd(_)
+                    | Item::CommentReference(_)
+            )
+        };
+        let mut at = start;
+        while at < end {
+            if !anchor(&self.body[at]) {
+                at += 1;
+                continue;
+            }
+            let window = self.body[at..end]
+                .iter()
+                .take_while(|item| anchor(item))
+                .count();
+            let changes: Vec<Option<Change>> = self.body[at..at + window]
+                .iter()
+                .map(|item| self.anchor_change(item))
+                .collect();
+            if let Some(first) = changes.iter().position(Option::is_some) {
+                let change = changes[first];
+                if let Some(last) = changes.iter().rposition(|c| *c == change) {
+                    let (loose, kept): (Vec<usize>, Vec<usize>) =
+                        (first + 1..last).partition(|&i| {
+                            changes[i].is_none() && matches!(self.body[at + i], Item::RangeStart(_))
+                        });
+                    if !loose.is_empty() {
+                        let mut order: Vec<usize> = (0..first).collect();
+                        order.extend(&loose);
+                        order.push(first);
+                        order.extend(kept);
+                        order.extend(last..window);
+                        let items: Vec<Item> =
+                            order.iter().map(|&i| self.body[at + i].clone()).collect();
+                        self.body.splice(at..at + window, items);
+                    }
+                }
+            }
+            at += window;
+        }
+    }
+
+    /// The change `holds` names: a run of that revision, a note already bound
+    /// to it, or its unshown mark, opened once.
+    fn held_revision(
+        &mut self,
+        start: usize,
+        end: usize,
+        inserted: bool,
+        revision: u32,
+    ) -> Option<Change> {
+        let kind = if inserted { Kind::Insert } else { Kind::Delete };
+        let runs: Vec<u32> = self.body[start..end]
+            .iter()
+            .filter_map(|item| match item {
+                Item::Run(run) => run
+                    .change
+                    .filter(|(own, _)| *own == kind)
+                    .map(|(_, serial)| serial),
+                _ => None,
+            })
+            .collect();
+        for serial in runs {
+            if self
+                .document
+                .revision_ids
+                .get(&serial)
+                .is_some_and(|ids| ids.contains(&revision))
+            {
+                return Some((kind, serial));
+            }
+        }
+        // Only a note this paragraph holds: a change bound to another
+        // paragraph's note would leave this paragraph's mark written empty,
+        // a second carrier of the same id.
+        let here: HashSet<u32> = self.body[start..end]
+            .iter()
+            .filter_map(|item| match item {
+                Item::CommentReference(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        let noted: Vec<Change> = self
+            .document
+            .note_changes
+            .iter()
+            .filter(|(comment, _)| here.contains(comment))
+            .map(|(_, (change, _))| *change)
+            .filter(|(own, _)| *own == kind)
+            .collect();
+        for change in noted {
+            if self
+                .document
+                .revision_ids
+                .get(&change.1)
+                .is_some_and(|ids| ids.contains(&revision))
+            {
+                return Some(change);
+            }
+        }
+        let Item::Paragraph(paragraph) = self.body.get_mut(start)? else {
+            return None;
+        };
+        let found = paragraph
+            .unshown
+            .iter()
+            .position(|(ins, mark)| *ins == inserted && mark.id == Some(revision))?;
+        let (_, mark) = paragraph.unshown.remove(found);
+        self.serial += 1;
+        let serial = self.serial;
+        self.document
+            .attributions
+            .insert(serial, (mark.author, mark.date));
+        self.name_revision(serial, vec![revision]);
+        Some((kind, serial))
+    }
+
     /// The notes that say `in r13` put their comment's reference back
     /// inside r13: the paragraph's runs of it, or the mark its id line
     /// names when r13 holds nothing else (`rev-del r13 @D`), as Word wrote
@@ -5579,6 +5814,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.text_boxes();
         self.named_held_marks();
         self.held_comment_marks();
+        self.place_held_events();
         let mut body = std::mem::take(&mut self.body);
         clear_continued_marks(&mut body, &self.document);
         finish_story(&mut body);
@@ -6422,6 +6658,10 @@ fn renumber_comments(document: &mut Document) {
     document.note_changes = std::mem::take(&mut document.note_changes)
         .into_iter()
         .map(|(id, change)| (ids[&id], change))
+        .collect();
+    document.event_holds = std::mem::take(&mut document.event_holds)
+        .into_iter()
+        .map(|((id, event), change)| ((ids[&id], event), change))
         .collect();
 }
 

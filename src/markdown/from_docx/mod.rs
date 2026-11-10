@@ -3042,12 +3042,20 @@ impl Writer<'_> {
             let numbered = heading_marker.is_some() || list_marker.is_some();
             // A paragraph whose text is only blanks writes none of it, so
             // the tags its notes would carry print nowhere either.
+            let shown = if written {
+                inline.render(true)
+            } else {
+                String::new()
+            };
             let unshown = if self.resolved {
                 Vec::new()
-            } else if written {
-                agent::unshown_tags(p, &inline.render(true), &self.handles)
             } else {
-                agent::unshown_tags(p, "", &self.handles)
+                agent::unshown_tags(p, &shown, &self.handles)
+            };
+            let holds = if self.resolved {
+                Vec::new()
+            } else {
+                agent::held_comment_clauses(p, &shown)
             };
             // The level the paragraph states itself (`w:outlineLvl`),
             // which without a `w:pStyle` is the only place it can come
@@ -3146,6 +3154,7 @@ impl Writer<'_> {
                 mark_inherits,
                 unshown: &unshown,
                 size,
+                holds: &holds,
             };
             blocks.push_line(&format!(
                 "{}{}",
