@@ -1767,7 +1767,7 @@ fn flush(plain: &mut String, out: &mut String, deleted: bool, fmt: &StoryFmt) {
 /// keeps one `w:rPr`, with the colour before highlight, underline and
 /// vertical alignment.
 fn paint_run_color(content: &str, color: &str) -> String {
-    let mut out = String::new();
+    let mut out = String::with_capacity(content.len() + 64);
     let mut rest = content;
     while !rest.is_empty() {
         if let Some(inner) = rest.strip_prefix("<w:r><w:rPr>") {
@@ -1776,7 +1776,7 @@ fn paint_run_color(content: &str, color: &str) -> String {
                 out.push_str(inner);
                 break;
             };
-            out.push_str(&with_color(&inner[..end], color));
+            push_with_color(&mut out, &inner[..end], color);
             out.push_str("</w:rPr>");
             rest = &inner[end + "</w:rPr>".len()..];
         } else if let Some(inner) = rest.strip_prefix("<w:r>") {
@@ -1793,18 +1793,16 @@ fn paint_run_color(content: &str, color: &str) -> String {
     out
 }
 
-fn with_color(inner: &str, color: &str) -> String {
-    let colour = format!("<w:color w:val=\"{color}\"/>");
-    for marker in ["<w:highlight", "<w:u", "<w:vertAlign"] {
-        if let Some(at) = inner.find(marker) {
-            let mut out = String::with_capacity(inner.len() + colour.len());
-            out.push_str(&inner[..at]);
-            out.push_str(&colour);
-            out.push_str(&inner[at..]);
-            return out;
-        }
-    }
-    format!("{inner}{colour}")
+/// `inner` (a run's properties) with `w:color` placed before highlight,
+/// underline and vertical alignment, as CT_RPr orders them.
+fn push_with_color(out: &mut String, inner: &str, color: &str) {
+    let at = ["<w:highlight", "<w:u", "<w:vertAlign"]
+        .iter()
+        .find_map(|marker| inner.find(marker))
+        .unwrap_or(inner.len());
+    out.push_str(&inner[..at]);
+    let _ = write!(out, "<w:color w:val=\"{color}\"/>");
+    out.push_str(&inner[at..]);
 }
 
 /// Document text the view escaped back as it was: a mark's delimiter
