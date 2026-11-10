@@ -932,6 +932,13 @@ impl Dom {
     /// present (existing, or repeated in `attrs` after expansion) keeps
     /// its first declaration-order slot and takes the latest value — what
     /// N `set_attribute_value` calls produce.
+    pub fn copy_attributes(&mut self, src: NodeId, dest: NodeId) {
+        if src == dest {
+            return;
+        }
+        self.data_mut(dest).attrs = self.data(src).attrs.clone();
+    }
+
     pub(crate) fn set_attributes(&mut self, id: NodeId, attrs: Vec<(XName, String)>) {
         let data = self.data_mut(id);
         if attrs.is_empty() {

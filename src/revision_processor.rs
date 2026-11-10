@@ -173,9 +173,7 @@ pub fn accept_move_from_move_to_transform(dom: &mut Dom, node: NodeId) -> Vec<No
         };
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
+    dom.copy_attributes(node, ne);
     for c in dom.nodes(node) {
         for tn in accept_move_from_move_to_transform(dom, c) {
             dom.add(ne, tn);
