@@ -403,7 +403,11 @@ fn walk(
     stack: &mut Vec<usize>,
     out: &mut Vec<Event>,
 ) {
-    for child in dom.elements(node, None) {
+    for i in 0..dom.child_count(node) {
+        let child = dom.child_at(node, i);
+        if !dom.is_element(child) {
+            continue;
+        }
         let Some(name) = dom.name(child) else {
             continue;
         };
