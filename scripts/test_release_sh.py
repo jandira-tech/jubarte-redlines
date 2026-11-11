@@ -329,6 +329,22 @@ class Lessons0101(unittest.TestCase):
         add = s8[start : s8.index("git commit", start)]
         self.assertIn("gemini-extension.json", add)
 
+    def test_the_release_commit_takes_every_doc_gen_docs_writes(self) -> None:
+        # Step 6 runs gen_docs.sh, which rewrites every file in its
+        # GENERATED_DOCS. The 0.18.0 run regenerated docs/flags_datetime.md
+        # and docs/locations.md, the release commit left them out, and the
+        # dirty tree stopped the wasm build of step 8.
+        text = (HERE / "gen_docs.sh").read_text()
+        block = text[text.index("GENERATED_DOCS=(") : ]
+        block = block[: block.index(")") + 1]
+        generated = re.findall(r"[\w./-]+\.md", block)
+        self.assertIn("docs/locations.md", generated)
+        s8 = step(8)
+        start = s8.index("git add Cargo.toml")
+        add = s8[start : s8.index("git commit", start)].split()
+        for doc in generated:
+            self.assertIn(doc, add, f"{doc} is written by gen_docs.sh")
+
     def test_npm_publish_takes_a_one_time_password(self) -> None:
         # npm answered EOTP to the non-interactive publish.
         s10 = step(10)

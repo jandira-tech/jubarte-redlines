@@ -274,6 +274,7 @@ Generate a source-bound JSON plan without applying edits
 | `--force` |  |  | false |  |  | Replace only an explicitly named existing output; never an input alias |
 | `--json` |  |  | false |  | conflicts --jsonl | One compact result envelope; conflicts with -o - |
 | `--jsonl` |  |  | false |  | conflicts --json | Result records ending in a terminal result; never a plan encoding |
+| `--refresh-plan` |  | <PLAN.json> |  |  |  | Refresh this plan: write it back whole (every operation, scope, decisions, the `others` guard, attribution), with each rewrite of the generated rows taking a fresh before_sha256 from the source. The plan must be bound to this source |
 | `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte compare (aliases: redline)
@@ -809,6 +810,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--quiet` | (shorthand), __edit-v2, __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert, __edit-v2 delete, __edit-v2 apply, __edit-template, __edit-template template, compare, changes, accept, reject, convert, diff, read, edit, add, capabilities, self-update, debug, debug diff, visual-diff, comments, append, validate, check, scrub | `-q default=false values=` |
 | `--raw` | debug diff | `default=false values=` |
 | `--reference-doc` | (shorthand), compare, convert | `<FILE> default= values=` |
+| `--refresh-plan` | __edit-template template | `<PLAN.json> default= values=` |
 | `--regex` | (shorthand), __edit-template template, compare, read | **differs**: `<PATTERN> default= values=` on (shorthand), compare, read; `<REGEX> default= values=` on __edit-template template |
 | `--reject` | edit | `default= values=` |
 | `--reject-change` | (shorthand), __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert, __edit-v2 delete, __edit-template template, compare, read | **differs**: `<ID> default= values=` on (shorthand), compare, read; `<REJECT_CHANGE> default= values=` on __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert, __edit-v2 delete, __edit-template template |
