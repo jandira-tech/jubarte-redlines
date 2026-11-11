@@ -167,6 +167,7 @@ The crafted-input hardening pass continues from 0.17.0. Each item below is refus
 
 - **`scripts/test_oracle_dependency.py` runs on a fresh checkout** (#2251). It skips a lockfile that is not there, and fuzz's lockfile is gitignored.
 - **The library builds without the `cli` feature with no warning again** (#2254), so `cargo clippy --no-default-features -- -D warnings` passes; #2178 had left a cli-only helper in every build.
+- **The release commit takes every doc `scripts/gen_docs.sh` regenerates** (#2259): `docs/flags_datetime.md` and `docs/locations.md` too, so a stale copy of either no longer stops the wasm build with a dirty tree.
 - **The example letter's zip records one host OS** (#2231), so `agent_example_plans_apply` stops failing with `STALE_SOURCE` on Windows.
 
 ### Performance
