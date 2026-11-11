@@ -416,7 +416,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-redlines"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "base64",
  "cap-std",
@@ -447,7 +447,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-rust-inproc"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "jubarte-redlines",
  "mimalloc",

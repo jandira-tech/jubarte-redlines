@@ -57,7 +57,7 @@ binary when retention is needed.
 
 ```text
 $ jubarte-redlines --help
-jubarte-redlines 0.17.0
+jubarte-redlines 0.18.0
 Read, edit, compare and render Word documents
 
 Usage: jubarte-redlines [OPTIONS]
@@ -1764,7 +1764,7 @@ redaction therefore refuses with `REDACTION_LEAK` instead of accepting an
 incomplete scan. Comparer settings continue to supply their own limits.
 
 <!-- gen:python-api:start -->
-Reflects the `jubarte_redlines` package built from this source tree (`__version__` reports `0.17.0`).
+Reflects the `jubarte_redlines` package built from this source tree (`__version__` reports `0.18.0`).
 
 ### `JubarteError`
 
@@ -1773,7 +1773,7 @@ Raised when the jubarte-redlines engine cannot process a document.
 
 ### `__version__`
 
-`'0.17.0'`
+`'0.18.0'`
 
 ### `accept_revisions`
 
@@ -1993,7 +1993,7 @@ The body as Markdown with a ``[pN]`` id before each paragraph.
 #### `Document.edit`
 
 ```python
-Document.edit(self, plan: 'EditPlan | dict[str, object] | str') -> 'EditResult'
+Document.edit(self, plan: 'EditPlan | dict[str, object] | str', *, syntax: 'str | None' = None) -> 'EditResult'
 ```
 
 Apply a plan: clean copy, Word redline and report, or ``EditPlanError``.
@@ -2019,7 +2019,7 @@ Markdown text), as ``jubarte_redlines.diff`` gives them.
 #### `Document.preview`
 
 ```python
-Document.preview(self, plan: 'EditPlan | dict[str, object] | str') -> 'EditReport'
+Document.preview(self, plan: 'EditPlan | dict[str, object] | str', *, syntax: 'str | None' = None) -> 'EditReport'
 ```
 
 Resolve every operation and report, without producing documents.
