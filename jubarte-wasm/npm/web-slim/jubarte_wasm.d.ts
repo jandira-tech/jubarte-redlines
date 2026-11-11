@@ -85,14 +85,14 @@ export class RepairOutput {
  *
  * Mirrors `jubarte::changes::accept_changes`.
  */
-export function acceptChanges(docx: Uint8Array, filter_json: string): Uint8Array;
+export function acceptChanges(docx: Uint8Array | number[], filter_json: string): Uint8Array;
 
 /**
  * Accept every tracked revision (package-wide) → clean DOCX bytes.
  *
  * Mirrors `jubarte::document_comparer::accept_revisions`.
  */
-export function acceptRevisions(docx: Uint8Array): Uint8Array;
+export function acceptRevisions(docx: Uint8Array | number[]): Uint8Array;
 
 /**
  * Append B after A, carrying B's images, links, headers, styles, lists and
@@ -102,7 +102,7 @@ export function acceptRevisions(docx: Uint8Array): Uint8Array;
  *
  * Mirrors `jubarte::append::append_documents`.
  */
-export function appendDocuments(a: Uint8Array, b: Uint8Array, options_json?: string | null): AppendOutput;
+export function appendDocuments(a: Uint8Array | number[], b: Uint8Array | number[], options_json?: string | null): AppendOutput;
 
 /**
  * Apply an edit plan (JSON) to a DOCX: the clean copy, the Word redline,
@@ -113,7 +113,7 @@ export function appendDocuments(a: Uint8Array, b: Uint8Array, options_json?: str
  *
  * Mirrors `jubarte::edit::apply_plan_json`.
  */
-export function applyEditPlan(docx: Uint8Array, plan_json: string, name?: string | null): EditOutput;
+export function applyEditPlan(docx: Uint8Array | number[], plan_json: string, name?: string | null, syntax?: string | null): EditOutput;
 
 /**
  * Audit findings as JSON `{findings, rules, layout}` (see `jubarte validate --rules`).
@@ -122,7 +122,7 @@ export function applyEditPlan(docx: Uint8Array, plan_json: string, name?: string
  * has no layout pass: it leaves `FONT_SUBSTITUTED` out (naming it is an
  * error) and does not compare `NUMPAGES` caches with a page count.
  */
-export function auditDocument(docx: Uint8Array, rules?: string | null): string;
+export function auditDocument(docx: Uint8Array | number[], rules?: string | null): string;
 
 /**
  * Check that every text change from `original` to `edited` is a revision
@@ -134,7 +134,7 @@ export function auditDocument(docx: Uint8Array, rules?: string | null): string;
  *
  * Mirrors `jubarte::validate::audit_tracked`.
  */
-export function auditTracked(original: Uint8Array, edited: Uint8Array, author: string): string;
+export function auditTracked(original: Uint8Array | number[], edited: Uint8Array | number[], author: string): string;
 
 /**
  * What this build can do, as JSON (`runtime: "wasm"`): PDF and field
@@ -182,7 +182,7 @@ export function changeFilter(filter_json: string): string;
  *
  * Mirrors `jubarte::markdown::changed_view`.
  */
-export function changedView(docx: Uint8Array, author: string, accepted: boolean, source?: string | null): string;
+export function changedView(docx: Uint8Array | number[], author: string, accepted: boolean, source?: string | null): string;
 
 /**
  * The listing `jubarte changes` prints: a line per change with its short
@@ -192,7 +192,7 @@ export function changedView(docx: Uint8Array, author: string, accepted: boolean,
  *
  * Mirrors `jubarte::changes::changes_text`.
  */
-export function changesText(docx: Uint8Array, authors?: string[] | null): string;
+export function changesText(docx: Uint8Array | number[], authors?: string[] | null): string;
 
 /**
  * The listing `jubarte comments` prints: a line per comment with its short
@@ -201,7 +201,7 @@ export function changesText(docx: Uint8Array, authors?: string[] | null): string
  *
  * Mirrors `jubarte::comments::comments_text`.
  */
-export function commentsText(docx: Uint8Array, author?: string | null, latest?: boolean | null): string;
+export function commentsText(docx: Uint8Array | number[], author?: string | null, latest?: boolean | null): string;
 
 /**
  * Compare two DOCX packages (bytes) → redline DOCX bytes (`w:ins`/`w:del`).
@@ -215,7 +215,7 @@ export function commentsText(docx: Uint8Array, author?: string | null, latest?: 
  * The default budget allows 2 GiB inflated, more than a 32-bit WASM heap
  * holds, so browser hosts should lower it.
  */
-export function compareDocuments(original: Uint8Array, modified: Uint8Array, author: string, input_limits_json?: string | null): Uint8Array;
+export function compareDocuments(original: Uint8Array | number[], modified: Uint8Array | number[], author: string, input_limits_json?: string | null): Uint8Array;
 
 /**
  * The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
@@ -232,12 +232,12 @@ export function compareDocuments(original: Uint8Array, modified: Uint8Array, aut
  *
  * Mirrors `jubarte::markdown::patch_documents`.
  */
-export function diffDocuments(old: Uint8Array, next: Uint8Array, author: string, date: string, columns?: number | null, old_name?: string | null, new_name?: string | null): string;
+export function diffDocuments(old: Uint8Array | number[], next: Uint8Array | number[], author: string, date: string, columns?: number | null, old_name?: string | null, new_name?: string | null): string;
 
 /**
  * The complete document as CriticMarkup; existing paragraph patches stay separate.
  */
-export function diffDocumentsCritic(old: Uint8Array, next: Uint8Array, author?: string | null, date?: string | null): string;
+export function diffDocumentsCritic(old: Uint8Array | number[], next: Uint8Array | number[], author?: string | null, date?: string | null): string;
 
 /**
  * Document review view. `optionsJson` is a strict camelCase object with
@@ -246,7 +246,7 @@ export function diffDocumentsCritic(old: Uint8Array, next: Uint8Array, author?: 
  * and `newFormat` (docx/md). Defaults use the core display window; Word
  * always accepts both inputs' revisions before creating new CriticMarkup.
  */
-export function diffDocumentsView(old: Uint8Array, next: Uint8Array, options_json?: string | null): string;
+export function diffDocumentsView(old: Uint8Array | number[], next: Uint8Array | number[], options_json?: string | null): string;
 
 /**
  * Body paragraphs as Markdown, each preceded by its `[pN]` id: the
@@ -254,12 +254,12 @@ export function diffDocumentsView(old: Uint8Array, next: Uint8Array, options_jso
  *
  * Mirrors `jubarte::inspect::markdown`.
  */
-export function documentMarkdown(docx: Uint8Array): string;
+export function documentMarkdown(docx: Uint8Array | number[]): string;
 
 /**
  * Markdown without paragraph ids, with tracked changes kept or resolved.
  */
-export function documentMarkdownWithChanges(docx: Uint8Array, track_changes: string): string;
+export function documentMarkdownWithChanges(docx: Uint8Array | number[], track_changes: string): string;
 
 /**
  * The JSON-lines form of a report (`load`, one `op` per operation,
@@ -274,7 +274,7 @@ export function editReportJsonl(report_json: string): string;
  *
  * Mirrors `jubarte::edit::flags::editing_mode_conflict`.
  */
-export function editingModeConflict(plan: string, docx: Uint8Array): string | undefined;
+export function editingModeConflict(plan: string, docx: Uint8Array | number[]): string | undefined;
 
 /**
  * The plan the `edit`/`add` operation flags describe, as JSON `{plan,
@@ -287,7 +287,7 @@ export function editingModeConflict(plan: string, docx: Uint8Array): string | un
  *
  * Mirrors `jubarte::edit::flags::plan_from_flags`.
  */
-export function flagPlan(verb: string, operations_json: string, docx: Uint8Array, options_json?: string | null): string;
+export function flagPlan(verb: string, operations_json: string, docx: Uint8Array | number[], options_json?: string | null): string;
 
 /**
  * The working-document JSON `jubarte read --for-edit` prints
@@ -305,7 +305,7 @@ export function flagPlan(verb: string, operations_json: string, docx: Uint8Array
  *
  * Mirrors `jubarte::edit::for_edit::for_edit_json`.
  */
-export function forEdit(docx: Uint8Array, options_json?: string | null): string;
+export function forEdit(docx: Uint8Array | number[], options_json?: string | null): string;
 
 /**
  * List the tracked revisions in a DOCX as a JSON array string, grouped as
@@ -316,7 +316,7 @@ export function forEdit(docx: Uint8Array, options_json?: string | null): string;
  * serialized by the shared `revisions_to_json`. `inputLimitsJson` as in
  * `compareDocuments`.
  */
-export function getRevisions(docx: Uint8Array, input_limits_json?: string | null): string;
+export function getRevisions(docx: Uint8Array | number[], input_limits_json?: string | null): string;
 
 /**
  * One-shot init: panic hook → `console.error`. Safe to call multiple times.
@@ -331,7 +331,7 @@ export function initPanicHook(): void;
  *
  * Mirrors `jubarte::validate::input_notice`.
  */
-export function inputNotice(docx: Uint8Array, file: string): string | undefined;
+export function inputNotice(docx: Uint8Array | number[], file: string): string | undefined;
 
 /**
  * The JSON status `changes --json` and `comments --json` print on stderr
@@ -341,7 +341,7 @@ export function inputNotice(docx: Uint8Array, file: string): string | undefined;
  *
  * Mirrors `jubarte::validate::input_validity_line`.
  */
-export function inputValidityLine(docx: Uint8Array, file: string): string;
+export function inputValidityLine(docx: Uint8Array | number[], file: string): string;
 
 /**
  * The inspection snapshot as JSON: `schema_version`, `source_sha256`,
@@ -353,7 +353,7 @@ export function inputValidityLine(docx: Uint8Array, file: string): string;
  *
  * Mirrors `jubarte::inspect::inspect_json`.
  */
-export function inspectDocument(docx: Uint8Array): string;
+export function inspectDocument(docx: Uint8Array | number[]): string;
 
 /**
  * List the tracked changes as a JSON array string, one object per
@@ -372,7 +372,7 @@ export function inspectDocument(docx: Uint8Array): string;
  *
  * Mirrors `jubarte::changes::list_logical_changes` and `by_authors`.
  */
-export function listChanges(docx: Uint8Array, authors?: string[] | null): string;
+export function listChanges(docx: Uint8Array | number[], authors?: string[] | null): string;
 
 /**
  * List every comment as a JSON array string (the objects `jubarte comments
@@ -383,7 +383,7 @@ export function listChanges(docx: Uint8Array, authors?: string[] | null): string
  *
  * Mirrors `jubarte::comments::list_comments` and `select_comments`.
  */
-export function listComments(docx: Uint8Array, author?: string | null, latest?: boolean | null): string;
+export function listComments(docx: Uint8Array | number[], author?: string | null, latest?: boolean | null): string;
 
 /**
  * The author and timestamp a Markdown document gives the changes and
@@ -391,7 +391,7 @@ export function listComments(docx: Uint8Array, author?: string | null, latest?: 
  * does not tell): its front matter, else the reference `.docx`'s creator
  * and creation time. The CLI falls back to `Redline` and now.
  */
-export function markdownStamp(text: string, reference?: Uint8Array | null): string;
+export function markdownStamp(text: string, reference?: Uint8Array | number[] | null): string;
 
 /**
  * Markdown with CriticMarkup → DOCX bytes, as `jubarte convert draft.md`.
@@ -412,7 +412,7 @@ export function markdownStamp(text: string, reference?: Uint8Array | null): stri
  * Images are written as their alt text, and the engine's warnings are not
  * returned.
  */
-export function markdownToDocx(text: string, options_json?: string | null, reference?: Uint8Array | null): Uint8Array;
+export function markdownToDocx(text: string, options_json?: string | null, reference?: Uint8Array | number[] | null): Uint8Array;
 
 /**
  * Shared clap parsing, with no filesystem, clock or process access.
@@ -433,7 +433,7 @@ export function planError(plan_json: string): string | undefined;
  *
  * Mirrors `jubarte::edit::preview_plan`.
  */
-export function previewEditPlan(docx: Uint8Array, plan_json: string): EditOutput;
+export function previewEditPlan(docx: Uint8Array | number[], plan_json: string, syntax?: string | null): EditOutput;
 
 /**
  * The snapshot `jubarte read --json` prints, with its `changes` and
@@ -447,7 +447,7 @@ export function previewEditPlan(docx: Uint8Array, plan_json: string): EditOutput
  *
  * Mirrors `jubarte::markdown::read_snapshot`.
  */
-export function readJson(docx: Uint8Array, options_json?: string | null): string;
+export function readJson(docx: Uint8Array | number[], options_json?: string | null): string;
 
 /**
  * The agent view (`read`) as JSON `{markdown, warnings}`: a YAML header,
@@ -461,7 +461,7 @@ export function readJson(docx: Uint8Array, options_json?: string | null): string
  *
  * Mirrors `jubarte::markdown::read`.
  */
-export function readView(docx: Uint8Array, options_json?: string | null): string;
+export function readView(docx: Uint8Array | number[], options_json?: string | null): string;
 
 /**
  * `edit`/`add --plan PLAN.json` with operation flags: the operations
@@ -475,12 +475,12 @@ export function readView(docx: Uint8Array, options_json?: string | null): string
  *
  * Mirrors `jubarte::edit::record::record`.
  */
-export function recordPlan(verb: string, operations_json: string, docx: Uint8Array, options_json: string, held?: string | null): string;
+export function recordPlan(verb: string, operations_json: string, docx: Uint8Array | number[], options_json: string, held?: string | null): string;
 
 /**
  * DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
  */
-export function redlineDocuments(old: Uint8Array, next: Uint8Array, author: string, date: string): Uint8Array;
+export function redlineDocuments(old: Uint8Array | number[], next: Uint8Array | number[], author: string, date: string): Uint8Array;
 
 /**
  * The error line for an input no task reads, as the binary prints it:
@@ -489,7 +489,7 @@ export function redlineDocuments(old: Uint8Array, next: Uint8Array, author: stri
  *
  * Mirrors `jubarte::cli::refused_input`.
  */
-export function refusedInput(path: string, bytes: Uint8Array, word: boolean): string | undefined;
+export function refusedInput(path: string, bytes: Uint8Array | number[], word: boolean): string | undefined;
 
 /**
  * Reject the changes `filterJson` selects and keep the rest tracked
@@ -497,14 +497,14 @@ export function refusedInput(path: string, bytes: Uint8Array, word: boolean): st
  *
  * Mirrors `jubarte::changes::reject_changes`.
  */
-export function rejectChanges(docx: Uint8Array, filter_json: string): Uint8Array;
+export function rejectChanges(docx: Uint8Array | number[], filter_json: string): Uint8Array;
 
 /**
  * Reject every tracked revision (package-wide) → base DOCX bytes.
  *
  * Mirrors `jubarte::document_comparer::reject_revisions`.
  */
-export function rejectRevisions(docx: Uint8Array): Uint8Array;
+export function rejectRevisions(docx: Uint8Array | number[]): Uint8Array;
 
 /**
  * The package with every repairable finding fixed, with the findings it
@@ -512,7 +512,7 @@ export function rejectRevisions(docx: Uint8Array): Uint8Array;
  *
  * Mirrors `jubarte::validate::repair`.
  */
-export function repairDocument(docx: Uint8Array): RepairOutput;
+export function repairDocument(docx: Uint8Array | number[]): RepairOutput;
 
 /**
  * The lines `edit -p rN --accept/--reject` prints for a pure resolution:
@@ -521,7 +521,7 @@ export function repairDocument(docx: Uint8Array): RepairOutput;
  *
  * Mirrors `jubarte::edit::resolution::resolution_text`.
  */
-export function resolutionText(docx: Uint8Array, resolved_json: string): string;
+export function resolutionText(docx: Uint8Array | number[], resolved_json: string): string;
 
 /**
  * The line an error prints on stdout under `--json`:
@@ -541,7 +541,7 @@ export function runtimeJsonError(message: string, exit: number): string;
  *
  * Mirrors `jubarte::scrub::scrub`.
  */
-export function scrubDocument(docx: Uint8Array, options_json?: string | null): Uint8Array;
+export function scrubDocument(docx: Uint8Array | number[], options_json?: string | null): Uint8Array;
 
 /**
  * SHA-256 (lowercase hex) of the bytes: the `source_sha256` guard an edit
@@ -549,7 +549,7 @@ export function scrubDocument(docx: Uint8Array, options_json?: string | null): U
  *
  * Mirrors `jubarte::inspect::source_sha256`.
  */
-export function sourceSha256(docx: Uint8Array): string;
+export function sourceSha256(docx: Uint8Array | number[]): string;
 
 /**
  * The grids `jubarte read --tables` prints: a `table N: RxC …` line per
@@ -560,7 +560,7 @@ export function sourceSha256(docx: Uint8Array): string;
  *
  * Mirrors `jubarte::markdown::read_tables` without a selection.
  */
-export function tablesText(docx: Uint8Array, options_json?: string | null): string;
+export function tablesText(docx: Uint8Array | number[], options_json?: string | null): string;
 
 /**
  * What `jubarte read --tables` prints, as JSON `{markdown, warnings}`:
@@ -575,7 +575,7 @@ export function tablesText(docx: Uint8Array, options_json?: string | null): stri
  *
  * Mirrors `jubarte::markdown::read_tables`.
  */
-export function tablesView(docx: Uint8Array, options_json?: string | null): string;
+export function tablesView(docx: Uint8Array | number[], options_json?: string | null): string;
 
 /**
  * Word-validity findings beyond the schema as a JSON array (`code`, `set`,
@@ -585,7 +585,7 @@ export function tablesView(docx: Uint8Array, options_json?: string | null): stri
  *
  * Mirrors `jubarte::validate::validate`.
  */
-export function validateDocument(docx: Uint8Array): string;
+export function validateDocument(docx: Uint8Array | number[]): string;
 
 /**
  * Whether a command line (without the program name) asks for JSON: a
@@ -618,7 +618,7 @@ export interface InitOutput {
     readonly appendDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly appendoutput_docx: (a: number, b: number) => void;
     readonly appendoutput_warnings: (a: number, b: number) => void;
-    readonly applyEditPlan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly applyEditPlan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly auditDocument: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly auditTracked: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly capabilities: (a: number) => void;
@@ -632,7 +632,7 @@ export interface InitOutput {
     readonly compareDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly diffDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => void;
     readonly diffDocumentsCritic: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
-    readonly diffDocumentsUnified: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
+    readonly diffDocumentsUnified: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: any) => void;
     readonly diffDocumentsView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly documentMarkdown: (a: number, b: number, c: number) => void;
     readonly documentMarkdownWithChanges: (a: number, b: number, c: number, d: number, e: number) => void;
@@ -656,7 +656,7 @@ export interface InitOutput {
     readonly markdownToDocx: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly parseCli: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly planError: (a: number, b: number, c: number) => void;
-    readonly previewEditPlan: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly previewEditPlan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly readJson: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly readView: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly recordPlan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
@@ -679,7 +679,13 @@ export interface InitOutput {
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number, b: number, c: number) => void;
+    readonly __wbindgen_export4: (a: number) => void;
+    readonly __wbindgen_export5: () => number;
+    readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
+    readonly __wbindgen_export6: (a: number) => void;
+    readonly __wbindgen_export7: (a: number, b: number) => void;
+    readonly __wbindgen_start: () => void;
 }
 
 export type SyncInitInput = BufferSource | WebAssembly.Module;

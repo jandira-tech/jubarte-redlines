@@ -285,7 +285,7 @@ ones the output still has.
 ### `acceptChanges`
 
 ```typescript
-acceptChanges(docx: Uint8Array, filter_json: string): Uint8Array
+acceptChanges(docx: Uint8Array | number[], filter_json: string): Uint8Array
 ```
 
 Accept the changes `filterJson` selects and keep the rest tracked, as
@@ -298,7 +298,7 @@ Mirrors `jubarte::changes::accept_changes`.
 ### `acceptRevisions`
 
 ```typescript
-acceptRevisions(docx: Uint8Array): Uint8Array
+acceptRevisions(docx: Uint8Array | number[]): Uint8Array
 ```
 
 Accept every tracked revision (package-wide) → clean DOCX bytes.
@@ -308,7 +308,7 @@ Mirrors `jubarte::document_comparer::accept_revisions`.
 ### `appendDocuments`
 
 ```typescript
-appendDocuments(a: Uint8Array, b: Uint8Array, options_json?: string | null): AppendOutput
+appendDocuments(a: Uint8Array | number[], b: Uint8Array | number[], options_json?: string | null): AppendOutput
 ```
 
 Append B after A, carrying B's images, links, headers, styles, lists and
@@ -321,7 +321,7 @@ Mirrors `jubarte::append::append_documents`.
 ### `applyEditPlan`
 
 ```typescript
-applyEditPlan(docx: Uint8Array, plan_json: string, name?: string | null): EditOutput
+applyEditPlan(docx: Uint8Array | number[], plan_json: string, name?: string | null, syntax?: string | null): EditOutput
 ```
 
 Apply an edit plan (JSON) to a DOCX: the clean copy, the Word redline,
@@ -335,7 +335,7 @@ Mirrors `jubarte::edit::apply_plan_json`.
 ### `auditDocument`
 
 ```typescript
-auditDocument(docx: Uint8Array, rules?: string | null): string
+auditDocument(docx: Uint8Array | number[], rules?: string | null): string
 ```
 
 Audit findings as JSON `{findings, rules, layout}` (see `jubarte validate --rules`).
@@ -347,7 +347,7 @@ error) and does not compare `NUMPAGES` caches with a page count.
 ### `auditTracked`
 
 ```typescript
-auditTracked(original: Uint8Array, edited: Uint8Array, author: string): string
+auditTracked(original: Uint8Array | number[], edited: Uint8Array | number[], author: string): string
 ```
 
 Check that every text change from `original` to `edited` is a revision
@@ -415,7 +415,7 @@ Mirrors `jubarte::changes::ChangeFilter::normalized`.
 ### `changedView`
 
 ```typescript
-changedView(docx: Uint8Array, author: string, accepted: boolean, source?: string | null): string
+changedView(docx: Uint8Array | number[], author: string, accepted: boolean, source?: string | null): string
 ```
 
 The blocks of `docx` (a redline) carrying `author`'s marks, as the agent
@@ -428,7 +428,7 @@ Mirrors `jubarte::markdown::changed_view`.
 ### `changesText`
 
 ```typescript
-changesText(docx: Uint8Array, authors?: string[] | null): string
+changesText(docx: Uint8Array | number[], authors?: string[] | null): string
 ```
 
 The listing `jubarte changes` prints: a line per change with its short
@@ -441,7 +441,7 @@ Mirrors `jubarte::changes::changes_text`.
 ### `commentsText`
 
 ```typescript
-commentsText(docx: Uint8Array, author?: string | null, latest?: boolean | null): string
+commentsText(docx: Uint8Array | number[], author?: string | null, latest?: boolean | null): string
 ```
 
 The listing `jubarte comments` prints: a line per comment with its short
@@ -453,7 +453,7 @@ Mirrors `jubarte::comments::comments_text`.
 ### `compareDocuments`
 
 ```typescript
-compareDocuments(original: Uint8Array, modified: Uint8Array, author: string, input_limits_json?: string | null): Uint8Array
+compareDocuments(original: Uint8Array | number[], modified: Uint8Array | number[], author: string, input_limits_json?: string | null): Uint8Array
 ```
 
 Compare two DOCX packages (bytes) → redline DOCX bytes (`w:ins`/`w:del`).
@@ -470,7 +470,7 @@ holds, so browser hosts should lower it.
 ### `convertMarkdown`
 
 ```typescript
-convertMarkdown(docx: Uint8Array, track_changes: string, page_markers: boolean, revisions?: string | null, revision_palette?: string | null): string
+convertMarkdown(docx: Uint8Array | number[], track_changes: string, page_markers: boolean, revisions?: string | null, revision_palette?: string | null): string
 ```
 
 A Word document as `convert --to md` writes it: Markdown with its
@@ -485,7 +485,7 @@ Mirrors `jubarte::markdown::with_page_markers`.
 ### `diffDocuments`
 
 ```typescript
-diffDocuments(old: Uint8Array, next: Uint8Array, author: string, date: string, columns?: number | null, old_name?: string | null, new_name?: string | null): string
+diffDocuments(old: Uint8Array | number[], next: Uint8Array | number[], author: string, date: string, columns?: number | null, old_name?: string | null, new_name?: string | null): string
 ```
 
 The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
@@ -505,7 +505,7 @@ Mirrors `jubarte::markdown::patch_documents`.
 ### `diffDocumentsCritic`
 
 ```typescript
-diffDocumentsCritic(old: Uint8Array, next: Uint8Array, author?: string | null, date?: string | null): string
+diffDocumentsCritic(old: Uint8Array | number[], next: Uint8Array | number[], author?: string | null, date?: string | null): string
 ```
 
 The complete document as CriticMarkup; existing paragraph patches stay separate.
@@ -513,7 +513,7 @@ The complete document as CriticMarkup; existing paragraph patches stay separate.
 ### `diffDocumentsView`
 
 ```typescript
-diffDocumentsView(old: Uint8Array, next: Uint8Array, options_json?: string | null): string
+diffDocumentsView(old: Uint8Array | number[], next: Uint8Array | number[], options_json?: string | null): string
 ```
 
 Document review view. `optionsJson` is a strict camelCase object with
@@ -525,7 +525,7 @@ always accepts both inputs' revisions before creating new CriticMarkup.
 ### `documentMarkdown`
 
 ```typescript
-documentMarkdown(docx: Uint8Array): string
+documentMarkdown(docx: Uint8Array | number[]): string
 ```
 
 Body paragraphs as Markdown, each preceded by its `[pN]` id: the
@@ -536,7 +536,7 @@ Mirrors `jubarte::inspect::markdown`.
 ### `documentMarkdownWithChanges`
 
 ```typescript
-documentMarkdownWithChanges(docx: Uint8Array, track_changes: string): string
+documentMarkdownWithChanges(docx: Uint8Array | number[], track_changes: string): string
 ```
 
 Markdown without paragraph ids, with tracked changes kept or resolved.
@@ -544,7 +544,7 @@ Markdown without paragraph ids, with tracked changes kept or resolved.
 ### `docxToPdf`
 
 ```typescript
-docxToPdf(docx: Uint8Array, compress?: boolean | null, revisions?: string | null, revision_palette?: string | null, move_comments?: boolean | null, changed_only?: boolean | null): Uint8Array
+docxToPdf(docx: Uint8Array | number[], compress?: boolean | null, revisions?: string | null, revision_palette?: string | null, move_comments?: boolean | null, changed_only?: boolean | null): Uint8Array
 ```
 
 Render a DOCX package (bytes) → PDF bytes (Word-style layout).
@@ -576,7 +576,7 @@ The JSON-lines form of a report (`load`, one `op` per operation,
 ### `editingModeConflict`
 
 ```typescript
-editingModeConflict(plan: string, docx: Uint8Array): string | undefined
+editingModeConflict(plan: string, docx: Uint8Array | number[]): string | undefined
 ```
 
 Why `--editing-mode` cannot apply `plan` to `docx`: the tracked changes
@@ -588,7 +588,7 @@ Mirrors `jubarte::edit::flags::editing_mode_conflict`.
 ### `flagPlan`
 
 ```typescript
-flagPlan(verb: string, operations_json: string, docx: Uint8Array, options_json?: string | null): string
+flagPlan(verb: string, operations_json: string, docx: Uint8Array | number[], options_json?: string | null): string
 ```
 
 The plan the `edit`/`add` operation flags describe, as JSON `{plan,
@@ -604,7 +604,7 @@ Mirrors `jubarte::edit::flags::plan_from_flags`.
 ### `forEdit`
 
 ```typescript
-forEdit(docx: Uint8Array, options_json?: string | null): string
+forEdit(docx: Uint8Array | number[], options_json?: string | null): string
 ```
 
 The working-document JSON `jubarte read --for-edit` prints
@@ -625,7 +625,7 @@ Mirrors `jubarte::edit::for_edit::for_edit_json`.
 ### `getRevisions`
 
 ```typescript
-getRevisions(docx: Uint8Array, input_limits_json?: string | null): string
+getRevisions(docx: Uint8Array | number[], input_limits_json?: string | null): string
 ```
 
 List the tracked revisions in a DOCX as a JSON array string, grouped as
@@ -647,7 +647,7 @@ One-shot init: panic hook → `console.error`. Safe to call multiple times.
 ### `inputNotice`
 
 ```typescript
-inputNotice(docx: Uint8Array, file: string): string | undefined
+inputNotice(docx: Uint8Array | number[], file: string): string | undefined
 ```
 
 The one stderr line `read` and `changes` give an input with validity
@@ -660,7 +660,7 @@ Mirrors `jubarte::validate::input_notice`.
 ### `inputValidityLine`
 
 ```typescript
-inputValidityLine(docx: Uint8Array, file: string): string
+inputValidityLine(docx: Uint8Array | number[], file: string): string
 ```
 
 The JSON status `changes --json` and `comments --json` print on stderr
@@ -673,7 +673,7 @@ Mirrors `jubarte::validate::input_validity_line`.
 ### `inspectDocument`
 
 ```typescript
-inspectDocument(docx: Uint8Array): string
+inspectDocument(docx: Uint8Array | number[]): string
 ```
 
 The inspection snapshot as JSON: `schema_version`, `source_sha256`,
@@ -688,7 +688,7 @@ Mirrors `jubarte::inspect::inspect_json`.
 ### `listChanges`
 
 ```typescript
-listChanges(docx: Uint8Array, authors?: string[] | null): string
+listChanges(docx: Uint8Array | number[], authors?: string[] | null): string
 ```
 
 List the tracked changes as a JSON array string, one object per
@@ -710,7 +710,7 @@ Mirrors `jubarte::changes::list_logical_changes` and `by_authors`.
 ### `listComments`
 
 ```typescript
-listComments(docx: Uint8Array, author?: string | null, latest?: boolean | null): string
+listComments(docx: Uint8Array | number[], author?: string | null, latest?: boolean | null): string
 ```
 
 List every comment as a JSON array string (the objects `jubarte comments
@@ -724,7 +724,7 @@ Mirrors `jubarte::comments::list_comments` and `select_comments`.
 ### `markdownStamp`
 
 ```typescript
-markdownStamp(text: string, reference?: Uint8Array | null): string
+markdownStamp(text: string, reference?: Uint8Array | number[] | null): string
 ```
 
 The author and timestamp a Markdown document gives the changes and
@@ -735,7 +735,7 @@ and creation time. The CLI falls back to `Redline` and now.
 ### `markdownToDocx`
 
 ```typescript
-markdownToDocx(text: string, options_json?: string | null, reference?: Uint8Array | null): Uint8Array
+markdownToDocx(text: string, options_json?: string | null, reference?: Uint8Array | number[] | null): Uint8Array
 ```
 
 Markdown with CriticMarkup → DOCX bytes, as `jubarte convert draft.md`.
@@ -767,7 +767,7 @@ Shared clap parsing, with no filesystem, clock or process access.
 ### `pdfPageCount`
 
 ```typescript
-pdfPageCount(pdf: Uint8Array): number
+pdfPageCount(pdf: Uint8Array | number[]): number
 ```
 
 Number of pages in a PDF (cheap object scan; `0` if the bytes are not a
@@ -790,7 +790,7 @@ Mirrors `jubarte::edit::EditPlan::from_json`.
 ### `previewEditPlan`
 
 ```typescript
-previewEditPlan(docx: Uint8Array, plan_json: string): EditOutput
+previewEditPlan(docx: Uint8Array | number[], plan_json: string, syntax?: string | null): EditOutput
 ```
 
 Resolve every operation of an edit plan without producing documents.
@@ -800,7 +800,7 @@ Mirrors `jubarte::edit::preview_plan`.
 ### `readJson`
 
 ```typescript
-readJson(docx: Uint8Array, options_json?: string | null): string
+readJson(docx: Uint8Array | number[], options_json?: string | null): string
 ```
 
 The snapshot `jubarte read --json` prints, with its `changes` and
@@ -817,7 +817,7 @@ Mirrors `jubarte::markdown::read_snapshot`.
 ### `readView`
 
 ```typescript
-readView(docx: Uint8Array, options_json?: string | null): string
+readView(docx: Uint8Array | number[], options_json?: string | null): string
 ```
 
 The agent view (`read`) as JSON `{markdown, warnings}`: a YAML header,
@@ -834,7 +834,7 @@ Mirrors `jubarte::markdown::read`.
 ### `recordPlan`
 
 ```typescript
-recordPlan(verb: string, operations_json: string, docx: Uint8Array, options_json: string, held?: string | null): string
+recordPlan(verb: string, operations_json: string, docx: Uint8Array | number[], options_json: string, held?: string | null): string
 ```
 
 `edit`/`add --plan PLAN.json` with operation flags: the operations
@@ -851,7 +851,7 @@ Mirrors `jubarte::edit::record::record`.
 ### `redlineDocuments`
 
 ```typescript
-redlineDocuments(old: Uint8Array, next: Uint8Array, author: string, date: string): Uint8Array
+redlineDocuments(old: Uint8Array | number[], next: Uint8Array | number[], author: string, date: string): Uint8Array
 ```
 
 DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
@@ -859,7 +859,7 @@ DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
 ### `refusedInput`
 
 ```typescript
-refusedInput(path: string, bytes: Uint8Array, word: boolean): string | undefined
+refusedInput(path: string, bytes: Uint8Array | number[], word: boolean): string | undefined
 ```
 
 The error line for an input no task reads, as the binary prints it:
@@ -871,7 +871,7 @@ Mirrors `jubarte::cli::refused_input`.
 ### `rejectChanges`
 
 ```typescript
-rejectChanges(docx: Uint8Array, filter_json: string): Uint8Array
+rejectChanges(docx: Uint8Array | number[], filter_json: string): Uint8Array
 ```
 
 Reject the changes `filterJson` selects and keep the rest tracked
@@ -882,7 +882,7 @@ Mirrors `jubarte::changes::reject_changes`.
 ### `rejectRevisions`
 
 ```typescript
-rejectRevisions(docx: Uint8Array): Uint8Array
+rejectRevisions(docx: Uint8Array | number[]): Uint8Array
 ```
 
 Reject every tracked revision (package-wide) → base DOCX bytes.
@@ -892,7 +892,7 @@ Mirrors `jubarte::document_comparer::reject_revisions`.
 ### `renderPdf`
 
 ```typescript
-renderPdf(docx: Uint8Array, revisions?: string | null, revision_palette?: string | null): RenderOutput
+renderPdf(docx: Uint8Array | number[], revisions?: string | null, revision_palette?: string | null): RenderOutput
 ```
 
 An edited document's PDF, compressed, its changes painted as
@@ -905,7 +905,7 @@ Mirrors `jubarte::convert::render`.
 ### `repairDocument`
 
 ```typescript
-repairDocument(docx: Uint8Array): RepairOutput
+repairDocument(docx: Uint8Array | number[]): RepairOutput
 ```
 
 The package with every repairable finding fixed, with the findings it
@@ -916,7 +916,7 @@ Mirrors `jubarte::validate::repair`.
 ### `resolutionText`
 
 ```typescript
-resolutionText(docx: Uint8Array, resolved_json: string): string
+resolutionText(docx: Uint8Array | number[], resolved_json: string): string
 ```
 
 The lines `edit -p rN --accept/--reject` prints for a pure resolution:
@@ -940,7 +940,7 @@ Mirrors `jubarte::cli::runtime_json_error`.
 ### `scrubDocument`
 
 ```typescript
-scrubDocument(docx: Uint8Array, options_json?: string | null): Uint8Array
+scrubDocument(docx: Uint8Array | number[], options_json?: string | null): Uint8Array
 ```
 
 Remove who touched a document: author names (as one alias), rsids, the
@@ -954,7 +954,7 @@ Mirrors `jubarte::scrub::scrub`.
 ### `sourceSha256`
 
 ```typescript
-sourceSha256(docx: Uint8Array): string
+sourceSha256(docx: Uint8Array | number[]): string
 ```
 
 SHA-256 (lowercase hex) of the bytes: the `source_sha256` guard an edit
@@ -965,7 +965,7 @@ Mirrors `jubarte::inspect::source_sha256`.
 ### `tablesText`
 
 ```typescript
-tablesText(docx: Uint8Array, options_json?: string | null): string
+tablesText(docx: Uint8Array | number[], options_json?: string | null): string
 ```
 
 The grids `jubarte read --tables` prints: a `table N: RxC …` line per
@@ -979,7 +979,7 @@ Mirrors `jubarte::markdown::read_tables` without a selection.
 ### `tablesView`
 
 ```typescript
-tablesView(docx: Uint8Array, options_json?: string | null): string
+tablesView(docx: Uint8Array | number[], options_json?: string | null): string
 ```
 
 What `jubarte read --tables` prints, as JSON `{markdown, warnings}`:
@@ -997,7 +997,7 @@ Mirrors `jubarte::markdown::read_tables`.
 ### `updateFields`
 
 ```typescript
-updateFields(docx: Uint8Array): FieldsOutput
+updateFields(docx: Uint8Array | number[]): FieldsOutput
 ```
 
 Refresh the cached results of `PAGEREF`, `REF`, `NUMPAGES`, `SEQ` and
@@ -1009,7 +1009,7 @@ Mirrors `jubarte::fields::update_fields`.
 ### `validateDocument`
 
 ```typescript
-validateDocument(docx: Uint8Array): string
+validateDocument(docx: Uint8Array | number[]): string
 ```
 
 Word-validity findings beyond the schema as a JSON array (`code`, `set`,
@@ -1103,7 +1103,7 @@ binary when retention is needed.
 
 ```text
 $ jubarte-redlines --help
-jubarte-redlines 0.17.0
+jubarte-redlines 0.18.0
 Read, edit, compare and render Word documents
 
 Usage: jubarte-redlines [OPTIONS]

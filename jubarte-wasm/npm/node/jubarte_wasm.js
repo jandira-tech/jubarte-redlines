@@ -26,7 +26,7 @@ class AppendOutput {
      */
     get docx() {
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.appendoutput_docx(retptr, this.__wbg_ptr);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -46,7 +46,7 @@ class AppendOutput {
         let deferred1_0;
         let deferred1_1;
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.appendoutput_warnings(retptr, this.__wbg_ptr);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -91,7 +91,7 @@ class EditOutput {
      */
     get clean() {
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.editoutput_clean(retptr, this.__wbg_ptr);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -114,7 +114,7 @@ class EditOutput {
         let deferred1_0;
         let deferred1_1;
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.editoutput_json(retptr, this.__wbg_ptr);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -142,7 +142,7 @@ class EditOutput {
      */
     get patch() {
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.editoutput_patch(retptr, this.__wbg_ptr);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -163,7 +163,7 @@ class EditOutput {
      */
     get redline() {
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.editoutput_redline(retptr, this.__wbg_ptr);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -207,7 +207,7 @@ class FieldsOutput {
      */
     get docx() {
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.fieldsoutput_docx(retptr, this.__wbg_ptr);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -226,7 +226,7 @@ class FieldsOutput {
         let deferred1_0;
         let deferred1_1;
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.fieldsoutput_json(retptr, this.__wbg_ptr);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -272,7 +272,7 @@ class RenderOutput {
         let deferred1_0;
         let deferred1_1;
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.renderoutput_json(retptr, this.__wbg_ptr);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -290,7 +290,7 @@ class RenderOutput {
      */
     get pdf() {
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.renderoutput_pdf(retptr, this.__wbg_ptr);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -331,7 +331,7 @@ class RepairOutput {
      */
     get docx() {
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.repairoutput_docx(retptr, this.__wbg_ptr);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -351,7 +351,7 @@ class RepairOutput {
         let deferred1_0;
         let deferred1_1;
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.repairoutput_json(retptr, this.__wbg_ptr);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -374,24 +374,31 @@ exports.RepairOutput = RepairOutput;
  * every list given (`{}` selects every change; an empty list, none).
  *
  * Mirrors `jubarte::changes::accept_changes`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string} filter_json
  * @returns {Uint8Array}
  */
 function acceptChanges(docx, filter_json) {
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(filter_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passStringToWasm0(filter_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.acceptChanges(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
         if (r3) {
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         var v3 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export3(r0, r1 * 1, 1);
@@ -406,12 +413,12 @@ exports.acceptChanges = acceptChanges;
  * Accept every tracked revision (package-wide) → clean DOCX bytes.
  *
  * Mirrors `jubarte::document_comparer::accept_revisions`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @returns {Uint8Array}
  */
 function acceptRevisions(docx) {
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
         const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
         const len0 = WASM_VECTOR_LEN;
         wasm.acceptRevisions(retptr, ptr0, len0);
@@ -420,7 +427,7 @@ function acceptRevisions(docx) {
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
         if (r3) {
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         var v2 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export3(r0, r1 * 1, 1);
@@ -438,26 +445,34 @@ exports.acceptRevisions = acceptRevisions;
  * optional; B's comments are dropped (warned) unless `"carry"`.
  *
  * Mirrors `jubarte::append::append_documents`.
- * @param {Uint8Array} a
- * @param {Uint8Array} b
+ * @param {Uint8Array | number[]} a
+ * @param {Uint8Array | number[]} b
  * @param {string | null} [options_json]
  * @returns {AppendOutput}
  */
 function appendDocuments(a, b, options_json) {
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(a, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(b, wasm.__wbindgen_export);
-        const len1 = WASM_VECTOR_LEN;
-        var ptr2 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len2 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1, ptr2, len2;
+        try {
+            ptr0 = passArray8ToWasm0(a, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passArray8ToWasm0(b, wasm.__wbindgen_export);
+            len1 = WASM_VECTOR_LEN;
+            ptr2 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len2 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr2) { wasm.__wbindgen_export3(ptr2, len2 * 1, 1); }
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.appendDocuments(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         if (r2) {
-            throw takeObject(r1);
+            throw takeFromExternrefTable0(r1);
         }
         return AppendOutput.__wrap(r0);
     } finally {
@@ -474,26 +489,38 @@ exports.appendDocuments = appendDocuments;
  * the other party's the redline also holds.
  *
  * Mirrors `jubarte::edit::apply_plan_json`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string} plan_json
  * @param {string | null} [name]
+ * @param {string | null} [syntax]
  * @returns {EditOutput}
  */
-function applyEditPlan(docx, plan_json, name) {
+function applyEditPlan(docx, plan_json, name, syntax) {
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(plan_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len1 = WASM_VECTOR_LEN;
-        var ptr2 = isLikeNone(name) ? 0 : passStringToWasm0(name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len2 = WASM_VECTOR_LEN;
-        wasm.applyEditPlan(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passStringToWasm0(plan_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+            ptr2 = isLikeNone(name) ? 0 : passStringToWasm0(name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len2 = WASM_VECTOR_LEN;
+            ptr3 = isLikeNone(syntax) ? 0 : passStringToWasm0(syntax, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len3 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr3) { wasm.__wbindgen_export3(ptr3, len3 * 1, 1); }
+            if (ptr2) { wasm.__wbindgen_export3(ptr2, len2 * 1, 1); }
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
+        wasm.applyEditPlan(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         if (r2) {
-            throw takeObject(r1);
+            throw takeFromExternrefTable0(r1);
         }
         return EditOutput.__wrap(r0);
     } finally {
@@ -508,7 +535,7 @@ exports.applyEditPlan = applyEditPlan;
  * `structure`) or codes; omitted or empty runs every rule. The slim build
  * has no layout pass: it leaves `FONT_SUBSTITUTED` out (naming it is an
  * error) and does not compare `NUMPAGES` caches with a page count.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string | null} [rules]
  * @returns {string}
  */
@@ -516,11 +543,18 @@ function auditDocument(docx, rules) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(rules) ? 0 : passStringToWasm0(rules, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = isLikeNone(rules) ? 0 : passStringToWasm0(rules, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.auditDocument(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -530,7 +564,7 @@ function auditDocument(docx, rules) {
         var len3 = r1;
         if (r3) {
             ptr3 = 0; len3 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred4_0 = ptr3;
         deferred4_1 = len3;
@@ -551,8 +585,8 @@ exports.auditDocument = auditDocument;
  * `edited` lost) as a JSON array.
  *
  * Mirrors `jubarte::validate::audit_tracked`.
- * @param {Uint8Array} original
- * @param {Uint8Array} edited
+ * @param {Uint8Array | number[]} original
+ * @param {Uint8Array | number[]} edited
  * @param {string} author
  * @returns {string}
  */
@@ -560,13 +594,21 @@ function auditTracked(original, edited, author) {
     let deferred5_0;
     let deferred5_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(original, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(edited, wasm.__wbindgen_export);
-        const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passStringToWasm0(author, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len2 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1, ptr2, len2;
+        try {
+            ptr0 = passArray8ToWasm0(original, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passArray8ToWasm0(edited, wasm.__wbindgen_export);
+            len1 = WASM_VECTOR_LEN;
+            ptr2 = passStringToWasm0(author, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len2 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr2) { wasm.__wbindgen_export3(ptr2, len2 * 1, 1); }
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.auditTracked(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -576,7 +618,7 @@ function auditTracked(original, edited, author) {
         var len4 = r1;
         if (r3) {
             ptr4 = 0; len4 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred5_0 = ptr4;
         deferred5_1 = len4;
@@ -599,7 +641,7 @@ function capabilities() {
     let deferred2_0;
     let deferred2_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
         wasm.capabilities(retptr);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -609,7 +651,7 @@ function capabilities() {
         var len1 = r1;
         if (r3) {
             ptr1 = 0; len1 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred2_0 = ptr1;
         deferred2_1 = len1;
@@ -634,7 +676,7 @@ function capabilitiesText(manifest_json) {
     let deferred3_0;
     let deferred3_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
         var ptr0 = isLikeNone(manifest_json) ? 0 : passStringToWasm0(manifest_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         var len0 = WASM_VECTOR_LEN;
         wasm.capabilitiesText(retptr, ptr0, len0);
@@ -646,7 +688,7 @@ function capabilitiesText(manifest_json) {
         var len2 = r1;
         if (r3) {
             ptr2 = 0; len2 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred3_0 = ptr2;
         deferred3_1 = len2;
@@ -668,11 +710,18 @@ function capabilityQuery(operation, field) {
     let deferred3_0;
     let deferred3_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        var ptr0 = isLikeNone(operation) ? 0 : passStringToWasm0(operation, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(field) ? 0 : passStringToWasm0(field, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = isLikeNone(operation) ? 0 : passStringToWasm0(operation, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = isLikeNone(field) ? 0 : passStringToWasm0(field, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.capabilityQuery(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -696,11 +745,18 @@ function capabilityQueryText(operation, field) {
     let deferred3_0;
     let deferred3_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        var ptr0 = isLikeNone(operation) ? 0 : passStringToWasm0(operation, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(field) ? 0 : passStringToWasm0(field, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = isLikeNone(operation) ? 0 : passStringToWasm0(operation, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = isLikeNone(field) ? 0 : passStringToWasm0(field, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.capabilityQueryText(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -729,7 +785,7 @@ function changeFilter(filter_json) {
     let deferred3_0;
     let deferred3_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
         const ptr0 = passStringToWasm0(filter_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
         wasm.changeFilter(retptr, ptr0, len0);
@@ -741,7 +797,7 @@ function changeFilter(filter_json) {
         var len2 = r1;
         if (r3) {
             ptr2 = 0; len2 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred3_0 = ptr2;
         deferred3_1 = len2;
@@ -760,40 +816,49 @@ exports.changeFilter = changeFilter;
  * `source:`.
  *
  * Mirrors `jubarte::markdown::changed_view`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string} author
  * @param {boolean} accepted
  * @param {string | null} [source]
  * @returns {string}
  */
 function changedView(docx, author, accepted, source) {
-    let deferred5_0;
-    let deferred5_1;
+    let deferred6_0;
+    let deferred6_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(author, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len1 = WASM_VECTOR_LEN;
-        var ptr2 = isLikeNone(source) ? 0 : passStringToWasm0(source, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len2 = WASM_VECTOR_LEN;
-        wasm.changedView(retptr, ptr0, len0, ptr1, len1, accepted, ptr2, len2);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        const val4 = +accepted;
+        let ptr0, len0, ptr1, len1, ptr2, len2;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passStringToWasm0(author, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+            ptr2 = isLikeNone(source) ? 0 : passStringToWasm0(source, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len2 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr2) { wasm.__wbindgen_export3(ptr2, len2 * 1, 1); }
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
+        wasm.changedView(retptr, ptr0, len0, ptr1, len1, val4, ptr2, len2);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
-        var ptr4 = r0;
-        var len4 = r1;
+        var ptr5 = r0;
+        var len5 = r1;
         if (r3) {
-            ptr4 = 0; len4 = 0;
-            throw takeObject(r2);
+            ptr5 = 0; len5 = 0;
+            throw takeFromExternrefTable0(r2);
         }
-        deferred5_0 = ptr4;
-        deferred5_1 = len4;
-        return getStringFromWasm0(ptr4, len4);
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
-        wasm.__wbindgen_export3(deferred5_0, deferred5_1, 1);
+        wasm.__wbindgen_export3(deferred6_0, deferred6_1, 1);
     }
 }
 exports.changedView = changedView;
@@ -805,7 +870,7 @@ exports.changedView = changedView;
  * `authors` filters as in [`listChanges`](list_changes).
  *
  * Mirrors `jubarte::changes::changes_text`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string[] | null} [authors]
  * @returns {string}
  */
@@ -813,11 +878,18 @@ function changesText(docx, authors) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(authors) ? 0 : passArrayJsValueToWasm0(authors, wasm.__wbindgen_export);
-        var len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = isLikeNone(authors) ? 0 : passArrayJsValueToWasm0(authors, wasm.__wbindgen_export);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export7(ptr1, len1); wasm.__wbindgen_export3(ptr1, len1 * 4, 4); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.changesText(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -827,7 +899,7 @@ function changesText(docx, authors) {
         var len3 = r1;
         if (r3) {
             ptr3 = 0; len3 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred4_0 = ptr3;
         deferred4_1 = len3;
@@ -845,7 +917,7 @@ exports.changesText = changesText;
  * `author` and `latest` filter as in [`listComments`](list_comments).
  *
  * Mirrors `jubarte::comments::comments_text`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string | null} [author]
  * @param {boolean | null} [latest]
  * @returns {string}
@@ -854,11 +926,18 @@ function commentsText(docx, author, latest) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(author) ? 0 : passStringToWasm0(author, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = isLikeNone(author) ? 0 : passStringToWasm0(author, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.commentsText(retptr, ptr0, len0, ptr1, len1, isLikeNone(latest) ? 0xFFFFFF : latest ? 1 : 0);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -868,7 +947,7 @@ function commentsText(docx, author, latest) {
         var len3 = r1;
         if (r3) {
             ptr3 = 0; len3 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred4_0 = ptr3;
         deferred4_1 = len3;
@@ -891,30 +970,39 @@ exports.commentsText = commentsText;
  * throws with `INPUT_LIMIT`; an unknown key throws `invalid input limits`.
  * The default budget allows 2 GiB inflated, more than a 32-bit WASM heap
  * holds, so browser hosts should lower it.
- * @param {Uint8Array} original
- * @param {Uint8Array} modified
+ * @param {Uint8Array | number[]} original
+ * @param {Uint8Array | number[]} modified
  * @param {string} author
  * @param {string | null} [input_limits_json]
  * @returns {Uint8Array}
  */
 function compareDocuments(original, modified, author, input_limits_json) {
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(original, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(modified, wasm.__wbindgen_export);
-        const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passStringToWasm0(author, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len2 = WASM_VECTOR_LEN;
-        var ptr3 = isLikeNone(input_limits_json) ? 0 : passStringToWasm0(input_limits_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len3 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3;
+        try {
+            ptr0 = passArray8ToWasm0(original, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passArray8ToWasm0(modified, wasm.__wbindgen_export);
+            len1 = WASM_VECTOR_LEN;
+            ptr2 = passStringToWasm0(author, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len2 = WASM_VECTOR_LEN;
+            ptr3 = isLikeNone(input_limits_json) ? 0 : passStringToWasm0(input_limits_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len3 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr3) { wasm.__wbindgen_export3(ptr3, len3 * 1, 1); }
+            if (ptr2) { wasm.__wbindgen_export3(ptr2, len2 * 1, 1); }
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.compareDocuments(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
         if (r3) {
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         var v5 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export3(r0, r1 * 1, 1);
@@ -934,7 +1022,7 @@ exports.compareDocuments = compareDocuments;
  * Full build only.
  *
  * Mirrors `jubarte::markdown::with_page_markers`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string} track_changes
  * @param {boolean} page_markers
  * @param {string | null} [revisions]
@@ -942,35 +1030,45 @@ exports.compareDocuments = compareDocuments;
  * @returns {string}
  */
 function convertMarkdown(docx, track_changes, page_markers, revisions, revision_palette) {
-    let deferred6_0;
-    let deferred6_1;
+    let deferred7_0;
+    let deferred7_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(track_changes, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len1 = WASM_VECTOR_LEN;
-        var ptr2 = isLikeNone(revisions) ? 0 : passStringToWasm0(revisions, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len2 = WASM_VECTOR_LEN;
-        var ptr3 = isLikeNone(revision_palette) ? 0 : passStringToWasm0(revision_palette, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len3 = WASM_VECTOR_LEN;
-        wasm.convertMarkdown(retptr, ptr0, len0, ptr1, len1, page_markers, ptr2, len2, ptr3, len3);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        const val5 = +page_markers;
+        let ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passStringToWasm0(track_changes, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+            ptr2 = isLikeNone(revisions) ? 0 : passStringToWasm0(revisions, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len2 = WASM_VECTOR_LEN;
+            ptr3 = isLikeNone(revision_palette) ? 0 : passStringToWasm0(revision_palette, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len3 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr3) { wasm.__wbindgen_export3(ptr3, len3 * 1, 1); }
+            if (ptr2) { wasm.__wbindgen_export3(ptr2, len2 * 1, 1); }
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
+        wasm.convertMarkdown(retptr, ptr0, len0, ptr1, len1, val5, ptr2, len2, ptr3, len3);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
-        var ptr5 = r0;
-        var len5 = r1;
+        var ptr6 = r0;
+        var len6 = r1;
         if (r3) {
-            ptr5 = 0; len5 = 0;
-            throw takeObject(r2);
+            ptr6 = 0; len6 = 0;
+            throw takeFromExternrefTable0(r2);
         }
-        deferred6_0 = ptr5;
-        deferred6_1 = len5;
-        return getStringFromWasm0(ptr5, len5);
+        deferred7_0 = ptr6;
+        deferred7_1 = len6;
+        return getStringFromWasm0(ptr6, len6);
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
-        wasm.__wbindgen_export3(deferred6_0, deferred6_1, 1);
+        wasm.__wbindgen_export3(deferred7_0, deferred7_1, 1);
     }
 }
 exports.convertMarkdown = convertMarkdown;
@@ -989,8 +1087,8 @@ exports.convertMarkdown = convertMarkdown;
  * the names default to `old.docx`/`old.md` and `new.docx`/`new.md`.
  *
  * Mirrors `jubarte::markdown::patch_documents`.
- * @param {Uint8Array} old
- * @param {Uint8Array} next
+ * @param {Uint8Array | number[]} old
+ * @param {Uint8Array | number[]} next
  * @param {string} author
  * @param {string} date
  * @param {number | null} [columns]
@@ -999,47 +1097,59 @@ exports.convertMarkdown = convertMarkdown;
  * @returns {string}
  */
 function diffDocuments(old, next, author, date, columns, old_name, new_name) {
-    let deferred8_0;
-    let deferred8_1;
+    let deferred9_0;
+    let deferred9_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export);
-        const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passStringToWasm0(author, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len2 = WASM_VECTOR_LEN;
-        const ptr3 = passStringToWasm0(date, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len3 = WASM_VECTOR_LEN;
-        var ptr4 = isLikeNone(old_name) ? 0 : passStringToWasm0(old_name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len4 = WASM_VECTOR_LEN;
-        var ptr5 = isLikeNone(new_name) ? 0 : passStringToWasm0(new_name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len5 = WASM_VECTOR_LEN;
-        wasm.diffDocuments(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, isLikeNone(columns) ? Number.MAX_SAFE_INTEGER : (columns) >>> 0, ptr4, len4, ptr5, len5);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        const val7 = +(isLikeNone(columns) ? Number.MAX_SAFE_INTEGER : (columns) >>> 0);
+        let ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5;
+        try {
+            ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export);
+            len1 = WASM_VECTOR_LEN;
+            ptr2 = passStringToWasm0(author, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len2 = WASM_VECTOR_LEN;
+            ptr3 = passStringToWasm0(date, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len3 = WASM_VECTOR_LEN;
+            ptr4 = isLikeNone(old_name) ? 0 : passStringToWasm0(old_name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len4 = WASM_VECTOR_LEN;
+            ptr5 = isLikeNone(new_name) ? 0 : passStringToWasm0(new_name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len5 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr5) { wasm.__wbindgen_export3(ptr5, len5 * 1, 1); }
+            if (ptr4) { wasm.__wbindgen_export3(ptr4, len4 * 1, 1); }
+            if (ptr3) { wasm.__wbindgen_export3(ptr3, len3 * 1, 1); }
+            if (ptr2) { wasm.__wbindgen_export3(ptr2, len2 * 1, 1); }
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
+        wasm.diffDocuments(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, val7, ptr4, len4, ptr5, len5);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
-        var ptr7 = r0;
-        var len7 = r1;
+        var ptr8 = r0;
+        var len8 = r1;
         if (r3) {
-            ptr7 = 0; len7 = 0;
-            throw takeObject(r2);
+            ptr8 = 0; len8 = 0;
+            throw takeFromExternrefTable0(r2);
         }
-        deferred8_0 = ptr7;
-        deferred8_1 = len7;
-        return getStringFromWasm0(ptr7, len7);
+        deferred9_0 = ptr8;
+        deferred9_1 = len8;
+        return getStringFromWasm0(ptr8, len8);
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
-        wasm.__wbindgen_export3(deferred8_0, deferred8_1, 1);
+        wasm.__wbindgen_export3(deferred9_0, deferred9_1, 1);
     }
 }
 exports.diffDocuments = diffDocuments;
 
 /**
  * The complete document as CriticMarkup; existing paragraph patches stay separate.
- * @param {Uint8Array} old
- * @param {Uint8Array} next
+ * @param {Uint8Array | number[]} old
+ * @param {Uint8Array | number[]} next
  * @param {string | null} [author]
  * @param {string | null} [date]
  * @returns {string}
@@ -1048,15 +1158,24 @@ function diffDocumentsCritic(old, next, author, date) {
     let deferred6_0;
     let deferred6_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export);
-        const len1 = WASM_VECTOR_LEN;
-        var ptr2 = isLikeNone(author) ? 0 : passStringToWasm0(author, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len2 = WASM_VECTOR_LEN;
-        var ptr3 = isLikeNone(date) ? 0 : passStringToWasm0(date, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len3 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3;
+        try {
+            ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export);
+            len1 = WASM_VECTOR_LEN;
+            ptr2 = isLikeNone(author) ? 0 : passStringToWasm0(author, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len2 = WASM_VECTOR_LEN;
+            ptr3 = isLikeNone(date) ? 0 : passStringToWasm0(date, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len3 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr3) { wasm.__wbindgen_export3(ptr3, len3 * 1, 1); }
+            if (ptr2) { wasm.__wbindgen_export3(ptr2, len2 * 1, 1); }
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.diffDocumentsCritic(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -1066,7 +1185,7 @@ function diffDocumentsCritic(old, next, author, date) {
         var len5 = r1;
         if (r3) {
             ptr5 = 0; len5 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred6_0 = ptr5;
         deferred6_1 = len5;
@@ -1081,8 +1200,8 @@ exports.diffDocumentsCritic = diffDocumentsCritic;
 /**
  * Complete, unwrapped document snapshots as a Git text patch. `context`
  * is validated before wasm-bindgen can coerce booleans or wrap u32 values.
- * @param {Uint8Array} old
- * @param {Uint8Array} next
+ * @param {Uint8Array | number[]} old
+ * @param {Uint8Array | number[]} next
  * @param {string | null | undefined} old_name
  * @param {string | null | undefined} new_name
  * @param {any} context
@@ -1092,16 +1211,25 @@ function diffDocumentsUnified(old, next, old_name, new_name, context) {
     let deferred6_0;
     let deferred6_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export);
-        const len1 = WASM_VECTOR_LEN;
-        var ptr2 = isLikeNone(old_name) ? 0 : passStringToWasm0(old_name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len2 = WASM_VECTOR_LEN;
-        var ptr3 = isLikeNone(new_name) ? 0 : passStringToWasm0(new_name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len3 = WASM_VECTOR_LEN;
-        wasm.diffDocumentsUnified(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, addHeapObject(context));
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3;
+        try {
+            ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export);
+            len1 = WASM_VECTOR_LEN;
+            ptr2 = isLikeNone(old_name) ? 0 : passStringToWasm0(old_name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len2 = WASM_VECTOR_LEN;
+            ptr3 = isLikeNone(new_name) ? 0 : passStringToWasm0(new_name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len3 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr3) { wasm.__wbindgen_export3(ptr3, len3 * 1, 1); }
+            if (ptr2) { wasm.__wbindgen_export3(ptr2, len2 * 1, 1); }
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
+        wasm.diffDocumentsUnified(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, context);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
@@ -1110,7 +1238,7 @@ function diffDocumentsUnified(old, next, old_name, new_name, context) {
         var len5 = r1;
         if (r3) {
             ptr5 = 0; len5 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred6_0 = ptr5;
         deferred6_1 = len5;
@@ -1128,8 +1256,8 @@ exports.diffDocumentsUnified = diffDocumentsUnified;
  * `newName`, `context` (u32), `acceptChanges`, `fullLines`, `oldFormat`
  * and `newFormat` (docx/md). Defaults use the core display window; Word
  * always accepts both inputs' revisions before creating new CriticMarkup.
- * @param {Uint8Array} old
- * @param {Uint8Array} next
+ * @param {Uint8Array | number[]} old
+ * @param {Uint8Array | number[]} next
  * @param {string | null} [options_json]
  * @returns {string}
  */
@@ -1137,13 +1265,21 @@ function diffDocumentsView(old, next, options_json) {
     let deferred5_0;
     let deferred5_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export);
-        const len1 = WASM_VECTOR_LEN;
-        var ptr2 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len2 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1, ptr2, len2;
+        try {
+            ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export);
+            len1 = WASM_VECTOR_LEN;
+            ptr2 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len2 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr2) { wasm.__wbindgen_export3(ptr2, len2 * 1, 1); }
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.diffDocumentsView(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -1153,7 +1289,7 @@ function diffDocumentsView(old, next, options_json) {
         var len4 = r1;
         if (r3) {
             ptr4 = 0; len4 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred5_0 = ptr4;
         deferred5_1 = len4;
@@ -1170,14 +1306,14 @@ exports.diffDocumentsView = diffDocumentsView;
  * coordinates an edit plan uses.
  *
  * Mirrors `jubarte::inspect::markdown`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @returns {string}
  */
 function documentMarkdown(docx) {
     let deferred3_0;
     let deferred3_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
         const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
         const len0 = WASM_VECTOR_LEN;
         wasm.documentMarkdown(retptr, ptr0, len0);
@@ -1189,7 +1325,7 @@ function documentMarkdown(docx) {
         var len2 = r1;
         if (r3) {
             ptr2 = 0; len2 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred3_0 = ptr2;
         deferred3_1 = len2;
@@ -1203,7 +1339,7 @@ exports.documentMarkdown = documentMarkdown;
 
 /**
  * Markdown without paragraph ids, with tracked changes kept or resolved.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string} track_changes
  * @returns {string}
  */
@@ -1211,11 +1347,18 @@ function documentMarkdownWithChanges(docx, track_changes) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(track_changes, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passStringToWasm0(track_changes, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.documentMarkdownWithChanges(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -1225,7 +1368,7 @@ function documentMarkdownWithChanges(docx, track_changes) {
         var len3 = r1;
         if (r3) {
             ptr3 = 0; len3 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred4_0 = ptr3;
         deferred4_1 = len3;
@@ -1254,7 +1397,7 @@ exports.documentMarkdownWithChanges = documentMarkdownWithChanges;
  * (optional, default `false`) keeps only the pages a tracked change
  * touches, the pages a comment is anchored on and each section's first
  * page on which a revised header or footer paints (else the first page).
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {boolean | null} [compress]
  * @param {string | null} [revisions]
  * @param {string | null} [revision_palette]
@@ -1264,20 +1407,28 @@ exports.documentMarkdownWithChanges = documentMarkdownWithChanges;
  */
 function docxToPdf(docx, compress, revisions, revision_palette, move_comments, changed_only) {
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(revisions) ? 0 : passStringToWasm0(revisions, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len1 = WASM_VECTOR_LEN;
-        var ptr2 = isLikeNone(revision_palette) ? 0 : passStringToWasm0(revision_palette, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len2 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1, ptr2, len2;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = isLikeNone(revisions) ? 0 : passStringToWasm0(revisions, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+            ptr2 = isLikeNone(revision_palette) ? 0 : passStringToWasm0(revision_palette, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len2 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr2) { wasm.__wbindgen_export3(ptr2, len2 * 1, 1); }
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.docxToPdf(retptr, ptr0, len0, isLikeNone(compress) ? 0xFFFFFF : compress ? 1 : 0, ptr1, len1, ptr2, len2, isLikeNone(move_comments) ? 0xFFFFFF : move_comments ? 1 : 0, isLikeNone(changed_only) ? 0xFFFFFF : changed_only ? 1 : 0);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
         if (r3) {
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         var v4 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export3(r0, r1 * 1, 1);
@@ -1298,7 +1449,7 @@ function editReportJsonl(report_json) {
     let deferred3_0;
     let deferred3_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
         const ptr0 = passStringToWasm0(report_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
         wasm.editReportJsonl(retptr, ptr0, len0);
@@ -1310,7 +1461,7 @@ function editReportJsonl(report_json) {
         var len2 = r1;
         if (r3) {
             ptr2 = 0; len2 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred3_0 = ptr2;
         deferred3_1 = len2;
@@ -1329,16 +1480,23 @@ exports.editReportJsonl = editReportJsonl;
  *
  * Mirrors `jubarte::edit::flags::editing_mode_conflict`.
  * @param {string} plan
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @returns {string | undefined}
  */
 function editingModeConflict(plan, docx) {
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passStringToWasm0(plan, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passStringToWasm0(plan, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.editingModeConflict(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -1366,7 +1524,7 @@ exports.editingModeConflict = editingModeConflict;
  * Mirrors `jubarte::edit::flags::plan_from_flags`.
  * @param {string} verb
  * @param {string} operations_json
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string | null} [options_json]
  * @returns {string}
  */
@@ -1374,15 +1532,24 @@ function flagPlan(verb, operations_json, docx, options_json) {
     let deferred6_0;
     let deferred6_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passStringToWasm0(verb, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(operations_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len2 = WASM_VECTOR_LEN;
-        var ptr3 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len3 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3;
+        try {
+            ptr0 = passStringToWasm0(verb, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passStringToWasm0(operations_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+            ptr2 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len2 = WASM_VECTOR_LEN;
+            ptr3 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len3 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr3) { wasm.__wbindgen_export3(ptr3, len3 * 1, 1); }
+            if (ptr2) { wasm.__wbindgen_export3(ptr2, len2 * 1, 1); }
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.flagPlan(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -1392,7 +1559,7 @@ function flagPlan(verb, operations_json, docx, options_json) {
         var len5 = r1;
         if (r3) {
             ptr5 = 0; len5 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred6_0 = ptr5;
         deferred6_1 = len5;
@@ -1419,7 +1586,7 @@ exports.flagPlan = flagPlan;
  * `jubarte-wasm: CODE: …`, as the CLI exits 3.
  *
  * Mirrors `jubarte::edit::for_edit::for_edit_json`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string | null} [options_json]
  * @returns {string}
  */
@@ -1427,11 +1594,18 @@ function forEdit(docx, options_json) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.forEdit(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -1441,7 +1615,7 @@ function forEdit(docx, options_json) {
         var len3 = r1;
         if (r3) {
             ptr3 = 0; len3 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred4_0 = ptr3;
         deferred4_1 = len3;
@@ -1461,7 +1635,7 @@ exports.forEdit = forEdit;
  * Mirrors `jubarte::document_comparer::get_revisions` with default settings,
  * serialized by the shared `revisions_to_json`. `inputLimitsJson` as in
  * `compareDocuments`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string | null} [input_limits_json]
  * @returns {string}
  */
@@ -1469,11 +1643,18 @@ function getRevisions(docx, input_limits_json) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(input_limits_json) ? 0 : passStringToWasm0(input_limits_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = isLikeNone(input_limits_json) ? 0 : passStringToWasm0(input_limits_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.getRevisions(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -1483,7 +1664,7 @@ function getRevisions(docx, input_limits_json) {
         var len3 = r1;
         if (r3) {
             ptr3 = 0; len3 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred4_0 = ptr3;
         deferred4_1 = len3;
@@ -1510,17 +1691,24 @@ exports.initPanicHook = initPanicHook;
  * validated; `file` is the path as the command line spells it.
  *
  * Mirrors `jubarte::validate::input_notice`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string} file
  * @returns {string | undefined}
  */
 function inputNotice(docx, file) {
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(file, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passStringToWasm0(file, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.inputNotice(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -1543,7 +1731,7 @@ exports.inputNotice = inputNotice;
  * line spells it. A package that cannot be validated counts none.
  *
  * Mirrors `jubarte::validate::input_validity_line`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string} file
  * @returns {string}
  */
@@ -1551,11 +1739,18 @@ function inputValidityLine(docx, file) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(file, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passStringToWasm0(file, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.inputValidityLine(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -1565,7 +1760,7 @@ function inputValidityLine(docx, file) {
         var len3 = r1;
         if (r3) {
             ptr3 = 0; len3 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred4_0 = ptr3;
         deferred4_1 = len3;
@@ -1586,14 +1781,14 @@ exports.inputValidityLine = inputValidityLine;
  * nested entries `parent` cell paths and no `index`. Oversized or malformed packages are refused before parsing.
  *
  * Mirrors `jubarte::inspect::inspect_json`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @returns {string}
  */
 function inspectDocument(docx) {
     let deferred3_0;
     let deferred3_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
         const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
         const len0 = WASM_VECTOR_LEN;
         wasm.inspectDocument(retptr, ptr0, len0);
@@ -1605,7 +1800,7 @@ function inspectDocument(docx) {
         var len2 = r1;
         if (r3) {
             ptr2 = 0; len2 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred3_0 = ptr2;
         deferred3_1 = len2;
@@ -1633,7 +1828,7 @@ exports.inspectDocument = inspectDocument;
  * changes --author`; omitted or empty, every change.
  *
  * Mirrors `jubarte::changes::list_logical_changes` and `by_authors`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string[] | null} [authors]
  * @returns {string}
  */
@@ -1641,11 +1836,18 @@ function listChanges(docx, authors) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(authors) ? 0 : passArrayJsValueToWasm0(authors, wasm.__wbindgen_export);
-        var len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = isLikeNone(authors) ? 0 : passArrayJsValueToWasm0(authors, wasm.__wbindgen_export);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export7(ptr1, len1); wasm.__wbindgen_export3(ptr1, len1 * 4, 4); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.listChanges(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -1655,7 +1857,7 @@ function listChanges(docx, authors) {
         var len3 = r1;
         if (r3) {
             ptr3 = 0; len3 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred4_0 = ptr3;
         deferred4_1 = len3;
@@ -1675,7 +1877,7 @@ exports.listChanges = listChanges;
  * author's comments; `latest` keeps the newest comment of each thread.
  *
  * Mirrors `jubarte::comments::list_comments` and `select_comments`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string | null} [author]
  * @param {boolean | null} [latest]
  * @returns {string}
@@ -1684,11 +1886,18 @@ function listComments(docx, author, latest) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(author) ? 0 : passStringToWasm0(author, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = isLikeNone(author) ? 0 : passStringToWasm0(author, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.listComments(retptr, ptr0, len0, ptr1, len1, isLikeNone(latest) ? 0xFFFFFF : latest ? 1 : 0);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -1698,7 +1907,7 @@ function listComments(docx, author, latest) {
         var len3 = r1;
         if (r3) {
             ptr3 = 0; len3 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred4_0 = ptr3;
         deferred4_1 = len3;
@@ -1716,18 +1925,25 @@ exports.listComments = listComments;
  * does not tell): its front matter, else the reference `.docx`'s creator
  * and creation time. The CLI falls back to `Redline` and now.
  * @param {string} text
- * @param {Uint8Array | null} [reference]
+ * @param {Uint8Array | number[] | null} [reference]
  * @returns {string}
  */
 function markdownStamp(text, reference) {
     let deferred3_0;
     let deferred3_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(reference) ? 0 : passArray8ToWasm0(reference, wasm.__wbindgen_export);
-        var len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passStringToWasm0(text, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = isLikeNone(reference) ? 0 : passArray8ToWasm0(reference, wasm.__wbindgen_export);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.markdownStamp(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -1761,25 +1977,33 @@ exports.markdownStamp = markdownStamp;
  * returned.
  * @param {string} text
  * @param {string | null} [options_json]
- * @param {Uint8Array | null} [reference]
+ * @param {Uint8Array | number[] | null} [reference]
  * @returns {Uint8Array}
  */
 function markdownToDocx(text, options_json, reference) {
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len1 = WASM_VECTOR_LEN;
-        var ptr2 = isLikeNone(reference) ? 0 : passArray8ToWasm0(reference, wasm.__wbindgen_export);
-        var len2 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1, ptr2, len2;
+        try {
+            ptr0 = passStringToWasm0(text, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+            ptr2 = isLikeNone(reference) ? 0 : passArray8ToWasm0(reference, wasm.__wbindgen_export);
+            len2 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr2) { wasm.__wbindgen_export3(ptr2, len2 * 1, 1); }
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.markdownToDocx(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
         if (r3) {
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         var v4 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export3(r0, r1 * 1, 1);
@@ -1801,13 +2025,21 @@ function parseCli(arguments_json, program, supported_json) {
     let deferred5_0;
     let deferred5_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passStringToWasm0(arguments_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(program) ? 0 : passStringToWasm0(program, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len1 = WASM_VECTOR_LEN;
-        var ptr2 = isLikeNone(supported_json) ? 0 : passStringToWasm0(supported_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len2 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1, ptr2, len2;
+        try {
+            ptr0 = passStringToWasm0(arguments_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = isLikeNone(program) ? 0 : passStringToWasm0(program, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+            ptr2 = isLikeNone(supported_json) ? 0 : passStringToWasm0(supported_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len2 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr2) { wasm.__wbindgen_export3(ptr2, len2 * 1, 1); }
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.parseCli(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -1817,7 +2049,7 @@ function parseCli(arguments_json, program, supported_json) {
         var len4 = r1;
         if (r3) {
             ptr4 = 0; len4 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred5_0 = ptr4;
         deferred5_1 = len4;
@@ -1834,7 +2066,7 @@ exports.parseCli = parseCli;
  * readable PDF).
  *
  * Mirrors `jubarte::convert::pdf_page_count`.
- * @param {Uint8Array} pdf
+ * @param {Uint8Array | number[]} pdf
  * @returns {number}
  */
 function pdfPageCount(pdf) {
@@ -1856,7 +2088,7 @@ exports.pdfPageCount = pdfPageCount;
  */
 function planError(plan_json) {
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
         const ptr0 = passStringToWasm0(plan_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
         wasm.planError(retptr, ptr0, len0);
@@ -1878,23 +2110,34 @@ exports.planError = planError;
  * Resolve every operation of an edit plan without producing documents.
  *
  * Mirrors `jubarte::edit::preview_plan`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string} plan_json
+ * @param {string | null} [syntax]
  * @returns {EditOutput}
  */
-function previewEditPlan(docx, plan_json) {
+function previewEditPlan(docx, plan_json, syntax) {
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(plan_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len1 = WASM_VECTOR_LEN;
-        wasm.previewEditPlan(retptr, ptr0, len0, ptr1, len1);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1, ptr2, len2;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passStringToWasm0(plan_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+            ptr2 = isLikeNone(syntax) ? 0 : passStringToWasm0(syntax, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len2 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr2) { wasm.__wbindgen_export3(ptr2, len2 * 1, 1); }
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
+        wasm.previewEditPlan(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         if (r2) {
-            throw takeObject(r1);
+            throw takeFromExternrefTable0(r1);
         }
         return EditOutput.__wrap(r0);
     } finally {
@@ -1914,7 +2157,7 @@ exports.previewEditPlan = previewEditPlan;
  * snapshot keeps the selected paragraphs and their changes and comments.
  *
  * Mirrors `jubarte::markdown::read_snapshot`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string | null} [options_json]
  * @returns {string}
  */
@@ -1922,11 +2165,18 @@ function readJson(docx, options_json) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.readJson(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -1936,7 +2186,7 @@ function readJson(docx, options_json) {
         var len3 = r1;
         if (r3) {
             ptr3 = 0; len3 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred4_0 = ptr3;
         deferred4_1 = len3;
@@ -1959,7 +2209,7 @@ exports.readJson = readJson;
  * `source:`).
  *
  * Mirrors `jubarte::markdown::read`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string | null} [options_json]
  * @returns {string}
  */
@@ -1967,11 +2217,18 @@ function readView(docx, options_json) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.readView(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -1981,7 +2238,7 @@ function readView(docx, options_json) {
         var len3 = r1;
         if (r3) {
             ptr3 = 0; len3 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred4_0 = ptr3;
         deferred4_1 = len3;
@@ -2006,7 +2263,7 @@ exports.readView = readView;
  * Mirrors `jubarte::edit::record::record`.
  * @param {string} verb
  * @param {string} operations_json
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string} options_json
  * @param {string | null} [held]
  * @returns {string}
@@ -2015,17 +2272,27 @@ function recordPlan(verb, operations_json, docx, options_json, held) {
     let deferred6_0;
     let deferred6_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passStringToWasm0(verb, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(operations_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len2 = WASM_VECTOR_LEN;
-        const ptr3 = passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len3 = WASM_VECTOR_LEN;
-        var ptr4 = isLikeNone(held) ? 0 : passStringToWasm0(held, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len4 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4;
+        try {
+            ptr0 = passStringToWasm0(verb, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passStringToWasm0(operations_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+            ptr2 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len2 = WASM_VECTOR_LEN;
+            ptr3 = passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len3 = WASM_VECTOR_LEN;
+            ptr4 = isLikeNone(held) ? 0 : passStringToWasm0(held, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len4 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr4) { wasm.__wbindgen_export3(ptr4, len4 * 1, 1); }
+            if (ptr3) { wasm.__wbindgen_export3(ptr3, len3 * 1, 1); }
+            if (ptr2) { wasm.__wbindgen_export3(ptr2, len2 * 1, 1); }
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.recordPlan(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -2041,30 +2308,39 @@ exports.recordPlan = recordPlan;
 
 /**
  * DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
- * @param {Uint8Array} old
- * @param {Uint8Array} next
+ * @param {Uint8Array | number[]} old
+ * @param {Uint8Array | number[]} next
  * @param {string} author
  * @param {string} date
  * @returns {Uint8Array}
  */
 function redlineDocuments(old, next, author, date) {
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export);
-        const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passStringToWasm0(author, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len2 = WASM_VECTOR_LEN;
-        const ptr3 = passStringToWasm0(date, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len3 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3;
+        try {
+            ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export);
+            len1 = WASM_VECTOR_LEN;
+            ptr2 = passStringToWasm0(author, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len2 = WASM_VECTOR_LEN;
+            ptr3 = passStringToWasm0(date, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len3 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr3) { wasm.__wbindgen_export3(ptr3, len3 * 1, 1); }
+            if (ptr2) { wasm.__wbindgen_export3(ptr2, len2 * 1, 1); }
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.redlineDocuments(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
         if (r3) {
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         var v5 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export3(r0, r1 * 1, 1);
@@ -2082,26 +2358,34 @@ exports.redlineDocuments = redlineDocuments;
  *
  * Mirrors `jubarte::cli::refused_input`.
  * @param {string} path
- * @param {Uint8Array} bytes
+ * @param {Uint8Array | number[]} bytes
  * @param {boolean} word
  * @returns {string | undefined}
  */
 function refusedInput(path, bytes, word) {
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passStringToWasm0(path, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(bytes, wasm.__wbindgen_export);
-        const len1 = WASM_VECTOR_LEN;
-        wasm.refusedInput(retptr, ptr0, len0, ptr1, len1, word);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        const val3 = +word;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passStringToWasm0(path, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passArray8ToWasm0(bytes, wasm.__wbindgen_export);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
+        wasm.refusedInput(retptr, ptr0, len0, ptr1, len1, val3);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-        let v3;
+        let v4;
         if (r0 !== 0) {
-            v3 = getStringFromWasm0(r0, r1);
+            v4 = getStringFromWasm0(r0, r1);
             wasm.__wbindgen_export3(r0, r1 * 1, 1);
         }
-        return v3;
+        return v4;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -2113,24 +2397,31 @@ exports.refusedInput = refusedInput;
  * (filter as in `acceptChanges`).
  *
  * Mirrors `jubarte::changes::reject_changes`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string} filter_json
  * @returns {Uint8Array}
  */
 function rejectChanges(docx, filter_json) {
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(filter_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passStringToWasm0(filter_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.rejectChanges(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
         if (r3) {
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         var v3 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export3(r0, r1 * 1, 1);
@@ -2145,12 +2436,12 @@ exports.rejectChanges = rejectChanges;
  * Reject every tracked revision (package-wide) → base DOCX bytes.
  *
  * Mirrors `jubarte::document_comparer::reject_revisions`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @returns {Uint8Array}
  */
 function rejectRevisions(docx) {
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
         const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
         const len0 = WASM_VECTOR_LEN;
         wasm.rejectRevisions(retptr, ptr0, len0);
@@ -2159,7 +2450,7 @@ function rejectRevisions(docx) {
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
         if (r3) {
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         var v2 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export3(r0, r1 * 1, 1);
@@ -2177,26 +2468,34 @@ exports.rejectRevisions = rejectRevisions;
  * only.
  *
  * Mirrors `jubarte::convert::render`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string | null} [revisions]
  * @param {string | null} [revision_palette]
  * @returns {RenderOutput}
  */
 function renderPdf(docx, revisions, revision_palette) {
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(revisions) ? 0 : passStringToWasm0(revisions, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len1 = WASM_VECTOR_LEN;
-        var ptr2 = isLikeNone(revision_palette) ? 0 : passStringToWasm0(revision_palette, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len2 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1, ptr2, len2;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = isLikeNone(revisions) ? 0 : passStringToWasm0(revisions, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+            ptr2 = isLikeNone(revision_palette) ? 0 : passStringToWasm0(revision_palette, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len2 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr2) { wasm.__wbindgen_export3(ptr2, len2 * 1, 1); }
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.renderPdf(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         if (r2) {
-            throw takeObject(r1);
+            throw takeFromExternrefTable0(r1);
         }
         return RenderOutput.__wrap(r0);
     } finally {
@@ -2210,12 +2509,12 @@ exports.renderPdf = renderPdf;
  * fixed and could not fix in `json`.
  *
  * Mirrors `jubarte::validate::repair`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @returns {RepairOutput}
  */
 function repairDocument(docx) {
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
         const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
         const len0 = WASM_VECTOR_LEN;
         wasm.repairDocument(retptr, ptr0, len0);
@@ -2223,7 +2522,7 @@ function repairDocument(docx) {
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         if (r2) {
-            throw takeObject(r1);
+            throw takeFromExternrefTable0(r1);
         }
         return RepairOutput.__wrap(r0);
     } finally {
@@ -2238,7 +2537,7 @@ exports.repairDocument = repairDocument;
  * `resolvedJson` (`{"accepted": [...], "rejected": [...]}` short ids).
  *
  * Mirrors `jubarte::edit::resolution::resolution_text`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string} resolved_json
  * @returns {string}
  */
@@ -2246,11 +2545,18 @@ function resolutionText(docx, resolved_json) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(resolved_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passStringToWasm0(resolved_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.resolutionText(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -2260,7 +2566,7 @@ function resolutionText(docx, resolved_json) {
         var len3 = r1;
         if (r3) {
             ptr3 = 0; len3 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred4_0 = ptr3;
         deferred4_1 = len3;
@@ -2283,21 +2589,22 @@ exports.resolutionText = resolutionText;
  * @returns {string}
  */
 function runtimeJsonError(message, exit) {
-    let deferred2_0;
-    let deferred2_1;
+    let deferred3_0;
+    let deferred3_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        const val2 = +exit;
         const ptr0 = passStringToWasm0(message, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
-        wasm.runtimeJsonError(retptr, ptr0, len0, exit);
+        wasm.runtimeJsonError(retptr, ptr0, len0, val2);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-        deferred2_0 = r0;
-        deferred2_1 = r1;
+        deferred3_0 = r0;
+        deferred3_1 = r1;
         return getStringFromWasm0(r0, r1);
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
-        wasm.__wbindgen_export3(deferred2_0, deferred2_1, 1);
+        wasm.__wbindgen_export3(deferred3_0, deferred3_1, 1);
     }
 }
 exports.runtimeJsonError = runtimeJsonError;
@@ -2310,24 +2617,31 @@ exports.runtimeJsonError = runtimeJsonError;
  * goes under the alias `Author`.
  *
  * Mirrors `jubarte::scrub::scrub`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string | null} [options_json]
  * @returns {Uint8Array}
  */
 function scrubDocument(docx, options_json) {
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.scrubDocument(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
         if (r3) {
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         var v3 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export3(r0, r1 * 1, 1);
@@ -2343,14 +2657,14 @@ exports.scrubDocument = scrubDocument;
  * plan carries.
  *
  * Mirrors `jubarte::inspect::source_sha256`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @returns {string}
  */
 function sourceSha256(docx) {
     let deferred2_0;
     let deferred2_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
         const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
         const len0 = WASM_VECTOR_LEN;
         wasm.sourceSha256(retptr, ptr0, len0);
@@ -2374,7 +2688,7 @@ exports.sourceSha256 = sourceSha256;
  * reads the rejected text).
  *
  * Mirrors `jubarte::markdown::read_tables` without a selection.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string | null} [options_json]
  * @returns {string}
  */
@@ -2382,11 +2696,18 @@ function tablesText(docx, options_json) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.tablesText(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -2396,7 +2717,7 @@ function tablesText(docx, options_json) {
         var len3 = r1;
         if (r3) {
             ptr3 = 0; len3 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred4_0 = ptr3;
         deferred4_1 = len3;
@@ -2420,7 +2741,7 @@ exports.tablesText = tablesText;
  * exits 2.
  *
  * Mirrors `jubarte::markdown::read_tables`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @param {string | null} [options_json]
  * @returns {string}
  */
@@ -2428,11 +2749,18 @@ function tablesView(docx, options_json) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len1 = WASM_VECTOR_LEN;
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
         wasm.tablesView(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -2442,7 +2770,7 @@ function tablesView(docx, options_json) {
         var len3 = r1;
         if (r3) {
             ptr3 = 0; len3 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred4_0 = ptr3;
         deferred4_1 = len3;
@@ -2460,12 +2788,12 @@ exports.tablesView = tablesView;
  * Word's). Full build only: it needs the layout the PDF export links.
  *
  * Mirrors `jubarte::fields::update_fields`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @returns {FieldsOutput}
  */
 function updateFields(docx) {
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
         const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
         const len0 = WASM_VECTOR_LEN;
         wasm.updateFields(retptr, ptr0, len0);
@@ -2473,7 +2801,7 @@ function updateFields(docx) {
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         if (r2) {
-            throw takeObject(r1);
+            throw takeFromExternrefTable0(r1);
         }
         return FieldsOutput.__wrap(r0);
     } finally {
@@ -2489,14 +2817,14 @@ exports.updateFields = updateFields;
  * `[]` is a pass.
  *
  * Mirrors `jubarte::validate::validate`.
- * @param {Uint8Array} docx
+ * @param {Uint8Array | number[]} docx
  * @returns {string}
  */
 function validateDocument(docx) {
     let deferred3_0;
     let deferred3_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
         const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
         const len0 = WASM_VECTOR_LEN;
         wasm.validateDocument(retptr, ptr0, len0);
@@ -2508,7 +2836,7 @@ function validateDocument(docx) {
         var len2 = r1;
         if (r3) {
             ptr2 = 0; len2 = 0;
-            throw takeObject(r2);
+            throw takeFromExternrefTable0(r2);
         }
         deferred3_0 = ptr2;
         deferred3_1 = len2;
@@ -2551,56 +2879,65 @@ exports.wantsJson = wantsJson;
  * @returns {string}
  */
 function wroteLine(path, format, size, pages) {
-    let deferred4_0;
-    let deferred4_1;
+    let deferred6_0;
+    let deferred6_1;
     try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passStringToWasm0(path, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(format, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len1 = WASM_VECTOR_LEN;
-        wasm.wroteLine(retptr, ptr0, len0, ptr1, len1, size, isLikeNone(pages) ? Number.MAX_SAFE_INTEGER : (pages) >>> 0);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+        const val3 = +size;
+        const val4 = +(isLikeNone(pages) ? Number.MAX_SAFE_INTEGER : (pages) >>> 0);
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passStringToWasm0(path, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passStringToWasm0(format, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
+            throw e;
+        }
+        wasm.wroteLine(retptr, ptr0, len0, ptr1, len1, val3, val4);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
-        var ptr3 = r0;
-        var len3 = r1;
+        var ptr5 = r0;
+        var len5 = r1;
         if (r3) {
-            ptr3 = 0; len3 = 0;
-            throw takeObject(r2);
+            ptr5 = 0; len5 = 0;
+            throw takeFromExternrefTable0(r2);
         }
-        deferred4_0 = ptr3;
-        deferred4_1 = len3;
-        return getStringFromWasm0(ptr3, len3);
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
-        wasm.__wbindgen_export3(deferred4_0, deferred4_1, 1);
+        wasm.__wbindgen_export3(deferred6_0, deferred6_1, 1);
     }
 }
 exports.wroteLine = wroteLine;
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
-        __wbg___wbindgen_is_undefined_8865fb403f8fe9d8: function(arg0) {
-            const ret = getObject(arg0) === undefined;
+        __wbg___wbindgen_is_undefined_be5b34249ff1fc15: function(arg0) {
+            const ret = arg0 === undefined;
             return ret;
         },
-        __wbg___wbindgen_number_get_2e0e7dee9f701a71: function(arg0, arg1) {
-            const obj = getObject(arg1);
+        __wbg___wbindgen_number_get_934b640d0889af78: function(arg0, arg1) {
+            const obj = arg1;
             const ret = typeof(obj) === 'number' ? obj : undefined;
-            getDataViewMemory0().setFloat64(arg0 + 8 * 1, isLikeNone(ret) ? 0 : ret, true);
-            getDataViewMemory0().setInt32(arg0 + 4 * 0, !isLikeNone(ret), true);
+            getDataViewMemory0().setFloat64((arg0 >>> 0) + 8 * 1, isLikeNone(ret) ? 0 : ret, true);
+            getDataViewMemory0().setInt32((arg0 >>> 0) + 4 * 0, !isLikeNone(ret), true);
         },
-        __wbg___wbindgen_string_get_0380ccaa2f57f0d9: function(arg0, arg1) {
-            const obj = getObject(arg1);
+        __wbg___wbindgen_string_get_7ce8eee7fd327545: function(arg0, arg1) {
+            const obj = arg1;
             const ret = typeof(obj) === 'string' ? obj : undefined;
             var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_export, wasm.__wbindgen_export2);
             var len1 = WASM_VECTOR_LEN;
-            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
-            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+            getDataViewMemory0().setInt32((arg0 >>> 0) + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32((arg0 >>> 0) + 4 * 0, ptr1, true);
         },
-        __wbg___wbindgen_throw_41e9ee4f547fc59a: function(arg0, arg1) {
+        __wbg___wbindgen_throw_4c88d8bf264fd984: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
         __wbg_error_757e9472f8410341: function(arg0, arg1) {
@@ -2614,52 +2951,60 @@ function __wbg_get_imports() {
                 wasm.__wbindgen_export3(deferred0_0, deferred0_1, 1);
             }
         },
-        __wbg_getUTCDate_3a2d5b5ab12ed75b: function(arg0) {
-            const ret = getObject(arg0).getUTCDate();
+        __wbg_getRandomValues_8b6f1f663e6f188d: function() { return handleError(function (arg0, arg1) {
+            globalThis.crypto.getRandomValues(getArrayU8FromWasm0(arg0, arg1));
+        }, arguments); },
+        __wbg_getUTCDate_663b90c995fdf8b7: function(arg0) {
+            const ret = arg0.getUTCDate();
             return ret;
         },
-        __wbg_getUTCFullYear_73494f858b1a97cf: function(arg0) {
-            const ret = getObject(arg0).getUTCFullYear();
+        __wbg_getUTCFullYear_a63feba390b3baf5: function(arg0) {
+            const ret = arg0.getUTCFullYear();
             return ret;
         },
-        __wbg_getUTCHours_674184914a683e3f: function(arg0) {
-            const ret = getObject(arg0).getUTCHours();
+        __wbg_getUTCHours_3e5c258e11ac0d90: function(arg0) {
+            const ret = arg0.getUTCHours();
             return ret;
         },
-        __wbg_getUTCMinutes_2cbcb785a0d2e614: function(arg0) {
-            const ret = getObject(arg0).getUTCMinutes();
+        __wbg_getUTCMinutes_e309e461528477de: function(arg0) {
+            const ret = arg0.getUTCMinutes();
             return ret;
         },
-        __wbg_getUTCMonth_441e536ac640bfab: function(arg0) {
-            const ret = getObject(arg0).getUTCMonth();
+        __wbg_getUTCMonth_135d8f5aa938eadd: function(arg0) {
+            const ret = arg0.getUTCMonth();
             return ret;
         },
-        __wbg_getUTCSeconds_4e4f4b1e03334a24: function(arg0) {
-            const ret = getObject(arg0).getUTCSeconds();
+        __wbg_getUTCSeconds_8eb6d834a30e92cf: function(arg0) {
+            const ret = arg0.getUTCSeconds();
             return ret;
         },
-        __wbg_new_0_72d020f0c63443d4: function() {
+        __wbg_new_0_36d738a0c8cfac43: function() {
             const ret = new Date();
-            return addHeapObject(ret);
+            return ret;
         },
-        __wbg_new_227d7c05414eb861: function() {
+        __wbg_new_bb74001155cb8ca8: function() {
             const ret = new Error();
-            return addHeapObject(ret);
+            return ret;
         },
-        __wbg_stack_3b0d974bbf31e44f: function(arg0, arg1) {
-            const ret = getObject(arg1).stack;
+        __wbg_stack_575c4e0918581b9c: function(arg0, arg1) {
+            const ret = arg1.stack;
             const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_export, wasm.__wbindgen_export2);
             const len1 = WASM_VECTOR_LEN;
-            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
-            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+            getDataViewMemory0().setInt32((arg0 >>> 0) + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32((arg0 >>> 0) + 4 * 0, ptr1, true);
         },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
             // Cast intrinsic for `Ref(String) -> Externref`.
             const ret = getStringFromWasm0(arg0, arg1);
-            return addHeapObject(ret);
+            return ret;
         },
-        __wbindgen_object_drop_ref: function(arg0) {
-            takeObject(arg0);
+        __wbindgen_init_externref_table: function() {
+            const table = wasm.__wbindgen_externrefs;
+            table.set(0, undefined);
+            table.set(1024, undefined);
+            table.set(1025, null);
+            table.set(1026, true);
+            table.set(1027, false);
         },
     };
     return {
@@ -2684,19 +3029,10 @@ const RepairOutputFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_repairoutput_free(ptr, 1));
 
-function addHeapObject(obj) {
-    if (heap_next === heap.length) heap.push(heap.length + 1);
-    const idx = heap_next;
-    heap_next = heap[idx];
-
-    heap[idx] = obj;
+function addToExternrefTable0(obj) {
+    const idx = wasm.__wbindgen_export5();
+    wasm.__wbindgen_externrefs.set(idx, obj);
     return idx;
-}
-
-function dropObject(idx) {
-    if (idx < 1028) return;
-    heap[idx] = heap_next;
-    heap_next = idx;
 }
 
 function getArrayU8FromWasm0(ptr, len) {
@@ -2713,7 +3049,8 @@ function getDataViewMemory0() {
 }
 
 function getStringFromWasm0(ptr, len) {
-    return decodeText(ptr >>> 0, len);
+    ptr = ptr >>> 0;
+    return decodeText(getUint8ArrayMemory0().subarray(ptr, ptr + len));
 }
 
 let cachedUint8ArrayMemory0 = null;
@@ -2724,12 +3061,14 @@ function getUint8ArrayMemory0() {
     return cachedUint8ArrayMemory0;
 }
 
-function getObject(idx) { return heap[idx]; }
-
-let heap = new Array(1024).fill(undefined);
-heap.push(undefined, null, true, false);
-
-let heap_next = heap.length;
+function handleError(f, args) {
+    try {
+        return f.apply(this, args);
+    } catch (e) {
+        const idx = addToExternrefTable0(e);
+        wasm.__wbindgen_export4(idx);
+    }
+}
 
 function isLikeNone(x) {
     return x === undefined || x === null;
@@ -2744,9 +3083,9 @@ function passArray8ToWasm0(arg, malloc) {
 
 function passArrayJsValueToWasm0(array, malloc) {
     const ptr = malloc(array.length * 4, 4) >>> 0;
-    const mem = getDataViewMemory0();
     for (let i = 0; i < array.length; i++) {
-        mem.setUint32(ptr + 4 * i, addHeapObject(array[i]), true);
+        const add = addToExternrefTable0(array[i]);
+        getDataViewMemory0().setUint32(ptr + 4 * i, add, true);
     }
     WASM_VECTOR_LEN = array.length;
     return ptr;
@@ -2789,16 +3128,16 @@ function passStringToWasm0(arg, malloc, realloc) {
     return ptr;
 }
 
-function takeObject(idx) {
-    const ret = getObject(idx);
-    dropObject(idx);
-    return ret;
+function takeFromExternrefTable0(idx) {
+    const value = wasm.__wbindgen_externrefs.get(idx);
+    wasm.__wbindgen_export6(idx);
+    return value;
 }
 
-let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
+let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true });
 cachedTextDecoder.decode();
-function decodeText(ptr, len) {
-    return cachedTextDecoder.decode(getUint8ArrayMemory0().subarray(ptr, ptr + len));
+function decodeText(bytes) {
+    return cachedTextDecoder.decode(bytes);
 }
 
 const cachedTextEncoder = new TextEncoder();
@@ -2821,3 +3160,4 @@ const wasmBytes = require('fs').readFileSync(wasmPath);
 const wasmModule = new WebAssembly.Module(wasmBytes);
 let wasmInstance = new WebAssembly.Instance(wasmModule, __wbg_get_imports());
 let wasm = wasmInstance.exports;
+wasm.__wbindgen_start();

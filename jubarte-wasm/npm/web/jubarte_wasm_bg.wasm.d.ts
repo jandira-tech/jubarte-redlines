@@ -11,7 +11,7 @@ export const acceptRevisions: (a: number, b: number, c: number) => void;
 export const appendDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const appendoutput_docx: (a: number, b: number) => void;
 export const appendoutput_warnings: (a: number, b: number) => void;
-export const applyEditPlan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+export const applyEditPlan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
 export const auditDocument: (a: number, b: number, c: number, d: number, e: number) => void;
 export const auditTracked: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const capabilities: (a: number) => void;
@@ -26,7 +26,7 @@ export const compareDocuments: (a: number, b: number, c: number, d: number, e: n
 export const convertMarkdown: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
 export const diffDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => void;
 export const diffDocumentsCritic: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
-export const diffDocumentsUnified: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
+export const diffDocumentsUnified: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: any) => void;
 export const diffDocumentsView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const documentMarkdown: (a: number, b: number, c: number) => void;
 export const documentMarkdownWithChanges: (a: number, b: number, c: number, d: number, e: number) => void;
@@ -54,7 +54,7 @@ export const markdownToDocx: (a: number, b: number, c: number, d: number, e: num
 export const parseCli: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const pdfPageCount: (a: number, b: number) => number;
 export const planError: (a: number, b: number, c: number) => void;
-export const previewEditPlan: (a: number, b: number, c: number, d: number, e: number) => void;
+export const previewEditPlan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const readJson: (a: number, b: number, c: number, d: number, e: number) => void;
 export const readView: (a: number, b: number, c: number, d: number, e: number) => void;
 export const recordPlan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
@@ -81,4 +81,10 @@ export const wroteLine: (a: number, b: number, c: number, d: number, e: number, 
 export const __wbindgen_export: (a: number, b: number) => number;
 export const __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
 export const __wbindgen_export3: (a: number, b: number, c: number) => void;
+export const __wbindgen_export4: (a: number) => void;
+export const __wbindgen_export5: () => number;
+export const __wbindgen_externrefs: WebAssembly.Table;
 export const __wbindgen_add_to_stack_pointer: (a: number) => number;
+export const __wbindgen_export6: (a: number) => void;
+export const __wbindgen_export7: (a: number, b: number) => void;
+export const __wbindgen_start: () => void;
