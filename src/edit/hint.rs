@@ -421,8 +421,8 @@ fn json(text: &str) -> String {
     serde_json::Value::from(text).to_string()
 }
 
-/// The strike of an insertion, as `syntax` spells it. A v2 plan and the
-/// typed commands have no strike yet.
+/// The strike of an insertion, as `syntax` spells it. The typed commands
+/// have no strike yet.
 fn strike(syntax: PlanSyntax, holder: &Holder<'_>) -> Option<String> {
     if holder.held != Held::Inserted {
         return None;
@@ -433,7 +433,12 @@ fn strike(syntax: PlanSyntax, holder: &Holder<'_>) -> Option<String> {
             json(holder.id)
         )),
         PlanSyntax::Flags => Some(format!("-p {} --strike", shell_word(holder.id))),
-        PlanSyntax::V2 | PlanSyntax::Typed => None,
+        PlanSyntax::V2 => Some(format!(
+            r#"{{"kind":"strike","target":{{"short_id":{},"long_id":{}}}}}"#,
+            json(holder.id),
+            json(holder.long_id)
+        )),
+        PlanSyntax::Typed => None,
     }
 }
 
@@ -449,8 +454,13 @@ fn restore(syntax: PlanSyntax, holder: &Holder<'_>) -> Option<String> {
             json(holder.id)
         )),
         PlanSyntax::Flags => Some(format!("-p {} --restore", shell_word(holder.id))),
-        // A v2 plan and the typed commands have no restore yet.
-        PlanSyntax::V2 | PlanSyntax::Typed => None,
+        PlanSyntax::V2 => Some(format!(
+            r#"{{"kind":"restore","target":{{"short_id":{},"long_id":{}}}}}"#,
+            json(holder.id),
+            json(holder.long_id)
+        )),
+        // The typed commands have no restore yet.
+        PlanSyntax::Typed => None,
     }
 }
 
@@ -628,9 +638,9 @@ mod tests {
                     &[
                         r#""accept":[{"short_id":"r12","long_id":"document.w:del.w:id.12"}]"#,
                         r#""target":"#,
+                        r#"{"kind":"restore","target":{"short_id":"r12","long_id":"document.w:del.w:id.12"}}"#,
                     ],
-                    // A v2 plan has no restore yet.
-                    &[r#""ids""#, "--accept", r#""paragraph""#, "restore"],
+                    &[r#""ids""#, "--accept", r#""paragraph""#],
                 ),
                 PlanSyntax::Typed => (
                     &[
@@ -861,10 +871,10 @@ mod tests {
                 "{syntax:?}\n{hint}"
             );
             match syntax {
-                PlanSyntax::V1 | PlanSyntax::Flags => {
+                PlanSyntax::V1 | PlanSyntax::Flags | PlanSyntax::V2 => {
                     assert!(hint.contains("restore"), "{syntax:?}\n{hint}");
                 }
-                PlanSyntax::V2 | PlanSyntax::Typed => {
+                PlanSyntax::Typed => {
                     assert!(
                         hint.contains("accepting or rejecting would erase their change"),
                         "{syntax:?}\n{hint}"
@@ -877,7 +887,7 @@ mod tests {
 
     #[test]
     fn hint_guard_off_offers_strike_first_for_another_authors_insertion() {
-        for syntax in [PlanSyntax::V1, PlanSyntax::Flags] {
+        for syntax in [PlanSyntax::V1, PlanSyntax::Flags, PlanSyntax::V2] {
             let hint = settle_hint(&foreign(Held::Inserted), syntax);
             let routes: Vec<&str> = hint.lines().skip(1).collect();
             assert!(
@@ -896,17 +906,12 @@ mod tests {
                 "{syntax:?}\n{hint}"
             );
         }
-        for syntax in [PlanSyntax::V2, PlanSyntax::Typed] {
-            let hint = settle_hint(&foreign(Held::Inserted), syntax);
-            assert!(
-                !hint.lines().nth(1).unwrap().contains("strike"),
-                "{syntax:?}\n{hint}"
-            );
-            assert!(
-                hint.contains(r#"keep it (erases "Trainer 1 - AgentCo"'s insertion):"#),
-                "{syntax:?}\n{hint}"
-            );
-        }
+        let typed = settle_hint(&foreign(Held::Inserted), PlanSyntax::Typed);
+        assert!(!typed.lines().nth(1).unwrap().contains("strike"), "{typed}");
+        assert!(
+            typed.contains(r#"keep it (erases "Trainer 1 - AgentCo"'s insertion):"#),
+            "{typed}"
+        );
         let own = settle_hint(&holder(Held::Inserted), PlanSyntax::V1);
         assert!(!own.contains("strike"), "{own}");
     }
@@ -926,15 +931,21 @@ mod tests {
             !flags.contains("--accept") && !flags.contains("--reject"),
             "{flags}"
         );
-        for syntax in [PlanSyntax::V2, PlanSyntax::Typed] {
-            let hint = settle_hint(&guarded, syntax);
-            assert!(
-                hint.contains("accepting or rejecting would erase their change"),
-                "{syntax:?}\n{hint}"
-            );
-            assert!(!hint.contains("strike"), "{syntax:?}\n{hint}");
-            assert!(!hint.contains("resolve_revisions"), "{syntax:?}\n{hint}");
-        }
+        let v2 = settle_hint(&guarded, PlanSyntax::V2);
+        assert!(
+            v2.contains(
+                r#"{"kind":"strike","target":{"short_id":"r12","long_id":"document.w:del.w:id.12"}}"#
+            ),
+            "{v2}"
+        );
+        assert!(!v2.contains("resolve_revisions"), "{v2}");
+        let typed = settle_hint(&guarded, PlanSyntax::Typed);
+        assert!(
+            typed.contains("accepting or rejecting would erase their change"),
+            "{typed}"
+        );
+        assert!(!typed.contains("strike"), "{typed}");
+        assert!(!typed.contains("resolve_revisions"), "{typed}");
     }
 
     #[test]

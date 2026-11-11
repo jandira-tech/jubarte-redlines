@@ -970,6 +970,30 @@ impl Dom {
         }
     }
 
+    /// Copies `src`'s attributes onto `dest` as one [`Self::set_attribute_value`]
+    /// per attribute, in order, would: a name `dest` already has keeps its
+    /// slot and takes the new value. Onto an element with no attributes (a
+    /// rebuilt copy, the usual case) the list is cloned whole, without the
+    /// `(XName, String)` pairs [`Self::attributes`] allocates; an element's
+    /// names are unique, so the clone is what the calls would build.
+    pub fn copy_attributes(&mut self, src: NodeId, dest: NodeId) {
+        if src == dest {
+            return;
+        }
+        let attrs = self.data(src).attrs.clone();
+        let target = &mut self.data_mut(dest).attrs;
+        if target.is_empty() {
+            *target = attrs;
+            return;
+        }
+        for attr in attrs {
+            match target.iter_mut().find(|a| a.name == attr.name) {
+                Some(existing) => existing.value = attr.value,
+                None => target.push(attr),
+            }
+        }
+    }
+
     /// ⚡ Bolt: Sorts attributes in-place to avoid heavy allocations during canonicalization.
     pub fn sort_attributes(&mut self, id: NodeId) {
         let attrs = &mut self.data_mut(id).attrs;
@@ -1501,5 +1525,39 @@ mod attribute_iter_tests {
         assert_eq!(src.parent(rpr), Some(run));
         let other = dst.import_subtree(&src, doc);
         assert_eq!(dst.root(other).map(|r| dst.name(r)), Some(src.name(run)));
+    }
+
+    /// `copy_attributes` leaves the target as one `set_attribute_value` per
+    /// source attribute, in order, would: onto an empty element, onto one
+    /// that shares names (value replaced in place) and onto itself.
+    #[test]
+    fn copy_attributes_matches_setting_each_attribute() {
+        const XML: &str =
+            r#"<a xmlns:w="urn:w" w:id="1" w:author="A" x=""><b x="old" y="kept"/><c/></a>"#;
+        // root, its two children, and a fresh element, in a new arena.
+        let open = || {
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(XML);
+            let root = dom.root(doc).unwrap();
+            let kids = dom.elements(root, None);
+            let fresh = dom.new_element(XName::get("d", ""));
+            (dom, [root, kids[0], kids[1], fresh])
+        };
+        let (mut expected, nodes) = open();
+        let (mut dom, _) = open();
+        let root = nodes[0];
+        for &dest in &nodes[1..] {
+            for (name, value) in expected.attributes(root) {
+                expected.set_attribute_value(dest, &name, Some(&value));
+            }
+            dom.copy_attributes(root, dest);
+            assert_eq!(dom.attributes(dest), expected.attributes(dest));
+        }
+        let before = dom.attributes(root);
+        dom.copy_attributes(root, root);
+        assert_eq!(dom.attributes(root), before);
+        let bare = dom.new_element(XName::get("e", ""));
+        dom.copy_attributes(bare, nodes[2]);
+        assert_eq!(dom.attributes(nodes[2]), before);
     }
 }

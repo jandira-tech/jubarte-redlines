@@ -35,8 +35,9 @@ use super::{CorrelationStatus, WmlComparerSettings};
 
 /// `VerifyNoInvalidContent` (WmlComparer.ts :8678): error if any
 /// descendant of `content_parent` is a member of
-/// [`super::tables::INVALID_ELEMENTS`] (`altChunk`, `customXml`, `subDoc`,
-/// the customXml range markers).
+/// [`super::tables::INVALID_ELEMENTS`] (`altChunk`, `subDoc`, the customXml
+/// range markers). A `w:customXml` element is unwrapped before this check
+/// (`unwrap_custom_xml`): Word drops that markup and keeps its content.
 ///
 /// # Errors
 ///
@@ -115,11 +116,17 @@ fn revision_tracking_element_from_ancestors(
     ancestors: &[NodeId],
 ) -> Option<NodeId> {
     if dom.name_is(content, &W::p_pr()) {
-        for rpr in dom.elements(content, Some(&W::r_pr())) {
-            for e in dom.elements(rpr, None) {
-                let n = dom.name(e).unwrap();
-                if n == W::del() || n == W::ins() {
-                    return Some(e);
+        for i in 0..dom.child_count(content) {
+            let rpr = dom.child_at(content, i);
+            if dom.name_is(rpr, &W::r_pr()) {
+                for j in 0..dom.child_count(rpr) {
+                    let e = dom.child_at(rpr, j);
+                    if dom.is_element(e) {
+                        let n = dom.name(e).unwrap();
+                        if n == W::del() || n == W::ins() {
+                            return Some(e);
+                        }
+                    }
                 }
             }
         }
@@ -203,6 +210,9 @@ fn atom_hash(dom: &Dom, content: NodeId, settings: &WmlComparerSettings) -> Atom
     AtomHash::of_bytes(format!("{local}{text}").as_bytes())
 }
 
+/// Open fields that still receive a copy of one instruction.
+const MAX_OPEN_FIELDS: usize = 32;
+
 /// Salts every atom of a complex field with the codes of the fields around it.
 ///
 /// Word replaces a field whose code changed as a whole, nested fields included.
@@ -214,6 +224,9 @@ fn atom_hash(dom: &Dom, content: NodeId, settings: &WmlComparerSettings) -> Atom
 /// leaves fields half deleted (98bf5f3d×a3701d36). So begin, code, separate,
 /// end and result all carry the whole chain of codes, outermost first: a
 /// field's shell matches only when every enclosing code is the same.
+///
+/// Sibling begins do not deepen the XML, so an instruction is copied onto
+/// at most [`MAX_OPEN_FIELDS`] fields that have not reached their result.
 fn salt_field_results(dom: &Dom, list: &mut [ComparisonUnitAtom]) {
     let fld_char = W::fld_char();
     let fld_char_type = W::name("fldCharType");
@@ -231,22 +244,35 @@ fn salt_field_results(dom: &Dom, list: &mut [ComparisonUnitAtom]) {
     let mut codes: Vec<String> = Vec::new();
     let mut code_of: Vec<Option<usize>> = vec![None; list.len()];
     // Open fields, innermost last: (index into codes, inside the result).
+    // Begins past the cap are counted so their separate and end stay paired,
+    // and they do not take a copy of the instruction.
     let mut open: Vec<(usize, bool)> = Vec::new();
+    let mut past: usize = 0;
     for (i, atom) in list.iter().enumerate() {
         let el = atom.content_element;
         match kind(el) {
             Some("begin") => {
-                code_of[i] = Some(codes.len());
-                open.push((codes.len(), false));
-                codes.push(String::new());
+                if open.len() >= MAX_OPEN_FIELDS {
+                    past += 1;
+                } else {
+                    code_of[i] = Some(codes.len());
+                    open.push((codes.len(), false));
+                    codes.push(String::new());
+                }
             }
             Some("separate") => {
-                if let Some(field) = open.last_mut() {
+                if past == 0
+                    && let Some(field) = open.last_mut()
+                {
                     field.1 = true;
                 }
             }
             Some("end") => {
-                open.pop();
+                if past > 0 {
+                    past -= 1;
+                } else {
+                    open.pop();
+                }
             }
             _ => {
                 if dom.name(el).is_some_and(|n| n == instr || n == del_instr) {
@@ -262,27 +288,76 @@ fn salt_field_results(dom: &Dom, list: &mut [ComparisonUnitAtom]) {
         return;
     }
     // Pass 2: salt every atom inside a field with the chain of open codes.
+    // The chain text is kept and only the atom's own hash is appended.
     let mut chain: Vec<usize> = Vec::new();
+    let mut salted = String::new();
+    let mut prefix = 0usize;
+    let mut prefixed = usize::MAX;
+    let mut past = 0usize;
     for (i, atom) in list.iter_mut().enumerate() {
         let ty = kind(atom.content_element);
-        if ty == Some("begin")
-            && let Some(c) = code_of[i]
-        {
-            chain.push(c);
+        if ty == Some("begin") {
+            if let Some(c) = code_of[i] {
+                chain.push(c);
+            } else {
+                past += 1;
+            }
         }
         if !chain.is_empty() {
-            let mut salted = String::from("FIELD");
-            for &c in &chain {
+            if prefixed != chain.len() {
+                salted.clear();
+                salted.push_str("FIELD");
+                for &c in &chain {
+                    salted.push('|');
+                    salted.push_str(codes[c].trim());
+                }
                 salted.push('|');
-                salted.push_str(codes[c].trim());
+                prefix = salted.len();
+                prefixed = chain.len();
             }
-            salted.push('|');
+            salted.truncate(prefix);
             salted.push_str(&atom.sha1_hash.to_hex_string());
             atom.sha1_hash = AtomHash::of_bytes(salted.as_bytes());
         }
         if ty == Some("end") {
-            chain.pop();
+            if past > 0 {
+                past -= 1;
+            } else {
+                chain.pop();
+                prefixed = usize::MAX;
+            }
         }
+    }
+}
+
+/// Drop every `w:customXml` element under `content_parent`, lifting its
+/// content into the parent. `w:customXmlPr` stays with the wrapper: it is
+/// the markup's own metadata. Nested wrappers unwrap deepest first.
+///
+/// Word has dropped custom XML markup on open since 2010 and compared the
+/// content (#1674). Range markers (`w:customXmlInsRangeStart` and the rest)
+/// are different elements and are not unwrapped.
+fn unwrap_custom_xml(dom: &mut Dom, content_parent: NodeId) {
+    let element = W::custom_xml();
+    let props = W::name("customXmlPr");
+    // `descendants` is pre-order, so in reverse every wrapper comes after
+    // the wrappers nested inside it: one pass unwraps deepest first, and
+    // a lifted child stays inside its outer wrapper until that one goes.
+    for node in dom
+        .descendants(content_parent, Some(&element))
+        .into_iter()
+        .rev()
+    {
+        if dom.parent(node).is_none() {
+            continue;
+        }
+        for child in dom.nodes(node) {
+            if !dom.name_is(child, &props) {
+                dom.remove(child);
+                dom.add_before_self(node, child);
+            }
+        }
+        dom.remove(node);
     }
 }
 
@@ -302,13 +377,16 @@ fn salt_field_results(dom: &Dom, list: &mut [ComparisonUnitAtom]) {
 /// # Panics
 ///
 /// Panics if `verify_no_invalid_content` or `move_last_sectpr_into_last_paragraph`
-/// returns an error; the compare pipeline gates this with an
-/// `admission::admit` check on the source bytes.
+/// returns an error. `refuse_unatomizable` is the gate for what this still
+/// rejects (`altChunk`, `subDoc`, customXml range markers, two `w:sectPr`
+/// in one element). `admission::admit` does not know those names.
+/// `w:customXml` elements are not in that gate: they are unwrapped here.
 pub fn create_comparison_unit_atom_list(
     dom: &mut Dom,
     content_parent: NodeId,
     settings: &WmlComparerSettings,
 ) -> Vec<ComparisonUnitAtom> {
+    unwrap_custom_xml(dom, content_parent);
     verify_no_invalid_content(dom, content_parent).expect("invalid content in comparer input");
     assign_to_all_elements(dom, content_parent);
     move_last_sectpr_into_last_paragraph(dom, content_parent)
@@ -332,7 +410,11 @@ fn annotate_element_with_props(
     settings: &WmlComparerSettings,
     path: &mut Vec<NodeId>,
 ) {
-    for item in dom.elements(element, None) {
+    for i in 0..dom.child_count(element) {
+        let item = dom.child_at(element, i);
+        if !dom.is_element(item) {
+            continue;
+        }
         let skip = match (child_property_names, dom.name(item)) {
             (Some(props), Some(n)) => props.contains(&n),
             _ => false,
@@ -520,7 +602,9 @@ fn recurse(
     // fldSimple 3 → 0 while GT keeps every field; every rendered page showed
     // "Pg  Left aligned" with empty numbers). Non-empty fldSimple still
     // recurses (its result runs diff normally).
-    if name == W::fld_simple() && dom.elements(element, None).is_empty() {
+    if name == W::fld_simple()
+        && (0..dom.child_count(element)).all(|i| !dom.is_element(dom.child_at(element, i)))
+    {
         let chain = chain_with(path, element);
         push_atom(dom, element, &chain, list, settings);
         return;
@@ -586,9 +670,7 @@ fn coalesce_recurse(dom: &mut Dom, atoms: &[ComparisonUnitAtom], level: usize) -
                 dom.name(a.content_element).unwrap()
             });
             let p = dom.new_element(W::p());
-            for (an, av) in dom.attributes(ancestor) {
-                dom.set_attribute_value(p, &an, Some(&av));
-            }
+            dom.copy_attributes(ancestor, p);
             // pPr group(s) first (the paragraph mark), then child runs.
             for (cname, gc) in &by_name {
                 if *cname == W::p_pr() {
@@ -616,9 +698,12 @@ fn coalesce_recurse(dom: &mut Dom, atoms: &[ComparisonUnitAtom], level: usize) -
             });
             let r = dom.new_element(W::r());
             // rPr from ancestor run
-            for rpr in dom.elements(ancestor, Some(&W::r_pr())) {
-                let cloned = dom.clone_subtree(rpr);
-                dom.add(r, cloned);
+            for i in 0..dom.child_count(ancestor) {
+                let rpr = dom.child_at(ancestor, i);
+                if dom.name_is(rpr, &W::r_pr()) {
+                    let cloned = dom.clone_subtree(rpr);
+                    dom.add(r, cloned);
+                }
             }
             for (cname, gc) in &by_name {
                 if *cname == W::t() || *cname == W::del_text() {
@@ -645,9 +730,7 @@ fn coalesce_recurse(dom: &mut Dom, atoms: &[ComparisonUnitAtom], level: usize) -
 
         // generic ancestor: rebuild with attributes + recurse deeper
         let ne = dom.new_element(aname);
-        for (an, av) in dom.attributes(ancestor) {
-            dom.set_attribute_value(ne, &an, Some(&av));
-        }
+        dom.copy_attributes(ancestor, ne);
         let children = coalesce_recurse(dom, &group, level + 1);
         for c in children {
             dom.add(ne, c);
@@ -1117,6 +1200,41 @@ mod coverage_atomizer_field_chain_boundaries {
                 assert_eq!(dom.value(atoms[6].content_element), "X");
             }
         }
+    }
+
+    /// Sibling field begins do not deepen the XML, and one instruction is
+    /// copied onto every field that has not reached its result. The copy
+    /// stops at 32 open fields.
+    #[test]
+    fn a_nested_field_instruction_is_copied_only_to_the_open_bound() {
+        const BOUND: usize = 32;
+        const DEPTH: usize = 40;
+        let begins = "<w:r><w:fldChar w:fldCharType='begin'/></w:r>".repeat(DEPTH);
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            "<w:body xmlns:w='{ns}'><w:p>{begins}<w:r><w:instrText>CODE</w:instrText></w:r><w:r><w:t>Z</w:t></w:r></w:p></w:body>",
+            ns = W::URI
+        ));
+        let body = dom.root(doc).unwrap();
+        let settings = WmlComparerSettings::default();
+        let atoms = create_comparison_unit_atom_list(&mut dom, body, &settings);
+        let z = atoms
+            .iter()
+            .find(|atom| dom.value(atom.content_element) == "Z")
+            .expect("the result text");
+        let base = atom_hash(&dom, z.content_element, &settings);
+        let salted = |copies: usize| {
+            let codes = std::iter::repeat_n("CODE", copies)
+                .collect::<Vec<_>>()
+                .join("|");
+            AtomHash::of_bytes(format!("FIELD|{codes}|{}", base.to_hex_string()).as_bytes())
+        };
+        assert_ne!(salted(BOUND), salted(DEPTH));
+        assert_eq!(
+            z.sha1_hash,
+            salted(BOUND),
+            "one instruction copied onto {DEPTH} open fields"
+        );
     }
 
     #[test]

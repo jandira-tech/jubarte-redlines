@@ -228,10 +228,12 @@ pub(super) fn assemble(
         next_revision,
         cursors: HashMap::new(),
         used_revisions: HashSet::new(),
+        move_ranges: HashMap::new(),
         warnings,
         revision_prefix: "",
         pending_marks: Vec::new(),
         run_sizes: Vec::new(),
+        pending_run_format: Vec::new(),
         num_ids,
         label_nums,
         note_ids: Vec::new(),
@@ -291,7 +293,7 @@ pub(super) fn assemble(
         let part = sibling(&main, "comments.xml");
         package.set_part(
             &part,
-            xml::comments_part(&context, &document.comments).into_bytes(),
+            xml::comments_part(&mut context, &document.comments).into_bytes(),
         );
         package.add_content_type_override(
             &format!("/{part}"),
@@ -440,6 +442,109 @@ fn unique_revision_ids(package: &mut PartFs, markdown: &str, warnings: &mut Vec<
             &part,
             crate::xmllinq::serialize::serialize_document(&dom, document).into_bytes(),
         );
+    }
+    warn_when_separate_tags_touch(package, markdown, warnings);
+}
+
+/// A logical change whose marks the markdown named on separate tags reads
+/// back as one change. Say so. A tag that already names every mark, and a
+/// mark the markdown never named, are the writer's own grouping.
+fn warn_when_separate_tags_touch(package: &PartFs, markdown: &str, warnings: &mut Vec<String>) {
+    let mut tags: Vec<(&str, BTreeSet<String>)> = Vec::new();
+    let mut named = BTreeSet::new();
+    let comments = comment_spans(markdown);
+    let mut comment = comments.iter().peekable();
+    for (start, word) in tag_words(markdown) {
+        // Only a tag names a change: a note right after a span
+        // (`{--old--}{r1 @A}`, `{++new++}{r2 Ana Lima}`) or ids an author
+        // handle follows (`rev r1 @AC`). Ids in prose, a comment's text
+        // included, are text.
+        while comment.next_if(|span| span.end <= start).is_some() {}
+        if comment.peek().is_some_and(|span| span.contains(&start)) {
+            continue;
+        }
+        let end = start + word.len();
+        if !(markdown[..start].ends_with("}{") || markdown[end..].starts_with(" @")) {
+            continue;
+        }
+        let Ok(ids) = crate::ids::parse_change_ids(word) else {
+            continue;
+        };
+        let shorts: BTreeSet<String> = ids.iter().map(crate::ids::ChangeId::short).collect();
+        if shorts.is_empty() {
+            continue;
+        }
+        named.extend(shorts.iter().cloned());
+        tags.push((word, shorts));
+    }
+    for change in crate::changes::logical_changes_in(package) {
+        let members: Vec<&str> = change.element_ids().collect();
+        if members.len() < 2 || members.iter().any(|id| !named.contains(*id)) {
+            continue;
+        }
+        let one_tag_names_every_mark = tags
+            .iter()
+            .any(|(_, shorts)| members.iter().all(|id| shorts.contains(*id)));
+        if one_tag_names_every_mark {
+            continue;
+        }
+        let mut tokens = Vec::new();
+        for (token, shorts) in &tags {
+            if shorts.iter().any(|id| members.contains(&id.as_str())) && !tokens.contains(token) {
+                tokens.push(*token);
+            }
+        }
+        if tokens.len() < 2 {
+            continue;
+        }
+        warnings.push(format!(
+            "{} touch in the DOCX, so they read back as one change, {}",
+            listed(&tokens),
+            change.id
+        ));
+    }
+}
+
+/// The byte ranges of the `{>>…<<}` comments in `markdown`, in order. A
+/// comment without its closer runs to the end.
+fn comment_spans(markdown: &str) -> Vec<std::ops::Range<usize>> {
+    let mut spans = Vec::new();
+    let mut at = 0;
+    while let Some(open) = markdown[at..].find("{>>") {
+        let open = at + open;
+        let end = markdown[open..]
+            .find("<<}")
+            .map_or(markdown.len(), |close| open + close + 3);
+        spans.push(open..end);
+        at = end;
+    }
+    spans
+}
+
+/// The words of `markdown` with their byte offsets, split at whitespace and
+/// at the punctuation around tags.
+fn tag_words(markdown: &str) -> impl Iterator<Item = (usize, &str)> {
+    let boundary = |c: char| c.is_whitespace() || matches!(c, '{' | '}' | ';' | ',' | '"' | '\'');
+    let mut at = 0;
+    markdown
+        .split(boundary)
+        .map(move |word| {
+            let start = at;
+            at += word.len();
+            // The boundary after the word, when there is one.
+            at += markdown[at..].chars().next().map_or(0, char::len_utf8);
+            (start, word)
+        })
+        .filter(|(_, word)| !word.is_empty())
+}
+
+/// `r1 and r2`, or `r1, r2 and r3`.
+fn listed(tokens: &[&str]) -> String {
+    match tokens {
+        [one] => (*one).to_string(),
+        [first, second] => format!("{first} and {second}"),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        [] => String::new(),
     }
 }
 
@@ -913,35 +1018,34 @@ pub(super) fn word_table_style_name(id: &str) -> Option<String> {
 /// by its tint and darkened by its shade; `auto` for a colour the theme
 /// does not hold.
 fn with_theme_colours(xml: &str, theme: &str) -> String {
-    xml.split_inclusive('>')
-        .map(|tag| {
-            if !tag.contains("\"@\"") {
-                return tag.to_string();
+    let mut result = String::with_capacity(xml.len());
+    for tag in xml.split_inclusive('>') {
+        if !tag.contains("\"@\"") {
+            result.push_str(tag);
+            continue;
+        }
+        let attribute = |name: &str| {
+            tag.split_once(&format!(" w:{name}=\""))
+                .and_then(|(_, rest)| rest.split_once('"'))
+                .map(|(value, _)| value)
+        };
+        let mut out = tag.to_string();
+        for (key, colour, tint, shade) in [
+            ("color", "themeColor", "themeTint", "themeShade"),
+            ("val", "themeColor", "themeTint", "themeShade"),
+            ("fill", "themeFill", "themeFillTint", "themeFillShade"),
+        ] {
+            let unresolved = format!(" w:{key}=\"@\"");
+            if out.contains(&unresolved) {
+                let hex = attribute(colour)
+                    .and_then(|name| theme_colour(theme, name, attribute(tint), attribute(shade)))
+                    .unwrap_or_else(|| "auto".to_string());
+                out = out.replace(&unresolved, &format!(" w:{key}=\"{hex}\""));
             }
-            let attribute = |name: &str| {
-                tag.split_once(&format!(" w:{name}=\""))
-                    .and_then(|(_, rest)| rest.split_once('"'))
-                    .map(|(value, _)| value)
-            };
-            let mut out = tag.to_string();
-            for (key, colour, tint, shade) in [
-                ("color", "themeColor", "themeTint", "themeShade"),
-                ("val", "themeColor", "themeTint", "themeShade"),
-                ("fill", "themeFill", "themeFillTint", "themeFillShade"),
-            ] {
-                let unresolved = format!(" w:{key}=\"@\"");
-                if out.contains(&unresolved) {
-                    let hex = attribute(colour)
-                        .and_then(|name| {
-                            theme_colour(theme, name, attribute(tint), attribute(shade))
-                        })
-                        .unwrap_or_else(|| "auto".to_string());
-                    out = out.replace(&unresolved, &format!(" w:{key}=\"{hex}\""));
-                }
-            }
-            out
-        })
-        .collect()
+        }
+        result.push_str(&out);
+    }
+    result
 }
 
 /// The theme colour `name` (`accent1`, `text1`), tinted and shaded as Word
@@ -1896,6 +2000,26 @@ mod tests {
         }
         // No DrawingML binding: Word's own prefix.
         assert_eq!(drawing_prefix("<theme/>"), "a:");
+    }
+
+    /// Only a tag holding an `@` colour changes: from its own theme
+    /// attributes, `auto` for a colour the theme lacks; every other tag,
+    /// and the text between tags, is copied as it is (#2231).
+    #[test]
+    fn theme_colours_resolve_only_the_tags_that_ask() {
+        let theme = "<a:theme xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+                     <a:accent1><a:srgbClr val=\"112233\"/></a:accent1></a:theme>";
+        let xml = "<w:p><w:r><w:rPr><w:color w:val=\"@\" w:themeColor=\"accent1\"/>\
+                   <w:shd w:fill=\"@\" w:themeFill=\"accent6\"/><w:b/></w:rPr>\
+                   <w:t>a \"@\" &gt; b</w:t></w:r></w:p>";
+        assert_eq!(
+            with_theme_colours(xml, theme),
+            "<w:p><w:r><w:rPr><w:color w:val=\"112233\" w:themeColor=\"accent1\"/>\
+             <w:shd w:fill=\"auto\" w:themeFill=\"accent6\"/><w:b/></w:rPr>\
+             <w:t>a \"@\" &gt; b</w:t></w:r></w:p>"
+        );
+        assert_eq!(with_theme_colours("", theme), "");
+        assert_eq!(with_theme_colours("text, no tag", theme), "text, no tag");
     }
 
     #[test]

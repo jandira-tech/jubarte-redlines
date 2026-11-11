@@ -83,6 +83,14 @@ pub(crate) struct ParaFact {
     /// Its own indent (`w:ind`), as the id lines say it: `first-line`,
     /// `hanging`, `left`, `right` and each one's inches.
     pub indent: Vec<(&'static str, String)>,
+    /// Its own tab stops (`w:tabs`): `center 4680`, or `right dot 9360`
+    /// when a leader is set. The position is twips.
+    pub tabs: Vec<String>,
+    /// Its own spacing (`w:spacing`), in the body's spacing words
+    /// (`before 6pt`, `after 0pt`, `line 1`).
+    pub spacing: Vec<String>,
+    /// Its own shading (`w:shd`): `val`, `color` and `fill`, in that order.
+    pub shading: Vec<(&'static str, String)>,
 }
 
 /// A section of the body (Task 11 fills these).
@@ -1206,15 +1214,77 @@ pub(crate) fn story_style(kind: &str) -> &'static str {
     if kind == "header" { "Header" } else { "Footer" }
 }
 
+/// A paragraph's own tab stops (`w:tabs`), each `center 4680` or
+/// `right dot 9360`. A stop Word would not keep is left out.
+pub(crate) fn tab_stops(tabs: &Element) -> Vec<String> {
+    tabs.children_named("tab")
+        .filter_map(|tab| {
+            // Strict and bidirectional text say `start` and `end`.
+            let val = match tab.attr("val")? {
+                "start" => "left",
+                "end" => "right",
+                val => val,
+            };
+            if !crate::markdown::xml::TAB_VALS.contains(&val) {
+                return None;
+            }
+            let pos = tab_pos(tab.attr("pos")?)?;
+            let leader = tab
+                .attr("leader")
+                .filter(|leader| crate::markdown::xml::TAB_LEADERS.contains(leader));
+            Some(match leader {
+                Some(leader) => format!("{val} {leader} {pos}"),
+                None => format!("{val} {pos}"),
+            })
+        })
+        .collect()
+}
+
+fn tab_pos(raw: &str) -> Option<i64> {
+    let twips =
+        crate::util::parse_finite_f64(raw).or_else(|| crate::util::universal_measure_twips(raw))?;
+    let twips = twips.round();
+    // `as` cannot truncate: the bound is checked first, and 31680 is exact.
+    (twips.is_finite() && twips.abs() <= crate::markdown::xml::TAB_POS_LIMIT as f64)
+        .then_some(twips as i64)
+}
+
+/// A paragraph's own shading (`w:shd`): `val`, then `color`, then `fill`.
+pub(crate) fn shading_pairs(shd: &Element) -> Vec<(&'static str, String)> {
+    let mut out = Vec::new();
+    if let Some(val) = shd
+        .attr("val")
+        .filter(|val| crate::markdown::xml::SHD_VALS.contains(val))
+    {
+        out.push(("val", val.to_string()));
+    }
+    if let Some(color) = shd
+        .attr("color")
+        .filter(|color| crate::markdown::xml::shading_colour(color))
+    {
+        out.push(("color", color.to_string()));
+    }
+    if let Some(fill) = shd
+        .attr("fill")
+        .filter(|fill| crate::markdown::xml::shading_colour(fill))
+    {
+        out.push(("fill", fill.to_string()));
+    }
+    out
+}
+
 /// A story prints paragraph by paragraph (`p0: {text: …, color: …}`) when
-/// one carries its own colour, borders, frame or indent, or their
-/// alignments differ.
+/// one carries its own colour, borders, frame, indent, tab stops, spacing
+/// or shading, or their alignments differ.
 fn by_paragraph(s: &StoryFact) -> bool {
     s.paras.iter().any(|p| {
         p.color.is_some()
             || p.border.is_some()
             || p.frame.is_some()
             || !p.indent.is_empty()
+            || !p.tabs.is_empty()
+            || !p.spacing.is_empty()
+            || !p.shading.is_empty()
             || p.align != s.align
     })
 }
@@ -1247,6 +1317,24 @@ fn paragraph_entries(s: &StoryFact) -> Vec<String> {
             }
             if let Some(frame) = &p.frame {
                 inner.push_str(&format!(", frame: {frame}"));
+            }
+            if !p.tabs.is_empty() {
+                let items: Vec<String> = p.tabs.iter().map(|stop| scalar(stop, true)).collect();
+                inner.push_str(&format!(", tabs: [{}]", items.join(", ")));
+            }
+            if !p.spacing.is_empty() {
+                inner.push_str(&format!(
+                    ", spacing: {}",
+                    scalar(&p.spacing.join(", "), true)
+                ));
+            }
+            if !p.shading.is_empty() {
+                let items: Vec<String> = p
+                    .shading
+                    .iter()
+                    .map(|(name, value)| format!("{name}: {}", scalar(value, true)))
+                    .collect();
+                inner.push_str(&format!(", shading: {{{}}}", items.join(", ")));
             }
             format!("p{}: {{{inner}}}", s.first + k)
         })
@@ -1389,10 +1477,15 @@ fn section_entry(
 ) -> String {
     let mut parts = vec![format!("p{}-p{}", section.first, section.last)];
     let setup = |s: &SectionFact| s.sect_pr.as_ref().map(page_setup);
-    if setup(section) != setup(first)
+    let earlier = changed_page(section);
+    if (setup(section) != setup(first) || earlier.is_some())
         && let Some(page) = setup(section)
     {
-        parts.push(format!("page: {page}"));
+        let mut text = format!("page: {page}");
+        if let Some(earlier) = earlier {
+            text.push_str(&format!("; was: {earlier}"));
+        }
+        parts.push(text);
     }
     if let Some(tags) = handles.and_then(|h| section_changes(section, h)) {
         parts.push(format!("fmt: {}", scalar(&tags, true)));
@@ -1428,6 +1521,18 @@ fn section_entry(
     format!("{{{}}}", parts.join(", "))
 }
 
+/// The page a `w:sectPrChange` recorded, when it is not the live page.
+/// Reject restores it; a copy of the live page would not (#1475).
+fn changed_page(section: &SectionFact) -> Option<String> {
+    let sect = section.sect_pr.as_ref()?;
+    let saved = sect
+        .children_named("sectPrChange")
+        .next()?
+        .child("sectPr")?;
+    let earlier = page_setup(saved);
+    (earlier != page_setup(sect)).then_some(earlier)
+}
+
 /// The tracked view's tags for a section's own changes (`w:sectPrChange`):
 /// `r9 @AC`.
 fn section_changes(section: &SectionFact, handles: &Handles) -> Option<String> {
@@ -1439,9 +1544,9 @@ fn section_changes(section: &SectionFact, handles: &Handles) -> Option<String> {
     (!tags.is_empty()).then(|| super::agent::format_tags(&tags))
 }
 
-/// `Normal: styles.r0 @AS, Heading1: styles.r3 @AS`: the styles part's
+/// `Normal: pPr styles.r0 @AS; rPr styles.r3 @AS`: the styles part's
 /// tracked changes by the style that holds them (`docDefaults` for the
-/// document defaults), in the tracked view.
+/// document defaults), each tag naming the property it was read from.
 fn style_changes(styles: &Element, handles: &Handles) -> Vec<(String, String)> {
     let mut found = Vec::new();
     for holder in styles.elements() {
@@ -1454,35 +1559,72 @@ fn style_changes(styles: &Element, handles: &Handles) -> Vec<(String, String)> {
             _ => continue,
         };
         let mut carriers = Vec::new();
-        collect(holder, &mut carriers);
+        collect_style_carriers(holder, &mut carriers);
         let mut tags: Vec<String> = Vec::new();
-        for carrier in carriers {
+        for (carrier, kind) in carriers {
             let tag = format!(
-                "styles#{}",
-                super::agent::required_date_tag_of(carrier, handles)
+                "{kind} {}",
+                super::agent::format_tag(&format!(
+                    "styles#{}",
+                    super::agent::required_date_tag_of(carrier, handles)
+                ))
             );
             if !tags.contains(&tag) {
                 tags.push(tag);
             }
         }
         if !tags.is_empty() {
-            found.push((name, super::agent::format_tags(&tags)));
+            found.push((name, tags.join("; ")));
         }
     }
     found
 }
 
-/// The elements under `e` that record a tracked change.
-fn collect<'e>(e: &'e Element, out: &mut Vec<&'e Element>) {
-    for child in e.elements() {
+/// Direct property carriers, then any other id-bearing carrier. A change's
+/// historical payload is not a current property.
+fn collect_style_carriers<'e>(holder: &'e Element, out: &mut Vec<(&'e Element, &'static str)>) {
+    if holder.local() == "docDefaults" {
+        push_direct(holder.path(&["pPrDefault", "pPr"]), "pPrChange", "pPr", out);
+        push_direct(holder.path(&["rPrDefault", "rPr"]), "rPrChange", "rPr", out);
+    } else {
+        for paragraph in holder.children_named("pPr") {
+            push_direct(Some(paragraph), "pPrChange", "pPr", out);
+        }
+        for run in holder.children_named("rPr") {
+            push_direct(Some(run), "rPrChange", "rPr", out);
+        }
+    }
+    collect_other(holder, out);
+}
+
+fn push_direct<'e>(
+    parent: Option<&'e Element>,
+    change: &str,
+    kind: &'static str,
+    out: &mut Vec<(&'e Element, &'static str)>,
+) {
+    let Some(parent) = parent else {
+        return;
+    };
+    for carrier in parent.elements() {
+        if carrier.local() == change && carrier.attr("id").is_some() {
+            out.push((carrier, kind));
+        }
+    }
+}
+
+fn collect_other<'e>(element: &'e Element, out: &mut Vec<(&'e Element, &'static str)>) {
+    for child in element.elements() {
         let local = child.local();
         if (local.ends_with("Change") || matches!(local, "ins" | "del"))
             && child.attr("id").is_some()
         {
-            out.push(child);
+            if !out.iter().any(|(seen, _)| std::ptr::eq(*seen, child)) {
+                out.push((child, "other"));
+            }
             continue;
         }
-        collect(child, out);
+        collect_other(child, out);
     }
 }
 
@@ -1491,6 +1633,9 @@ fn part_two(out: &mut String, f: &Facts) {
         && let Some(sect) = first.sect_pr.as_ref()
     {
         let mut page = page_setup(sect);
+        if let Some(earlier) = changed_page(first) {
+            page.push_str(&format!("; was: {earlier}"));
+        }
         if f.resolved.is_none()
             && let Some(tags) = section_changes(first, f.handles)
         {
@@ -1658,10 +1803,18 @@ fn part_two(out: &mut String, f: &Facts) {
             .iter()
             .map(|(style, tags)| format!("{}: {}", scalar(style, true), scalar(tags, true)))
             .collect();
+        let loss = ordered.iter().any(|(style, tags)| {
+            style == "docDefaults" || tags.split("; ").any(|tag| tag.starts_with("other "))
+        });
+        let note = if loss {
+            "tracked changes to the styles; docDefaults and other changes are not written back"
+        } else {
+            "tracked changes to the styles"
+        };
         kv(
             out,
             &format!("style_changes: {{{}}}", list.join(", ")),
-            Some("tracked changes to the styles"),
+            Some(note),
         );
     }
     let (rev, fmt) = &f.note_changes;
@@ -1846,7 +1999,7 @@ pub(crate) fn story_text_with(
                     }
                 }
                 "AlternateContent" => {
-                    if let Some(choice) = run.child("Choice").or_else(|| run.child("Fallback")) {
+                    if let Some(choice) = super::agent::shown_branch(run) {
                         walk(choice, s, draw);
                     }
                 }
@@ -1922,8 +2075,26 @@ pub(crate) fn story_text_with(
                     if super::agent::hidden_run(run.child("rPr"), hidden) {
                         continue;
                     }
+                    // A field's pieces print its code (`{PAGE}`, `{/}`),
+                    // which marks must not wrap: the code is no text, and
+                    // a wrapped separate moves the end past a result-less
+                    // field's start, so it would gain `{/}`.
+                    let field_piece = run.elements().any(|child| {
+                        matches!(child.local(), "fldChar" | "instrText" | "delInstrText")
+                    });
+                    let wrap = match s.view {
+                        StoryView::Tagged(..) if !field_piece => character_wrap(run),
+                        _ => None,
+                    };
+                    let before = s.out.len();
                     for child in run.elements() {
                         run_content(child, s, draw);
+                    }
+                    if let Some((open, close)) = wrap
+                        && s.out.len() > before
+                    {
+                        s.out.insert_str(before, &open);
+                        s.out.push_str(&close);
                     }
                 }
                 _ => {}
@@ -1949,7 +2120,7 @@ pub(crate) fn story_text_with(
                 }
             }
             "AlternateContent" => {
-                if let Some(choice) = child.child("Choice").or_else(|| child.child("Fallback")) {
+                if let Some(choice) = super::agent::shown_branch(child) {
                     for inner in choice.elements() {
                         run_content(inner, s, draw);
                     }
@@ -2088,6 +2259,67 @@ fn escape_field_codes(text: &str) -> std::borrow::Cow<'_, str> {
         out.push(c);
     }
     std::borrow::Cow::Owned(out)
+}
+
+/// The character marks a story run prints: open tags, then their closers.
+/// Direct run properties only. Yellow is a bare `<mark>`; any other named
+/// colour keeps `class="hl-…"`. Bold, italic, underline, strike, code and
+/// vertical alignment use the same tags as the body.
+fn character_wrap(run: &Element) -> Option<(String, String)> {
+    let rpr = run.child("rPr")?;
+    let bold = rpr.toggle("b") == Some(true);
+    let italic = rpr.toggle("i") == Some(true);
+    let underline = rpr.child("u").is_some_and(super::is_underlined);
+    let strike = rpr.toggle("strike") == Some(true);
+    let highlight = rpr
+        .child("highlight")
+        .and_then(|mark| mark.attr("val"))
+        .and_then(super::highlight_color);
+    let code = rpr.child("rStyle").and_then(|style| style.attr("val")) == Some("VerbatimChar")
+        || super::font_of(rpr).is_some_and(|font| super::is_monospace(&font));
+    let raised = rpr.child("vertAlign").and_then(|align| align.attr("val"));
+    let sup = raised == Some("superscript");
+    let sub = raised == Some("subscript");
+    if !(bold || italic || underline || strike || highlight.is_some() || code || sup || sub) {
+        return None;
+    }
+    let mut open = String::new();
+    let mut close = String::new();
+    let push = |open: &mut String, close: &mut String, start: &str, end: &str| {
+        open.push_str(start);
+        close.insert_str(0, end);
+    };
+    if bold {
+        push(&mut open, &mut close, "<b>", "</b>");
+    }
+    if italic {
+        push(&mut open, &mut close, "<i>", "</i>");
+    }
+    if underline {
+        push(&mut open, &mut close, "<u>", "</u>");
+    }
+    match highlight {
+        Some("yellow") => push(&mut open, &mut close, "<mark>", "</mark>"),
+        Some(colour) => push(
+            &mut open,
+            &mut close,
+            &format!("<mark class=\"hl-{colour}\">"),
+            "</mark>",
+        ),
+        None => {}
+    }
+    if strike {
+        push(&mut open, &mut close, "<s>", "</s>");
+    }
+    if code {
+        push(&mut open, &mut close, "<code>", "</code>");
+    }
+    if sup {
+        push(&mut open, &mut close, "<sup>", "</sup>");
+    } else if sub {
+        push(&mut open, &mut close, "<sub>", "</sub>");
+    }
+    Some((open, close))
 }
 
 #[cfg(test)]

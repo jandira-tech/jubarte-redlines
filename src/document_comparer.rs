@@ -1900,9 +1900,8 @@ fn style_prop_signature(dom: &Dom, node: NodeId) -> String {
         return String::new();
     };
     let mut out = n.clark();
-    let mut attrs: Vec<(String, String)> = dom
-        .attributes(node)
-        .into_iter()
+    let mut attrs: Vec<(String, &str)> = dom
+        .attributes_iter(node)
         .filter(|(a, _)| {
             !a.local_name().to_ascii_lowercase().starts_with("rsid")
                 && !dom.is_namespace_declaration(a)
@@ -1914,11 +1913,14 @@ fn style_prop_signature(dom: &Dom, node: NodeId) -> String {
         out.push('\u{1}');
         out.push_str(&a);
         out.push('=');
-        out.push_str(&v);
+        out.push_str(v);
     }
-    for c in dom.elements(node, None) {
-        out.push('\u{2}');
-        out.push_str(&style_prop_signature(dom, c));
+    for i in 0..dom.child_count(node) {
+        let c = dom.child_at(node, i);
+        if dom.is_element(c) {
+            out.push('\u{2}');
+            out.push_str(&style_prop_signature(dom, c));
+        }
     }
     out
 }
@@ -2131,7 +2133,11 @@ fn effective_chain_props(
     let mut slots: Slots = Slots::new();
 
     let absorb = |props: &mut Props, slots: &mut Slots, block: NodeId| {
-        for c in dom.elements(block, None) {
+        for i in 0..dom.child_count(block) {
+            let c = dom.child_at(block, i);
+            if !dom.is_element(c) {
+                continue;
+            }
             let Some(n) = dom.name(c) else { continue };
             if is_style_prop_noise(&n) {
                 continue;
@@ -2141,9 +2147,9 @@ fn effective_chain_props(
                 continue;
             }
             let slot = slots.entry(n.clark()).or_default();
-            for (a, v) in dom.attributes(c) {
+            for (a, v) in dom.attributes_iter(c) {
                 if a.local_name().to_ascii_lowercase().starts_with("rsid")
-                    || dom.is_namespace_declaration(&a)
+                    || dom.is_namespace_declaration(a)
                 {
                     continue;
                 }
@@ -2158,7 +2164,7 @@ fn effective_chain_props(
                         }
                     }
                 }
-                slot.insert(a.clark(), v);
+                slot.insert(a.clark(), v.to_string());
             }
         }
     };
@@ -5332,26 +5338,37 @@ fn refuse_past_story_budget(
 }
 
 /// Refuse a story the atomizer cannot flatten, in one walk: a subdocument,
-/// an altChunk, a content part or custom XML markup (word_exp N4 panicked
-/// the atomizer, 2026-10-31), or an element with two direct `w:sectPr`
-/// (the atomizer's last-sectPr move expects one). `story` names the part or
-/// side in the error.
+/// an altChunk, a content part, or a customXml range marker (word_exp N4
+/// panicked the atomizer, 2026-10-31), or an element with two direct
+/// `w:sectPr` (the atomizer's last-sectPr move expects one). A `w:customXml`
+/// element is not a refusal: the atomizer unwraps it and keeps its content
+/// (#1674). `story` names the part or side in the error.
 fn refuse_unatomizable(dom: &Dom, root: NodeId, story: &str) -> Result<(), OpcError> {
-    let content_part = W::name("contentPart");
+    let content_part = W::content_part();
     let sect_pr = W::sect_pr();
+    let custom_xml = W::custom_xml();
+    // The atomizer unwraps `w:customXml` first, so a sectPr's parent is
+    // its nearest ancestor that is not one: two sectPr meet there.
+    let unwrapped_parent = |mut node: NodeId| loop {
+        let parent = dom.parent(node)?;
+        if !dom.name_is(parent, &custom_xml) {
+            return Some(parent);
+        }
+        node = parent;
+    };
     let mut sect_parents = std::collections::HashSet::new();
     let mut bad = None;
     dom.find_descendant_element(root, None, |e| {
         if dom.name_is(e, &sect_pr) {
-            if let Some(parent) = dom.parent(e)
+            if let Some(parent) = unwrapped_parent(e)
                 && !sect_parents.insert(parent)
             {
                 bad = Some("Document contains two sectPr in one story element".to_string());
             }
         } else if dom.name_is(e, &content_part)
-            || dom
-                .name(e)
-                .is_some_and(|name| crate::comparer::tables::INVALID_ELEMENTS.contains(&name))
+            || dom.name(e).is_some_and(|name| {
+                crate::comparer::tables::INVALID_ELEMENTS.contains(&name) && name != custom_xml
+            })
         {
             let name = dom
                 .name(e)
@@ -5774,7 +5791,7 @@ fn adopt_revised_header_footer(
     // its own, which may be another B part's.
     let mut renamed: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for r in refs {
-        let is_header = d2.name(r) == Some(href.clone());
+        let is_header = d2.name(r).as_ref() == Some(&href);
         let ty = d2
             .attribute(r, &W::type_())
             .unwrap_or("default")
@@ -7287,6 +7304,9 @@ fn compare_documents_impl(
         Some(&mut notes_ctx),
     )
     .map_err(crate::opc::refused)?;
+    // A break the revision adds is an inserted paragraph mark. The body
+    // comparison still leaves that break live, so Reject All would keep it.
+    track_added_section_breaks(&mut dom, result_root, body1, body2, settings);
     for root in [root1, root2] {
         dom.set_attribute_value(root, &crate::namespaces::PT::default_line(), None);
         dom.set_attribute_value(
@@ -7848,6 +7868,16 @@ fn compare_documents_impl(
                     }
                 }
             }
+        }
+        // #1678: a table that replaced the body's last paragraph keeps the
+        // revised document's empty close. After M491, which only removes a
+        // misplaced copy of that paragraph.
+        if let (Some(revised_xml), Some(produced_xml)) =
+            (pkg2.part_string(&main2), out.part_string(&main1))
+            && let Some(kept) =
+                crate::comparer::finalize::keep_revised_empty_close(&produced_xml, &revised_xml)
+        {
+            out.set_part(&main1, kept.into_bytes());
         }
     }
 
@@ -8754,6 +8784,10 @@ fn sweep_part_validity(out: &mut PartFs, main: &str, comparison: Option<&Compari
             }
         }
     }
+    // The glossary is not swept above: it is not a story. Repair the three
+    // inherited shapes in it anyway, and leave the part untouched when that
+    // repair changes nothing.
+    repair_glossary_shapes(out);
     // Settling final marks is comparison chrome, including renamed stories.
     if comparison.is_none() {
         return;
@@ -8903,6 +8937,16 @@ fn sweep_comparison_chrome(
                     settings,
                 },
             );
+            // After every mark-writing pass and before the cells settle:
+            // the inserted paragraph and the deleted table are both
+            // finished here (#1683, case 2).
+            if let Some(body) = vd.element(root, &W::body()) {
+                crate::comparer::finalize::pair_closing_insert_across_deleted_table(
+                    vd,
+                    body,
+                    revised_xml,
+                );
+            }
         }
     }
     // A cell's final mark carries no revision its row does not
@@ -8923,6 +8967,64 @@ fn sweeps_final_marks(part: &str, main: &str) -> bool {
         || part == "word/endnotes.xml"
         || ((part.starts_with("word/header") || part.starts_with("word/footer"))
             && part.ends_with(".xml"))
+}
+
+/// Glossary parts: the canonical building-block part, and any part a
+/// `glossaryDocument` relationship reaches. Not a story, so cell marks are
+/// left alone; only the inherited schema shapes are repaired.
+fn glossary_parts(out: &PartFs) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    let mut push = |name: String| {
+        if name.is_empty()
+            || found
+                .iter()
+                .any(|have: &String| have.eq_ignore_ascii_case(&name))
+        {
+            return;
+        }
+        found.push(name);
+    };
+    for part in out.parts() {
+        if part.eq_ignore_ascii_case("word/glossary/document.xml") {
+            push(part);
+        }
+    }
+    for (source, rels) in out.relationship_parts() {
+        for rel in &rels.items {
+            if rel.target_mode.as_deref() == Some("External")
+                || !rel.rel_type.ends_with("/glossaryDocument")
+            {
+                continue;
+            }
+            push(out.resolve_rel_target(source, &rel.target));
+        }
+    }
+    found
+}
+
+/// Drop an empty shading fill, a grid-column type, and out-of-order cell
+/// margins in a glossary. Write the part back only when that changes it.
+/// The glossary is carried, not compared, so compare repairs it as accept
+/// and reject do: the comparison's canonicalizer would drop comments and
+/// whitespace in a valid part's properties and rewrite it (#2117 review).
+fn repair_glossary_shapes(out: &mut PartFs) {
+    for part in glossary_parts(out) {
+        let Some(xml) = out.part_string(&part) else {
+            continue;
+        };
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let Some(root) = dom.root(doc) else {
+            continue;
+        };
+        let before = dom.serialize_element(root);
+        crate::comparer::finalize::repair_inherited_invalidity(&mut dom, root);
+        crate::comparer::finalize::repair_part_schema_order(&mut dom, root);
+        let after = dom.serialize_element(root);
+        if before != after {
+            out.set_part(&part, after.into_bytes());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -14531,5 +14633,277 @@ mod story_diff_failure_tests {
             err.to_string()
                 .contains("STORY_DIFF_FAILED: word/footer1.xml")
         );
+    }
+}
+
+/// A section break the revised paragraph carries and the original paragraph
+/// does not. The final body section, hoisted into the last paragraph before
+/// the diff, is not one: it wears the hoist stamp.
+fn authored_section_break(dom: &Dom, paragraph: NodeId) -> bool {
+    let hoist = crate::namespaces::PT::name("BodySectPrHoist");
+    dom.element(paragraph, &W::p_pr()).is_some_and(|ppr| {
+        dom.elements(ppr, Some(&W::sect_pr()))
+            .into_iter()
+            .any(|section| dom.attribute(section, &hoist) != Some("1"))
+    })
+}
+
+fn paragraph_plain_text(dom: &Dom, paragraph: NodeId) -> String {
+    dom.descendants(paragraph, Some(&W::t()))
+        .into_iter()
+        .map(|text| dom.value(text))
+        .collect()
+}
+
+struct SectionRow {
+    text: String,
+    authored: bool,
+    /// A paragraph, table or block wrapper follows it in its body. A
+    /// break added there takes Word's middle model, even when what follows
+    /// is a blank paragraph or a table (#2126 review).
+    followed: bool,
+}
+
+fn followed_by_block(dom: &Dom, paragraph: NodeId) -> bool {
+    let mut next = dom.next_element(paragraph);
+    while let Some(node) = next {
+        if dom
+            .name(node)
+            .is_some_and(|name| matches!(name.local_name(), "p" | "tbl" | "sdt" | "customXml"))
+        {
+            return true;
+        }
+        next = dom.next_element(node);
+    }
+    false
+}
+
+fn section_rows(dom: &Dom, body: NodeId) -> Vec<SectionRow> {
+    dom.elements(body, Some(&W::p()))
+        .into_iter()
+        .filter_map(|paragraph| {
+            let text = paragraph_plain_text(dom, paragraph);
+            if text.is_empty() {
+                None
+            } else {
+                Some(SectionRow {
+                    authored: authored_section_break(dom, paragraph),
+                    followed: followed_by_block(dom, paragraph),
+                    text,
+                })
+            }
+        })
+        .collect()
+}
+
+fn has_paragraph_mark(dom: &Dom, paragraph: NodeId) -> bool {
+    dom.element(paragraph, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .is_some_and(|rpr| {
+            dom.elements(rpr, None).into_iter().any(|child| {
+                dom.name(child).is_some_and(|name| {
+                    matches!(name.local_name(), "ins" | "del" | "moveFrom" | "moveTo")
+                })
+            })
+        })
+}
+
+fn next_revision_id(dom: &Dom, root: NodeId) -> u32 {
+    let mut next = 0u32;
+    for node in dom.descendants_and_self(root, None) {
+        let Some(raw) = dom.attribute(node, &W::id()) else {
+            continue;
+        };
+        let Ok(id) = raw.parse::<u32>() else {
+            continue;
+        };
+        next = next.max(id.saturating_add(1));
+    }
+    next
+}
+
+fn paragraph_properties(dom: &mut Dom, paragraph: NodeId) -> NodeId {
+    if let Some(ppr) = dom.element(paragraph, &W::p_pr()) {
+        return ppr;
+    }
+    let ppr = dom.new_element(W::p_pr());
+    dom.add_first(paragraph, ppr);
+    ppr
+}
+
+fn run_properties_before_section(dom: &mut Dom, ppr: NodeId) -> NodeId {
+    if let Some(rpr) = dom.element(ppr, &W::r_pr()) {
+        return rpr;
+    }
+    let rpr = dom.new_element(W::r_pr());
+    let anchor = dom
+        .elements(ppr, None)
+        .into_iter()
+        .find(|&child| dom.name_is(child, &W::sect_pr()) || dom.name_is(child, &W::p_pr_change()));
+    if let Some(anchor) = anchor {
+        dom.add_before_self(anchor, rpr);
+    } else {
+        dom.add(ppr, rpr);
+    }
+    rpr
+}
+
+fn drop_empty_paragraph_change(dom: &mut Dom, ppr: NodeId) {
+    let Some(change) = dom.element(ppr, &W::p_pr_change()) else {
+        return;
+    };
+    let records_layout = dom.element(change, &W::p_pr()).is_some_and(|inner| {
+        dom.elements(inner, None)
+            .into_iter()
+            .any(|child| !dom.name_is(child, &W::r_pr()))
+    });
+    if !records_layout {
+        dom.remove(change);
+    }
+}
+
+fn push_paragraph_mark(
+    dom: &mut Dom,
+    rpr: NodeId,
+    inserted: bool,
+    id: u32,
+    author: &str,
+    date: &str,
+) {
+    let marked = dom.elements(rpr, None).into_iter().any(|child| {
+        dom.name(child)
+            .is_some_and(|name| matches!(name.local_name(), "ins" | "del" | "moveFrom" | "moveTo"))
+    });
+    if marked {
+        return;
+    }
+    let mark = dom.new_element(if inserted { W::ins() } else { W::del() });
+    let id_text = id.to_string();
+    dom.set_attribute_value(mark, &W::id(), Some(&id_text));
+    dom.set_attribute_value(mark, &W::author(), Some(author));
+    dom.set_attribute_value(mark, &W::date(), Some(date));
+    dom.add_first(rpr, mark);
+}
+
+fn following_paragraph(dom: &Dom, paragraph: NodeId) -> Option<NodeId> {
+    let parent = dom.parent(paragraph)?;
+    let siblings = dom.elements(parent, Some(&W::p()));
+    let index = siblings.iter().position(|&sibling| sibling == paragraph)?;
+    siblings.get(index + 1).copied()
+}
+
+fn paragraph_is_blank(dom: &Dom, paragraph: NodeId) -> bool {
+    paragraph_plain_text(dom, paragraph).is_empty()
+        && dom
+            .element(paragraph, &W::p_pr())
+            .is_none_or(|ppr| dom.element(ppr, &W::sect_pr()).is_none())
+}
+
+fn track_closing_added_break(dom: &mut Dom, paragraph: NodeId, id: u32, author: &str, date: &str) {
+    let ppr = paragraph_properties(dom, paragraph);
+    if dom.element(ppr, &W::sect_pr()).is_none() {
+        return;
+    }
+    drop_empty_paragraph_change(dom, ppr);
+    let rpr = run_properties_before_section(dom, ppr);
+    push_paragraph_mark(dom, rpr, true, id, author, date);
+    let followed_by_blank =
+        following_paragraph(dom, paragraph).is_some_and(|next| paragraph_is_blank(dom, next));
+    if !followed_by_blank {
+        let blank = dom.new_element(W::p());
+        dom.add_after_self(paragraph, blank);
+    }
+}
+
+fn track_middle_added_break(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    deleted_id: u32,
+    inserted_id: u32,
+    author: &str,
+    date: &str,
+) {
+    let ppr = paragraph_properties(dom, paragraph);
+    let Some(section) = dom.element(ppr, &W::sect_pr()) else {
+        return;
+    };
+    drop_empty_paragraph_change(dom, ppr);
+    let rpr = run_properties_before_section(dom, ppr);
+    push_paragraph_mark(dom, rpr, false, deleted_id, author, date);
+    let blank = dom.new_element(W::p());
+    let blank_ppr = dom.new_element(W::p_pr());
+    dom.add(blank, blank_ppr);
+    // Accept All merges this paragraph into the carrier and keeps the
+    // carrier's properties, so it carries the paragraph's own (#2126
+    // review). Its mark, break and recorded change stay apart.
+    for child in dom.elements(ppr, None) {
+        if dom.name_is(child, &W::r_pr())
+            || dom.name_is(child, &W::sect_pr())
+            || dom.name_is(child, &W::p_pr_change())
+        {
+            continue;
+        }
+        let copy = dom.clone_subtree(child);
+        dom.add(blank_ppr, copy);
+    }
+    let blank_rpr = dom.new_element(W::r_pr());
+    dom.add(blank_ppr, blank_rpr);
+    push_paragraph_mark(dom, blank_rpr, true, inserted_id, author, date);
+    dom.remove(section);
+    dom.add(blank_ppr, section);
+    dom.add_after_self(paragraph, blank);
+}
+
+/// Track a section break the revision adds, when the same paragraphs are
+/// still in order on both sides. The closing paragraph keeps the break
+/// under an inserted mark and an empty paragraph follows it. A break
+/// before a later paragraph deletes this mark and the break moves onto
+/// that new empty paragraph.
+fn track_added_section_breaks(
+    dom: &mut Dom,
+    result_root: NodeId,
+    original_body: NodeId,
+    revised_body: NodeId,
+    settings: &WmlComparerSettings,
+) {
+    if !settings.merge_replaced_paragraphs {
+        return;
+    }
+    let Some(result_body) = dom.element(result_root, &W::body()) else {
+        return;
+    };
+    let original = section_rows(dom, original_body);
+    let revised = section_rows(dom, revised_body);
+    let result: Vec<NodeId> = dom
+        .elements(result_body, Some(&W::p()))
+        .into_iter()
+        .filter(|&paragraph| !paragraph_plain_text(dom, paragraph).is_empty())
+        .collect();
+    if original.len() != revised.len() || original.len() != result.len() {
+        return;
+    }
+    let mut next_id = next_revision_id(dom, result_root);
+    for index in (0..result.len()).rev() {
+        if original[index].text != revised[index].text
+            || original[index].text != paragraph_plain_text(dom, result[index])
+        {
+            continue;
+        }
+        if !revised[index].authored || original[index].authored {
+            continue;
+        }
+        if has_paragraph_mark(dom, result[index]) {
+            continue;
+        }
+        let author = settings.author_for_revisions.as_str();
+        let date = settings.date_time_for_revisions.as_str();
+        if !original[index].followed {
+            track_closing_added_break(dom, result[index], next_id, author, date);
+            next_id = next_id.saturating_add(1);
+        } else {
+            let inserted_id = next_id.saturating_add(1);
+            track_middle_added_break(dom, result[index], next_id, inserted_id, author, date);
+            next_id = inserted_id.saturating_add(1);
+        }
     }
 }

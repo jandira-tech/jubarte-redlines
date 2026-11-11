@@ -2149,6 +2149,9 @@ struct TableGeom {
     /// `w:tblCellSpacing` in points: Word leaves twice it between cells
     /// and around them.
     cell_spacing: f32,
+    /// `w:tblStyle/@w:val`, when the table names one. Adjacent flow tables
+    /// join only when this matches, including when both are absent.
+    style_id: Option<String>,
 }
 
 /// Preferred table width from `tblW`. Word `pct` is 50ths of a percent
@@ -2290,6 +2293,8 @@ struct TableCell {
     /// `tcPr/shd`. Word paints that shd at cell height with x-inset
     /// only (C1E4F5 14.64/14.64); per-line inner is for direct shd.
     style_fill: bool,
+    /// This cell's own `w:tcW`, before a span's width is shared across columns.
+    pref: PrefWidth,
 }
 
 impl TableCell {
@@ -2341,6 +2346,7 @@ impl TableCell {
             grid_skip: self.grid_skip,
             borders: self.borders,
             style_fill: self.style_fill,
+            pref: self.pref,
         }
     }
 }
@@ -6074,10 +6080,15 @@ fn ordinal_text_ones(one: &str) -> String {
     }
 }
 
+/// No Word document carries a Chicago sequence past a handful of cycles.
+/// A larger start renders at this cap instead of allocating one mark per
+/// cycle (`u32::MAX` would ask for about a gigabyte of label bytes).
+const MAX_CHICAGO_MARKS: usize = 256;
+
 fn chicago_label(n: u32) -> String {
     const MARKS: [&str; 4] = ["*", "†", "‡", "§"];
     let i = n.saturating_sub(1) as usize;
-    MARKS[i % 4].repeat(i / 4 + 1)
+    MARKS[i % 4].repeat((i / 4 + 1).min(MAX_CHICAGO_MARKS))
 }
 
 fn ideograph_digital_label(n: u32) -> String {
@@ -7754,7 +7765,7 @@ fn comments_extended(pkg: &PartFs, main: &str) -> (HashMap<String, String>, Hash
     let cdoc = cdom.parse_xdocument(&comments);
     let mut by_para = HashMap::new();
     if let Some(root) = cdom.root(cdoc) {
-        for comment in cdom.descendants(root, Some(&W::name("comment"))) {
+        for comment in cdom.descendants(root, Some(&W::comment())) {
             let last = cdom
                 .descendants(comment, Some(&W::p()))
                 .last()
@@ -7868,7 +7879,7 @@ fn load_comments(pkg: &PartFs, main: &str) -> HashMap<String, CommentRec> {
     };
     let resolved = comments_resolved(pkg, main);
     let mut out = HashMap::new();
-    for node in dom.descendants(root, Some(&W::name("comment"))) {
+    for node in dom.descendants(root, Some(&W::comment())) {
         let Some(id) = attr_any(&dom, node, "id").map(str::to_string) else {
             continue;
         };
@@ -9943,9 +9954,10 @@ fn para_is_empty_toc_field(dom: &Dom, para: NodeId) -> bool {
 }
 
 /// Whether the table at `i` joins the one straight before it. Word joins
-/// only flow tables of one layout type: a fixed table after an autofit
-/// one keeps its own place (probe_adj j6, j9; 0bf5192ed0's alternating
-/// tables).
+/// only flow tables of one layout type and one table style: a fixed table
+/// after an autofit one keeps its own place (probe_adj j6, j9;
+/// 0bf5192ed0's alternating tables), and so does a table whose `tblStyle`
+/// differs. Direct borders do not split them.
 fn table_joins_previous(blocks: &[Block], i: usize) -> bool {
     let Some(Block::Table { geom, .. }) = blocks.get(i) else {
         return false;
@@ -9953,7 +9965,9 @@ fn table_joins_previous(blocks: &[Block], i: usize) -> bool {
     geom.float.is_none()
         && i.checked_sub(1).is_some_and(|j| {
             matches!(&blocks[j], Block::Table { geom: prev, .. }
-                if prev.float.is_none() && prev.fixed == geom.fixed)
+                if prev.float.is_none()
+                    && prev.fixed == geom.fixed
+                    && prev.style_id == geom.style_id)
         })
 }
 
@@ -10003,6 +10017,65 @@ fn clamp_to_word_max_width(mut widths: Vec<f32>, tbl_ind: f32) -> Vec<f32> {
     widths
 }
 
+/// An autofit table whose widthless span is wider than the grid columns
+/// it covers is laid out again. A span that fits those columns keeps them.
+fn span_content_outruns_grid(
+    fonts: &Fonts,
+    cols: &[f32],
+    rows: &[Vec<TableCell>],
+    geom: &TableGeom,
+) -> bool {
+    if geom.fixed || geom.grid_padded || !matches!(geom.width, TblWidth::Grid) {
+        return false;
+    }
+    let gap = 2.0 * geom.cell_spacing;
+    rows.iter().flatten().any(|cell| {
+        let end = cell.col + cell.colspan;
+        if cell.colspan < 2
+            || end > cols.len()
+            || cell.grid_skip
+            || cell.vertical
+            || !matches!(cell.pref, PrefWidth::Auto)
+        {
+            return false;
+        }
+        let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
+        let inner = gap * (cell.colspan as f32 - 1.0);
+        let need = cell_fit_extent(fonts, cell).1 + pads - inner;
+        let cover: f32 = cols[cell.col..end].iter().sum();
+        need > cover + 0.5
+    })
+}
+
+/// An autofit table whose every column prefers zero percent of the width.
+/// When the rows outrun that width the columns split it evenly. When they
+/// fit, each column stays as wide as its text.
+fn zero_pct_column_widths(
+    fonts: &Fonts,
+    cols: &[f32],
+    rows: &[Vec<TableCell>],
+    geom: &TableGeom,
+    avail: f32,
+) -> Option<Vec<f32>> {
+    let n = cols.len();
+    if geom.fixed || n == 0 || geom.pref.len() != n {
+        return None;
+    }
+    if geom.pref.iter().any(|p| !matches!(*p, PrefWidth::Pct(0.0))) {
+        return None;
+    }
+    let target = declared_table_width(geom, avail).unwrap_or(avail);
+    let (_, maxs) = content_autofit_extents(fonts, n, rows, geom, false, None);
+    let gap = 2.0 * geom.cell_spacing;
+    let content = maxs.iter().sum::<f32>() + gap * (n as f32 + 1.0);
+    if content > target + 0.5 {
+        return Some(vec![target / n as f32; n]);
+    }
+    Some(content_autofit_widths(
+        fonts, n, rows, geom, target, false, None,
+    ))
+}
+
 fn unclamped_col_widths(
     fonts: &Fonts,
     cols: &[f32],
@@ -10010,6 +10083,11 @@ fn unclamped_col_widths(
     geom: &TableGeom,
     avail: f32,
 ) -> Vec<f32> {
+    // Word ignores a zero-percent table's saved grid, so it splits the
+    // measure before a grid that outruns the room is re-fit (#2120 review).
+    if let Some(widths) = zero_pct_column_widths(fonts, cols, rows, geom, avail) {
+        return widths;
+    }
     // An autofit table whose saved grid outruns its room is laid out again
     // inside it (Word probes b1, b2, b4 and b6, 2026-10-02: 500pt and
     // 600pt grids in a 468pt measure; a9de4ed3f9's landscape register in
@@ -10028,7 +10106,7 @@ fn unclamped_col_widths(
                 *pref = PrefWidth::Dxa(col);
             }
         }
-        return content_autofit_widths(fonts, cols.len(), rows, &prefer, avail, true);
+        return content_autofit_widths(fonts, cols.len(), rows, &prefer, avail, true, None);
     }
     // An autofit table whose rows reach past its saved grid is laid out
     // again: its columns share the width it declares by their content, as
@@ -10043,15 +10121,30 @@ fn unclamped_col_widths(
         return fill_table_width(fonts, cols.len(), rows, geom, target, avail);
     }
     if geom.content_autofit {
-        return content_autofit_widths(fonts, cols.len(), rows, geom, avail, false);
+        return content_autofit_widths(fonts, cols.len(), rows, geom, avail, false, None);
     }
-    let widths = table_col_widths(cols, geom, avail);
+    // A span's re-fit keeps a vertical cell's column at its grid width, as
+    // `autofit_to_words` does: its line runs along the row (#2119 review).
+    if span_content_outruns_grid(fonts, cols, rows, geom) {
+        return content_autofit_widths(fonts, cols.len(), rows, geom, avail, false, Some(cols));
+    }
+    let mut widths = table_col_widths(cols, geom, avail);
+    // A width every single-span cell repeats replaces this grid. Rows
+    // that disagree, a span, and a fixed table leave it alone.
+    let agreed = agreed_column_widths(fonts, rows, geom, avail, widths.len());
+    let replaced_grid = agreed.is_some();
+    if let Some(agreed) = agreed {
+        widths = agreed;
+    }
     // An autofit column is at least its longest word: Word widens a tcW
     // too narrow for one, and the grid it saved over the same table width
     // is that result (72dcf4dc: tcW 1530 under "complementary", grid 1762
-    // in Word).
+    // in Word). A grid that agreed widths replaced is stale: Word laid the
+    // table out from them (the 4000/4000 probe), so their words widen
+    // them below instead (#2123 review).
     let total = |v: &[f32]| v.iter().sum::<f32>();
-    if !geom.fixed
+    if !replaced_grid
+        && !geom.fixed
         && !geom.grid_padded
         && widths.len() == cols.len()
         && (total(cols) - total(&widths)).abs() < 1.0
@@ -10075,11 +10168,111 @@ fn unclamped_col_widths(
     widths
 }
 
+/// Widths an autofit table's cells all repeat. A twip width is that
+/// width. A percent width is its share of the measure when any column's
+/// text is wider than its share, and each column's own text otherwise.
+fn agreed_column_widths(
+    fonts: &Fonts,
+    rows: &[Vec<TableCell>],
+    geom: &TableGeom,
+    avail: f32,
+    n: usize,
+) -> Option<Vec<f32>> {
+    if n == 0 || geom.fixed || geom.grid_padded || !matches!(geom.width, TblWidth::Grid) {
+        return None;
+    }
+    let same = |a: PrefWidth, b: PrefWidth| match (a, b) {
+        // Agreement is at the authored unit: half a twip, half a fiftieth
+        // of a percent (#2123 review).
+        (PrefWidth::Dxa(x), PrefWidth::Dxa(y)) => (x - y).abs() < 0.025,
+        (PrefWidth::Pct(x), PrefWidth::Pct(y)) => (x - y).abs() < 0.0001,
+        _ => false,
+    };
+    let mut agreed = vec![None; n];
+    for cell in rows.iter().flatten() {
+        if cell.grid_skip {
+            continue;
+        }
+        if cell.colspan != 1 || cell.col >= n {
+            return None;
+        }
+        match agreed[cell.col] {
+            Some(prev) if same(prev, cell.pref) => {}
+            None => agreed[cell.col] = Some(cell.pref),
+            Some(_) => return None,
+        }
+    }
+    if agreed.iter().any(Option::is_none) {
+        return None;
+    }
+    let prefs: Vec<PrefWidth> = agreed.into_iter().flatten().collect();
+    if prefs
+        .iter()
+        .all(|pref| matches!(pref, PrefWidth::Dxa(w) if *w > 0.0))
+    {
+        return Some(
+            prefs
+                .iter()
+                .map(|pref| match *pref {
+                    PrefWidth::Dxa(w) => w,
+                    _ => 0.0,
+                })
+                .collect(),
+        );
+    }
+    if !prefs
+        .iter()
+        .all(|pref| matches!(pref, PrefWidth::Pct(p) if *p > 0.0))
+    {
+        return None;
+    }
+    let measure = (avail + geom.pct_margins).max(0.0);
+    let sum_p: f32 = prefs
+        .iter()
+        .map(|pref| match *pref {
+            PrefWidth::Pct(p) => p,
+            _ => 0.0,
+        })
+        .sum();
+    if sum_p <= 0.0 {
+        return None;
+    }
+    let shares: Vec<f32> = prefs
+        .iter()
+        .map(|pref| match *pref {
+            PrefWidth::Pct(p) => measure * p / sum_p,
+            _ => 0.0,
+        })
+        .collect();
+    let mut maxima = vec![0.0_f32; n];
+    for cell in rows.iter().flatten() {
+        if cell.grid_skip || cell.colspan != 1 || cell.col >= n {
+            continue;
+        }
+        let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
+        // Pictures and nested tables count, as in a content fit; vertical
+        // text runs along the row and does not (#2123 review).
+        let content = if cell.vertical {
+            0.0
+        } else {
+            cell_fit_extent(fonts, cell).1
+        };
+        maxima[cell.col] = maxima[cell.col].max(content + pads);
+    }
+    let over = maxima.iter().sum::<f32>() > measure + 0.5
+        || maxima
+            .iter()
+            .zip(&shares)
+            .any(|(max, share)| *max > *share + 0.5);
+    if over { Some(shares) } else { Some(maxima) }
+}
+
 /// Word's autofit widens a column narrower than its longest word to it,
 /// taking the room from columns wider than theirs (21349517's 29pt "ID"
-/// column holds "Sub001" whole). Only when the words together overrun
-/// the measure of a pct or auto table do the columns stay and the words
-/// break (08c53c4f).
+/// column holds "Sub001" whole). When one of those words is wider than
+/// its own column, an auto or pct table re-fits into the measure and the
+/// other columns may break. Words that still fit their columns stay put
+/// when they overrun the measure together (08c53c4f).
 fn autofit_to_words(
     fonts: &Fonts,
     widths: Vec<f32>,
@@ -10088,6 +10281,7 @@ fn autofit_to_words(
     avail: f32,
 ) -> Vec<f32> {
     let mut mins = vec![0.0_f32; widths.len()];
+    let mut words = vec![0.0_f32; widths.len()];
     for cell in rows.iter().flatten() {
         // Vertical text runs along the row, not across the column: 1c99b5cd's
         // btLr "Theory Topics" column stays 13pt wide in Word.
@@ -10097,7 +10291,9 @@ fn autofit_to_words(
             continue;
         }
         let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
-        mins[cell.col] = mins[cell.col].max(cell_content_extent(fonts, cell).0 + pads);
+        let word = cell_content_extent(fonts, cell).0;
+        words[cell.col] = words[cell.col].max(word);
+        mins[cell.col] = mins[cell.col].max(word + pads);
     }
     // A spanning cell's word that overruns the columns it covers widens the
     // last of them (9f41b69c's "Controls" over a 0.65pt grid column).
@@ -10122,8 +10318,38 @@ fn autofit_to_words(
     // A dxa table still gives every column its word and runs past the
     // margin (Word 16 probes a1/a5 2026-10-01; ee7b597379 ends at 610pt).
     let overrun = mins.iter().sum::<f32>() > avail + geom.pct_margins + 0.5;
-    if short < 0.5 || overrun && !matches!(geom.width, TblWidth::Dxa(_)) {
+    let text_over = widths.iter().zip(&words).any(|(w, t)| *t > *w + 0.5);
+    if short < 0.5 || (overrun && !text_over && !matches!(geom.width, TblWidth::Dxa(_))) {
         return widths;
+    }
+    // The saved columns cannot hold a word. An auto or pct table comes
+    // back inside the measure: columns share it by their words when the
+    // words themselves overrun it, and otherwise the narrow columns keep
+    // their words while the rest of the measure goes to the wider ones.
+    if text_over && !matches!(geom.width, TblWidth::Dxa(_)) {
+        // A pct table keeps to its declared width, its outer rules given
+        // up (#2122 review); an auto one to the measure.
+        let room = declared_table_width(geom, avail).unwrap_or((avail + geom.pct_margins).max(0.0));
+        let sum = mins.iter().sum::<f32>();
+        if sum > room + 0.5 || sum <= 0.0 {
+            let scale = if sum > 0.0 { room / sum } else { 1.0 };
+            return mins.iter().map(|m| m * scale).collect();
+        }
+        let extra = room - sum;
+        let spare: Vec<f32> = mins
+            .iter()
+            .zip(&widths)
+            .map(|(m, w)| (w - m).max(0.0))
+            .collect();
+        let spare_sum = spare.iter().sum::<f32>();
+        if spare_sum > 0.5 {
+            return mins
+                .iter()
+                .zip(&spare)
+                .map(|(m, s)| m + extra * s / spare_sum)
+                .collect();
+        }
+        return mins.iter().map(|m| m + extra * m / sum).collect();
     }
     let spare: f32 = widths
         .iter()
@@ -10281,7 +10507,8 @@ fn cell_fit_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
         {
             let (lo, hi) = if geom.content_autofit {
                 let gaps = 2.0 * geom.cell_spacing * cols.len() as f32;
-                let (mins, maxs) = content_autofit_extents(fonts, cols.len(), rows, geom, false);
+                let (mins, maxs) =
+                    content_autofit_extents(fonts, cols.len(), rows, geom, false, None);
                 (
                     mins.iter().sum::<f32>() + gaps,
                     maxs.iter().sum::<f32>() + gaps,
@@ -10293,7 +10520,7 @@ fn cell_fit_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
                     TblWidth::Pct(_) => {
                         let gaps = 2.0 * geom.cell_spacing * cols.len() as f32;
                         let (mins, _) =
-                            content_autofit_extents(fonts, cols.len(), rows, geom, false);
+                            content_autofit_extents(fonts, cols.len(), rows, geom, false, None);
                         mins.iter().sum::<f32>() + gaps
                     }
                 };
@@ -10322,8 +10549,9 @@ fn content_autofit_widths(
     geom: &TableGeom,
     avail: f32,
     pref_caps: bool,
+    vertical_grid: Option<&[f32]>,
 ) -> Vec<f32> {
-    let (mins, maxs) = content_autofit_extents(fonts, n, rows, geom, pref_caps);
+    let (mins, maxs) = content_autofit_extents(fonts, n, rows, geom, pref_caps, vertical_grid);
     let gap = 2.0 * geom.cell_spacing;
     // A legacy document's autofit spans the text plus the table's cell
     // margins, as its pct tables do (00046848's lines reach 525pt in a
@@ -10382,7 +10610,7 @@ fn fill_table_width(
     target: Option<f32>,
     avail: f32,
 ) -> Vec<f32> {
-    let (words, mut maxs) = content_autofit_extents(fonts, n, rows, geom, false);
+    let (words, mut maxs) = content_autofit_extents(fonts, n, rows, geom, false, None);
     let mut mins = words.clone();
     let mut held = vec![false; n];
     for j in 0..n {
@@ -10454,6 +10682,7 @@ fn content_autofit_extents(
     rows: &[Vec<TableCell>],
     geom: &TableGeom,
     pref_caps: bool,
+    vertical_grid: Option<&[f32]>,
 ) -> (Vec<f32>, Vec<f32>) {
     let mut mins = vec![0.0_f32; n];
     let mut maxs = vec![0.0_f32; n];
@@ -10475,6 +10704,15 @@ fn content_autofit_extents(
         if cell.colspan != 1 || cell.col >= n || cell.grid_skip {
             continue;
         }
+        // With `vertical_grid`, a vertical cell holds its column at the
+        // grid width rather than at its unrotated line.
+        if cell.vertical
+            && let Some(&w) = vertical_grid.and_then(|grid| grid.get(cell.col))
+        {
+            mins[cell.col] = mins[cell.col].max(w);
+            maxs[cell.col] = maxs[cell.col].max(w);
+            continue;
+        }
         // The spacing inset in pad_l is the column's gap, counted below.
         let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
         let (lo, hi) = extent(cell);
@@ -10482,9 +10720,32 @@ fn content_autofit_extents(
         maxs[cell.col] = maxs[cell.col].max(hi + pads);
     }
     let gap = 2.0 * geom.cell_spacing;
-    // A spanning cell needs its columns to hold its content between them,
-    // and they share what they lack evenly: Word spreads probe span's
-    // sentence over its two columns without a tcW, 231.8 and 236.6pt.
+    // Preferred dxa widths are maximums before a span shares what it
+    // lacks, from every row: a span on the first row leaves the tcW of
+    // the row under it on that row's cells.
+    if !pref_caps {
+        for (j, max) in maxs.iter_mut().enumerate() {
+            if let Some(&PrefWidth::Dxa(w)) = geom.pref.get(j)
+                && w > 0.0
+            {
+                *max = (*max).max(w);
+            }
+        }
+        for cell in rows.iter().flatten() {
+            if cell.colspan != 1 || cell.col >= n || cell.grid_skip {
+                continue;
+            }
+            if let PrefWidth::Dxa(w) = cell.pref
+                && w > 0.0
+            {
+                maxs[cell.col] = maxs[cell.col].max(w);
+            }
+        }
+    }
+    // A spanning cell needs its columns to hold its content between them.
+    // They share what they lack in proportion to those maximums, and
+    // evenly when every one of them is zero (probe span: 231.8 and 236.6pt
+    // over two columns with no tcW).
     for cell in rows.iter().flatten() {
         let end = cell.col + cell.colspan;
         if pref_caps || cell.colspan < 2 || end > n || cell.grid_skip {
@@ -10493,14 +10754,24 @@ fn content_autofit_extents(
         let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
         let inner = gap * (cell.colspan - 1) as f32;
         let (lo, hi) = extent(cell);
+        let weights: Vec<f32> = maxs[cell.col..end].to_vec();
+        let weight: f32 = weights.iter().copied().sum();
         for (need, have) in [
             (lo + pads - inner, &mut mins),
             (hi + pads - inner, &mut maxs),
         ] {
             let cover: f32 = have[cell.col..end].iter().sum();
-            if need > cover {
-                let each = (need - cover) / cell.colspan as f32;
+            if need <= cover {
+                continue;
+            }
+            let lack = need - cover;
+            if weight <= 0.0 {
+                let each = lack / cell.colspan as f32;
                 have[cell.col..end].iter_mut().for_each(|w| *w += each);
+            } else {
+                for (slot, wt) in have[cell.col..end].iter_mut().zip(&weights) {
+                    *slot += lack * (wt / weight);
+                }
             }
         }
     }
@@ -10529,7 +10800,8 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
     let n = cols.len();
     let grid_total: f32 = cols.iter().sum();
     // tblW=auto: Word's tblGrid is the last autofit cache. Overlaying
-    // first-row tcW (mini 342) dropped comments-lots. Keep the cache as
+    // first-row tcW (mini 342) dropped comments-lots; a tcW every row
+    // repeats does replace it (`agreed_column_widths`). Keep the cache as
     // written, even past the margins (000aba38's 488.9pt grid in a 481.9pt
     // measure ends at 539.5 in Word, not shrunk to 533).
     if !geom.fixed && matches!(geom.width, TblWidth::Grid) {
@@ -14323,6 +14595,7 @@ fn table_block(
                     && matches!(table_pref_width(dom, table), TblWidth::Grid)
                     && (foreign_grid || cells_foreign),
                 cell_spacing: tbl_spacing,
+                style_id: table_style_id(dom, table).map(str::to_owned),
             })
         },
         // Moved last: the geometry above reads them.
@@ -14418,7 +14691,7 @@ fn table_pref_width(dom: &Dom, table: NodeId) -> TblWidth {
     let Some(tw) = first_named(dom, pr, "tblW") else {
         return TblWidth::Grid;
     };
-    match attr_any(dom, tw, "type").unwrap_or("auto") {
+    match attr_any(dom, tw, "type").unwrap_or("dxa") {
         "pct" => {
             let fiftieths = attr_any(dom, tw, "w")
                 .and_then(parse_finite_f32)
@@ -14776,17 +15049,11 @@ fn cell_pref_width(dom: &Dom, cell: NodeId) -> PrefWidth {
     let Some(tw) = direct_named(dom, pr, "tcW") else {
         return PrefWidth::Auto;
     };
-    match attr_any(dom, tw, "type").unwrap_or("auto") {
-        "pct" => {
-            let fiftieths = attr_any(dom, tw, "w")
-                .and_then(parse_finite_f32)
-                .unwrap_or(0.0);
-            if fiftieths > 0.0 {
-                PrefWidth::Pct(fiftieths / 5000.0)
-            } else {
-                PrefWidth::Auto
-            }
-        }
+    match attr_any(dom, tw, "type").unwrap_or("dxa") {
+        "pct" => match attr_any(dom, tw, "w").and_then(parse_finite_f32) {
+            Some(fiftieths) if fiftieths >= 0.0 => PrefWidth::Pct(fiftieths / 5000.0),
+            _ => PrefWidth::Auto,
+        },
         "dxa" => {
             let w = attr_any(dom, tw, "w").and_then(parse_len).unwrap_or(0.0);
             if w > 0.0 {
@@ -15203,6 +15470,7 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
                 grid_skip: raw.grid_skip,
                 borders: raw.borders,
                 style_fill: false,
+                pref: raw.pref,
             });
             if open.len() < col + span {
                 open.resize(col + span, None);
@@ -33558,10 +33826,31 @@ impl<'a> Layout<'a> {
                     (3.0 * w, 2.0 * w)
                 };
                 let (on, off) = (on.max(0.5), off.max(0.5));
-                let mut p = from;
-                while p < to {
-                    seg(self, p, (p + on).min(to), 0.0);
-                    p += on + off;
+                /// Dashes one edge may paint. Longer edges stop here, and a
+                /// step that no longer moves the coordinate stops earlier.
+                const MAX_BORDER_DASHES: usize = 4096;
+                // Walk an offset from zero. At large coordinates `p + step`
+                // rounds back to `p`, so a cursor in page space never moves.
+                let span = to - from;
+                if span.is_finite() && span > 0.0 {
+                    let span = span.min(MAX_BORDER_DASHES as f32);
+                    let mut traveled = 0.0_f32;
+                    let mut drawn = 0_usize;
+                    while traveled < span && drawn < MAX_BORDER_DASHES {
+                        let next = (traveled + on).min(span);
+                        let start = from + traveled;
+                        let end = from + next;
+                        if drawn > 0 && end <= start {
+                            break;
+                        }
+                        seg(self, start, end, 0.0);
+                        drawn += 1;
+                        let advanced = traveled + on + off;
+                        if advanced <= traveled {
+                            break;
+                        }
+                        traveled = advanced;
+                    }
                 }
             }
         }
@@ -38152,6 +38441,13 @@ mod page_num_fmt_labels {
         assert_eq!(chicago_label(1), "*");
         assert_eq!(chicago_label(2), "†");
         assert_eq!(chicago_label(5), "**");
+    }
+
+    #[test]
+    fn chicago_label_does_not_grow_with_a_huge_start() {
+        // 1025 is the first value whose uncapped mark is 257 stars.
+        let label = chicago_label(1025);
+        assert_eq!(label, "*".repeat(256), "len {}", label.chars().count());
     }
 
     #[test]
@@ -48070,6 +48366,7 @@ mod regression_tests {
             pct_rules: 0.0,
             content_autofit: false,
             cell_spacing: 0.0,
+            style_id: None,
         }
     }
 
@@ -50526,6 +50823,257 @@ mod coverage_round_two_tests {
         assert_eq!(
             autofit_to_words(&fonts, vec![10.0, 10.0], &[vec![span]], &geom, 100.0),
             vec![10.0, 10.0]
+        );
+    }
+
+    #[test]
+    fn a_span_refit_leaves_a_vertical_cells_column_at_its_width() {
+        // Vertical text runs along the row, not across the column
+        // (`autofit_to_words`, 1c99b5cd). A span that outruns the grid
+        // lays the table out again; that re-fit must not read a btLr
+        // cell's line as its column's width either (#2119 review).
+        let fonts = fonts();
+        let widths = |vertical_text: &str| {
+            let span = "AAAA ".repeat(25);
+            let Block::Table {
+                cols, rows, geom, ..
+            } = table(&format!(
+                "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+                 <w:tblGrid><w:gridCol w:w=\"600\"/><w:gridCol w:w=\"2400\"/></w:tblGrid>\
+                 <w:tr><w:tc><w:tcPr><w:tcW w:w=\"600\" w:type=\"dxa\"/><w:textDirection w:val=\"btLr\"/></w:tcPr>\
+                 <w:p><w:r><w:t>{vertical_text}</w:t></w:r></w:p></w:tc>\
+                 <w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>Value</w:t></w:r></w:p></w:tc></w:tr>\
+                 <w:tr><w:tc><w:tcPr><w:gridSpan w:val=\"2\"/></w:tcPr>\
+                 <w:p><w:r><w:t>{span}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+            ))
+            else {
+                panic!("table fixture")
+            };
+            assert!(rows[0][0].vertical, "btLr cell");
+            assert!(!geom.content_autofit, "a saved grid, not a content fit");
+            assert!(span_content_outruns_grid(&fonts, &cols, &rows, &geom));
+            unclamped_col_widths(&fonts, &cols, &rows, &geom, 468.0)
+        };
+        let short = widths("Q");
+        let long = widths("A very long vertical heading that runs along the row");
+        assert!(
+            (short[0] - long[0]).abs() < 0.5,
+            "the vertical column keeps one width whatever its text: {short:?} vs {long:?}"
+        );
+    }
+
+    #[test]
+    fn a_zero_pct_table_splits_the_measure_even_when_its_grid_outruns_it() {
+        // Word ignores a zero-percent table's saved grid and splits the
+        // measure when the rows outrun it (WORD_LAYOUT_RULES, #2120). A
+        // grid wider than the measure must not send it down the
+        // grid-outruns re-fit first (#2120 review).
+        let fonts = fonts();
+        let long = "AAAA ".repeat(25);
+        let Block::Table {
+            cols, rows, geom, ..
+        } = table(&format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"6000\"/><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+             <w:tr><w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"pct\"/></w:tcPr>\
+             <w:p><w:r><w:t>LABEL:</w:t></w:r></w:p></w:tc>\
+             <w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"pct\"/></w:tcPr>\
+             <w:p><w:r><w:t>{long}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+        ))
+        else {
+            panic!("table fixture")
+        };
+        assert!(cols.iter().sum::<f32>() > 468.0, "the grid outruns");
+        let widths = unclamped_col_widths(&fonts, &cols, &rows, &geom, 468.0);
+        assert!(
+            widths.iter().all(|w| (w - 234.0).abs() < 0.5),
+            "two equal halves of the 468pt measure: {widths:?}"
+        );
+    }
+
+    #[test]
+    fn a_typeless_zero_width_is_still_no_preference() {
+        // A width with no type is dxa, but a zero one stays no preference
+        // on the table and on its cell (WORD_LAYOUT_RULES; #2121 review).
+        let geom_of = |tbl_w: &str, tc_w: &str| {
+            let Block::Table { geom, .. } = table(&format!(
+                "<w:tbl><w:tblPr><w:tblW {tbl_w}/></w:tblPr>\
+                 <w:tblGrid><w:gridCol w:w=\"2400\"/></w:tblGrid>\
+                 <w:tr><w:tc><w:tcPr><w:tcW {tc_w}/></w:tcPr><w:p/></w:tc></w:tr></w:tbl>"
+            )) else {
+                panic!("table fixture")
+            };
+            geom
+        };
+        let zero = geom_of("w:w=\"0\"", "w:w=\"0\"");
+        assert!(matches!(zero.width, TblWidth::Grid), "typeless zero tblW");
+        assert!(
+            matches!(zero.pref[..], [PrefWidth::Auto]),
+            "typeless zero tcW"
+        );
+        let set = geom_of("w:w=\"9000\"", "w:w=\"6000\"");
+        assert!(matches!(set.width, TblWidth::Dxa(w) if (w - 450.0).abs() < 0.01));
+        assert!(matches!(set.pref[..], [PrefWidth::Dxa(w)] if (w - 300.0).abs() < 0.01));
+    }
+
+    #[test]
+    fn a_word_refit_keeps_a_pct_table_inside_its_bordered_width() {
+        // A pct table's columns give up half its outer rules so the rim
+        // stays at the pct width (`declared_table_width`, probe pct3). The
+        // re-fit around a word wider than its column keeps to that width
+        // too (#2122 review).
+        let fonts = fonts();
+        let word = "A".repeat(102);
+        let rule = "w:val=\"single\" w:sz=\"24\" w:space=\"0\" w:color=\"auto\"";
+        let Block::Table {
+            cols, rows, geom, ..
+        } = table(&format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"pct\"/>\
+             <w:tblBorders><w:left {rule}/><w:right {rule}/></w:tblBorders></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+             <w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>LABEL:</w:t></w:r></w:p></w:tc>\
+             <w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>{word}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+        ))
+        else {
+            panic!("table fixture")
+        };
+        assert!(geom.pct_rules > 0.0, "outer rules to give up");
+        let declared = declared_table_width(&geom, 468.0).expect("pct width");
+        let widths = unclamped_col_widths(&fonts, &cols, &rows, &geom, 468.0);
+        let total: f32 = widths.iter().sum();
+        assert!(
+            (total - declared).abs() < 0.5,
+            "the re-fit fills the bordered pct width {declared}, not more: {widths:?}"
+        );
+    }
+
+    fn agreed_table(
+        grid: &str,
+        rows: &[[(&str, &str); 2]],
+    ) -> (Vec<f32>, Vec<Vec<TableCell>>, TableGeom) {
+        let cell = |content: &str, tcw: &str| {
+            let content = if content.starts_with('<') {
+                content.to_string()
+            } else {
+                format!("<w:p><w:r><w:t>{content}</w:t></w:r></w:p>")
+            };
+            format!("<w:tc><w:tcPr><w:tcW {tcw}/></w:tcPr>{content}</w:tc>")
+        };
+        let body: String = rows
+            .iter()
+            .map(|row| {
+                format!(
+                    "<w:tr>{}{}</w:tr>",
+                    cell(row[0].0, row[0].1),
+                    cell(row[1].0, row[1].1)
+                )
+            })
+            .collect();
+        let Block::Table {
+            cols, rows, geom, ..
+        } = table(&format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+             <w:tblGrid>{grid}</w:tblGrid>{body}</w:tbl>"
+        ))
+        else {
+            panic!("table fixture")
+        };
+        (cols, rows, *geom)
+    }
+
+    const GRID_2400_6000: &str = "<w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"6000\"/>";
+    const PCT_2500: &str = "w:w=\"2500\" w:type=\"pct\"";
+
+    #[test]
+    fn an_agreed_pct_column_holds_its_nested_table() {
+        // `cell_fit_extent` counts pictures and nested tables; the agreed
+        // pct path must too, or a column collapses under its nested table
+        // (#2123 review).
+        let fonts = fonts();
+        let nested = "<w:tbl><w:tblPr><w:tblW w:w=\"3000\" w:type=\"dxa\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"3000\"/></w:tblGrid><w:tr><w:tc><w:tcPr>\
+             <w:tcW w:w=\"3000\" w:type=\"dxa\"/></w:tcPr><w:p/></w:tc></w:tr></w:tbl><w:p/>";
+        let (_, rows, geom) =
+            agreed_table(GRID_2400_6000, &[[(nested, PCT_2500), ("x", PCT_2500)]]);
+        assert!(!rows[0][0].nested.is_empty(), "a nested table");
+        let widths = agreed_column_widths(&fonts, &rows, &geom, 468.0, 2).expect("agreed");
+        assert!(
+            widths[0] >= 150.0,
+            "the column holds its 150pt nested table: {widths:?}"
+        );
+    }
+
+    #[test]
+    fn an_agreed_pct_column_of_vertical_text_ignores_its_length() {
+        // Vertical text runs along the row (`autofit_to_words`, 1c99b5cd):
+        // its length must not widen the column or push the table onto
+        // its pct shares (#2123 review).
+        let fonts = fonts();
+        let widths = |text: &str| {
+            let vertical = format!("<w:p><w:pPr/><w:r><w:t>{text}</w:t></w:r></w:p>");
+            let (_, mut rows, geom) = agreed_table(
+                GRID_2400_6000,
+                &[[(vertical.as_str(), PCT_2500), ("x", PCT_2500)]],
+            );
+            rows[0][0].vertical = true;
+            agreed_column_widths(&fonts, &rows, &geom, 468.0, 2).expect("agreed")
+        };
+        let short = widths("Q");
+        let long = widths(&"A very long vertical heading ".repeat(4));
+        assert!(
+            short.iter().zip(&long).all(|(a, b)| (a - b).abs() < 0.5),
+            "vertical text length changes nothing: {short:?} vs {long:?}"
+        );
+    }
+
+    #[test]
+    fn rows_one_twip_apart_do_not_agree() {
+        // Rows that disagree keep the grid; agreement is at the authored
+        // twip, not a layout tolerance (#2123 review).
+        let fonts = fonts();
+        let (_, rows, geom) = agreed_table(
+            GRID_2400_6000,
+            &[
+                [
+                    ("a", "w:w=\"4000\" w:type=\"dxa\""),
+                    ("b", "w:w=\"4000\" w:type=\"dxa\""),
+                ],
+                [
+                    ("c", "w:w=\"4001\" w:type=\"dxa\""),
+                    ("d", "w:w=\"4000\" w:type=\"dxa\""),
+                ],
+            ],
+        );
+        assert!(agreed_column_widths(&fonts, &rows, &geom, 468.0, 2).is_none());
+    }
+
+    #[test]
+    fn an_agreed_width_too_narrow_for_a_word_widens_from_the_agreement() {
+        // Word lays an agreed tcW out over a stale grid (the 4000/4000
+        // probe), so a word too wide for an agreed column widens it from
+        // the agreement rather than restoring the grid (#2123 review).
+        let fonts = fonts();
+        let word = "A".repeat(28);
+        let wide = "w:w=\"6000\" w:type=\"dxa\"";
+        let narrow = "w:w=\"2400\" w:type=\"dxa\"";
+        let (cols, rows, geom) = agreed_table(
+            GRID_2400_6000,
+            &[
+                [("LABEL:", wide), (word.as_str(), narrow)],
+                [("x", wide), ("y", narrow)],
+            ],
+        );
+        let need = cell_content_extent(&fonts, &rows[0][1]).0;
+        assert!(
+            need > 125.0 && need < 290.0,
+            "a word between the two widths: {need}"
+        );
+        let widths = unclamped_col_widths(&fonts, &cols, &rows, &geom, 468.0);
+        assert!(
+            widths[0] > 125.0 && widths[1] + 0.5 >= need,
+            "the agreed 300/120 widens its second column, not back to 120/300: {widths:?}"
         );
     }
 
@@ -54439,6 +54987,38 @@ mod coverage_round_three_tests {
                     }
                 }
             }
+        }
+
+        /// A dotted edge used to emit one segment per point, and a dash
+        /// whose step no longer moves the coordinate never returned.
+        #[test]
+        fn a_dashed_border_stops_when_coordinates_stop_advancing() {
+            const BOUND: usize = 4096;
+            let fonts = fonts();
+            let edge = PageBorder {
+                color: [0.0; 3],
+                width: 0.24,
+                space: 0.0,
+                line: BorderLine::Dotted,
+            };
+            let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+            lay.border_edge(edge, (0.0, 10.0), (20_000.0, 10.0));
+            let painted = rectangles(&lay.pages[0].ops);
+            assert!(
+                painted.len() <= BOUND,
+                "drew {} dash segments on one edge",
+                painted.len()
+            );
+
+            let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+            let from = 16_777_216.0_f32;
+            lay.border_edge(edge, (from, 10.0), (from + 64.0, 10.0));
+            let painted = rectangles(&lay.pages[0].ops);
+            assert!(
+                painted.len() <= 8,
+                "drew {} segments after a dash step stopped moving",
+                painted.len()
+            );
         }
 
         #[test]
@@ -58734,8 +59314,13 @@ mod rendering_uncovered_contract_tests {
 
     #[test]
     fn malformed_nonpositive_cell_widths_are_auto_and_percent_indents_are_ignored() {
+        // A zero percent is a preference since #2120: Word splits the
+        // measure over a table whose cells all ask for it.
+        let (dom, root) =
+            xml("<w:tc><w:tcPr><w:tcW w:type=\"pct\" w:w=\"0\"/></w:tcPr><w:p/></w:tc>");
+        let cell = dom.element(root, &W::tc()).unwrap();
+        assert!(matches!(cell_pref_width(&dom, cell), PrefWidth::Pct(0.0)));
         for (kind, value) in [
-            ("pct", "0"),
             ("pct", "-50"),
             ("pct", "bad"),
             ("dxa", "0"),
@@ -59010,6 +59595,23 @@ mod rendering_uncovered_contract_tests {
         ] {
             assert!(!table_joins_previous(&blocks, 1));
         }
+        let styled = |id: &str| {
+            format!(
+                "<w:tbl><w:tblPr><w:tblStyle w:val=\"{id}\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"1440\"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+            )
+        };
+        for (a, b, join) in [("Grid", "Grid", true), ("Grid", "Plain", false)] {
+            let blocks = vec![parsed_table(&styled(a)), parsed_table(&styled(b))];
+            assert_eq!(table_joins_previous(&blocks, 1), join, "{a} then {b}");
+        }
+        let blocks = vec![
+            parsed_table(&styled("Grid")),
+            parsed_table(&fragment(false)),
+        ];
+        assert!(
+            !table_joins_previous(&blocks, 1),
+            "a styled table does not join an unstyled one"
+        );
     }
 
     fn drawing_dom(fragment: &str) -> (Dom, NodeId) {
@@ -65088,7 +65690,7 @@ mod complete_coordinate_layout_contract_tests {
                     }
                 }
             }
-            let widths = content_autofit_widths(&fonts, 3, &rows, &geom, 200.0, false);
+            let widths = content_autofit_widths(&fonts, 3, &rows, &geom, 200.0, false, None);
             for (actual, wanted) in widths.iter().zip(expected) {
                 assert!((actual - wanted).abs() < 0.0001, "{widths:?}");
             }

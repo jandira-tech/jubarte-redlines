@@ -1209,15 +1209,42 @@ fn resolution_text(py: Python<'_>, source: &[u8], resolved_json: &str) -> PyResu
     .map_err(err)
 }
 
+/// `v1`, `flags`, `v2` or `typed`: the grammar a refusal quotes.
+fn quoting(syntax: Option<&str>) -> PyResult<jubarte::edit::PrepareOptions> {
+    Ok(jubarte::edit::PrepareOptions {
+        syntax: match syntax.unwrap_or("v1") {
+            "v1" => jubarte::edit::PlanSyntax::V1,
+            "flags" => jubarte::edit::PlanSyntax::Flags,
+            "v2" => jubarte::edit::PlanSyntax::V2,
+            "typed" => jubarte::edit::PlanSyntax::Typed,
+            other => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown plan syntax {other:?}"
+                )));
+            }
+        },
+        ..Default::default()
+    })
+}
+
 /// Apply an edit plan (JSON) → `(ok, clean | None, redline | None, json)`.
 ///
 /// On success `json` is the report; on refusal it is the structured error
 /// (`code`, `operation`, `message`, `outcomes`) and both documents are `None`.
 /// Refusals are data, not exceptions: the Python layer raises
-/// `EditPlanError` from them so the outcomes stay attached.
+/// `EditPlanError` from them so the outcomes stay attached. `syntax` is the
+/// grammar the refusal quotes (`flags` for a flags command); omitted, a
+/// JSON plan keeps the JSON wording.
 #[pyfunction]
-fn edit_json(py: Python<'_>, docx: &[u8], plan_json: &str) -> PyResult<EditOutcome> {
-    let result = py.detach(|| jubarte::edit::apply_plan_json(docx, plan_json));
+#[pyo3(signature = (docx, plan_json, syntax = None))]
+fn edit_json(
+    py: Python<'_>,
+    docx: &[u8],
+    plan_json: &str,
+    syntax: Option<&str>,
+) -> PyResult<EditOutcome> {
+    let options = quoting(syntax)?;
+    let result = py.detach(|| jubarte::edit::apply_plan_json_with(docx, plan_json, &options));
     Ok(match result {
         Ok(r) => (
             true,
@@ -1232,10 +1259,17 @@ fn edit_json(py: Python<'_>, docx: &[u8], plan_json: &str) -> PyResult<EditOutco
 /// Resolve an edit plan without producing documents → `(ok, json)`; `json`
 /// is the report or the structured error.
 #[pyfunction]
-fn preview_json(py: Python<'_>, docx: &[u8], plan_json: &str) -> PyResult<(bool, String)> {
+#[pyo3(signature = (docx, plan_json, syntax = None))]
+fn preview_json(
+    py: Python<'_>,
+    docx: &[u8],
+    plan_json: &str,
+    syntax: Option<&str>,
+) -> PyResult<(bool, String)> {
+    let options = quoting(syntax)?;
     let result = py.detach(|| {
         let (plan, notes) = jubarte::edit::EditPlan::from_json_with_notes(plan_json)?;
-        jubarte::edit::preview_plan(docx, &plan).map(|mut report| {
+        jubarte::edit::preview_plan_with(docx, &plan, &options).map(|mut report| {
             report.notes = notes;
             report
         })

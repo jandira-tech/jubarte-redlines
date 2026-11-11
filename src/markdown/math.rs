@@ -23,6 +23,20 @@ pub(super) const INSERT_END: char = '\u{2E0F}';
 pub(super) const DELETE_START: char = '\u{2E10}';
 pub(super) const DELETE_END: char = '\u{2E11}';
 
+/// The four change markers.
+const MARKERS: [char; 4] = [INSERT_START, INSERT_END, DELETE_START, DELETE_END];
+
+/// `text` with each change marker it holds as a character escaped
+/// (`\⸎`), so the math reads it as that character and not as a change.
+pub(super) fn literal_markers(text: &str, out: &mut String) {
+    for c in text.chars() {
+        if MARKERS.contains(&c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+}
+
 /// The Office Math namespace.
 pub(super) const M_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
 
@@ -646,6 +660,12 @@ fn tokens(latex: &str) -> Vec<Token> {
         i += 1;
         out.push(match c {
             '\\' => match chars.get(i) {
+                // A change marker the source held as a character: that
+                // character, never a change ([`literal_markers`]).
+                Some(&n) if MARKERS.contains(&n) => {
+                    i += 1;
+                    Token::Char(n)
+                }
                 Some(n) if n.is_ascii_alphabetic() => {
                     let start = i;
                     while chars.get(i).is_some_and(char::is_ascii_alphabetic) {

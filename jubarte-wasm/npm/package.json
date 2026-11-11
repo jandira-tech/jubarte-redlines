@@ -1,6 +1,6 @@
 {
   "name": "jubarte-wasm",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "description": "Word-mode DOCX redline engine (jubarte-redlines) compiled to WebAssembly: compare two DOCX files into a tracked-changes redline, accept/reject revisions, list revisions, render DOCX to PDF, inspect and edit DOCX by paragraph id with edit plans. Node and browser builds included, plus compare-only slim builds without the PDF engine.",
   "license": "AGPL-3.0-only",
   "repository": {
@@ -98,6 +98,7 @@
     "0.14.0": "`read -p` repeats, `read --tables -o FILE` writes the grids, `changes --author NAME` filters, and `edit --help` shows the whole plan. Tracked edits keep formatting history apart and refuse duplicate revision ids; table redlines avoid the final-mark revision that hangs Word. Known: 3 of 600 sample redlines crash Word 16.115 where Word's own does not (#1802). 0.13.0 never reached npm; this is the first npm release since 0.12.0.",
     "0.15.0": "Word-mode tables now pair, split and mesh as Word Compare does; validate with an original checks comments (FOREIGN_COMMENT); comments and edits no longer restyle or renumber what they did not touch; redlines with deleted page-numbered footers open in Word.",
     "0.16.0": "Breaking: changes/comments --json print records only on stdout, and input_validity goes to stderr. validate finds more broken relationships and nameless move ranges; PDF tables past their grid take Word's widths; rewrites under keep mark one change per phrase.",
-    "0.17.0": "Security hardening: element budget, DTDs refused, compare story-unit budget and UNSUPPORTED_CONTENT instead of panics, optional JUBARTE_TIMEOUT. Breaking: limits gain max_xml_elements and max_story_units; one-shot edit/add need an author; --in-place replaces -o INPUT; --keep-others guards other authors markup."
+    "0.17.0": "Security hardening: element budget, DTDs refused, compare story-unit budget and UNSUPPORTED_CONTENT instead of panics, optional JUBARTE_TIMEOUT. Breaking: limits gain max_xml_elements and max_story_units; one-shot edit/add need an author; --in-place replaces -o INPUT; --keep-others guards other authors markup.",
+    "0.18.0": "Hardened package open and bounded crafted input (legacy .doc, fields, comment anchors, font caches); over a hundred compare, accept/reject, edit-plan and Markdown-view fixes, Word-faithful tables and autofit."
   }
 }

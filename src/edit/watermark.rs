@@ -279,6 +279,9 @@ impl Transaction<'_> {
                 None => {
                     n += 1;
                     self.new_header(sect_pr, &markup(&spec, n, size));
+                    // The new header's reference is a child of the body's
+                    // section properties, so that story has to be written.
+                    touched.insert(0);
                 }
             }
         }

@@ -243,6 +243,12 @@ fn apply_bound(
             bytes
         }
     };
+    // Judged once the selection and the global policy have both settled,
+    // as the legacy path does (#2096).
+    if working.as_slice() != source {
+        crate::changes::check_exposed_final_marks(source, &working)
+            .map_err(|e| super::selection_error(e, syntax, ""))?;
+    }
     let mut execution = legacy(plan);
     execution.operations = mapped.iter().map(|m| m.legacy.clone()).collect();
     // Always use the preserving engine path. Tracking controls only the new edits.
@@ -857,6 +863,27 @@ impl SourceModel {
             paragraph_story: &self.loaded.paragraph_story,
         }
     }
+    /// The paragraphs, in document order, that hold a tracked-revision
+    /// element of change `short_id` in its own story.
+    fn revision_paragraphs(&self, short_id: &str) -> Vec<usize> {
+        let Some(cid) = crate::ids::change_id(short_id) else {
+            return Vec::new();
+        };
+        let known = crate::revision_processor::tracked_revisions_elements();
+        let dom = &self.opened.dom;
+        let id_attr = W::id();
+        (0..self.loaded.paragraph_nodes.len())
+            .filter(|&g| self.loaded.stories[self.loaded.paragraph_story[g].0].id == cid.story)
+            .filter(|&g| {
+                dom.find_descendant_element(self.loaded.paragraph_nodes[g], None, |n| {
+                    dom.attribute(n, &id_attr) == Some(cid.wid.as_str())
+                        && dom.name(n).is_some_and(|name| known.contains(&name))
+                })
+                .is_some()
+            })
+            .collect()
+    }
+
     fn entity(&self, target: &Target) -> Result<Entity, EditError> {
         let bad = || {
             err(
@@ -1422,11 +1449,14 @@ impl SourceModel {
             | V::ReplyComment { target, .. }
             | V::ResolveComment { target, .. }
             | V::EditComment { target, .. }
-            | V::DeleteComment { target, .. } => target,
+            | V::DeleteComment { target, .. }
+            | V::Strike { target }
+            | V::Restore { target } => target,
         };
         let entity = self.entity(target)?;
         let mut paragraphs = Vec::new();
         let mut comment_id = None;
+        let mut revision_id = None;
         match entity {
             Entity::Paragraph(g) => paragraphs.push(g),
             Entity::Container(_, first) => paragraphs.push(first.ok_or_else(|| {
@@ -1439,12 +1469,26 @@ impl SourceModel {
             Entity::Comment(id) => {
                 comment_id = Some(id);
             }
-            Entity::Revision(_) => {
-                return Err(err(
-                    "INVALID_TARGET",
-                    None,
-                    "revision is not a direct operation target",
-                ));
+            Entity::Revision(id) => {
+                if !matches!(operation, V::Strike { .. } | V::Restore { .. }) {
+                    return Err(err(
+                        "INVALID_TARGET",
+                        None,
+                        "revision is not a direct operation target",
+                    ));
+                }
+                // The paragraphs that hold the revision are what a selected
+                // scope must authorize; one held by none is never in scope.
+                let held = self.revision_paragraphs(&id);
+                if !scope.all && held.is_empty() {
+                    return Err(err(
+                        "OUT_OF_SCOPE",
+                        None,
+                        "the revision sits in no paragraph a selected scope can name",
+                    ));
+                }
+                paragraphs.extend(held);
+                revision_id = Some(id);
             }
         }
         let paragraph = paragraphs
@@ -1594,6 +1638,16 @@ impl SourceModel {
                 }
                 OperationKind::DeleteComment { comment_id: id }
             }
+            V::Strike { .. } => OperationKind::Strike {
+                revision: revision_id
+                    .ok_or_else(|| err("INVALID_TARGET", None, "strike targets a revision"))?,
+                comment: None,
+            },
+            V::Restore { .. } => OperationKind::Restore {
+                revision: revision_id
+                    .ok_or_else(|| err("INVALID_TARGET", None, "restore targets a revision"))?,
+                comment: None,
+            },
         };
         if !scope.all
             && (paragraphs.iter().any(|g| !scope.paragraphs.contains(g))
@@ -2121,12 +2175,25 @@ fn check_comment_anchor(
 }
 
 fn resolve_operation(
-    tx: &Transaction<'_>,
+    tx: &mut Transaction<'_>,
     operation: &v2::Operation,
     m: &Mapped,
     o: &mut EditOutcome,
 ) -> Result<Vec<Resolved>, EditError> {
     use v2::Operation as V;
+    // Strike and restore already resolve on the visible path. The text
+    // resolver refuses them so a v1 plan cannot reach it twice.
+    if let Some((visible, revision, comment)) = super::visible::of(&m.legacy.kind) {
+        let (resolved, outcome) = tx
+            .resolve_visible(&o.id, visible, revision, comment)
+            .map_err(|boxed| boxed.0)?;
+        *o = EditOutcome {
+            kind: o.kind.clone(),
+            status: "ok".into(),
+            ..outcome
+        };
+        return Ok(resolved);
+    }
     let p = m
         .paragraphs
         .first()
@@ -2479,6 +2546,25 @@ fn edited_revisions(tx: &Transaction<'_>) -> Edited {
             }
             continue;
         }
+        // A restore's copy lands inside the insertion that holds the
+        // deletion, and a tracked redline splits that insertion there.
+        // The copy is the edit; the insertion's own words stay.
+        if let Resolved::Restore { para, wid, .. } = resolved {
+            let node = tx.paragraph_nodes[*para];
+            if let Some(del) = super::visible::revision_in(dom, node, "del", wid) {
+                let story = &tx.stories[tx.paragraph_story[*para].0].id;
+                let mut up = dom.parent(del);
+                while let Some(ancestor) = up {
+                    if super::hint::Held::of(dom, ancestor) == Some(super::hint::Held::Inserted)
+                        && let Some(id) = dom.attribute(ancestor, &W::id())
+                    {
+                        ids.insert(crate::ids::ChangeId::new(story, id).short());
+                    }
+                    up = dom.parent(ancestor);
+                }
+            }
+            continue;
+        }
         let Resolved::Text {
             para,
             start,
@@ -2539,8 +2625,9 @@ fn edited_revisions(tx: &Transaction<'_>) -> Edited {
 }
 
 /// What `ranges` (projection bytes) take from `run`: its words outside
-/// them, its `w:t` and `w:delText` text in document order as its
-/// formatting change lists it, and how many characters and atoms inside.
+/// them, its `w:t` and `w:delText` text and its own tabs and breaks in
+/// document order as its formatting change lists it, and how many
+/// characters and atoms inside.
 fn rewrite(
     dom: &Dom,
     projection: &crate::inspect::Projection,
@@ -2550,7 +2637,29 @@ fn rewrite(
     use crate::inspect::Piece;
     let inside = |at: usize| ranges.iter().any(|&(start, end)| start <= at && at < end);
     let mut out = Rewrite::default();
+    let (tab, br) = (W::name("tab"), W::name("br"));
     for node in dom.descendants(run, None) {
+        // A tab or break of the run reads as `\t` or `\n` in the change's
+        // text; one the ranges take counts with the atoms below.
+        let glyph = if dom.name_is(node, &tab) {
+            Some('\t')
+        } else if dom.name_is(node, &br) {
+            Some('\n')
+        } else {
+            None
+        };
+        if let Some(glyph) = glyph {
+            let piece = Piece::Glyph { element: node, run };
+            let taken = projection
+                .segments
+                .iter()
+                .find(|s| s.piece == piece)
+                .is_some_and(|s| inside(s.start));
+            if dom.parent(node) == Some(run) && !taken {
+                out.words.push(glyph);
+            }
+            continue;
+        }
         if !dom.name_is(node, &W::t()) && !dom.name_is(node, &W::del_text()) {
             continue;
         }
@@ -4116,9 +4225,10 @@ mod tests {
 
     #[test]
     fn history_guard_keeps_a_record_while_an_atom_of_its_run_remains() {
-        // Carol replaces all of Alice's words; the tab of her run stays hers.
+        // Carol replaces all of Alice's words; the tab of her run stays hers
+        // and is what her record's text still reads.
         let source = paragraph(&alice_with_tab(5, "abc"));
-        let edited = rewriting("r5", "", 3);
+        let edited = rewriting("r5", "\t", 3);
         let guard = |candidate: &[u8]| {
             preserve_direct_history(&source, candidate, &edited, "Carol Diaz", &BTreeMap::new())
         };

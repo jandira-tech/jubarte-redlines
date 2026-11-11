@@ -89,18 +89,20 @@ impl AnchorChanges {
         let comments = crate::comments::list_comments(source)
             .map_err(|e| super::err("INVALID_DOCUMENT", None, e.to_string()))?;
         let groups = |ids: &[String]| {
+            // Receipts name each `w:id` as written. The reader parsed it.
+            let wanted: std::collections::HashSet<u32> =
+                ids.iter().filter_map(|id| id.parse().ok()).collect();
             comments
                 .iter()
                 .filter(|c| {
-                    ids.contains(&c.id.to_string())
-                        && !c.parent.is_some_and(|p| ids.contains(&p.to_string()))
+                    wanted.contains(&c.id) && !c.parent.is_some_and(|p| wanted.contains(&p))
                 })
                 .map(|root| {
                     let mut family = vec![root.id];
                     loop {
                         let before = family.len();
                         for c in &comments {
-                            if ids.contains(&c.id.to_string())
+                            if wanted.contains(&c.id)
                                 && !family.contains(&c.id)
                                 && c.parent.is_some_and(|p| family.contains(&p))
                             {
@@ -131,12 +133,18 @@ impl AnchorChanges {
                 crate::changes::member_wholes(source).map_err(invalid)?,
             )
         };
+        // Each pass by its comment's number, parsed once: the keys keep the
+        // `w:id` as written (`0005`).
+        let passes: std::collections::HashMap<u32, _> = self
+            .passes
+            .iter()
+            .filter_map(|(raw, pass)| Some((raw.parse::<u32>().ok()?, pass)))
+            .collect();
         let removed = groups(&self.removed)
             .into_iter()
             .map(|(c, replies)| {
-                let pass = self
-                    .passes
-                    .get(&c.id.to_string())
+                let pass = passes
+                    .get(&c.id)
                     .expect("every removed thread is recorded with its pass");
                 let id = format!("c{}", c.id);
                 let thread: Vec<String> = std::iter::once(id.clone())
@@ -174,4 +182,82 @@ impl AnchorChanges {
             .collect();
         Ok((removed, kept))
     }
+}
+
+/// Threads the redline still carries that the clean copy does not.
+/// A reply whose parent is also gone is listed on the root, in comment
+/// order. Threads already named by settlement stay on that receipt.
+/// `deleted` holds the ids of the paragraphs the plan deleted whole: a
+/// thread on any other paragraph lost only its words.
+pub(crate) fn threads_the_clean_copy_drops(
+    clean: &[u8],
+    redline: &[u8],
+    already: &[RemovedComment],
+    deleted: &std::collections::HashSet<String>,
+) -> Result<Vec<RemovedComment>, super::EditError> {
+    let invalid =
+        |error: crate::comments::CommentError| super::err(error.code(), None, error.to_string());
+    let on_redline = crate::comments::list_comments(redline).map_err(invalid)?;
+    let on_clean = crate::comments::list_comments(clean).map_err(invalid)?;
+    let kept: std::collections::HashSet<u32> = on_clean.iter().map(|comment| comment.id).collect();
+    let dropped: std::collections::HashSet<u32> = on_redline
+        .iter()
+        .map(|comment| comment.id)
+        .filter(|id| !kept.contains(id))
+        .collect();
+    if dropped.is_empty() {
+        return Ok(Vec::new());
+    }
+    let named: std::collections::HashSet<u32> = already
+        .iter()
+        .filter_map(|comment| comment.id.strip_prefix('c')?.parse().ok())
+        .collect();
+    let mut threads = Vec::new();
+    for root in on_redline.iter().filter(|comment| {
+        dropped.contains(&comment.id)
+            && !named.contains(&comment.id)
+            && !comment
+                .parent
+                .is_some_and(|parent| dropped.contains(&parent))
+    }) {
+        let mut family = std::collections::HashSet::from([root.id]);
+        loop {
+            let before = family.len();
+            for comment in &on_redline {
+                if dropped.contains(&comment.id)
+                    && !family.contains(&comment.id)
+                    && comment
+                        .parent
+                        .is_some_and(|parent| family.contains(&parent))
+                {
+                    family.insert(comment.id);
+                }
+            }
+            if family.len() == before {
+                break;
+            }
+        }
+        let replies = on_redline
+            .iter()
+            .filter(|comment| comment.id != root.id && family.contains(&comment.id))
+            .map(|comment| format!("c{}", comment.id))
+            .collect();
+        let why = match root.paragraph.as_deref() {
+            Some(paragraph) if deleted.contains(paragraph) => {
+                format!("anchor removed by the plan's deletion of {paragraph}")
+            }
+            Some(paragraph) => {
+                format!("anchor removed by the plan's deletion of its text in {paragraph}")
+            }
+            None => "anchor removed by the plan's deletions".to_string(),
+        };
+        threads.push(RemovedComment {
+            id: format!("c{}", root.id),
+            author: root.author.clone(),
+            replies,
+            why,
+            decision: None,
+        });
+    }
+    Ok(threads)
 }

@@ -46,6 +46,11 @@ pub(super) enum Content {
     Break,
     /// A page break (`w:br w:type="page"`).
     PageBreak,
+    /// A symbol (`w:sym`): the view's `<sym font="…" char="…"/>`.
+    Symbol {
+        font: String,
+        value: String,
+    },
     Tab,
     /// A footnote reference, by the footnote's position (1-based).
     NoteReference(u32),
@@ -85,8 +90,9 @@ pub(super) struct Paragraph {
     /// A numbering instance (index into [`Document::lists`]) and level.
     pub numbering: Option<(usize, u32)>,
     pub indent: Option<u32>,
-    /// The indents an id line names, in twips (`first-line 0.5in`); its
-    /// `left` wins over `indent`.
+    /// The indents an id line names, in twips (`first-line 0.5in`) and in
+    /// hundredths of a character (`first-line 2ch`); its `left` wins over
+    /// `indent`.
     pub ind: Indent,
     /// The spacing an id line names (`before 6pt, line 1.5`).
     pub spacing: Spacing,
@@ -122,12 +128,18 @@ pub(super) struct Paragraph {
     /// The marks its id line names that its text shows nothing of (`rev
     /// r9 @AL`, `rev-del r10 @AL`): `true` for an insertion.
     pub unshown: Vec<(bool, FormatMark)>,
+    /// Comment events a `holds` clause names: whether the revision inserts,
+    /// its `w:id`, the comment's view number, and the event (0 start, 1 end,
+    /// 2 reference).
+    pub holds: Vec<(bool, u32, u32, u8)>,
     /// The paragraph's number as its id line names it (`p1`), when it has
     /// one: the header's `unplaced:` names paragraphs by it.
     pub number: Option<usize>,
     /// The text box the paragraph anchors, whose blocks the view prints
     /// after its text with no id line of their own.
     pub text_box: Option<TextBox>,
+    /// The size names the runs, and the mark keeps the style.
+    pub mark_inherits: bool,
 }
 
 /// A minimal anchored text box: the change its anchor run carries, as the
@@ -154,6 +166,18 @@ pub(super) struct FormatMark {
     pub date: String,
 }
 
+/// Which property a `style_changes` tag names. `FormatMark` stays the mark
+/// itself: sections and note separators use it with no property kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum StyleChangeKind {
+    /// The style's own `w:pPrChange`.
+    Paragraph,
+    /// The style's own `w:rPrChange`.
+    Run,
+    /// A carrier the view can name and the writer does not put back.
+    Other,
+}
+
 /// The formatting changes a table line names: the table's own, a row's
 /// (`in t0.row1`) and a cell's (`in t0.row1.cell0`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -175,9 +199,44 @@ pub(super) struct TableFormats {
     pub row_borders: HashMap<usize, super::borders::Sides>,
 }
 
-/// A paragraph's `w:ind`, side by side, in twips.
+/// Hundredths of a character (`2ch` is 200, `1.5ch` is 150, `-1ch` is -100)
+/// with the fewest decimals that read back to the same count.
+pub(crate) fn char_units(hundredths: f64) -> String {
+    let hundredths = hundredths.round();
+    let count = hundredths / 100.0;
+    let value = (0..=2)
+        .map(|places| format!("{count:.places$}"))
+        .find(|text| {
+            text.parse::<f64>()
+                .is_ok_and(|v| (v * 100.0).round() == hundredths)
+        })
+        .unwrap_or_else(|| format!("{count:.2}"));
+    // Only a fraction's trailing zeros go: `10ch` stays ten.
+    let value = if value.contains('.') {
+        value.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        &value
+    };
+    format!("{value}ch")
+}
+
+/// `2ch` as hundredths of a character, within ten million characters either
+/// way. `None` when the suffix or the number does not read.
+pub(crate) fn char_hundredths(value: &str) -> Option<i64> {
+    let count: f64 = value.strip_suffix("ch")?.parse().ok()?;
+    let hundredths = (count * 100.0).round();
+    // `as` cannot truncate: the bound is checked first.
+    (hundredths.is_finite() && hundredths.abs() <= 1_000_000_000.0).then_some(hundredths as i64)
+}
+
+/// A paragraph's `w:ind`: each side in twips, and in hundredths of a
+/// character when the paragraph states a character unit.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct Indent {
+    pub first_line_chars: Option<i64>,
+    pub hanging_chars: Option<i64>,
+    pub left_chars: Option<i64>,
+    pub right_chars: Option<i64>,
     pub first_line: Option<i64>,
     pub hanging: Option<i64>,
     pub left: Option<i64>,
@@ -205,6 +264,10 @@ pub(super) struct Spacing {
     pub after: Option<u32>,
     pub before_auto: bool,
     pub after_auto: bool,
+    /// `w:beforeLines`, in hundredths of a line (`150` is 1.5 lines).
+    pub before_lines: Option<u32>,
+    /// `w:afterLines`, in hundredths of a line.
+    pub after_lines: Option<u32>,
     pub line: Option<(u32, &'static str)>,
 }
 
@@ -303,8 +366,16 @@ impl Spacing {
         match (word, value) {
             ("before", "auto") => (self.before, self.before_auto) = (None, true),
             ("after", "auto") => (self.after, self.after_auto) = (None, true),
-            ("before", _) => (self.before, self.before_auto) = (Some(points(value)?), false),
-            ("after", _) => (self.after, self.after_auto) = (Some(points(value)?), false),
+            // No `if let` guards: they are not stable on the declared
+            // rust-version (1.94, E0658).
+            ("before", _) => match hundredths_lines(value) {
+                Some(lines) => self.before_lines = Some(lines),
+                None => (self.before, self.before_auto) = (Some(points(value)?), false),
+            },
+            ("after", _) => match hundredths_lines(value) {
+                Some(lines) => self.after_lines = Some(lines),
+                None => (self.after, self.after_auto) = (Some(points(value)?), false),
+            },
             ("line", _) => {
                 self.line = Some(match value.split_once(' ') {
                     Some((height, "exact")) => (points(height)?, "exact"),
@@ -325,6 +396,99 @@ impl Spacing {
         }
         Some(())
     }
+
+    /// `<w:spacing …/>` for what `self` names, or nothing when it names none.
+    pub(super) fn markup(&self) -> String {
+        if self.is_empty() {
+            return String::new();
+        }
+        let mut out = String::from("<w:spacing");
+        for (name, value, auto, lines) in [
+            ("before", self.before, self.before_auto, self.before_lines),
+            ("after", self.after, self.after_auto, self.after_lines),
+        ] {
+            if let Some(value) = value {
+                let _ = write!(out, " w:{name}=\"{value}\"");
+            }
+            if let Some(lines) = lines {
+                let _ = write!(out, " w:{name}Lines=\"{lines}\"");
+            }
+            if auto {
+                let _ = write!(out, " w:{name}Autospacing=\"1\"");
+            }
+        }
+        if let Some((line, rule)) = self.line {
+            let _ = write!(out, " w:line=\"{line}\" w:lineRule=\"{rule}\"");
+        }
+        out.push_str("/>");
+        out
+    }
+}
+
+/// `before 1.5 lines`: hundredths of a line (`150`), not twips.
+fn hundredths_lines(value: &str) -> Option<u32> {
+    let count = value.strip_suffix(" lines")?;
+    let n: f64 = count.parse().ok()?;
+    let hundredths = (n * 100.0).round();
+    let most = f64::from(u32::MAX);
+    // `as` cannot overflow: the bound is checked first.
+    (n.is_finite() && (0.0..=most).contains(&hundredths)).then_some(hundredths as u32)
+}
+
+/// `w:tab w:val` (ST_TabJc).
+pub(crate) const TAB_VALS: &[&str] = &["left", "center", "right", "decimal", "bar", "clear", "num"];
+
+/// `w:tab w:leader`, other than the default `none`.
+pub(crate) const TAB_LEADERS: &[&str] = &["dot", "hyphen", "underscore", "heavy", "middleDot"];
+
+/// A tab stop's `w:pos`, twips: Word keeps one within 22in either way.
+pub(crate) const TAB_POS_LIMIT: i64 = 31_680;
+
+/// `w:shd w:val` (ST_Shd).
+pub(crate) const SHD_VALS: &[&str] = &[
+    "nil",
+    "clear",
+    "solid",
+    "horzStripe",
+    "vertStripe",
+    "reverseDiagStripe",
+    "diagStripe",
+    "horzCross",
+    "diagCross",
+    "thinHorzStripe",
+    "thinVertStripe",
+    "thinReverseDiagStripe",
+    "thinDiagStripe",
+    "thinHorzCross",
+    "thinDiagCross",
+    "pct5",
+    "pct10",
+    "pct12",
+    "pct15",
+    "pct20",
+    "pct25",
+    "pct30",
+    "pct35",
+    "pct37",
+    "pct40",
+    "pct45",
+    "pct50",
+    "pct55",
+    "pct60",
+    "pct62",
+    "pct65",
+    "pct70",
+    "pct75",
+    "pct80",
+    "pct85",
+    "pct87",
+    "pct90",
+    "pct95",
+];
+
+/// `w:shd` `w:color` or `w:fill`: `auto`, or six hex digits.
+pub(crate) fn shading_colour(value: &str) -> bool {
+    value == "auto" || (value.len() == 6 && value.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 /// A hyperlink's target.
@@ -428,6 +592,8 @@ pub(super) struct Comment {
     /// Its paragraphs' style when the `comments:` line names one for its
     /// number (`c6 style Normal`).
     pub style: Option<String>,
+    /// Each paragraph's own spacing, in paragraph order.
+    pub spacing: Vec<Spacing>,
 }
 
 /// A Markdown document read into Word items.
@@ -443,8 +609,9 @@ pub(super) struct Document {
     /// the header's `notes: {fmt: footnotes.r0 @AS; …}`.
     pub note_formats: Vec<(&'static str, super::view_notes::Tag)>,
     /// The tracked style changes the header's `style_changes:` names, by
-    /// holder (`Normal`, `docDefaults`): their ids, authors and dates.
-    pub style_changes: Vec<(String, Vec<FormatMark>)>,
+    /// holder (`Normal`, `docDefaults`): each tag's property, id, author
+    /// and date.
+    pub style_changes: Vec<(String, Vec<(StyleChangeKind, FormatMark)>)>,
     /// The style of every comment's paragraphs, when not CommentText: the
     /// header's `comments: …, style Normal`.
     pub comment_style: Option<String>,
@@ -462,6 +629,9 @@ pub(super) struct Document {
     /// range ends there too: its reference (and range end) open the
     /// change's mark (`{++{>>c1 re c0<<}text++}`).
     pub note_changes: HashMap<u32, (Change, bool)>,
+    /// Comment events a `holds` clause puts back inside a revision, keyed by
+    /// the comment's id and the event (0 start, 1 end, 2 reference).
+    pub event_holds: HashMap<(u32, u8), Change>,
     pub pictures: Vec<Picture>,
     /// `drawing:` payloads to splice back, in the order the runs name them.
     pub drawings: Vec<super::from_docx::drawing::Drawing>,
@@ -506,6 +676,10 @@ pub(super) struct Document {
     /// The `w:id`s of the marks of changes the view numbers, by serial, in
     /// order (`{r5+6 @AB}` on a change of two runs).
     pub revision_ids: HashMap<u32, Vec<u32>>,
+    /// Move range name by serial. Present, even when empty, means the change
+    /// is a move rather than a deletion or an insertion. An empty name writes
+    /// the move element without a range.
+    pub moves: HashMap<u32, String>,
     /// Source line of each explicitly numbered change, for rename warnings.
     pub revision_lines: HashMap<u32, usize>,
     /// A change that was another change's only content, by the serial of
@@ -521,6 +695,9 @@ pub(super) struct Document {
     /// The formatting change each section's page names (`page: …; fmt r17
     /// @AL`), by section number from one.
     pub section_formats: HashMap<usize, FormatMark>,
+    /// The earlier page a section's change keeps (`page: …; was: …`), by
+    /// section number from one. Without one, the change keeps the live page.
+    pub earlier_pages: BTreeMap<usize, super::view_notes::PageSetup>,
     /// The `w:id`s formatting changes take: no fresh id takes them.
     pub reserved_ids: BTreeSet<u32>,
     /// The list labels id lines name (`num "(a)"`, `bullet`), each once.
@@ -565,7 +742,10 @@ impl Document {
             .or_else(|| self.pages.get(&1))
             .map_or_else(|| fallback.to_string(), |page| page.sect_pr());
         match self.section_formats.get(&number) {
-            Some(mark) => with_section_change(&section, mark),
+            Some(mark) => {
+                let earlier = self.earlier_pages.get(&number).map(|page| page.sect_pr());
+                with_section_change(&section, earlier.as_deref(), mark)
+            }
             None => section,
         }
     }
@@ -655,6 +835,8 @@ pub(super) struct Context<'d> {
     /// Every revision `w:id` written so far: named ids and fresh ids
     /// both respect uniqueness. Contiguous pieces reuse an open element.
     pub used_revisions: HashSet<u32>,
+    /// The range id of each move whose range is still open, by serial.
+    pub move_ranges: HashMap<u32, u32>,
     pub warnings: &'d mut Vec<String>,
     /// The owning part's short-id prefix; empty for body revisions.
     pub revision_prefix: &'static str,
@@ -667,6 +849,10 @@ pub(super) struct Context<'d> {
     /// Each open paragraph's text size (`size 9pt`), in half-points: its
     /// runs take it. A text box's paragraphs open inside their anchor's.
     pub run_sizes: Vec<Option<u32>>,
+    /// Each open paragraph's single `fmt` that belongs on its emphasized
+    /// text, taken by the first such run. A stack, as `run_sizes` is: a
+    /// text box's paragraphs open inside their anchor's.
+    pub pending_run_format: Vec<Option<FormatMark>>,
     /// `w:numId` of each numbering instance.
     pub num_ids: Vec<u32>,
     /// `w:numId` of each label use, by its index in `Document::label_uses`.
@@ -753,12 +939,71 @@ impl Context<'_> {
         named.saturating_sub(self.cursors.get(&by).copied().unwrap_or(0))
     }
 
-    fn revision(&mut self, kind: Kind, by: Option<u32>) -> String {
-        let id = self.revision_id(by);
-        let name = match kind {
-            Kind::Insert => "w:ins",
-            Kind::Delete => "w:del",
+    /// `w:ins` / `w:del`, or `w:moveTo` / `w:moveFrom` when `by` is a move.
+    fn element_name(&self, kind: Kind, by: Option<u32>) -> &'static str {
+        let moved = by.is_some_and(|serial| self.document.moves.contains_key(&serial));
+        match (kind, moved) {
+            (Kind::Insert, true) => "w:moveTo",
+            (Kind::Delete, true) => "w:moveFrom",
+            (Kind::Insert, false) => "w:ins",
+            (Kind::Delete, false) => "w:del",
+        }
+    }
+
+    /// The range start, when `by` names one, then the open move or revision tag.
+    fn open_revision(&mut self, out: &mut String, kind: Kind, by: Option<u32>) {
+        let serial = by.filter(|serial| {
+            self.document
+                .moves
+                .get(serial)
+                .is_some_and(|name| !name.is_empty())
+                && !self.move_ranges.contains_key(serial)
+        });
+        if let Some(serial) = serial {
+            let name = self
+                .document
+                .moves
+                .get(&serial)
+                .cloned()
+                .unwrap_or_default();
+            let id = self.revision_id(None);
+            self.move_ranges.insert(serial, id);
+            let start = if kind == Kind::Delete {
+                "moveFromRangeStart"
+            } else {
+                "moveToRangeStart"
+            };
+            let (author, date) = match self.document.attributions.get(&serial) {
+                Some((author, date)) => (escape(author).into_owned(), date.clone()),
+                None => (self.author.clone(), self.date.clone()),
+            };
+            let _ = write!(
+                out,
+                "<w:{start} w:id=\"{id}\" w:author=\"{author}\"{} w:name=\"{}\"/>",
+                date_attribute(&date),
+                escape(&name)
+            );
+        }
+        let wrap = self.revision(kind, by);
+        let _ = write!(out, "<{wrap}>");
+    }
+
+    /// The range end of a move `open_revision` started for `by`.
+    fn finish_move_range(&mut self, out: &mut String, kind: Kind, by: u32) {
+        let Some(id) = self.move_ranges.remove(&by) else {
+            return;
         };
+        let end = if kind == Kind::Delete {
+            "moveFromRangeEnd"
+        } else {
+            "moveToRangeEnd"
+        };
+        let _ = write!(out, "<w:{end} w:id=\"{id}\"/>");
+    }
+
+    fn revision(&mut self, kind: Kind, by: Option<u32>) -> String {
+        let name = self.element_name(kind, by);
+        let id = self.revision_id(by);
         let last_day = by
             .filter(|&serial| self.ids_left(serial) == 0)
             .and_then(|serial| self.document.range_ends.get(&serial));
@@ -839,8 +1084,7 @@ pub(super) fn story(
             close_mark(context, &natural, &mut out, &mut open);
             let (kind, by) = side;
             spend(&mut natural, by);
-            let wrap = context.revision(kind, Some(by));
-            let _ = write!(out, "<{wrap}>");
+            context.open_revision(&mut out, kind, Some(by));
             open = Some(side);
         }
         // A bookmark, a comment's range marks and its reference sit inside
@@ -853,7 +1097,10 @@ pub(super) fn story(
             Item::LinkEnd => fields.last().copied().flatten(),
             _ => None,
         };
-        let in_note = note_change(&context.document.note_changes, item);
+        // A `holds` clause names the event's revision outright, so it wins
+        // over the change a note's place implies.
+        let in_note = held_event_change(context.document, item)
+            .or_else(|| note_item_change(context.document, items, at));
         // A range or bookmark with no run left before the paragraph ends
         // sits inside the mark a suspended change holds, after the inner
         // ones end: only the open mark closes, the suspended ones wait.
@@ -889,10 +1136,11 @@ pub(super) fn story(
         if let Some(change) = in_note
             && open != Some(change)
         {
-            if let Some(depth) = marks
-                .iter()
-                .rposition(|outer| continues_change(context.document, change, *outer))
-            {
+            // A suspended mark of the change itself (a `holds` event after
+            // its nested changes) holds the items as a piece of it does.
+            if let Some(depth) = marks.iter().rposition(|outer| {
+                *outer == change || continues_change(context.document, change, *outer)
+            }) {
                 // The note sits in a piece of a change a nested one
                 // suspended: the marks above that piece's change close,
                 // and the note's items and the piece's runs go inside its
@@ -905,9 +1153,16 @@ pub(super) fn story(
                 open = None;
             } else {
                 close_marks(context, &natural, &mut out, &mut open, &mut marks);
+                // The marks a change named after ` re ` sits in open
+                // around it, as they do before its first run: the run
+                // after the note's items finds its mark open already.
+                for outer in wrapping_chain(context.document, change).iter().rev() {
+                    spend(&mut natural, outer.1);
+                    context.open_revision(&mut out, outer.0, Some(outer.1));
+                    marks.push(*outer);
+                }
                 spend(&mut natural, change.1);
-                let wrap = context.revision(change.0, Some(change.1));
-                let _ = write!(out, "<{wrap}>");
+                context.open_revision(&mut out, change.0, Some(change.1));
                 open = Some(change);
             }
         }
@@ -923,7 +1178,13 @@ pub(super) fn story(
             }
             Item::Paragraph(paragraph) => {
                 out.push_str("<w:p>");
-                paragraph_properties(context, paragraph, &mut out);
+                let on_run = run_formatting_change(paragraph, &items[at + 1..]);
+                paragraph_properties(
+                    context,
+                    paragraph,
+                    paragraph_formats(paragraph, on_run.is_some()),
+                    &mut out,
+                );
                 // The text box the paragraph anchors leads its content,
                 // its change the first the reader pairs: `rev r12` before
                 // the deletion after it, as Word writes it.
@@ -945,6 +1206,7 @@ pub(super) fn story(
                     );
                     bookmark = Some(id);
                 }
+                context.pending_run_format.push(on_run);
                 if paragraph.mark.is_some()
                     && let Some(by) = paragraph.mark_by
                 {
@@ -953,9 +1215,8 @@ pub(super) fn story(
                 if first_paragraph {
                     first_paragraph = false;
                     let change = note.flatten();
-                    let wrap = change.map(|(kind, by)| context.revision(kind, Some(by)));
-                    if let Some(wrap) = &wrap {
-                        let _ = write!(out, "<{wrap}>");
+                    if let Some((kind, by)) = change {
+                        context.open_revision(&mut out, kind, Some(by));
                     }
                     let (style, element) = if context.in_endnote {
                         ("EndnoteReference", "endnoteRef")
@@ -966,7 +1227,9 @@ pub(super) fn story(
                         out,
                         "<w:r><w:rPr><w:rStyle w:val=\"{style}\"/></w:rPr><w:{element}/></w:r>"
                     );
-                    let text = if matches!(change, Some((Kind::Delete, _))) {
+                    let text = if change.is_some_and(|(kind, by)| {
+                        kind == Kind::Delete && !context.document.moves.contains_key(&by)
+                    }) {
                         "delText"
                     } else {
                         "t"
@@ -986,10 +1249,8 @@ pub(super) fn story(
                             spend(&mut natural, by);
                             open = change;
                         } else {
-                            out.push_str(match kind {
-                                Kind::Insert => "</w:ins>",
-                                Kind::Delete => "</w:del>",
-                            });
+                            element_close(context, kind, Some(by), &mut out);
+                            context.finish_move_range(&mut out, kind, by);
                         }
                     }
                 }
@@ -1019,6 +1280,7 @@ pub(super) fn story(
                     let mark = context.revision(kind, by);
                     out.insert_str(at, &format!("<{mark}/>"));
                 }
+                context.pending_run_format.pop();
                 context.run_sizes.pop();
                 out.push_str("</w:p>");
             }
@@ -1110,7 +1372,7 @@ pub(super) fn story(
                             run,
                             relate,
                             &mut out,
-                            marks.iter().any(|mark| mark.0 == Kind::Delete),
+                            deletion_wraps(context, &marks),
                         );
                         // The resumed mark ends here unless the change it
                         // holds another of resumes later: a piece of it is
@@ -1141,13 +1403,11 @@ pub(super) fn story(
                         marks.push(outer);
                         for wrap in chain[..depth].iter().rev() {
                             spend(&mut natural, wrap.1);
-                            let revision = context.revision(wrap.0, Some(wrap.1));
-                            let _ = write!(out, "<{revision}>");
+                            context.open_revision(&mut out, wrap.0, Some(wrap.1));
                             marks.push(*wrap);
                         }
                         spend(&mut natural, change.1);
-                        let wrap = context.revision(change.0, Some(change.1));
-                        let _ = write!(out, "<{wrap}>");
+                        context.open_revision(&mut out, change.0, Some(change.1));
                         open = Some(change);
                     } else if let Some(change) = run.change
                         && let Some(&(kind, by)) = context.document.wraps.get(&change.1)
@@ -1162,8 +1422,7 @@ pub(super) fn story(
                         // stays open around each of them.
                         close_mark(context, &natural, &mut out, &mut open);
                         spend(&mut natural, change.1);
-                        let wrap = context.revision(change.0, Some(change.1));
-                        let _ = write!(out, "<{wrap}>");
+                        context.open_revision(&mut out, change.0, Some(change.1));
                         open = run.change;
                     } else {
                         close_marks(context, &natural, &mut out, &mut open, &mut marks);
@@ -1177,15 +1436,13 @@ pub(super) fn story(
                             let chain = wrapping_chain(context.document, change);
                             for outer in chain.iter().rev() {
                                 spend(&mut natural, outer.1);
-                                let wrap = context.revision(outer.0, Some(outer.1));
-                                let _ = write!(out, "<{wrap}>");
+                                context.open_revision(&mut out, outer.0, Some(outer.1));
                                 marks.push(*outer);
                             }
                         }
                         if let Some((kind, by)) = run.change {
                             spend(&mut natural, by);
-                            let wrap = context.revision(kind, Some(by));
-                            let _ = write!(out, "<{wrap}>");
+                            context.open_revision(&mut out, kind, Some(by));
                         }
                         open = run.change;
                     }
@@ -1195,12 +1452,9 @@ pub(super) fn story(
                     && fields.last().copied().flatten().is_none()
                 {
                     // The change goes on in a new mark: no empty marks yet.
-                    out.push_str(match kind {
-                        Kind::Insert => "</w:ins>",
-                        Kind::Delete => "</w:del>",
-                    });
-                    let wrap = context.revision(kind, Some(by));
-                    let _ = write!(out, "<{wrap}>");
+                    // The range stays open across the split.
+                    element_close(context, kind, Some(by), &mut out);
+                    context.open_revision(&mut out, kind, Some(by));
                     open = run.change;
                 }
                 if carried {
@@ -1214,7 +1468,7 @@ pub(super) fn story(
                         &plain,
                         relate,
                         &mut out,
-                        marks.iter().any(|mark| mark.0 == Kind::Delete),
+                        deletion_wraps(context, &marks),
                     );
                 } else {
                     write_run(
@@ -1222,7 +1476,7 @@ pub(super) fn story(
                         run,
                         relate,
                         &mut out,
-                        marks.iter().any(|mark| mark.0 == Kind::Delete),
+                        deletion_wraps(context, &marks),
                     );
                 }
             }
@@ -1261,8 +1515,7 @@ pub(super) fn story(
                 {
                     close_mark(context, &natural, &mut out, &mut open);
                     spend(&mut natural, by);
-                    let wrap = context.revision(kind, Some(by));
-                    let _ = write!(out, "<{wrap}>");
+                    context.open_revision(&mut out, kind, Some(by));
                     open = field;
                 }
                 let mut instruction = match link {
@@ -1274,8 +1527,9 @@ pub(super) fn story(
                 if let Some(title) = title {
                     let _ = write!(instruction, " \\o \"{}\"", field_argument(title));
                 }
+                let own_move = context.document.moves.contains_key(&by);
                 let element =
-                    if kind == Kind::Delete || marks.iter().any(|mark| mark.0 == Kind::Delete) {
+                    if (!own_move && kind == Kind::Delete) || deletion_wraps(context, &marks) {
                         "delInstrText"
                     } else {
                         "instrText"
@@ -1618,6 +1872,52 @@ fn note_change(notes: &HashMap<u32, (Change, bool)>, item: &Item) -> Option<Chan
     }
 }
 
+/// [`note_change`], and a range start that belongs to the same note when
+/// the next run, or a link that change's mark holds, is that change. The start then opens the mark, so it is
+/// not left before a deletion the note sits in.
+fn note_item_change(document: &Document, items: &[Item], at: usize) -> Option<Change> {
+    let item = items.get(at)?;
+    if let Some(change) = note_change(&document.note_changes, item) {
+        return Some(change);
+    }
+    let Item::RangeStart(slot) = item else {
+        return None;
+    };
+    let id = document.slots.get(*slot).copied().flatten()?;
+    let (change, end_inside) = document.note_changes.get(&id)?;
+    if !end_inside {
+        return None;
+    }
+    let rest = &items[at + 1..];
+    let next = rest.iter().position(|item| {
+        !matches!(
+            item,
+            Item::Bookmark(_) | Item::RangeStart(_) | Item::RangeEnd(_) | Item::CommentReference(_)
+        )
+    })?;
+    // A link the change's mark holds (`field_link`) starts that change too.
+    let opens = match &rest[next] {
+        Item::Run(run) => run.change == Some(*change),
+        Item::LinkStart(..) => field_link(&rest[next + 1..], document) == Some(*change),
+        _ => false,
+    };
+    opens.then_some(*change)
+}
+
+/// The revision a `holds` clause names for this comment event.
+fn held_event_change(document: &Document, item: &Item) -> Option<Change> {
+    let (id, event) = match item {
+        Item::RangeStart(slot) => {
+            let id = document.slots.get(*slot).copied().flatten()?;
+            (id, 0)
+        }
+        Item::RangeEnd(id) => (*id, 1),
+        Item::CommentReference(id) => (*id, 2),
+        _ => return None,
+    };
+    document.event_holds.get(&(id, event)).copied()
+}
+
 /// Whether the next real item in `rest` is a run still inside a mark:
 /// `open`'s own, one a nested change suspended (`marks`), whose other
 /// pieces name the same ids, or a change `open` resumes after, which the
@@ -1823,6 +2123,20 @@ fn ends_inserted_side(document: &Document, rest: &[Item], open: Option<Change>) 
         )
 }
 
+/// Write the closing tag of a mark of `kind` into `out`.
+fn element_close(context: &Context<'_>, kind: Kind, by: Option<u32>, out: &mut String) {
+    out.push_str("</");
+    out.push_str(context.element_name(kind, by));
+    out.push('>');
+}
+
+/// A real `w:del` among `marks`. A move's source is not one: its text is `w:t`.
+fn deletion_wraps(context: &Context<'_>, marks: &[Change]) -> bool {
+    marks
+        .iter()
+        .any(|mark| mark.0 == Kind::Delete && !context.document.moves.contains_key(&mark.1))
+}
+
 fn close_mark(
     context: &mut Context<'_>,
     natural: &HashMap<u32, usize>,
@@ -1832,10 +2146,7 @@ fn close_mark(
     let Some((kind, by)) = open.take() else {
         return;
     };
-    out.push_str(match kind {
-        Kind::Insert => "</w:ins>",
-        Kind::Delete => "</w:del>",
-    });
+    element_close(context, kind, Some(by), out);
     if natural.get(&by).copied().unwrap_or(0) == 0 {
         // A paragraph mark written at its paragraph's end takes its own.
         let deferred = context
@@ -1849,6 +2160,7 @@ fn close_mark(
             let _ = write!(out, "<{mark}/>");
         }
     }
+    context.finish_move_range(out, kind, by);
 }
 
 /// [`close_mark`] for the open mark and every mark a nested change's mark
@@ -1870,12 +2182,11 @@ fn close_marks(
 /// The marks each numbered change opens in `items` when no change splits:
 /// a run that does not continue the open mark, a paragraph mark, a row.
 fn natural_marks(document: &Document, items: &[Item]) -> HashMap<u32, usize> {
-    let notes = &document.note_changes;
     let mut marks = HashMap::new();
     let mut open: Option<Change> = None;
     let mut fields: Vec<Option<Change>> = Vec::new();
     for (at, item) in items.iter().enumerate() {
-        if let Some(change) = note_change(notes, item) {
+        if let Some(change) = note_item_change(document, items, at) {
             if open != Some(change) {
                 *marks.entry(change.1).or_default() += 1;
             }
@@ -2032,7 +2343,12 @@ fn spend(natural: &mut HashMap<u32, usize>, by: u32) {
     }
 }
 
-fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &mut String) {
+fn paragraph_properties(
+    context: &mut Context<'_>,
+    paragraph: &Paragraph,
+    formats: &[FormatMark],
+    out: &mut String,
+) {
     let mut properties = String::new();
     if let Some(style) = &paragraph.style {
         let _ = write!(properties, "<w:pStyle w:val=\"{}\"/>", escape(style));
@@ -2061,37 +2377,31 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
         );
     }
     // Before `w:ind`, as the schema orders `w:pPr`.
-    let spacing = paragraph.spacing;
-    if !spacing.is_empty() {
-        properties.push_str("<w:spacing");
-        for (name, value, auto) in [
-            ("before", spacing.before, spacing.before_auto),
-            ("after", spacing.after, spacing.after_auto),
-        ] {
-            if let Some(value) = value {
-                let _ = write!(properties, " w:{name}=\"{value}\"");
-            }
-            if auto {
-                let _ = write!(properties, " w:{name}Autospacing=\"1\"");
-            }
-        }
-        if let Some((line, rule)) = spacing.line {
-            let _ = write!(properties, " w:line=\"{line}\" w:lineRule=\"{rule}\"");
-        }
-        properties.push_str("/>");
-    }
+    properties.push_str(&paragraph.spacing.markup());
     let ind = paragraph.ind;
     let left = ind.left.or(paragraph.indent.map(i64::from));
-    if left.is_some() || ind.right.is_some() || ind.first_line.is_some() || ind.hanging.is_some() {
+    let sides = [
+        ("left", left, "leftChars", ind.left_chars),
+        ("right", ind.right, "rightChars", ind.right_chars),
+        (
+            "firstLine",
+            ind.first_line,
+            "firstLineChars",
+            ind.first_line_chars,
+        ),
+        ("hanging", ind.hanging, "hangingChars", ind.hanging_chars),
+    ];
+    if sides
+        .iter()
+        .any(|(_, twips, _, chars)| twips.is_some() || chars.is_some())
+    {
         properties.push_str("<w:ind");
-        for (name, value) in [
-            ("left", left),
-            ("right", ind.right),
-            ("firstLine", ind.first_line),
-            ("hanging", ind.hanging),
-        ] {
-            if let Some(value) = value {
+        for (name, twips, chars_name, chars) in sides {
+            if let Some(value) = twips {
                 let _ = write!(properties, " w:{name}=\"{value}\"");
+            }
+            if let Some(value) = chars {
+                let _ = write!(properties, " w:{chars_name}=\"{value}\"");
             }
         }
         properties.push_str("/>");
@@ -2106,7 +2416,7 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
     let base = properties.clone();
     // Word reads the mark's change before the paragraph's: with two, the
     // first is the mark's.
-    let (mark_format, paragraph_format) = match paragraph.formats.as_slice() {
+    let (mark_format, paragraph_format) = match formats {
         [] => (None, None),
         [one] => (None, Some(one)),
         [first, second, ..] => (Some(first), Some(second)),
@@ -2123,7 +2433,7 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
     }
     // CT_ParaRPr: the mark's change, then its size, then its formatting
     // change.
-    if let Some(size) = paragraph.size {
+    if let Some(size) = paragraph.size.filter(|_| !paragraph.mark_inherits) {
         let _ = write!(
             mark_properties,
             "<w:sz w:val=\"{size}\"/><w:szCs w:val=\"{size}\"/>"
@@ -2168,7 +2478,7 @@ fn is_endnote(context: &Context<'_>, position: u32) -> bool {
         .is_some_and(|note| note.endnote)
 }
 
-fn run_properties(context: &Context<'_>, run: &Run) -> String {
+fn run_properties(context: &mut Context<'_>, run: &Run) -> String {
     let format = run.format;
     let mut out = String::new();
     let style = match &run.content {
@@ -2213,10 +2523,74 @@ fn run_properties(context: &Context<'_>, run: &Run) -> String {
     } else if format.subscript {
         out.push_str("<w:vertAlign w:val=\"subscript\"/>");
     }
-    if out.is_empty() {
-        out
+    let tracked = if holds_run_format(run) {
+        context.pending_run_format.last_mut().and_then(Option::take)
     } else {
-        format!("<w:rPr>{out}</w:rPr>")
+        None
+    };
+    if out.is_empty() && tracked.is_none() {
+        return out;
+    }
+    let mut properties = format!("<w:rPr>{out}");
+    if let Some(format) = tracked {
+        let change = context.format_mark("w:rPrChange", &format);
+        let _ = write!(properties, "<{change}><w:rPr/></w:rPrChange>");
+    }
+    properties.push_str("</w:rPr>");
+    properties
+}
+
+/// Whether a run is emphasized text, the run a paragraph's sole `fmt`
+/// lands on. Math is written outside any run, and a field's begin, code
+/// and separate runs share one property string, so neither holds it.
+fn holds_run_format(run: &Run) -> bool {
+    let format = run.format;
+    matches!(run.content, Content::Text(_))
+        && (format.bold
+            || format.italic
+            || format.strike
+            || format.underline
+            || format.superscript
+            || format.subscript)
+}
+
+/// A paragraph id line named a property of its own, so its `fmt` tag is
+/// that property's change rather than a run's.
+fn paragraph_states_own_property(paragraph: &Paragraph) -> bool {
+    paragraph.style.is_some()
+        || paragraph.numbering.is_some()
+        || paragraph.label.is_some()
+        || paragraph.indent.is_some()
+        || paragraph.ind != Indent::default()
+        || paragraph.spacing != Spacing::default()
+        || paragraph.size.is_some()
+        || paragraph.align.is_some()
+        || paragraph.outline.is_some()
+        || paragraph.rule
+}
+
+/// The paragraph's only `fmt`, when it belongs on an emphasized run: the
+/// paragraph states no property of its own, and a following text run is
+/// bold, italic, struck, underlined, or a super/subscript.
+fn run_formatting_change(paragraph: &Paragraph, following: &[Item]) -> Option<FormatMark> {
+    let [mark] = paragraph.formats.as_slice() else {
+        return None;
+    };
+    if paragraph_states_own_property(paragraph) {
+        return None;
+    }
+    following
+        .iter()
+        .take_while(|item| !matches!(item, Item::ParagraphEnd))
+        .any(|item| matches!(item, Item::Run(run) if holds_run_format(run)))
+        .then(|| mark.clone())
+}
+
+fn paragraph_formats(paragraph: &Paragraph, on_run: bool) -> &[FormatMark] {
+    if on_run {
+        &[]
+    } else {
+        paragraph.formats.as_slice()
     }
 }
 
@@ -2228,7 +2602,10 @@ fn write_run(
     parent_deleted: bool,
 ) {
     let properties = run_properties(context, run);
-    let deleted = parent_deleted || matches!(run.change, Some((Kind::Delete, _)));
+    let own_move = run
+        .change
+        .is_some_and(|(_, by)| context.document.moves.contains_key(&by));
+    let deleted = parent_deleted || (!own_move && matches!(run.change, Some((Kind::Delete, _))));
     let _ = write!(out, "<w:r>{properties}");
     match &run.content {
         Content::Text(text) => {
@@ -2241,6 +2618,14 @@ fn write_run(
         }
         Content::Break => out.push_str("<w:br/>"),
         Content::PageBreak => out.push_str("<w:br w:type=\"page\"/>"),
+        Content::Symbol { font, value } => {
+            let _ = write!(
+                out,
+                "<w:sym w:font=\"{}\" w:char=\"{}\"/>",
+                escape(font),
+                escape(value)
+            );
+        }
         Content::Tab => out.push_str("<w:tab/>"),
         Content::FieldBegin(code) => {
             let element = if deleted {
@@ -2387,16 +2772,23 @@ fn text_box_xml(context: &mut Context<'_>, boxed: &TextBox, relate: &mut dyn Rel
 /// it is stamped and its changes read back as the header's `unplaced:`.
 fn box_xml(context: &mut Context<'_>, items: &[Item], relate: &mut dyn Relate, out: &mut String) {
     let mut open: Option<Change> = None;
-    for item in items {
+    for (at, item) in items.iter().enumerate() {
         match item {
             Item::Paragraph(paragraph) => {
                 out.push_str("<w:p>");
-                paragraph_properties(context, paragraph, out);
+                let on_run = run_formatting_change(paragraph, &items[at + 1..]);
+                paragraph_properties(
+                    context,
+                    paragraph,
+                    paragraph_formats(paragraph, on_run.is_some()),
+                    out,
+                );
+                context.pending_run_format.push(on_run);
             }
             Item::Run(run) => {
                 if open != run.change {
-                    if let Some((kind, _)) = open.take() {
-                        out.push_str(close_tag(kind));
+                    if let Some((kind, by)) = open.take() {
+                        close_tag(context, kind, by, out);
                     }
                     if let Some(change @ (kind, _)) = run.change {
                         let wrap = context.revision(kind, Some(change.1));
@@ -2413,9 +2805,10 @@ fn box_xml(context: &mut Context<'_>, items: &[Item], relate: &mut dyn Relate, o
                     let mark = context.revision(kind, by);
                     out.insert_str(at, &format!("<{mark}/>"));
                 }
+                context.pending_run_format.pop();
                 context.run_sizes.pop();
-                if let Some((kind, _)) = open.take() {
-                    out.push_str(close_tag(kind));
+                if let Some((kind, by)) = open.take() {
+                    close_tag(context, kind, by, out);
                 }
                 out.push_str("</w:p>");
             }
@@ -2424,12 +2817,10 @@ fn box_xml(context: &mut Context<'_>, items: &[Item], relate: &mut dyn Relate, o
     }
 }
 
-/// The closing tag of a mark of `kind`.
-fn close_tag(kind: Kind) -> &'static str {
-    match kind {
-        Kind::Insert => "</w:ins>",
-        Kind::Delete => "</w:del>",
-    }
+/// Write the closing tag of a mark of `kind`. A box never opens a move
+/// range.
+fn close_tag(context: &Context<'_>, kind: Kind, by: u32, out: &mut String) {
+    element_close(context, kind, Some(by), out);
 }
 
 /// A `w:drawing` holding `picture` inline, embedded through `rel`, with
@@ -2456,14 +2847,141 @@ pub(crate) fn drawing_xml(picture: &Picture, rel: &str, id: u32, out: &mut Strin
     );
 }
 
+/// The runs of one comment paragraph. A tracked change the note carried
+/// is a `w:ins` or `w:del` of the comment's author. Braces that were
+/// already text stay text.
+/// `carried` holds the marks still open at the end of the paragraph
+/// before: a change that spans a comment's paragraph break reopens here,
+/// and the marks still open at this paragraph's end go on to the next.
+fn comment_text_runs(
+    context: &mut Context<'_>,
+    text: &str,
+    author: &str,
+    date: &str,
+    carried: &mut Vec<Kind>,
+) -> String {
+    let mut out = String::new();
+    let mut buf = String::new();
+    let mut open: Vec<Kind> = Vec::new();
+    for kind in std::mem::take(carried) {
+        open_comment_mark(context, &mut out, &mut open, kind, author, date);
+    }
+    let reopened = out.len();
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        // The writer escaped a stand-in that was the note's own text.
+        if c == super::critic::ESCAPE {
+            buf.extend(chars.next());
+            continue;
+        }
+        match super::critic::token_of(c) {
+            Some(super::critic::Token::InsertStart) => {
+                flush_comment_text(&mut buf, &mut out, open.last().copied());
+                open_comment_mark(context, &mut out, &mut open, Kind::Insert, author, date);
+            }
+            Some(super::critic::Token::DeleteStart)
+            | Some(super::critic::Token::SubstituteStart) => {
+                flush_comment_text(&mut buf, &mut out, open.last().copied());
+                open_comment_mark(context, &mut out, &mut open, Kind::Delete, author, date);
+            }
+            Some(super::critic::Token::SubstituteSeparator) => {
+                flush_comment_text(&mut buf, &mut out, open.last().copied());
+                close_comment_mark(&mut out, &mut open);
+                open_comment_mark(context, &mut out, &mut open, Kind::Insert, author, date);
+            }
+            Some(
+                super::critic::Token::InsertEnd
+                | super::critic::Token::DeleteEnd
+                | super::critic::Token::SubstituteEnd,
+            ) => {
+                flush_comment_text(&mut buf, &mut out, open.last().copied());
+                close_comment_mark(&mut out, &mut open);
+            }
+            _ => buf.push(c),
+        }
+    }
+    flush_comment_text(&mut buf, &mut out, open.last().copied());
+    carried.clone_from(&open);
+    if out.len() == reopened {
+        // Nothing but the reopened marks: no empty change in this one.
+        return String::new();
+    }
+    while !open.is_empty() {
+        close_comment_mark(&mut out, &mut open);
+    }
+    out
+}
+
+fn flush_comment_text(buf: &mut String, out: &mut String, open: Option<Kind>) {
+    if buf.is_empty() {
+        return;
+    }
+    let element = if open == Some(Kind::Delete) {
+        "w:delText"
+    } else {
+        "w:t"
+    };
+    let _ = write!(
+        out,
+        "<w:r><{element} xml:space=\"preserve\">{}</{element}></w:r>",
+        escape(buf)
+    );
+    buf.clear();
+}
+
+fn open_comment_mark(
+    context: &mut Context<'_>,
+    out: &mut String,
+    open: &mut Vec<Kind>,
+    kind: Kind,
+    author: &str,
+    date: &str,
+) {
+    let id = context.revision_id(None);
+    let name = match kind {
+        Kind::Insert => "w:ins",
+        Kind::Delete => "w:del",
+    };
+    let _ = write!(
+        out,
+        "<{name} w:id=\"{id}\" w:author=\"{}\"{}>",
+        escape(author),
+        legacy_date_attribute(date)
+    );
+    open.push(kind);
+}
+
+fn close_comment_mark(out: &mut String, open: &mut Vec<Kind>) {
+    match open.pop() {
+        Some(Kind::Insert) => out.push_str("</w:ins>"),
+        Some(Kind::Delete) => out.push_str("</w:del>"),
+        None => {}
+    }
+}
+
+fn comment_runs(
+    context: &mut Context<'_>,
+    text: &str,
+    author: &str,
+    date: &str,
+    carried: &mut Vec<Kind>,
+) -> String {
+    let runs = comment_text_runs(context, text, author, date, carried);
+    if runs.is_empty() {
+        "<w:r><w:t xml:space=\"preserve\"></w:t></w:r>".to_string()
+    } else {
+        runs
+    }
+}
+
 /// A comments part holding `comments`.
-pub(super) fn comments_part(context: &Context<'_>, comments: &[Comment]) -> String {
+pub(super) fn comments_part(context: &mut Context<'_>, comments: &[Comment]) -> String {
     let default_style = context
         .document
         .style_specs
         .iter()
-        .find(|s| s.default)
-        .map_or("Normal", |s| s.id.as_str());
+        .find(|spec| spec.default)
+        .map_or_else(|| "Normal".to_string(), |spec| spec.id.clone());
     let mut out = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
          <w:comments xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">",
@@ -2499,6 +3017,30 @@ pub(super) fn comments_part(context: &Context<'_>, comments: &[Comment]) -> Stri
                 );
             }
         }
+        let (author, date) = comment
+            .by
+            .as_ref()
+            .map(|(author, date)| (author.clone(), date.clone()))
+            .unwrap_or_else(|| (context.author.clone(), context.date.clone()));
+        let texts: Vec<&str> = comment
+            .paragraphs
+            .iter()
+            .map(|paragraph| paragraph.trim())
+            .collect();
+        let mut carried = Vec::new();
+        let first = comment_runs(
+            context,
+            texts.first().copied().unwrap_or(""),
+            &author,
+            &date,
+            &mut carried,
+        );
+        let later: Vec<String> = texts
+            .iter()
+            .skip(1)
+            .filter(|text| !text.is_empty())
+            .map(|text| comment_runs(context, text, &author, &date, &mut carried))
+            .collect();
         // Word's CommentText unless the `comments:` line names another;
         // the document's default style needs no `w:pStyle`.
         let style = comment
@@ -2506,26 +3048,33 @@ pub(super) fn comments_part(context: &Context<'_>, comments: &[Comment]) -> Stri
             .as_ref()
             .or(context.document.comment_style.as_ref())
             .map_or("CommentText", String::as_str);
-        let ppr = if style == default_style {
-            String::new()
-        } else {
-            format!("<w:pPr><w:pStyle w:val=\"{}\"/></w:pPr>", escape(style))
+        let ppr = |at: usize| {
+            let mut inner = String::new();
+            if style != default_style {
+                let _ = write!(inner, "<w:pStyle w:val=\"{}\"/>", escape(style));
+            }
+            inner.push_str(
+                &comment
+                    .spacing
+                    .get(at)
+                    .copied()
+                    .unwrap_or_default()
+                    .markup(),
+            );
+            if inner.is_empty() {
+                String::new()
+            } else {
+                format!("<w:pPr>{inner}</w:pPr>")
+            }
         };
-        let mut paragraphs = comment.paragraphs.iter().map(|p| p.trim());
-        let first = paragraphs.next().unwrap_or_default();
         let _ = write!(
             out,
-            "<w:p>{ppr}\
-             <w:r><w:rPr><w:rStyle w:val=\"CommentReference\"/></w:rPr><w:annotationRef/></w:r>\
-             <w:r><w:t xml:space=\"preserve\">{}</w:t></w:r></w:p>",
-            escape(first)
+            "<w:p>{}<w:r><w:rPr><w:rStyle w:val=\"CommentReference\"/></w:rPr><w:annotationRef/></w:r>{}</w:p>",
+            ppr(0),
+            first
         );
-        for paragraph in paragraphs.filter(|p| !p.is_empty()) {
-            let _ = write!(
-                out,
-                "<w:p>{ppr}<w:r><w:t xml:space=\"preserve\">{}</w:t></w:r></w:p>",
-                escape(paragraph)
-            );
+        for (at, runs) in later.iter().enumerate() {
+            let _ = write!(out, "<w:p>{}{}</w:p>", ppr(at + 1), runs);
         }
         out.push_str("</w:comment>");
     }
@@ -2867,30 +3416,35 @@ pub(crate) fn style_definition(id: &str) -> Option<String> {
     })
 }
 
-/// ` w:date="…"`, or nothing for an empty date: the attribute is optional,
-/// and a note the view gave no exact date (an author with several, the
-/// `authors:` table only spanning days) is written undated, never with an
-/// invented one.
-/// `section` with a `w:sectPrChange` that keeps its page as it is.
-fn with_section_change(section: &str, mark: &FormatMark) -> String {
-    let (Some(open), Some(close)) = (
-        section
-            .find("<w:sectPr")
-            .and_then(|at| section[at..].find('>').map(|end| at + end + 1)),
-        section.rfind("</w:sectPr>"),
-    ) else {
+/// The page elements of a `w:sectPr`, without its header and footer
+/// references: those stay on the live section.
+fn page_elements(section: &str) -> Option<String> {
+    let open = section
+        .find("<w:sectPr")
+        .and_then(|at| section[at..].find('>').map(|end| at + end + 1))?;
+    let close = section.rfind("</w:sectPr>")?;
+    if open > close || section[..open].ends_with("/>") {
+        return None;
+    }
+    let page = &section[open..close];
+    let mut elements = String::with_capacity(page.len());
+    for element in page.split_inclusive("/>") {
+        if !element.contains("<w:headerReference") && !element.contains("<w:footerReference") {
+            elements.push_str(element);
+        }
+    }
+    Some(elements)
+}
+
+/// `section` with a `w:sectPrChange`. `earlier` is the page the change
+/// keeps; without it the change keeps `section`'s own page.
+fn with_section_change(section: &str, earlier: Option<&str>, mark: &FormatMark) -> String {
+    let Some(close) = section.rfind("</w:sectPr>") else {
         return section.to_string();
     };
-    if open > close || section[..open].ends_with("/>") {
+    let Some(old) = page_elements(earlier.unwrap_or(section)) else {
         return section.to_string();
-    }
-    // The page alone: a section's headers are no part of its change.
-    let old: String = section[open..close]
-        .split_inclusive("/>")
-        .filter(|element| {
-            !element.contains("<w:headerReference") && !element.contains("<w:footerReference")
-        })
-        .collect();
+    };
     format!(
         "{}<w:sectPrChange w:id=\"{}\" w:author=\"{}\"{}><w:sectPr>{old}</w:sectPr></w:sectPrChange>{}",
         &section[..close],
@@ -2963,6 +3517,26 @@ fn cell_borders_at(
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
+
+    /// Whole character counts keep their zeros: `0ch` is a stated zero and
+    /// `10ch` is ten (#2133 review, Bugbot).
+    #[test]
+    fn char_units_keep_the_zeros_of_whole_counts() {
+        for (hundredths, want) in [
+            (0.0, "0ch"),
+            (100.0, "1ch"),
+            (1000.0, "10ch"),
+            (10000.0, "100ch"),
+            (150.0, "1.5ch"),
+            (1050.0, "10.5ch"),
+            (125.0, "1.25ch"),
+            (-200.0, "-2ch"),
+            (-1000.0, "-10ch"),
+        ] {
+            assert_eq!(char_units(hundredths), want, "{hundredths}");
+            assert_eq!(char_hundredths(want), Some(hundredths as i64), "{want}");
+        }
+    }
 
     #[test]
     fn a_run_splits_after_its_last_inner_space_else_before_its_last_character() {

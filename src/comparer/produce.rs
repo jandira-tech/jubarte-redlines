@@ -1394,9 +1394,7 @@ fn reconstruct_element(
         coalesce_recurse(dom, g, level + 1, settings, id_gen)
     };
     let ne = dom.new_element(aname.clone());
-    for (an, av) in dom.attributes(ancestor) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
+    dom.copy_attributes(ancestor, ne);
     // hoist property children (in declared order)
     if aname == W::pict() {
         for p in dom.elements(ancestor, Some(&crate::namespaces::VML::shapetype())) {

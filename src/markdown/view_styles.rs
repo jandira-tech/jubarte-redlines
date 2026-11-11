@@ -34,129 +34,164 @@
 use std::fmt::Write as _;
 
 use super::from_docx::Element;
-use super::xml::{FormatMark, escape};
+use super::xml::{FormatMark, StyleChangeKind, escape};
 
-/// `styles` with a tracked change on each holder the view's
-/// `style_changes:` names. A style's two tags name its `w:pPrChange` and
-/// `w:rPrChange` in document order; a single tag names both with their
-/// shared id, as Word writes them. `docDefaults` takes only a
-/// `w:rPrChange`. Each carries empty previous properties as the view names
-/// no payload. A holder the part has no style of is left out.
-pub(super) fn with_style_changes(styles: &str, changes: &[(String, Vec<FormatMark>)]) -> String {
+/// `styles` with one tracked change per property the view's
+/// `style_changes:` names. A paragraph tag writes `w:pPrChange` and a run
+/// tag writes `w:rPrChange`; the first tag of each kind wins, and an
+/// existing carrier of that kind is replaced. `docDefaults` and `other`
+/// are not written: the schema has no slot for them. Each written carrier
+/// holds empty previous properties, because the view names no payload. A
+/// holder the part has no style of is left out. When nothing is written
+/// the part's bytes stay as they were.
+pub(super) fn with_style_changes(
+    styles: &str,
+    changes: &[(String, Vec<(StyleChangeKind, FormatMark)>)],
+) -> String {
     let mut out = styles.to_string();
     for (holder, marks) in changes {
-        for (index, mark) in marks.iter().enumerate() {
-            let date = super::xml::date_attribute(&mark.date);
-            let id = mark
-                .id
-                .map_or_else(String::new, |id| format!(" w:id=\"{id}\""));
-            let change = |name: &str, inner: &str| {
-                format!(
-                    "<w:{name}Change{id} w:author=\"{}\"{date}><w:{inner}/></w:{name}Change>",
-                    escape(&mark.author)
-                )
-            };
-            if holder == "docDefaults" {
-                with_defaults_change(&mut out, &change("rPr", "rPr"));
-                continue;
+        if holder == "docDefaults" {
+            continue;
+        }
+        let paragraph = marks
+            .iter()
+            .find(|(kind, _)| *kind == StyleChangeKind::Paragraph)
+            .map(|(_, mark)| mark);
+        let run = marks
+            .iter()
+            .find(|(kind, _)| *kind == StyleChangeKind::Run)
+            .map(|(_, mark)| mark);
+        if paragraph.is_none() && run.is_none() {
+            continue;
+        }
+        let key = format!("w:styleId=\"{}\"", escape(holder));
+        let Some(at) = out.find(&key) else {
+            continue;
+        };
+        let Some(end) = out[at..].find("</w:style>").map(|i| at + i) else {
+            continue;
+        };
+        let mut block = out[at..end].to_string();
+        // The style's own `w:pPr` and `w:rPr`: the `w:rPr` a `w:pPr`
+        // holds is the paragraph mark's (`CT_ParaRPr`), and `CT_Style`
+        // puts the style's own after the `w:pPr`.
+        if let Some(mark) = paragraph {
+            place(&mut block, "pPr", &carrier(mark, "pPr"));
+        }
+        if let Some(mark) = run {
+            place(&mut block, "rPr", &carrier(mark, "rPr"));
+        }
+        out.replace_range(at..end, &block);
+    }
+    out
+}
+
+/// Warnings for the marks the writer drops: extra tags of one kind, an
+/// `other` tag, a legacy tag with no kind, and every `docDefaults` tag.
+pub(super) fn style_change_warnings(
+    changes: &[(String, Vec<(StyleChangeKind, FormatMark)>)],
+    legacy: &[(String, Vec<String>)],
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for (holder, tags) in legacy {
+        // The defaults are never written; their own warning below says so.
+        if tags.is_empty() || holder == "docDefaults" {
+            continue;
+        }
+        let verb = if tags.len() == 1 { "has" } else { "have" };
+        out.push(format!(
+            "style_changes: {holder}: {} {verb} no kind; written as rPr",
+            tags.join("; ")
+        ));
+    }
+    for (holder, marks) in changes {
+        if holder == "docDefaults" {
+            let count = marks.len();
+            if count == 1 {
+                out.push(
+                    "style_changes: docDefaults: the document defaults have no change slot; 1 change is not written"
+                        .to_string(),
+                );
+            } else if count > 1 {
+                out.push(format!(
+                    "style_changes: docDefaults: the document defaults have no change slot; {count} changes are not written"
+                ));
             }
-            let key = format!("w:styleId=\"{}\"", escape(holder));
-            let Some(at) = out.find(&key) else {
-                continue;
-            };
-            let Some(end) = out[at..].find("</w:style>").map(|i| at + i) else {
-                continue;
-            };
-            let mut block = out[at..end].to_string();
-            // The style's own `w:pPr` and `w:rPr`: the `w:rPr` a `w:pPr`
-            // holds is the paragraph mark's (`CT_ParaRPr`), and
-            // `CT_Style` puts the style's own after the `w:pPr`.
-            if marks.len() != 2 || index == 0 {
-                let change = change("pPr", "pPr");
-                match own_ppr(&block) {
-                    Some(ppr) if ppr.empty() => {
-                        block
-                            .replace_range(ppr.start..ppr.end, &format!("<w:pPr>{change}</w:pPr>"));
-                    }
-                    Some(ppr) => block.insert_str(ppr.at(), &change),
-                    // The style had no `w:pPr`: one takes the change,
-                    // where `CT_Style` puts it, before its `w:rPr`.
-                    None => {
-                        let at = own_rpr(&block).map_or(block.len(), |rpr| rpr.start);
-                        block.insert_str(at, &format!("<w:pPr>{change}</w:pPr>"));
-                    }
-                }
-            }
-            if marks.len() != 2 || index == 1 {
-                let change = change("rPr", "rPr");
-                match own_rpr(&block) {
-                    Some(rpr) if rpr.empty() => {
-                        block
-                            .replace_range(rpr.start..rpr.end, &format!("<w:rPr>{change}</w:rPr>"));
-                    }
-                    Some(rpr) => block.insert_str(rpr.at(), &change),
-                    None => block.push_str(&format!("<w:rPr>{change}</w:rPr>")),
-                }
-            }
-            out.replace_range(at..end, &block);
+            continue;
+        }
+        let paragraph = marks
+            .iter()
+            .filter(|(kind, _)| *kind == StyleChangeKind::Paragraph)
+            .count();
+        let run = marks
+            .iter()
+            .filter(|(kind, _)| *kind == StyleChangeKind::Run)
+            .count();
+        let other = marks
+            .iter()
+            .filter(|(kind, _)| *kind == StyleChangeKind::Other)
+            .count();
+        if paragraph > 1 {
+            out.push(format!(
+                "style_changes: {holder}: {paragraph} pPr changes for one slot; the rest are not written"
+            ));
+        }
+        if run > 1 {
+            out.push(format!(
+                "style_changes: {holder}: {run} rPr changes for one slot; the rest are not written"
+            ));
+        }
+        if other == 1 {
+            out.push(format!(
+                "style_changes: {holder}: 1 other change is not written"
+            ));
+        } else if other > 1 {
+            out.push(format!(
+                "style_changes: {holder}: {other} other changes are not written"
+            ));
         }
     }
     out
 }
 
-/// `carrier` (a `w:rPrChange`) last in the run defaults' `w:rPr`, making
-/// whatever of `w:docDefaults` / `w:rPrDefault` / `w:rPr` the part lacks
-/// where the schema puts it: `w:docDefaults` first in `w:styles`,
-/// `w:rPrDefault` first in it. A part with no `w:styles` takes nothing.
-fn with_defaults_change(out: &mut String, carrier: &str) {
-    let run = format!("<w:rPr>{carrier}</w:rPr>");
-    let default = format!("<w:rPrDefault>{run}</w:rPrDefault>");
-    let Some(defaults) = open_tag(out, "docDefaults", 0..out.len()) else {
-        if let Some(styles) = open_tag(out, "styles", 0..out.len()).filter(|t| !t.empty) {
-            out.insert_str(
-                styles.end,
-                &format!("<w:docDefaults>{default}</w:docDefaults>"),
+fn carrier(mark: &FormatMark, inner: &str) -> String {
+    let date = super::xml::date_attribute(&mark.date);
+    let id = mark
+        .id
+        .map_or_else(String::new, |id| format!(" w:id=\"{id}\""));
+    format!(
+        "<w:{inner}Change{id} w:author=\"{}\"{date}><w:{inner}/></w:{inner}Change>",
+        escape(&mark.author)
+    )
+}
+
+/// One carrier, last in the style's own property element. An existing
+/// direct carrier of that kind is replaced, nested closes and all. A
+/// missing `w:pPr` is created before the style's `w:rPr`.
+fn place(block: &mut String, property: &str, change: &str) {
+    match if property == "pPr" {
+        own_ppr(block)
+    } else {
+        own_rpr(block)
+    } {
+        Some(own) if own.empty() => {
+            block.replace_range(
+                own.start..own.end,
+                &format!("<w:{property}>{change}</w:{property}>"),
             );
         }
-        return;
-    };
-    if defaults.empty {
-        out.replace_range(
-            defaults.start..defaults.end,
-            &format!("<w:docDefaults>{default}</w:docDefaults>"),
-        );
-        return;
-    }
-    let Some(close) = out[defaults.end..]
-        .find("</w:docDefaults>")
-        .map(|at| defaults.end + at)
-    else {
-        return;
-    };
-    let Some(rpr_default) = open_tag(out, "rPrDefault", defaults.end..close) else {
-        out.insert_str(defaults.end, &default);
-        return;
-    };
-    if rpr_default.empty {
-        out.replace_range(rpr_default.start..rpr_default.end, &default);
-        return;
-    }
-    let Some(default_close) = out[rpr_default.end..close]
-        .find("</w:rPrDefault>")
-        .map(|at| rpr_default.end + at)
-    else {
-        return;
-    };
-    match open_tag(out, "rPr", rpr_default.end..default_close) {
-        Some(rpr) if rpr.empty => out.replace_range(rpr.start..rpr.end, &run),
-        // The last `</w:rPr>` in the default closes its own `w:rPr`: an
-        // earlier one closes a change's previous properties.
-        Some(rpr) => {
-            if let Some(at) = out[rpr.end..default_close].rfind("</w:rPr>") {
-                out.insert_str(rpr.end + at, carrier);
+        Some(own) => {
+            if let Some(span) = direct_child_span(block, &own, &format!("{property}Change")) {
+                block.replace_range(span, change);
+            } else if let Some(close) = own.close {
+                block.insert_str(close, change);
             }
         }
-        None => out.insert_str(rpr_default.end, &run),
+        None if property == "pPr" => {
+            let at = own_rpr(block).map_or(block.len(), |run| run.start);
+            block.insert_str(at, &format!("<w:pPr>{change}</w:pPr>"));
+        }
+        None => block.push_str(&format!("<w:rPr>{change}</w:rPr>")),
     }
 }
 
@@ -202,11 +237,6 @@ struct Own {
 }
 
 impl Own {
-    /// Where a change of this element goes.
-    fn at(&self) -> usize {
-        self.close.unwrap_or(self.start)
-    }
-
     /// Whether the change replaces the element rather than joining it.
     fn empty(&self) -> bool {
         self.close.is_none()
@@ -263,6 +293,40 @@ fn own_ppr(block: &str) -> Option<Own> {
 /// the style's (#1595 review).
 fn own_rpr(block: &str) -> Option<Own> {
     own(block, "rPr", own_ppr(block).map_or(0, |ppr| ppr.end))
+}
+
+/// The first direct child named `local` inside `own`, including a nested
+/// payload. A carrier inside that payload is not this child.
+fn direct_child_span(block: &str, own: &Own, local: &str) -> Option<std::ops::Range<usize>> {
+    let open_end = own.start + block[own.start..].find('>')? + 1;
+    let close = own.close?;
+    let mut at = open_end;
+    while at < close {
+        let rest = &block[at..close];
+        let Some(rel) = rest.find('<') else {
+            break;
+        };
+        let start = at + rel;
+        if block.as_bytes().get(start + 1) == Some(&b'/') {
+            break;
+        }
+        let tag_end = start + block[start..close].find('>')?;
+        let raw = &block[start + 1..tag_end];
+        let empty = raw.ends_with('/');
+        let token = raw.trim_end_matches('/').split_whitespace().next()?;
+        let name = token.rsplit(':').next().unwrap_or(token);
+        let element_end = if empty {
+            tag_end + 1
+        } else {
+            let close_at = close_at(block, name, tag_end + 1)?;
+            close_at + format!("</w:{name}>").len()
+        };
+        if name == local {
+            return Some(start..element_end);
+        }
+        at = element_end;
+    }
+    None
 }
 
 /// One style the legend describes.
@@ -1193,58 +1257,109 @@ mod tests {
             author: "Ana".to_string(),
             date: String::new(),
         };
-        with_style_changes(styles, &[("docDefaults".to_string(), vec![mark])])
+        with_style_changes(
+            styles,
+            &[(
+                "docDefaults".to_string(),
+                vec![(StyleChangeKind::Run, mark)],
+            )],
+        )
     }
 
-    const CARRIER: &str = "<w:rPrChange w:id=\"7\" w:author=\"Ana\"><w:rPr/></w:rPrChange>";
-
     #[test]
-    fn a_defaults_change_lands_in_the_defaults_wherever_they_are() {
-        // No docDefaults: the change makes one, first in the part (where
-        // CT_Styles puts it), never in another style's run properties.
-        let out = defaults_change(
+    fn a_defaults_change_leaves_the_defaults_unchanged() {
+        for styles in [
             "<w:styles xmlns:w=\"W\"><w:style w:styleId=\"A\"><w:rPr><w:b/></w:rPr></w:style></w:styles>",
-        );
-        assert_eq!(
-            out,
-            format!(
-                "<w:styles xmlns:w=\"W\"><w:docDefaults><w:rPrDefault><w:rPr>{CARRIER}</w:rPr>\
-                 </w:rPrDefault></w:docDefaults><w:style w:styleId=\"A\"><w:rPr><w:b/></w:rPr></w:style></w:styles>"
-            )
-        );
-        // A docDefaults with only paragraph defaults: rPrDefault goes
-        // first (CT_DocDefaults is rPrDefault, then pPrDefault).
-        let out = defaults_change(
             "<w:styles><w:docDefaults><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults></w:styles>",
-        );
-        assert_eq!(
-            out,
-            format!(
-                "<w:styles><w:docDefaults><w:rPrDefault><w:rPr>{CARRIER}</w:rPr></w:rPrDefault>\
-                 <w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults></w:styles>"
-            )
-        );
-        // An empty docDefaults element.
-        let out = defaults_change("<w:styles><w:docDefaults/></w:styles>");
-        assert_eq!(
-            out,
-            format!(
-                "<w:styles><w:docDefaults><w:rPrDefault><w:rPr>{CARRIER}</w:rPr></w:rPrDefault>\
-                 </w:docDefaults></w:styles>"
-            )
-        );
-        // An existing run default takes the change last in its rPr.
-        let out = defaults_change(
+            "<w:styles><w:docDefaults/></w:styles>",
             "<w:styles><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault>\
              </w:docDefaults><w:style w:styleId=\"A\"><w:rPr><w:b/></w:rPr></w:style></w:styles>",
+        ] {
+            assert_eq!(defaults_change(styles), styles);
+        }
+    }
+
+    #[test]
+    fn style_change_carrier_first_mark_of_each_kind_is_written() {
+        let styles = "<w:styles><w:style w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style></w:styles>";
+        let mark = |id: u32, author: &str| FormatMark {
+            id: Some(id),
+            author: author.to_string(),
+            date: String::new(),
+        };
+        let out = with_style_changes(
+            styles,
+            &[(
+                "Normal".to_string(),
+                vec![
+                    (StyleChangeKind::Paragraph, mark(7, "Ana")),
+                    (StyleChangeKind::Paragraph, mark(8, "Ana")),
+                    (StyleChangeKind::Paragraph, mark(9, "Bob")),
+                    (StyleChangeKind::Run, mark(3, "Ana")),
+                    (StyleChangeKind::Other, mark(4, "Ana")),
+                ],
+            )],
         );
-        assert_eq!(
-            out,
-            format!(
-                "<w:styles><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/>{CARRIER}</w:rPr>\
-                 </w:rPrDefault></w:docDefaults><w:style w:styleId=\"A\"><w:rPr><w:b/></w:rPr></w:style></w:styles>"
-            )
+        assert_eq!(out.matches("<w:pPrChange").count(), 1, "{out}");
+        assert_eq!(out.matches("<w:rPrChange").count(), 1, "{out}");
+        assert!(out.contains("w:id=\"7\""), "{out}");
+        assert!(out.contains("w:id=\"3\""), "{out}");
+        assert!(!out.contains("w:id=\"8\""), "{out}");
+        assert!(!out.contains("w:id=\"4\""), "{out}");
+        let ppr = out.find("<w:pPr>").expect("pPr");
+        let rpr = out.find("<w:rPr>").expect("rPr");
+        assert!(ppr < rpr, "{out}");
+    }
+
+    #[test]
+    fn style_change_carrier_replaces_a_nested_run_change() {
+        let styles = "<w:styles><w:style w:styleId=\"Normal\"><w:rPr><w:b/>\
+            <w:rPrChange w:id=\"1\" w:author=\"Old\"><w:rPr><w:i/></w:rPr></w:rPrChange>\
+            </w:rPr></w:style></w:styles>";
+        let out = with_style_changes(
+            styles,
+            &[(
+                "Normal".to_string(),
+                vec![(
+                    StyleChangeKind::Run,
+                    FormatMark {
+                        id: Some(9),
+                        author: "Ana".to_string(),
+                        date: String::new(),
+                    },
+                )],
+            )],
         );
+        assert_eq!(out.matches("<w:rPrChange").count(), 1, "{out}");
+        assert!(out.contains("w:id=\"9\""), "{out}");
+        assert!(out.contains("<w:b/>"), "{out}");
+        assert!(!out.contains("w:author=\"Old\""), "{out}");
+        assert!(!out.contains("<w:i/>"), "{out}");
+    }
+
+    #[test]
+    fn style_change_carrier_expands_an_empty_run_holder() {
+        let styles = "<w:styles><w:style w:styleId=\"Normal\"><w:rPr/></w:style></w:styles>";
+        let mark = FormatMark {
+            id: Some(4),
+            author: "Ana".to_string(),
+            date: String::new(),
+        };
+        let out = with_style_changes(
+            styles,
+            &[(
+                "Normal".to_string(),
+                vec![
+                    (StyleChangeKind::Run, mark.clone()),
+                    (StyleChangeKind::Paragraph, mark),
+                ],
+            )],
+        );
+        let ppr = out.find("<w:pPr>").expect("pPr");
+        let rpr = out.find("<w:rPr>").expect("rPr");
+        assert!(ppr < rpr, "{out}");
+        assert!(out.contains("<w:pPr><w:pPrChange"), "{out}");
+        assert!(out.contains("<w:rPr><w:rPrChange"), "{out}");
     }
 
     /// A style's `w:pPr` may hold the paragraph mark's own run properties
@@ -1262,7 +1377,16 @@ mod tests {
                       <w:pPr><w:keepNext/><w:rPr><w:i/></w:rPr></w:pPr>\
                       <w:rPr><w:sz w:val=\"32\"/></w:rPr></w:style></w:styles>";
         assert_eq!(
-            with_style_changes(styles, &[("Heading1".to_string(), vec![mark])]),
+            with_style_changes(
+                styles,
+                &[(
+                    "Heading1".to_string(),
+                    vec![
+                        (StyleChangeKind::Paragraph, mark.clone()),
+                        (StyleChangeKind::Run, mark),
+                    ],
+                )],
+            ),
             "<w:styles><w:style w:styleId=\"Heading1\"><w:name w:val=\"heading 1\"/>\
              <w:pPr><w:keepNext/><w:rPr><w:i/></w:rPr>\
              <w:pPrChange w:id=\"9\" w:author=\"Ana\"><w:pPr/></w:pPrChange></w:pPr>\

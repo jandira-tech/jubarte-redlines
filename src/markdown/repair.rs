@@ -60,6 +60,11 @@ pub(crate) enum RunKind {
     Code(String),
     /// `<br>`.
     Break,
+    /// `<sym font="…" char="…"/>`.
+    Symbol {
+        font: String,
+        value: String,
+    },
     Tab,
     /// A rendered page break: Markdown cannot re-emit one.
     PageBreak,
@@ -212,6 +217,10 @@ fn runs_of(document: &Document, accept: Option<bool>) -> Vec<InlineRun> {
                     continue;
                 }
                 let kind = match &run.content {
+                    Content::Symbol { font, value } => RunKind::Symbol {
+                        font: font.clone(),
+                        value: value.clone(),
+                    },
                     Content::Text(text) if run.format.code => RunKind::Code(text.clone()),
                     Content::Text(text) => RunKind::Text(text.clone()),
                     Content::Break => RunKind::Break,
@@ -781,6 +790,14 @@ fn emit_runs(
             RunKind::Break => {
                 adjust(&mut open_levels, &levels(run.format, flavour), &mut out);
                 out.push_str("<br>");
+            }
+            RunKind::Symbol { font, value } => {
+                adjust(&mut open_levels, &levels(run.format, flavour), &mut out);
+                out.push_str(&format!(
+                    "<sym font=\"{}\" char=\"{}\"/>",
+                    xml::escape(font),
+                    xml::escape(value)
+                ));
             }
             RunKind::Tab => {
                 adjust(&mut open_levels, &levels(run.format, flavour), &mut out);

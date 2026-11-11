@@ -93,7 +93,7 @@ const STAND_INS: [(Token, char); 20] = [
 ];
 
 /// Put before a stand-in character (or itself) that was in the source.
-const ESCAPE: char = '\u{F0000}';
+pub(super) const ESCAPE: char = '\u{F0000}';
 
 /// A span's opening delimiter, its closing one, and the separator a
 /// substitution needs between them.
@@ -117,7 +117,7 @@ const SPANS: [(&str, &str, Option<&str>, Token, Token); 5] = [
     ("{>>", "<<}", None, Token::CommentStart, Token::CommentEnd),
 ];
 
-fn stand_in(token: Token) -> char {
+pub(super) fn stand_in(token: Token) -> char {
     STAND_INS
         .iter()
         .find(|(t, _)| *t == token)
@@ -125,11 +125,11 @@ fn stand_in(token: Token) -> char {
         .unwrap_or(ESCAPE)
 }
 
-fn token_of(c: char) -> Option<Token> {
+pub(super) fn token_of(c: char) -> Option<Token> {
     STAND_INS.iter().find(|(_, s)| *s == c).map(|(t, _)| *t)
 }
 
-fn push_escaped(out: &mut String, text: &str) {
+pub(super) fn push_escaped(out: &mut String, text: &str) {
     for c in text.chars() {
         if c == ESCAPE || token_of(c).is_some() {
             out.push(ESCAPE);
@@ -307,7 +307,9 @@ pub(super) fn legacy_attribution_error(source: &str) -> Option<String> {
         let Some((payload, _)) = source[at + 3..].split_once("<<}") else {
             continue;
         };
-        let legacy_part = |part: &str| {
+        // The handle form: numbered ids (`r1`, `r1+2`, `header1.r3`) and
+        // one tag.
+        let tag_part = |part: &str| {
             let id = part.split(' ').next().unwrap_or("");
             let (story, id) = id
                 .rsplit_once('.')
@@ -325,11 +327,41 @@ pub(super) fn legacy_attribution_error(source: &str) -> Option<String> {
                 })
                 && super::view_notes::revision_tags(part).is_some_and(|tags| tags.len() == 1)
         };
-        if !payload.split(" on ").all(legacy_part) {
+        // The plain form, in the whole grammar the writer prints: any id it
+        // accepts (`noid`, the colon id) and a substitution's `; ` sides.
+        let plain_part = |part: &str| super::view_notes::plain_revision(part).is_some();
+        let chain = payload
+            .split(" on ")
+            .all(|part| tag_part(part) || plain_part(part));
+        let sides = !chain && payload.contains("; ") && payload.split("; ").all(plain_part);
+        if !chain && !sides {
             continue;
         }
         let old = &source[at..at + 3 + payload.len() + 3];
-        let new = format!("{{{}}}", payload.replace(" on ", " re "));
+        // A plain part is spelled as the writer spells it: in a nested note
+        // its author's parentheses go percent-wise, so the date's stay the
+        // only bare ones and the chain reads back.
+        let new = if chain {
+            let parts: Vec<&str> = payload.split(" on ").collect();
+            let nested = parts.len() > 1;
+            let spelled = parts
+                .iter()
+                .map(|&part| match () {
+                    _ if tag_part(part) => part.to_string(),
+                    _ if nested => super::from_docx::critic::spell_re_in_author(
+                        &super::from_docx::critic::escaped_author(part),
+                    ),
+                    _ => super::from_docx::critic::spell_re_in_author(part),
+                })
+                .collect::<Vec<_>>();
+            format!("{{{}}}", spelled.join(" re "))
+        } else {
+            let spelled = payload
+                .split("; ")
+                .map(super::from_docx::critic::spell_re_in_author)
+                .collect::<Vec<_>>();
+            format!("{{{}}}", spelled.join("; "))
+        };
         let line = source[..at].bytes().filter(|&c| c == b'\n').count() + 1;
         return Some(format!(
             "line {line}: old attribution `{old}` is no longer supported; write `{new}`. A comment with that text is written `{{>>c1 @X: r1 @ASR<<}}`."
@@ -1349,6 +1381,48 @@ fn encode_range(
     }
 }
 
+/// A note the tag parsers accept, including one whose parts carry a move
+/// clause (` move`, or ` move` and one range name). The returned text is
+/// the brace's own note: the clause stays for the writer to read back.
+fn recognized_note(note: &str) -> bool {
+    fn parses(text: &str) -> bool {
+        super::view_notes::revision_tags(text).is_some()
+            || super::view_notes::nested_revision_tags(text).is_some()
+            || super::view_notes::plain_revisions(text).is_some()
+            || super::view_notes::nested_plain_revisions(text).is_some()
+    }
+    if parses(note) {
+        return true;
+    }
+    note.contains(" move") && parses(&note_without_move(note))
+}
+
+/// `note` with a trailing move clause removed from each part.
+fn note_without_move(note: &str) -> String {
+    note.split(" re ")
+        .map(|segment| {
+            segment
+                .split("; ")
+                .map(part_without_move)
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+        .collect::<Vec<_>>()
+        .join(" re ")
+}
+
+/// One part without ` move` or ` move {name}` when `{name}` is one token.
+fn part_without_move(part: &str) -> String {
+    let part = part.trim();
+    if let Some((body, name)) = part.rsplit_once(" move ") {
+        let name = name.trim();
+        if !name.is_empty() && !name.contains(char::is_whitespace) {
+            return body.trim_end().to_string();
+        }
+    }
+    part.strip_suffix(" move").unwrap_or(part).to_string()
+}
+
 /// A complete attribution brace and its byte length. Comments never use
 /// this grammar; callers also check the preceding closer or pilcrow.
 pub(crate) fn attribution_tag(text: &str) -> Option<(&str, usize)> {
@@ -1363,11 +1437,7 @@ pub(crate) fn attribution_tag(text: &str) -> Option<(&str, usize)> {
     }
     let end = end.0;
     let note = &after[..end];
-    (super::view_notes::revision_tags(note).is_some()
-        || super::view_notes::nested_revision_tags(note).is_some()
-        || super::view_notes::plain_revisions(note).is_some()
-        || super::view_notes::nested_plain_revisions(note).is_some())
-    .then_some((note, end + 2))
+    recognized_note(note).then_some((note, end + 2))
 }
 
 /// Complete attribution payloads in rendered text, paired with their mark.
@@ -1436,13 +1506,128 @@ pub(crate) fn without_attributions(source: &str) -> String {
     out
 }
 
+/// One tracked change inside a comment: its marks, the inner source, the
+/// substitution separator when the change has one, and the byte after
+/// the closer.
+struct CommentMark {
+    start: Token,
+    end: Token,
+    inner: std::ops::Range<usize>,
+    split: Option<(usize, usize)>,
+    after: usize,
+}
+
+/// A complete tracked change at `at` inside a comment, when `at` is its
+/// opener and the closer lies in `until`. A backslash keeps the braces
+/// as text. The outer span still treats the comment as one opaque run.
+fn comment_change(source: &str, at: usize, until: usize) -> Option<CommentMark> {
+    if escaped(source, at) {
+        return None;
+    }
+    let rest = source.get(at..until)?;
+    let (open, close, separator, start, end) = if rest.starts_with("{++") {
+        ("{++", "++}", None, Token::InsertStart, Token::InsertEnd)
+    } else if rest.starts_with("{--") {
+        ("{--", "--}", None, Token::DeleteStart, Token::DeleteEnd)
+    } else if rest.starts_with("{~~") {
+        (
+            "{~~",
+            "~~}",
+            Some("~>"),
+            Token::SubstituteStart,
+            Token::SubstituteEnd,
+        )
+    } else {
+        return None;
+    };
+    let body = at + open.len();
+    let close_at = comment_closer(source, open, close, body, until)?;
+    let split = match separator {
+        Some(separator) => {
+            let mid = comment_separator(source, open, close, separator, body, close_at)?;
+            Some((mid, separator.len()))
+        }
+        None => None,
+    };
+    Some(CommentMark {
+        start,
+        end,
+        inner: body..close_at,
+        split,
+        after: close_at + close.len(),
+    })
+}
+
+/// The closer of `open` that brings its depth back to zero.
+fn comment_closer(
+    source: &str,
+    open: &str,
+    close: &str,
+    from: usize,
+    until: usize,
+) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut at = from;
+    while at < until {
+        if !escaped(source, at) && source[at..].starts_with(open) {
+            depth += 1;
+            at += open.len();
+            continue;
+        }
+        if !escaped(source, at) && source[at..].starts_with(close) {
+            depth -= 1;
+            if depth == 0 {
+                return Some(at);
+            }
+            at += close.len();
+            continue;
+        }
+        at += source[at..].chars().next()?.len_utf8();
+    }
+    None
+}
+
+/// The substitution separator at depth one, between `from` and `until`.
+fn comment_separator(
+    source: &str,
+    open: &str,
+    close: &str,
+    separator: &str,
+    from: usize,
+    until: usize,
+) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut at = from;
+    while at < until {
+        if !escaped(source, at) && source[at..].starts_with(open) {
+            depth += 1;
+            at += open.len();
+            continue;
+        }
+        if !escaped(source, at) && source[at..].starts_with(close) {
+            depth -= 1;
+            if depth == 0 {
+                return None;
+            }
+            at += close.len();
+            continue;
+        }
+        if depth == 1 && !escaped(source, at) && source[at..].starts_with(separator) {
+            return Some(at);
+        }
+        at += source[at..].chars().next()?.len_utf8();
+    }
+    None
+}
+
 /// A comment's body: text, with every run of blank or whitespace-only
 /// lines as one [`Token::CommentBreak`] stand-in so the comment's
 /// paragraphs survive the Markdown parser without splitting the
 /// paragraph the comment is anchored on. A single newline stays text,
 /// and a character reference naming a stand-in stays literal as in any
 /// other text. A comment anchored in a code block unwinds the reader's
-/// fence escapes in its body, as the fence's own text does.
+/// fence escapes in its body, as the fence's own text does. A tracked
+/// change in the body is that change's own mark.
 fn encode_comment(
     source: &str,
     closers: &Closers<'_>,
@@ -1477,6 +1662,26 @@ fn encode_comment(
                 at += 1 + white;
                 continue;
             }
+        }
+        if let Some(CommentMark {
+            start,
+            end,
+            inner,
+            split,
+            after,
+        }) = comment_change(source, at, body.end)
+        {
+            out.push(stand_in(start));
+            if let Some((mid, width)) = split {
+                encode_comment(source, closers, inner.start..mid, out);
+                out.push(stand_in(Token::SubstituteSeparator));
+                encode_comment(source, closers, mid + width..inner.end, out);
+            } else {
+                encode_comment(source, closers, inner, out);
+            }
+            out.push(stand_in(end));
+            at = after;
+            continue;
         }
         let c = source[at..body.end].chars().next().unwrap_or_default();
         push_escaped(out, &source[at..at + c.len_utf8()]);
@@ -2800,11 +3005,28 @@ pub(super) fn resolve_with_policy(
             }
         }
         Piece::Token(token) => {
-            if remove_deleted_lines && matches!(token, Token::DeleteStart | Token::SubstituteStart)
+            // A deletion inside a note is the note's own: it removes no
+            // document text.
+            if remove_deleted_lines
+                && state != In::Comment
+                && matches!(token, Token::DeleteStart | Token::SubstituteStart)
             {
                 removed_text = true;
             }
             let opened = match token {
+                // A mark inside a comment belongs to the note. It does not
+                // open a change of the document around the note.
+                Token::InsertStart
+                | Token::InsertEnd
+                | Token::DeleteStart
+                | Token::DeleteEnd
+                | Token::SubstituteStart
+                | Token::SubstituteSeparator
+                | Token::SubstituteEnd
+                    if state == In::Comment =>
+                {
+                    None
+                }
                 // A highlight run or a field is Markdown, not a change: it
                 // stays.
                 Token::MarkStart
@@ -3296,8 +3518,8 @@ mod tests {
                 "<SubstituteEnd>",
             ]
         );
-        // No change in a change, nor in a highlight in a change, nor any
-        // span in a comment.
+        // No change in a change, nor in a highlight in a change. A
+        // comment's own insertion is a mark of the note.
         assert_eq!(
             pieces(&encode("{++a {--b--}++}")),
             ["<InsertStart>", "a {--b--}", "<InsertEnd>"]
@@ -3314,8 +3536,23 @@ mod tests {
         );
         assert_eq!(
             pieces(&encode("{>>a {++b++}<<}")),
-            ["<CommentStart>", "a {++b++}", "<CommentEnd>"]
+            [
+                "<CommentStart>",
+                "a ",
+                "<InsertStart>",
+                "b",
+                "<InsertEnd>",
+                "<CommentEnd>"
+            ]
         );
+        assert_eq!(resolve("{>>a {++b++}<<}", true), "");
+        // cursor 4498793195: a deletion inside a note is the note's own,
+        // so accepted clauses treat its line as they treat the plain note.
+        assert_eq!(
+            accept_clauses("one\n\n{>>see {--x--}<<}\n\ntwo"),
+            accept_clauses("one\n\n{>>see x<<}\n\ntwo")
+        );
+        assert_eq!(resolve("{==x==}{>>see {++this++}<<}", true), "x");
         // A comment inside a change does not end it.
         let text = "x{++a{>>n<<}b++}{~~c~>{==d==}{>>m<<}e~~}";
         assert_eq!(resolve(text, true), "xabde");

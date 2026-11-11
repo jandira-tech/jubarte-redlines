@@ -306,19 +306,22 @@ impl Pending {
     }
 }
 
-/// Drawing roots directly owned by this story. Stop at drawings and at a
-/// different text-box owner, rather than collecting descendants of descendants.
+/// Drawing roots directly owned by this story. A plain inline picture
+/// ([`is_plain_inline`]) stays where it sits, in the story's payload;
+/// every other drawing (a nested box, a chart, an object, an anchored
+/// picture) is owned. Stop at drawings and at a different text-box owner,
+/// rather than collecting descendants of descendants.
 pub(crate) fn owned_drawings(story: &Element) -> Vec<&Element> {
     fn walk<'a>(node: &'a Element, out: &mut Vec<&'a Element>) {
         for child in node.elements() {
             if child.is("txbxContent") {
                 continue;
             }
-            if matches!(child.local(), "drawing" | "pict" | "object")
-                || (child.is("AlternateContent") && capturable_alternate(child))
-            {
+            let drawing = matches!(child.local(), "drawing" | "pict" | "object")
+                || (child.is("AlternateContent") && capturable_alternate(child));
+            if drawing && !is_plain_inline(child) {
                 out.push(child);
-            } else {
+            } else if !drawing {
                 walk(child, out);
             }
         }
@@ -340,6 +343,50 @@ fn shape_shell(element: &Element) -> String {
     let document = dom.parse_xdocument(&serialize(&element));
     let root = dom.elements(document, None)[0];
     crate::comparer::textbox::shell(&mut dom, root)
+}
+
+/// Markup inside every text box. A shell comparison empties that markup, so
+/// two frames that differ only there still need this to stay unpaired.
+/// Per-copy identity is left out: Word numbers a Fallback copy's revisions
+/// and shapes on from the Choice's and writes paragraph ids only in the
+/// Choice. Relationship ids (`r:id`, `r:embed`) stay, since they pick content.
+fn box_payload(element: &Element) -> String {
+    fn anonymous(element: &mut Element) {
+        let namespaces = std::sync::Arc::clone(&element.namespaces);
+        let relationship = |name: &str| {
+            name.split_once(':')
+                .and_then(|(prefix, _)| namespaces.get(prefix))
+                .is_some_and(|uri| REL_NS.contains(&uri.as_str()))
+        };
+        element.attrs.retain(|(name, _)| {
+            let per_copy = matches!(
+                local(name),
+                "paraId" | "textId" | "anchorId" | "editId" | "spid"
+            ) || (local(name) == "id" && !relationship(name));
+            !per_copy
+        });
+        for child in &mut element.children {
+            if let Node::Element(child) = child {
+                anonymous(child);
+            }
+        }
+    }
+    fn walk(element: &Element, out: &mut String) {
+        if element.is("txbxContent") {
+            for child in element.elements() {
+                let mut child = child.clone();
+                anonymous(&mut child);
+                out.push_str(&serialize(&child));
+            }
+            return;
+        }
+        for child in element.elements() {
+            walk(child, out);
+        }
+    }
+    let mut out = String::new();
+    walk(element, &mut out);
+    out
 }
 
 /// Pair nearest-owned copies by box ordinal and drawing order. A Fallback
@@ -367,7 +414,9 @@ fn nested_pairs(element: &Element) -> Option<Vec<(&Element, &Element, bool)>> {
                 } else {
                     shown
                 };
-                if shape_shell(expected) != shape_shell(copy) {
+                if shape_shell(expected) != shape_shell(copy)
+                    || box_payload(expected) != box_payload(copy)
+                {
                     return None;
                 }
                 pairs.push((shown, copy, true));
@@ -2034,6 +2083,47 @@ mod tests {
 
     fn element(xml: &str) -> Element {
         parse_xml(xml.as_bytes()).unwrap()
+    }
+
+    /// A text box story owns every nested drawing but a plain inline
+    /// picture, which stays in the box's payload: an anchored picture, a
+    /// chart, an object or a nested box is still a nested token.
+    #[test]
+    fn a_box_owns_its_nested_drawings_but_a_plain_inline_picture() {
+        let story = element(
+            r#"<w:txbxContent><w:p><w:r><w:drawing><wp:inline><a:blip/></wp:inline></w:drawing></w:r><w:r><w:drawing><wp:anchor><a:blip/></wp:anchor></w:drawing></w:r><w:r><w:drawing><wp:inline><c:chart/></wp:inline></w:drawing></w:r><w:r><w:object><v:shape/></w:object></w:r></w:p></w:txbxContent>"#,
+        );
+        let owned: Vec<String> = owned_drawings(&story).into_iter().map(serialize).collect();
+        assert_eq!(owned.len(), 3, "{owned:?}");
+        assert!(
+            owned.iter().all(|xml| !xml.contains("<wp:inline><a:blip")),
+            "{owned:?}"
+        );
+    }
+
+    #[test]
+    fn box_payloads_ignore_per_copy_ids_but_not_content() {
+        // Word numbers a Fallback copy's revisions on (w:ins 287 vs 289) and
+        // writes paragraph ids only in the Choice (tests/corpus file_70.docx).
+        let choice = element(
+            r#"<wps:txbx><w:txbxContent><w:p w14:paraId="1A2B" w14:textId="3C4D"><w:ins w:id="287" w:author="A"><w:r><w:t>x</w:t></w:r></w:ins><w:r><a:blip r:embed="rId5"/></w:r></w:p></w:txbxContent></wps:txbx>"#,
+        );
+        let fallback = element(
+            r#"<wps:txbx><w:txbxContent><w:p><w:ins w:id="289" w:author="A"><w:r><w:t>x</w:t></w:r></w:ins><w:r><a:blip r:embed="rId5"/></w:r></w:p></w:txbxContent></wps:txbx>"#,
+        );
+        assert_eq!(box_payload(&choice), box_payload(&fallback));
+        let other_picture = element(&serialize(&fallback).replace("rId5", "rId6"));
+        assert_ne!(box_payload(&choice), box_payload(&other_picture));
+        let other_text = element(&serialize(&fallback).replace(">x<", ">y<"));
+        assert_ne!(box_payload(&choice), box_payload(&other_text));
+        // A VML picture's `r:id` picks its image: it is content, not identity.
+        let vml = |id: &str| {
+            element(&format!(
+                r#"<wps:txbx xmlns:r="{}"><w:txbxContent><w:p><w:r><w:pict><v:shape id="s{id}"><v:imagedata r:id="{id}"/></v:shape></w:pict></w:r></w:p></w:txbxContent></wps:txbx>"#,
+                REL_NS[0]
+            ))
+        };
+        assert_ne!(box_payload(&vml("rId5")), box_payload(&vml("rId6")));
     }
 
     #[test]

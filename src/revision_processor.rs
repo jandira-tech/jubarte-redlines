@@ -173,9 +173,7 @@ pub fn accept_move_from_move_to_transform(dom: &mut Dom, node: NodeId) -> Vec<No
         };
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
+    dom.copy_attributes(node, ne);
     for c in dom.nodes(node) {
         for tn in accept_move_from_move_to_transform(dom, c) {
             dom.add(ne, tn);
@@ -359,9 +357,7 @@ fn try_accept_cell_merge(dom: &mut Dom, node: NodeId, name: &XName) -> Option<Ve
 fn try_accept_hyperlink(dom: &mut Dom, node: NodeId, name: &XName) -> Option<Vec<NodeId>> {
     if name == &W::hyperlink() {
         let ne = dom.new_element(name.clone());
-        for (an, av) in dom.attributes(node) {
-            dom.set_attribute_value(ne, &an, Some(&av));
-        }
+        dom.copy_attributes(node, ne);
         for c in dom.nodes(node) {
             for tn in accept_all_other_revisions_transform(dom, c) {
                 dom.add(ne, tn);
@@ -470,9 +466,7 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
 
     // Identity clone with transformed children.
     let ne = dom.new_element(name.clone());
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
+    dom.copy_attributes(node, ne);
     for c in dom.nodes(node) {
         for tn in accept_all_other_revisions_transform(dom, c) {
             dom.add(ne, tn);
@@ -635,9 +629,7 @@ fn reverse_revisions_transform(dom: &mut Dom, node: NodeId) -> NodeId {
 fn rebuild_named(dom: &mut Dom, new_name: XName, src: NodeId, keep_attrs: bool) -> NodeId {
     let ne = dom.new_element(new_name);
     if keep_attrs {
-        for (an, av) in dom.attributes(src) {
-            dom.set_attribute_value(ne, &an, Some(&av));
-        }
+        dom.copy_attributes(src, ne);
     }
     for c in dom.nodes(src) {
         let t = reverse_revisions_transform(dom, c);
@@ -847,9 +839,7 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
 
     // Identity: rebuild with attributes + transformed children.
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
+    dom.copy_attributes(node, ne);
     let mut kept_block = false;
     for c in dom.nodes(node) {
         if clear_blocks && dom.name(c).is_some_and(|n| n == W::p() || n == W::tbl()) {
@@ -1134,24 +1124,33 @@ pub fn iterate_block_content_elements(dom: &Dom, element: NodeId) -> Vec<BlockCo
 /// `w:comment`: the C# pipeline never visits `comments.xml`, but Word's
 /// Accept/Reject All does, and a deleted or inserted paragraph mark inside
 /// a comment merges the comment's own paragraphs — never across the
-/// `w:comment` boundary.
-fn block_level_content_containers() -> [XName; 8] {
+/// `w:comment` boundary. Text boxes are not in this list: both names live
+/// in [`crate::inspect::text_box_names`] (#1318).
+fn block_level_content_containers() -> [XName; 7] {
     [
         W::body(),
         W::tc(),
-        W::txbx_content(),
         W::hdr(),
         W::ftr(),
         W::endnote(),
         W::footnote(),
-        W::name("comment"),
+        W::comment(),
     ]
+}
+
+/// `w:txbxContent` or the Strict `wne:txbxContent`.
+fn is_text_box(name: &XName) -> bool {
+    crate::inspect::text_box_names().contains(name)
+}
+
+fn is_block_level_content_container(name: &XName) -> bool {
+    block_level_content_containers().contains(name) || is_text_box(name)
 }
 
 /// A.0 — `GetParagraphInfo` (:2917) + `InitializeParagraphInfo` (:2890): for a
 /// child of a block-level content container, `this` = the first
-/// descendant-or-self in {`w:p`, `w:tc`, `w:txbxContent`} — nulled when that
-/// first hit is a `tc`/`txbxContent` (means "no own paragraph") — and
+/// descendant-or-self in {`w:p`, `w:tc`, either text-box name} — nulled when
+/// that first hit is a `tc` or a text box (means "no own paragraph") — and
 /// `previous` = the previous element sibling (content element of any kind).
 ///
 /// # Panics
@@ -1163,17 +1162,20 @@ pub fn get_paragraph_info(dom: &Dom, content_element: NodeId) -> BlockContentInf
         .expect("GetParagraphInfo called for element without parent");
     let parent_name = dom.name(parent);
     assert!(
-        parent_name.is_some_and(|n| block_level_content_containers().contains(&n)),
+        parent_name.is_some_and(|n| is_block_level_content_container(&n)),
         "GetParagraphInfo called for element that is not child of content container"
     );
 
-    let (p, tc, txbx) = (W::p(), W::tc(), W::txbx_content());
+    let (p, tc) = (W::p(), W::tc());
     let mut paragraph = dom
         .descendants_and_self(content_element, None)
         .into_iter()
-        .find(|&e| dom.name(e).is_some_and(|n| n == p || n == tc || n == txbx));
+        .find(|&e| {
+            dom.name(e)
+                .is_some_and(|n| n == p || n == tc || is_text_box(&n))
+        });
     if let Some(hit) = paragraph
-        && dom.name(hit).is_some_and(|n| n == tc || n == txbx)
+        && dom.name(hit).is_some_and(|n| n == tc || is_text_box(&n))
     {
         paragraph = None;
     }
@@ -1212,9 +1214,7 @@ fn transform_instr_text_to_del_instr_text(dom: &mut Dom, node: NodeId) -> NodeId
     let name = dom.name(node).unwrap();
     if name == W::instr_text() {
         let ne = dom.new_element(W::del_instr_text());
-        for (an, av) in dom.attributes(node) {
-            dom.set_attribute_value(ne, &an, Some(&av));
-        }
+        dom.copy_attributes(node, ne);
         // C# takes element.Nodes() as-is (no recursion below instrText).
         for c in dom.nodes(node) {
             let cc = dom.clone_subtree(c);
@@ -1223,9 +1223,7 @@ fn transform_instr_text_to_del_instr_text(dom: &mut Dom, node: NodeId) -> NodeId
         return ne;
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
+    dom.copy_attributes(node, ne);
     for c in dom.nodes(node) {
         let tc = transform_instr_text_to_del_instr_text(dom, c);
         dom.add(ne, tc);
@@ -1276,9 +1274,7 @@ pub fn fix_up_deleted_or_inserted_field_codes_transform(dom: &mut Dom, node: Nod
         let g_len = grouped.len();
 
         let new_paragraph = dom.new_element(W::p());
-        for (an, av) in dom.attributes(node) {
-            dom.set_attribute_value(new_paragraph, &an, Some(&av));
-        }
+        dom.copy_attributes(node, new_paragraph);
         for (i, (key, group)) in grouped.iter().enumerate() {
             match key {
                 1..=3 => {
@@ -1318,9 +1314,7 @@ pub fn fix_up_deleted_or_inserted_field_codes_transform(dom: &mut Dom, node: Nod
         return new_paragraph;
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
+    dom.copy_attributes(node, ne);
     for c in dom.nodes(node) {
         let tc = fix_up_deleted_or_inserted_field_codes_transform(dom, c);
         dom.add(ne, tc);
@@ -1498,9 +1492,7 @@ fn normalize_orphan_moves_transform(
         dom.name(node).unwrap()
     };
     let ne = dom.new_element(new_name);
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
+    dom.copy_attributes(node, ne);
     for c in dom.nodes(node) {
         if let Some(tc) = normalize_orphan_moves_transform(dom, c, to_ins, to_del, drop_markers) {
             dom.add(ne, tc);
@@ -1533,10 +1525,33 @@ pub fn accept_move_from_ranges(dom: &mut Dom, document: NodeId) -> NodeId {
 /// prepass uses the same deletion set before wrappers/anchors are hoisted,
 /// so range-only moved characters count as deleted just like wrapped ones.
 fn move_from_range_deleted_elements(dom: &Dom, document: NodeId) -> HashSet<NodeId> {
-    use std::collections::{HashMap, HashSet};
+    elements_inside_matched_ranges(
+        dom,
+        document,
+        &W::move_from_range_start(),
+        &W::move_from_range_end(),
+    )
+}
 
-    let mfrs = W::move_from_range_start();
-    let mfre = W::move_from_range_end();
+/// Elements wholly inside a matched custom-XML move-from range. Accept
+/// deletes those elements; the annotation prepass has to count them deleted
+/// before that transform runs.
+fn custom_xml_move_from_deleted_elements(dom: &Dom, document: NodeId) -> HashSet<NodeId> {
+    elements_inside_matched_ranges(
+        dom,
+        document,
+        &W::name("customXmlMoveFromRangeStart"),
+        &W::name("customXmlMoveFromRangeEnd"),
+    )
+}
+
+fn elements_inside_matched_ranges(
+    dom: &Dom,
+    document: NodeId,
+    start: &XName,
+    end: &XName,
+) -> HashSet<NodeId> {
+    use std::collections::{HashMap, HashSet};
 
     let mut start_tags_in_range: Vec<NodeId> = Vec::new();
     let mut end_tags_in_range: Vec<NodeId> = Vec::new();
@@ -1545,7 +1560,7 @@ fn move_from_range_deleted_elements(dom: &Dom, document: NodeId) -> HashSet<Node
 
     for tag in descendant_and_self_tags(dom, document) {
         let name = dom.name(tag.element).unwrap();
-        if name == mfrs {
+        if &name == start {
             let id = dom
                 .attribute(tag.element, &W::id())
                 .unwrap_or("")
@@ -1553,7 +1568,7 @@ fn move_from_range_deleted_elements(dom: &Dom, document: NodeId) -> HashSet<Node
             potential.insert(id, (Vec::new(), Vec::new()));
             continue;
         }
-        if name == mfre {
+        if &name == end {
             let id = dom.attribute(tag.element, &W::id()).unwrap_or("");
             if let Some((starts, ends)) = potential.remove(id) {
                 start_tags_in_range.extend(starts);
@@ -1636,9 +1651,7 @@ fn accept_move_from_ranges_transform(
         return None;
     }
     let ne = dom.new_element(dom.name(node).unwrap());
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
+    dom.copy_attributes(node, ne);
     for c in dom.nodes(node) {
         if let Some(tc) = accept_move_from_ranges_transform(dom, c, to_delete) {
             dom.add(ne, tc);
@@ -1672,9 +1685,7 @@ pub fn collapse_paragraph_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> 
         return keep.into_iter().map(|e| dom.clone_subtree(e)).collect();
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
+    dom.copy_attributes(node, ne);
     for c in dom.nodes(node) {
         for tc in collapse_paragraph_transform(dom, c) {
             dom.add(ne, tc);
@@ -1700,9 +1711,7 @@ pub fn coalesque_paragraph_end_tags_in_move_from_transform(
     let name = dom.name(node).unwrap();
     if name == W::p() {
         let np = dom.new_element(W::p());
-        for (an, av) in dom.attributes(node) {
-            dom.set_attribute_value(np, &an, Some(&av));
-        }
+        dom.copy_attributes(node, np);
         for e in dom.elements(node, None) {
             let ce = dom.clone_subtree(e);
             dom.add(np, ce);
@@ -1715,9 +1724,7 @@ pub fn coalesque_paragraph_end_tags_in_move_from_transform(
         return np;
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
+    dom.copy_attributes(node, ne);
     for c in dom.nodes(node) {
         let tc = coalesque_paragraph_end_tags_in_move_from_transform(dom, c, group);
         dom.add(ne, tc);
@@ -1750,7 +1757,7 @@ pub fn accept_paragraph_end_tags_in_move_from_transform(dom: &mut Dom, node: Nod
         return dom.clone_subtree(node);
     }
     let name = dom.name(node).unwrap();
-    if block_level_content_containers().contains(&name) {
+    if is_block_level_content_container(&name) {
         let mfrs = W::move_from_range_start();
         let mfre = W::move_from_range_end();
         let mark_in_open_range = |dom: &Dom, p: NodeId| {
@@ -1787,9 +1794,7 @@ pub fn accept_paragraph_end_tags_in_move_from_transform(dom: &mut Dom, node: Nod
             // as-is (C# attaches the original elements to a new parent, which
             // XLinq clones; descendants are NOT re-transformed here).
             let ne = dom.new_element(name);
-            for (an, av) in dom.attributes(node) {
-                dom.set_attribute_value(ne, &an, Some(&av));
-            }
+            dom.copy_attributes(node, ne);
             for (key, group) in grouped {
                 if !key {
                     for e in group {
@@ -1809,9 +1814,7 @@ pub fn accept_paragraph_end_tags_in_move_from_transform(dom: &mut Dom, node: Nod
         // FAITHFUL-BUG: in-range groups exist → plain recursive rebuild, no
         // coalescing.
         let ne = dom.new_element(name);
-        for (an, av) in dom.attributes(node) {
-            dom.set_attribute_value(ne, &an, Some(&av));
-        }
+        dom.copy_attributes(node, ne);
         for c in dom.nodes(node) {
             let tc = accept_paragraph_end_tags_in_move_from_transform(dom, c);
             dom.add(ne, tc);
@@ -1819,9 +1822,7 @@ pub fn accept_paragraph_end_tags_in_move_from_transform(dom: &mut Dom, node: Nod
         return ne;
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
+    dom.copy_attributes(node, ne);
     for c in dom.nodes(node) {
         let tc = accept_paragraph_end_tags_in_move_from_transform(dom, c);
         dom.add(ne, tc);
@@ -1991,9 +1992,7 @@ fn accept_deleted_and_moved_from_content_controls_transform(
         return vec![];
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
+    dom.copy_attributes(node, ne);
     for c in dom.nodes(node) {
         for tc in
             accept_deleted_and_moved_from_content_controls_transform(dom, c, to_collapse, to_delete)
@@ -2103,9 +2102,7 @@ fn collapse_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
         return vec![];
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
+    dom.copy_attributes(node, ne);
     for c in dom.nodes(node) {
         for tc in collapse_transform(dom, c) {
             dom.add(ne, tc);
@@ -2219,11 +2216,9 @@ fn accept_paragraph_marks_with_owners(
         return dom.clone_subtree(node);
     }
     let name = dom.name(node).unwrap();
-    if !block_level_content_containers().contains(&name) {
+    if !is_block_level_content_container(&name) {
         let ne = dom.new_element(name);
-        for (an, av) in dom.attributes(node) {
-            dom.set_attribute_value(ne, &an, Some(&av));
-        }
+        dom.copy_attributes(node, ne);
         for c in dom.nodes(node) {
             let tc = accept_paragraph_marks_with_owners(dom, c, paragraph_owners);
             dom.add(ne, tc);
@@ -2389,9 +2384,7 @@ fn accept_paragraph_marks_with_owners(
                 let this = z.0.this_block_content_element.unwrap();
                 let rebuilt_name = dom.name(this).unwrap();
                 let re = dom.new_element(rebuilt_name);
-                for (an, av) in dom.attributes(this) {
-                    dom.set_attribute_value(re, &an, Some(&av));
-                }
+                dom.copy_attributes(this, re);
                 let held = held_marks.get(&this).copied();
                 if let Some(next) = held
                     && let Some(ppr) = held_mark_properties(dom, next)
@@ -2414,9 +2407,7 @@ fn accept_paragraph_marks_with_owners(
     }
 
     let ne = dom.new_element(name.clone());
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
+    dom.copy_attributes(node, ne);
     for e in dom.elements(node, Some(&W::tc_pr())) {
         let ce = dom.clone_subtree(e);
         dom.add(ne, ce);
@@ -2579,14 +2570,14 @@ fn annotate_paragraph_content_with_id(dom: &mut Dom, element: NodeId) {
     }
 }
 
-/// Descendants of `element` in document order, not descending INTO elements
-/// named `trim` (the `DescendantsTrimmed` helper the annotators use).
-fn descendants_trimmed(dom: &Dom, element: NodeId, trim: &XName) -> Vec<NodeId> {
+/// Descendants of `element` in document order, not descending into a text
+/// box (`w:txbxContent` or Strict `wne:txbxContent`).
+fn descendants_trimmed(dom: &Dom, element: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
     let mut stack: Vec<NodeId> = dom.elements(element, None).into_iter().rev().collect();
     while let Some(e) = stack.pop() {
         out.push(e);
-        if dom.name(e).as_ref() != Some(trim) {
+        if dom.name(e).is_none_or(|name| !is_text_box(&name)) {
             for c in dom.elements(e, None).into_iter().rev() {
                 stack.push(c);
             }
@@ -2597,13 +2588,12 @@ fn descendants_trimmed(dom: &Dom, element: NodeId, trim: &XName) -> Vec<NodeId> 
 
 /// A.5b — `AnnotateContentControlsWithRunIds` (:1945): give every descendant
 /// `w:sdt` a `pt:RunIds` (comma-joined `pt:UniqueId`s of its runs, trimmed at
-/// `w:txbxContent`) and its own `pt:UniqueId` (in place).
+/// either text-box name) and its own `pt:UniqueId` (in place).
 pub fn annotate_content_controls_with_run_ids(dom: &mut Dom, element: NodeId) {
     let unique_id = PT::unique_id();
     let run_ids_name = PT::run_ids();
-    let txbx = W::txbx_content();
     for (sdt_id, e) in (0..).zip(dom.descendants(element, Some(&W::sdt()))) {
-        let ids: Vec<String> = descendants_trimmed(dom, e, &txbx)
+        let ids: Vec<String> = descendants_trimmed(dom, e)
             .into_iter()
             .filter(|&d2| dom.name(d2) == Some(W::r()))
             .filter_map(|r| dom.attribute(r, &unique_id).map(str::to_string))
@@ -2823,9 +2813,7 @@ fn add_content_controls_with_owners(
                     .any(|node| from_after(dom, node))
             });
             let emptied = dom.new_element(sdt.clone());
-            for (an, av) in dom.attributes(cc) {
-                dom.set_attribute_value(emptied, &an, Some(&av));
-            }
+            dom.copy_attributes(cc, emptied);
             let props: Vec<NodeId> = dom
                 .elements(cc, None)
                 .into_iter()
@@ -3054,9 +3042,7 @@ fn add_content_controls_with_owners(
             // ordered by Order_sdt — not from a control holding the merged
             // paragraph.
             let new_cc = dom.new_element(dom.name(cc).unwrap());
-            for (an, av) in dom.attributes(cc) {
-                dom.set_attribute_value(new_cc, &an, Some(&av));
-            }
+            dom.copy_attributes(cc, new_cc);
             let mut cc_children = dom.elements(cc, None);
             cc_children.sort_by_key(|&e| order_sdt(&dom.name(e).unwrap()));
             for e in cc_children {
@@ -3080,9 +3066,7 @@ fn add_content_controls_with_owners(
             dom.remove(c);
         }
         let new_cc = dom.new_element(dom.name(cc).unwrap());
-        for (an, av) in dom.attributes(cc) {
-            dom.set_attribute_value(new_cc, &an, Some(&av));
-        }
+        dom.copy_attributes(cc, new_cc);
         let sdt_content = dom.new_element(W::sdt_content());
         for &e in &in_range {
             dom.add(sdt_content, e); // detached → moved, like the C#
@@ -3274,9 +3258,7 @@ fn remove_rows_left_empty_by_move_from_inner(dom: &mut Dom, node: NodeId) -> Opt
     }
     let had_rows = name == W::tbl() && dom.element(node, &W::tr()).is_some();
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
+    dom.copy_attributes(node, ne);
     for c in dom.nodes(node) {
         if let Some(tc) = remove_rows_left_empty_by_move_from_inner(dom, c) {
             dom.add(ne, tc);
@@ -3342,9 +3324,7 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
     let name = dom.name(node).unwrap();
     if name != W::tr() {
         let ne = dom.new_element(name);
-        for (an, av) in dom.attributes(node) {
-            dom.set_attribute_value(ne, &an, Some(&av));
-        }
+        dom.copy_attributes(node, ne);
         for c in dom.nodes(node) {
             let tc = accept_deleted_cells_transform(dom, c);
             dom.add(ne, tc);
@@ -3362,12 +3342,13 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         let cell_after = dom
             .nodes_after_self(e)
             .into_iter()
-            .find(|&s| dom.name(s) == Some(tc_name.clone()));
+            .find(|&s| dom.name(s).as_ref() == Some(&tc_name));
         let cell_after_is_deleted = cell_after.is_some_and(|ca| has_cell_del(dom, ca));
-        if dom.name(e) == Some(tc_name.clone()) && (cell_after_is_deleted || has_cell_del(dom, e)) {
+        if dom.name(e).as_ref() == Some(&tc_name) && (cell_after_is_deleted || has_cell_del(dom, e))
+        {
             let anchor = std::iter::once(e)
                 .chain(content_elements_before_self(dom, e))
-                .find(|&z| dom.name(z) == Some(tc_name.clone()) && !has_cell_del(dom, z));
+                .find(|&z| dom.name(z).as_ref() == Some(&tc_name) && !has_cell_del(dom, z));
             return (true, anchor);
         }
         (false, Some(e))
@@ -3375,9 +3356,7 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
     let grouped = crate::util::group_adjacent(children, |&e| key_of(dom, e));
 
     let tr = dom.new_element(W::tr());
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(tr, &an, Some(&av));
-    }
+    dom.copy_attributes(node, tr);
     for ((is_deleted, _anchor), group) in grouped {
         if !is_deleted {
             for e in group {
@@ -3409,7 +3388,7 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         let rest: Vec<NodeId> = dom
             .elements(current_tc_pr, None)
             .into_iter()
-            .filter(|&e| dom.name(e) != Some(grid_span_name.clone()))
+            .filter(|&e| dom.name(e).as_ref() != Some(&grid_span_name))
             .collect();
         for e in rest {
             tcpr_kids.push(dom.clone_subtree(e));
@@ -3425,7 +3404,7 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         let body_kids: Vec<NodeId> = dom
             .elements(first, None)
             .into_iter()
-            .filter(|&e| dom.name(e) != Some(tcpr_name.clone()))
+            .filter(|&e| dom.name(e).as_ref() != Some(&tcpr_name))
             .collect();
         for e in body_kids {
             let c = dom.clone_subtree(e);
@@ -3702,9 +3681,7 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
     let tbl_name = W::tbl();
     if dom.element(node, &tbl_name).is_none() {
         let ne = dom.new_element(name);
-        for (an, av) in dom.attributes(node) {
-            dom.set_attribute_value(ne, &an, Some(&av));
-        }
+        dom.copy_attributes(node, ne);
         for c in dom.nodes(node) {
             let tc = merge_adjacent_tables(dom, c, mode);
             dom.add(ne, tc);
@@ -3716,9 +3693,7 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
     let grouped = crate::util::group_adjacent(children, |&e| table_merge_key(dom, e, mode));
 
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
+    dom.copy_attributes(node, ne);
     for (key, group) in grouped {
         if key.is_empty() || group.len() == 1 {
             for e in group {
@@ -3776,9 +3751,7 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
             let fixed = fix_widths(dom, tbl);
             for tr in wrapped_children(dom, fixed, &W::tr()) {
                 let new_row = dom.new_element(W::tr());
-                for (an, av) in dom.attributes(tr) {
-                    dom.set_attribute_value(new_row, &an, Some(&av));
-                }
+                dom.copy_attributes(tr, new_row);
                 if !own_ex.is_empty() {
                     let ex = row_tbl_pr_ex(dom, tr, &own_ex);
                     dom.add(new_row, ex);
@@ -4068,6 +4041,123 @@ fn mark_emptied_controls(dom: &mut Dom, root: NodeId) {
 
 // ─────────────── A.10 — the full AcceptRevisionsForPart pipeline ────────────
 
+/// The `w:del` or `w:moveFrom` that holds `node`, when accept will remove it.
+pub(crate) fn accept_deleted(dom: &Dom, node: NodeId) -> Option<NodeId> {
+    let mut cur = dom.parent(node);
+    while let Some(ancestor) = cur {
+        if dom.name_is(ancestor, &W::del()) || dom.name_is(ancestor, &W::move_from()) {
+            return Some(ancestor);
+        }
+        cur = dom.parent(ancestor);
+    }
+    None
+}
+
+/// Spans whose field characters accept removes: the deletion that holds the
+/// `begin` and the one that holds the matching `end`.
+fn deleted_field_spans(dom: &Dom, root: NodeId) -> Vec<(NodeId, NodeId)> {
+    let mut stack: Vec<(NodeId, bool)> = Vec::new();
+    let mut spans = Vec::new();
+    dom.for_each_descendant_element(root, Some(&W::fld_char()), |fld| {
+        let deleted = accept_deleted(dom, fld);
+        match dom.attribute(fld, &W::fld_char_type()) {
+            Some("begin") => stack.push((deleted.unwrap_or(fld), deleted.is_some())),
+            Some("end") => {
+                if let Some((begin, true)) = stack.pop()
+                    && let Some(end) = deleted
+                {
+                    spans.push((begin, end));
+                }
+            }
+            _ => {}
+        }
+    });
+    spans
+}
+
+/// Accept drops the result of a field whose begin and end are both
+/// tracked-deleted. Those characters may be two deletions with the result
+/// between them; Word removes the result with the field (#1285). A result
+/// already inside the same deletion needs nothing: accept removes it.
+///
+/// The result is marked deleted here, before the comment, bookmark and
+/// permission prepasses, so its ranges settle as in any other deletion: a
+/// range wholly inside it goes (or is rescued), one that reaches past it
+/// keeps its surviving characters and both ends. Range markers stay where
+/// they are; only content moves into a `w:del` (an insertion becomes one).
+///
+/// The begin and end must share a parent. A field whose result crosses a
+/// paragraph keeps its result, as before #1285: what Word does with the
+/// paragraph marks inside it is not yet probed.
+fn delete_deleted_field_results(dom: &mut Dom, root: NodeId) {
+    for (begin_del, end_del) in deleted_field_spans(dom, root) {
+        if begin_del == end_del {
+            continue;
+        }
+        let Some(parent) = dom.parent(begin_del) else {
+            continue;
+        };
+        if dom.parent(end_del) != Some(parent) {
+            continue;
+        }
+        // Collected before the loop below moves them into new wrappers.
+        let mut between = Vec::new();
+        let mut inside = false;
+        for i in 0..dom.child_count(parent) {
+            let child = dom.child_at(parent, i);
+            if child == end_del {
+                break;
+            }
+            if inside && dom.is_element(child) {
+                between.push(child);
+            } else if child == begin_del {
+                inside = true;
+            }
+        }
+        let attributes = dom.attributes(begin_del);
+        for child in between {
+            if is_range_marker(dom, child)
+                || dom.name_is(child, &W::del())
+                || dom.name_is(child, &W::move_from())
+            {
+                continue;
+            }
+            if dom.name_is(child, &W::ins()) {
+                dom.set_name(child, W::del());
+                continue;
+            }
+            let del = dom.new_element(W::del());
+            for (name, value) in &attributes {
+                dom.set_attribute_value(del, name, Some(value));
+            }
+            dom.add_before_self(child, del);
+            dom.remove(child);
+            dom.add(del, child);
+        }
+    }
+}
+
+/// A range or proofing marker: it holds no character of its own.
+fn is_range_marker(dom: &Dom, node: NodeId) -> bool {
+    dom.name(node).is_some_and(|name| {
+        name.namespace_name() == W::URI
+            && matches!(
+                name.local_name(),
+                "bookmarkStart"
+                    | "bookmarkEnd"
+                    | "commentRangeStart"
+                    | "commentRangeEnd"
+                    | "permStart"
+                    | "permEnd"
+                    | "moveFromRangeStart"
+                    | "moveFromRangeEnd"
+                    | "moveToRangeStart"
+                    | "moveToRangeEnd"
+                    | "proofErr"
+            )
+    })
+}
+
 /// A.10 — `AcceptRevisionsForPart` (:1314) at content scope: the exact
 /// 15-step transform order. `contains_move_from` is captured AFTER the
 /// field-code fixup but BEFORE AcceptMoveFromMoveTo consumes the `w:moveFrom`
@@ -4106,6 +4196,9 @@ fn accept_content(
         // content on Accept (#1243), which is A.2's own doing, and A.10
         // strips every leftover marker afterwards.
         let e = normalize_orphan_moves(dom, e, OrphanMovePass::AcceptElements);
+        // #1285: a field whose begin and end are both deleted takes its
+        // result with it, ranges settled like any deletion's.
+        delete_deleted_field_results(dom, e);
         if keep_comments {
             kept.extend(comments::keep_wholly_deleted_comments(dom, e));
         }
@@ -4200,7 +4293,7 @@ fn carry_kept_revisions(dom: &mut Dom, live: NodeId, reverted: NodeId, first: bo
 /// (`w:p`, `w:tbl`, `w:sdt`, `w:customXml`) an empty paragraph (#1223).
 fn ensure_comment_paragraphs(dom: &mut Dom, root: NodeId) {
     let block = [W::p(), W::tbl(), W::sdt(), W::custom_xml()];
-    for comment in dom.elements(root, Some(&W::name("comment"))) {
+    for comment in dom.elements(root, Some(&W::comment())) {
         if !dom
             .elements(comment, None)
             .into_iter()
@@ -4223,9 +4316,7 @@ fn accept_revisions_for_styles_transform(dom: &mut Dom, node: NodeId) -> Option<
         return None;
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
+    dom.copy_attributes(node, ne);
     for c in dom.nodes(node) {
         if let Some(tc) = accept_revisions_for_styles_transform(dom, c) {
             dom.add(ne, tc);
@@ -4256,9 +4347,7 @@ fn reject_revisions_for_styles_transform(dom: &mut Dom, node: NodeId) -> Option<
         return inner.and_then(|i| reject_revisions_for_styles_transform(dom, i));
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
+    dom.copy_attributes(node, ne);
     for c in dom.nodes(node) {
         if let Some(tc) = reject_revisions_for_styles_transform(dom, c) {
             dom.add(ne, tc);
@@ -4556,7 +4645,7 @@ fn resolve_with_comments(
         });
     }
     let stories = story_parts(&parts);
-    let removed_comments = comments::prune_orphan_comments(pkg, &stories);
+    let removed_comments = comments::prune_orphan_comments(pkg, &stories, comments.as_deref());
     notes::prune_orphan_notes(pkg, &stories);
     let tidied: Vec<String> = stories
         .into_iter()

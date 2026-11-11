@@ -486,18 +486,21 @@ fn story_of(dom: &Dom, n: NodeId) -> Option<NodeId> {
         .find(|&a| STORIES.contains(&local(dom, a).as_str()))
 }
 
-/// `D` (deleted), `I` (inserted) or `-`, from the nearest revision container in
-/// `n`'s own story.
+/// `D` (deleted), `I` (inserted) or `-`. A deletion in `n`'s own story wins,
+/// even through an insertion or a move destination, as validate's repair
+/// (`under_deletion`) reads it. Otherwise an insertion or move destination
+/// counts.
 fn state(dom: &Dom, n: NodeId) -> char {
+    let mut inserted = false;
     for a in dom.ancestors(n, None) {
         match local(dom, a).as_str() {
             "del" | "moveFrom" => return 'D',
-            "ins" | "moveTo" => return 'I',
-            s if STORIES.contains(&s) => return '-',
+            "ins" | "moveTo" => inserted = true,
+            s if STORIES.contains(&s) => break,
             _ => {}
         }
     }
-    '-'
+    if inserted { 'I' } else { '-' }
 }
 
 /// The deletion around a text box's anchor, in the story that holds it.
@@ -1082,8 +1085,8 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
             }
             // Only `ins`/`del` count as interleaving: Word's measured
             // reject-all misreading (#1134, 2026-10-17) alternates the two. A
-            // move between two same-kind revisions is unmeasured, so it
-            // reports as nested.
+            // move between two same-kind revisions is its own `move-nested`
+            // kind: Word opens it (#1395), but its reading is unmeasured.
             "ins" | "del"
                 if dom
                     .ancestors(n, None)
@@ -1091,14 +1094,28 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                     .take_while(|&a| !STORIES.contains(&local(dom, a).as_str()))
                     .any(|a| local(dom, a) == name) =>
             {
-                let alternating = dom
-                    .ancestors(n, None)
-                    .into_iter()
-                    .take_while(|&a| {
-                        !STORIES.contains(&local(dom, a).as_str()) && local(dom, a) != name
-                    })
-                    .any(|a| matches!(local(dom, a).as_str(), "ins" | "del"));
-                let relation = if alternating { "interleaved" } else { "nested" };
+                // One walk up to the outer same-kind revision (or the story).
+                let (mut interleaved, mut moved) = (false, false);
+                let mut current = dom.parent(n);
+                while let Some(a) = current {
+                    let a_local = local(dom, a);
+                    if STORIES.contains(&a_local.as_str()) || a_local == name {
+                        break;
+                    }
+                    match a_local.as_str() {
+                        "ins" | "del" => interleaved = true,
+                        "moveFrom" | "moveTo" => moved = true,
+                        _ => {}
+                    }
+                    current = dom.parent(a);
+                }
+                let relation = if interleaved {
+                    "interleaved"
+                } else if moved {
+                    "move-nested"
+                } else {
+                    "nested"
+                };
                 f.add_at(
                     &format!("{name}-{relation}-in-{name}"),
                     part,
@@ -2781,7 +2798,10 @@ pub fn findings(docx: &[u8]) -> Result<Vec<crate::validate::Finding>, String> {
                 format!("{kind} in '{part}': {detail}")
             };
             let mut finding = crate::validate::Finding::new(&code, part, place, message);
-            if code == "NESTED_SAME_REVISION" {
+            if kind.contains("move-nested") {
+                finding.message.push_str("; Word opens it");
+            }
+            if code == "NESTED_SAME_REVISION" && !kind.contains("move-nested") {
                 if matches!(kind.as_str(), "ins-nested-in-ins" | "del-nested-in-del") {
                     finding.severity = "info".to_string();
                     finding
@@ -2828,7 +2848,9 @@ fn finding_code(kind: &str) -> String {
         "ins-nested-in-ins"
         | "del-nested-in-del"
         | "ins-interleaved-in-ins"
-        | "del-interleaved-in-del" => "NESTED_SAME_REVISION",
+        | "del-interleaved-in-del"
+        | "ins-move-nested-in-ins"
+        | "del-move-nested-in-del" => "NESTED_SAME_REVISION",
         "body-sectPr-not-last" => "SECTPR_NOT_LAST",
         k if k.starts_with("bookmark-in-") && k.ends_with("-control") => {
             "BOOKMARK_IN_SINGLE_VALUE_CONTROL"

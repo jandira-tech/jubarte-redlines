@@ -12,7 +12,7 @@
 //! ([`font_report_json`]). The bundled catalogue itself is internal.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::{self, Write as _};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -924,7 +924,7 @@ pub(crate) struct Face<'a> {
     /// own (redline 0006f790: 21% of samples in `ShapePlan::new`).
     plans: Mutex<HashMap<PlanKey, Arc<rustybuzz::ShapePlan>>>,
     /// Shaped text in font units by (text, kern); see `shaped_units`.
-    shaped: Mutex<HashMap<(String, bool), ShapedUnits>>,
+    shaped: Mutex<BoundedCache<(String, bool), ShapedUnits>>,
 }
 
 /// Glyph ids and x advances in font units.
@@ -1084,7 +1084,10 @@ impl<'a> Face<'a> {
             bytes,
             buzz,
             plans: Mutex::new(HashMap::new()),
-            shaped: Mutex::new(HashMap::new()),
+            shaped: Mutex::new(BoundedCache::new(
+                MAX_SHAPED_CACHE_BYTES,
+                shaped_payload_bytes,
+            )),
             pdf_name,
             upem,
             descent,
@@ -1361,7 +1364,10 @@ impl<'a> Face<'a> {
         let units: ShapedUnits = glyphs.into();
         if let Ok(mut cache) = self.shaped.lock() {
             // A long-lived caller (Python / WASM) converts many documents
-            // through one face; keep the memory bounded.
+            // through one face. The entry count still clears past 50_000,
+            // and the glyph payloads stay inside the byte budget. The
+            // greatest key is the one that goes. This cache belongs to the
+            // face, so it ends when that face's bytes do.
             if cache.len() > 50_000 {
                 cache.clear();
             }
@@ -2244,7 +2250,14 @@ fn sorted_dir_listing(dir: &Path) -> Arc<Vec<PathBuf>> {
     if let Some(hit) = CACHE.lock().ok().and_then(|c| c.get(dir).cloned()) {
         return hit;
     }
-    let mut paths: Vec<PathBuf> = fs::read_dir(dir)
+    let read = fs::read_dir(dir);
+    // Permission can be granted later without a new directory mtime
+    // (macOS privacy, or chmod). Caching the empty denial would hide the
+    // fonts for the rest of the process (#2051).
+    if matches!(&read, Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied) {
+        return Arc::new(Vec::new());
+    }
+    let mut paths: Vec<PathBuf> = read
         .map(|entries| entries.flatten().map(|e| e.path()).collect())
         .unwrap_or_default();
     paths.sort();
@@ -3036,13 +3049,101 @@ fn is_cjk_name_char(c: char) -> bool {
 
 type SharedFaces = Vec<((bool, bool), Arc<[u8]>)>;
 
+/// Face bytes the process cache will hold. A larger face is not stored.
+/// Past this, the greatest key is dropped until the next face fits.
+const MAX_FACE_CACHE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Glyph payloads kept on one face. The entry-count clear still applies.
+/// A larger shaped entry is not stored.
+const MAX_SHAPED_CACHE_BYTES: usize = 4 * 1024 * 1024;
+
+fn shared_payload(faces: &SharedFaces) -> usize {
+    faces
+        .iter()
+        .fold(0usize, |sum, (_, bytes)| sum.saturating_add(bytes.len()))
+}
+
+fn shaped_payload_bytes(units: &ShapedUnits) -> usize {
+    units
+        .len()
+        .saturating_mul(std::mem::size_of::<(u16, i32, u32)>())
+}
+
+fn face_cache() -> &'static Mutex<BoundedCache<String, SharedFaces>> {
+    static CACHE: Mutex<BoundedCache<String, SharedFaces>> =
+        Mutex::new(BoundedCache::new(MAX_FACE_CACHE_BYTES, shared_payload));
+    &CACHE
+}
+
+/// A map whose values' bytes stay inside `max`. It keeps the running
+/// total, so a store costs a lookup and not a walk over every entry. Past
+/// the budget the greatest key goes first, so what stays does not depend
+/// on hash order.
+struct BoundedCache<K, V> {
+    map: BTreeMap<K, V>,
+    bytes: usize,
+    max: usize,
+    size: fn(&V) -> usize,
+}
+
+impl<K: Ord, V> BoundedCache<K, V> {
+    const fn new(max: usize, size: fn(&V) -> usize) -> Self {
+        Self {
+            map: BTreeMap::new(),
+            bytes: 0,
+            max,
+            size,
+        }
+    }
+
+    fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.map.get(key)
+    }
+
+    fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    fn clear(&mut self) {
+        self.map.clear();
+        self.bytes = 0;
+    }
+
+    /// Store `value` under `key`, replacing what the key held. The
+    /// greatest keys go until it fits. A value larger than the whole
+    /// budget is not stored, and the key is then absent.
+    fn insert(&mut self, key: K, value: V) {
+        if let Some(old) = self.map.remove(&key) {
+            self.bytes = self.bytes.saturating_sub((self.size)(&old));
+        }
+        let add = (self.size)(&value);
+        if add > self.max {
+            return;
+        }
+        while self.bytes.saturating_add(add) > self.max {
+            let Some((_, gone)) = self.map.pop_last() else {
+                break;
+            };
+            self.bytes = self.bytes.saturating_sub((self.size)(&gone));
+        }
+        self.bytes = self.bytes.saturating_add(add);
+        self.map.insert(key, value);
+    }
+}
+
 /// Installed-face lookups, cached for the process: a long-lived caller
 /// (the Python and WASM bindings) would otherwise re-read 10-20 MB font
-/// collections for every conversion.
+/// collections for every conversion. The cache holds at most
+/// [`MAX_FACE_CACHE_BYTES`] of those bytes. A face that would pass the
+/// budget drops the greatest key until it fits. A face larger than the
+/// budget is returned and not stored. A caller that does not use this
+/// cache is not limited by it.
 fn cached_faces(key: &str, load: impl FnOnce() -> Vec<((bool, bool), Vec<u8>)>) -> SharedFaces {
-    static CACHE: LazyLock<Mutex<HashMap<String, SharedFaces>>> =
-        LazyLock::new(|| Mutex::new(HashMap::new()));
-    if let Ok(cache) = CACHE.lock()
+    if let Ok(cache) = face_cache().lock()
         && let Some(faces) = cache.get(key)
     {
         return faces.clone();
@@ -3051,7 +3152,11 @@ fn cached_faces(key: &str, load: impl FnOnce() -> Vec<((bool, bool), Vec<u8>)>) 
         .into_iter()
         .map(|(style, bytes)| (style, Arc::from(bytes)))
         .collect();
-    if let Ok(mut cache) = CACHE.lock() {
+    let add = shared_payload(&faces);
+    if add > MAX_FACE_CACHE_BYTES {
+        return faces;
+    }
+    if let Ok(mut cache) = face_cache().lock() {
         cache.insert(key.to_string(), faces.clone());
     }
     faces
@@ -3107,9 +3212,15 @@ fn font_index_path() -> Option<PathBuf> {
     }
 }
 
-/// Bump the `1` when the family search's matching rules change; the crate
-/// version drops the answers another release recorded.
-const FONT_INDEX_HEADER: &str = concat!("jubarte-font-index\t2\t", env!("CARGO_PKG_VERSION"));
+/// Bump when the family search's matching rules change, or when a recorded
+/// answer would stay wrong for the same folder mtime. Generation 3 drops
+/// misses recorded while a folder could not be listed (#2051): permission
+/// does not change the directory's mtime. The crate version drops the
+/// answers another release recorded.
+const FONT_INDEX_HEADER: &str = concat!("jubarte-font-index\t3\t", env!("CARGO_PKG_VERSION"));
+/// Families one persistent font index keeps. A miss past this bound is not
+/// recorded: recording it would rewrite the whole index once per name.
+const MAX_FONT_INDEX_ENTRIES: usize = 256;
 
 /// A modification time in nanoseconds, `None` for a missing path.
 fn mtime_of(path: &Path) -> Option<u128> {
@@ -3181,15 +3292,21 @@ struct FontIndex {
 
 impl FontIndex {
     fn load(path: Option<PathBuf>) -> Self {
-        let entries = path
+        let mut entries = path
             .as_deref()
             .and_then(|p| fs::read_to_string(p).ok())
             .map(|text| parse_font_index(&text))
             .unwrap_or_default();
+        if entries.len() > MAX_FONT_INDEX_ENTRIES {
+            entries = entries.into_iter().take(MAX_FONT_INDEX_ENTRIES).collect();
+        }
         Self { path, entries }
     }
 
     fn record(&mut self, key: &str, dirs: &[PathBuf], faces: &SourcedFaces) {
+        if !self.entries.contains_key(key) && self.entries.len() >= MAX_FONT_INDEX_ENTRIES {
+            return;
+        }
         let entry = IndexEntry {
             dirs: dirs
                 .iter()
@@ -3205,7 +3322,39 @@ impl FontIndex {
                 .collect(),
         };
         self.entries.insert(key.to_string(), entry);
-        self.save();
+        self.persist(key);
+    }
+
+    /// Appends one family while the file is this release's index and holds
+    /// fewer than [`MAX_FONT_INDEX_ENTRIES`] families. Otherwise (missing,
+    /// stale, full, or a line another writer tore) the file is rewritten
+    /// once, merged and capped, so it stays bounded however many processes
+    /// append to it.
+    fn persist(&self, key: &str) {
+        let Some(path) = self.path.as_deref() else {
+            return;
+        };
+        if index_file_takes_appends(path) {
+            self.append_key(path, key);
+        } else {
+            self.save();
+        }
+    }
+
+    fn append_key(&self, path: &Path, key: &str) {
+        let Some(entry) = self.entries.get(key) else {
+            return;
+        };
+        let formatted = format_font_index(&HashMap::from([(key.to_string(), entry.clone())]));
+        let Some(line) = formatted.lines().nth(1).filter(|line| !line.is_empty()) else {
+            return;
+        };
+        let Ok(mut file) = fs::OpenOptions::new().append(true).open(path) else {
+            return;
+        };
+        // One write: another process's append cannot land between a line
+        // and its newline.
+        let _ = std::io::Write::write_all(&mut file, format!("{line}\n").as_bytes());
     }
 
     /// Writes the index, merged over what other processes wrote since it
@@ -3218,6 +3367,22 @@ impl FontIndex {
             .map(|text| parse_font_index(&text))
             .unwrap_or_default();
         merged.extend(self.entries.iter().map(|(k, v)| (k.clone(), v.clone())));
+        if merged.len() > MAX_FONT_INDEX_ENTRIES {
+            let mut kept = HashMap::with_capacity(MAX_FONT_INDEX_ENTRIES);
+            for (k, v) in &self.entries {
+                if kept.len() == MAX_FONT_INDEX_ENTRIES {
+                    break;
+                }
+                kept.insert(k.clone(), v.clone());
+            }
+            for (k, v) in &merged {
+                if kept.len() == MAX_FONT_INDEX_ENTRIES {
+                    break;
+                }
+                kept.entry(k.clone()).or_insert(v.clone());
+            }
+            merged = kept;
+        }
         let text = format_font_index(&merged);
         let tmp = path.with_extension(format!("tsv.{}.tmp", std::process::id()));
         let written = path
@@ -3229,6 +3394,44 @@ impl FontIndex {
             let _ = fs::remove_file(&tmp);
         }
     }
+}
+
+/// The on-disk index starts with this release's header and holds fewer
+/// than [`MAX_FONT_INDEX_ENTRIES`] family lines, all readable, so one family
+/// can be appended without rewriting the families already stored.
+fn index_file_takes_appends(path: &Path) -> bool {
+    let Ok(file) = fs::File::open(path) else {
+        return false;
+    };
+    let mut lines = std::io::BufRead::lines(std::io::BufReader::new(file));
+    if !matches!(lines.next(), Some(Ok(header)) if header == FONT_INDEX_HEADER) {
+        return false;
+    }
+    let mut families = 0;
+    for line in lines {
+        match line {
+            Ok(line) if line.is_empty() => {}
+            // A torn or foreign line: rewrite the file rather than append
+            // after it, so `save` drops it.
+            Ok(line) if parse_index_line(&line).is_none() => return false,
+            Ok(_) => {
+                families += 1;
+                if families >= MAX_FONT_INDEX_ENTRIES {
+                    return false;
+                }
+            }
+            Err(_) => return false,
+        }
+    }
+    true
+}
+
+/// `read_dir` failed because the process may not list `dir` (EACCES/EPERM).
+fn dir_listing_denied(dir: &Path) -> bool {
+    matches!(
+        fs::read_dir(dir),
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied
+    )
 }
 
 /// `key`'s faces from the index when still current, else from `scan`
@@ -3243,7 +3446,12 @@ fn indexed_faces(
         return faces;
     }
     let (faces, dirs) = scan();
-    if let Ok(mut index) = index.lock() {
+    // A denial is not an answer. The directory mtime does not change when
+    // the folder becomes readable, so recording the miss would serve it
+    // from then on (#2051).
+    if !dirs.iter().any(|dir| dir_listing_denied(dir))
+        && let Ok(mut index) = index.lock()
+    {
         index.record(key, &dirs, &faces);
     }
     faces
@@ -3316,6 +3524,12 @@ fn parse_font_index(text: &str) -> HashMap<String, IndexEntry> {
     if lines.next() != Some(FONT_INDEX_HEADER) {
         return HashMap::new();
     }
+    lines.filter_map(parse_index_line).collect()
+}
+
+/// One family line of the index (`key`, folders, faces), or `None` for a
+/// line another writer tore or an older release wrote.
+fn parse_index_line(line: &str) -> Option<(String, IndexEntry)> {
     let opt = |s: &str| (s != "-").then(|| s.parse().ok()).flatten();
     let items = |s: &'_ str| -> Vec<Vec<String>> {
         s.split(ITEM_SEP)
@@ -3323,42 +3537,42 @@ fn parse_font_index(text: &str) -> HashMap<String, IndexEntry> {
             .map(|i| i.split(FIELD_SEP).map(str::to_string).collect())
             .collect()
     };
-    let mut out = HashMap::new();
-    for line in lines {
-        let mut cols = line.split('\t');
-        let (Some(key), Some(dirs), Some(faces), None) =
-            (cols.next(), cols.next(), cols.next(), cols.next())
-        else {
-            continue;
-        };
-        let dirs: Option<Vec<(PathBuf, Option<u128>)>> = items(dirs)
-            .into_iter()
-            .map(|f| match f.as_slice() {
-                [d, m] => Some((PathBuf::from(d), opt(m))),
-                _ => None,
-            })
-            .collect();
-        let faces: Option<Vec<IndexedFace>> = items(faces)
-            .into_iter()
-            .map(|f| match f.as_slice() {
-                [path, index, bold, italic, len, mtime] => Some(IndexedFace {
-                    style: (bold == "1", italic == "1"),
-                    source: FaceSource {
-                        path: PathBuf::from(path),
-                        index: opt(index).and_then(|i: u128| u32::try_from(i).ok()),
-                    },
-                    stamp: opt(len)
-                        .and_then(|l: u128| u64::try_from(l).ok())
-                        .zip(opt(mtime)),
-                }),
-                _ => None,
-            })
-            .collect();
-        if let (Some(dirs), Some(faces)) = (dirs, faces) {
-            out.insert(key.to_string(), IndexEntry { dirs, faces });
-        }
-    }
-    out
+    let mut cols = line.split('\t');
+    let (Some(key), Some(dirs), Some(faces), None) =
+        (cols.next(), cols.next(), cols.next(), cols.next())
+    else {
+        return None;
+    };
+    let dirs: Option<Vec<(PathBuf, Option<u128>)>> = items(dirs)
+        .into_iter()
+        .map(|f| match f.as_slice() {
+            [d, m] => Some((PathBuf::from(d), opt(m))),
+            _ => None,
+        })
+        .collect();
+    let faces: Option<Vec<IndexedFace>> = items(faces)
+        .into_iter()
+        .map(|f| match f.as_slice() {
+            [path, index, bold, italic, len, mtime] => Some(IndexedFace {
+                style: (bold == "1", italic == "1"),
+                source: FaceSource {
+                    path: PathBuf::from(path),
+                    index: opt(index).and_then(|i: u128| u32::try_from(i).ok()),
+                },
+                stamp: opt(len)
+                    .and_then(|l: u128| u64::try_from(l).ok())
+                    .zip(opt(mtime)),
+            }),
+            _ => None,
+        })
+        .collect();
+    Some((
+        key.to_string(),
+        IndexEntry {
+            dirs: dirs?,
+            faces: faces?,
+        },
+    ))
 }
 
 /// Loads Word's East Asian fallback faces (YaHei, Yu Gothic, Malgun
@@ -3824,6 +4038,110 @@ mod tests {
         assert_eq!(scans.get(), 4);
     }
 
+    /// A persistent index used to rewrite every family on each miss. Misses
+    /// append, and the index keeps at most 256 families.
+    #[cfg(unix)]
+    #[test]
+    fn many_font_index_misses_do_not_rewrite_the_growing_index() {
+        use std::os::unix::fs::MetadataExt;
+
+        const BOUND: usize = 256;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let index_path = tmp.path().join("font-index.tsv");
+        let index = Mutex::new(FontIndex::load(Some(index_path.clone())));
+        let miss = || (Vec::new(), Vec::new());
+        indexed_faces(&index, "family-0", miss);
+        let inode = fs::metadata(&index_path).expect("index").ino();
+        for i in 1..8 {
+            indexed_faces(&index, &format!("family-{i}"), miss);
+        }
+        assert_eq!(
+            fs::metadata(&index_path).expect("index").ino(),
+            inode,
+            "each miss rewrote the whole font index"
+        );
+        for i in 8..=BOUND {
+            indexed_faces(&index, &format!("family-{i}"), miss);
+        }
+        let text = fs::read_to_string(&index_path).expect("read index");
+        let families = text.lines().skip(1).filter(|line| !line.is_empty()).count();
+        assert!(families <= BOUND, "index kept {families} families");
+    }
+
+    /// Two processes that read one index each append their own misses. The
+    /// file on disk still keeps at most 256 families: past that a miss
+    /// rewrites it, merged and capped, instead of appending.
+    #[test]
+    fn two_indexes_appending_to_one_file_keep_it_bounded() {
+        const BOUND: usize = 256;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let index_path = tmp.path().join("font-index.tsv");
+        let first = Mutex::new(FontIndex::load(Some(index_path.clone())));
+        let second = Mutex::new(FontIndex::load(Some(index_path.clone())));
+        let miss = || (Vec::new(), Vec::new());
+        for i in 0..200 {
+            indexed_faces(&first, &format!("first-{i}"), miss);
+            indexed_faces(&second, &format!("second-{i}"), miss);
+        }
+        let text = fs::read_to_string(&index_path).expect("read index");
+        let families = text.lines().skip(1).filter(|line| !line.is_empty()).count();
+        assert!(families <= BOUND, "index kept {families} families");
+        assert!(text.ends_with('\n'), "a family line lost its newline");
+    }
+
+    /// A cloud-font folder that could not be listed (macOS privacy, or any
+    /// permission denial) must not poison the index: chmod does not change
+    /// the directory mtime, so a recorded miss would be served after the
+    /// folder becomes readable (#2051).
+    #[cfg(unix)]
+    #[test]
+    fn a_font_index_miss_while_a_folder_is_unreadable_is_not_reused() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let fonts = tmp.path().join("cloud");
+        fs::create_dir(&fonts).expect("fonts dir");
+        let carlito = fonts.join("Carlito-Regular.ttf");
+        fs::write(
+            &carlito,
+            include_bytes!("../../assets/fonts/Carlito-Regular.ttf"),
+        )
+        .expect("font");
+        let index_path = tmp.path().join("font-index.tsv");
+        let scan = || {
+            let listing = sorted_dir_listing(&fonts);
+            let faces = listing
+                .iter()
+                .filter(|path| path.extension().is_some_and(|ext| ext == "ttf"))
+                .filter_map(|path| {
+                    let bytes = fs::read(path).ok()?;
+                    Some(((false, false), FaceSource::new(path, None), bytes))
+                })
+                .collect();
+            (faces, vec![fonts.clone()])
+        };
+        let readable = fs::metadata(&fonts).expect("stat").permissions();
+        let mut denied = readable.clone();
+        denied.set_mode(0o0);
+        fs::set_permissions(&fonts, denied).expect("deny");
+        let index = Mutex::new(FontIndex::load(Some(index_path.clone())));
+        assert!(
+            indexed_faces(&index, "cloud", scan).is_empty(),
+            "an unreadable folder lists no faces"
+        );
+        fs::set_permissions(&fonts, readable).expect("restore");
+        let again = indexed_faces(&index, "cloud", scan);
+        assert!(
+            !again.is_empty(),
+            "the folder is readable; a miss recorded while it was not must not be served"
+        );
+        let reloaded = Mutex::new(FontIndex::load(Some(index_path)));
+        assert!(
+            !indexed_faces(&reloaded, "cloud", scan).is_empty(),
+            "reloading the index must not keep the unreadable-folder miss"
+        );
+    }
+
     #[test]
     fn the_font_index_file_round_trips_and_rejects_other_versions() {
         let mut entries = HashMap::new();
@@ -3843,7 +4161,7 @@ mod tests {
         );
         let text = format_font_index(&entries);
         assert_eq!(parse_font_index(&text), entries);
-        assert!(parse_font_index(&text.replacen("\t2\t", "\t0\t", 1)).is_empty());
+        assert!(parse_font_index(&text.replacen("\t3\t", "\t0\t", 1)).is_empty());
     }
 
     #[test]
@@ -3862,10 +4180,11 @@ mod tests {
         let header = text.lines().next().unwrap();
         assert!(header.ends_with(&format!("\t{}", env!("CARGO_PKG_VERSION"))));
         assert!(parse_font_index(&text.replace(env!("CARGO_PKG_VERSION"), "0.0.0")).is_empty());
-        // Rules 2 (Windows folders, matched by internal name): an index
-        // the same release wrote under rules 1 never listed those folders.
-        assert!(header.starts_with("jubarte-font-index\t2\t"));
-        assert!(parse_font_index(&text.replacen("\t2\t", "\t1\t", 1)).is_empty());
+        // Generation 3 drops an unreadable-folder miss (#2051). An index
+        // this release wrote under generation 2 is not reused: permission
+        // does not change the directory mtime those entries were stamped with.
+        assert!(header.starts_with("jubarte-font-index\t3\t"));
+        assert!(parse_font_index(&text.replacen("\t3\t", "\t2\t", 1)).is_empty());
     }
 
     #[test]
@@ -5959,7 +6278,11 @@ mod deeper_boundary_tests {
             let empty: ShapedUnits = Vec::new().into();
             let entries =
                 (0..initial).map(|i| ((format!("reserved-{i}"), false), Arc::clone(&empty)));
-            face.shaped.lock().unwrap().extend(entries);
+            let mut cache = face.shaped.lock().unwrap();
+            for (key, units) in entries {
+                cache.insert(key, units);
+            }
+            drop(cache);
             let shaped = face.shape("A", 12.0);
             assert_eq!(
                 shaped,
@@ -5971,10 +6294,10 @@ mod deeper_boundary_tests {
             let cache = face.shaped.lock().unwrap();
             assert_eq!(cache.len(), expected, "initial={initial}");
             assert_eq!(
-                cache.contains_key(&("reserved-0".into(), false)),
+                cache.get(&("reserved-0".to_string(), false)).is_some(),
                 initial <= 50_000
             );
-            assert_eq!(cache[&("A".into(), false)].len(), 1);
+            assert_eq!(cache.get(&("A".to_string(), false)).unwrap().len(), 1);
         }
     }
 
@@ -6697,6 +7020,90 @@ mod residual_embedded_style_contract_tests {
             // resolving it instead would enter the filesystem catalogue.
             assert_eq!(fonts.embedded_index("Absent Memory", false, false), None);
         }
+    }
+
+    /// Two shaped entries that cannot both fit leave only the later one,
+    /// an entry larger than the whole budget is not stored, and the next
+    /// word still fits beside what stays. A face payload that no longer
+    /// fits is read again; a face inside the budget stays.
+    #[test]
+    fn a_cache_past_its_byte_budget_drops_what_no_longer_fits() {
+        let face = Face::bundled(FaceId::SansRegular);
+        let glyph = std::mem::size_of::<(u16, i32, u32)>();
+        let half: ShapedUnits =
+            vec![(0u16, 0i32, 0u32); MAX_SHAPED_CACHE_BYTES / glyph / 2 + 1].into();
+        let oversized: ShapedUnits =
+            vec![(0u16, 0i32, 0u32); MAX_SHAPED_CACHE_BYTES / glyph + 1].into();
+        let mut cache = face.shaped.lock().unwrap();
+        cache.insert(("zzzz-a".into(), false), Arc::clone(&half));
+        cache.insert(("zzzz-b".into(), false), Arc::clone(&half));
+        cache.insert(("zzzz-c".into(), false), oversized);
+        drop(cache);
+        let _ = face.shape("A", 12.0);
+        let cache = face.shaped.lock().unwrap();
+        let retained = cache
+            .map
+            .values()
+            .map(shaped_payload_bytes)
+            .fold(0, usize::saturating_add);
+        assert_eq!(cache.bytes, retained, "the running total drifted");
+        assert!(
+            retained <= MAX_SHAPED_CACHE_BYTES,
+            "shaped cache kept {retained} bytes past {MAX_SHAPED_CACHE_BYTES}"
+        );
+        let held = |key: &str| cache.get(&(key.to_string(), false)).is_some();
+        assert!(!held("zzzz-a"), "the entry that no longer fit stayed");
+        assert!(held("zzzz-b"), "the entry that still fits was dropped");
+        assert!(!held("zzzz-c"), "the oversized shaped entry was stored");
+        assert!(held("A"), "the next word was not stored");
+        drop(cache);
+
+        let half = MAX_FACE_CACHE_BYTES / 2 + 1;
+        cached_faces("zzzz-byte-a", || vec![((false, false), vec![1u8; half])]);
+        cached_faces("zzzz-byte-b", || vec![((false, false), vec![2u8; half])]);
+        let reloaded = cached_faces("zzzz-byte-a", || {
+            vec![((false, false), b"reloaded".to_vec())]
+        });
+        assert_eq!(
+            reloaded[0].1.as_ref(),
+            b"reloaded",
+            "a face that no longer fit stayed in the cache"
+        );
+        let kept = cached_faces("zzzz-byte-b", || {
+            panic!("a face inside the budget was read again")
+        });
+        assert_eq!(kept[0].1.len(), half);
+        let faces = face_cache().lock().unwrap();
+        let face_bytes = faces
+            .map
+            .values()
+            .map(shared_payload)
+            .fold(0, usize::saturating_add);
+        assert_eq!(faces.bytes, face_bytes, "the running total drifted");
+        assert!(
+            face_bytes <= MAX_FACE_CACHE_BYTES,
+            "face cache kept {face_bytes} bytes"
+        );
+    }
+
+    /// Replacing a key and clearing keep the running total equal to the
+    /// bytes the map holds.
+    #[test]
+    fn a_bounded_cache_counts_replacements_and_clears() {
+        let mut cache: BoundedCache<u8, Vec<u8>> = BoundedCache::new(10, Vec::len);
+        let held =
+            |cache: &BoundedCache<u8, Vec<u8>>| cache.map.values().map(Vec::len).sum::<usize>();
+        cache.insert(1, vec![0; 4]);
+        cache.insert(2, vec![0; 4]);
+        cache.insert(1, vec![0; 2]);
+        assert_eq!((cache.bytes, held(&cache)), (6, 6));
+        cache.insert(3, vec![0; 6]);
+        assert_eq!(cache.map.keys().copied().collect::<Vec<_>>(), [1, 3]);
+        assert_eq!((cache.bytes, held(&cache)), (8, 8));
+        cache.insert(4, vec![0; 11]);
+        assert_eq!((cache.bytes, cache.get(&4)), (8, None));
+        cache.clear();
+        assert_eq!((cache.bytes, cache.len()), (0, 0));
     }
 }
 

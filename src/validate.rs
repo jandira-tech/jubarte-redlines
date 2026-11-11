@@ -218,7 +218,7 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 36] = [
+const RING1_CODES: [&str; 39] = [
     "DATA_BINDING_WITHOUT_STORE",
     "MOVE_RANGE_COUNT_MISMATCH",
     "MOVE_RANGE_NAME_MISSING",
@@ -255,6 +255,9 @@ const RING1_CODES: [&str; 36] = [
     "DELETED_SECTION_PAGE_FIELD",
     "INSERTED_TEXT_BEFORE_DELETED_TABLE",
     "NON_FINITE_MEASURE",
+    "DUPLICATE_DURABLE_ID",
+    "STYLE_CHANGE_SIBLINGS",
+    "DOC_DEFAULTS_CHANGE",
 ];
 
 /// Why a package could not be validated at all (a finding is never an
@@ -457,13 +460,13 @@ fn new_markup(original: &[u8], edited: &[u8]) -> Result<Vec<AuthorMark>, Validat
     let mut revisions = Vec::new();
     check_foreign_revisions(original, edited, None, &wholes, &mut revisions)?;
     let mut out = Vec::new();
-    let mut counted: HashSet<(String, String)> = HashSet::new();
+    let mut counted: HashSet<(&str, &str)> = HashSet::new();
     for finding in &revisions {
         if let Some((id, author)) = new_foreign(finding) {
             // The finding names the change as `changes` lists it, or one
             // mark of it; the map names the change either way.
-            let change = wholes.whole(false, id).to_string();
-            if counted.insert((change, author.to_string())) {
+            let change = wholes.whole(false, id);
+            if counted.insert((change, author)) {
                 add(&mut out, author, false);
             }
         }
@@ -1520,6 +1523,7 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_runs_inside_paragraphs(pkg, &mut out);
     check_paragraph_ruby(pkg, &mut out);
     check_style_names(pkg, &mut out);
+    check_style_change_carriers(pkg, &mut out);
     check_nested_text_boxes(pkg, &mut out);
     check_nested_ppr(pkg, &mut out);
     check_move_range_counts(pkg, &mut out);
@@ -1528,6 +1532,7 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_deleted_section_page_fields(pkg, &mut out);
     check_inserted_text_before_deleted_tables(pkg, &mut out);
     check_non_finite_measures(pkg, &mut out);
+    check_duplicate_num_durable_ids(pkg, &mut out);
     out
 }
 
@@ -1944,7 +1949,8 @@ pub(crate) fn revision_name(kind: &str) -> XName {
 }
 
 /// The last paragraph among a container's blocks, through block content
-/// controls and custom XML elements, not into nested tables.
+/// controls, custom XML elements, and the alternate-content branch Word
+/// shows, not into nested tables.
 pub(crate) fn last_block_paragraph(dom: &Dom, container: NodeId) -> Option<NodeId> {
     container_blocks(dom, container)
         .into_iter()
@@ -1952,8 +1958,35 @@ pub(crate) fn last_block_paragraph(dom: &Dom, container: NodeId) -> Option<NodeI
         .find(|&block| dom.name_is(block, &W::p()))
 }
 
+/// The branch of block-level text alternate content that Word shows.
+/// Drawing and VML alternates stay whole, so their paragraphs are not
+/// blocks of the cell around them. Anything else is not alternate content.
+fn shown_alternate_branch(dom: &Dom, node: NodeId) -> Option<NodeId> {
+    if !dom.name_is(node, &MC::alternate_content()) {
+        return None;
+    }
+    // A picture that is itself a branch's block (not one inside a branch's
+    // paragraph) leaves the branch Word shows in doubt, so it is skipped.
+    let pictured = |branch: NodeId| {
+        dom.elements(branch, None)
+            .into_iter()
+            .any(|child| dom.name_is(child, &W::drawing()) || dom.name_is(child, &W::pict()))
+    };
+    if dom.elements(node, None).into_iter().any(pictured) {
+        return None;
+    }
+    let understood = crate::comparer::finalize::word_understands_namespace;
+    dom.elements(node, Some(&MC::choice()))
+        .into_iter()
+        .find(|&choice| {
+            crate::comparer::finalize::choice_requires_understood(dom, choice, understood)
+        })
+        .or_else(|| dom.element(node, &MC::fallback()))
+}
+
 /// The paragraphs and tables of `container` in order, through block
-/// content controls and custom XML elements, not into nested tables.
+/// content controls, custom XML elements, and the alternate-content branch
+/// Word shows, not into nested tables.
 pub(crate) fn container_blocks(dom: &Dom, container: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
     for child in dom.elements(container, None) {
@@ -1965,6 +1998,8 @@ pub(crate) fn container_blocks(dom: &Dom, container: NodeId) -> Vec<NodeId> {
             }
         } else if dom.name_is(child, &W::custom_xml()) {
             out.extend(container_blocks(dom, child));
+        } else if let Some(branch) = shown_alternate_branch(dom, child) {
+            out.extend(container_blocks(dom, branch));
         }
     }
     out
@@ -2096,7 +2131,7 @@ fn check_nested_text_boxes(pkg: &PartFs, out: &mut Vec<Finding>) {
         "http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
     );
     let vml_box = VML::name("textbox");
-    for part in xml_parts(pkg) {
+    for part in nested_text_box_parts(pkg) {
         let Some((dom, root)) = parse_part(pkg, &part) else {
             continue;
         };
@@ -2108,10 +2143,7 @@ fn check_nested_text_boxes(pkg: &PartFs, out: &mut Vec<Finding>) {
                 continue;
             }
             let ancestors = dom.ancestors(node, None);
-            if ancestors
-                .iter()
-                .any(|&a| dom.name(a).is_some_and(|n| n == MC::name("Fallback")))
-            {
+            if crate::comparer::finalize::in_unselected_alternate(&dom, node) {
                 continue;
             }
             if let Some(&outer) = ancestors
@@ -2155,6 +2187,95 @@ fn text_box_name(dom: &Dom, node: NodeId) -> String {
     element_path(dom, node)
 }
 
+/// Parts whose text Word renders as a story: the main document, a header,
+/// footer, footnote, endnote or comment part under its usual name, and any
+/// part the main document relates as one of those. Custom XML is not one.
+fn nested_text_box_parts(pkg: &PartFs) -> Vec<String> {
+    let mut out: Vec<String> = xml_parts(pkg)
+        .into_iter()
+        .filter(|name| conventional_story(name))
+        .collect();
+    let main = pkg.main_document_part().or_else(|| {
+        pkg.parts()
+            .into_iter()
+            .find(|name| name.eq_ignore_ascii_case("word/document.xml"))
+    });
+    let Some(main) = main else {
+        return out;
+    };
+    if !out.iter().any(|have| have.eq_ignore_ascii_case(&main)) {
+        out.push(main.clone());
+    }
+    let Some(rels) = pkg.read_rels_for(&main) else {
+        return out;
+    };
+    for rel in &rels.items {
+        if rel.target_mode.as_deref() == Some("External") {
+            continue;
+        }
+        let story = ["/header", "/footer", "/footnotes", "/endnotes", "/comments"]
+            .iter()
+            .any(|kind| rel.rel_type.ends_with(kind));
+        if !story {
+            continue;
+        }
+        let part = pkg.resolve_rel_target(&main, &rel.target);
+        if !out.iter().any(|have| have.eq_ignore_ascii_case(&part)) {
+            out.push(part);
+        }
+    }
+    out
+}
+
+/// `word/document.xml`, the note and comment parts, and `word/headerN.xml`
+/// / `word/footerN.xml`.
+fn conventional_story(name: &str) -> bool {
+    let name = name.trim_start_matches('/');
+    if name.eq_ignore_ascii_case("word/document.xml")
+        || name.eq_ignore_ascii_case("word/footnotes.xml")
+        || name.eq_ignore_ascii_case("word/endnotes.xml")
+        || name.eq_ignore_ascii_case("word/comments.xml")
+    {
+        return true;
+    }
+    let Some((dir, file)) = name.rsplit_once('/') else {
+        return false;
+    };
+    if !dir.eq_ignore_ascii_case("word") {
+        return false;
+    }
+    let stem = file.split('.').next().unwrap_or(file);
+    numbered_story(stem, "header") || numbered_story(stem, "footer")
+}
+
+/// `header`, `header1`, `footer2`: the kind, or the kind plus digits.
+/// Compared byte-wise, without lowering a copy of every part's stem.
+fn numbered_story(stem: &str, kind: &str) -> bool {
+    let (stem, kind) = (stem.as_bytes(), kind.as_bytes());
+    stem.len() >= kind.len() && {
+        let (prefix, rest) = stem.split_at(kind.len());
+        prefix.eq_ignore_ascii_case(kind) && rest.iter().all(u8::is_ascii_digit)
+    }
+}
+
+#[cfg(test)]
+mod numbered_story_tests {
+    #[test]
+    fn a_story_stem_is_its_kind_with_digits() {
+        for (stem, kind, expected) in [
+            ("header", "header", true),
+            ("Header12", "header", true),
+            ("FOOTER2", "footer", true),
+            ("header1a", "header", false),
+            ("head", "header", false),
+            ("headér1", "header", false),
+            ("footer", "header", false),
+        ] {
+            assert_eq!(super::numbered_story(stem, kind), expected, "{stem} {kind}");
+        }
+    }
+}
+
 /// A style's `w:name` holds no comma: the schema's pattern is `[^,]*`
 /// (Word reads a comma there as the start of an alias list), while its
 /// `w:styleId` may hold one. The OOXML validator refuses the part; Word
@@ -2185,6 +2306,75 @@ fn check_style_names(pkg: &PartFs, out: &mut Vec<Finding>) {
             }
         }
     }
+}
+
+/// Two or more same-kind change carriers under one style property, or a
+/// change carrier in the document defaults. The schema allows one
+/// `w:pPrChange` in `w:pPr` and one `w:rPrChange` in `w:rPr`, and the run
+/// defaults' `w:rPr` has no change child. Word opens both shapes, so neither
+/// finding is Word-fatal, and a repair would drop revision data.
+fn check_style_change_carriers(pkg: &PartFs, out: &mut Vec<Finding>) {
+    for part in xml_parts(pkg) {
+        let Some((dom, root)) = parse_part(pkg, &part) else {
+            continue;
+        };
+        if dom
+            .name(root)
+            .is_none_or(|name| name.local_name() != "styles")
+        {
+            continue;
+        }
+        for (holder_name, change_name) in [("pPr", "pPrChange"), ("rPr", "rPrChange")] {
+            for holder in dom.descendants(root, Some(&W::name(holder_name))) {
+                let count = dom.elements(holder, Some(&W::name(change_name))).len();
+                if count < 2 {
+                    continue;
+                }
+                let style = style_id_of(&dom, holder);
+                out.push(Finding::new(
+                    "STYLE_CHANGE_SIBLINGS",
+                    &part,
+                    element_path(&dom, holder),
+                    format!(
+                        "style '{style}' has {count} {change_name} carriers under one {holder_name}"
+                    ),
+                ));
+            }
+        }
+        for defaults in dom.elements(root, Some(&W::name("docDefaults"))) {
+            for run_default in dom.elements(defaults, Some(&W::name("rPrDefault"))) {
+                for run in dom.elements(run_default, Some(&W::name("rPr"))) {
+                    if dom.elements(run, Some(&W::name("rPrChange"))).is_empty() {
+                        continue;
+                    }
+                    out.push(Finding::new(
+                        "DOC_DEFAULTS_CHANGE",
+                        &part,
+                        element_path(&dom, run),
+                        "document defaults have a run-property change, which w:rPrDefault's w:rPr does not allow",
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// The `w:styleId` of the style that contains `node`, when it has one.
+fn style_id_of(dom: &Dom, node: NodeId) -> String {
+    let mut current = Some(node);
+    while let Some(at) = current {
+        if dom
+            .name(at)
+            .is_some_and(|name| name.local_name() == "style")
+        {
+            return dom
+                .attribute(at, &W::name("styleId"))
+                .unwrap_or("")
+                .to_string();
+        }
+        current = dom.parent(at);
+    }
+    String::new()
 }
 
 /// A run outside any paragraph: Word loads the document empty. Probed
@@ -2289,6 +2479,8 @@ pub(crate) fn element_path(dom: &Dom, node: NodeId) -> String {
 
 fn parse_part(pkg: &PartFs, name: &str) -> Option<(Dom, NodeId)> {
     let xml = pkg.part_string(name)?;
+    // Strict parts are read as the Transitional names these checks compare.
+    let xml = crate::strict_translation::transitional_part(name, &xml);
     let mut dom = Dom::new();
     let doc = dom.parse_xdocument(&xml);
     let root = dom.root(doc)?;
@@ -2496,7 +2688,10 @@ fn check_relationship_integrity(pkg: &PartFs, out: &mut Vec<Finding>) {
         ));
     }
     for name in pkg.parts() {
-        if !name.ends_with(".xml") || name.ends_with(".rels") {
+        // Part names are case-insensitive, so `document.XML` owns its
+        // references as `document.xml` does.
+        let extension = name.rsplit_once('.').map_or("", |(_, ext)| ext);
+        if !extension.eq_ignore_ascii_case("xml") {
             continue;
         }
         let rels = pkg.read_rels_for(&name);
@@ -2594,12 +2789,31 @@ fn check_relationship_integrity(pkg: &PartFs, out: &mut Vec<Finding>) {
     }
 }
 
-/// Internal targets must name a part at their resolved package path.
-fn missing_relationship_target(pkg: &PartFs, source: &str, target: &str) -> Option<String> {
+/// A target that is not an OPC part: an absolute URI, a Windows path, or a
+/// UNC share. A doubled slash in front of a package root (`//word/...`, in
+/// any ASCII case, as part names are) still names a part.
+fn external_uri_target(target: &str) -> bool {
     if target.starts_with("http://")
         || target.starts_with("https://")
         || target.starts_with("mailto:")
+        || target.starts_with("file:")
+        || target.contains('\\')
     {
+        return true;
+    }
+    let Some(rest) = target.strip_prefix("//") else {
+        return false;
+    };
+    let host = rest.split('/').next().unwrap_or("");
+    !host.is_empty()
+        && !["word", "docProps", "customXml", "_rels", "ppt", "xl"]
+            .iter()
+            .any(|root| host.eq_ignore_ascii_case(root))
+}
+
+/// Internal targets must name a part at their resolved package path.
+fn missing_relationship_target(pkg: &PartFs, source: &str, target: &str) -> Option<String> {
+    if external_uri_target(target) {
         return None;
     }
     let resolved = pkg.resolve_rel_target(source, target);
@@ -2633,6 +2847,41 @@ fn check_picture_bullets(pkg: &PartFs, out: &mut Vec<Finding>) {
             ));
         }
     }
+}
+
+/// Two `w:num` elements that share one numbering `w16cid:durableId`. A copy
+/// takes a fresh id, and the editor writes none, so a repeat is a warning.
+fn check_duplicate_num_durable_ids(pkg: &PartFs, out: &mut Vec<Finding>) {
+    const PART: &str = "word/numbering.xml";
+    const CID: &str = "http://schemas.microsoft.com/office/word/2016/wordml/cid";
+    let Some((dom, root)) = parse_part(pkg, PART) else {
+        return;
+    };
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut reported: HashSet<String> = HashSet::new();
+    for num in dom.elements(root, Some(&W::name("num"))) {
+        let Some(id) = num_durable_id(&dom, num, CID) else {
+            continue;
+        };
+        if !seen.insert(id.to_string()) && reported.insert(id.to_string()) {
+            out.push(Finding::new(
+                "DUPLICATE_DURABLE_ID",
+                PART,
+                element_path(&dom, num),
+                format!("w:num repeats durableId '{id}'"),
+            ));
+        }
+    }
+}
+
+fn num_durable_id<'a>(dom: &'a Dom, num: NodeId, namespace: &str) -> Option<&'a str> {
+    for index in 0..dom.attr_count(num) {
+        let (name, value) = dom.attr_at(num, index);
+        if name.local_name() == "durableId" && name.namespace_name() == namespace {
+            return Some(value);
+        }
+    }
+    None
 }
 
 fn check_revision_and_drawing_ids(pkg: &PartFs, out: &mut Vec<Finding>) {
@@ -2949,7 +3198,8 @@ fn check_para_text_id_bounds(pkg: &PartFs, out: &mut Vec<Finding>) {
 /// settled by Ring-3 probe 2026-07-16 (delText-under-moveFrom failed open).
 /// The nearest deletion owns the text: an insertion inside the move source
 /// does not shelter `w:delText` (Word refuses it), a `w:del` inside it does
-/// (Word opens it; probes M1/M5, 2026-10-18).
+/// (Word opens it; probes M1/M5, 2026-10-18). A deletion outside the move
+/// source owns the text as well, so that `w:delText` stays.
 fn check_del_text_under_del(pkg: &PartFs, out: &mut Vec<Finding>) {
     for name in xml_parts(pkg) {
         let Some((dom, root)) = parse_part(pkg, &name) else {
@@ -2973,7 +3223,7 @@ fn check_del_text_under_del(pkg: &PartFs, out: &mut Vec<Finding>) {
         let move_from = W::move_from();
         for mf in dom.descendants(root, Some(&move_from)) {
             for dt in dom.descendants(mf, Some(&W::del_text())) {
-                if ancestor_has(&dom, dt, mf, "del") {
+                if ancestor_has(&dom, dt, mf, "del") || under_deletion(&dom, dt) {
                     continue;
                 }
                 out.push(Finding::new(
@@ -2990,10 +3240,17 @@ fn check_del_text_under_del(pkg: &PartFs, out: &mut Vec<Finding>) {
 /// Any enclosing deletion counts, even through an insertion, but only
 /// within the run's own story (#1134, Word probe 2026-10-17).
 fn under_deletion(dom: &Dom, node: NodeId) -> bool {
-    dom.ancestors(node, None)
-        .into_iter()
-        .take_while(|&a| dom.name(a).is_none_or(|n| n.local_name() != "txbxContent"))
-        .any(|a| dom.name(a).is_some_and(|n| n == W::del()))
+    // Walks the parent links rather than collecting the ancestors: the
+    // checks call this once per `w:delText` of a move source.
+    let mut cur = dom.parent(node);
+    while let Some(p) = cur {
+        match dom.name(p) {
+            Some(n) if n.local_name() == "txbxContent" => return false,
+            Some(n) if n == W::del() => return true,
+            _ => cur = dom.parent(p),
+        }
+    }
+    false
 }
 
 /// True when a `w:del` or `w:moveFrom` covers `node` in its own story (a
@@ -3294,7 +3551,7 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
         .any(|(part, _, _)| pkg.part_bytes(part).is_some());
     let mut all_para_ids = HashSet::new();
     let mut last_para_ids = HashSet::new();
-    for comment in comments_dom.elements(comments_root, Some(&W::name("comment"))) {
+    for comment in comments_dom.elements(comments_root, Some(&W::comment())) {
         let comment_id = comments_dom
             .attribute(comment, &W::id())
             .unwrap_or("<missing>");
@@ -3743,7 +4000,8 @@ pub(crate) fn namespace_in_scope<'a>(
 /// paragraph ids brought into Word's range, cells given a last paragraph,
 /// orphan comment anchors dropped. The result is validated again to fill
 /// `remaining`. A package with no repairable finding comes back as its
-/// own bytes.
+/// own bytes; an ISO Strict package with one is repaired, and written
+/// back, Transitional.
 ///
 /// # Errors
 ///
@@ -3770,10 +4028,15 @@ pub fn repair(docx: &[u8]) -> Result<Repaired, ValidateError> {
         parts.dedup();
         parts
     };
+    // Ring-1 reads a Strict part under its Transitional names, and the
+    // repairs below edit those names: a Strict package is repaired, and
+    // written back, Transitional, as accept and reject write it.
+    let transitional = crate::strict_translation::strict_to_transitional_docx(docx)
+        .map_err(|e| ValidateError::Package(e.to_string()))?;
     let bytes = if has("DUPLICATE_DOCPR_ID") {
-        crate::comparer::fixups::fix_up_drawing_ids_in_package(docx)?
+        crate::comparer::fixups::fix_up_drawing_ids_in_package(&transitional)?
     } else {
-        docx.to_vec()
+        transitional
     };
     let mut pkg = PartFs::open(&bytes)?;
     for part in parts_with(&["MC_UNBOUND_PREFIX"]) {
@@ -3856,8 +4119,9 @@ fn edit_part(pkg: &mut PartFs, part: &str, f: impl FnOnce(&mut Dom, NodeId)) {
 }
 
 /// `w:t` and `w:instrText` under a deletion become `w:delText` and
-/// `w:delInstrText`; `w:delText` under a move source, and deleted text no
-/// deletion covers, become live text again.
+/// `w:delInstrText`. `w:delText` under a move source becomes live text
+/// again only when no deletion in that story covers it, as does deleted
+/// text no deletion covers.
 fn fix_deleted_text(dom: &mut Dom, root: NodeId) {
     let mut renames: Vec<(NodeId, XName)> = Vec::new();
     for (live, deleted) in [("t", "delText"), ("instrText", "delInstrText")] {
@@ -3869,7 +4133,7 @@ fn fix_deleted_text(dom: &mut Dom, root: NodeId) {
     }
     for mf in dom.descendants(root, Some(&W::move_from())) {
         for dt in dom.descendants(mf, Some(&W::del_text())) {
-            if !ancestor_has(dom, dt, mf, "del") {
+            if !ancestor_has(dom, dt, mf, "del") && !under_deletion(dom, dt) {
                 renames.push((dt, W::t()));
             }
         }
@@ -5636,6 +5900,174 @@ mod validation_owner_boundary_tests {
             assert_eq!(pkg.to_zip().unwrap(), before);
         }
     }
+
+    #[test]
+    fn file_unc_and_external_template_targets_are_not_internal_parts() {
+        let template =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/attachedTemplate";
+        for target in [
+            "file:///etc/passwd",
+            "file://server/share/template.dotx",
+            r"\\server\share\template.dotx",
+            "//server/share/template.dotx",
+        ] {
+            let mut pkg = package();
+            pkg.add_document_relationship("word/document.xml", template, target);
+            let mut findings = Vec::new();
+            check_relationship_integrity(&pkg, &mut findings);
+            let missing: Vec<_> = findings
+                .iter()
+                .filter(|finding| finding.code == "MISSING_REL_TARGET")
+                .map(|finding| finding.message.clone())
+                .collect::<Vec<_>>();
+            assert!(
+                missing.is_empty(),
+                "{target} was resolved as an internal part: {missing:?}"
+            );
+            let opened = PartFs::open(&pkg.to_zip().unwrap()).expect("reopen");
+            let rels = opened
+                .read_rels_for("word/document.xml")
+                .expect("relationships");
+            assert!(
+                rels.items.iter().any(|item| item.target == target),
+                "{target} was dropped from the package"
+            );
+        }
+
+        let mut kept = package();
+        let external = "file:///C:/Templates/Normal.dotx";
+        kept.add_document_relationship_external("word/document.xml", template, external);
+        let mut findings = Vec::new();
+        check_relationship_integrity(&kept, &mut findings);
+        assert!(
+            findings
+                .iter()
+                .all(|finding| finding.code != "MISSING_REL_TARGET")
+        );
+        let opened = PartFs::open(&kept.to_zip().unwrap()).expect("reopen");
+        let rels = opened
+            .read_rels_for("word/document.xml")
+            .expect("relationships");
+        assert!(
+            rels.items.iter().any(|item| item.target == external),
+            "an external template target was dropped"
+        );
+
+        // Part names are case-insensitive, so `//Word/` is a package root too.
+        for target in [
+            "//word/no-such.xml",
+            "//Word/no-such.xml",
+            "//DOCPROPS/no-such.xml",
+        ] {
+            let mut doubled = package();
+            doubled.add_document_relationship("word/document.xml", "urn:test/part", target);
+            let mut findings = Vec::new();
+            check_relationship_integrity(&doubled, &mut findings);
+            assert!(
+                findings
+                    .iter()
+                    .any(|finding| finding.code == "MISSING_REL_TARGET"),
+                "{target}: a doubled package path still names a part"
+            );
+        }
+    }
+
+    #[test]
+    fn a_doubled_package_root_in_any_ascii_case_still_names_a_part() {
+        for target in [
+            "//Word/no-such.xml",
+            "//WORD/no-such.xml",
+            "//DocProps/no-such.xml",
+            "//CustomXml/no-such.xml",
+            "//_RELS/no-such.xml",
+            "//Ppt/no-such.xml",
+            "//XL/no-such.xml",
+        ] {
+            let mut pkg = package();
+            pkg.add_document_relationship("word/document.xml", "urn:test/part", target);
+            let mut findings = Vec::new();
+            check_relationship_integrity(&pkg, &mut findings);
+            assert!(
+                findings
+                    .iter()
+                    .any(|finding| finding.code == "MISSING_REL_TARGET"),
+                "{target} was treated as a share, not a part"
+            );
+        }
+
+        let mut present = package();
+        present.add_document_relationship(
+            "word/document.xml",
+            "urn:test/part",
+            "//Word/document.xml",
+        );
+        let mut findings = Vec::new();
+        check_relationship_integrity(&present, &mut findings);
+        assert!(
+            findings.iter().all(|finding| {
+                finding.code != "MISSING_REL_TARGET"
+                    || !finding.message.contains("//Word/document.xml")
+            }),
+            "the document part was missed under another case: {findings:?}"
+        );
+
+        let mut share = package();
+        share.add_document_relationship(
+            "word/document.xml",
+            "urn:test/part",
+            "//notepad/share/template.dotx",
+        );
+        let mut findings = Vec::new();
+        check_relationship_integrity(&share, &mut findings);
+        assert!(
+            findings
+                .iter()
+                .all(|finding| finding.code != "MISSING_REL_TARGET"
+                    || !finding.message.contains("notepad")),
+            "a share whose name is not a package root was read as a part"
+        );
+    }
+
+    /// A referenced target behind a mixed-case doubled root, and a
+    /// referenced target from an owner whose extension is `.XML`, are the
+    /// Word-fatal, error-severity finding on their owner, not the unused
+    /// relationship warning.
+    #[test]
+    fn a_referenced_missing_target_is_fatal_on_its_owner_in_any_case() {
+        let body = |id: &str| {
+            format!(
+                "<w:document xmlns:w='{}' xmlns:r='{}'><w:body><w:p><w:r><w:drawing r:embed=\"{id}\"/></w:r></w:p></w:body></w:document>",
+                W::URI,
+                R::URI
+            )
+            .into_bytes()
+        };
+        for (owner, target) in [
+            ("word/document.xml", "//Word/media/no-such.bin"),
+            ("word/extra.XML", "media/no-such.bin"),
+        ] {
+            let mut pkg = package();
+            let id = pkg.add_document_relationship(owner, "urn:test:payload", target);
+            pkg.set_part(owner, body(&id));
+            let mut findings = Vec::new();
+            check_relationship_integrity(&pkg, &mut findings);
+            let missing: Vec<_> = findings
+                .iter()
+                .filter(|f| f.code == "MISSING_REL_TARGET" && f.message.contains(target))
+                .collect();
+            assert_eq!(missing.len(), 1, "{owner} -> {target}: {findings:?}");
+            let finding = missing[0];
+            assert_eq!(finding.part, owner, "{target}");
+            assert!(finding.word_fatal, "{owner} -> {target} is not Word-fatal");
+            assert_eq!(finding.severity, "error", "{owner} -> {target}");
+            assert!(
+                finding
+                    .message
+                    .contains(&format!("relationship '{id}' on '{owner}'"))
+            );
+        }
+    }
+
     #[test]
     fn orphan_comment_cleanup_preserves_live_references_and_neighbor_run_properties() {
         for (content, remains) in [

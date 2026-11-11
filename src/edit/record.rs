@@ -150,7 +150,9 @@ pub(crate) fn plan_target(plan: &Path) -> PathBuf {
 
 /// Legacy temporary-name helper, retained for API compatibility. Recordings
 /// no longer open this predictable path; publication creates exclusive staging.
-/// Concurrent recordings remain last-writer-wins, not a serialized append.
+/// [`commit_plan`] locks a sibling of the plan and refuses when the bytes it
+/// read are gone. A writer that does not call it is not blocked, and a change
+/// that lands before that locked re-read is refused rather than overwritten.
 pub fn partial_path(target: &Path) -> PathBuf {
     let name = target
         .file_name()
@@ -184,6 +186,95 @@ pub fn write_plan(plan: &Path, json: &str) -> std::io::Result<Vec<String>> {
             json.len()
         ),
     ))
+}
+
+/// [`commit_plan`]'s refusal: PLAN.json is no longer the bytes the caller
+/// read, so the commit would overwrite a newer plan. It travels inside the
+/// [`std::io::Error`] (kind [`std::io::ErrorKind::AlreadyExists`]) and
+/// callers can downcast to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlanChanged;
+
+impl std::fmt::Display for PlanChanged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the plan changed while it was recorded; record the operation again")
+    }
+}
+
+impl std::error::Error for PlanChanged {}
+
+/// Replace PLAN.json with `json` only when its bytes are still `expected`.
+/// `None` means the plan was absent when it was read. A mismatch leaves the
+/// file untouched and returns an error whose message says the plan changed.
+///
+/// Callers of this function take one writer lock on a sibling of the plan, so
+/// two of them cannot overwrite each other. A writer that does not call it is
+/// not blocked. A change that lands before the locked re-read is refused
+/// rather than overwritten.
+///
+/// # Errors
+///
+/// [`std::io::ErrorKind::AlreadyExists`] when `expected` is not the plan's
+/// current bytes. The same I/O errors as [`write_plan`] when the publish
+/// fails. WASM has no filesystem publication.
+pub fn commit_plan(
+    plan: &Path,
+    expected: Option<&str>,
+    json: &str,
+) -> std::io::Result<Vec<String>> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let target = plan_target(plan);
+        // The lock lives on a sibling inode. Replacing the plan renames a new
+        // inode into place, which would drop a lock held on the plan itself.
+        let _lock = lock_plan(&target)?;
+        let current = match std::fs::read_to_string(&target) {
+            Ok(text) => Some(text),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        if current.as_deref() != expected {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                PlanChanged,
+            ));
+        }
+        write_plan(plan, json)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = expected;
+        write_plan(plan, json)
+    }
+}
+
+/// Exclusive lock on `.{name}.lock` beside `target`, through std's
+/// [`std::fs::File::lock`] (`flock` on Unix, `LockFileEx` on Windows). The
+/// returned file holds the lock until it is dropped. Callers share one
+/// inode, so a second commit waits instead of publishing over the first.
+/// A lock file another user left, which this one cannot write, is opened
+/// read-only: neither lock call needs write access.
+#[cfg(not(target_arch = "wasm32"))]
+fn lock_plan(target: &Path) -> std::io::Result<std::fs::File> {
+    let name = target
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    let path = target.with_file_name(format!(".{name}.lock"));
+    let file = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            std::fs::File::open(&path)?
+        }
+        Err(error) => return Err(error),
+    };
+    file.lock()?;
+    Ok(file)
 }
 
 /// The operations `ops` recorded into `held` (PLAN.json's text, `None`
@@ -564,5 +655,69 @@ mod tests {
             record_json("edit", "[]", b"", None, r#"{"file":"a","plan":"p","existingRevisions":"x"}"#),
             Err(RecordError::Usage(m)) if m.contains("auto, keep")
         ));
+    }
+
+    /// A direct write is not blocked. A later commit that still names the
+    /// bytes it read refuses and leaves the newer plan in place. A commit
+    /// that names the bytes now on disk replaces them.
+    #[test]
+    fn a_stale_plan_commit_keeps_the_newer_plan() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("plan.json");
+        std::fs::write(&path, "one\n").unwrap();
+        std::fs::write(&path, "two\n").unwrap();
+        match commit_plan(&path, Some("one\n"), "one-plus\n") {
+            Err(error) => {
+                assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+                // A typed refusal, not only a message.
+                assert!(
+                    error
+                        .get_ref()
+                        .is_some_and(|inner| inner.downcast_ref::<PlanChanged>().is_some()),
+                    "{error:?}"
+                );
+                assert!(error.to_string().contains("changed"), "{error}");
+            }
+            Ok(_) => panic!(
+                "a stale commit replaced the plan: {}",
+                std::fs::read_to_string(&path).unwrap()
+            ),
+        }
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "two\n");
+        commit_plan(&path, Some("two\n"), "three\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "three\n");
+    }
+
+    /// The lock file another user left (read-only to this one) still locks:
+    /// an advisory lock needs no write access, so the commit goes ahead.
+    #[cfg(unix)]
+    #[test]
+    fn a_read_only_lock_file_does_not_refuse_the_commit() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("plan.json");
+        std::fs::write(&path, "one\n").unwrap();
+        let lock = dir.path().join(".plan.json.lock");
+        std::fs::write(&lock, b"").unwrap();
+        std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(0o444)).unwrap();
+        commit_plan(&path, Some("one\n"), "two\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "two\n");
+    }
+
+    /// The plan lock is exclusive: while one commit holds it, a second
+    /// cannot take it, on every platform the lock compiles for.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_plan_lock_is_exclusive() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("plan.json");
+        let held = lock_plan(&target).unwrap();
+        let second = std::fs::File::open(dir.path().join(".plan.json.lock")).unwrap();
+        assert!(matches!(
+            second.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+        drop(held);
+        second.try_lock().unwrap();
     }
 }

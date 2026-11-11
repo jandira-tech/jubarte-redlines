@@ -713,6 +713,12 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             return Err(part_declared_over(&name, entry.size(), &limits));
         }
     }
+    if let Some(name) = ancestor_part(&names) {
+        return Err(AdmissionError::new(
+            K::UnsupportedPackage,
+            format!("unsafe entry name {name:?}: part is an ancestor of another part"),
+        ));
+    }
 
     let mut total = 0u64;
     let mut elements = 0u64;
@@ -744,8 +750,32 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             if n <= cap {
                 check_xml_depth(&name, &buf, limits)?;
                 tally_xml_elements(&mut elements, &name, &buf, &limits)?;
-                if lower == "[content_types].xml" || lower == "_rels/.rels" {
+                // Content types and relationships are interpreted below
+                // (`main_part`) and by the package open. A second root or a
+                // foreign default namespace must fail here, before either
+                // reader relabels the records into the OPC namespace (#643).
+                if lower == "[content_types].xml" {
+                    crate::opc::metadata_document(
+                        &buf,
+                        "Types",
+                        "http://schemas.openxmlformats.org/package/2006/content-types",
+                    )
+                    .map_err(|why| {
+                        AdmissionError::new(K::InvalidXml, format!("{}: {why}", shown(&name)))
+                    })?;
                     kept.insert(lower, buf);
+                } else if lower.ends_with(".rels") {
+                    crate::opc::metadata_document(
+                        &buf,
+                        "Relationships",
+                        "http://schemas.openxmlformats.org/package/2006/relationships",
+                    )
+                    .map_err(|why| {
+                        AdmissionError::new(K::InvalidXml, format!("{}: {why}", shown(&name)))
+                    })?;
+                    if lower == "_rels/.rels" {
+                        kept.insert(lower, buf);
+                    }
                 }
             }
             n
@@ -978,16 +1008,17 @@ pub(crate) fn zip_entry_name_raw(
             ));
         }
     }
-    Ok(if utf8 {
-        String::from_utf8_lossy(&name).into_owned()
+    if utf8 {
+        utf8_entry_name(name)
     } else {
-        cp437_name(&name)
-    })
+        Ok(cp437_name(&name))
+    }
 }
 
 /// An entry name decoded exactly as the zip 8 reader did, from the raw name
 /// bytes, the general-purpose flag field and the Info-ZIP Unicode Path
-/// (0x7075) extra fields: bit 11 set means UTF-8 (lossy), clear means CP437,
+/// (0x7075) extra fields: bit 11 set means UTF-8, and those bytes are
+/// refused when they are not UTF-8 (#640). Bit 11 clear means CP437,
 /// and a Unicode Path field whose CRC32 matches the header name replaces it
 /// (`zip-8.6.0/src/read.rs` 523-529 and 705-709). zip 9's `ZipFile::name`
 /// instead tries UTF-8 first whatever the flag says
@@ -1000,7 +1031,8 @@ pub(crate) fn zip_entry_name_raw(
 /// [`zip::result::ZipError`] when a Unicode Path field's CRC matches the
 /// visible name but its content is not UTF-8 — the archive zip 8 refused to
 /// open (`String::from_utf8` on the adopted content) rather than read under
-/// the header name.
+/// the header name — or when bit 11 is set and the header name itself is
+/// not UTF-8. A lossy replacement (`U+FFFD`) is not a part name.
 ///
 /// A field matching neither the header name nor the adopted one (a plain CRC
 /// mismatch, or a second field chained after an adopted one) is
@@ -1032,15 +1064,27 @@ pub(crate) fn zip_entry_name(
     }
     // Bit 11 (0x0800) is the language-encoding flag: `ZipFlags::LanguageEncoding`
     // in zip-9.0.4/src/format/flags.rs, `is_utf8` in zip-8.6.0/src/read.rs.
-    Ok(if flags & 0x0800 != 0 {
-        String::from_utf8_lossy(&raw).into_owned()
+    // The flag is a claim that the bytes are UTF-8; an invalid sequence is
+    // refused rather than replaced (#640).
+    if flags & 0x0800 != 0 {
+        utf8_entry_name(raw)
     } else {
-        cp437_name(&raw)
+        Ok(cp437_name(&raw))
+    }
+}
+
+/// `bytes` as a UTF-8 part name. Bit 11 and an adopted Unicode Path field
+/// both claim UTF-8; a sequence that is not UTF-8 is not given a name.
+fn utf8_entry_name(bytes: Vec<u8>) -> Result<String, zip::result::ZipError> {
+    String::from_utf8(bytes).map_err(|_| {
+        zip::result::ZipError::InvalidArchive("UTF-8 flagged entry name is not valid UTF-8".into())
     })
 }
 
 /// A ZIP name must be a relative part name: no leading slash or drive, no
-/// backslash, no empty, `.` or `..` segment.
+/// backslash, no empty, `.` or `..` segment, no trailing dot, and no
+/// percent-encoded unreserved character (`#646`). A percent-encoded
+/// `[Content_Types].xml` is the reserved metadata name, not a second part.
 fn check_part_name(name: &str) -> Result<(), AdmissionError> {
     let refuse = |why: &str| {
         Err(AdmissionError::new(
@@ -1057,6 +1101,9 @@ fn check_part_name(name: &str) -> Result<(), AdmissionError> {
     if name.contains('\\') || name.contains('\0') {
         return refuse("backslash or NUL");
     }
+    if percent_encodes_unreserved(name) {
+        return refuse("percent-encoded unreserved character");
+    }
     let segments = name.strip_suffix('/').unwrap_or(name);
     if segments
         .split('/')
@@ -1064,14 +1111,126 @@ fn check_part_name(name: &str) -> Result<(), AdmissionError> {
     {
         return refuse("empty, . or .. segment");
     }
+    if segments.split('/').any(|segment| segment.ends_with('.')) {
+        return refuse("trailing dot");
+    }
+    match percent_decode(name) {
+        Some(decoded) => {
+            if decoded.eq_ignore_ascii_case("[content_types].xml")
+                && !name.eq_ignore_ascii_case("[content_types].xml")
+            {
+                return refuse("reserved metadata name");
+            }
+            let decoded_segments = decoded.strip_suffix('/').unwrap_or(decoded.as_str());
+            if decoded_segments
+                .split('/')
+                .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+            {
+                return refuse("empty, . or .. segment");
+            }
+        }
+        None => return refuse("bad percent-encoding"),
+    }
     Ok(())
+}
+
+/// One stored part is a directory prefix of another (`word/document.xml`
+/// and `word/document.xml/child.bin`). A trailing-slash directory entry
+/// is not a part.
+fn ancestor_part(names: &[String]) -> Option<&str> {
+    // Lowercased once and sorted: the first name at or after `prefix/` is
+    // the only one that can start with it, so each check is a binary
+    // search, not a scan of every name (#2078 review).
+    let mut lower: Vec<(String, &str)> = names
+        .iter()
+        .map(String::as_str)
+        .filter(|name| !name.ends_with('/'))
+        .map(|name| (name.to_ascii_lowercase(), name))
+        .collect();
+    lower.sort_unstable();
+    let mut prefix = String::new();
+    for (low, name) in &lower {
+        prefix.clear();
+        prefix.push_str(low);
+        prefix.push('/');
+        let at = lower.partition_point(|(other, _)| other.as_str() < prefix.as_str());
+        if lower
+            .get(at)
+            .is_some_and(|(other, _)| other.starts_with(&prefix))
+        {
+            return Some(name);
+        }
+    }
+    None
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => byte.checked_sub(b'0'),
+        b'a'..=b'f' => byte.checked_sub(b'a').and_then(|n| n.checked_add(10)),
+        b'A'..=b'F' => byte.checked_sub(b'A').and_then(|n| n.checked_add(10)),
+        _ => None,
+    }
+}
+
+fn is_unreserved(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
+}
+
+/// True when a `%HH` escape decodes to an unreserved ASCII byte. OPC part
+/// names write those characters literally.
+fn percent_encodes_unreserved(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let Some(byte) = bytes.get(index).copied() else {
+            break;
+        };
+        if byte == b'%' {
+            let hi = bytes.get(index.saturating_add(1)).copied();
+            let lo = bytes.get(index.saturating_add(2)).copied();
+            if let (Some(hi), Some(lo)) = (hi.and_then(hex_digit), lo.and_then(hex_digit)) {
+                let value = hi.saturating_mul(16).saturating_add(lo);
+                if is_unreserved(value) {
+                    return true;
+                }
+                index = index.saturating_add(3);
+                continue;
+            }
+        }
+        index = index.saturating_add(1);
+    }
+    false
+}
+
+/// Decode `%HH` escapes. `None` when a `%` is not a two-digit hex escape
+/// or the result is not UTF-8.
+fn percent_decode(name: &str) -> Option<String> {
+    let bytes = name.as_bytes();
+    let mut out = Vec::new();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let byte = bytes.get(index).copied()?;
+        if byte == b'%' {
+            let hi_at = index.checked_add(1)?;
+            let lo_at = index.checked_add(2)?;
+            let hi = hex_digit(bytes.get(hi_at).copied()?)?;
+            let lo = hex_digit(bytes.get(lo_at).copied()?)?;
+            out.push(hi.checked_mul(16)?.checked_add(lo)?);
+            index = index.checked_add(3)?;
+        } else {
+            out.push(byte);
+            index = index.checked_add(1)?;
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 /// A part's text for scanning. Word writes UTF-8, but a part may be UTF-16
 /// with a byte-order mark (SharePoint's `customXml` items often are) and
 /// Word opens it, so it is transcoded; other bytes decode lossily, as the
 /// rest of the engine reads them.
-fn part_text(xml: &[u8]) -> Cow<'_, str> {
+pub(crate) fn part_text(xml: &[u8]) -> Cow<'_, str> {
     let utf16 = |rest: &[u8], unit: fn([u8; 2]) -> u16| {
         let units = rest.as_chunks::<2>().0.iter().map(|&pair| unit(pair));
         Cow::Owned(
@@ -1713,14 +1872,45 @@ mod tests {
         admit(bytes, limits).expect_err("refused").kind
     }
 
+    /// ZIP-12 (#640): bit 11 means the header name is UTF-8. Invalid UTF-8
+    /// is refused, not replaced with U+FFFD and then used as the part name.
+    /// A valid UTF-8 name with the flag set still opens.
+    #[test]
+    fn a_utf8_flagged_name_is_not_read_lossy() {
+        let bytes = zip_names::docx_package(
+            "",
+            &[zip_names::RawEntry::raw(b"word/media/\xff.bin", b"PNG").utf8()],
+        );
+        match crate::opc::PartFs::open(&bytes) {
+            Ok(fs) => panic!("invalid UTF-8 entry name was read as {:?}", fs.parts()),
+            Err(err) => assert!(err.to_string().contains("not valid UTF-8"), "{err}"),
+        }
+        match admit(&bytes, InputLimits::default()) {
+            Ok(pkg) => panic!("admit read an invalid UTF-8 entry name: {pkg:?}"),
+            Err(err) => assert!(err.to_string().contains("not valid UTF-8"), "{err}"),
+        }
+        let ok = zip_names::docx_package(
+            "",
+            &[zip_names::RawEntry::raw("word/media/caf\u{e9}.bin".as_bytes(), b"PNG").utf8()],
+        );
+        let fs = crate::opc::PartFs::open(&ok).expect("valid UTF-8 with bit 11 opens");
+        assert!(
+            fs.parts().iter().any(|name| name.contains("caf\u{e9}")),
+            "{:?}",
+            fs.parts()
+        );
+        assert!(admit(&ok, InputLimits::default()).is_ok());
+    }
+
     /// `admit` and `PartFs::open` decode entry names with the same rule
     /// (bit 11 / CP437 / the 0x7075 override) and refuse the same decoded
     /// duplicates, so a package one reader accepts the other accepts with the
     /// same part names (#524, #1069 zip9 review rows 1-2).
     #[test]
     fn admission_and_partfs_agree_on_decoded_names_and_duplicates() {
-        // Row 1: two raw names, bit 11 set, whose lossy UTF-8 decode collides —
-        // one part, refused by both readers.
+        // Row 1: two raw names, bit 11 set, that are not UTF-8. They used to
+        // collapse to one `x\u{FFFD}.bin` and refuse as a duplicate; each
+        // name is refused as invalid UTF-8 before an alias can form (#640).
         let aliased = zip_names::docx_package(
             "",
             &[
@@ -1728,17 +1918,16 @@ mod tests {
                 zip_names::RawEntry::raw(b"x\x83.bin", b"SECOND").utf8(),
             ],
         );
-        assert_eq!(
-            kind(&aliased, InputLimits::default()).code(),
-            "DUPLICATE_PART"
-        );
+        let admitted = admit(&aliased, InputLimits::default()).expect_err("invalid UTF-8");
+        assert_eq!(admitted.kind.code(), "INVALID_PACKAGE");
         assert!(
-            matches!(
-                crate::opc::PartFs::open(&aliased),
-                Err(crate::opc::OpcError::DuplicatePartName(ref n)) if n == "x\u{FFFD}.bin"
-            ),
-            "the constructor must refuse the same aliases with the typed variant"
+            admitted.to_string().contains("not valid UTF-8"),
+            "{admitted}"
         );
+        let Err(opened) = crate::opc::PartFs::open(&aliased) else {
+            panic!("invalid UTF-8 entry names were accepted");
+        };
+        assert!(opened.to_string().contains("not valid UTF-8"), "{opened}");
         // Two entries of the same name, byte for byte: the same pair of
         // refusals (the p1 shape).
         let exact = zip_names::docx_package(
@@ -1990,6 +2179,59 @@ mod tests {
             .unwrap();
         let bytes = out.finish().unwrap().into_inner();
         assert!(admit(&bytes, InputLimits::default()).is_ok());
+    }
+
+    #[test]
+    fn ancestor_part_matches_by_segment_in_any_case() {
+        let names = |list: &[&str]| list.iter().map(|n| (*n).to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            ancestor_part(&names(&[
+                "WORD/Document.xml/child.bin",
+                "word/document.xml"
+            ])),
+            Some("word/document.xml")
+        );
+        // a shared text prefix is not a shared segment
+        assert_eq!(
+            ancestor_part(&names(&["word/doc", "word/document.xml"])),
+            None
+        );
+        assert_eq!(ancestor_part(&names(&["word/doc", "word/doc.xml/x"])), None);
+        // a directory entry is not a part
+        assert_eq!(ancestor_part(&names(&["word/", "word/document.xml"])), None);
+        // the entry cap's worth of names, none an ancestor (#2078 review)
+        let many: Vec<String> = (0..10_000)
+            .map(|i| format!("word/media/image{i}.png"))
+            .collect();
+        assert_eq!(ancestor_part(&many), None);
+    }
+
+    #[test]
+    fn strict_opc_part_names_are_refused() {
+        // Percent-encoded `..`, a percent-encoded unreserved letter, a
+        // trailing dot, a part that is also an ancestor, and a
+        // percent-encoded content-types name (#646).
+        for name in [
+            "word/%2e%2e/evil.bin",
+            "word/doc%75ment2.xml",
+            "word/evil.xml.",
+            "word/document.xml/child.bin",
+            "%5BContent_Types%5D.xml",
+        ] {
+            let bytes = docx_with(&[(name, b"<x/>")]);
+            assert_eq!(
+                kind(&bytes, InputLimits::default()),
+                AdmissionErrorKind::UnsupportedPackage,
+                "{name}"
+            );
+        }
+        assert!(
+            admit(
+                &docx_with(&[("word/media/image1.png", b"png")]),
+                InputLimits::default()
+            )
+            .is_ok()
+        );
     }
 
     #[test]

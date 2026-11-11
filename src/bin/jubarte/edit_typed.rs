@@ -113,6 +113,7 @@ fn regeneration_action(
     plan: &PlanV2,
     source: &Path,
     plan_path: &Path,
+    reserved: &[std::path::PathBuf],
 ) -> Option<NextAction> {
     let mut seen = std::collections::BTreeSet::new();
     let targets: Vec<_> = error
@@ -132,7 +133,8 @@ fn regeneration_action(
     }
     let mut output = plan_path.with_extension("regenerated.json");
     let mut suffix = 1;
-    while output.symlink_metadata().is_ok() {
+    while output.symlink_metadata().is_ok() || reserved.iter().any(|path| same_path(path, &output))
+    {
         output = plan_path.with_extension(format!("regenerated-{suffix}.json"));
         suffix += 1;
     }
@@ -167,9 +169,8 @@ fn regeneration_action(
         policy.into(),
         "--track".into(),
         track.into(),
-        format!("--author={}", plan.author),
-        "--datetime".into(),
-        plan.date.clone(),
+        "--refresh-plan".into(),
+        absolute(plan_path),
         "--expect-sha256".into(),
         plan.source.sha256.clone(),
         "-o".into(),
@@ -182,7 +183,7 @@ fn regeneration_action(
                 plan.source.sha256
             )])
             .with_purpose(
-                "regenerate a new plan containing only the stale rows with their current working text; the original plan file is not changed; merge those rows into the original plan by hand",
+                "write a complete copy of the plan with a fresh before_sha256 for the stale rows; every other part of the plan is kept as written; the original plan file is not changed",
             ),
     )
 }
@@ -502,7 +503,23 @@ fn prepare_and_publish(
         .map_err(|e| {
             let next = match (&request, plan_path) {
                 (Request::V2(plan), Some(path)) if e.code == "WORKING_BASE_CHANGED" => {
-                    regeneration_action(&e, plan, action.file(), path)
+                    let mut reserved = vec![action.file().to_path_buf(), path.to_path_buf()];
+                    if let Some(output) = delivery.output.as_deref() {
+                        reserved.push(output.to_path_buf());
+                    }
+                    if let Some(report) = delivery.report.as_deref() {
+                        reserved.push(report.to_path_buf());
+                    }
+                    if let Some(expect) = delivery.expect.as_deref() {
+                        reserved.push(expect.to_path_buf());
+                    }
+                    if let Some(dir) = delivery.out_dir.as_deref() {
+                        reserved.push(dir.to_path_buf());
+                        reserved.push(dir.join("document.docx"));
+                        reserved.push(dir.join("changes.diff"));
+                        reserved.push(dir.join("report.json"));
+                    }
+                    regeneration_action(&e, plan, action.file(), path, &reserved)
                 }
                 _ => None,
             };

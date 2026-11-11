@@ -475,16 +475,18 @@ fn parse_rpr(dom: &mut Dom, s: Option<&str>) -> NodeId {
 }
 
 /// Clone a parsed old-properties element without the scratch `pt14:*`
-/// attributes it was serialized with, nor the `xmlns:ns0` declarations the
-/// standalone serialization bound them to (they would otherwise survive into
-/// the redline).
+/// attributes it was serialized with, nor the `xmlns` declarations the
+/// standalone serialization bound (`pt14`, and `w` on a fragment whose
+/// parent document already declares it). They would otherwise survive
+/// into the redline and Reject All would not match the source mark.
 fn drop_pt_bookkeeping(dom: &mut Dom, root: NodeId) -> NodeId {
     let out = dom.clone_subtree(root);
     for el in dom.descendants_and_self(out, None) {
         let drop: Vec<XName> = (0..dom.attr_count(el))
             .map(|i| dom.attr_at(el, i))
             .filter(|(n, v)| {
-                n.namespace_name() == PT::URI || (dom.is_namespace_declaration(n) && *v == PT::URI)
+                n.namespace_name() == PT::URI
+                    || (dom.is_namespace_declaration(n) && (*v == PT::URI || *v == W::URI))
             })
             .map(|(n, _)| n.clone())
             .collect();
@@ -1529,6 +1531,48 @@ pub(crate) fn word_understands_namespace(uri: &str) -> bool {
     ]
     .iter()
     .any(|root| uri.starts_with(root))
+}
+
+/// Every prefix in a Requires list passes `prefix_understood`. No list means
+/// the choice stands.
+pub(crate) fn requires_list_understood(
+    requires: Option<&str>,
+    prefix_understood: impl Fn(&str) -> bool,
+) -> bool {
+    requires.is_none_or(|requires| requires.split_whitespace().all(prefix_understood))
+}
+
+/// The branch Word shows: the first Choice whose Requires it understands,
+/// otherwise the Fallback.
+pub(crate) fn selected_alternate_branch(dom: &Dom, alternate: NodeId) -> Option<NodeId> {
+    dom.elements(alternate, Some(&MC::choice()))
+        .into_iter()
+        .find(|&choice| {
+            requires_list_understood(
+                dom.attribute(choice, &XNamespace::none().name("Requires")),
+                |prefix| {
+                    prefix_namespace(dom, choice, prefix)
+                        .is_some_and(|uri| word_understands_namespace(&uri))
+                },
+            )
+        })
+        .or_else(|| dom.element(alternate, &MC::fallback()))
+}
+
+/// True when `node` sits in a Choice or Fallback that Word does not show.
+pub(crate) fn in_unselected_alternate(dom: &Dom, node: NodeId) -> bool {
+    dom.ancestors(node, None).into_iter().any(|ancestor| {
+        if !dom.name_is(ancestor, &MC::choice()) && !dom.name_is(ancestor, &MC::fallback()) {
+            return false;
+        }
+        let Some(alternate) = dom.parent(ancestor) else {
+            return false;
+        };
+        if !dom.name_is(alternate, &MC::alternate_content()) {
+            return false;
+        }
+        selected_alternate_branch(dom, alternate) != Some(ancestor)
+    })
 }
 
 /// True if `prefix` is bound by an `xmlns:prefix` declaration on `node` or any of
@@ -8460,6 +8504,301 @@ fn fuse_story_tail_into_deleted(dom: &mut Dom, last_ins: NodeId, first_del: Node
     dom.remove(last_ins);
 }
 
+/// #1678. The revised body ends on an empty paragraph and the redline
+/// ended on the table that replaced the source's last paragraph. Word
+/// keeps that empty paragraph as the close, with no revision on it, and
+/// writes an inserted mark on the replacement so Reject All joins the
+/// empty paragraph away.
+pub(crate) fn keep_revised_empty_close(out_xml: &str, revised_xml: &str) -> Option<String> {
+    let mut revised = Dom::new();
+    let revised_doc = revised.parse_xdocument(revised_xml);
+    let revised_body = revised
+        .root(revised_doc)
+        .and_then(|root| revised.element(root, &W::body()))?;
+    let revised_last = revised
+        .elements(revised_body, None)
+        .into_iter()
+        .rfind(|&child| !revised.name_is(child, &W::sect_pr()))?;
+    if !paragraph_has_live_empty_pilcrow(&revised, revised_last) {
+        return None;
+    }
+
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(out_xml);
+    let root = dom.root(doc)?;
+    let body = dom.element(root, &W::body())?;
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&child| !dom.name_is(child, &W::sect_pr()))
+        .collect();
+    let (&last, before) = kids.split_last()?;
+    // Only a table the revision added replaces the paragraph: one the
+    // source already ended on stays live under Reject All, and the close
+    // could not join away across it (cursor on #2102).
+    if !dom.name_is(last, &W::tbl()) || !table_is_inserted(&dom, last) {
+        return None;
+    }
+    let &previous = before.last()?;
+    if !dom.name_is(previous, &W::p())
+        || dom
+            .find_descendant_element(previous, Some(&W::ins()), |_| true)
+            .is_none()
+        || dom
+            .find_descendant_element(previous, Some(&W::del()), |_| true)
+            .is_none()
+        || para_mark_revision(&dom, previous, &W::del())
+        || para_mark_revision(&dom, previous, &W::move_from())
+        || para_mark_revision(&dom, previous, &W::move_to())
+    {
+        return None;
+    }
+    let minted = !para_mark_revision(&dom, previous, &W::ins());
+    if minted {
+        mint_replacement_mark(&mut dom, root, previous)?;
+    }
+    let close = revised_close_copy(&mut dom, &revised, revised_last, previous)?;
+    match dom.element(body, &W::sect_pr()) {
+        Some(sect) => dom.add_before_self(sect, close),
+        None => dom.add(body, close),
+    }
+    Some(dom.serialize_element(root))
+}
+
+/// Every row of `table` carries an inserted row mark.
+fn table_is_inserted(dom: &Dom, table: NodeId) -> bool {
+    let mut rows = 0usize;
+    let mut inserted = 0usize;
+    dom.for_each_descendant_element(table, Some(&W::tr()), |row| {
+        rows += 1;
+        if dom
+            .element(row, &W::tr_pr())
+            .is_some_and(|properties| dom.element(properties, &W::ins()).is_some())
+        {
+            inserted += 1;
+        }
+    });
+    rows > 0 && rows == inserted
+}
+
+/// The revised close, copied with its properties and inert runs (codex on
+/// #2102). Reject All joins the replaced paragraph's words into this mark,
+/// so a close whose properties differ records the replaced paragraph's in
+/// a `w:pPrChange`. Its `w14` ids stay behind, as they could repeat one
+/// the redline already holds, and so does a paragraph-level `w:sectPr`,
+/// whose header and footer references name the revised part's
+/// relationships, not the redline's.
+fn revised_close_copy(
+    dom: &mut Dom,
+    revised: &Dom,
+    revised_close: NodeId,
+    previous: NodeId,
+) -> Option<NodeId> {
+    let close = dom.import_subtree(revised, revised_close);
+    for name in [W14::name("paraId"), W14::name("textId")] {
+        dom.set_attribute_value(close, &name, None);
+    }
+    let Some(properties) = dom.element(close, &W::p_pr()) else {
+        return Some(close);
+    };
+    for child in dom.elements(properties, None) {
+        if dom.name_is(child, &W::sect_pr()) || dom.name_is(child, &W::p_pr_change()) {
+            dom.remove(child);
+        }
+    }
+    let formatting = |dom: &Dom, holder: Option<NodeId>| -> Vec<String> {
+        holder
+            .map(|holder| {
+                dom.elements(holder, None)
+                    .into_iter()
+                    .filter(|&c| !dom.name_is(c, &W::r_pr()) && !dom.name_is(c, &W::p_pr_change()))
+                    .map(|c| dom.serialize_element(c))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let previous_properties = dom.element(previous, &W::p_pr());
+    if formatting(dom, Some(properties)) == formatting(dom, previous_properties) {
+        return Some(close);
+    }
+    let mark = dom.find_descendant_element(previous, Some(&W::ins()), |_| true)?;
+    let author = dom.attribute(mark, &W::author())?.to_string();
+    let date = dom.attribute(mark, &W::date()).map(str::to_string);
+    let id = fresh_revision_id(dom, dom.parent(dom.parent(previous)?)?);
+    let change = dom.new_element(W::p_pr_change());
+    dom.set_attribute_value(change, &W::id(), Some(&id.to_string()));
+    dom.set_attribute_value(change, &W::author(), Some(&author));
+    if let Some(date) = date.as_deref() {
+        dom.set_attribute_value(change, &W::date(), Some(date));
+    }
+    let recorded = dom.new_element(W::p_pr());
+    if let Some(holder) = previous_properties {
+        for child in dom.elements(holder, None) {
+            if !dom.name_is(child, &W::r_pr())
+                && !dom.name_is(child, &W::p_pr_change())
+                && !dom.name_is(child, &W::sect_pr())
+            {
+                let copy = dom.clone_subtree(child);
+                dom.add(recorded, copy);
+            }
+        }
+    }
+    dom.add(change, recorded);
+    dom.add(properties, change);
+    Some(close)
+}
+
+/// A revision id no element under `root` uses.
+fn fresh_revision_id(dom: &Dom, root: NodeId) -> u64 {
+    let mut used = HashSet::new();
+    dom.for_each_descendant_element(root, None, |element| {
+        if let Some(id) = dom
+            .attribute(element, &W::id())
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            used.insert(id);
+        }
+    });
+    crate::revision_processor::RevisionIds::from_used(used).allocate()
+}
+
+/// An inserted mark on the paragraph a table replaced, copied from the
+/// paragraph's own insertion.
+fn mint_replacement_mark(dom: &mut Dom, root: NodeId, paragraph: NodeId) -> Option<()> {
+    let source = dom.find_descendant_element(paragraph, Some(&W::ins()), |_| true)?;
+    let author = dom.attribute(source, &W::author())?.to_string();
+    let date = dom.attribute(source, &W::date()).map(str::to_string);
+    let id = fresh_revision_id(dom, root);
+    let mark = dom.new_element(W::ins());
+    dom.set_attribute_value(mark, &W::id(), Some(&id.to_string()));
+    dom.set_attribute_value(mark, &W::author(), Some(&author));
+    if let Some(date) = date.as_deref() {
+        dom.set_attribute_value(mark, &W::date(), Some(date));
+    }
+    let properties = match dom.element(paragraph, &W::p_pr()) {
+        Some(properties) => properties,
+        None => {
+            let properties = dom.new_element(W::p_pr());
+            dom.add_first(paragraph, properties);
+            properties
+        }
+    };
+    let mark_properties = match dom.element(properties, &W::r_pr()) {
+        Some(mark_properties) => mark_properties,
+        None => {
+            let mark_properties = dom.new_element(W::r_pr());
+            let after = dom.elements(properties, None).into_iter().find(|&child| {
+                dom.name_is(child, &W::sect_pr()) || dom.name_is(child, &W::p_pr_change())
+            });
+            match after {
+                Some(after) => dom.add_before_self(after, mark_properties),
+                None => dom.add(properties, mark_properties),
+            }
+            mark_properties
+        }
+    };
+    dom.add_first(mark_properties, mark);
+    Some(())
+}
+
+/// #1683, case 2. Word's Compare writes the revised body's last paragraph
+/// after the table it replaced, as the closing paragraph, with no revision
+/// on that mark. The redline left the inserted paragraph, mark included,
+/// before the deleted table, and the original's empty close after it.
+/// Move the insertion onto that close. A paragraph that also carries a
+/// deletion stays where it is (#1926).
+///
+/// Only when the inserted paragraph is the revision's own last one
+/// (`revised_xml`'s body closes on its text): a revision that ends on an
+/// empty paragraph pairs that one with the close, and Word keeps the
+/// inserted paragraph before the deleted table on its inserted mark
+/// (Word's nested_table_rowspan × numbered_list redline, CI on #2101).
+pub(crate) fn pair_closing_insert_across_deleted_table(
+    dom: &mut Dom,
+    body: NodeId,
+    revised_xml: &str,
+) {
+    // Range and proofing markers sit between blocks without being one
+    // (cursor on #2101); the body's own `w:sectPr` closes it.
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&child| {
+            !dom.name_is(child, &W::sect_pr())
+                && !crate::comparer::final_marks::is_inert_body_marker(dom, child)
+        })
+        .collect();
+    let Some((&close, before)) = kids.split_last() else {
+        return;
+    };
+    if !paragraph_has_live_empty_pilcrow(dom, close) {
+        return;
+    }
+    let Some(split) = before
+        .iter()
+        .rposition(|&child| !table_is_deleted(dom, child))
+    else {
+        return;
+    };
+    if split + 1 >= before.len() {
+        return;
+    }
+    let inserted = before[split];
+    if !para_is_pure_inserted(dom, inserted)
+        || !para_mark_revision(dom, inserted, &W::ins())
+        || para_has_no_text(dom, inserted)
+        || revised_body_close_text(revised_xml).as_deref()
+            != Some(paragraph_text(dom, inserted).as_str())
+    {
+        return;
+    }
+    // A whole story replaced keeps Word's order, every insertion before
+    // the deleted original: the inserted paragraph stays before the table
+    // on its inserted mark (Word's nested_table_rowspan × numbered_list
+    // redline, `tests/m_whole_story_final_marks.rs`). Only a revision that
+    // keeps something of the original before it pairs (CI on #2101).
+    let keeps_original = before[..split].iter().any(|&block| {
+        if dom.name_is(block, &W::p()) {
+            !para_is_pure_inserted(dom, block) && !para_is_pure_deleted(dom, block)
+        } else {
+            !table_is_deleted(dom, block)
+        }
+    });
+    if !keeps_original {
+        return;
+    }
+    for child in dom.elements(inserted, None) {
+        if !dom.name_is(child, &W::p_pr()) {
+            dom.add(close, child);
+        }
+    }
+    dom.remove(inserted);
+}
+
+/// The `w:t` text of `paragraph`, in order.
+fn paragraph_text(dom: &Dom, paragraph: NodeId) -> String {
+    let mut text = String::new();
+    dom.for_each_descendant_element(paragraph, Some(&W::t()), |t| {
+        text.push_str(&dom.value(t));
+    });
+    text
+}
+
+/// The text of the paragraph that closes `xml`'s body, past its `w:sectPr`
+/// and inert markers; `None` when the body closes on anything else.
+fn revised_body_close_text(xml: &str) -> Option<String> {
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(xml);
+    let root = dom.root(doc)?;
+    let body = dom.element(root, &W::body())?;
+    let close = dom.elements(body, None).into_iter().rev().find(|&child| {
+        !dom.name_is(child, &W::sect_pr())
+            && !crate::comparer::final_marks::is_inert_body_marker(&dom, child)
+    })?;
+    dom.name_is(close, &W::p())
+        .then(|| paragraph_text(&dom, close))
+}
+
 /// Every paragraph of the table is deleted, marks included, and nothing in it
 /// is live or inserted (the rows get their deleted marks later, from
 /// `mark_fully_revised_rows`).
@@ -8668,12 +9007,38 @@ fn story_tail_has_paired_original_boundary(
         && paired_replacement_has_identical_properties(dom, deleted[0], inserted)
 }
 
+/// Whether `container` is a table cell's story: the cell itself, or a block
+/// content control (`w:sdtContent`) whose nearest story is a cell, through
+/// further controls and custom XML. A text box is a story of its own (#2100).
+fn container_is_cell_story(dom: &Dom, container: NodeId) -> bool {
+    let mut node = container;
+    loop {
+        if dom.name_is(node, &W::tc()) {
+            return true;
+        }
+        let transparent = dom.name_is(node, &W::sdt_content())
+            || dom.name_is(node, &W::sdt())
+            || dom.name_is(node, &W::custom_xml());
+        if !transparent {
+            return false;
+        }
+        let Some(parent) = dom.parent(node) else {
+            return false;
+        };
+        node = parent;
+    }
+}
+
 fn merge_replaced_in_container(
     dom: &mut Dom,
     container: NodeId,
     comparer_author: &str,
     fold_boundary: bool,
 ) {
+    // #1686: a cell that gains or loses an empty paragraph must keep it.
+    // The story-end fold below treats the end of a cell as the end of the
+    // story and deletes that paragraph. Body folds are unchanged.
+    let in_cell = container_is_cell_story(dom, container);
     loop {
         let children: Vec<NodeId> = dom.elements(container, None);
         let classes: Vec<Option<bool>> = children
@@ -8913,9 +9278,7 @@ fn merge_replaced_in_container(
                     continue;
                 }
                 let merged = dom.new_element(W::p());
-                for (an, av) in dom.attributes(ins_p) {
-                    dom.set_attribute_value(merged, &an, Some(&av));
-                }
+                dom.copy_attributes(ins_p, merged);
                 // Inserted pPr wins when structural (new formatting). M88: when
                 // Inserted is bare but Deleted has numPr/spacing, keep Deleted
                 // structural live with del mark (file_55 mixed "notation"+"a").
@@ -9078,7 +9441,11 @@ fn merge_replaced_in_container(
                 // inventory first fold — Word keeps one empty pure-D).
                 let carrier = inss[inss.len() - 1];
                 let carrier_has_mark_del = para_mark_revision(dom, carrier, &W::del());
-                let mark_only_empty_del = inss.len() == 1
+                // #1686: inside a cell the mark-only empty paragraph is one
+                // the cell lost. Folding it onto the inserted paragraph
+                // leaves Reject All one paragraph short.
+                let mark_only_empty_del = !in_cell
+                    && inss.len() == 1
                     && !preceding_has_ins
                     && !carrier_has_mark_del
                     && first_mark_only_empty
@@ -9103,7 +9470,10 @@ fn merge_replaced_in_container(
                                 .starts_with("list")
                         })
                     });
-                let heading_empty_mark_fold = first_mark_only_empty
+                // #2100: in a cell this fold drops the empty heading the cell
+                // lost, as `mark_only_empty_del` would.
+                let heading_empty_mark_fold = !in_cell
+                    && first_mark_only_empty
                     && !carrier_has_mark_del
                     && para_has_heading_or_title_style(dom, dels[0])
                     && last_ins_list_style;
@@ -9196,7 +9566,11 @@ fn merge_replaced_in_container(
                 // When last pure-I is empty/whitespace and first pure-D is
                 // unrelated, keep trailing empty as carrier (long OR short).
                 let trailing = inss[inss.len() - 1];
-                if inss.len() >= 2
+                // #1686: a cell's trailing empty inserted paragraph is a
+                // paragraph of the revised cell. Using it as the carrier
+                // deletes it on the next fold.
+                if !in_cell
+                    && inss.len() >= 2
                     && trailing != last_ins
                     && (para_has_no_text(dom, trailing)
                         || para_body_text_is_whitespace_only(dom, trailing))
@@ -9763,6 +10137,36 @@ fn merge_replaced_in_container(
                     && para_body_alnum_len(dom, d) >= 10
                     && (para_word_atom_count(dom, d) >= 8 || para_has_heading_style(dom, d))
                 {
+                    continue;
+                }
+                // #1686: the carrier is an empty inserted paragraph of a cell.
+                // Word's `[One.]` → `["" ""]` keeps that inserted mark on the
+                // paragraph that holds the deleted words and leaves the other
+                // paragraph empty. Any other empty inserted paragraph of a
+                // cell stays; folding it away drops a paragraph Accept All
+                // or Reject All still has.
+                if in_cell
+                    && (para_has_no_text(dom, last_ins)
+                        || para_body_text_is_whitespace_only(dom, last_ins))
+                    && para_mark_revision(dom, last_ins, &W::ins())
+                {
+                    let word_empty_gain = inss.len() == 1
+                        && dels.len() == 1
+                        && para_has_real_del(dom, d)
+                        && !para_mark_revision(dom, d, &W::del());
+                    if word_empty_gain {
+                        // The deleted words move onto the inserted mark; the
+                        // shell keeps its `w:pPr`, which Reject All joins the
+                        // inserted mark's content into (#2100).
+                        for c in dom.elements(d, None) {
+                            if !dom.name_is(c, &W::p_pr()) {
+                                dom.add(last_ins, c);
+                                dom.remove(c);
+                            }
+                        }
+                        acted = true;
+                        break;
+                    }
                     continue;
                 }
                 // Strip para-mark revision from the carrier (Word: bare mixed p)
@@ -10424,9 +10828,7 @@ pub fn convert_stamped_preins(
                 let after: Vec<NodeId> = sibs[idx + 1..].to_vec();
                 if !after.is_empty() {
                     let del2 = dom.new_element(W::del());
-                    for (an, av) in dom.attributes(parent) {
-                        dom.set_attribute_value(del2, &an, Some(&av));
-                    }
+                    dom.copy_attributes(parent, del2);
                     dom.set_attribute_value(del2, &W::id(), Some(&id_gen.to_string()));
                     *id_gen += 1;
                     for a in after {
@@ -10784,14 +11186,13 @@ fn order_property_elements(dom: &mut Dom, root: NodeId, comparison: bool) {
             let kids = dom.elements(el, None);
             let needs_move = kids
                 .iter()
-                .position(|&c| dom.name_is(c, &props.clone()))
+                .position(|&c| dom.name_is(c, &props))
                 .is_some_and(|first_props| {
                     kids[..first_props].iter().any(|&c| !dom.name_is(c, &props))
                 });
             if needs_move {
-                let (front, back): (Vec<NodeId>, Vec<NodeId>) = kids
-                    .into_iter()
-                    .partition(|&c| dom.name_is(c, &props.clone()));
+                let (front, back): (Vec<NodeId>, Vec<NodeId>) =
+                    kids.into_iter().partition(|&c| dom.name_is(c, &props));
                 for c in front.into_iter().chain(back) {
                     dom.remove(c);
                     dom.add(el, c);
@@ -10882,7 +11283,7 @@ pub fn wrap_bare_del_text_runs(
             };
             let n = dom.name(p);
             // Legal parents for delText runs: w:del and w:moveFrom.
-            n != Some(W::del()) && n != Some(move_from.clone())
+            n != Some(W::del()) && n.as_ref() != Some(&move_from)
         })
         .collect();
     for r in runs {
@@ -11149,10 +11550,7 @@ pub fn flatten_tracked_deletions(
     for d in dels {
         // paragraph-mark markers live under pPr/rPr — handled (or deliberately
         // kept) above; the childless element must not be "unwrapped" away
-        if dom
-            .parent(d)
-            .is_some_and(|p| dom.name_is(p, &rpr_name.clone()))
-        {
+        if dom.parent(d).is_some_and(|p| dom.name_is(p, &rpr_name)) {
             continue;
         }
         let kids = dom.nodes(d);
@@ -11289,9 +11687,7 @@ pub fn convert_stamped_predeletes(
                 let after: Vec<NodeId> = sibs[idx + 1..].to_vec();
                 if !after.is_empty() {
                     let ins2 = dom.new_element(W::ins());
-                    for (an, av) in dom.attributes(parent) {
-                        dom.set_attribute_value(ins2, &an, Some(&av));
-                    }
+                    dom.copy_attributes(parent, ins2);
                     dom.set_attribute_value(ins2, &W::id(), Some(&id_gen.to_string()));
                     *id_gen += 1;
                     for a in after {
@@ -11884,12 +12280,12 @@ pub fn mark_fully_revised_rows(
                 p
             }
         };
-        // A paired row's property history establishes structural ownership
-        // on both sides. Deleted old text does not delete that row when B
-        // deliberately retained empty cells (Word M337). A surviving
-        // paragraph mark is an independent owner of the paired structure.
-        // Existing row revision marks still control wholesale lifetimes.
-        let paired_row = dom.element(trpr, &W::name("trPrChange")).is_some();
+        // Deleted text does not delete a row the other document kept.
+        // A surviving paragraph mark is that row's owner, including when
+        // the row properties are equal and carry no `w:trPrChange`
+        // (#1672). A row the other document dropped has its paragraph
+        // marks deleted, so it still receives the row mark. An existing
+        // row revision still controls a wholesale lifetime.
         let already_owned =
             dom.element(trpr, &W::ins()).is_some() || dom.element(trpr, &W::del()).is_some();
         if already_owned {
@@ -11903,13 +12299,11 @@ pub fn mark_fully_revised_rows(
                     && !para_mark_revision(dom, p, &W::move_from())
             }
         };
-        if paired_row
-            && dom
-                .elements(tr, Some(&tc_name))
-                .into_iter()
-                .flat_map(|tc| dom.descendants(tc, Some(&W::p())))
-                .any(survives_direction)
-        {
+        let p_name = W::p();
+        if dom.elements(tr, Some(&tc_name)).into_iter().any(|tc| {
+            dom.find_descendant_element(tc, Some(&p_name), survives_direction)
+                .is_some()
+        }) {
             continue;
         }
         let rev_name = if k { W::ins() } else { W::del() };

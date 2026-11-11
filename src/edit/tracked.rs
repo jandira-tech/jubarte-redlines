@@ -134,9 +134,24 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
                 let node = tx.paragraph_nodes[*para];
                 let replacement = tx.final_replacement(*para);
                 if let Some(moved) = moved_in(dom, node) {
+                    // A mark stored in a formatting change is that change's
+                    // history. Name the outermost one: a history recorded
+                    // inside another is not listed on its own, so only the
+                    // outer change is what the listing offers.
+                    let mut recorded = None;
+                    let mut current = dom.parent(moved);
+                    while let Some(ancestor) = current {
+                        if dom.name(ancestor).is_some_and(|name| {
+                            name.namespace_name() == W::URI
+                                && crate::changes::FORMATTING.contains(&name.local_name())
+                        }) {
+                            recorded = Some(ancestor);
+                        }
+                        current = dom.parent(ancestor);
+                    }
                     Some(named(
                         "under keep, a paragraph that holds a move cannot be deleted yet: the move is",
-                        moved,
+                        recorded.unwrap_or(moved),
                     ))
                 } else if let Some(foreign) = untrackable_content(dom, node) {
                     let name = dom.name(foreign).expect("an element");
@@ -291,6 +306,12 @@ pub(super) fn result_v2_with_paragraphs(
         .unwrap_or(report.paragraphs.from);
     report.revisions = revision_counts(&redline, &tx.plan.author, &tx.date, &own);
     report.split_revisions = splits(&paragraphs.insertion_origins);
+    report.clean_removed_comments = super::comment_settlement::threads_the_clean_copy_drops(
+        &clean,
+        &redline,
+        &report.removed_comments,
+        &tx.deleted_paragraph_ids(),
+    )?;
     Ok((
         EditResult {
             clean,
@@ -313,6 +334,12 @@ fn result_with_order(
         .unwrap_or(report.paragraphs.from);
     report.revisions = revision_counts(&redline, &tx.plan.author, &tx.date, &own);
     report.split_revisions = splits(&paragraphs.insertion_origins);
+    report.clean_removed_comments = super::comment_settlement::threads_the_clean_copy_drops(
+        &clean,
+        &redline,
+        &report.removed_comments,
+        &tx.deleted_paragraph_ids(),
+    )?;
     Ok(EditResult {
         clean,
         redline,
@@ -953,6 +980,12 @@ fn emit(
             cursor
         };
         if let Some(carrier) = carrier {
+            // The mark goes with this paragraph, so a nonempty bookmark ends
+            // inside the deletion, as Word writes it. An empty bookmark, and
+            // a cell whose mark stays, keep the end outside (#1676).
+            if carrier == node {
+                enclose_nonempty_bookmark_ends(dom, node);
+            }
             mark(dom, carrier, W::del(), stamp);
         }
     }
@@ -1593,7 +1626,13 @@ fn emit_text(
             (None, None) => return,
         };
         let (t, run) = chosen;
-        isolate(dom, run, t, &mut stamp.ids);
+        // An empty `w:t` covers no character. Peeling it off the piece the
+        // insertion attaches to moves Alice's id onto that empty run and
+        // mints a fresh id for the tab. `audit_tracked` then reports the
+        // original id as `FOREIGN_AUTHOR` (#1663).
+        if split_around_piece(dom, run, t) {
+            isolate(dom, run, t, &mut stamp.ids);
+        }
         let anchor = insertion_boundary_anchor(dom, run, before);
         (Some(run), Some(anchor), before)
     };
@@ -1959,11 +1998,30 @@ fn isolate_range(
     }
 }
 
+/// Whether `t` has a sibling the insertion must leave in another run.
+/// An empty `w:t` stays with `t`: it is not a character the insertion splits.
+fn split_around_piece(dom: &Dom, run: NodeId, t: NodeId) -> bool {
+    child_elements(dom, run).any(|child| {
+        if child == t || dom.name_is(child, &W::r_pr()) {
+            return false;
+        }
+        if dom.name_is(child, &W::t()) {
+            return !dom.value(child).is_empty();
+        }
+        true
+    })
+}
+
 /// Whether `t` is the only child of `run` besides its `w:rPr`.
 fn alone(dom: &Dom, run: NodeId, t: NodeId) -> bool {
-    dom.elements(run, None)
-        .into_iter()
-        .all(|c| c == t || dom.name_is(c, &W::r_pr()))
+    child_elements(dom, run).all(|c| c == t || dom.name_is(c, &W::r_pr()))
+}
+
+/// The element children of `run`, without collecting them.
+fn child_elements(dom: &Dom, run: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+    (0..dom.child_count(run))
+        .map(move |i| dom.child_at(run, i))
+        .filter(|&child| dom.is_element(child))
 }
 
 /// Move the children of `run` before `t` into a copy of the run placed
@@ -2114,6 +2172,45 @@ fn wrap_deleted(dom: &mut Dom, group: Vec<NodeId>, stamp: &mut Stamp<'_>) {
         dom.add(del, run);
         rename_deleted_text(dom, run);
     }
+}
+
+/// A nonempty bookmark's end follows its deleted words into the content
+/// `w:del`. An empty bookmark has no deleted words between its endpoints
+/// and stays outside.
+fn enclose_nonempty_bookmark_ends(dom: &mut Dom, paragraph: NodeId) {
+    let children = dom.elements(paragraph, None);
+    let mut moves = Vec::new();
+    for (index, &child) in children.iter().enumerate() {
+        if !dom.name_is(child, &W::bookmark_end()) {
+            continue;
+        }
+        let Some(id) = dom.attribute(child, &W::id()) else {
+            continue;
+        };
+        let Some(start_at) = children[..index].iter().rposition(|&start| {
+            dom.name_is(start, &W::bookmark_start()) && dom.attribute(start, &W::id()) == Some(id)
+        }) else {
+            continue;
+        };
+        let Some(&del) = children[start_at + 1..index]
+            .iter()
+            .rev()
+            .find(|&&node| dom.name_is(node, &W::del()) && deletion_has_text(dom, node))
+        else {
+            continue;
+        };
+        moves.push((child, del));
+    }
+    for (end, del) in moves {
+        dom.remove(end);
+        dom.add(del, end);
+    }
+}
+
+fn deletion_has_text(dom: &Dom, del: NodeId) -> bool {
+    dom.descendants(del, Some(&W::del_text()))
+        .iter()
+        .any(|&text| !dom.value(text).is_empty())
 }
 
 /// Revision elements of a paragraph mark that delete it.

@@ -23,7 +23,7 @@ use super::critic::{self, Piece, Pieces, Token};
 use super::diff::{continues, marker_len, opens_amount, table_row, table_row_change};
 use super::xml::{
     Change, Comment, Content, Document, FormatMark, Indent, Item, Kind, Label, LabelUse, Link,
-    List, Note, Paragraph, Picture, Run, RunFormat, TableFormats, TextBox,
+    List, Note, Paragraph, Picture, Run, RunFormat, StyleChangeKind, TableFormats, TextBox,
 };
 use super::{DocxOptions, MarkdownError, PageSize, TrackChanges, WrittenDocx, package};
 use super::{math, view_notes, view_stories, view_styles};
@@ -149,7 +149,7 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
         (markdown.to_string(), Vec::new())
     };
     let source = page_commands(&source);
-    let source = inline_math(table_pipes(&source));
+    let source = inline_math(table_pipes(&source), options.critic);
     let mut writer = Writer::new(options);
     (writer.box_markdown, writer.document.box_error) = text_box_sources(markdown);
     writer.tables = table_plans(&source);
@@ -218,12 +218,26 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
     document
 }
 
-/// Keep rejected dollar pairs as text before any Markdown pass consumes them.
-fn inline_math(source: String) -> String {
-    inline_math_passes(source).0
+/// A style-change tag's property word, the revision tag after it, and
+/// whether the property word was missing (an older view, written as a run).
+fn style_change_tag(raw: &str) -> (StyleChangeKind, &str, bool) {
+    match raw.split_once(' ') {
+        Some(("pPr", rest)) => (StyleChangeKind::Paragraph, rest, false),
+        Some(("rPr", rest)) => (StyleChangeKind::Run, rest, false),
+        Some(("other", rest)) => (StyleChangeKind::Other, rest, false),
+        _ => (StyleChangeKind::Run, raw, true),
+    }
 }
 
-fn inline_math_passes(mut source: String) -> (String, usize) {
+/// Keep rejected dollar pairs as text before any Markdown pass consumes them.
+///
+/// A stand-in can cross a formula only while CriticMarkup is on. Off, the
+/// boundary check has nothing to refuse, so a dollar pair stays math.
+fn inline_math(source: String, critic_on: bool) -> String {
+    inline_math_passes(source, critic_on).0
+}
+
+fn inline_math_passes(mut source: String, critic_on: bool) -> (String, usize) {
     let mut passes = 0;
     if !source.contains('$') {
         return (source, passes);
@@ -254,7 +268,7 @@ fn inline_math_passes(mut source: String) -> (String, usize) {
             let closer = range.end - 1;
             if steals_formula
                 || (!display && opens_amount(&source, closer))
-                || critic::math_crosses_boundary(&latex)
+                || (critic_on && critic::math_crosses_boundary(&latex))
             {
                 rejected.push(range.start);
                 if display {
@@ -566,7 +580,7 @@ fn scholar(markdown: &str, stories: bool) -> String {
 }
 
 /// A YAML front matter block's text and the Markdown after it.
-fn split_front_matter(markdown: &str) -> Option<(&str, &str)> {
+pub(super) fn split_front_matter(markdown: &str) -> Option<(&str, &str)> {
     let rest = markdown
         .strip_prefix("---\n")
         .or_else(|| markdown.strip_prefix("---\r\n"))?;
@@ -898,6 +912,8 @@ struct TablePlan {
     /// Rows' and cells' own changes the text does not show.
     row_marks: BTreeMap<usize, (bool, view_notes::Tag)>,
     cell_marks: BTreeMap<(usize, usize), (view_notes::CellMark, view_notes::Tag)>,
+    /// Cell paragraphs whose size stays on the runs (`mark style`).
+    mark_inherits: HashSet<usize>,
 }
 
 /// One row of a [`TablePlan`].
@@ -1326,6 +1342,7 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
         para_fmt: line.para_fmt,
         row_marks: line.row_marks,
         cell_marks: line.cell_marks,
+        mark_inherits: line.mark_inherits,
     }
 }
 
@@ -1367,6 +1384,14 @@ fn html_attribute(html: &str, name: &str) -> Option<String> {
         return Some(crate::convert::altchunk::decode_entities(raw));
     }
     None
+}
+
+/// Whether `html` is one `<sym …/>` tag and nothing else.
+fn is_symbol_tag(html: &str) -> bool {
+    html.starts_with('<')
+        && html.ends_with("/>")
+        && html.matches('<').count() == 1
+        && html_tag(html).is_some_and(|tag| tag.name == "sym" && tag.empty && !tag.closing)
 }
 
 /// Whether an HTML block is only comments (the view's id lines).
@@ -1486,6 +1511,16 @@ struct HtmlTag {
     closing: bool,
     /// `<b/>`: opens and closes at once.
     empty: bool,
+}
+
+/// `<br type="page"/>`: a page break in the text, not a line break.
+fn html_is_page_break(html: &str) -> bool {
+    let compact: String = html
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    compact.contains("type=\"page\"") || compact.contains("type='page'")
 }
 
 /// The tag `html` is, if it is one: a comment, a declaration or a
@@ -1808,6 +1843,10 @@ struct Writer<'o, 'a> {
     /// Endnote -->`), then the open note's.
     note_style_next: Vec<String>,
     note_style: Vec<String>,
+    /// Spacing the next note's id line names, then the open note's, one
+    /// group per paragraph.
+    note_spacing_next: Vec<super::xml::Spacing>,
+    note_spacing: Vec<super::xml::Spacing>,
     /// The note paragraph `begin_paragraph` styles next, from 0.
     note_paragraph: usize,
     /// The number of the next cell paragraph, when the table line counts
@@ -1874,6 +1913,10 @@ struct Writer<'o, 'a> {
     pieces: Pieces,
     change: Option<(Kind, u32)>,
     serial: u32,
+    /// Nests whose outer kind was guessed because no earlier piece of that
+    /// change had been read: the inner serial and the story it sits in.
+    /// [`Self::finish`] gives each the kind of the change's first piece.
+    guessed_wraps: Vec<(u32, Option<String>)>,
     slot: usize,
     span_start: Option<SpanStart>,
     closed: Option<u32>,
@@ -1935,6 +1978,70 @@ struct Writer<'o, 'a> {
     document: Document,
 }
 
+/// The note with each ` re ` part's ` move` clause removed, and the range
+/// name that clause named. Empty is a move with no range. The original
+/// note comes back, with no names, unless the peeled text is a revision note.
+fn peeled_note(note: &str) -> (String, Vec<Option<String>>) {
+    let peeled: Vec<(String, Option<String>)> = note.split(" re ").map(peel_move_part).collect();
+    let names: Vec<Option<String>> = peeled.iter().map(|(_, name)| name.clone()).collect();
+    if names.iter().all(Option::is_none) {
+        return (note.to_string(), names);
+    }
+    let joined = peeled
+        .iter()
+        .map(|(body, _)| body.as_str())
+        .collect::<Vec<_>>()
+        .join(" re ");
+    let parses = view_notes::nested_revision_tags(&joined).is_some()
+        || view_notes::revision_tags(&joined).is_some()
+        || view_notes::nested_plain_revisions(&joined).is_some()
+        || view_notes::plain_revisions(&joined).is_some()
+        || view_notes::plain_revision(&joined).is_some();
+    if parses {
+        (joined, names)
+    } else {
+        (note.to_string(), vec![None; names.len()])
+    }
+}
+
+/// One ` re ` part without its move clause. A single trailing token is the
+/// range name (` move move1`); a bare ` move` is a move with no name.
+fn peel_move_part(part: &str) -> (String, Option<String>) {
+    let part = part.trim();
+    if let Some((body, name)) = part.rsplit_once(" move ") {
+        let name = name.trim();
+        if !name.is_empty() && !name.contains(char::is_whitespace) {
+            return (body.trim_end().to_string(), Some(decode_move_name(name)));
+        }
+    }
+    if let Some(body) = part.strip_suffix(" move") {
+        return (body.to_string(), Some(String::new()));
+    }
+    (part.to_string(), None)
+}
+
+/// The range name the reader stored. `%25` is `%` and `%20` is a space,
+/// decoded in that order so a name that itself holds `%20` stays.
+fn decode_move_name(token: &str) -> String {
+    let mut out = String::with_capacity(token.len());
+    let mut rest = token;
+    while let Some(at) = rest.find('%') {
+        out.push_str(&rest[..at]);
+        match rest.get(at + 1..at + 3) {
+            Some("25") => out.push('%'),
+            Some("20") => out.push(' '),
+            _ => {
+                out.push('%');
+                rest = &rest[at + 1..];
+                continue;
+            }
+        }
+        rest = &rest[at + 3..];
+    }
+    out.push_str(rest);
+    out
+}
+
 impl<'o, 'a> Writer<'o, 'a> {
     fn new(options: &'o DocxOptions<'a>) -> Self {
         Self {
@@ -1973,6 +2080,8 @@ impl<'o, 'a> Writer<'o, 'a> {
             note_paragraph_breaks: false,
             note_style_next: Vec::new(),
             note_style: Vec::new(),
+            note_spacing_next: Vec::new(),
+            note_spacing: Vec::new(),
             note_paragraph: 0,
             cell_paragraph: None,
             row_shapes: Vec::new(),
@@ -2013,6 +2122,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             pieces: Pieces::default(),
             change: None,
             serial: 0,
+            guessed_wraps: Vec::new(),
             slot: 0,
             span_start: None,
             closed: None,
@@ -2198,6 +2308,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .unwrap_or_default();
                 self.note_paragraph_breaks = counted > 1 && breaks + 1 == counted;
                 self.note_style = std::mem::take(&mut self.note_style_next);
+                self.note_spacing = std::mem::take(&mut self.note_spacing_next);
                 self.note_paragraph = 0;
                 self.note_count += 1;
                 let label = note_label(&label);
@@ -2490,6 +2601,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.end_paragraph();
                 self.target = None;
                 self.note_style.clear();
+                self.note_spacing.clear();
                 self.note_paragraph_breaks = false;
             }
             TagEnd::Table => {
@@ -2563,6 +2675,16 @@ impl<'o, 'a> Writer<'o, 'a> {
             TagEnd::HtmlBlock => {
                 if let Some(block) = self.html_block.take() {
                     if self.box_boundary(block.trim()) {
+                        return;
+                    }
+                    // A paragraph of only a symbol starts with its tag, so
+                    // CommonMark reads it as an HTML block: it is that
+                    // paragraph, not dropped markup.
+                    if is_symbol_tag(block.trim()) {
+                        self.end_paragraph();
+                        self.begin_paragraph();
+                        self.inline_html(block.trim());
+                        self.end_paragraph();
                         return;
                     }
                     let view_lines = self.view
@@ -2640,20 +2762,20 @@ impl<'o, 'a> Writer<'o, 'a> {
         let Some((index, open)) = self.row.take() else {
             return;
         };
+        // Cells whose text is one change whole make a row change only in
+        // Markdown with no table line (plain views, hand-written tables).
+        // A table line names the row's own mark, so there a change that
+        // only fills the cells stays on their text (#1370).
         let row_change = match (open, self.row_cells) {
             (Some((kind, serial)), _) if self.change == Some((kind, serial)) => {
                 Some((kind, serial))
             }
-            (_, RowCells::Whole(kind, serial)) => Some((kind, serial)),
+            (_, RowCells::Whole(kind, serial)) if self.table_plan.is_none() => Some((kind, serial)),
             _ => None,
         };
-        // A row the table line names a mark of its own for has that mark,
-        // and its text keeps its own (`rev r80 @AL in t1.row1`). A row it
-        // says nothing of, whose cells' text is one change whole, had that
-        // change on the row in Word's file — an id two cells' runs share
-        // is nothing Word writes — so the writer puts it back there and
-        // the text carries it. Plain Markdown has no line either way, and
-        // keeps the inference.
+        // A row the table line names has that mark (`rev r80 @AL in
+        // t1.row1`), and its text keeps its own. The line's mark is
+        // written with the table's formats.
         let own = !self.resolved
             && self.table_plan.as_ref().is_some_and(|plan| {
                 plan.row_marks
@@ -2699,6 +2821,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             // the definition.
             self.endnote_next = view_notes::endnote_line(line);
             self.note_style_next = view_notes::note_styles(line).unwrap_or_default();
+            self.note_spacing_next = view_notes::note_spacings(line);
             if self.endnote_next || view_notes::footnote_line(line) {
                 continue;
             }
@@ -2809,10 +2932,14 @@ impl<'o, 'a> Writer<'o, 'a> {
                 .find(|s| s.default)
                 .map_or("Normal", |s| s.id.as_str());
             // A note paragraph takes its own entry, past the list the last.
+            let spacing_at = self.note_paragraph;
             let at = self
                 .note_paragraph
                 .min(self.note_style.len().saturating_sub(1));
             self.note_paragraph += 1;
+            if let Some(spacing) = self.note_spacing.get(spacing_at) {
+                paragraph.spacing = *spacing;
+            }
             paragraph.style = match self.note_style.get(at) {
                 Some(style) if style == default => None,
                 Some(style) => Some(style.clone().into()),
@@ -2858,6 +2985,10 @@ impl<'o, 'a> Writer<'o, 'a> {
             });
             paragraph.section_break = line.section_break;
             paragraph.ind = Indent {
+                first_line_chars: line.first_line_chars,
+                hanging_chars: line.hanging_chars,
+                left_chars: line.left_chars,
+                right_chars: line.right_chars,
                 first_line: line.first_line,
                 hanging: line.hanging,
                 left: line.left,
@@ -2865,6 +2996,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             };
             paragraph.spacing = line.spacing;
             paragraph.size = line.size;
+            paragraph.mark_inherits = line.mark_inherits;
             if let Some(label) = line.label {
                 // The label stands for the list's own number, and a heading
                 // prints it before its text.
@@ -2900,6 +3032,11 @@ impl<'o, 'a> Writer<'o, 'a> {
                     unshown.extend(marks.into_iter().map(|mark| (*inserted, mark)));
                 }
                 paragraph.unshown = unshown;
+                paragraph.holds = line
+                    .holds
+                    .iter()
+                    .map(|event| (event.inserted, event.revision, event.comment, event.event))
+                    .collect();
             }
             let mark = line
                 .break_ins
@@ -2939,6 +3076,10 @@ impl<'o, 'a> Writer<'o, 'a> {
                 .and_then(|plan| plan.sizes.get(&at).copied())
             {
                 paragraph.size = Some(size);
+                paragraph.mark_inherits = self
+                    .table_plan
+                    .as_ref()
+                    .is_some_and(|plan| plan.mark_inherits.contains(&at));
             }
             let formats = self
                 .table_plan
@@ -3403,9 +3544,21 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.soft_break_resolved(true);
         if self.metadata.is_some() || self.image.is_some() || self.comment.is_some() {
             let fence = if display { "$$" } else { "$" };
-            let text = format!("{fence}{}{fence}", critic::restore(latex));
+            // With CriticMarkup off nothing in the latex is an encoded
+            // token: a stand-in there is its own character.
+            let critic = self.options.critic;
+            let latex = if critic {
+                critic::restore(latex)
+            } else {
+                latex.to_string()
+            };
+            let text = format!("{fence}{latex}{fence}");
             if let Some(metadata) = &mut self.metadata {
                 metadata.push_str(&text);
+            } else if let Some((_, _, alt, _)) = &mut self.image
+                && !critic
+            {
+                alt.push_str(&text);
             } else if let Some((_, _, alt, loose)) = &mut self.image {
                 let mut tokens = Vec::new();
                 self.pieces.feed(&text, |piece| match piece {
@@ -3419,16 +3572,23 @@ impl<'o, 'a> Writer<'o, 'a> {
             return;
         }
         // An insertion or deletion inside the math (`$A={--π--}r^2$`) marks
-        // its runs; any other CriticMarkup there is text.
+        // its runs; any other CriticMarkup there is text. With CriticMarkup
+        // off there is no encoded token to split, so the latex is kept.
+        // A stand-in the source held as a character is escaped, so the
+        // math keeps it as that character.
         let mut source = String::with_capacity(latex.len());
-        Pieces::default().feed(latex, |piece| match piece {
-            Piece::Text(text) => source.push_str(text),
-            Piece::Token(Token::InsertStart) => source.push(math::INSERT_START),
-            Piece::Token(Token::InsertEnd) => source.push(math::INSERT_END),
-            Piece::Token(Token::DeleteStart) => source.push(math::DELETE_START),
-            Piece::Token(Token::DeleteEnd) => source.push(math::DELETE_END),
-            Piece::Token(token) => source.push_str(critic::delimiter(token)),
-        });
+        if self.options.critic {
+            Pieces::default().feed(latex, |piece| match piece {
+                Piece::Text(text) => math::literal_markers(text, &mut source),
+                Piece::Token(Token::InsertStart) => source.push(math::INSERT_START),
+                Piece::Token(Token::InsertEnd) => source.push(math::INSERT_END),
+                Piece::Token(Token::DeleteStart) => source.push(math::DELETE_START),
+                Piece::Token(Token::DeleteEnd) => source.push(math::DELETE_END),
+                Piece::Token(token) => source.push_str(critic::delimiter(token)),
+            });
+        } else {
+            math::literal_markers(latex, &mut source);
+        }
         self.push(Content::Math {
             latex: source,
             display,
@@ -3457,8 +3617,10 @@ impl<'o, 'a> Writer<'o, 'a> {
             return;
         }
         if let Some(comment) = &mut self.comment {
+            // Text stays text: a character that reads as a change's
+            // stand-in is escaped, so only a real mark opens a change.
             if let Some(last) = comment.paragraphs.last_mut() {
-                last.push_str(text);
+                critic::push_escaped(last, text);
             }
             return;
         }
@@ -3540,6 +3702,19 @@ impl<'o, 'a> Writer<'o, 'a> {
                 Token::CommentBreak => {
                     if let Some(comment) = &mut self.comment {
                         comment.paragraphs.push(String::new());
+                    }
+                }
+                Token::InsertStart
+                | Token::InsertEnd
+                | Token::DeleteStart
+                | Token::DeleteEnd
+                | Token::SubstituteStart
+                | Token::SubstituteSeparator
+                | Token::SubstituteEnd => {
+                    if let Some(comment) = &mut self.comment
+                        && let Some(last) = comment.paragraphs.last_mut()
+                    {
+                        last.push(critic::stand_in(token));
                     }
                 }
                 _ => {}
@@ -3685,10 +3860,33 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.story().push(Item::RangeStart(slot));
     }
 
+    /// Records each peeled move name on the serial it belongs to. One name
+    /// covers every serial of a single-part note. An empty name is still a move.
+    fn note_moves(&mut self, names: &[Option<String>], serials: &[u32]) {
+        if names.len() == 1 {
+            if let Some(name) = names.first().cloned().flatten() {
+                for serial in serials {
+                    self.document.moves.insert(*serial, name.clone());
+                }
+            }
+            return;
+        }
+        for (name, serial) in names.iter().zip(serials) {
+            if let Some(name) = name {
+                self.document.moves.insert(*serial, name.clone());
+            }
+        }
+    }
+
     fn end_comment(&mut self) {
         let Some(mut comment) = self.comment.take() else {
             return;
         };
+        let joined = comment.paragraphs.join("\n");
+        let (note, move_names) = peeled_note(&joined);
+        if note != joined {
+            comment.paragraphs = vec![note];
+        }
         let is_attribution = std::mem::take(&mut self.attribution_open);
         if std::mem::take(&mut self.paragraph_attribution) {
             let whole = comment.paragraphs.join("\n");
@@ -3706,6 +3904,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             } else {
                 return;
             };
+            self.note_moves(&move_names, &[serial]);
             self.ensure_paragraph();
             if let Some(index) = self.paragraph
                 && let Item::Paragraph(p) = &mut self.story()[index]
@@ -3748,10 +3947,20 @@ impl<'o, 'a> Writer<'o, 'a> {
                     self.name_revision(inner, old_ids);
                 }
                 if let Some(tag) = tags.get(1) {
-                    let outer = (other(kind), self.tag_serial(tag));
+                    let established = self.established_kind(&tag.ids);
+                    if established.is_none() && !tag.ids.is_empty() {
+                        self.guessed_wraps.push((inner, self.target.clone()));
+                    }
+                    let parent = established.unwrap_or_else(|| other(kind));
+                    let outer = (parent, self.tag_serial(tag));
                     self.document.wraps.insert(inner, outer);
                     self.unshown_rebuilt(&[outer.1]);
                 }
+                let mut serials = vec![inner];
+                if let Some(outer) = self.document.wraps.get(&inner).map(|outer| outer.1) {
+                    serials.push(outer);
+                }
+                self.note_moves(&move_names, &serials);
                 return;
             }
             if let Some((kind, inner)) = sole
@@ -3778,7 +3987,12 @@ impl<'o, 'a> Writer<'o, 'a> {
                 }
                 if let Some(part) = parts.get(1) {
                     self.serial += 1;
-                    let outer = (other(kind), self.serial);
+                    let established = self.established_kind(&part.ids);
+                    if established.is_none() && !part.ids.is_empty() {
+                        self.guessed_wraps.push((inner, self.target.clone()));
+                    }
+                    let parent = established.unwrap_or_else(|| other(kind));
+                    let outer = (parent, self.serial);
                     self.document
                         .attributions
                         .insert(outer.1, (part.author.clone(), part.date.clone()));
@@ -3788,6 +4002,11 @@ impl<'o, 'a> Writer<'o, 'a> {
                     self.pool(&part.ids, &[outer.1]);
                     self.document.wraps.insert(inner, outer);
                 }
+                let mut serials = vec![inner];
+                if let Some(outer) = self.document.wraps.get(&inner).map(|outer| outer.1) {
+                    serials.push(outer);
+                }
+                self.note_moves(&move_names, &serials);
                 return;
             }
             // The view's tag note: `r1+2 @AC` names both sides, `r1 @AC;
@@ -3847,6 +4066,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 if serials.len() == 2 && numbers <= 1 {
                     self.anchor = anchor.takes_attribution().then_some(anchor);
                 }
+                self.note_moves(&move_names, &serials);
                 return;
             }
             // The plain view's note: the change's ids, then who made it and
@@ -3899,6 +4119,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 if serials.len() == 2 && tags.iter().map(|tag| tag.ids.len()).sum::<usize>() <= 1 {
                     self.anchor = anchor.takes_attribution().then_some(anchor);
                 }
+                self.note_moves(&move_names, &serials);
                 return;
             }
             if let Some((author, date)) = attribution(whole.trim()) {
@@ -3945,6 +4166,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         if let Some((head, text)) = head {
             // By the view's number, before renumbering can move it.
             comment.style = self.document.comment_styles.get(&head.number).cloned();
+            comment.spacing = head.spacing;
             comment.number = Some(head.number).filter(|&n| n <= view_notes::MOST_ID);
             comment.parent = head.reply_to.filter(|&n| n <= view_notes::MOST_ID);
             comment.done = head.resolved;
@@ -4025,12 +4247,21 @@ impl<'o, 'a> Writer<'o, 'a> {
                 end_at = Some(start);
             }
         }
-        // A note inside a change: its reference, and its range end where
-        // that stays here, are in the change's mark.
+        // A note inside a change: its reference, and its range end when
+        // that end is still inside the change, stay in the change's mark.
+        // A highlight that closes inside the change is such an end; the
+        // reference must not open a second piece of the same deletion.
         if let Some(change) = self.change {
-            self.document
-                .note_changes
-                .insert(id, (change, end_at.is_none()));
+            let end_inside = match end_at {
+                None => true,
+                // Backwards: the change's run usually sits just before
+                // the end, so the scan stops there.
+                Some(at) => self.story()[..at]
+                    .iter()
+                    .rev()
+                    .any(|item| matches!(item, Item::Run(run) if run.change == Some(change))),
+            };
+            self.document.note_changes.insert(id, (change, end_inside));
         }
         let story = self.story();
         match end_at {
@@ -4052,7 +4283,7 @@ impl<'o, 'a> Writer<'o, 'a> {
     fn note_reference(&mut self, label: &str) {
         if let Some(comment) = &mut self.comment {
             if let Some(last) = comment.paragraphs.last_mut() {
-                last.push_str(&format!("[^{}]", critic::decode(label)));
+                critic::push_escaped(last, &format!("[^{}]", critic::decode(label)));
             }
             return;
         }
@@ -4149,7 +4380,21 @@ impl<'o, 'a> Writer<'o, 'a> {
         };
         if name == "br" {
             if !closing {
-                self.line_break(empty);
+                if html_is_page_break(html) {
+                    self.push(Content::PageBreak);
+                } else {
+                    self.line_break(empty);
+                }
+            }
+            return;
+        }
+        if name == "sym" {
+            if empty && !closing {
+                let font = html_attribute(html, "font").unwrap_or_default();
+                let value = html_attribute(html, "char").unwrap_or_default();
+                if !font.is_empty() && !value.is_empty() {
+                    self.push(Content::Symbol { font, value });
+                }
             }
             return;
         }
@@ -4524,6 +4769,12 @@ impl<'o, 'a> Writer<'o, 'a> {
                 if let Some(page) = page {
                     self.document.pages.insert(number, page);
                 }
+                // The last declaration wins: one without `; was:` keeps
+                // the live page.
+                match view_notes::section_earlier_page(line) {
+                    Some(earlier) => self.document.earlier_pages.insert(number, earlier),
+                    None => self.document.earlier_pages.remove(&number),
+                };
                 if let Some((_, entry)) = line.trim().split_once(": ") {
                     self.stories(number, view_stories::section(entry));
                     if let Some(tag) = view_notes::section_format(entry) {
@@ -4605,27 +4856,60 @@ impl<'o, 'a> Writer<'o, 'a> {
                     }
                 }
                 "style_changes" => {
-                    // `{Normal: styles.r0 @AS, …}`: the view names who
-                    // changed a style's formatting, not what it was.
+                    // `{Normal: pPr styles.r0 @AS, …}`: the view names who
+                    // changed a style's formatting, and which property.
                     if !self.resolved
                         && let Some(map) = value
                             .strip_prefix('{')
                             .and_then(|map| map.strip_suffix('}'))
                     {
+                        let mut grouped: Vec<(String, Vec<(StyleChangeKind, FormatMark)>)> =
+                            Vec::new();
+                        let mut legacy: Vec<(String, Vec<String>)> = Vec::new();
                         for entry in map.split(", ") {
                             let Some((holder, tags)) = entry.split_once(": ") else {
                                 continue;
                             };
                             let holder = holder.trim_matches(|c| c == '"' || c == '\'');
                             let tags = tags.trim_matches(|c| c == '"' || c == '\'');
-                            let Some(tags) = view_notes::revision_tags(tags) else {
+                            let mut marks = Vec::new();
+                            let mut assumed = Vec::new();
+                            for raw in tags.split("; ") {
+                                let (kind, rest, bare) = style_change_tag(raw);
+                                let Some(parsed) = view_notes::revision_tags(rest) else {
+                                    continue;
+                                };
+                                if bare {
+                                    assumed.push(rest.to_string());
+                                }
+                                for tag in parsed {
+                                    marks.push((kind, self.format_mark(&tag)));
+                                }
+                            }
+                            if marks.is_empty() {
                                 continue;
-                            };
-                            let marks = tags.iter().map(|tag| self.format_mark(tag)).collect();
-                            self.document
-                                .style_changes
-                                .push((holder.to_string(), marks));
+                            }
+                            if !assumed.is_empty() {
+                                if let Some((_, known)) =
+                                    legacy.iter_mut().find(|(name, _)| name == holder)
+                                {
+                                    known.extend(assumed);
+                                } else {
+                                    legacy.push((holder.to_string(), assumed));
+                                }
+                            }
+                            if let Some((_, known)) =
+                                grouped.iter_mut().find(|(name, _)| name == holder)
+                            {
+                                known.extend(marks);
+                            } else {
+                                grouped.push((holder.to_string(), marks));
+                            }
                         }
+                        self.document
+                            .warnings
+                            .extend(view_styles::style_change_warnings(&grouped, &legacy));
+                        self.document.style_changes.extend(grouped);
                     }
                 }
                 "view" => {
@@ -4637,6 +4921,10 @@ impl<'o, 'a> Writer<'o, 'a> {
                     if let Some(page) = view_notes::page_setup(value) {
                         self.document.pages.insert(1, page);
                     }
+                    match view_notes::earlier_page(value) {
+                        Some(earlier) => self.document.earlier_pages.insert(1, earlier),
+                        None => self.document.earlier_pages.remove(&1),
+                    };
                     if let Some(tag) = view_notes::section_format(value) {
                         let mark = self.format_mark(&tag);
                         self.document.section_formats.insert(1, mark);
@@ -4671,6 +4959,71 @@ impl<'o, 'a> Writer<'o, 'a> {
             self.document.warnings.push(format!(
                 "comment in {part} dropped: Word shows comments only in the body, never in a header or footer"
             ));
+        }
+    }
+
+    /// The kind of a change these ids already name in the story being written.
+    /// A substitution inside that change keeps its kind: the other of the
+    /// inner side would call a deletion an insertion and spend one of its
+    /// ids on the wrapper.
+    fn established_kind(&self, ids: &[u32]) -> Option<Kind> {
+        if ids.is_empty() {
+            return None;
+        }
+        let story: &[Item] = match &self.target {
+            Some(label) => self.definitions.get(label).map(Vec::as_slice)?,
+            None => &self.body,
+        };
+        // The latest piece of that change, searched from the end.
+        story.iter().rev().find_map(|item| match item {
+            Item::Run(Run {
+                change: Some((kind, serial)),
+                ..
+            }) if self
+                .document
+                .revision_ids
+                .get(serial)
+                .is_some_and(|named| named.as_slice() == ids) =>
+            {
+                Some(*kind)
+            }
+            _ => None,
+        })
+    }
+
+    /// A nest read before any other piece of its outer change guessed that
+    /// change's kind. The change's first piece in the same story settles it:
+    /// a substitution at the start of a deletion sits in that deletion.
+    fn settle_guessed_wraps(&mut self) {
+        for (inner, target) in std::mem::take(&mut self.guessed_wraps) {
+            let Some(&(_, outer)) = self.document.wraps.get(&inner) else {
+                continue;
+            };
+            let Some(ids) = self.document.revision_ids.get(&outer).cloned() else {
+                continue;
+            };
+            let story: &[Item] = match &target {
+                Some(label) => self.definitions.get(label).map_or(&[][..], Vec::as_slice),
+                None => &self.body,
+            };
+            let first = story.iter().find_map(|item| match item {
+                Item::Run(Run {
+                    change: Some((kind, serial)),
+                    ..
+                }) if *serial != inner
+                    && self
+                        .document
+                        .revision_ids
+                        .get(serial)
+                        .is_some_and(|named| *named == ids) =>
+                {
+                    Some(*kind)
+                }
+                _ => None,
+            });
+            if let (Some(kind), Some(wrap)) = (first, self.document.wraps.get_mut(&inner)) {
+                wrap.0 = kind;
+            }
         }
     }
 
@@ -5063,6 +5416,236 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
     }
 
+    /// A `holds` clause puts those comment events back inside the revision
+    /// it names. A shown run of that revision keeps its serial. An unshown
+    /// mark is opened once and then dropped, so it is not also written empty.
+    fn place_held_events(&mut self) {
+        let ats: Vec<usize> = self
+            .body
+            .iter()
+            .enumerate()
+            .filter_map(|(at, item)| match item {
+                Item::Paragraph(paragraph) if !paragraph.holds.is_empty() => Some(at),
+                _ => None,
+            })
+            .collect();
+        for at in ats {
+            let Item::Paragraph(paragraph) = &self.body[at] else {
+                continue;
+            };
+            let holds = paragraph.holds.clone();
+            let mut at = at;
+            let mut end = self.body[at..]
+                .iter()
+                .position(|item| matches!(item, Item::ParagraphEnd))
+                .map_or(self.body.len(), |skip| at + skip);
+            let mut bound: HashMap<(bool, u32), Change> = HashMap::new();
+            for (inserted, revision, comment, event) in holds {
+                let Some(id) = self
+                    .document
+                    .comments
+                    .iter()
+                    .find(|row| row.number == Some(comment))
+                    .map(|row| row.id)
+                else {
+                    continue;
+                };
+                // The clause names an event of this paragraph. A range end
+                // the view placed before it (where an outer scope closes)
+                // moves in, before the comment's reference; any other event
+                // outside the paragraph is not held, so no mark opens
+                // outside a paragraph.
+                if !self.holds_event(at, end, id, event) {
+                    let earlier = self.body[..at]
+                        .iter()
+                        .rposition(|item| matches!(item, Item::RangeEnd(e) if *e == id));
+                    let reference = self.body[at..end]
+                        .iter()
+                        .position(|item| matches!(item, Item::CommentReference(r) if *r == id))
+                        .map(|skip| at + skip);
+                    let (1, Some(from), Some(to)) = (event, earlier, reference) else {
+                        continue;
+                    };
+                    let item = self.body.remove(from);
+                    at -= 1;
+                    end -= 1;
+                    self.body.insert(to - 1, item);
+                }
+                let key = (inserted, revision);
+                let change = bound.get(&key).copied().or_else(|| {
+                    let change = self.held_revision(at, end, inserted, revision)?;
+                    bound.insert(key, change);
+                    Some(change)
+                });
+                if let Some(change) = change {
+                    self.document.event_holds.insert((id, event), change);
+                }
+            }
+            self.gather_held_events(at, end);
+        }
+    }
+
+    /// Whether the paragraph `start..end` holds comment `id`'s event (0
+    /// range start, 1 range end, 2 reference).
+    fn holds_event(&self, start: usize, end: usize, id: u32, event: u8) -> bool {
+        self.body[start..end]
+            .iter()
+            .any(|item| match (item, event) {
+                (Item::RangeStart(slot), 0) => {
+                    self.document.slots.get(*slot).copied().flatten() == Some(id)
+                }
+                (Item::RangeEnd(e), 1) | (Item::CommentReference(e), 2) => *e == id,
+                _ => false,
+            })
+    }
+
+    /// The change an anchor goes inside: a `holds` clause's, or the change
+    /// a note is bound to (its reference, and its range end when the end
+    /// goes inside too).
+    fn anchor_change(&self, item: &Item) -> Option<Change> {
+        let document = &self.document;
+        let (id, event) = match item {
+            Item::RangeStart(slot) => (document.slots.get(*slot).copied().flatten()?, 0),
+            Item::RangeEnd(id) => (*id, 1),
+            Item::CommentReference(id) => (*id, 2),
+            _ => return None,
+        };
+        document.event_holds.get(&(id, event)).copied().or_else(|| {
+            let (change, end_inside) = document.note_changes.get(&id)?;
+            match event {
+                1 if *end_inside => Some(*change),
+                2 => Some(*change),
+                _ => None,
+            }
+        })
+    }
+
+    /// A range start that goes inside no change, between anchors one change
+    /// holds, moves before them: left between, it closes that change's mark,
+    /// and the anchors after it reopen the change as a second carrier of
+    /// its id.
+    fn gather_held_events(&mut self, start: usize, end: usize) {
+        let anchor = |item: &Item| {
+            matches!(
+                item,
+                Item::Bookmark(_)
+                    | Item::RangeStart(_)
+                    | Item::RangeEnd(_)
+                    | Item::CommentReference(_)
+            )
+        };
+        let mut at = start;
+        while at < end {
+            if !anchor(&self.body[at]) {
+                at += 1;
+                continue;
+            }
+            let window = self.body[at..end]
+                .iter()
+                .take_while(|item| anchor(item))
+                .count();
+            let changes: Vec<Option<Change>> = self.body[at..at + window]
+                .iter()
+                .map(|item| self.anchor_change(item))
+                .collect();
+            if let Some(first) = changes.iter().position(Option::is_some) {
+                let change = changes[first];
+                if let Some(last) = changes.iter().rposition(|c| *c == change) {
+                    let (loose, kept): (Vec<usize>, Vec<usize>) =
+                        (first + 1..last).partition(|&i| {
+                            changes[i].is_none() && matches!(self.body[at + i], Item::RangeStart(_))
+                        });
+                    if !loose.is_empty() {
+                        let mut order: Vec<usize> = (0..first).collect();
+                        order.extend(&loose);
+                        order.push(first);
+                        order.extend(kept);
+                        order.extend(last..window);
+                        let items: Vec<Item> =
+                            order.iter().map(|&i| self.body[at + i].clone()).collect();
+                        self.body.splice(at..at + window, items);
+                    }
+                }
+            }
+            at += window;
+        }
+    }
+
+    /// The change `holds` names: a run of that revision, a note already bound
+    /// to it, or its unshown mark, opened once.
+    fn held_revision(
+        &mut self,
+        start: usize,
+        end: usize,
+        inserted: bool,
+        revision: u32,
+    ) -> Option<Change> {
+        let kind = if inserted { Kind::Insert } else { Kind::Delete };
+        let runs: Vec<u32> = self.body[start..end]
+            .iter()
+            .filter_map(|item| match item {
+                Item::Run(run) => run
+                    .change
+                    .filter(|(own, _)| *own == kind)
+                    .map(|(_, serial)| serial),
+                _ => None,
+            })
+            .collect();
+        for serial in runs {
+            if self
+                .document
+                .revision_ids
+                .get(&serial)
+                .is_some_and(|ids| ids.contains(&revision))
+            {
+                return Some((kind, serial));
+            }
+        }
+        // Only a note this paragraph holds: a change bound to another
+        // paragraph's note would leave this paragraph's mark written empty,
+        // a second carrier of the same id.
+        let here: HashSet<u32> = self.body[start..end]
+            .iter()
+            .filter_map(|item| match item {
+                Item::CommentReference(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        let noted: Vec<Change> = self
+            .document
+            .note_changes
+            .iter()
+            .filter(|(comment, _)| here.contains(comment))
+            .map(|(_, (change, _))| *change)
+            .filter(|(own, _)| *own == kind)
+            .collect();
+        for change in noted {
+            if self
+                .document
+                .revision_ids
+                .get(&change.1)
+                .is_some_and(|ids| ids.contains(&revision))
+            {
+                return Some(change);
+            }
+        }
+        let Item::Paragraph(paragraph) = self.body.get_mut(start)? else {
+            return None;
+        };
+        let found = paragraph
+            .unshown
+            .iter()
+            .position(|(ins, mark)| *ins == inserted && mark.id == Some(revision))?;
+        let (_, mark) = paragraph.unshown.remove(found);
+        self.serial += 1;
+        let serial = self.serial;
+        self.document
+            .attributions
+            .insert(serial, (mark.author, mark.date));
+        self.name_revision(serial, vec![revision]);
+        Some((kind, serial))
+    }
+
     /// The notes that say `in r13` put their comment's reference back
     /// inside r13: the paragraph's runs of it, or the mark its id line
     /// names when r13 holds nothing else (`rev-del r13 @D`), as Word wrote
@@ -5175,6 +5758,7 @@ impl<'o, 'a> Writer<'o, 'a> {
     fn finish(mut self) -> Document {
         self.end_paragraph();
         self.textless_paragraph();
+        self.settle_guessed_wraps();
         if let Some(comment) = self.comment.take() {
             // An unclosed comment cannot happen with complete spans; keep
             // its text anyway.
@@ -5230,6 +5814,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.text_boxes();
         self.named_held_marks();
         self.held_comment_marks();
+        self.place_held_events();
         let mut body = std::mem::take(&mut self.body);
         clear_continued_marks(&mut body, &self.document);
         finish_story(&mut body);
@@ -6074,6 +6659,10 @@ fn renumber_comments(document: &mut Document) {
         .into_iter()
         .map(|(id, change)| (ids[&id], change))
         .collect();
+    document.event_holds = std::mem::take(&mut document.event_holds)
+        .into_iter()
+        .map(|((id, event), change)| ((ids[&id], event), change))
+        .collect();
 }
 
 /// A story's last paragraph mark cannot be inserted or deleted in Word; a
@@ -6257,7 +6846,8 @@ fn attribution(text: &str) -> Option<(Option<String>, &str)> {
 /// the text after them. The date is the first parenthesised date after a
 /// name whose own parentheses balance, for an author may hold some
 /// (`Ana (consultant)`) and a comment's text may hold a date; in a fold
-/// note they come percent-spelled (`%28`, `%29`, with `%` itself `%25`)
+/// note they come percent-spelled (`%28`, `%29`, with `%` itself `%25`,
+/// and a space that would read as ` re ` before a revision id as `%20`)
 /// and are read back off the name.
 pub(super) fn named(text: &str) -> Option<(Option<String>, &str, &str)> {
     // The first group that is a date after a name: a later one belongs to
@@ -6303,14 +6893,15 @@ pub(super) fn named(text: &str) -> Option<(Option<String>, &str, &str)> {
 }
 
 /// A name with its percent-spelled parentheses (`%28`, `%29`), backslash
-/// (`%5C`) and `%` (`%25`) read back off, as a fold note writes them;
-/// anything else a `%` starts stays as it is.
-fn unescaped(name: &str) -> String {
+/// (`%5C`), space (`%20`) and `%` (`%25`) read back off, as a note writes
+/// them; anything else a `%` starts stays as it is.
+pub(super) fn unescaped(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     let mut rest = name;
     while let Some(at) = rest.find('%') {
         out.push_str(&rest[..at]);
         let spelled = match rest.get(at + 1..at + 3) {
+            Some("20") => Some(' '),
             Some("25") => Some('%'),
             Some("28") => Some('('),
             Some("29") => Some(')'),
@@ -6532,7 +7123,7 @@ mod tests {
             .map(|n| format!("${n}"))
             .collect::<Vec<_>>()
             .join(",");
-        let (escaped, passes) = inline_math_passes(source);
+        let (escaped, passes) = inline_math_passes(source, true);
         assert!(
             passes <= 3,
             "2,000 amounts took {passes} full parses (limit 3)"

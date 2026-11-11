@@ -279,9 +279,7 @@ pub fn try_compare_bodies_faithful_with_notes(
         };
         sp.map(|sp| {
             let clean = dom.new_element(W::sect_pr());
-            for (an, av) in dom.attributes(sp) {
-                dom.set_attribute_value(clean, &an, Some(&av));
-            }
+            dom.copy_attributes(sp, clean);
             // EFFECTIVE header/footer references: OOXML inherits a missing
             // reference type from the nearest PRECEDING section, and Word's
             // Compare resolves that inheritance when building its output

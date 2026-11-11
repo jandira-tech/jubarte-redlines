@@ -263,8 +263,9 @@ pub(crate) fn shared_word_row_sequences(
     }
     let old: Vec<_> = rows1.iter().map(|r| row_word_tokens(dom, r)).collect();
     let new: Vec<_> = rows2.iter().map(|r| row_word_tokens(dom, r)).collect();
-    // Content-free rows carry no signal to score: decline (the historical
-    // contract) rather than pairing emptiness positionally.
+    // Content-free rows carry no signal to score; the routes below pair
+    // them. A row whose paragraph mark survives is never stamped deleted
+    // (`mark_fully_revised_rows`, #1672).
     if !old.iter().any(|t| !t.is_empty()) || !new.iter().any(|t| !t.is_empty()) {
         return None;
     }

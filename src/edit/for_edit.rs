@@ -686,6 +686,11 @@ pub fn matching_body_paragraphs(
         .collect())
 }
 
+/// The largest program a `--regex` pattern may compile into: 10 MiB, the
+/// regex crate's own default, pinned here so a dependency upgrade cannot
+/// loosen it.
+const REGEX_SIZE_LIMIT: usize = 10 * (1 << 20);
+
 /// The paragraphs whose original final logical text the search matches.
 fn text_selection(
     request: &ForEditRequest,
@@ -713,7 +718,15 @@ fn text_selection(
         } else {
             pattern.to_string()
         };
-        let compiled = regex::Regex::new(&pattern)
+        // The pattern can come from an untrusted caller (WASM, Python, an
+        // agent). The regex crate matches in linear time, so the risk is
+        // a short pattern that compiles into a huge program
+        // (`a{1000}{1000}`). The size limit refuses that; a cap on the
+        // pattern's length would not, and would refuse long alternations
+        // of defined terms.
+        let compiled = regex::RegexBuilder::new(&pattern)
+            .size_limit(REGEX_SIZE_LIMIT)
+            .build()
             .map_err(|e| super::err("USAGE", None, format!("--regex does not compile: {e}")))?;
         Box::new(move |text: &str| compiled.is_match(text))
     };

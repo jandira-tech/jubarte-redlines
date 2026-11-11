@@ -820,13 +820,15 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
         raise SystemExit(EXIT_USAGE)
     dry_run = bool(getattr(args, "dry_run", False))
     pdf, png = bool(getattr(args, "pdf", False)), bool(getattr(args, "png", False))
+    # A flags command quotes flags. A `--plan` file quotes the plan's JSON.
+    syntax = None if getattr(args, "plan", None) is not None else "flags"
     try:
         if dry_run:
-            sys.stdout.write(doc.preview(plan_text).to_jsonl())
+            sys.stdout.write(doc.preview(plan_text, syntax=syntax).to_jsonl())
             return EXIT_OK
         # The plan first: a refused plan prints its whole report, whatever
         # the outputs (D15).
-        result = doc.edit(plan_text)
+        result = doc.edit(plan_text, syntax=syntax)
     except EditPlanError as exc:
         _print_refusal(exc)
         return EXIT_PLAN_REFUSED
@@ -900,7 +902,7 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
             names = [name for name, _ in outputs] + ["report.jsonl"]
             sys.stdout.flush()
             print(f"wrote {out_dir} ({len(names)} files: {', '.join(names)})", file=sys.stderr)
-            for note in _edit_notes(notes, result):
+            for note in _edit_notes(notes, result, editing=editing):
                 print(note, file=sys.stderr)
             sys.stdout.write(text)
             return EXIT_OK
@@ -909,17 +911,37 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
     names = [name for name, _ in outputs] + ["report.jsonl"]
     sys.stdout.flush()
     print(f"wrote {out_dir} ({len(names)} files: {', '.join(names)})", file=sys.stderr)
-    for note in _edit_notes(notes, result):
+    for note in _edit_notes(notes, result, editing=editing):
         print(note, file=sys.stderr)
     shown = out_dir / ("clean.docx" if editing else "redline.docx")
     _print_resolution_or_view(source_bytes, parsed, result, editing, shown)
     return EXIT_OK
 
 
-def _edit_notes(notes: list[str], result: EditResult) -> list[str]:
+def _reply_clause(replies: list[str]) -> str:
+    """The same reply tail the Rust receipt uses."""
+    if not replies:
+        return ""
+    if len(replies) == 1:
+        return f" and its reply {replies[0]}"
+    return " and its replies " + ", ".join(replies)
+
+
+def _clean_removed_lines(result: EditResult) -> list[str]:
+    """Threads the clean copy drops. The dataclass omits the field; the report JSON carries it."""
+    payload = json.loads(result.report._json) if result.report._json else {}
+    lines = []
+    for comment in payload.get("clean_removed_comments") or []:
+        replies = [str(reply) for reply in comment.get("replies") or []]
+        why = comment.get("why") or "their anchor was text the deletion removed"
+        lines.append(f"removed {comment['id']} ({comment['author']}){_reply_clause(replies)}: {why}")
+    return lines
+
+
+def _edit_notes(notes: list[str], result: EditResult, *, editing: bool = False) -> list[str]:
     """The ``note:`` lines of an applied edit: the flags' notes, the plan's
     (a field read as another), then each anchor read without its Markdown
-    marks."""
+    marks. Editing mode also names threads its clean copy drops."""
     lines = [f"note: {note}" for note in (*notes, *result.report.notes)]
     for outcome in result.report.operations:
         if outcome.anchor_given is not None and outcome.anchor_read_as is not None:
@@ -930,6 +952,8 @@ def _edit_notes(notes: list[str], result: EditResult) -> list[str]:
             lines.append(
                 f"note: {outcome.id}: anchor {given} read as {read_as} (Markdown marks are not document text)"
             )
+    if editing:
+        lines.extend(_clean_removed_lines(result))
     return lines
 
 
@@ -1083,7 +1107,7 @@ def _write_edited(
             f"wrote {pattern} (png, {png_count} page{'' if png_count == 1 else 's'}, {args.dpi:g} dpi)",
             file=sys.stderr,
         )
-    for note in _edit_notes(notes, result):
+    for note in _edit_notes(notes, result, editing=editing):
         print(note, file=sys.stderr)
     if source is not None:
         _print_resolution_or_view(source, parsed, result, editing, path)

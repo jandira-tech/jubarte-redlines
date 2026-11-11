@@ -315,7 +315,11 @@ fn promote_skip_ahead_equals_inner(
                 .iter()
                 .map(|s| s.com_units_1.as_ref().map(|u| u.len()).unwrap_or(0))
                 .sum();
-            let prev_ok = out.last().is_none_or(|s| {
+            // A deletion that opens the story is not a skip-ahead. The
+            // equal table after it stayed where it was (#1675): promoting
+            // it inserts that table and deletes the original, and Accept
+            // All keeps the body's final mark as an empty paragraph.
+            let prev_ok = out.last().is_some_and(|s| {
                 s.correlation_status == CorrelationStatus::Equal
                     || s.correlation_status == CorrelationStatus::Inserted
             });
@@ -432,13 +436,32 @@ fn promote_skip_ahead_equals_inner(
                         }
                     }
                     if !u1_all.is_empty() && !u2_all.is_empty() {
-                        out.push(CorrelatedSequence::inserted(u2_all));
-                        for g in gap {
-                            out.push(g.clone());
+                        // The matched run has to open on the heading that
+                        // moved. A run that opens on the table — or on the
+                        // words of the paragraph that follows a table — is
+                        // the paragraph deleted in front of a table that
+                        // stayed (#1675). Promoting it deletes that table
+                        // and inserts a copy, and the body's final mark
+                        // survives Accept All as an empty paragraph.
+                        let moved_heading =
+                            u1_all.iter().take_while(|u| !unit_is_table(u)).any(|u| {
+                                matches!(
+                                    u,
+                                    ComparisonUnit::Group(g)
+                                        if g.group_type == ComparisonUnitGroupType::Paragraph
+                                )
+                            });
+                        // No heading in front of the table: leave the gap and
+                        // the equal run in source order.
+                        if moved_heading {
+                            out.push(CorrelatedSequence::inserted(u2_all));
+                            for g in gap {
+                                out.push(g.clone());
+                            }
+                            out.push(CorrelatedSequence::deleted(u1_all));
+                            i = eq_end;
+                            continue;
                         }
-                        out.push(CorrelatedSequence::deleted(u1_all));
-                        i = eq_end;
-                        continue;
                     }
                 }
             }

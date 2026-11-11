@@ -8,7 +8,7 @@
 //! comment's head (`c5 @AC: `, `c6 @AS re c5: `, `c7 @AC resolved: `).
 //! `jubarte read` writes them (`from_docx::agent`, `from_docx::header`).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::xml::Label;
 
@@ -428,6 +428,29 @@ fn one_tag(part: &str) -> Option<Tag> {
     }
 }
 
+/// The formatting change's own tag. Words after ` re ` name the insertion,
+/// deletion or move it sits in, and they stay out of the change itself.
+pub(super) fn own_fmt_tag(text: &str) -> &str {
+    match text.split_once(" re ") {
+        Some((own, _)) => own,
+        None => text,
+    }
+}
+
+/// The formatting changes an id line's `fmt` clause names. Each tag may
+/// carry the change it sits in (`r95 @TL re r96 @RC`); the clause keeps
+/// the formatting change.
+pub(super) fn formatting_tags(text: &str) -> Option<Vec<Tag>> {
+    let mut own = String::with_capacity(text.len());
+    for (index, part) in text.split("; ").enumerate() {
+        if index > 0 {
+            own.push_str("; ");
+        }
+        own.push_str(own_fmt_tag(part));
+    }
+    revision_tags(&own)
+}
+
 /// The parts of a plain nested revision note, its own change first: `r3
 /// Ben Ode (2026-…) re r1 Ana Lima (2026-…)`. `None` for any other
 /// comment text.
@@ -526,7 +549,9 @@ pub(super) fn plain_revision(text: &str) -> Option<PlainRevision> {
         Some((author, date, "")) => (author.unwrap_or_default(), date.to_string()),
         Some(_) => return None,
         None if rest.contains([':', '(', ')']) || rest.starts_with('@') => return None,
-        None => (rest.trim().to_string(), String::new()),
+        // A dateless author is spelled as a dated one is (`Bo%20re r1
+        // Kim`), so it is read back the same way.
+        None => (super::write::unescaped(rest.trim()), String::new()),
     };
     let ids = crate::ids::parse_change_ids(id)
         .map(|ids| {
@@ -567,6 +592,9 @@ pub(super) struct CommentHead {
     /// The `w:id`s of the change that holds the comment's reference mark
     /// (`in r13` → 13): the note prints outside it, so it says so.
     pub held_in: Vec<u32>,
+    /// Spacing clauses after the head (`c5 @AC, after 0pt, line 1: `),
+    /// one group per paragraph.
+    pub spacing: Vec<super::xml::Spacing>,
 }
 
 /// The cells a `cell-borders` group names: every cell, a row's, or one.
@@ -662,6 +690,8 @@ pub(super) struct TableLine {
     /// The grid columns each row leaves out before and after its cells
     /// (`gaps t0.row1 before 1; t0.row2 after 1`), by row.
     pub gaps: HashMap<usize, (usize, usize)>,
+    /// Cell paragraphs whose size stays on the runs (`mark style`).
+    pub mark_inherits: HashSet<usize>,
 }
 
 /// The mark a cell paragraph's own changes give it, when they name one:
@@ -698,6 +728,7 @@ pub(super) fn unplaced(value: &str) -> Vec<(usize, &'static str, Tag)> {
     else {
         return Vec::new();
     };
+    let mut seen = HashSet::new();
     list.split(", ")
         .filter_map(|entry| {
             let (entry, _) = scalar_and_comment(entry.trim());
@@ -708,7 +739,14 @@ pub(super) fn unplaced(value: &str) -> Vec<(usize, &'static str, Tag)> {
                 Some(("ins", tag)) => ("ins", tag),
                 _ => ("ins", tag),
             };
-            Some((crate::ids::short_number(at, 'p')?, kind, first_tag(tag)?))
+            let tag = first_tag(tag)?;
+            let number = crate::ids::short_number(at, 'p')?;
+            // A later paragraph of the same mark (kind, ids, author and
+            // date) is the rest of that row or cell, not a second mark. A
+            // mark without an id names nothing to fold on.
+            (tag.ids.is_empty()
+                || seen.insert((kind, tag.ids.clone(), tag.handle.clone(), tag.date.clone())))
+            .then_some((number, kind, tag))
         })
         .collect()
 }
@@ -791,7 +829,7 @@ pub(super) fn note_formats(value: &str) -> Vec<(&'static str, Tag)> {
                 "endnotes" => "endnote",
                 _ => return None,
             };
-            Some((kind, revision_tags(entry)?.into_iter().next()?))
+            Some((kind, revision_tags(own_fmt_tag(entry))?.into_iter().next()?))
         })
         .collect()
 }
@@ -835,6 +873,7 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         row_marks: BTreeMap::new(),
         cell_marks: BTreeMap::new(),
         gaps: HashMap::new(),
+        mark_inherits: HashSet::new(),
     };
     for (i, clause) in split_clauses(rest).into_iter().enumerate() {
         // `p5 center`: a cell paragraph aligned against its column.
@@ -855,7 +894,7 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         // cell paragraphs' own spacing and text size.
         if let Some((at, tail)) = clause.split_once(' ')
             && let Some((first, count)) = paragraph_range(at)
-            && let Some((spacing, size)) = spacing_words(tail)
+            && let Some((spacing, size, inherits)) = spacing_words(tail)
         {
             for n in first..first + count {
                 if !spacing.is_empty() {
@@ -863,6 +902,9 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
                 }
                 if let Some(size) = size {
                     parsed.sizes.insert(n, size);
+                    if inherits {
+                        parsed.mark_inherits.insert(n);
+                    }
                 }
             }
             continue;
@@ -912,6 +954,7 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
                 let (tag, at) = change
                     .rsplit_once(" in ")
                     .map_or((change, None), |(tag, at)| (tag, Some(at)));
+                let tag = own_fmt_tag(tag);
                 // The grid's change has no author to name: `@??` on the
                 // table itself.
                 let grid = at.is_none() && tag.ends_with(&format!(" @{UNNAMED}"));
@@ -1160,7 +1203,11 @@ pub(super) fn note_styles(line: &str) -> Option<Vec<String>> {
     let mut styles = Vec::new();
     let mut rest = rest.trim();
     while !rest.is_empty() {
-        let (style, after) = take_style(rest)?;
+        // A spacing clause (`after 0pt`) is not a style. Stop so the
+        // styles already named still apply.
+        let Some((style, after)) = take_style(rest) else {
+            break;
+        };
         // `""` names no style a paragraph can be in.
         if style.trim().is_empty() {
             return None;
@@ -1169,6 +1216,51 @@ pub(super) fn note_styles(line: &str) -> Option<Vec<String>> {
         rest = after;
     }
     (!styles.is_empty()).then_some(styles)
+}
+
+/// The spacing a note definition's id line names after its styles, one
+/// group per paragraph (`<!-- footnotes.p0 after 0pt, line 1 -->`,
+/// `<!-- footnotes.p0-p1 after 0pt; before 6pt -->`). An empty group is
+/// a paragraph that states none.
+pub(super) fn note_spacings(line: &str) -> Vec<super::xml::Spacing> {
+    if note_line(line, "footnotes").is_none() && note_line(line, "endnotes").is_none() {
+        return Vec::new();
+    }
+    let Some(inner) = line
+        .trim()
+        .strip_prefix("<!--")
+        .and_then(|s| s.strip_suffix("-->"))
+    else {
+        return Vec::new();
+    };
+    let mut rest = inner
+        .trim()
+        .split_once(char::is_whitespace)
+        .map_or("", |(_, rest)| rest)
+        .trim();
+    while !rest.is_empty() {
+        let Some((_, after)) = take_style(rest) else {
+            break;
+        };
+        rest = after;
+    }
+    if rest.is_empty() {
+        return Vec::new();
+    }
+    rest.split("; ")
+        .map(|group| {
+            let mut spacing = super::xml::Spacing::default();
+            if group.is_empty() {
+                return spacing;
+            }
+            for clause in split_clauses(group) {
+                if let Some((word, value)) = clause.split_once(' ') {
+                    let _ = spacing.clause(word, value);
+                }
+            }
+            spacing
+        })
+        .collect()
 }
 
 /// Whether `line` is an endnote definition's id line (`<!-- endnotes.p0 -->`).
@@ -1210,7 +1302,7 @@ pub(super) fn empty_paragraphs(line: &str) -> Option<usize> {
 
 /// The words that open an id line's clauses (`center`, `left 0.5in`,
 /// `break-ins r3 @AC`): any other word after the id is a style.
-const CLAUSE_WORDS: [&str; 25] = [
+const CLAUSE_WORDS: [&str; 27] = [
     "empty",
     "outline",
     "center",
@@ -1223,6 +1315,7 @@ const CLAUSE_WORDS: [&str; 25] = [
     "after",
     "line",
     "size",
+    "mark",
     "bullet",
     "num",
     "level",
@@ -1236,6 +1329,7 @@ const CLAUSE_WORDS: [&str; 25] = [
     "rev",
     "comments",
     "in",
+    "holds",
 ];
 
 /// The words that open a id line's clauses (`center`, `left 0.5in`,
@@ -1352,6 +1446,16 @@ fn split_clauses(text: &str) -> Vec<&str> {
     clauses
 }
 
+/// One comment event a `holds` clause puts back inside a revision.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct HeldEvent {
+    pub inserted: bool,
+    pub revision: u32,
+    pub comment: u32,
+    /// 0 is the range start, 1 the range end, 2 the reference.
+    pub event: u8,
+}
+
 /// What a paragraph's id line says about it (`<!-- p5 TitlePage center,
 /// first-line 0.5in -->`): its style, alignment (`w:jc`) and indents in
 /// twips.
@@ -1376,6 +1480,8 @@ pub(super) struct IdLine {
     pub size: Option<u32>,
     /// The paragraph holds a page break (`page-break`).
     pub page_break: bool,
+    /// The size names the runs, and the mark keeps the style (`mark style`).
+    pub mark_inherits: bool,
     /// The page break's tracked change, `true` for an insertion
     /// (`page-break-ins r5 @AC`, `page-break-del r5 @AC`).
     pub page_break_change: Option<(bool, Tag)>,
@@ -1401,6 +1507,14 @@ pub(super) struct IdLine {
     pub rev_del: Vec<Tag>,
     /// The comments whose ranges run into it (`in c5 c6`).
     pub in_comments: Vec<u32>,
+    /// Comment events the clause puts back inside a revision
+    /// (`holds del r70 c0 start`).
+    pub holds: Vec<HeldEvent>,
+    /// Character-unit indents (`first-line 2ch`), in hundredths of a character.
+    pub first_line_chars: Option<i64>,
+    pub hanging_chars: Option<i64>,
+    pub left_chars: Option<i64>,
+    pub right_chars: Option<i64>,
 }
 
 /// The id line of one paragraph (`pN`, or a range's first `pN-pM`, whose
@@ -1466,6 +1580,18 @@ impl IdLine {
                     .filter_map(|n| u32::try_from(n).ok())
                     .collect();
             }
+            Some(("first-line", v)) if v.ends_with("ch") => {
+                self.first_line_chars = super::xml::char_hundredths(v).or(self.first_line_chars);
+            }
+            Some(("hanging", v)) if v.ends_with("ch") => {
+                self.hanging_chars = super::xml::char_hundredths(v).or(self.hanging_chars);
+            }
+            Some(("left", v)) if v.ends_with("ch") => {
+                self.left_chars = super::xml::char_hundredths(v).or(self.left_chars);
+            }
+            Some(("right", v)) if v.ends_with("ch") => {
+                self.right_chars = super::xml::char_hundredths(v).or(self.right_chars);
+            }
             Some(("first-line", v)) => self.first_line = twips(v),
             Some(("hanging", v)) => self.hanging = twips(v),
             Some(("left", v)) => self.left = twips(v),
@@ -1481,6 +1607,7 @@ impl IdLine {
             Some(("size", v)) => {
                 self.size = super::xml::size_half_points(v).or(self.size);
             }
+            Some(("mark", "style")) => self.mark_inherits = true,
             Some(("level", v)) => self.level = v.parse().ok().filter(|&n| n <= 8),
             Some(("outline", v)) => self.outline = v.parse().ok().filter(|&n| (1..=9).contains(&n)),
             // A mark has one change: the first tag names it.
@@ -1490,7 +1617,7 @@ impl IdLine {
                 self.page_break = true;
                 self.page_break_change = first_tag(v).map(|tag| (kind == "page-break-ins", tag));
             }
-            Some(("fmt", v)) => self.fmt.extend(revision_tags(v).into_iter().flatten()),
+            Some(("fmt", v)) => self.fmt.extend(formatting_tags(v).into_iter().flatten()),
             Some(("rev", v)) => self.rev.extend(
                 revision_tags(v)
                     .into_iter()
@@ -1503,7 +1630,46 @@ impl IdLine {
                     .extend(tags.iter().cloned().map(|tag| (false, tag)));
                 self.rev_del.extend(tags);
             }
+            Some(("holds", rest)) => self.hold(rest),
             Some(_) => {}
+        }
+    }
+
+    /// `holds del r70 c0 start` or `holds ins r51 c0 end c0 ref`.
+    fn hold(&mut self, rest: &str) {
+        let mut words = rest.split(' ');
+        let inserted = match words.next() {
+            Some("ins") => true,
+            Some("del") => false,
+            _ => return,
+        };
+        let Some(revision) = words
+            .next()
+            .and_then(|word| word.strip_prefix('r'))
+            .and_then(|n| n.parse().ok())
+        else {
+            return;
+        };
+        let words: Vec<&str> = words.collect();
+        if !words.len().is_multiple_of(2) {
+            return;
+        }
+        for pair in words.chunks(2) {
+            let Some(comment) = pair[0].strip_prefix('c').and_then(|n| n.parse().ok()) else {
+                return;
+            };
+            let event = match pair[1] {
+                "start" => 0,
+                "end" => 1,
+                "ref" => 2,
+                _ => return,
+            };
+            self.holds.push(HeldEvent {
+                inserted,
+                revision,
+                comment,
+                event,
+            });
         }
     }
 }
@@ -1511,11 +1677,19 @@ impl IdLine {
 /// `before 2pt after 2pt line 8.65pt exact size 9pt`: a cell paragraph's
 /// spacing and text size on the table line, the id line's clauses joined
 /// by spaces. `None` unless every word is one of them.
-fn spacing_words(text: &str) -> Option<(super::xml::Spacing, Option<u32>)> {
+fn spacing_words(text: &str) -> Option<(super::xml::Spacing, Option<u32>, bool)> {
     let mut spacing = super::xml::Spacing::default();
     let mut size = None;
+    let mut inherits = false;
     let mut words = text.split(' ').peekable();
     while let Some(word) = words.next() {
+        if word == "mark" {
+            if words.next()? != "style" {
+                return None;
+            }
+            inherits = true;
+            continue;
+        }
         let mut value = words.next()?.to_string();
         if word == "size" {
             size = Some(super::xml::size_half_points(&value)?);
@@ -1526,9 +1700,14 @@ fn spacing_words(text: &str) -> Option<(super::xml::Spacing, Option<u32>)> {
         {
             value = format!("{value} {rule}");
         }
+        if matches!(word, "before" | "after")
+            && let Some(unit) = words.next_if(|w| *w == "lines")
+        {
+            value = format!("{value} {unit}");
+        }
         spacing.clause(word, &value)?;
     }
-    (!spacing.is_empty() || size.is_some()).then_some((spacing, size))
+    (!spacing.is_empty() || size.is_some()).then_some((spacing, size, inherits))
 }
 
 /// `c5 c6`: the comment numbers of an `in` clause.
@@ -1594,6 +1773,11 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
         // A comment with no text: `c5 @AC:` at the end.
         text.strip_suffix(':').map(|head| (head, ""))
     })?;
+    // Spacing follows the head words: `c5 @AC, after 0pt, line 1`.
+    let (head, clauses) = match head.split_once(", ") {
+        Some((head, clauses)) => (head, Some(clauses)),
+        None => (head, None),
+    };
     let mut words = head.split(' ').peekable();
     // `c5`, never a bare `5`: a person's comment such as `3: item three` is
     // text, not a head.
@@ -1606,6 +1790,7 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
         reply_to: None,
         resolved: false,
         held_in: Vec::new(),
+        spacing: Vec::new(),
     };
     if let Some(handle) = words.peek().and_then(|w| w.strip_prefix('@')) {
         if !is_handle(handle) {
@@ -1640,11 +1825,37 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
         }
         _ => return None,
     }
+    if let Some(clauses) = clauses {
+        for group in clauses.split("; ") {
+            let mut spacing = super::xml::Spacing::default();
+            if !group.is_empty() {
+                for clause in group.split(", ") {
+                    let (word, value) = clause.split_once(' ')?;
+                    spacing.clause(word, value)?;
+                }
+            }
+            parsed.spacing.push(spacing);
+        }
+    }
     Some((parsed, body))
 }
 
 #[cfg(test)]
 mod tests {
+    /// A row's later paragraph repeats its entry and reads as one mark,
+    /// but marks without an id, or a repeated `w:id` by another author,
+    /// stay separate marks.
+    #[test]
+    fn only_a_repeated_entry_of_one_mark_folds() {
+        use super::unplaced;
+        assert_eq!(unplaced("[ins r5 @AC in p0, ins r5 @AC in p1]").len(), 1);
+        assert_eq!(
+            unplaced("[ins noid @AC in p0, ins noid @AC in p2]").len(),
+            2
+        );
+        assert_eq!(unplaced("[ins r5 @AC in p0, ins r5 @BD in p1]").len(), 2);
+    }
+
     #[test]
     fn note_formats_reads_each_parts_separator_changes() {
         let kinds = |value: &str| -> Vec<(&str, Vec<u32>)> {
@@ -2082,6 +2293,7 @@ mod tests {
                 reply_to: None,
                 resolved: false,
                 held_in: Vec::new(),
+                spacing: Vec::new(),
             }
         );
         assert_eq!(text, "Is one percent the cap?");
@@ -2363,10 +2575,36 @@ pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
     Some(page)
 }
 
+/// The earlier page a section names (`page: Letter portrait; was: A4
+/// portrait, margins 1in`). Reject writes this into `w:sectPrChange`.
+pub(super) fn earlier_page(text: &str) -> Option<PageSetup> {
+    let rest = text.split("; was: ").nth(1)?;
+    let end = [";", ", fmt", ", headers:", ", footers:", ", columns:", "}"]
+        .iter()
+        .filter_map(|key| rest.find(key))
+        .min()
+        .unwrap_or(rest.len());
+    page_setup(rest[..end].trim())
+}
+
 /// A `sections:` entry of the view's YAML header (`  2: {p30-p103, page:
 /// Letter landscape, margins 1in, headers: {…}}`): the section's number and
 /// its page, when it names one (else it keeps the first section's).
 pub(super) fn section_page(line: &str) -> Option<(usize, Option<PageSetup>)> {
+    let (number, page) = section_page_clause(line)?;
+    Some((number, page.and_then(page_setup)))
+}
+
+/// The earlier page a `sections:` entry's own `page:` clause names (`page:
+/// Letter portrait; was: A4 portrait`). Only that clause counts: a story's
+/// text later in the entry may read `; was: …` too.
+pub(super) fn section_earlier_page(line: &str) -> Option<PageSetup> {
+    earlier_page(section_page_clause(line)?.1?)
+}
+
+/// A `sections:` entry's number and the text of its `page:` clause, when it
+/// has one.
+fn section_page_clause(line: &str) -> Option<(usize, Option<&str>)> {
     let (number, entry) = line.trim().split_once(": ")?;
     let number: usize = number.parse().ok()?;
     let entry = entry.strip_prefix('{')?;
@@ -2380,5 +2618,5 @@ pub(super) fn section_page(line: &str) -> Option<(usize, Option<PageSetup>)> {
         .min()
         .or_else(|| page.rfind('}'))
         .unwrap_or(page.len());
-    Some((number, page_setup(&page[..end])))
+    Some((number, Some(&page[..end])))
 }

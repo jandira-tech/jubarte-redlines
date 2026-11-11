@@ -17,7 +17,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use super::{
     EditError, EditOutcome, EditPlan, EditResult, ExistingRevisions, OperationKind, Resolved,
     StoryPart, Transaction, check_update_fields, comment_holds_kept_text, comment_text_of,
-    controls, lift_deletion_comments, revision_counts, sections, tracked, whole,
+    controls, enclose_deleted_paragraph_comment_references, lift_deletion_comments,
+    revision_counts, sections, tracked, whole,
 };
 use crate::comparer::WmlComparerSettings;
 use crate::inspect::{body_paragraph_nodes, project_paragraph, source_sha256};
@@ -845,7 +846,22 @@ fn screen_candidates(
         let Some(baseline) = baseline else {
             continue;
         };
-        for finding in introduced_findings(baseline, &findings) {
+        // A block placed before a finding shifts its sibling indices. The
+        // finding is still the one the source had when a stable anchor
+        // (paragraph id, revision id, or that element's own text) finds it.
+        // Only findings of a code the candidate seems to introduce are
+        // relocated, so an edit that introduces nothing reads no XML here
+        // (#2127 review).
+        let suspects: HashSet<String> = introduced_findings(baseline, &findings)
+            .into_iter()
+            .map(|finding| finding.code)
+            .collect();
+        let baseline = if suspects.is_empty() {
+            baseline.to_vec()
+        } else {
+            relocate_findings(source, bytes, baseline, &suspects)
+        };
+        for finding in introduced_findings(&baseline, &findings) {
             if blocking(&finding) {
                 refusals.push(refused(
                     artifact,
@@ -877,6 +893,292 @@ fn screen_candidates(
         integrity: true,
         operation_postconditions: false,
     })
+}
+
+struct ParsedPart {
+    dom: crate::xmllinq::Dom,
+    root: crate::xmllinq::NodeId,
+    /// Same-name children per parent, with each child's text and revision
+    /// marks, built once per part: every finding's walk reads them, and a
+    /// part with many findings would otherwise rescan its siblings for
+    /// each (#2127 review).
+    siblings: HashMap<(crate::xmllinq::NodeId, String, String), std::rc::Rc<Siblings>>,
+}
+
+struct Siblings {
+    nodes: Vec<crate::xmllinq::NodeId>,
+    texts: Vec<String>,
+    marks: Vec<Vec<(String, String)>>,
+    /// How many siblings carry each text.
+    text_counts: HashMap<String, usize>,
+}
+
+impl ParsedPart {
+    fn siblings(
+        &mut self,
+        parent: crate::xmllinq::NodeId,
+        namespace: &str,
+        local: &str,
+    ) -> std::rc::Rc<Siblings> {
+        let key = (parent, namespace.to_string(), local.to_string());
+        if let Some(found) = self.siblings.get(&key) {
+            return std::rc::Rc::clone(found);
+        }
+        let nodes = named_children(&self.dom, parent, namespace, local);
+        let texts: Vec<String> = nodes.iter().map(|&node| self.dom.value(node)).collect();
+        let marks = nodes
+            .iter()
+            .map(|&node| revision_marks(&self.dom, node))
+            .collect();
+        let mut text_counts = HashMap::new();
+        for text in &texts {
+            *text_counts.entry(text.clone()).or_insert(0) += 1;
+        }
+        let built = std::rc::Rc::new(Siblings {
+            nodes,
+            texts,
+            marks,
+            text_counts,
+        });
+        self.siblings.insert(key, std::rc::Rc::clone(&built));
+        built
+    }
+}
+
+/// Baseline findings of a `suspects` code with locations rewritten to where
+/// the same element sits in `candidate`. An element the candidate no longer
+/// has, or that cannot be told from a sibling, keeps the location the
+/// source reported. Both packages are read as Transitional, as validation
+/// reads a Strict one, so the locations name the same elements (#2127
+/// review).
+fn relocate_findings(
+    source: &[u8],
+    candidate: &[u8],
+    baseline: &[Finding],
+    suspects: &HashSet<String>,
+) -> Vec<Finding> {
+    let (Ok(source), Ok(candidate)) = (
+        crate::strict_translation::strict_to_transitional_docx(source),
+        crate::strict_translation::strict_to_transitional_docx(candidate),
+    ) else {
+        return baseline.to_vec();
+    };
+    let Ok(source_pkg) = crate::opc::PartFs::open(&source) else {
+        return baseline.to_vec();
+    };
+    let Ok(candidate_pkg) = crate::opc::PartFs::open(&candidate) else {
+        return baseline.to_vec();
+    };
+    let mut source_parts = HashMap::new();
+    let mut candidate_parts = HashMap::new();
+    baseline
+        .iter()
+        .map(|finding| {
+            let mut finding = finding.clone();
+            if !suspects.contains(&finding.code) {
+                return finding;
+            }
+            if let Some(location) = moved_location(
+                &source_pkg,
+                &candidate_pkg,
+                &mut source_parts,
+                &mut candidate_parts,
+                &finding.part,
+                &finding.location,
+            ) {
+                finding.r#ref.clone_from(&location);
+                finding.location = location;
+            }
+            finding
+        })
+        .collect()
+}
+
+fn ensure_part(
+    pkg: &crate::opc::PartFs,
+    cache: &mut HashMap<String, ParsedPart>,
+    part: &str,
+) -> Option<()> {
+    if cache.contains_key(part) {
+        return Some(());
+    }
+    let (dom, _, root) = crate::inspect::parse_part(pkg, part).ok()?;
+    cache.insert(
+        part.to_string(),
+        ParsedPart {
+            dom,
+            root,
+            siblings: HashMap::new(),
+        },
+    );
+    Some(())
+}
+
+fn moved_location(
+    source_pkg: &crate::opc::PartFs,
+    candidate_pkg: &crate::opc::PartFs,
+    source_parts: &mut HashMap<String, ParsedPart>,
+    candidate_parts: &mut HashMap<String, ParsedPart>,
+    part: &str,
+    location: &str,
+) -> Option<String> {
+    if !location.contains('[') {
+        return None;
+    }
+    ensure_part(source_pkg, source_parts, part)?;
+    ensure_part(candidate_pkg, candidate_parts, part)?;
+    let source = source_parts.get_mut(part)?;
+    let candidate = candidate_parts.get_mut(part)?;
+    let mut source_node = source.root;
+    let mut candidate_node = candidate.root;
+    let mut steps = Vec::new();
+    for step in location.split('/') {
+        let (namespace, local, index) = parse_step(step)?;
+        let source_siblings = source.siblings(source_node, &namespace, &local);
+        let candidate_siblings = candidate.siblings(candidate_node, &namespace, &local);
+        let source_child = *source_siblings.nodes.get(index)?;
+        let new_index = match_child(
+            &source.dom,
+            index,
+            &source_siblings,
+            &candidate.dom,
+            &candidate_siblings,
+        )?;
+        let candidate_child = candidate_siblings.nodes[new_index];
+        let name = step.split_once('[').map_or(step, |(name, _)| name);
+        steps.push(format!("{name}[{new_index}]"));
+        source_node = source_child;
+        candidate_node = candidate_child;
+    }
+    let relocated = steps.join("/");
+    (relocated != location).then_some(relocated)
+}
+
+fn parse_step(step: &str) -> Option<(String, String, usize)> {
+    let (name, rest) = step.strip_suffix(']')?.split_once('[')?;
+    let index = rest.parse().ok()?;
+    let (namespace, local) = match name.split_once(':') {
+        Some((prefix, local)) => (
+            crate::xmllinq::serialize::well_known_namespace(prefix)?.to_string(),
+            local.to_string(),
+        ),
+        None => (String::new(), name.to_string()),
+    };
+    Some((namespace, local, index))
+}
+
+fn named_children(
+    dom: &crate::xmllinq::Dom,
+    parent: crate::xmllinq::NodeId,
+    namespace: &str,
+    local: &str,
+) -> Vec<crate::xmllinq::NodeId> {
+    dom.elements(parent, None)
+        .into_iter()
+        .filter(|&element| {
+            dom.name(element).is_some_and(|name| {
+                name.local_name() == local && name.namespace_name() == namespace
+            })
+        })
+        .collect()
+}
+
+/// The index among `candidate` of the sibling that is `source.nodes[index]`,
+/// told apart by paragraph id, its own revision, its revision marks, or its
+/// text (an empty text too, #2127 review), each only when that anchor is
+/// unique on both sides; else by position when no sibling came or went.
+fn match_child(
+    source_dom: &crate::xmllinq::Dom,
+    index: usize,
+    source: &Siblings,
+    candidate_dom: &crate::xmllinq::Dom,
+    candidate: &Siblings,
+) -> Option<usize> {
+    let node = source.nodes[index];
+    let para_id = crate::namespaces::W14::para_id();
+    if let Some(id) = source_dom.attribute(node, &para_id)
+        && let Some(found) = sole_index(&candidate.nodes, |sibling| {
+            candidate_dom.attribute(sibling, &para_id) == Some(id)
+        })
+        && sole_index(&source.nodes, |sibling| {
+            source_dom.attribute(sibling, &para_id) == Some(id)
+        })
+        .is_some()
+    {
+        return Some(found);
+    }
+    if let Some(revision) = own_revision(source_dom, node)
+        && let Some(found) = sole_index(&candidate.nodes, |sibling| {
+            own_revision(candidate_dom, sibling).as_ref() == Some(&revision)
+        })
+    {
+        return Some(found);
+    }
+    let marks = &source.marks[index];
+    if !marks.is_empty()
+        && source.marks.iter().filter(|other| *other == marks).count() == 1
+        && let Some(found) = unique_position(&candidate.marks, marks)
+    {
+        return Some(found);
+    }
+    let text = &source.texts[index];
+    if source.text_counts.get(text) == Some(&1) && candidate.text_counts.get(text) == Some(&1) {
+        return candidate.texts.iter().position(|other| other == text);
+    }
+    (source.nodes.len() == candidate.nodes.len()).then_some(index)
+}
+
+fn unique_position<T: PartialEq>(items: &[T], wanted: &T) -> Option<usize> {
+    let mut found = None;
+    for (at, item) in items.iter().enumerate() {
+        if item != wanted {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        found = Some(at);
+    }
+    found
+}
+
+fn sole_index(
+    nodes: &[crate::xmllinq::NodeId],
+    mut pred: impl FnMut(crate::xmllinq::NodeId) -> bool,
+) -> Option<usize> {
+    let mut found = None;
+    for (at, &node) in nodes.iter().enumerate() {
+        if !pred(node) {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        found = Some(at);
+    }
+    found
+}
+
+fn own_revision(
+    dom: &crate::xmllinq::Dom,
+    node: crate::xmllinq::NodeId,
+) -> Option<(String, String)> {
+    let id = dom.attribute(node, &W::id())?;
+    dom.attribute(node, &W::author())?;
+    Some((dom.name(node)?.local_name().to_string(), id.to_string()))
+}
+
+fn revision_marks(
+    dom: &crate::xmllinq::Dom,
+    node: crate::xmllinq::NodeId,
+) -> Vec<(String, String)> {
+    let mut marks: Vec<(String, String)> = std::iter::once(node)
+        .chain(dom.descendants(node, None))
+        .filter_map(|element| own_revision(dom, element))
+        .collect();
+    marks.sort();
+    marks.dedup();
+    marks
 }
 
 /// A candidate may not give a revision id a same-kind duplicate the source
@@ -1542,6 +1844,14 @@ fn produce(
         error.outcomes[op].code = Some(error.code.clone());
         return Err(error);
     }
+    // After the reply check: a deletion with no new comment can still land
+    // on a later copy of the same paragraph. Refuse that before publishing.
+    if let Some((op, message)) = identical_paragraph_kept(tx, &redline)? {
+        let mut error = tx.conflict(op, &message);
+        error.code = "UNSUPPORTED_STRUCTURE".into();
+        error.outcomes[op].code = Some(error.code.clone());
+        return Err(error);
+    }
     // A deleted text's comment wraps its deletion, as a strike's does.
     let lifted: Vec<u32> = tx
         .deletion_comments
@@ -1550,6 +1860,7 @@ fn produce(
         .map(|&(id, _)| id)
         .collect();
     redline = lift_deletion_comments(&redline, &lifted)?;
+    redline = enclose_deleted_paragraph_comment_references(&redline, &plan.author)?;
     // Settings are not revisions: the redline takes them as they are.
     if let Some(request) = &tx.settings {
         redline = crate::settings::apply_settings_to_docx(&redline, request)
@@ -1563,6 +1874,12 @@ fn produce(
         .unwrap_or(report.paragraphs.from);
     report.revisions = revision_counts(&redline);
     report.fields = fields;
+    report.clean_removed_comments = super::comment_settlement::threads_the_clean_copy_drops(
+        &clean,
+        &redline,
+        &report.removed_comments,
+        &tx.deleted_paragraph_ids(),
+    )?;
     if role == PrimaryRole::Redline {
         check_redline_stories(tx, &clean, &redline)?;
     }
@@ -1571,6 +1888,85 @@ fn produce(
         redline,
         report,
     })
+}
+
+/// A whole-paragraph deletion whose named paragraph still shows the same
+/// non-empty text. The comparer struck another copy. An empty paragraph
+/// is skipped: nothing distinguishes it from its twin.
+fn identical_paragraph_kept(
+    tx: &Transaction<'_>,
+    redline: &[u8],
+) -> Result<Option<(usize, String)>, EditError> {
+    let deletions: Vec<(usize, usize)> = tx
+        .resolved
+        .iter()
+        .filter_map(|(op, resolved)| match resolved {
+            Resolved::DeleteParagraph { para } => Some((*op, *para)),
+            _ => None,
+        })
+        .collect();
+    if deletions.is_empty() {
+        return Ok(None);
+    }
+    let opened = crate::inspect::Opened::open(redline)
+        .map_err(|error| err("PACKAGE_WRITE", None, error.to_string()))?;
+    let mut texts: HashMap<usize, Vec<String>> = HashMap::new();
+    for (op, para) in deletions {
+        let source = match tx.projections.get(para) {
+            Some(projection) if !projection.text.is_empty() => projection.text.as_str(),
+            _ => continue,
+        };
+        let Some(&(story, local)) = tx.paragraph_story.get(para) else {
+            continue;
+        };
+        if let std::collections::hash_map::Entry::Vacant(slot) = texts.entry(story) {
+            slot.insert(visible_paragraphs(&opened, tx, story)?);
+        }
+        let still_there = texts
+            .get(&story)
+            .and_then(|paragraphs| paragraphs.get(local))
+            .is_some_and(|text| text == source);
+        if !still_there {
+            continue;
+        }
+        let keep = match tx.syntax {
+            super::PlanSyntax::Flags | super::PlanSyntax::Typed => "--existing-revisions keep",
+            super::PlanSyntax::V1 | super::PlanSyntax::V2 => r#""existing_revisions": "keep""#,
+        };
+        return Ok(Some((
+            op,
+            format!(
+                "the comparer deleted an identical paragraph instead of the one named; pass {keep} to write the deletion as given"
+            ),
+        )));
+    }
+    Ok(None)
+}
+
+/// Visible text of each paragraph in `story`, in the order a plan addresses.
+fn visible_paragraphs(
+    opened: &crate::inspect::Opened,
+    tx: &Transaction<'_>,
+    story: usize,
+) -> Result<Vec<String>, EditError> {
+    if story == 0 {
+        return Ok(body_paragraph_nodes(&opened.dom, opened.body)
+            .into_iter()
+            .map(|paragraph| project_paragraph(&opened.dom, paragraph).text)
+            .collect());
+    }
+    let Some(part) = tx.stories.get(story).map(|story| story.part.clone()) else {
+        return Ok(Vec::new());
+    };
+    if opened.pkg.part_bytes(&part).is_none() {
+        return Ok(Vec::new());
+    }
+    let (dom, _, root) = crate::inspect::parse_part(&opened.pkg, &part)
+        .map_err(|error| err("PACKAGE_WRITE", None, error.to_string()))?;
+    Ok(crate::inspect::story_paragraph_nodes(&dom, root)
+        .into_iter()
+        .map(|paragraph| project_paragraph(&dom, paragraph).text)
+        .collect())
 }
 
 /// An [`EditError`] as `super::err` builds it.
@@ -1699,6 +2095,7 @@ pub(crate) mod tests {
                 existing_revisions: ExistingRevisions::Refuse,
                 resolved_revisions: Default::default(),
                 removed_comments: Vec::new(),
+                clean_removed_comments: Vec::new(),
                 kept_comments: Vec::new(),
                 paragraph_ids: Vec::new(),
                 split_revisions: Vec::new(),

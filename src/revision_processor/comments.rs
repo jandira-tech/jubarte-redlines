@@ -84,7 +84,8 @@ pub(super) fn drop_wholly_deleted_comments(dom: &mut Dom, root: NodeId) {
                 .attribute(marker, &W::id())
                 .is_some_and(|id| dropped.contains(id))
             {
-                remove_marker(dom, marker);
+                // Before the thaw a live record is one being settled now.
+                remove_marker(dom, marker, false);
             }
         }
     }
@@ -233,18 +234,39 @@ pub(super) fn keep_wholly_deleted_comments(dom: &mut Dom, root: NodeId) -> Vec<S
                     continue;
                 }
                 if local == "commentReference" {
-                    // Copy just the reference and its run properties: a
-                    // shared text run must never carry deleted text along.
+                    let parent = dom.parent(marker).filter(|&p| dom.name(p) == Some(W::r()));
+                    // A run holding only the reference moves whole: its
+                    // properties, and any revision they record, stay one
+                    // copy.
+                    if let Some(run) = parent
+                        && dom
+                            .elements(run, None)
+                            .into_iter()
+                            .all(|e| e == marker || dom.name(e) == Some(W::r_pr()))
+                    {
+                        dom.remove(run);
+                        dom.add_before_self(point, run);
+                        continue;
+                    }
+                    // Otherwise copy just the reference and its run
+                    // properties: a shared text run must never carry deleted
+                    // text along. A revision the properties record stays on
+                    // the text run alone, so its id names one record.
                     let run = dom.new_element(W::r());
-                    if let Some(parent) = dom.parent(marker)
+                    if let Some(parent) = parent
                         && let Some(pr) = dom.element(parent, &W::r_pr())
                     {
                         let pr = dom.clone_subtree(pr);
+                        for record in dom.descendants(pr, None) {
+                            if is_tracked_revision(dom, record, true) {
+                                dom.remove(record);
+                            }
+                        }
                         dom.add(run, pr);
                     }
                     let reference = dom.clone_subtree(marker);
                     dom.add(run, reference);
-                    remove_marker(dom, marker);
+                    remove_marker(dom, marker, false);
                     dom.add_before_self(point, run);
                 } else {
                     dom.remove(marker);
@@ -279,9 +301,34 @@ fn removed_container(dom: &Dom, node: NodeId) -> Option<NodeId> {
     removed
 }
 
+/// Whether `node` is a tracked revision record: a frozen one (an
+/// unselected revision, renamed out of the wordprocessing namespace while
+/// the selected ones settle), or with `live` a wordprocessing one too.
+fn is_tracked_revision(dom: &Dom, node: NodeId, live: bool) -> bool {
+    dom.name(node).is_some_and(|name| {
+        let ns = name.namespace_name();
+        (ns == super::FROZEN_NS || (live && ns == W::URI))
+            && super::TRACKED_REVISION_LOCAL_SET.contains(name.local_name())
+    })
+}
+
+/// True when `run`'s properties carry a revision that outlives this
+/// settlement, which is all the run still holds once its reference marker
+/// goes. Before the thaw only a frozen record does: a live one is being
+/// settled, and the run would be left as bare properties. After the thaw
+/// (`live`) every record left is one that stays.
+fn properties_hold_a_revision(dom: &Dom, run: NodeId, live: bool) -> bool {
+    dom.elements(run, Some(&W::r_pr()))
+        .into_iter()
+        .flat_map(|props| dom.descendants(props, None))
+        .any(|node| is_tracked_revision(dom, node, live))
+}
+
 /// A reference-only run goes with its marker; a run containing other content
-/// keeps that content. Range markers normally are siblings of runs.
-fn remove_marker(dom: &mut Dom, marker: NodeId) {
+/// keeps that content, and so does one whose properties record a revision
+/// that stays ([`properties_hold_a_revision`], `live` after the thaw).
+/// Range markers normally are siblings of runs.
+fn remove_marker(dom: &mut Dom, marker: NodeId, live: bool) {
     let run = dom.parent(marker).filter(|&p| dom.name(p) == Some(W::r()));
     dom.remove(marker);
     if let Some(run) = run
@@ -289,6 +336,7 @@ fn remove_marker(dom: &mut Dom, marker: NodeId) {
             .elements(run, None)
             .into_iter()
             .all(|e| dom.name(e) == Some(W::r_pr()))
+        && !properties_hold_a_revision(dom, run, live)
     {
         dom.remove(run);
     }
@@ -340,7 +388,10 @@ pub(crate) fn renumber_rescued_comments(pkg: &mut PartFs, kept: &[String]) {
     if story_order.is_empty() {
         return;
     }
-    let Some(mut comments_xml) = Parsed::load(pkg, FAMILY[0].0) else {
+    let Some(comments_part) = super::comments_part(pkg) else {
+        return;
+    };
+    let Some(mut comments_xml) = Parsed::load(pkg, &comments_part) else {
         return;
     };
     for c in comments_xml.w("comment") {
@@ -419,8 +470,15 @@ pub(crate) fn renumber_rescued_comments(pkg: &mut PartFs, kept: &[String]) {
 /// Drop the comments Accept / Reject All left without a reference, prune the
 /// comment family and `people.xml` (module docs). Return their ids, so
 /// callers can report precisely what went.
-pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) -> Vec<String> {
-    let Some(mut comments) = Parsed::load(pkg, FAMILY[0].0) else {
+pub(crate) fn prune_orphan_comments(
+    pkg: &mut PartFs,
+    story_parts: &[String],
+    comments_part: Option<&str>,
+) -> Vec<String> {
+    let Some(comments_part) = comments_part else {
+        return Vec::new();
+    };
+    let Some(mut comments) = Parsed::load(pkg, comments_part) else {
         return Vec::new();
     };
     // The comments part itself is not an anchor story: a `commentReference`
@@ -429,7 +487,7 @@ pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) ->
     // `word_save::tidy` instead.
     let stories: Vec<Parsed> = story_parts
         .iter()
-        .filter(|p| p.as_str() != FAMILY[0].0)
+        .filter(|p| p.as_str() != comments_part)
         .filter_map(|p| Parsed::load(pkg, p))
         .collect();
     let id = W::id();
@@ -474,7 +532,8 @@ pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) ->
         for local in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
             for m in s.w(local) {
                 if !s.dom.attribute(m, &id).is_some_and(|v| kept.contains(v)) {
-                    remove_marker(&mut s.dom, m);
+                    // After the thaw: every record left stays.
+                    remove_marker(&mut s.dom, m, true);
                     changed = true;
                 }
             }
@@ -489,7 +548,16 @@ pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) ->
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
     if kept.is_empty() {
-        for (part, _, rel_type) in FAMILY {
+        let parts: Vec<String> = (0..FAMILY.len())
+            .map(|index| {
+                if index == 0 {
+                    comments_part.to_string()
+                } else {
+                    family_part(pkg, index)
+                }
+            })
+            .collect();
+        for (part, (_, _, rel_type)) in parts.iter().zip(FAMILY) {
             remove_part(pkg, &main, part, rel_type);
         }
     } else if dropped {
@@ -554,13 +622,22 @@ fn marker(dom: &mut Dom, local: &str, cid: &str) -> NodeId {
     m
 }
 
+/// The comment family's part `index` (`FAMILY` order) as the main
+/// document's relationship names it, which need not be the conventional
+/// name (`word/commentsExtended1.xml`); the conventional name otherwise.
+fn family_part(pkg: &PartFs, index: usize) -> String {
+    let (conventional, _, rel_type) = FAMILY[index];
+    let kind = rel_type.rsplit('/').next().unwrap_or(rel_type);
+    super::related_part(pkg, kind).unwrap_or_else(|| conventional.to_string())
+}
+
 /// Drop the commentsExtended / commentsIds entries of the dropped comments'
 /// paragraphs and the commentsExtensible entries of their durable ids.
 fn prune_by_para(pkg: &mut PartFs, dropped_paras: &HashSet<String>) {
     if dropped_paras.is_empty() {
         return;
     }
-    if let Some(mut ext) = Parsed::load(pkg, FAMILY[1].0) {
+    if let Some(mut ext) = Parsed::load(pkg, &family_part(pkg, 1)) {
         let key = W15::name("paraId");
         for e in ext.dom.descendants(ext.root, Some(&W15::name("commentEx"))) {
             if ext
@@ -574,7 +651,7 @@ fn prune_by_para(pkg: &mut PartFs, dropped_paras: &HashSet<String>) {
         ext.store(pkg);
     }
     let mut durable: HashSet<String> = HashSet::new();
-    if let Some(mut ids) = Parsed::load(pkg, FAMILY[2].0) {
+    if let Some(mut ids) = Parsed::load(pkg, &family_part(pkg, 2)) {
         let (key, dur) = (XName::get("paraId", CID), XName::get("durableId", CID));
         for e in ids
             .dom
@@ -593,7 +670,7 @@ fn prune_by_para(pkg: &mut PartFs, dropped_paras: &HashSet<String>) {
         }
         ids.store(pkg);
     }
-    if let Some(mut cex) = Parsed::load(pkg, FAMILY[3].0) {
+    if let Some(mut cex) = Parsed::load(pkg, &family_part(pkg, 3)) {
         let key = XName::get("durableId", CEX);
         for e in cex
             .dom

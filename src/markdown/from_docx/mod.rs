@@ -14,7 +14,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 mod agent;
-mod critic;
+pub(in crate::markdown) mod critic;
 pub(crate) mod drawing;
 mod header;
 mod media;
@@ -61,6 +61,9 @@ pub(crate) struct Options {
     pub(crate) dates: bool,
     /// With `ids`: which blocks to print.
     pub(crate) select: Option<super::Select>,
+    /// Header and footer paragraphs follow the body, in the same critic
+    /// markup. The public read leaves this unset.
+    pub(crate) stories: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -413,6 +416,7 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
         ),
         monospace_paragraph: false,
         closing_fields: HashSet::new(),
+        inline_breaks: HashSet::new(),
         spanning_fields: HashSet::new(),
         open_fields: Vec::new(),
         revisions: Vec::new(),
@@ -420,6 +424,7 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
         notes: HashMap::new(),
         referenced: HashSet::new(),
         held_marks: HashMap::new(),
+        move_names: HashMap::new(),
         noted_at_end: HashSet::new(),
         noted_at_reference: HashSet::new(),
         open_comments: Vec::new(),
@@ -470,6 +475,7 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
     let body = document.child("body").unwrap_or(&document);
     let mut blocks = Blocks::new();
     let mut list = ListIndent::default();
+    move_range_names(&document, &mut writer.move_names);
     writer.blocks(body, &mut blocks, &mut list);
     writer.flush_empty(&mut blocks);
     // Notes of ranges that ended after the last paragraph.
@@ -488,6 +494,8 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
     // The style of each note whose first paragraph is not in Word's own
     // (`footnote text`, `endnote text`), by label: its id line names it.
     let mut note_styles: HashMap<String, Vec<String>> = HashMap::new();
+    // Each note paragraph's own spacing, one group per paragraph, by label.
+    let mut note_spacings: HashMap<String, String> = HashMap::new();
     // A silent line still needs the legend when the built-in name's spelling
     // differs from the writer's: canonical output id -> source definition id.
     let mut note_style_sources: HashMap<String, String> = HashMap::new();
@@ -533,6 +541,10 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
             } else {
                 "footnote text"
             };
+            // A spelling other than the writer's aliases the canonical id
+            // only while that id is free. When another style already owns
+            // it, the note prints the localized id and that definition stays.
+            let canonical_defined = writer.styles.by_id.contains_key(own);
             let styles: Vec<Option<String>> = paragraphs
                 .iter()
                 .map(|p| {
@@ -549,7 +561,10 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
                             if writer.styles.by_id.get(id).map_or(
                                 id.eq_ignore_ascii_case(own),
                                 |s| {
-                                    let own_style = s.name == own_name;
+                                    let other_owns_canonical =
+                                        canonical_defined && !id.eq_ignore_ascii_case(own);
+                                    let own_style = s.name == own_name
+                                        && !(s.exact_name != own_name && other_owns_canonical);
                                     if own_style && s.exact_name != own_name {
                                         note_style_sources
                                             .entry(own.to_string())
@@ -577,6 +592,23 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
                 }
                 Some(list)
             }
+        };
+        // One group per paragraph, empty groups kept so the indexes match.
+        // Nothing when every paragraph states none: the id line stays as it was.
+        let note_spacing = {
+            let groups: Vec<String> = paragraphs
+                .iter()
+                .map(|p| {
+                    p.path(&["pPr", "spacing"])
+                        .map(agent::spacing_clauses)
+                        .unwrap_or_default()
+                        .join(", ")
+                })
+                .collect();
+            groups
+                .iter()
+                .any(|group| !group.is_empty())
+                .then(|| groups.join("; "))
         };
         let many = writer.agent && paragraphs.len() > 1;
         let parts: Vec<critic::Part> = paragraphs
@@ -670,12 +702,66 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
                 if let Some(style) = note_style {
                     note_styles.insert(index.to_string(), style);
                 }
+                if let Some(spacing) = note_spacing {
+                    note_spacings.insert(index.to_string(), spacing);
+                }
             }
             defs.push(def);
             defined.insert(key);
         }
     }
     let mut markdown = blocks.finish();
+    if options.stories {
+        // Inspect lists headers, then footers, each part shorter-name first,
+        // and the patch searches paragraphs in that order. The blocks go
+        // before the note definitions, which are appended below.
+        let mut extra = Blocks::new();
+        for suffix in ["/header", "/footer"] {
+            let mut targets = rels.targets_of_type(suffix);
+            targets.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(b)));
+            for target in targets {
+                let Ok(Some(root)) = package.xml(&target) else {
+                    continue;
+                };
+                writer.open_comments.clear();
+                writer.hidden_ranges.clear();
+                writer.revisions.clear();
+                writer.lead = None;
+                writer.story = None;
+                let saved_part = std::mem::replace(&mut writer.part, target.clone());
+                let saved_scopes =
+                    std::mem::replace(&mut writer.scopes, drawing::ScopeMap::of(&root));
+                // A story numbers its own lists: a header repeats on every
+                // page, so it cannot go on with the body's count.
+                let saved_counters = std::mem::take(&mut writer.counters);
+                let saved_started = std::mem::take(&mut writer.started_nums);
+                let mut list = ListIndent::default();
+                // This story's own moves only: `root` is dropped after it,
+                // so its addresses must not outlive it in the map.
+                let mut story_moves = HashMap::new();
+                move_range_names(&root, &mut story_moves);
+                let saved_moves = std::mem::replace(&mut writer.move_names, story_moves);
+                writer.blocks(&root, &mut extra, &mut list);
+                writer.flush_empty(&mut extra);
+                // Notes of ranges the story closed after its last paragraph
+                // stay in it, as the body's do.
+                let trailing = writer.take_notes();
+                extra.push(&trailing, false);
+                writer.counters = saved_counters;
+                writer.started_nums = saved_started;
+                writer.part = saved_part;
+                writer.scopes = saved_scopes;
+                writer.move_names = saved_moves;
+            }
+        }
+        let stories = extra.finish();
+        if !stories.is_empty() {
+            if !markdown.is_empty() {
+                markdown.push_str("\n\n");
+            }
+            markdown.push_str(&stories);
+        }
+    }
     if let Some(pages) = options.pages.as_ref().filter(|_| options.ids) {
         let pages: Vec<&str> = pages.iter().map(String::as_str).collect();
         markdown = crate::markdown::paginate(&markdown, &pages);
@@ -1030,6 +1116,18 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
                                     .path(&["pPr", "ind"])
                                     .map(agent::indent_clauses)
                                     .unwrap_or_default(),
+                                tabs: p
+                                    .path(&["pPr", "tabs"])
+                                    .map(header::tab_stops)
+                                    .unwrap_or_default(),
+                                spacing: p
+                                    .path(&["pPr", "spacing"])
+                                    .map(agent::spacing_clauses)
+                                    .unwrap_or_default(),
+                                shading: p
+                                    .path(&["pPr", "shd"])
+                                    .map(header::shading_pairs)
+                                    .unwrap_or_default(),
                             };
                             (
                                 i,
@@ -1310,12 +1408,7 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
             // Only a change's own printed id shows it. A container's tag
             // does not: accepting an inserted row keeps the row and leaves
             // a change inside it tracked, so that change needs its own id.
-            let unplaced: Vec<String> = facts
-                .changes
-                .iter()
-                .filter(|c| !printed.contains(&c.id))
-                .map(|c| agent::unplaced_entry(c, &handles))
-                .collect();
+            let unplaced = agent::unplaced_entries(&facts.changes, &printed, &handles);
             facts.unplaced = unplaced;
             if !facts.unplaced.is_empty() {
                 head = header::render(&facts);
@@ -1344,7 +1437,17 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
                                 format!(" {}", tokens.join(", "))
                             })
                             .unwrap_or_default();
-                        format!("<!-- {id}{style} -->\n{def}")
+                        let spacing = agent::note_label(def)
+                            .and_then(|label| note_spacings.get(label))
+                            .map(|clauses| {
+                                if style.is_empty() {
+                                    format!(" {clauses}")
+                                } else {
+                                    format!(", {clauses}")
+                                }
+                            })
+                            .unwrap_or_default();
+                        format!("<!-- {id}{style}{spacing} -->\n{def}")
                     }
                     None => def.clone(),
                 }
@@ -1785,6 +1888,8 @@ struct Style {
     /// case, while the legend preserves this exact spelling.
     exact_name: String,
     based_on: Option<String>,
+    /// `w:type`; a style without one is a paragraph style.
+    kind: String,
     outline: Option<usize>,
     num: Option<(String, usize)>,
     bold: Option<bool>,
@@ -1833,6 +1938,7 @@ impl Styles {
                         .path(&["basedOn"])
                         .and_then(|n| n.attr("val"))
                         .map(str::to_string),
+                    kind: style.attr("type").unwrap_or("paragraph").to_string(),
                     outline: ppr
                         .and_then(|p| p.child("outlineLvl"))
                         .and_then(|o| o.attr("val"))
@@ -1888,15 +1994,19 @@ impl Styles {
             .find_map(|style| style.jc.as_deref())
     }
 
-    /// The style and its `basedOn` ancestors, nearest first.
+    /// The style and its `basedOn` ancestors, nearest first. A `basedOn`
+    /// naming a style of another type ends the chain: Word ignores it, as
+    /// ECMA-376 §17.7.4.3 says (a character style based on a bold
+    /// paragraph style prints plain).
     fn chain(&self, id: &str) -> Vec<&Style> {
-        let mut out = Vec::new();
+        let mut out: Vec<&Style> = Vec::new();
         let mut current = Some(id.to_string());
         while let Some(id) = current {
             if out.len() >= 16 {
                 break;
             }
             match self.by_id.get(&id) {
+                Some(style) if out.first().is_some_and(|first| first.kind != style.kind) => break,
                 Some(style) => {
                     out.push(style);
                     current = style.based_on.clone();
@@ -2148,6 +2258,39 @@ struct Field {
     printed: bool,
 }
 
+/// `<sym font="Wingdings" char="F0FC"/>` for a symbol the view keeps.
+/// A symbol inside a field's instruction prints nothing, as that run's
+/// text does. One with no font or character is left for the run walk.
+fn symbol_token(child: &Element, fields: &[Field]) -> Option<String> {
+    if child.local() != "sym" || fields.iter().any(|field| !field.in_result) {
+        return None;
+    }
+    let font = child.attr("font").filter(|font| !font.is_empty())?;
+    let value = child.attr("char").filter(|value| !value.is_empty())?;
+    Some(format!(
+        r#"<sym font="{}" char="{}"/>"#,
+        attribute_text(font),
+        attribute_text(value)
+    ))
+}
+
+/// `value` for a quoted attribute of a tag the view prints: every
+/// character but a letter, a digit, a space, `-` and `.` as a character
+/// reference, so the value ends neither the attribute nor the tag, and
+/// neither Markdown nor CriticMarkup reads a delimiter in it.
+fn attribute_text(value: &str) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        if c.is_alphanumeric() || matches!(c, ' ' | '-' | '.') {
+            out.push(c);
+        } else {
+            let _ = write!(out, "&#x{:X};", u32::from(c));
+        }
+    }
+    out
+}
+
 /// The `fldChar begin` of each field in `p` whose `separate` and `end` are
 /// in `p` too, inside the same tracked changes as its begin: the writer
 /// reads a field within one change, never one a change boundary cuts.
@@ -2355,29 +2498,94 @@ fn attribution(element: &Element, story: Option<&str>) -> Option<String> {
     ))
 }
 
-/// Tracked changes recorded in a properties element (`trPr`, `tcPr`, a
-/// paragraph mark's `rPr`), in document order.
-fn revision_marks(properties: &Element, story: Option<&str>) -> Vec<Change> {
-    properties
-        .elements()
-        .filter_map(|p| match p.local() {
-            "ins" | "moveTo" | "cellIns" => Some((Mark::Insertion, attribution(p, story))),
-            "del" | "moveFrom" | "cellDel" => Some((Mark::Deletion, attribution(p, story))),
-            _ => None,
-        })
-        .collect()
+/// `by` with the move sentinel and `name` before its date or the change it
+/// sits in, so the printed note can say ` move` and the writer can tell a
+/// move from a deletion or an insertion.
+fn with_move_sentinel(by: &str, name: &str) -> String {
+    let carried = by.ends_with(critic::CARRIED);
+    let by = by.strip_suffix(critic::CARRIED).unwrap_or(by);
+    let token = name.replace('%', "%25").replace(' ', "%20");
+    let payload = format!("{}{token}", critic::MOVE);
+    let mut out = match by.find([' ', '\u{E002}']) {
+        Some(at) => format!("{}{payload}{}", &by[..at], &by[at..]),
+        None => format!("{by}{payload}"),
+    };
+    if carried {
+        out.push_str(critic::CARRIED);
+    }
+    out
 }
 
-/// The tracked change on the mark that ends a paragraph, that is on the break
-/// between it and the next one. A mark inserted and then deleted counts as
-/// deleted, the later of the two changes.
-fn paragraph_mark(p: &Element, story: Option<&str>) -> Option<Change> {
-    let marks = p
-        .path(&["pPr", "rPr"])
-        .map(|rpr| revision_marks(rpr, story))
-        .unwrap_or_default();
-    let deleted = marks.iter().position(|(m, _)| *m == Mark::Deletion);
-    marks.into_iter().nth(deleted.unwrap_or(0))
+/// Record, for every `moveFrom`/`moveTo` under `root`, the name of the
+/// move range of its side still open where it starts, walking in document
+/// order across containers.
+fn move_range_names(root: &Element, names: &mut HashMap<*const Element, String>) {
+    fn walk(
+        e: &Element,
+        open: &mut [Vec<(String, String)>; 2],
+        names: &mut HashMap<*const Element, String>,
+    ) {
+        for child in e.elements() {
+            let side = match child.local() {
+                "moveFromRangeStart" | "moveFromRangeEnd" | "moveFrom" => 0,
+                "moveToRangeStart" | "moveToRangeEnd" | "moveTo" => 1,
+                _ => {
+                    walk(child, open, names);
+                    continue;
+                }
+            };
+            match child.local() {
+                "moveFromRangeStart" | "moveToRangeStart" => {
+                    if let Some(id) = child.attr("id") {
+                        open[side]
+                            .push((id.to_string(), child.attr("name").unwrap_or("").to_string()));
+                    }
+                }
+                "moveFromRangeEnd" | "moveToRangeEnd" => {
+                    if let Some(id) = child.attr("id") {
+                        open[side].retain(|(open_id, _)| open_id != id);
+                    }
+                }
+                _ => {
+                    if let Some((_, name)) = open[side].last() {
+                        names.insert(std::ptr::from_ref(child), name.clone());
+                    }
+                    walk(child, open, names);
+                }
+            }
+        }
+    }
+    walk(root, &mut [Vec::new(), Vec::new()], names);
+}
+
+/// The `w:name` of the move range still open before `child`.
+fn open_move_name(container: &Element, child: &Element) -> String {
+    let (start, end) = if child.local() == "moveFrom" {
+        ("moveFromRangeStart", "moveFromRangeEnd")
+    } else {
+        ("moveToRangeStart", "moveToRangeEnd")
+    };
+    let mut open: Vec<(String, String)> = Vec::new();
+    for sibling in container.elements() {
+        if std::ptr::eq(sibling, child) {
+            break;
+        }
+        if sibling.local() == start {
+            if let Some(id) = sibling.attr("id") {
+                open.push((
+                    id.to_string(),
+                    sibling.attr("name").unwrap_or("").to_string(),
+                ));
+            }
+        } else if sibling.local() == end
+            && let Some(id) = sibling.attr("id")
+        {
+            open.retain(|(open_id, _)| open_id != id);
+        }
+    }
+    open.last()
+        .map(|(_, name)| name.clone())
+        .unwrap_or_default()
 }
 
 /// A comment's `{>>…<<}` text: `Author (date): comment`. The date is Word's
@@ -2445,6 +2653,9 @@ struct Writer<'a> {
     /// The `fldChar begin` of each field whose `end` lies in the paragraph
     /// being written: only those print as `{CODE}result{/}`.
     closing_fields: HashSet<*const Element>,
+    /// Page-break runs of the paragraph being written that sit before
+    /// later text, printed in that text as `<br type="page"/>`.
+    inline_breaks: HashSet<*const Element>,
     /// The `fldChar begin` of each field whose `end` lies in a later
     /// paragraph of its container (see [`spanning_fields`]).
     spanning_fields: HashSet<*const Element>,
@@ -2464,6 +2675,11 @@ struct Writer<'a> {
     /// Agent view: comment id → the `w:id` of the one insertion or
     /// deletion holding its reference ([`held_marks`]).
     held_marks: HashMap<String, u32>,
+    /// Each `moveFrom`/`moveTo` element's open range name, by address: the
+    /// range markers may sit outside the element's container (Word puts a
+    /// moved paragraph's at body level), so a story is walked once in
+    /// document order ([`move_range_names`]).
+    move_names: HashMap<*const Element, String>,
     /// Comments whose note followed their range's end, inside a paragraph
     /// and outside any change: there Word puts the reference, and the
     /// writer takes the note back as the range's own comment. Their
@@ -2617,10 +2833,27 @@ impl Writer<'_> {
                     }
                 }
                 "ins" | "moveTo" | "del" | "moveFrom" => {
-                    self.revised(self.change_of(child), |w| w.blocks(child, blocks, list));
+                    let (mark, by) = self.change_of(child);
+                    self.revised((mark, self.moved(by, container, child)), |w| {
+                        w.blocks(child, blocks, list);
+                    });
                 }
                 "commentRangeStart" | "commentRangeEnd" => self.comment_range(child, None),
                 "customXml" | "sdtContent" | "txbxContent" => self.blocks(child, blocks, list),
+                // The branch Word shows, as read-only text. It takes no tN:
+                // stamp already keeps AlternateContent out of the inventory.
+                // Only the agent view labels it; plain Markdown shows it as is.
+                "AlternateContent" => {
+                    if let Some(branch) = agent::shown_branch(child) {
+                        if self.agent {
+                            blocks.push_line(agent::ALTERNATE_START);
+                        }
+                        self.blocks(branch, blocks, list);
+                        if self.agent {
+                            blocks.push_line(agent::ALTERNATE_END);
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -2802,7 +3035,7 @@ impl Writer<'_> {
             None
         };
         if let Some(index) = index {
-            let page_break = agent::has_page_break(p);
+            let page_break = agent::page_breaks(p) > agent::mid_paragraph_page_breaks(p).len();
             let comments = if self.comments_inline {
                 Vec::new()
             } else {
@@ -2816,12 +3049,20 @@ impl Writer<'_> {
             let numbered = heading_marker.is_some() || list_marker.is_some();
             // A paragraph whose text is only blanks writes none of it, so
             // the tags its notes would carry print nowhere either.
+            let shown = if written {
+                inline.render(true)
+            } else {
+                String::new()
+            };
             let unshown = if self.resolved {
                 Vec::new()
-            } else if written {
-                agent::unshown_tags(p, &inline.render(true), &self.handles)
             } else {
-                agent::unshown_tags(p, "", &self.handles)
+                agent::unshown_tags(p, &shown, &self.handles)
+            };
+            let holds = if self.resolved {
+                Vec::new()
+            } else {
+                agent::held_comment_clauses(p, &shown)
             };
             // The level the paragraph states itself (`w:outlineLvl`),
             // which without a `w:pStyle` is the only place it can come
@@ -2901,6 +3142,7 @@ impl Writer<'_> {
                 Some((_, said)) if said == level => 0,
                 _ => level,
             };
+            let mark_inherits = size.is_some() && agent::mark_keeps_style(p);
             let facts = agent::LineFacts {
                 index,
                 style: style.as_deref(),
@@ -2916,8 +3158,10 @@ impl Writer<'_> {
                 comments: &comments,
                 spans: &spans,
                 empty,
+                mark_inherits,
                 unshown: &unshown,
                 size,
+                holds: &holds,
             };
             blocks.push_line(&format!(
                 "{}{}",
@@ -2925,6 +3169,17 @@ impl Writer<'_> {
                 agent::id_line(p, &facts, &self.handles)
             ));
             self.line_indent = 0;
+        } else if self.in_box && self.agent && written {
+            // An empty box paragraph prints no id line: with no text after
+            // it, the writer would read the line as a body paragraph after
+            // the box (Strict01's empty cover-page box).
+            let clauses = ppr
+                .and_then(|pr| pr.child("spacing"))
+                .map(agent::spacing_clauses)
+                .unwrap_or_default();
+            if !clauses.is_empty() {
+                blocks.push_line(&agent::line("p0", &clauses));
+            }
         }
         if written {
             let edges = inline.edges();
@@ -3182,6 +3437,12 @@ impl Writer<'_> {
     /// Tracked changes around the paragraph and comment ranges still open from
     /// earlier paragraphs are opened again at its start.
     fn paragraph_inline(&mut self, p: &Element) -> (Critic, Vec<String>) {
+        // A text box's paragraph is written inside this one: it takes its
+        // own breaks and gives this paragraph's back when it is done.
+        let outer = std::mem::replace(
+            &mut self.inline_breaks,
+            agent::mid_paragraph_page_breaks(p).into_iter().collect(),
+        );
         let mut inline = Critic::default();
         if self.flattening > 0 {
             inline.set_inline_end();
@@ -3235,6 +3496,7 @@ impl Writer<'_> {
         if self.in_comment {
             inline = inline.unattributed();
         }
+        self.inline_breaks = outer;
         (inline, extra)
     }
 
@@ -3249,6 +3511,9 @@ impl Writer<'_> {
     ) {
         for child in container.elements() {
             match child.local() {
+                "r" if self.inline_breaks.contains(&std::ptr::from_ref(child)) => {
+                    out.raw("<br type=\"page\"/>");
+                }
                 "r" => self.run(child, link, base, fields, out, extra),
                 "hyperlink" => {
                     let url = child.rel_attr("id").and_then(|id| self.rels.link(id));
@@ -3280,6 +3545,7 @@ impl Writer<'_> {
                 }
                 "ins" | "moveTo" | "del" | "moveFrom" => {
                     let (mark, by) = self.change_of(child);
+                    let by = self.moved(by, container, child);
                     if self.dates {
                         out.open_dated(mark, by.as_deref(), child.revision_date());
                     } else {
@@ -3299,8 +3565,7 @@ impl Writer<'_> {
                     self.drawing(child, false, out, extra);
                 }
                 "AlternateContent" => {
-                    if let Some(choice) = child.child("Choice").or_else(|| child.child("Fallback"))
-                    {
+                    if let Some(choice) = agent::shown_branch(child) {
                         self.inline(choice, link, base, fields, out, extra);
                     }
                 }
@@ -3362,14 +3627,15 @@ impl Writer<'_> {
             .and_then(|s| s.attr("val"))
             .map(|s| self.styles.emphasis(s))
             .unwrap_or((None, None));
-        let bold = rpr
-            .and_then(|r| r.toggle("b"))
-            .or(style_bold)
-            .unwrap_or(base.0);
-        let italic = rpr
-            .and_then(|r| r.toggle("i"))
-            .or(style_italic)
-            .unwrap_or(base.1);
+        let direct_bold = rpr.and_then(|r| r.toggle("b"));
+        let direct_italic = rpr.and_then(|r| r.toggle("i"));
+        let bold = direct_bold.or(style_bold).unwrap_or(base.0);
+        let italic = direct_italic.or(style_italic).unwrap_or(base.1);
+        // A heading style is bold on its own. The stars print only for a
+        // toggle or a character style on the run, so the next write keeps
+        // that property.
+        let own_bold = direct_bold.or(style_bold) == Some(true);
+        let own_italic = direct_italic.or(style_italic) == Some(true);
         // Agent view only: the plain conversion has no underline. In a link,
         // to a bookmark too, the character style's underline is the link's
         // look (Word's Hyperlink style), not formatting: only a direct `w:u`
@@ -3417,6 +3683,8 @@ impl Writer<'_> {
         let marks = Marks {
             bold,
             italic,
+            own_bold,
+            own_italic,
             underline,
             highlight,
             strike,
@@ -3446,6 +3714,10 @@ impl Writer<'_> {
         }
         let opened = out.len();
         for child in run.elements() {
+            if let Some(token) = symbol_token(child, fields) {
+                out.raw(&token);
+                continue;
+            }
             self.run_child(child, link, marks, fields, out, extra);
         }
         if let Some((_, close)) = tags {
@@ -3575,7 +3847,7 @@ impl Writer<'_> {
                 self.drawing(child, true, out, extra);
             }
             "AlternateContent" => {
-                if let Some(choice) = child.child("Choice").or_else(|| child.child("Fallback")) {
+                if let Some(choice) = agent::shown_branch(child) {
                     for inner in choice.elements() {
                         self.run_child(inner, link, style, fields, out, extra);
                     }
@@ -3601,6 +3873,11 @@ impl Writer<'_> {
     ) {
         if self.in_comment || (self.in_box && !self.nested_editable) {
             self.drawing_text(element, out, extra);
+            return;
+        }
+        // A picture in a box stays in that box's payload. A nested token
+        // would be relabeled to an image and the box could not be written.
+        if self.in_box && drawing::is_plain_inline(element) {
             return;
         }
         if !self.in_box
@@ -3845,6 +4122,11 @@ impl Writer<'_> {
                     if said.is_empty() {
                         continue;
                     }
+                    let said = if self.own_size(p).is_some() && agent::mark_keeps_style(p) {
+                        format!("{said} mark style")
+                    } else {
+                        said
+                    };
                     match runs.last_mut() {
                         Some((_, last, same)) if *last + 1 == index && *same == said => {
                             *last = index;
@@ -3992,7 +4274,10 @@ impl Writer<'_> {
                     self.flattening -= 1;
                 }
                 "ins" | "moveTo" | "del" | "moveFrom" => {
-                    self.revised(self.change_of(child), |w| w.cell_parts(child, parts));
+                    let (mark, by) = self.change_of(child);
+                    self.revised((mark, self.moved(by, container, child)), |w| {
+                        w.cell_parts(child, parts);
+                    });
                 }
                 "commentRangeStart" | "commentRangeEnd" => self.comment_range(child, None),
                 "sdt" | "sdtContent" | "customXml" => self.cell_parts(child, parts),
@@ -4008,15 +4293,28 @@ impl Writer<'_> {
         if self.agent {
             return None;
         }
-        paragraph_mark(p, self.story.as_deref())
+        self.own_paragraph_mark(p)
             .map(|(mark, by)| (mark, by.filter(|_| !self.in_comment)))
+    }
+
+    /// The tracked change on the mark that ends a paragraph, that is on the
+    /// break between it and the next one. A mark inserted and then deleted
+    /// counts as deleted, the later of the two changes. A moved mark keeps
+    /// its move ([`Self::revision_marks`]).
+    fn own_paragraph_mark(&self, p: &Element) -> Option<Change> {
+        let marks = p
+            .path(&["pPr", "rPr"])
+            .map(|rpr| self.revision_marks(rpr))
+            .unwrap_or_default();
+        let deleted = marks.iter().position(|(m, _)| *m == Mark::Deletion);
+        marks.into_iter().nth(deleted.unwrap_or(0))
     }
 
     /// The tracked change on a note paragraph's mark. A note has no id
     /// lines, so the agent view prints it inline with its tag.
     fn note_mark(&self, p: &Element) -> Option<Change> {
         if !self.agent {
-            return paragraph_mark(p, self.story.as_deref());
+            return self.own_paragraph_mark(p);
         }
         let marks = p
             .path(&["pPr", "rPr"])
@@ -4052,6 +4350,20 @@ impl Writer<'_> {
         tagged
     }
 
+    /// A move's attribution, with the open range's name when `element` is one.
+    fn moved(&self, by: Option<String>, container: &Element, child: &Element) -> Option<String> {
+        let by = by?;
+        if !matches!(child.local(), "moveFrom" | "moveTo") {
+            return Some(by);
+        }
+        let name = self
+            .move_names
+            .get(&std::ptr::from_ref(child))
+            .cloned()
+            .unwrap_or_else(|| open_move_name(container, child));
+        Some(with_move_sentinel(&by, &name))
+    }
+
     /// A tracked change's mark with its attribution: the agent tag, or the
     /// `Author (date)` note of the plain conversion.
     fn change_of(&self, element: &Element) -> Change {
@@ -4063,11 +4375,12 @@ impl Writer<'_> {
         }
     }
 
-    /// [`revision_marks`] with agent tags when the agent view is on.
+    /// Tracked changes recorded in a properties element (`trPr`, `tcPr`, a
+    /// paragraph mark's `rPr`), in document order, with agent tags when the
+    /// agent view is on. A
+    /// moved mark (a moved paragraph's mark, row or cell) keeps the move
+    /// and its range's name, as a moved run does.
     fn revision_marks(&self, properties: &Element) -> Vec<Change> {
-        if !self.agent {
-            return revision_marks(properties, self.story.as_deref());
-        }
         properties
             .elements()
             .filter_map(|p| {
@@ -4076,7 +4389,12 @@ impl Writer<'_> {
                     "del" | "moveFrom" | "cellDel" => Mark::Deletion,
                     _ => return None,
                 };
-                Some((mark, Some(self.agent_tag(p))))
+                let by = if self.agent {
+                    Some(self.agent_tag(p))
+                } else {
+                    attribution(p, self.story.as_deref())
+                };
+                Some((mark, self.moved(by, properties, p)))
             })
             .collect()
     }
@@ -4121,14 +4439,30 @@ impl Writer<'_> {
             .needs_date(comment.attr("author"), self.dates)
             .then(|| comment.comment_date())
             .flatten();
-        agent::comment_head(
+        let mut head = agent::comment_head(
             id,
             comment.attr("author"),
             date,
             &self.handles,
             &self.threads,
             held,
-        )
+        );
+        let groups: Vec<String> = comment
+            .children_named("p")
+            .map(|p| {
+                p.path(&["pPr", "spacing"])
+                    .map(agent::spacing_clauses)
+                    .unwrap_or_default()
+                    .join(", ")
+            })
+            .collect();
+        if groups.iter().any(|group| !group.is_empty()) {
+            let clauses = groups.join("; ");
+            if let Some(bare) = head.strip_suffix(": ") {
+                head = format!("{bare}, {clauses}: ");
+            }
+        }
+        head
     }
 
     /// `note`, its head naming the change that holds comment `id`'s
@@ -5089,7 +5423,7 @@ mod tests {
         );
         assert_eq!(
             md(&bytes),
-            "# Report\n\n## Scope\n\nPlain **bold run** _it_, see [docs](https://example.com/a%20b).\n\n### Outline\n\na\\\nb\tc\n"
+            "# Report\n\n## **Scope**\n\nPlain **bold run** _it_, see [docs](https://example.com/a%20b).\n\n### Outline\n\na\\\nb\tc\n"
         );
     }
 
@@ -5581,7 +5915,7 @@ mod tests {
         // separate changes.
         assert_eq!(
             md(&docx(&body, &[])),
-            "Keep {++**new**++}{r2}{--_old_--}{r1}.\n\n{++destination++}{r3} / {--source--}{r3}\n"
+            "Keep {++**new**++}{r2}{--_old_--}{r1}.\n\n{++destination++}{r3 move} / {--source--}{r3 move}\n"
         );
     }
 
@@ -6164,7 +6498,7 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[])),
-            "I really love {++font-styles++}{r90 Ana (2026-01-02T03:04:00Z)}{--fonts--}{r91 Ana (2026-01-02T03:04:00Z)}\n\n{++one ++}{r90 Ana (2026-01-02T03:04:00Z)}{++insertion++}{r90 Ana (2026-01-02T03:04:00Z)}.\n\na{++ ++}{r90 Ana (2026-01-02T03:04:00Z)}\n\nx{--y--}{r91 Ana (2026-01-02T03:04:00Z) re r90 Ana (2026-01-02T03:04:00Z)}\n\n{++there++}{r4}{--here--}{r3}\n"
+            "I really love {++font-styles++}{r90 Ana (2026-01-02T03:04:00Z)}{--fonts--}{r91 Ana (2026-01-02T03:04:00Z)}\n\n{++one ++}{r90 Ana (2026-01-02T03:04:00Z)}{++insertion++}{r90 Ana (2026-01-02T03:04:00Z)}.\n\na{++ ++}{r90 Ana (2026-01-02T03:04:00Z)}\n\nx{--y--}{r91 Ana (2026-01-02T03:04:00Z) re r90 Ana (2026-01-02T03:04:00Z)}\n\n{++there++}{r4 move}{--here--}{r3 move}\n"
         );
     }
 
@@ -6451,7 +6785,7 @@ mod tests {
                     by("ins", "Ana Lima", t2, &r("b"))
                 ),
             ),
-            // Moves carry their own attribution.
+            // Moves carry their own attribution and stay moves.
             p("", &by("moveTo", "Bo Chen", t2, &r("moved here"))),
             // Missing date, missing author, neither, and a name that needs escaping.
             p(
@@ -6471,7 +6805,7 @@ mod tests {
             "{++styles++}{r7 Ana Lima (2026-09-29T14:05:00Z)}{--fonts--}{r7 Ana Lima (2026-09-29T14:05:00Z)}\n\n\
              {++new++}{r7 Bo Chen (2026-09-29T15:10:00Z)}{--old--}{r7 Ana Lima (2026-09-29T14:05:00Z)}\n\n\
              {++a++}{r7 Ana Lima (2026-09-29T14:05:00Z)}{++b++}{r7 Ana Lima (2026-09-29T15:10:00Z)}\n\n\
-             {++moved here++}{r7 Bo Chen (2026-09-29T15:10:00Z)}\n\n\
+             {++moved here++}{r7 Bo Chen (2026-09-29T15:10:00Z) move}\n\n\
              {++w++}{r7 Ana Lima}{--x--}{r7 (2026-09-29T14:05:00Z)}{++y++}{r7}{++z++}{r7 A <<\\} B (2026-09-29T14:05:00Z)}\n"
         );
     }

@@ -293,6 +293,9 @@ struct Output<'a> {
     render: &'a RenderArgs,
     /// SHA-256 of the bytes `--in-place` replaces, set once they are read.
     replaced_sha256: Option<String>,
+    /// A before-view already built from bytes the task holds. When set,
+    /// the confirmation uses it and does not read `input` again.
+    prepared_before: Option<Result<String, String>>,
 }
 
 impl<'a> Output<'a> {
@@ -319,6 +322,7 @@ impl<'a> Output<'a> {
             source: format!("{} (not written)", slash_path(&path.with_extension("docx"))),
             render,
             replaced_sha256: None,
+            prepared_before: None,
         }
     }
 }
@@ -375,8 +379,13 @@ fn write_output(out: &Output<'_>, produced: Produced<'_>) -> Result<(), ConvertF
         }
         (Format::Docx, Produced::Docx(bytes)) => {
             ensure_writable(out.path, out.force)?;
-            let before =
-                (!out.quiet).then(|| input_confirmation_view(out.input, out.markdown_input));
+            let before = if out.quiet {
+                None
+            } else if let Some(ready) = &out.prepared_before {
+                Some(ready.clone())
+            } else {
+                Some(input_confirmation_view(out.input, out.markdown_input))
+            };
             if let Some(expected) = out.replaced_sha256.clone() {
                 // `--in-place`: recheck the hash, then replace only this path.
                 // A symlink is followed inside `publish_files`.
@@ -1024,6 +1033,7 @@ fn run_read_tables(
         source: String::new(),
         render: &render,
         replaced_sha256: None,
+        prepared_before: None,
     });
     if let Some(out) = &out {
         refuse_output_alias(out.path, &[(file, "the input")])
@@ -1144,6 +1154,7 @@ fn run_text(
             source: source.unwrap_or_default(),
             render: &render,
             replaced_sha256: None,
+            prepared_before: None,
         };
         check_output(&out)?;
         if kind == Format::Json {
@@ -2459,6 +2470,16 @@ fn edit_notes(
         source,
         decision,
     ));
+    // Suggesting mode publishes the redline, which still holds these threads.
+    if published == result.clean.as_slice() {
+        lines.extend(settlement_notes(
+            &result.report.clean_removed_comments,
+            &[],
+            published,
+            source,
+            "deletion",
+        ));
+    }
     for outcome in &result.report.operations {
         if let (Some(given), Some(read_as)) = (&outcome.anchor_given, &outcome.anchor_read_as) {
             let why = if jubarte::markdown::plain_anchor(given) == *read_as {
@@ -2573,7 +2594,7 @@ fn write_edited(
     // `--in-place` authorizes the input only. A PDF, a PNG page or a
     // failed-op plan that already exists still needs `--force`.
     if let Some((taken, _)) = outputs.iter().find(|(output, _)| {
-        !job.force && !(job.in_place && output == job.file) && output.symlink_metadata().is_ok()
+        !(job.force || (job.in_place && output == job.file)) && output.symlink_metadata().is_ok()
     }) {
         return Err(taken_output(taken));
     }
@@ -2944,7 +2965,7 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
 /// can still fail later, while the redline is compared); a refusal leaves
 /// PLAN.json as it was.
 fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), (u8, String)> {
-    use jubarte::edit::record::{RecordError, record, write_plan};
+    use jubarte::edit::record::{RecordError, commit_plan, record};
     let options = flags.options;
     let held = match std::fs::read_to_string(path) {
         Ok(json) => Some(json),
@@ -2982,7 +3003,7 @@ fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), 
         }
     }
     if !flags.dry_run {
-        let warnings = write_plan(path, &recorded.json()).map_err(|error| {
+        let warnings = commit_plan(path, held.as_deref(), &recorded.json()).map_err(|error| {
             if let Some(publish) = error
                 .get_ref()
                 .and_then(|source| source.downcast_ref::<jubarte::publication::PublishError>())
@@ -3249,6 +3270,7 @@ fn run(job: &Job) -> Result<(), ConvertFailure> {
         source: source.clone(),
         render: &job.render,
         replaced_sha256: None,
+        prepared_before: None,
     });
     let original = read_document(&job.original)?;
     let modified = read_document(&job.modified)?;
@@ -3512,6 +3534,13 @@ fn markdown_text(path: &Path, bytes: Vec<u8>) -> Result<String, String> {
 /// collection themselves (#617).
 type ImageRefusals = std::rc::Rc<std::cell::RefCell<Vec<(String, &'static str)>>>;
 
+/// A UNC share (`\\server\share`, `//server/share`) or a device path
+/// (`\\?\`, `//./`), including after `%XX` decoding. Windows reads `/` and
+/// `\` alike, so any two leading separators (`/\`, `\/` too) name a share.
+fn network_or_device_path(name: &str) -> bool {
+    matches!(name.as_bytes(), [b'/' | b'\\', b'/' | b'\\', ..])
+}
+
 /// `path` names a URL (`scheme:…`): a scheme is a letter, then letters,
 /// digits and `+-.`, up to its `:`. A decoded absolute path (`C:\…`) is
 /// not a scheme; the containment check judges it.
@@ -3553,9 +3582,15 @@ fn image_policy(root: &Path, name: &str) -> Result<PathBuf, &'static str> {
         }
     }
     let named = std::str::from_utf8(&decoded).map_err(|_| "not found")?;
+    // Decoded first, so an encoded prefix (`%5C%5Cserver`, `%2F%2Fserver`)
+    // is judged as the name it becomes. A UNC or device prefix is refused
+    // before `canonicalize`, which would contact that share.
+    if network_or_device_path(named) {
+        return Err("a network path");
+    }
     let path = PathBuf::from(named);
-    // Decoded first, so an encoded scheme (`file%3A%2F%2F…`, `DATA%3A`)
-    // is judged as what it names, not as an opaque relative path.
+    // An encoded scheme (`file%3A%2F%2F…`, `DATA%3A`) is judged as what it
+    // names, not as an opaque relative path.
     if !path.is_absolute() && url_scheme(named) {
         return Err("a URL scheme");
     }
@@ -4025,13 +4060,16 @@ fn run_convert_any(
                 bytes
             };
             // The agent view, as `jubarte read` prints it: the dialect that
-            // comes back whole through `convert` to Word.
+            // comes back whole through `convert` to Word. `read` omits
+            // per-revision dates unless `--dates`. Convert asks for them
+            // so an author whose changes do not share one instant keeps
+            // each mark's date; a shared date stays in the authors header.
             let view = jubarte::markdown::read(
                 &source,
                 &jubarte::markdown::ReadOptions {
                     track_changes: markdown.track_changes.into(),
                     comments: true,
-                    dates: false,
+                    dates: true,
                     page_markers: !markdown.no_page_markers,
                     select: None,
                     source: job
@@ -4170,7 +4208,10 @@ fn run_convert_any(
                 }
                 Ok(())
             } else {
-                at(Format::Docx, &path, Some(Produced::Docx(&out)))
+                let mut output =
+                    Output::of_task(Format::Docx, &path, job.file, &render, job.force, job.quiet);
+                output.prepared_before = before;
+                write_output(&output, Produced::Docx(&out))
             }
         }
         (Format::Md, Format::Md) if keep_resolver.is_none() => {
@@ -4351,6 +4392,12 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
     // before any repair.
     let before = job.original.map(read_package).transpose()?;
     if let Some(out) = job.repair {
+        // A repair always writes a separate file. --force replaces another
+        // output; it never authorizes an input (the document or --original;
+        // clap refuses --baseline with --repair) under this name or another.
+        let mut inputs = vec![(job.file, "the input")];
+        inputs.extend(job.original.map(|p| (p, "the original")));
+        refuse_output_alias(out, &inputs)?;
         ensure_writable(out, job.force)?;
         let fixed = repair(&docx).map_err(|e| e.to_string())?;
         publish_file(out, &fixed.docx, job.force)?;
@@ -4367,6 +4414,14 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
         }
         if !job.quiet {
             eprintln!("{}", wrote_line(out, Format::Docx, fixed.docx.len(), None));
+            if !job.json {
+                print_success(
+                    job.file,
+                    confirmation_view(job.file, &docx),
+                    out,
+                    &fixed.docx,
+                )?;
+            }
         }
         docx = fixed.docx;
     }
@@ -5099,6 +5154,47 @@ mod tests {
         assert_eq!(foreign.len(), 1, "{foreign:?}");
         assert!(foreign[0].starts_with("(unreadable: "), "{foreign:?}");
         assert!(foreign_bundle_entries(&root.path().join("missing")).is_empty());
+    }
+
+    /// A UNC or device image name is refused before the path is resolved.
+    /// Percent-decoding happens first, so an encoded prefix is the same name.
+    #[test]
+    fn a_network_image_path_is_refused_before_resolution() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let unc = r"\\server\share\x.png";
+        // On Unix `\` is an ordinary byte, so the name is one file inside the
+        // root, and the refusal is proven to come before resolution. On
+        // Windows that path would be the share itself, which a test must
+        // never contact, so the file is written only on Unix.
+        #[cfg(unix)]
+        {
+            let mut in_root = root.clone().into_os_string();
+            in_root.push("/");
+            in_root.push(unc);
+            std::fs::write(in_root, b"secret").unwrap();
+        }
+        assert_eq!(
+            image_policy(&root, unc),
+            Err("a network path"),
+            "a UNC name must be refused before it is resolved"
+        );
+        for name in [
+            "//server/share/x.png",
+            r"\\?\UNC\server\share\x.png",
+            "//./device/x.png",
+            "%5C%5Cserver%5Cshare%5Cx.png",
+            "%2F%2Fserver%2Fshare%2Fx.png",
+            // Windows reads `/` and `\` alike, so a mixed pair is a share too.
+            r"/\server\share\x.png",
+            r"\/server/share/x.png",
+            "%2F%5Cserver%5Cshare%5Cx.png",
+            "%5C%2Fserver%2Fshare%2Fx.png",
+        ] {
+            assert_eq!(image_policy(&root, name), Err("a network path"), "{name}");
+        }
+        std::fs::write(root.join("ok.png"), b"png").unwrap();
+        assert!(image_policy(&root, "ok.png").is_ok());
     }
 
     #[test]

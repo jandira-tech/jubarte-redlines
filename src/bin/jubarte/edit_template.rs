@@ -23,6 +23,46 @@ fn failure(code: &str, message: impl Into<String>) -> Failure {
             .with_commit_state(CommitState::NotCommitted),
     )
 }
+/// The carried plan with each rewrite's `before_sha256` taken from the
+/// freshly generated row for the same target (short and long id). Everything
+/// else is the carried plan's: every other operation, the scope, the
+/// revision decisions, the `others` guard and the attribution, so following
+/// a recovery never drops or weakens the work it was asked for.
+fn refreshed(generated: &v2::PlanV2, mut carried: v2::PlanV2) -> Result<v2::PlanV2, Failure> {
+    if carried.source.sha256 != generated.source.sha256 {
+        return Err(failure(
+            "STALE_SOURCE",
+            "the carried plan is bound to another source: its source.sha256 is not this file's",
+        ));
+    }
+    let fresh: std::collections::HashMap<(&str, &str), &str> = generated
+        .operations
+        .iter()
+        .filter_map(|operation| match operation {
+            v2::Operation::Rewrite {
+                target,
+                before_sha256,
+                ..
+            } => Some((
+                (target.short_id.as_str(), target.long_id.as_str()),
+                before_sha256.as_str(),
+            )),
+            _ => None,
+        })
+        .collect();
+    for operation in &mut carried.operations {
+        if let v2::Operation::Rewrite {
+            target,
+            before_sha256,
+            ..
+        } = operation
+            && let Some(hash) = fresh.get(&(target.short_id.as_str(), target.long_id.as_str()))
+        {
+            *before_sha256 = (*hash).to_string();
+        }
+    }
+    Ok(carried)
+}
 fn read(path: &Path) -> Result<Vec<u8>, Failure> {
     std::fs::read(path).map_err(|e| failure("IO_ERROR", format!("reading {}: {e}", path.display())))
 }
@@ -57,6 +97,14 @@ fn generate(
             ));
         }
     }
+    if let Some(carried) = &options.refresh_plan
+        && paths.iter().any(|path| same_path(path, carried))
+    {
+        return Err(failure(
+            "OUTPUT_ALIAS",
+            "the generated plan aliases the carried plan",
+        ));
+    }
     let mut generated = template::generate(
         source,
         &TemplateRequest {
@@ -90,6 +138,23 @@ fn generate(
         },
     )
     .map_err(|e| failure(&e.code, e.message))?;
+    if let Some(path) = &options.refresh_plan {
+        let carried = read(path)?;
+        let carried = std::str::from_utf8(&carried).map_err(|error| {
+            failure(
+                "INVALID_UTF8",
+                format!("reading {}: {error}", path.display()),
+            )
+        })?;
+        let carried =
+            v2::PlanV2::from_json(carried).map_err(|error| failure(&error.code, error.message))?;
+        generated.plan = refreshed(&generated.plan, carried)?;
+        generated
+            .plan
+            .validate()
+            .map_err(|error| failure(&error.code, error.message))?;
+    }
+    // After any carried plan, so the flag can add the guard but never drop it.
     if options.keep_others || super::env_keep_others() {
         generated.plan.others = Some(jubarte::edit::Others::Keep);
     }
@@ -144,6 +209,17 @@ fn generate(
     }
     for path in &paths {
         alias(path, &options.file)?;
+        // The carried plan is an input too: never publish over it.
+        if options
+            .refresh_plan
+            .as_ref()
+            .is_some_and(|carried| same_path(path, carried))
+        {
+            return Err(failure(
+                "OUTPUT_ALIAS",
+                "the generated plan aliases the carried plan",
+            ));
+        }
         ensure_writable(path, options.force).map_err(|error| {
             failure(
                 "OUTPUT_EXISTS",

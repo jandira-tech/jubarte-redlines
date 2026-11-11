@@ -79,7 +79,12 @@ def build_server(*, root: Path) -> MCPServer:
             raise ToolError(f"{path} is outside root {root}")
         # Keep the lexical path for capability-relative operations; resolving
         # is only an early diagnostic, never the authorization for actual I/O.
-        return root / Path(path).expanduser()
+        # The lexical path must lie under root too: an outside link that
+        # resolves inside it has no root-relative name to open.
+        lexical = root / Path(path).expanduser()
+        if not lexical.is_relative_to(root):
+            raise ToolError(f"{path} is outside root {root}")
+        return lexical
 
     def load(path: str) -> Document:
         p = contained(path)

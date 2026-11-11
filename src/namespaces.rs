@@ -203,6 +203,8 @@ impl W {
     cached_xname!(W::URI, comment_range_start, "commentRangeStart");
     cached_xname!(W::URI, comment_range_end, "commentRangeEnd");
     cached_xname!(W::URI, comment_reference, "commentReference");
+    cached_xname!(W::URI, comment, "comment");
+    cached_xname!(W::URI, content_part, "contentPart");
     cached_xname!(W::URI, perm_start, "permStart");
     cached_xname!(W::URI, perm_end, "permEnd");
     cached_xname!(W::URI, p_pr, "pPr");
@@ -270,6 +272,9 @@ impl W {
     cached_xname!(W::URI, cell_merge, "cellMerge");
     cached_xname!(W::URI, hyperlink, "hyperlink");
     cached_xname!(W::URI, smart_tag, "smartTag");
+    // Direction overrides: a refusal names them as the run's wrapper.
+    cached_xname!(W::URI, dir, "dir");
+    cached_xname!(W::URI, bdo, "bdo");
     cached_xname!(W::URI, r_pr_change, "rPrChange");
     cached_xname!(W::URI, p_pr_change, "pPrChange");
     cached_xname!(W::URI, numbering_change, "numberingChange");

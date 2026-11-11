@@ -180,7 +180,7 @@ pub struct AttachedComment {
     pub text: String,
 }
 
-/// The eleven typed requests in the initial PlanV2 profile.
+/// Typed requests in the text-and-review profile.
 ///
 /// Literal occurrences are 1-based and count overlapping start positions.
 /// All active ranges resolve on one working baseline, not intermediate edits.
@@ -362,6 +362,16 @@ pub enum Operation {
         /// Root removal with replies requires explicit inclusion.
         include_replies: bool,
     },
+    /// Reject another author's insertion visibly. The target names that revision.
+    Strike {
+        /// The insertion, as `changes` lists it.
+        target: Target,
+    },
+    /// Reject another author's deletion visibly. The target names that revision.
+    Restore {
+        /// The deletion, as `changes` lists it.
+        target: Target,
+    },
 }
 
 /// Kind of immutable original-source observation.
@@ -466,6 +476,81 @@ fn present_integer<'de, D: Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Er
 fn invalid(message: impl Into<String>) -> EditError {
     super::err("INVALID_PLAN", None, message)
 }
+
+/// Fields one operation kind takes, in the order an unknown-field message lists them.
+fn operation_fields(kind: &str) -> Option<&'static [&'static str]> {
+    let fields: &[&str] = match kind {
+        "replace" => &["attached_comment", "find", "occurrence", "target", "text"],
+        "insert" => &[
+            "after_text",
+            "attached_comment",
+            "before_text",
+            "edge",
+            "occurrence",
+            "target",
+            "text",
+        ],
+        "delete" => &["find", "occurrence", "target"],
+        "rewrite" => &["attached_comment", "before_sha256", "target", "text"],
+        "insert_paragraph" => &["attached_comment", "position", "target", "text"],
+        "delete_paragraph" => &["target"],
+        "comment" => &["find", "occurrence", "target", "text", "through"],
+        "reply_comment" => &["target", "text"],
+        "resolve_comment" => &["done", "target"],
+        "edit_comment" => &["target", "text"],
+        "delete_comment" => &["include_replies", "target"],
+        "strike" | "restore" => &["target"],
+        _ => return None,
+    };
+    Some(fields)
+}
+
+/// A first-version name for `target`.
+fn v1_target_name(key: &str) -> Option<&'static str> {
+    match key {
+        "paragraph" | "paragraphs" | "anchor" => Some("target"),
+        _ => None,
+    }
+}
+
+/// An operation field this version does not take, named the way a
+/// first-version plan's unknown field is named.
+fn check_operation_fields(plan: &serde_json::Value) -> Result<(), EditError> {
+    let Some(operations) = plan.get("operations").and_then(serde_json::Value::as_array) else {
+        return Ok(());
+    };
+    for (i, operation) in operations.iter().enumerate() {
+        let Some(map) = operation.as_object() else {
+            continue;
+        };
+        let Some(kind) = map.get("kind").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let Some(fields) = operation_fields(kind) else {
+            continue;
+        };
+        let Some(key) = map
+            .keys()
+            .find(|key| key.as_str() != "kind" && !fields.contains(&key.as_str()))
+        else {
+            continue;
+        };
+        let label = format!("op-{}", i + 1);
+        let meant = v1_target_name(key).filter(|name| fields.contains(name));
+        let message = format!("{kind}: {}", super::unknown_field(key, fields, meant));
+        return Err(super::err("INVALID_PLAN", Some(&label), message));
+    }
+    Ok(())
+}
+
+fn unsupported(version: u64) -> EditError {
+    super::err(
+        "UNSUPPORTED_SCHEMA",
+        None,
+        format!("schema_version {version} is not supported (expected 2)"),
+    )
+}
+
 fn require(condition: bool, message: &str) -> Result<(), EditError> {
     if condition {
         Ok(())
@@ -521,7 +606,25 @@ impl PlanV2 {
     /// Successful parsing does not verify this request against source bytes.
     pub fn from_json(json: &str) -> Result<Self, EditError> {
         let json = super::without_byte_order_mark(json);
-        let plan: Self = serde_json::from_str(json).map_err(|e| invalid(e.to_string()))?;
+        let plan: Self = match serde_json::from_str(json) {
+            Ok(plan) => plan,
+            // Only a plan serde refuses is read again, to name the field
+            // the way a first-version plan's unknown field is named. Another
+            // version is refused as such before v2's fields apply to it.
+            Err(e) => {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(json) {
+                    if let Some(version) = value
+                        .get("schema_version")
+                        .and_then(serde_json::Value::as_u64)
+                        .filter(|&version| version != 2)
+                    {
+                        return Err(unsupported(version));
+                    }
+                    check_operation_fields(&value)?;
+                }
+                return Err(invalid(e.to_string()));
+            }
+        };
         plan.validate()?;
         Ok(plan)
     }
@@ -530,14 +633,7 @@ impl PlanV2 {
     /// value. This performs no source resolution and no document mutation.
     pub fn validate(&self) -> Result<(), EditError> {
         if self.schema_version != 2 {
-            return Err(super::err(
-                "UNSUPPORTED_SCHEMA",
-                None,
-                format!(
-                    "schema_version {} is not supported (expected 2)",
-                    self.schema_version
-                ),
-            ));
+            return Err(unsupported(self.schema_version));
         }
         require(
             hash(&self.source.sha256),
@@ -602,7 +698,9 @@ impl Operation {
             | Self::ReplyComment { target, .. }
             | Self::ResolveComment { target, .. }
             | Self::EditComment { target, .. }
-            | Self::DeleteComment { target, .. } => target,
+            | Self::DeleteComment { target, .. }
+            | Self::Strike { target }
+            | Self::Restore { target } => target,
         }
     }
     fn validate(&self) -> Result<(), EditError> {
@@ -710,7 +808,9 @@ impl Operation {
             }
             Self::DeleteParagraph { .. }
             | Self::ResolveComment { .. }
-            | Self::DeleteComment { .. } => {}
+            | Self::DeleteComment { .. }
+            | Self::Strike { .. }
+            | Self::Restore { .. } => {}
         }
         Ok(())
     }

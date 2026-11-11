@@ -185,6 +185,12 @@
           },
           {
             "$ref": "#/$defs/deleteComment"
+          },
+          {
+            "$ref": "#/$defs/strike"
+          },
+          {
+            "$ref": "#/$defs/restore"
           }
         ]
       },
@@ -749,6 +755,42 @@
         }
       },
       "description": "Explicit comment removal. Root removal with replies requires include_replies true. Conflicting mutations/replies/state changes on the affected comment/thread refuse."
+    },
+    "strike": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "target"
+      ],
+      "properties": {
+        "kind": {
+          "const": "strike"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        }
+      },
+      "x-jubarte-keep-only": true,
+      "description": "Reject another author's insertion visibly: a tracked deletion of its words, nested inside it. The target names that revision. Needs existing_revisions keep."
+    },
+    "restore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "target"
+      ],
+      "properties": {
+        "kind": {
+          "const": "restore"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        }
+      },
+      "x-jubarte-keep-only": true,
+      "description": "Reject another author's deletion visibly: their deletion stays, and a tracked copy of its words follows it. The target names that revision. Needs existing_revisions keep."
     }
   }
 }

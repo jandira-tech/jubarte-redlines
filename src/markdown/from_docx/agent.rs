@@ -262,10 +262,20 @@ fn untag_id(piece: &str) -> String {
 /// [`format_tag`] prints it.
 pub(crate) fn split_tag(one: &str) -> (Option<&str>, &str, &str) {
     let (head, handle) = one.rsplit_once('@').unwrap_or((one, "??"));
+    // The range name is not the author. [`join_tags`] copies it back.
+    let handle = handle.split(super::critic::MOVE).next().unwrap_or(handle);
     match head.split_once('#') {
         Some((story, ids)) => (Some(story), ids, handle),
         None => (None, head, handle),
     }
+}
+
+/// The range name stamped after [`super::critic::MOVE`] on `tag`, when it
+/// is a move. Empty is a move whose range has no name.
+fn move_payload(tag: &str) -> Option<&str> {
+    let handle = tag.rsplit_once('@')?.1;
+    let rest = handle.split_once(super::critic::MOVE)?.1;
+    Some(rest.split([' ', '\u{E002}']).next().unwrap_or(rest))
 }
 
 /// The handle of a one-author tag (`1+2@AC` → `AC`); `None` for several.
@@ -296,7 +306,17 @@ pub(crate) fn join_tags(parts: &[String]) -> String {
         Some((story, handle)) if keys.iter().all(|k| *k == keys[0]) => {
             let ids: Vec<&str> = parts.iter().map(|p| split_tag(p).1).collect();
             let story = story.map_or(String::new(), |s| format!("{s}#"));
-            format!("{story}{}@{handle}", ids.join("+"))
+            let mut joined = format!("{story}{}@{handle}", ids.join("+"));
+            let payloads: Vec<Option<&str>> = parts.iter().map(|p| move_payload(p)).collect();
+            if let Some(name) = payloads.iter().find_map(|payload| *payload)
+                && payloads
+                    .iter()
+                    .all(|payload| payload.is_none_or(|payload| payload == name))
+            {
+                joined.push(super::critic::MOVE);
+                joined.push_str(name);
+            }
+            joined
         }
         _ => parts.join("|"),
     }
@@ -715,31 +735,67 @@ fn mark_tags_by(
 /// its own properties, its list number), a text box Word stores twice read
 /// once.
 pub(crate) fn format_change_tags(p: &Element, handles: &Handles) -> Vec<String> {
-    format_change_tags_by(p, handles, tag_of)
+    format_change_nests(p, handles, tag_of)
+        .into_iter()
+        .map(|(own, _)| own)
+        .collect()
 }
 
-fn format_change_tags_by(
+/// Each formatting change in `p`, with the insertion, deletion or move
+/// that encloses it when one does. The change's own tag stays first.
+fn format_change_nests(
     p: &Element,
     handles: &Handles,
     tag: fn(&Element, &Handles) -> String,
-) -> Vec<String> {
+) -> Vec<(String, Option<String>)> {
     fn walk(
         e: &Element,
         handles: &Handles,
         tag: fn(&Element, &Handles) -> String,
-        out: &mut Vec<String>,
+        parent: &Option<String>,
+        out: &mut Vec<(String, Option<String>)>,
     ) {
         for child in shown_children(e) {
             if child.is("rPrChange") || child.is("pPrChange") || child.is("numberingChange") {
-                out.push(tag(child, handles));
+                out.push((tag(child, handles), parent.clone()));
+            } else if matches!(child.local(), "ins" | "del" | "moveFrom" | "moveTo") {
+                walk(child, handles, tag, &Some(tag(child, handles)), out);
             } else {
-                walk(child, handles, tag, out);
+                walk(child, handles, tag, parent, out);
             }
         }
     }
     let mut found = Vec::new();
-    walk(p, handles, tag, &mut found);
+    walk(p, handles, tag, &None, &mut found);
     found
+}
+
+/// One formatting tag, then ` re ` and the change it sits in.
+fn format_one_nest(own: &str, parent: Option<&str>) -> String {
+    let mut out = format_tag(own);
+    if let Some(parent) = parent {
+        out.push_str(" re ");
+        out.push_str(&parent_label(&format_tag(parent)));
+    }
+    out
+}
+
+/// A printed parent tag kept inside its one `fmt` entry: the reader splits
+/// the clause on `; `, so a parent printing several tags (two marks, a
+/// spelled id) joins them with `, ` instead. The reader drops the parent.
+fn parent_label(printed: &str) -> String {
+    printed.replace("; ", ", ")
+}
+
+fn format_nested_tags(tags: &[(String, Option<String>)]) -> String {
+    let mut out = String::new();
+    for (index, (own, parent)) in tags.iter().enumerate() {
+        if index > 0 {
+            out.push_str("; ");
+        }
+        out.push_str(&format_one_nest(own, parent.as_deref()));
+    }
+    out
 }
 
 struct Counter {
@@ -882,24 +938,28 @@ pub(crate) fn comment_anchors(e: &Element, out: &mut HashSet<String>) {
 /// counts once.
 pub(super) fn shown_children(e: &Element) -> Vec<&Element> {
     if e.is("AlternateContent") {
-        e.child("Choice")
-            .or_else(|| e.child("Fallback"))
-            .into_iter()
-            .collect()
+        shown_branch(e).into_iter().collect()
     } else {
         e.elements().collect()
     }
 }
 
-/// Whether `e` holds text the view shows: Word's Fallback copy of a text
-/// box is not shown.
-/// Whether a row's cells hold text inside changes of their own: Word's
-/// shape for a row it inserts or deletes, the row's mark and each run's.
-/// The row's mark then goes on the table line (`rev r80 @AL in t0.row1`)
-/// and the text keeps its own tags; a row whose text has none lends it the
-/// row's tag instead.
-pub(crate) fn row_text_marked(tr: &Element) -> bool {
-    super::row_cells(tr).any(text_marked)
+/// The branch Word shows. A Choice whose Requires names a namespace Word
+/// does not know is passed over for a later Choice, then the Fallback.
+pub(super) fn shown_branch(alternate: &Element) -> Option<&Element> {
+    alternate
+        .elements()
+        .find(|child| child.is("Choice") && requires_understood(child))
+        .or_else(|| alternate.child("Fallback"))
+}
+
+fn requires_understood(choice: &Element) -> bool {
+    crate::comparer::finalize::requires_list_understood(choice.attr("Requires"), |prefix| {
+        choice
+            .namespaces
+            .get(prefix)
+            .is_some_and(|uri| crate::comparer::finalize::word_understands_namespace(uri))
+    })
 }
 
 /// Whether a cell's own text (not a nested table's) is inside changes of
@@ -927,6 +987,8 @@ fn any_revision(e: &Element) -> bool {
         .any(|c| is_revision(c.local()) || any_revision(c))
 }
 
+/// Whether `e` holds text the view shows. Word's Fallback copy of a text
+/// box is not shown.
 fn shows_text(e: &Element) -> bool {
     shown_children(e).into_iter().any(|c| {
         matches!(c.local(), "t" | "delText" | "instrText" | "delInstrText") || shows_text(c)
@@ -1084,9 +1146,14 @@ pub(crate) struct LineFacts<'a> {
     /// Comment threads whose range runs on past this paragraph, inline or
     /// hidden: `in c5`.
     pub spans: &'a [String],
+    /// Comment events a revision holds that the rendered note does not
+    /// already place (`holds del r70 c0 start`).
+    pub holds: &'a [String],
     /// The paragraph has no text but keeps its own line for its marks,
     /// revisions or comments: `<!-- p4 -->` followed by `¶{r3 @AC}`.
     pub empty: bool,
+    /// The size is the runs', and the mark states none (`mark style`).
+    pub mark_inherits: bool,
     /// Tracked view: the printed tags of the paragraph's changes its text
     /// prints no tag for, `true` for an insertion (see [`unshown_tags`]).
     pub unshown: &'a [(bool, String)],
@@ -1101,8 +1168,8 @@ pub(crate) struct LineFacts<'a> {
 /// the writer gives the clause's size; a hidden run (`hidden` names the
 /// hidden character styles) prints nothing. A run whose `w:szCs` differs
 /// from its `w:sz` states no one size: the writer gives both the clause's.
-/// A text box sits inside a run, and Word's Fallback copy and math hold
-/// runs of their own.
+/// A text box sits inside a run, math holds runs of its own, and of an
+/// `mc:AlternateContent` only the branch Word shows counts.
 pub(crate) fn own_size(p: &Element, hidden: &HashSet<String>) -> Option<u32> {
     fn half_points(value: &str) -> Option<u32> {
         let half = crate::util::parse_finite_f64(value)
@@ -1130,7 +1197,12 @@ pub(crate) fn own_size(p: &Element, hidden: &HashSet<String>) -> Option<u32> {
     fn walk(element: &Element, hidden: &HashSet<String>, sizes: &mut Vec<Option<u32>>) {
         for child in element.elements() {
             match child.local() {
-                "pPr" | "Fallback" | "oMath" | "oMathPara" => {}
+                "pPr" | "oMath" | "oMathPara" => {}
+                "AlternateContent" => {
+                    if let Some(branch) = shown_branch(child) {
+                        walk(branch, hidden, sizes);
+                    }
+                }
                 "r" => {
                     if shown(child) && !hidden_run(child.child("rPr"), hidden) {
                         sizes.push(size(child.child("rPr")));
@@ -1154,6 +1226,13 @@ pub(crate) fn size_clause(half_points: u32) -> String {
         0 => format!("size {}pt", half_points / 2),
         _ => format!("size {}.5pt", half_points / 2),
     }
+}
+
+/// The mark states no `w:sz`, so a size the runs share stays off it.
+pub(crate) fn mark_keeps_style(p: &Element) -> bool {
+    p.path(&["pPr", "rPr"])
+        .and_then(|rpr| rpr.child("sz"))
+        .is_none()
 }
 
 /// The tags of the insertions, deletions and moves in paragraph `p` whose
@@ -1259,6 +1338,195 @@ fn printed_wids(shown: &str, story: &str) -> HashSet<String> {
     printed
 }
 
+/// `holds` clauses for comment events that sit in an insertion or a deletion
+/// and that the rendered note does not already place. A note inside `{--`,
+/// `{++` or `{~~` carries its events. `in rN` carries the reference. A range
+/// start is named only when the revision's id is not printed in the text.
+pub(crate) fn held_comment_clauses(p: &Element, shown: &str) -> Vec<String> {
+    struct Event {
+        inserted: bool,
+        revision: u32,
+        comment: u32,
+        kind: u8,
+    }
+    fn walk(
+        e: &Element,
+        stack: &mut Vec<(bool, u32)>,
+        seen: &mut HashSet<(u32, u8)>,
+        out: &mut Vec<Event>,
+    ) {
+        for child in shown_children(e) {
+            let local = child.local();
+            if local == "pPr"
+                || local == "rPr"
+                || local.ends_with("PrChange")
+                || local == "txbxContent"
+            {
+                continue;
+            }
+            if local == "ins" || local == "del" {
+                let id = child.attr("id").and_then(|id| id.parse::<u32>().ok());
+                if let Some(id) = id {
+                    stack.push((local == "ins", id));
+                }
+                walk(child, stack, seen, out);
+                if id.is_some() {
+                    stack.pop();
+                }
+                continue;
+            }
+            if let Some(&(inserted, revision)) = stack.last()
+                && let Some(kind) = match local {
+                    "commentRangeStart" => Some(0),
+                    "commentRangeEnd" => Some(1),
+                    "commentReference" => Some(2),
+                    _ => None,
+                }
+                && let Some(comment) = child.attr("id").and_then(|id| id.parse().ok())
+                && seen.insert((comment, kind))
+            {
+                out.push(Event {
+                    inserted,
+                    revision,
+                    comment,
+                    kind,
+                });
+            }
+            walk(child, stack, seen, out);
+        }
+    }
+    let mut events = Vec::new();
+    walk(p, &mut Vec::new(), &mut HashSet::new(), &mut events);
+    if events.is_empty() {
+        return Vec::new();
+    }
+    let (inside, held_refs) = comment_note_places(shown);
+    let printed = printed_wids(shown, "body");
+    // A note printed inside a change places its events where the view's
+    // marks fall, inside the spans printed there. A range start a revision
+    // holds that prints nothing has no span to fall in: it keeps its clause.
+    events.retain(|event| {
+        if let Some(&reply) = inside.get(&event.comment) {
+            return match event.kind {
+                0 => !printed.contains(&event.revision.to_string()),
+                1 => reply,
+                _ => false,
+            };
+        }
+        match event.kind {
+            0 => !printed.contains(&event.revision.to_string()),
+            2 => !held_refs
+                .get(&event.comment)
+                .is_some_and(|ids| ids.contains(&event.revision)),
+            _ => true,
+        }
+    });
+    // A clause names a set of events, not their order: start, end, then
+    // reference, each kind in document order, so the clause reads the same
+    // after a round trip that writes one comment's end and reference
+    // together.
+    events.sort_by_key(|event| event.kind);
+    let mut groups: Vec<(bool, u32, String)> = Vec::new();
+    for event in events {
+        let word = match event.kind {
+            0 => "start",
+            1 => "end",
+            _ => "ref",
+        };
+        let piece = format!("c{} {word}", event.comment);
+        match groups.iter_mut().find(|(inserted, revision, _)| {
+            *inserted == event.inserted && *revision == event.revision
+        }) {
+            Some((_, _, pieces)) => {
+                pieces.push(' ');
+                pieces.push_str(&piece);
+            }
+            None => groups.push((event.inserted, event.revision, piece)),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(inserted, revision, pieces)| {
+            let kind = if inserted { "ins" } else { "del" };
+            format!("holds {kind} r{revision} {pieces}")
+        })
+        .collect()
+}
+
+/// Comments whose `{>>cN` sits inside an open critic span, and the revisions
+/// a note head names with `in rN`.
+fn comment_note_places(shown: &str) -> (HashMap<u32, bool>, HashMap<u32, Vec<u32>>) {
+    let (mut inside, mut held) = (HashMap::new(), HashMap::new());
+    let (mut del, mut ins, mut sub) = (0usize, 0usize, 0usize);
+    let mut at = 0;
+    while at < shown.len() {
+        let rest = &shown[at..];
+        if let Some(next) = critic_span(rest) {
+            match next {
+                ("{--", 3) => del += 1,
+                ("--}", 3) => del = del.saturating_sub(1),
+                ("{++", 3) => ins += 1,
+                ("++}", 3) => ins = ins.saturating_sub(1),
+                ("{~~", 3) => sub += 1,
+                ("~~}", 3) => sub = sub.saturating_sub(1),
+                _ => {}
+            }
+            at += 3;
+            continue;
+        }
+        if let Some(body) = rest.strip_prefix("{>>") {
+            let head_end = body
+                .find(": ")
+                .or_else(|| body.find("<<}"))
+                .unwrap_or(body.len());
+            let head = &body[..head_end];
+            if let Some(comment) = head
+                .split_whitespace()
+                .next()
+                .and_then(|word| crate::ids::parse_comment_id(word).ok())
+            {
+                // A reply (`re c0`) prints no scope of its own, so its range
+                // end has no `==}` to fall in: only its reference is placed.
+                let reply = head.split_whitespace().any(|word| word == "re");
+                if del + ins + sub > 0 {
+                    inside.insert(comment, reply);
+                }
+                if let Some(ids) = head_held_revisions(head) {
+                    held.insert(comment, ids);
+                }
+            }
+            at += rest.find("<<}").map_or(3, |end| end + 3);
+            continue;
+        }
+        at += rest.chars().next().map_or(1, char::len_utf8);
+    }
+    (inside, held)
+}
+
+/// The critic opener or closer `rest` begins with, when it begins with one.
+fn critic_span(rest: &str) -> Option<(&'static str, usize)> {
+    for marker in ["{--", "--}", "{++", "++}", "{~~", "~~}"] {
+        if rest.starts_with(marker) {
+            return Some((marker, marker.len()));
+        }
+    }
+    None
+}
+
+/// The body revision ids at the end of a note head (`c0 @B in r13`).
+fn head_held_revisions(head: &str) -> Option<Vec<u32>> {
+    let words: Vec<&str> = head.split_whitespace().collect();
+    let [.., "in", change] = words.as_slice() else {
+        return None;
+    };
+    let ids = crate::ids::parse_change_ids(change).ok()?;
+    Some(
+        ids.into_iter()
+            .filter_map(|id| id.wid.parse().ok())
+            .collect(),
+    )
+}
+
 /// The ids (`r12`, `header1.r1`) of every change the view prints a tag for:
 /// an id, or ids joined by `+`, followed by an `@` handle. Only where the
 /// writer prints tags: the body's attribution braces (not a comment's note, which
@@ -1334,8 +1602,88 @@ fn tag_fields(line: &str) -> Vec<String> {
     out
 }
 
+/// Ranges of fenced code, in bytes. A line of three or more backticks or
+/// tildes, indented less than four columns, opens a fence, and a later bare
+/// line of at least that many of the same character closes it. An opening
+/// line may name a language; a backtick one names none holding a backtick.
+fn code_fenced(text: &str) -> Vec<std::ops::Range<usize>> {
+    let mut open: Option<(char, usize, usize)> = None;
+    let mut ranges = Vec::new();
+    let mut offset = 0usize;
+    for line in text.split_inclusive('\n') {
+        // Four columns of indent make indented code, not a fence.
+        let mut indent = 0usize;
+        for c in line.chars() {
+            match c {
+                ' ' => indent += 1,
+                '\t' => indent += 4 - indent % 4,
+                _ => break,
+            }
+        }
+        let trimmed = line.trim();
+        if indent < 4
+            && let Some((ch, len, bare)) = fence_mark(trimmed)
+        {
+            match open {
+                Some((och, olen, start)) if ch == och && bare && len >= olen => {
+                    ranges.push(start..offset + line.len());
+                    open = None;
+                }
+                // A backtick opener's info string holds no backtick
+                // (`` ```a``` `` is inline code).
+                None if ch != '`' || !trimmed[len..].contains('`') => {
+                    open = Some((ch, len, offset));
+                }
+                _ => {}
+            }
+        }
+        offset += line.len();
+    }
+    if let Some((_, _, start)) = open {
+        ranges.push(start..text.len());
+    }
+    ranges
+}
+
+/// Fenced ranges asked about positions in increasing order: a cursor
+/// walks the sorted ranges once, so a text with many fences and many
+/// lines stays linear.
+struct Fences<'a> {
+    ranges: &'a [std::ops::Range<usize>],
+    next: usize,
+}
+
+impl<'a> Fences<'a> {
+    fn new(ranges: &'a [std::ops::Range<usize>]) -> Self {
+        Self { ranges, next: 0 }
+    }
+
+    /// Whether `at` sits in a fence; `at` never goes back.
+    fn holds(&mut self, at: usize) -> bool {
+        while self
+            .ranges
+            .get(self.next)
+            .is_some_and(|range| range.end <= at)
+        {
+            self.next += 1;
+        }
+        self.ranges
+            .get(self.next)
+            .is_some_and(|range| range.contains(&at))
+    }
+}
+
+/// A fence marker: its character, how many, and whether nothing else is on
+/// the line, which is what closes a fence.
+fn fence_mark(trimmed: &str) -> Option<(char, usize, bool)> {
+    let ch = trimmed.chars().next().filter(|c| matches!(c, '`' | '~'))?;
+    let len = trimmed.chars().take_while(|&c| c == ch).count();
+    (len >= 3).then(|| (ch, len, trimmed.chars().skip(len).all(char::is_whitespace)))
+}
+
 /// The attribution braces (`{r5 @AC}`, comments skipped) in `text`, and with
-/// `lines` its `<!-- … -->` lines' contents.
+/// `lines` its `<!-- … -->` lines' contents. A comment inside a code fence
+/// is the fence's text.
 fn tag_spans(text: &str, lines: bool, out: &mut Vec<String>) {
     out.extend(
         crate::markdown::critic::attributed_notes(text)
@@ -1343,11 +1691,17 @@ fn tag_spans(text: &str, lines: bool, out: &mut Vec<String>) {
             .map(|(_, note)| note),
     );
     if lines {
+        let ranges = code_fenced(text);
+        let mut fenced = Fences::new(&ranges);
         let mut rest = text;
+        let mut base = 0usize;
         while let Some(at) = rest.find("<!-- ") {
             let after = &rest[at + 5..];
             let end = after.find(" -->").unwrap_or(after.len());
-            out.push(after[..end].to_string());
+            if !fenced.holds(base + at) {
+                out.push(after[..end].to_string());
+            }
+            base += at + 5 + end;
             rest = &after[end..];
         }
     }
@@ -1433,6 +1787,41 @@ pub(crate) fn unplaced_entry(change: &crate::changes::Change, handles: &Handles)
     }
 }
 
+/// The header's `unplaced:` entries: each change no other line shows, and,
+/// for a row or cell, one more entry at every later paragraph a change
+/// inside it sits in. The later entry is the same mark. The reader keeps
+/// the first paragraph only.
+pub(crate) fn unplaced_entries(
+    changes: &[crate::changes::Change],
+    printed: &HashSet<String>,
+    handles: &Handles,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for change in changes.iter().filter(|c| !printed.contains(&c.id)) {
+        out.push(unplaced_entry(change, handles));
+        if !matches!(change.target, "table_row" | "table_cell") {
+            continue;
+        }
+        let Some(home) = change.paragraph.as_deref() else {
+            continue;
+        };
+        let mut more: Vec<&str> = changes
+            .iter()
+            .filter(|inner| inner.inside.as_deref() == Some(change.id.as_str()))
+            .filter_map(|inner| inner.paragraph.as_deref())
+            .filter(|paragraph| *paragraph != home)
+            .collect();
+        more.sort_unstable();
+        more.dedup();
+        for paragraph in more {
+            let mut continued = change.clone();
+            continued.paragraph = Some(paragraph.to_string());
+            out.push(unplaced_entry(&continued, handles));
+        }
+    }
+    out
+}
+
 /// A whole story part's changes (a header, a footer, one note) whose id
 /// `shown` prints no tag for, as printed tags: insertions, deletions and
 /// moves, each `true` for an insertion (`rev`/`rev-del`), then formatting
@@ -1454,53 +1843,87 @@ pub(crate) fn story_unshown(
 ) -> (Vec<StoryRev>, Vec<StoryFmt>) {
     // `at` is the carrier's paragraph, counted as [`paragraphs`] does, so a
     // formatting change lands on the paragraph it is in (`in footer1.p1`).
+    struct Carrier<'e> {
+        at: Option<usize>,
+        formatting: bool,
+        inserted: bool,
+        element: &'e Element,
+        parent: Option<&'e Element>,
+    }
     fn walk<'e>(
         e: &'e Element,
         at: Option<usize>,
         counted: bool,
+        parent: Option<&'e Element>,
         next: &mut usize,
-        out: &mut Vec<(Option<usize>, bool, bool, &'e Element)>,
+        out: &mut Vec<Carrier<'e>>,
     ) {
         for child in shown_children(e) {
             let local = child.local();
             if local == "p" && counted {
                 let index = *next;
                 *next += 1;
-                walk(child, Some(index), counted, next, out);
+                walk(child, Some(index), counted, parent, next, out);
                 continue;
             }
-            if matches!(local, "ins" | "del" | "moveFrom" | "moveTo") {
-                out.push((at, false, matches!(local, "ins" | "moveTo"), child));
-            } else if local.ends_with("PrChange")
-                || matches!(local, "tblGridChange" | "numberingChange")
-            {
-                out.push((at, true, true, child));
-                continue;
-            } else if matches!(local, "cellIns" | "cellDel" | "cellMerge") {
-                out.push((at, false, local == "cellIns", child));
+            let revision = matches!(local, "ins" | "del" | "moveFrom" | "moveTo");
+            let formatting =
+                local.ends_with("PrChange") || matches!(local, "tblGridChange" | "numberingChange");
+            let cell = matches!(local, "cellIns" | "cellDel" | "cellMerge");
+            if revision || formatting || cell {
+                let inserted = if revision {
+                    matches!(local, "ins" | "moveTo")
+                } else {
+                    !cell || local == "cellIns"
+                };
+                out.push(Carrier {
+                    at,
+                    formatting,
+                    inserted,
+                    element: child,
+                    parent,
+                });
             }
-            walk(child, at, counted && local != "txbxContent", next, out);
+            if formatting {
+                continue;
+            }
+            let nearer = if revision { Some(child) } else { parent };
+            walk(
+                child,
+                at,
+                counted && local != "txbxContent",
+                nearer,
+                next,
+                out,
+            );
         }
     }
     let mut carriers = Vec::new();
-    walk(root, None, true, &mut 0, &mut carriers);
+    walk(root, None, true, None, &mut 0, &mut carriers);
     let printed = printed_wids(shown, story);
     let (mut rev, mut fmt) = (Vec::new(), Vec::new());
-    for (at, formatting, inserted, carrier) in carriers {
-        let Some(id) = carrier.attr("id") else {
+    for carrier in carriers {
+        let Some(id) = carrier.element.attr("id") else {
             continue;
         };
         if printed.contains(id) || skip.contains(id) {
             continue;
         }
-        let tag = format!("{story}#{}", required_date_tag_of(carrier, handles));
-        if formatting {
-            let tag = format_tag(&tag);
+        let tag = format!("{story}#{}", required_date_tag_of(carrier.element, handles));
+        if carrier.formatting {
+            let mut tag = format_tag(&tag);
+            if let Some(parent) = carrier.parent {
+                tag.push_str(" re ");
+                tag.push_str(&parent_label(&format_tag(&format!(
+                    "{story}#{}",
+                    required_date_tag_of(parent, handles)
+                ))));
+            }
             if !fmt.iter().any(|(_, t)| *t == tag) {
-                fmt.push((at, tag));
+                fmt.push((carrier.at, tag));
             }
         } else {
-            rev.push((inserted, tag));
+            rev.push((carrier.inserted, tag));
         }
     }
     (unshown_sides(rev), fmt)
@@ -1572,10 +1995,31 @@ pub(crate) fn comment_ids(p: &Element) -> Vec<String> {
     out
 }
 
+/// Character-unit sides of `w:ind` (`w:firstLineChars` and the rest), in
+/// the id lines' order. Each value is hundredths of a character (`200` is
+/// `2ch`). Strict `startChars` and `endChars` count only when `leftChars`
+/// and `rightChars` are absent.
+fn char_indent_clauses(ind: &Element) -> Vec<(&'static str, String)> {
+    [
+        (&["firstLineChars"][..], "first-line"),
+        (&["hangingChars"][..], "hanging"),
+        (&["leftChars", "startChars"][..], "left"),
+        (&["rightChars", "endChars"][..], "right"),
+    ]
+    .into_iter()
+    .filter_map(|(attrs, name)| {
+        let v = attrs.iter().find_map(|attr| ind.attr(attr))?;
+        let hundredths = crate::util::parse_finite_f64(v)?;
+        Some((name, crate::markdown::xml::char_units(hundredths)))
+    })
+    .collect()
+}
+
 /// A paragraph's own indent (`w:ind`), one clause per side in the id
-/// lines' order: `first-line`, `hanging`, `left`, `right`, each in inches.
-/// The strict `start`/`end` count only when the transitional `left`/`right`
-/// is absent, as the layout reads them.
+/// lines' order: `first-line`, `hanging`, `left`, `right`, each in inches,
+/// then the same sides in characters (`first-line 2ch`). The strict
+/// `start`/`end` count only when the transitional `left`/`right` is
+/// absent, as the layout reads them.
 pub(crate) fn indent_clauses(ind: &Element) -> Vec<(&'static str, String)> {
     [
         (&["firstLine"][..], "first-line"),
@@ -1590,6 +2034,7 @@ pub(crate) fn indent_clauses(ind: &Element) -> Vec<(&'static str, String)> {
             crate::util::parse_finite_f64(v).or_else(|| crate::util::universal_measure_twips(v))?;
         Some((name, inches(twips)))
     })
+    .chain(char_indent_clauses(ind))
     .collect()
 }
 
@@ -1615,6 +2060,11 @@ pub(crate) fn spacing_clauses(spacing: &Element) -> Vec<String> {
             out.push(format!("{word} auto"));
         } else if let Some(t) = twips(word) {
             out.push(format!("{word} {}", exact_points(t)));
+        }
+        if let Some(raw) = spacing.attr(&format!("{word}Lines"))
+            && let Some(count) = line_count(raw)
+        {
+            out.push(format!("{word} {count} lines"));
         }
     }
     if let Some(line) = twips("line") {
@@ -1653,6 +2103,33 @@ fn line_ratio(line: f64) -> String {
         .trim_end_matches('0')
         .trim_end_matches('.')
         .to_string()
+}
+
+/// `w:beforeLines` / `w:afterLines` (hundredths of a line) with the fewest
+/// decimals that read back to the same count: `150` → `1.5`, `100` → `1`.
+fn line_count(raw: &str) -> Option<String> {
+    let n = crate::util::parse_finite_f64(raw)?;
+    if !(n.is_finite() && n >= 0.0) {
+        return None;
+    }
+    let hundredths = n.round();
+    let count = hundredths / 100.0;
+    let value = (0..=2)
+        .map(|places| format!("{count:.places$}"))
+        .find(|text| {
+            text.parse::<f64>()
+                .is_ok_and(|v| (v * 100.0).round() == hundredths)
+        })
+        .unwrap_or_else(|| format!("{count:.2}"));
+    // Only a fraction's trailing zeros go: `10` stays ten lines.
+    Some(if value.contains('.') {
+        value
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    } else {
+        value
+    })
 }
 
 /// Twips as inches with the fewest decimals (two at least, four at most)
@@ -1717,6 +2194,57 @@ fn tracked_page_break(p: &Element, handles: &Handles) -> Option<(&'static str, S
 
 fn is_page_break(e: &Element) -> bool {
     e.is("br") && e.attr("type") == Some("page")
+}
+
+/// A run whose only content is a page break.
+fn page_break_only(run: &Element) -> bool {
+    run.local() == "r"
+        && run.elements().any(is_page_break)
+        && run.elements().all(|child| {
+            matches!(child.local(), "rPr" | "lastRenderedPageBreak") || is_page_break(child)
+        })
+}
+
+/// Text the view prints: a later one means a page break is not the
+/// paragraph's last content.
+fn shown_leaf(element: &Element) -> bool {
+    match element.local() {
+        "t" | "delText" => !element.text().is_empty(),
+        "tab" | "ptab" | "noBreakHyphen" => true,
+        "br" | "cr" => element.attr("type") != Some("page"),
+        // The view prints a symbol in place, `<sym …/>` (#1365).
+        "sym" => ["font", "char"]
+            .iter()
+            .all(|name| element.attr(name).is_some_and(|value| !value.is_empty())),
+        _ => false,
+    }
+}
+
+/// Page-break runs of `paragraph` that have text after them. The view
+/// prints each in place (`<br type="page"/>`); a break that ends the
+/// paragraph stays on its id line.
+pub(crate) fn mid_paragraph_page_breaks(paragraph: &Element) -> Vec<*const Element> {
+    let mut order = Vec::new();
+    fn walk<'a>(element: &'a Element, depth: usize, order: &mut Vec<(usize, &'a Element)>) {
+        order.push((depth, element));
+        for child in element.elements() {
+            walk(child, depth + 1, order);
+        }
+    }
+    walk(paragraph, 0, &mut order);
+    let mut breaks = Vec::new();
+    for (index, (depth, element)) in order.iter().enumerate() {
+        if !page_break_only(element) {
+            continue;
+        }
+        let mut rest = order[index + 1..]
+            .iter()
+            .skip_while(|(later, _)| *later > *depth);
+        if rest.any(|(_, later)| shown_leaf(later)) {
+            breaks.push(std::ptr::from_ref(*element));
+        }
+    }
+    breaks
 }
 
 pub(crate) fn has_page_break(p: &Element) -> bool {
@@ -2029,6 +2557,9 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     }
     if let Some(size) = f.size {
         clauses.push(size_clause(size));
+        if f.mark_inherits {
+            clauses.push("mark style".to_string());
+        }
     }
     match f.marker {
         Some("-") => clauses.push("bullet".to_string()),
@@ -2059,9 +2590,9 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     if !del.is_empty() {
         clauses.push(format!("break-del {}", format_tags(&del)));
     }
-    let fmt = format_change_tags_by(p, handles, required_date_tag_of);
+    let fmt = format_change_nests(p, handles, required_date_tag_of);
     if !fmt.is_empty() {
-        clauses.push(format!("fmt {}", format_tags(&fmt)));
+        clauses.push(format!("fmt {}", format_nested_tags(&fmt)));
     }
     let unshown: Vec<&(bool, String)> = f
         .unshown
@@ -2098,6 +2629,9 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     if !f.spans.is_empty() {
         let ids: Vec<String> = f.spans.iter().map(|c| format!("c{c}")).collect();
         clauses.push(format!("in {}", ids.join(" ")));
+    }
+    if !f.resolved {
+        clauses.extend(f.holds.iter().cloned());
     }
     line(&head, &clauses)
 }
@@ -2449,22 +2983,20 @@ pub(crate) fn table_line(
             let at = format!(" in t{t}.row{r}");
             changes_in(tr.child("trPr"), &at, &mut fmt);
             changes_in(tr.child("tblPrEx"), &at, &mut fmt);
-            // A row's insertion or deletion tags its cells' text; a row
-            // with no text, or whose text has marks of its own, names it
-            // here.
-            if !shows_text(tr) || row_text_marked(tr) {
-                for mark in tr
-                    .child("trPr")
-                    .into_iter()
-                    .flat_map(|e| e.elements())
-                    .filter(|e| matches!(e.local(), "ins" | "del"))
-                {
-                    let tag = format!("{}{at}", format_tag(&required_date_tag_of(mark, handles)));
-                    if mark.local() == "del" {
-                        rev_del.push(tag);
-                    } else {
-                        revs.push(tag);
-                    }
+            // A row's own insertion or deletion is named here. Cell text
+            // with no marks of its own still shows the row's tag; the
+            // writer puts the mark back on the row from this clause.
+            for mark in tr
+                .child("trPr")
+                .into_iter()
+                .flat_map(|e| e.elements())
+                .filter(|e| matches!(e.local(), "ins" | "del"))
+            {
+                let tag = format!("{}{at}", format_tag(&required_date_tag_of(mark, handles)));
+                if mark.local() == "del" {
+                    rev_del.push(tag);
+                } else {
+                    revs.push(tag);
                 }
             }
         }
@@ -2574,9 +3106,11 @@ pub(crate) fn table_line(
                     // A cell's paragraph has no id line to carry its own
                     // formatting changes.
                     fmt.extend(
-                        format_change_tags_by(p, handles, required_date_tag_of)
+                        format_change_nests(p, handles, required_date_tag_of)
                             .iter()
-                            .map(|t| format!("{} in p{i}", format_tag(t))),
+                            .map(|(own, parent)| {
+                                format!("{} in p{i}", format_one_nest(own, parent.as_deref()))
+                            }),
                     );
                 }
                 let ids: Vec<String> = comments.map_or_else(Vec::new, |known| {
@@ -2825,7 +3359,16 @@ pub(crate) fn collect_revisions(shown: &str) -> Vec<&'static str> {
             _ => add(&tags.iter().collect::<Vec<_>>(), kind),
         }
     }
-    for line in shown.lines() {
+    let ranges = code_fenced(shown);
+    let mut fenced = Fences::new(&ranges);
+    let mut offset = 0usize;
+    for line in shown.split_inclusive('\n') {
+        let at = offset;
+        offset += line.len();
+        if fenced.holds(at) {
+            continue;
+        }
+        let line = line.trim_end_matches(['\n', '\r']);
         if let Some(p) = view_notes::id_line(line) {
             if let Some(tag) = &p.break_ins {
                 add(&[tag], INSERTED_MARK);
@@ -2909,16 +3452,42 @@ fn numbers_after(line: &str, key: &str) -> Vec<usize> {
         .collect()
 }
 
+/// The lines around the branch of a block-level `mc:AlternateContent`
+/// that Word shows: read-only text, no edit address.
+pub(crate) const ALTERNATE_START: &str = "<!-- alternate -->";
+pub(crate) const ALTERNATE_END: &str = "<!-- /alternate -->";
+
 /// Splits a rendered body on blank lines into blocks keyed by their id
 /// lines; a page marker attaches to the block after it; a block with no id
-/// line (notes, footnote definitions) attaches to the block before it.
+/// line (notes, footnote definitions) attaches to the block before it. An
+/// `<!-- alternate -->` region is a block of its own with no span, so it
+/// never rides along with the paragraph before it.
 fn blocks_of(body: &str) -> Vec<Block> {
     let mut blocks: Vec<Block> = Vec::new();
     let mut page: Option<String> = None;
+    let mut in_alternate = false;
     for chunk in body.split("\n\n").filter(|c| !c.trim().is_empty()) {
         // A nested list item's id line, and a page marker between nested
         // items, are indented with the item.
         let first = chunk.lines().next().unwrap_or("").trim_start();
+        if in_alternate {
+            in_alternate = first != ALTERNATE_END;
+            if let Some(last) = blocks.last_mut() {
+                last.text.push_str("\n\n");
+                last.text.push_str(chunk);
+            }
+            continue;
+        }
+        if first == ALTERNATE_START {
+            in_alternate = true;
+            blocks.push(Block {
+                text: chunk.to_string(),
+                span: None,
+                table: None,
+                page: page.take(),
+            });
+            continue;
+        }
         if first.starts_with("<!-- page ") {
             page = Some(first.to_string());
             continue;
@@ -3281,6 +3850,21 @@ mod tests {
     use super::*;
     use crate::markdown::from_docx::ooxml::parse_xml;
 
+    /// coderabbit 4504980747, 4504980748: a parent that prints as several
+    /// tags (two marks, or a spelled id) stays inside its one `fmt` entry,
+    /// so the reader finds only the formatting change itself.
+    #[test]
+    fn a_parent_printing_several_tags_stays_in_one_fmt_entry() {
+        let line = format_nested_tags(&[
+            ("95@TL".to_string(), Some("96@RC|97@SD".to_string())),
+            ("98@TL".to_string(), None),
+        ]);
+        let tags = crate::markdown::view_notes::formatting_tags(&line).expect("the clause reads");
+        let ids: Vec<Vec<u32>> = tags.iter().map(|tag| tag.ids.clone()).collect();
+        assert_eq!(ids, [vec![95], vec![98]], "{line}");
+        assert!(tags.iter().all(|tag| tag.handle == "TL"), "{line}");
+    }
+
     /// empryo review of #476: a nested item's indented id line opens its
     /// own block, and an indented page marker still attaches to the block
     /// after it, so `-p`, `--head`, `--tail` and `--changed` see the item.
@@ -3423,6 +4007,18 @@ mod tests {
 
     const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
 
+    #[test]
+    fn own_size_reads_the_branch_word_shows() {
+        let paragraph = |requires: &str| {
+            parse_xml(format!(r#"<w:p {W} xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:zz="urn:example:future"><w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:t>a</w:t></w:r><mc:AlternateContent><mc:Choice Requires="{requires}"><w:r><w:rPr><w:sz w:val="40"/></w:rPr><w:t>b</w:t></w:r></mc:Choice><mc:Fallback><w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:t>b</w:t></w:r></mc:Fallback></mc:AlternateContent></w:p>"#).as_bytes()).unwrap()
+        };
+        let hidden = HashSet::new();
+        // Word does not know `zz`: it shows the Fallback, so every run is 10pt.
+        assert_eq!(own_size(&paragraph("zz"), &hidden), Some(20));
+        // Word knows `wps`: it shows the Choice's 20pt run beside a 10pt one.
+        assert_eq!(own_size(&paragraph("wps"), &hidden), None);
+    }
+
     fn body(inner: &str) -> Element {
         parse_xml(format!("<w:body {W}>{inner}</w:body>").as_bytes()).unwrap()
     }
@@ -3474,8 +4070,10 @@ mod tests {
             comments: &[],
             spans: &[],
             empty: false,
+            mark_inherits: false,
             unshown: &[],
             size: None,
+            holds: &[],
         };
         let line = id_line(p, &facts, &Handles::default());
         assert_eq!(line, "<!-- p0 first-line 0.25in, left 1in, right 0.5in -->");
@@ -3504,8 +4102,10 @@ mod tests {
                 comments: &[],
                 spans: &[],
                 empty: false,
+                mark_inherits: false,
                 unshown: &[],
                 size: None,
+                holds: &[],
             };
             let line = id_line(p, &facts, &Handles::default());
             assert_eq!(line, "<!-- p0 right 0.5in -->", "{start}: {line}");
@@ -3542,6 +4142,86 @@ mod tests {
         let line = "<!-- t0 1x1, cells p1-p1 by row, break-ins r3 @AC in p1, \
                     break-del r4 @AC in p1 -->";
         assert_eq!(collect_revisions(line), ["mark", "mark"]);
+    }
+
+    /// A code fence keeps a line that looks like an id line as text, so the
+    /// fallback count and a selection skip it. A cell paragraph that names
+    /// an insertion and a deletion still counts as two marks.
+    #[test]
+    fn a_fenced_id_line_does_not_count_and_both_cell_marks_do() {
+        let fenced = "```\n<!-- p3 rev r4 @AC -->\n```\n";
+        let fallback = with_logical(None, || shown_changes(fenced, true));
+        assert!(
+            fallback.is_empty(),
+            "fenced id line counted in the fallback: {fallback:?}"
+        );
+        let selected = with_logical(Some(vec![change("r4")]), || shown_changes(fenced, false));
+        assert!(
+            selected.is_empty(),
+            "fenced id line counted in a selection: {selected:?}"
+        );
+        let marks = "<!-- t0 1x1, cells p5-p5 by row, break-ins r1 @A in p5, \
+                     break-del r2 @A in p5 -->";
+        assert_eq!(collect_revisions(marks), ["mark", "mark"]);
+        assert_eq!(
+            with_logical(None, || shown_changes("<!-- p3 rev r4 @AC -->", true)),
+            ["ins"]
+        );
+        assert_eq!(
+            with_logical(Some(vec![change("r9")]), || shown_changes(fenced, true)),
+            ["ins"]
+        );
+    }
+
+    /// Four spaces before backticks make indented code, not a fence (as in
+    /// CommonMark and the reader's own literal scan): the id line after it
+    /// still counts, and a line of three spaces still opens one.
+    #[test]
+    fn an_indented_backtick_line_is_no_fence() {
+        let indented = "    ```\n<!-- p3 rev r4 @AC -->\n";
+        assert_eq!(
+            with_logical(None, || shown_changes(indented, true)),
+            ["ins"]
+        );
+        assert!(code_fenced(indented).is_empty());
+        let fenced = "   ```\n<!-- p3 rev r4 @AC -->\n   ```\n";
+        assert_eq!(code_fenced(fenced).len(), 1);
+        let inline = "```a```\n<!-- p3 rev r4 @AC -->\n";
+        assert!(code_fenced(inline).is_empty());
+    }
+
+    /// Positions asked in order walk the ranges once and still answer as a
+    /// scan of every range would.
+    #[test]
+    fn fences_answer_positions_in_order() {
+        let text = "a\n```\nb\n```\nc\n~~~\nd\n~~~\ne\n";
+        let ranges = code_fenced(text);
+        let mut fences = Fences::new(&ranges);
+        for at in 0..text.len() {
+            assert_eq!(
+                fences.holds(at),
+                ranges.iter().any(|range| range.contains(&at)),
+                "{at}"
+            );
+        }
+    }
+
+    fn change(id: &str) -> crate::changes::Change {
+        crate::changes::Change {
+            id: id.to_string(),
+            r#ref: id.to_string(),
+            kind: crate::changes::ChangeKind::Insertion,
+            target: "text",
+            author: None,
+            date: None,
+            text: String::new(),
+            paragraph: None,
+            move_name: None,
+            move_side: None,
+            inside: None,
+            holds_comments: Vec::new(),
+            members: Vec::new(),
+        }
     }
 
     /// A mark with no `w:id` prints `noid`, so one author's inserted and
@@ -3833,5 +4513,23 @@ mod tests {
     fn index_runs_collapse_consecutive_indices() {
         assert_eq!(runs(&[3, 4, 5, 9, 11, 12]), [(3, 5), (9, 9), (11, 12)]);
         assert!(runs(&[]).is_empty());
+    }
+
+    /// Whole line counts keep their zeros: `0` is no lines, `1000` is ten
+    /// (#2130 review, Bugbot).
+    #[test]
+    fn line_counts_keep_the_zeros_of_whole_counts() {
+        for (raw, want) in [
+            ("0", "0"),
+            ("100", "1"),
+            ("1000", "10"),
+            ("2000", "20"),
+            ("150", "1.5"),
+            ("1050", "10.5"),
+            ("125", "1.25"),
+            ("10", "0.1"),
+        ] {
+            assert_eq!(line_count(raw).as_deref(), Some(want), "{raw}");
+        }
     }
 }

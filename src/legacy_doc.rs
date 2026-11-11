@@ -49,6 +49,14 @@
 //! the structured [`LegacyDocument`]; [`doc_to_markdown`] and
 //! [`doc_to_docx`] for the two written outputs.
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Inspections of the legacy field-code stack. The scan must stay linear
+/// in the story length: an all-false stack is not walked per character.
+#[cfg(test)]
+static FIELD_CODE_STEPS: AtomicUsize = AtomicUsize::new(0);
+
 use std::fmt;
 
 /// The first bytes of an OLE compound file.
@@ -171,13 +179,22 @@ pub fn is_compound_file(bytes: &[u8]) -> bool {
 ///
 /// # Errors
 ///
-/// [`LegacyDocError`] when the bytes are not a compound file, hold no
-/// `WordDocument` stream (an encrypted `.docx`, a spreadsheet), predate
-/// Word 97, are encrypted, or whose tables point outside their streams
-/// (the piece table, the style sheet, the property bin tables and their
-/// pages, the list tables, the section table) or contradict themselves
-/// (pieces that do not cover the main story, or that run backwards).
+/// [`LegacyDocError`] when the file exceeds the input byte budget
+/// ([`crate::admission::InputLimits::max_compressed_bytes`]), the bytes
+/// are not a compound file, hold no `WordDocument` stream (an encrypted
+/// `.docx`, a spreadsheet), predate Word 97, are encrypted, or whose
+/// tables point outside their streams (the piece table, the style sheet,
+/// the property bin tables and their pages, the list tables, the section
+/// table) or contradict themselves (pieces that do not cover the main
+/// story, or that run backwards).
 pub fn read(bytes: &[u8]) -> Result<LegacyDocument> {
+    let limit = crate::admission::InputLimits::default().max_compressed_bytes;
+    let size = bytes.len() as u64;
+    if size > limit {
+        return Err(LegacyDocError::new(format!(
+            "the file is {size} bytes; it exceeds the input byte budget of {limit}"
+        )));
+    }
     let file = CompoundFile::open(bytes)?;
     let word = file.stream("WordDocument").ok_or_else(|| {
         LegacyDocError::new(
@@ -309,19 +326,40 @@ fn docx_error(what: &str) -> LegacyDocError {
 /// A word that stands in for an empty paragraph's text on its way through
 /// the Markdown writer: letters and digits only (nothing to escape, and the
 /// writer drops private-use characters), and in none of the document's text.
+/// The text is read once: every number that follows the stem in it is
+/// taken (`…123` takes words 1, 12 and 123; `…05` takes word 0 only), and
+/// the word is the stem with the smallest free number. Cells are read one
+/// by one: the Markdown puts a `|` between them, so a word split across two
+/// cells never reaches the writer whole.
 fn empty_placeholder(document: &LegacyDocument) -> String {
-    let texts: Vec<String> = document
-        .blocks
-        .iter()
-        .map(|block| match block {
-            Block::Paragraph(paragraph) => paragraph.text(),
-            Block::Table(table) => table.rows.iter().flatten().cloned().collect(),
-        })
-        .collect();
-    (0u32..)
-        .map(|n| format!("jubarteemptyparagraph{n}"))
-        .find(|candidate| texts.iter().all(|text| !text.contains(candidate.as_str())))
-        .unwrap_or_default()
+    const STEM: &str = "jubarteemptyparagraph";
+    let mut taken = std::collections::HashSet::new();
+    let mut note = |text: &str| {
+        for (at, _) in text.match_indices(STEM) {
+            let after = text[at..].strip_prefix(STEM).unwrap_or_default();
+            let digits = after.chars().map_while(|c| c.to_digit(10));
+            let mut number = 0u32;
+            for (index, digit) in digits.enumerate() {
+                // A word's number has no leading zero.
+                if index == 1 && number == 0 {
+                    break;
+                }
+                let Some(next) = number.checked_mul(10).and_then(|n| n.checked_add(digit)) else {
+                    break;
+                };
+                number = next;
+                taken.insert(number);
+            }
+        }
+    };
+    for block in &document.blocks {
+        match block {
+            Block::Paragraph(paragraph) => note(&paragraph.text()),
+            Block::Table(table) => table.rows.iter().flatten().for_each(|cell| note(cell)),
+        }
+    }
+    let free = (0u32..).find(|n| !taken.contains(n)).unwrap_or_default();
+    format!("{STEM}{free}")
 }
 
 /// How many placeholders an empty paragraph is written with: one a line.
@@ -572,10 +610,39 @@ fn render_spans(spans: &[Span]) -> String {
     out.trim().to_string()
 }
 
+// Characters examined while deciding whether a `.` or `)` still has an
+// all-ASCII-digit prefix. Re-reading that prefix at every delimiter is
+// quadratic; one pass is one step per character. The tests reject the
+// rescan. The count is per thread, so tests running together do not
+// share it.
+#[cfg(test)]
+thread_local! {
+    pub(super) static LIST_PREFIX_STEPS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Count `steps` characters of the prefix decision. Test-only; an empty
+/// inline function in production builds, so the runtime cost is zero.
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[inline]
+fn count_list_prefix_steps(steps: usize) {
+    LIST_PREFIX_STEPS.with(|total| total.set(total.get() + steps));
+}
+
+#[cfg(not(test))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[inline]
+fn count_list_prefix_steps(_steps: usize) {}
+
 /// Escape one line of text so Markdown reads it back as the same text.
 fn escape_line(text: &str) -> String {
     let text = text.trim();
     let mut out = String::with_capacity(text.len());
+    // Whether every character before the current one is an ASCII digit.
+    // `1.` or `1)` opens a list only then. Carrying the answer decides each
+    // delimiter in constant time instead of re-reading the prefix (#1503).
+    let mut prefix_is_digits = true;
     for (index, ch) in text.char_indices() {
         let at_start = index == 0;
         let escape = match ch {
@@ -584,8 +651,7 @@ fn escape_line(text: &str) -> String {
             '-' | '+' | '=' => at_start,
             '.' | ')' => {
                 // `1.` or `1)` at the start of a line opens a list.
-                let before = text.get(..index).unwrap_or("");
-                !before.is_empty() && before.chars().all(|c| c.is_ascii_digit())
+                prefix_is_digits && !at_start
             }
             _ => false,
         };
@@ -593,6 +659,9 @@ fn escape_line(text: &str) -> String {
             out.push('\\');
         }
         out.push(ch);
+        // One character of the pass: keep the all-digits answer current.
+        count_list_prefix_steps(1);
+        prefix_is_digits &= ch.is_ascii_digit();
     }
     out
 }
@@ -1184,6 +1253,14 @@ struct StoryChar {
 /// A piece that points past the `WordDocument` stream: a truncated or
 /// corrupt file, refused rather than converted short.
 fn main_text(word: &[u8], pieces: &[Piece], ccp_text: u32) -> Result<Vec<StoryChar>> {
+    // The same ceiling `read` uses for a story (`InputLimits::max_story_units`).
+    // Aliased pieces can describe billions of logical characters from one
+    // physical range; refuse that before allocating one record per character.
+    if u64::from(ccp_text) > crate::admission::InputLimits::default().max_story_units {
+        return Err(LegacyDocError::new(
+            "the main story exceeds the logical character budget",
+        ));
+    }
     let past = || LegacyDocError::new("a text piece points past the WordDocument stream");
     // The pieces run from CP 0 through the main story without a gap, or
     // the document would come out quietly shorter than it is.
@@ -1630,8 +1707,10 @@ impl Story<'_> {
         let mut out = Vec::new();
         let mut spans: Vec<Span> = Vec::new();
         // Field nesting: true while inside a field's code (before its
-        // separator).
+        // separator). `code_frames` is how many of those are still code,
+        // so the check below does not walk the stack per character.
         let mut fields: Vec<bool> = Vec::new();
+        let mut code_frames: u32 = 0;
         // Each finished row and whether it is marked as a header.
         let mut rows: Vec<(Vec<String>, bool)> = Vec::new();
         let mut row: Vec<String> = Vec::new();
@@ -1639,20 +1718,26 @@ impl Story<'_> {
 
         for story in chars {
             // Inside any field's code, even a nested field's result is code.
-            let in_code = fields.iter().any(|&code| code);
+            let in_code = code_frames != 0;
             let text = match story.ch {
                 '\u{13}' => {
                     fields.push(true);
+                    code_frames = code_frames.saturating_add(1);
                     continue;
                 }
                 '\u{14}' => {
-                    if let Some(top) = fields.last_mut() {
+                    if let Some(top) = fields.last_mut()
+                        && *top
+                    {
                         *top = false;
+                        code_frames = code_frames.saturating_sub(1);
                     }
                     continue;
                 }
                 '\u{15}' => {
-                    fields.pop();
+                    if fields.pop() == Some(true) {
+                        code_frames = code_frames.saturating_sub(1);
+                    }
                     continue;
                 }
                 _ if in_code => continue,
@@ -1793,6 +1878,47 @@ mod tests {
             "a\\_b \\* c \\[x\\] \\#2 \\$5"
         );
         assert_eq!(escape_line("  well-known  "), "well-known");
+    }
+
+    #[test]
+    fn escapes_list_delimiters_only_after_sole_digit_runs() {
+        // `1.` or `1)` opens a list only when nothing but digits precedes
+        // it; a delimiter after that first one is literal text.
+        assert_eq!(escape_line("12) not a list"), "12\\) not a list");
+        assert_eq!(escape_line("1.2."), "1\\.2.");
+        assert_eq!(escape_line("3.14)"), "3\\.14)");
+        assert_eq!(escape_line("."), ".");
+        assert_eq!(escape_line(")."), ").");
+        // Only ASCII digits count: `٣` does not open a list.
+        assert_eq!(escape_line("٣."), "٣.");
+    }
+
+    #[test]
+    fn list_prefix_scan_stays_linear() {
+        // 8_000 digits, then 4_000 `1.` pairs. Re-reading the digit prefix
+        // at every delimiter examines tens of millions of characters; one
+        // pass examines each character a constant number of times.
+        let digits = 8_000;
+        let pairs = 4_000;
+        let mut text = "7".repeat(digits);
+        text.push('.');
+        text.push_str(&"1.".repeat(pairs - 1));
+        let chars = text.chars().count();
+        let delimiters = text.chars().filter(|&c| matches!(c, '.' | ')')).count();
+        assert_eq!(delimiters, pairs);
+        LIST_PREFIX_STEPS.with(|steps| steps.set(0));
+        let escaped = escape_line(&text);
+        let steps = LIST_PREFIX_STEPS.with(std::cell::Cell::get);
+        const C: usize = 4;
+        let bound = C * chars;
+        assert!(
+            steps <= bound,
+            "escaping {delimiters} delimiters examined {steps} characters; \
+             a single pass examines at most {bound}"
+        );
+        // Only the first delimiter follows a pure digit run.
+        let expected = format!("{}\\.{}", "7".repeat(digits), "1.".repeat(pairs - 1));
+        assert_eq!(escaped, expected);
     }
 
     #[test]
@@ -2046,6 +2172,84 @@ mod tests {
         assert_eq!(texts, ["aoneb"]);
     }
 
+    #[test]
+    fn an_all_false_field_stack_is_not_walked_per_character() {
+        let (papx, chpx) = (FkpIndex { runs: Vec::new() }, FkpIndex { runs: Vec::new() });
+        let lists = Lists::default();
+        let depth = 40u32;
+        let mut text = String::new();
+        for _ in 0..depth {
+            text.push('\u{13}');
+            text.push('\u{14}');
+        }
+        text.push_str(&"x".repeat(depth as usize));
+        text.push('\r');
+        let chars = story_chars(&text);
+        let story = Story {
+            papx: &papx,
+            chpx: &chpx,
+            styles: &[],
+            lists: &lists,
+            section_marks: Vec::new(),
+        };
+        FIELD_CODE_STEPS.store(0, Ordering::Relaxed);
+        let blocks = story.blocks(&chars);
+        let steps = FIELD_CODE_STEPS.load(Ordering::Relaxed);
+        assert!(
+            steps <= chars.len(),
+            "field-code check inspected {steps} stack entries for {} characters",
+            chars.len()
+        );
+        let rendered: Vec<String> = blocks
+            .iter()
+            .map(|b| match b {
+                Block::Paragraph(p) => p.text(),
+                Block::Table(_) => "table".into(),
+            })
+            .collect();
+        assert_eq!(rendered, ["x".repeat(depth as usize)]);
+    }
+
+    #[test]
+    fn a_main_story_past_the_logical_budget_is_refused() {
+        let budget = crate::admission::InputLimits::default().max_story_units;
+        let n = u32::try_from(budget).unwrap().saturating_add(1);
+        let word = vec![b'A'; usize::try_from(n).unwrap()];
+        let pieces = [Piece {
+            cp_start: 0,
+            cp_end: n,
+            fc: 0,
+            compressed: true,
+            modifier: CharModifier::default(),
+        }];
+        match main_text(&word, &pieces, n) {
+            Ok(chars) => panic!(
+                "materialized {} logical characters past the budget",
+                chars.len()
+            ),
+            Err(err) => assert!(
+                err.to_string().contains("logical character budget"),
+                "{err}"
+            ),
+        }
+    }
+
+    #[test]
+    fn a_doc_past_the_input_byte_budget_is_refused() {
+        let budget = crate::admission::InputLimits::default().max_compressed_bytes;
+        let mut bytes = vec![0u8; usize::try_from(budget).unwrap().saturating_add(1)];
+        bytes[..OLE_MAGIC.len()].copy_from_slice(OLE_MAGIC);
+        match read(&bytes) {
+            Ok(_) => panic!("read a document past the input byte budget"),
+            Err(err) => {
+                let text = err.to_string();
+                assert!(text.contains("input byte budget"), "{text}");
+                assert!(text.contains(&(budget + 1).to_string()), "{text}");
+                assert!(text.contains(&budget.to_string()), "{text}");
+            }
+        }
+    }
+
     /// A supplementary character split across two Unicode pieces is one
     /// character, as Word reads it; a lone high surrogate is a replacement
     /// mark, never dropped.
@@ -2216,6 +2420,95 @@ mod tests {
             "{body}"
         );
         assert!(crate::validate::ring1(&package).is_empty());
+    }
+
+    #[test]
+    fn the_empty_placeholder_is_in_no_paragraph_and_no_cell() {
+        let table = |rows: &[&[&str]]| {
+            Block::Table(Table {
+                rows: rows
+                    .iter()
+                    .map(|row| row.iter().map(|cell| (*cell).to_string()).collect())
+                    .collect(),
+                header_rows: 1,
+            })
+        };
+        let document = LegacyDocument {
+            blocks: vec![
+                Block::Paragraph(plain("see jubarteemptyparagraph0")),
+                table(&[&["a", "jubarteemptyparagraph1 b"]]),
+                Block::Paragraph(plain("")),
+            ],
+        };
+        assert_eq!(empty_placeholder(&document), "jubarteemptyparagraph2");
+
+        // Cells never touch in the Markdown (a `|` stands between them), so
+        // a word split across two cells is no collision.
+        let split = LegacyDocument {
+            blocks: vec![
+                table(&[&["jubarteempty", "paragraph0"]]),
+                Block::Paragraph(plain("")),
+            ],
+        };
+        assert_eq!(empty_placeholder(&split), "jubarteemptyparagraph0");
+        let docx = document_to_docx(&split).unwrap();
+        let package = crate::opc::PartFs::open(&docx).unwrap();
+        assert!(crate::validate::ring1(&package).is_empty());
+        let body = package.part_string("word/document.xml").unwrap();
+        for text in [">jubarteempty<", ">paragraph0<"] {
+            assert!(body.contains(text), "{text}: {body}");
+        }
+        assert!(!body.contains("jubarteemptyparagraph0"), "{body}");
+        let after_table = body.split("</w:tbl>").nth(1).unwrap_or("");
+        assert!(after_table.contains("<w:p></w:p>"), "{body}");
+    }
+
+    #[test]
+    fn the_empty_placeholder_is_the_first_word_no_text_holds() {
+        // The definition, tried word by word: what the one pass must equal.
+        let reference = |texts: &[&str]| {
+            (0u32..)
+                .map(|n| format!("jubarteemptyparagraph{n}"))
+                .find(|word| texts.iter().all(|text| !text.contains(word.as_str())))
+                .unwrap_or_default()
+        };
+        for texts in [
+            &["plain text"][..],
+            &["jubarteemptyparagraph0"],
+            // "05" holds word 0 but not word 5.
+            &["jubarteemptyparagraph05", "jubarteemptyparagraph1"],
+            // "123" holds words 1, 12 and 123.
+            &["jubarteemptyparagraph123", "jubarteemptyparagraph0"],
+            &["xjubarteemptyparagraphjubarteemptyparagraph0y"],
+            &["jubarteemptyparagraph", "jubarteemptyparagraphx0"],
+            &["jubarteemptyparagraph99999999999", "jubarteemptyparagraph0"],
+            &[
+                "jubarteemptyparagraph0 jubarteemptyparagraph2",
+                "jubarteemptyparagraph1",
+            ],
+            &["Ünïcödé jubarteemptyparagraph0é jubarteemptyparagraph1"],
+        ] {
+            let document = LegacyDocument {
+                blocks: texts
+                    .iter()
+                    .map(|text| Block::Paragraph(plain(text)))
+                    .collect(),
+            };
+            assert_eq!(empty_placeholder(&document), reference(texts), "{texts:?}");
+        }
+    }
+
+    #[test]
+    fn the_empty_placeholder_reads_the_text_once() {
+        // A .doc can hold the words themselves; trying them one by one
+        // against all of its text is quadratic.
+        let words: Vec<String> = (0..20_000)
+            .map(|n| format!("jubarteemptyparagraph{n}"))
+            .collect();
+        let document = LegacyDocument {
+            blocks: vec![Block::Paragraph(plain(&words.join(" ")))],
+        };
+        assert_eq!(empty_placeholder(&document), "jubarteemptyparagraph20000");
     }
 
     /// Story characters for one table: `|` ends a cell, `/` ends a row

@@ -11,8 +11,9 @@
 //! designed for can parse it:
 //!
 //! - a span that crosses another is split so every span closes inside its parent;
-//! - a span inside another of the same kind is merged into it (`{--{--x--}--}`
-//!   would end at the first `--}`);
+//! - a span inside another of the same change, or of the same author, is merged
+//!   into it (`{--{--x--}--}` would end at the first `--}`); another author's
+//!   substitution stays its own span, and that author's other text merges;
 //! - spans with no text are dropped, keeping any comments they held;
 //! - untagged neighbouring spans of the same kind are joined;
 //! - comments inside a highlight move to right after it (`{==text==}{>>note<<}`);
@@ -122,6 +123,11 @@ fn bare(by: &str) -> &str {
     by.strip_suffix(CARRIED).unwrap_or(by)
 }
 
+/// A move's range name sits behind this sentinel, on the change's own tag
+/// and before its date or the change it nests in. The printed note says
+/// ` move` and, when the range has one, the name (`r3 @B move move1`).
+pub(super) const MOVE: char = '\u{E004}';
+
 /// The sentinel an attribution's tag sits behind.
 fn sentinel(by: &str) -> &'static str {
     if bare(by).starts_with(PLAIN) {
@@ -151,30 +157,65 @@ pub(super) fn display(by: &str) -> String {
         return by.to_string();
     };
     let fold = tagged.contains(ON);
+    let plain = by.starts_with(PLAIN);
     let one = |part: &str| {
-        if by.starts_with(PLAIN) {
-            let printed = super::agent::format_plain_tag(part);
-            return if fold {
+        let (part, move_name) = strip_move_mark(part);
+        let printed = if plain {
+            let printed = super::agent::format_plain_tag(&part);
+            let printed = if fold {
                 escaped_author(&printed)
             } else {
                 printed
             };
-        }
-        let (t, date) = tag_parts(part);
-        let mut out = super::agent::format_tag(t);
-        if let Some(date) = date {
-            out.push(' ');
-            out.push_str(date);
-        }
-        out
+            // Folded or not: an author that itself holds ` re ` before a
+            // revision id spells that space, so the note's own ` re ` stays
+            // the only separator.
+            spell_re_in_author(&printed)
+        } else {
+            let (t, date) = tag_parts(&part);
+            let mut out = super::agent::format_tag(t);
+            if let Some(date) = date {
+                out.push(' ');
+                out.push_str(date);
+            }
+            out
+        };
+        append_move(printed, move_name)
     };
     tagged.split(ON).map(one).collect::<Vec<_>>().join(" re ")
+}
+
+/// The part without [`MOVE`], and the range name that sentinel held.
+fn strip_move_mark(part: &str) -> (String, Option<&str>) {
+    let Some(at) = part.find(MOVE) else {
+        return (part.to_string(), None);
+    };
+    let rest = &part[at + MOVE.len_utf8()..];
+    let end = rest.find([' ', '\u{E002}']).unwrap_or(rest.len());
+    let mut clean = String::with_capacity(part.len());
+    clean.push_str(&part[..at]);
+    clean.push_str(&rest[end..]);
+    (clean, Some(&rest[..end]))
+}
+
+/// ` printed` plus the move clause the writer reads back (` move`, or
+/// ` move move1` when the range is named).
+fn append_move(mut printed: String, name: Option<&str>) -> String {
+    let Some(name) = name else {
+        return printed;
+    };
+    printed.push_str(" move");
+    if !name.is_empty() {
+        printed.push(' ');
+        printed.push_str(name);
+    }
+    printed
 }
 
 /// A printed plain part (`r1+2 Name (date)`) with the name's parentheses,
 /// backslashes and `%` percent-spelled (`%28` and its kin, `%` itself
 /// `%25`, the spelling the internal tags use): only the date's stay bare.
-fn escaped_author(part: &str) -> String {
+pub(in crate::markdown) fn escaped_author(part: &str) -> String {
     let Some((ids, rest)) = part.split_once(' ') else {
         return part.to_string();
     };
@@ -195,6 +236,66 @@ fn escaped_author(part: &str) -> String {
     }
     out.push_str(&rest[author_end..]);
     out
+}
+
+/// A printed plain part whose author holds ` re ` before a revision id
+/// (`r3 Bo re r1 Kim (date)` → `r3 Bo%20re r1 Kim (date)`). The space is
+/// the same percent-spelling the internal tags use, and the date stays
+/// bare. A fold joins its own ` re ` after this, so that separator is
+/// untouched.
+pub(in crate::markdown) fn spell_re_in_author(part: &str) -> String {
+    let Some((ids, rest)) = part.split_once(' ') else {
+        return part.to_string();
+    };
+    let author_end = super::super::view_notes::trailing_bare_group(rest)
+        .filter(|&at| super::super::write::is_date(&rest[at + 1..rest.len() - 1]))
+        .unwrap_or(rest.len());
+    let author = &rest[..author_end];
+    let spelled = spell_separator_spaces(author);
+    if spelled == author {
+        return part.to_string();
+    }
+    let mut out = String::with_capacity(part.len() + 2);
+    out.push_str(ids);
+    out.push(' ');
+    out.push_str(&spelled);
+    out.push_str(&rest[author_end..]);
+    out
+}
+
+/// ` re ` in `author` whose next word is a revision id, with that leading
+/// space spelled `%20`. Any other ` re ` stays, so a name such as
+/// `Bo re Kim` is unchanged.
+fn spell_separator_spaces(author: &str) -> String {
+    if !author.contains(" re ") {
+        return author.to_string();
+    }
+    let mut out = String::with_capacity(author.len());
+    let mut rest = author;
+    while let Some(at) = rest.find(" re ") {
+        let after = &rest[at + " re ".len()..];
+        let token = after.split_whitespace().next().unwrap_or("");
+        if revision_token(token) {
+            out.push_str(&rest[..at]);
+            out.push_str("%20re ");
+            rest = after;
+        } else {
+            let keep = at + " re ".len();
+            out.push_str(&rest[..keep]);
+            rest = &rest[keep..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Whether `token` is a revision id a plain note would accept as its own.
+fn revision_token(token: &str) -> bool {
+    !token.starts_with(|c: char| c.is_ascii_digit())
+        && !token.starts_with('#')
+        && (token == "noid"
+            || token.strip_suffix(".noid").is_some()
+            || crate::ids::parse_change_ids(token).is_ok())
 }
 
 /// Two attributions can pair: equal notes, or two tags of one author in
@@ -233,6 +334,16 @@ fn one_change(old_by: Option<&str>, new_by: Option<&str>) -> bool {
     match (tag(old_by), tag(new_by)) {
         (Some(old), Some(new)) => super::agent::one_replacement(tag_parts(old).0, tag_parts(new).0),
         _ => true,
+    }
+}
+
+/// The new side pairs when it sits in no change, or in the same change as
+/// the old side. A parent on the new side alone would make that side its
+/// own parent, so those stay two marks.
+fn same_nest(old_by: Option<&str>, new_by: Option<&str>) -> bool {
+    match outer_of(new_by) {
+        None => true,
+        Some(new) => outer_of(old_by) == Some(new),
     }
 }
 
@@ -538,45 +649,168 @@ impl Critic {
 /// A span still open while the tree is built.
 type Open = (Mark, Option<String>, Vec<Node>);
 
+/// Whether `inner` is the open change: neither note names anyone, the notes
+/// match, the tags are one logical change, or both name the same author.
+/// Another author's span is not. A note's own marks are that author's, so
+/// they stay in the reference's span; a substitution's new side is not.
+fn same_change_note(outer: Option<&str>, inner: Option<&str>) -> bool {
+    match (outer, inner) {
+        (None, None) => true,
+        (Some(a), Some(b)) if a == b => true,
+        (Some(a), Some(b)) => match (tag(Some(a)), tag(Some(b))) {
+            (Some(left), Some(right)) => {
+                let (left, right) = (tag_parts(left).0, tag_parts(right).0);
+                super::agent::same_change(left, right) || same_handle(left, right)
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Both tags name one author, and it is the same one. A tag with no handle
+/// names nobody, so it does not match another.
+fn same_handle(left: &str, right: &str) -> bool {
+    match (
+        super::agent::handle_of(left),
+        super::agent::handle_of(right),
+    ) {
+        (Some(outer), Some(inner)) if outer != "??" => outer == inner,
+        _ => false,
+    }
+}
+
+/// Whether this open is one side of a substitution that pairs, so it must
+/// keep its own span. Another author's other text still joins the open one.
+fn substitution_side(children: &[Node], mark: Mark, by: &Option<String>, rest: &[Token]) -> bool {
+    match mark {
+        Mark::Insertion => {
+            last_deletion(children).is_some_and(|old| pairs(old.as_deref(), by.as_deref()))
+        }
+        Mark::Deletion => {
+            following_insertion(rest).is_some_and(|new| pairs(by.as_deref(), new.as_deref()))
+        }
+        _ => false,
+    }
+}
+
+/// The deletion a new insertion would pair with, when it is the last thing
+/// already in the open span.
+fn last_deletion(children: &[Node]) -> Option<&Option<String>> {
+    let mut rest = children;
+    loop {
+        match rest.split_last() {
+            Some((Node::Leaf(Leaf::Text { text, .. }), head)) if text.is_empty() => rest = head,
+            Some((Node::Leaf(Leaf::Comment(_)), head)) => rest = head,
+            _ => break,
+        }
+    }
+    match rest.last() {
+        Some(Node::Span(Mark::Deletion, by, _)) => Some(by),
+        _ => None,
+    }
+}
+
+/// The insertion that follows this deletion once the deletion itself closes,
+/// when nothing with text sits between them.
+fn following_insertion(rest: &[Token]) -> Option<&Option<String>> {
+    let mut depth = 1i32;
+    let mut closed = false;
+    for token in rest {
+        if !closed {
+            match token {
+                Token::Open(Mark::Insertion | Mark::Deletion, _) => depth += 1,
+                Token::Close(Mark::Insertion | Mark::Deletion) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        closed = true;
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+        match token {
+            Token::Open(Mark::Insertion, by) => return Some(by),
+            // The insertion of a substitution inside a deletion is written
+            // after that deletion closes: text under a deletion is refused.
+            Token::Close(_) => {}
+            Token::Leaf(Leaf::Text { text, .. }) if text.is_empty() => {}
+            Token::Leaf(Leaf::Comment(_)) => {}
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// The two sides render would pair.
+fn pairs(old_by: Option<&str>, new_by: Option<&str>) -> bool {
+    same_nest(old_by, new_by)
+        && !holds(new_by, old_by)
+        && one_change(old_by, new_by)
+        && pairable_attribution(old_by, new_by)
+}
+
+/// A same-kind span joins the open one unless it is another author's
+/// substitution, which has to keep both sides.
+fn merges(
+    outer_by: Option<&str>,
+    children: &[Node],
+    mark: Mark,
+    by: &Option<String>,
+    rest: &[Token],
+) -> bool {
+    same_change_note(outer_by, by.as_deref()) || !substitution_side(children, mark, by, rest)
+}
+
 /// Builds well-nested spans from flat tokens. A span of a kind that is already
-/// open is merged into the open one, which keeps its attribution; a close that
-/// would cross other spans closes them first and opens them again after it,
-/// with the same attribution. Spans still open at the end close.
+/// open merges into it when it is that same change or that author's, which
+/// keeps its attribution. Another author's substitution stays open so both
+/// sides print. A close that would cross other spans closes them first and
+/// opens them again after it, with the same attribution. Spans still open at
+/// the end close.
 fn tree(tokens: Vec<Token>) -> Vec<Node> {
     let mut root = Vec::new();
     let mut open: Vec<Open> = Vec::new();
     let mut merged = [0usize; 3];
-    for token in tokens {
+    // Consumed one token at a time; `as_slice` is what follows, for the
+    // substitution lookahead, without cloning a leaf.
+    let mut tokens = tokens.into_iter();
+    while let Some(token) = tokens.next() {
         match token {
             Token::Leaf(leaf) => children(&mut root, &mut open).push(Node::Leaf(leaf)),
-            Token::Open(mark, _)
-                if open
+            Token::Open(mark, by) => {
+                let merges_into = open
                     .iter()
                     .rposition(|(m, ..)| *m == mark)
                     .is_some_and(|at| {
-                        // A span of a kind already open merges into it when only a
-                        // comment's scope lies between: a change of the other kind
-                        // between them makes a nest the reader must keep (`w:ins >
-                        // w:del > w:ins`), not a span to absorb.
                         open[at + 1..]
                             .iter()
                             .all(|(m, ..)| matches!(m, Mark::Scope))
-                    }) =>
-            {
-                merged[mark.index()] += 1;
+                            && merges(
+                                open[at].1.as_deref(),
+                                &open[at].2,
+                                mark,
+                                &by,
+                                tokens.as_slice(),
+                            )
+                    });
+                if merges_into {
+                    merged[mark.index()] += 1;
+                } else {
+                    open.push((mark, by, Vec::new()));
+                }
             }
-            Token::Open(mark, by) => open.push((mark, by, Vec::new())),
             Token::Close(mark) if merged[mark.index()] > 0 => merged[mark.index()] -= 1,
             Token::Close(mark) => {
-                let Some(at) = open.iter().rposition(|(m, ..)| *m == mark) else {
-                    continue;
-                };
-                let reopen: Vec<(Mark, Option<String>)> = open[at + 1..]
-                    .iter()
-                    .map(|(m, by, _)| (*m, by.clone()))
-                    .collect();
-                close_from(&mut root, &mut open, at);
-                open.extend(reopen.into_iter().map(|(m, by)| (m, by, Vec::new())));
+                if let Some(at) = open.iter().rposition(|(m, ..)| *m == mark) {
+                    let reopen: Vec<(Mark, Option<String>)> = open[at + 1..]
+                        .iter()
+                        .map(|(m, by, _)| (*m, by.clone()))
+                        .collect();
+                    close_from(&mut root, &mut open, at);
+                    open.extend(reopen.into_iter().map(|(m, by)| (m, by, Vec::new())));
+                }
             }
         }
     }
@@ -622,15 +856,17 @@ fn is_change(node: &Node) -> bool {
 
 /// A piece of a split `mark` made is one of the changes it held, not a
 /// piece of the change itself: the writer nests it back inside, so the
-/// outer may fold into its note. Same-kind changes merge in [`tree`],
-/// so a held change never shares the outer's mark — save a level a
-/// deeper fold already dissolved into its sole change, whose note then
-/// names the change it sits inside.
-fn held_change(piece: &Node, outer: Mark) -> bool {
+/// outer may fold into its note. A same-kind span is the outer's own
+/// piece when it is that change, and a held change otherwise.
+fn held_change(piece: &Node, outer_mark: Mark, outer_by: Option<&str>) -> bool {
     match piece {
         Node::Split(..) => true,
         Node::Span(Mark::Scope, _, children) => children.iter().any(is_change),
-        Node::Span(mark, by, _) => outer_of(by.as_deref()).is_some() || *mark != outer,
+        Node::Span(mark, by, _) => {
+            outer_of(by.as_deref()).is_some()
+                || *mark != outer_mark
+                || !same_change_note(outer_by, by.as_deref())
+        }
         _ => false,
     }
 }
@@ -744,7 +980,7 @@ fn tidy(nodes: Vec<Node>) -> Vec<Node> {
             // Each held change names its outer, even when live pieces of
             // that outer remain beside it.
             for piece in &mut pieces {
-                if held_change(piece, mark) {
+                if held_change(piece, mark, outer.as_deref()) {
                     fold_on(piece, outer.as_deref());
                 }
             }
@@ -930,15 +1166,16 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping<'_>, ids: &mu
     while index < nodes.len() {
         match (&nodes[index], nodes.get(index + 1)) {
             // Pair a deletion then a live insertion of one change.
-            // The old side keeps its parent; a parent on the new side
-            // prevents pairing. Insertion then deletion stays in order.
+            // The old side keeps its parent. The new side may share that
+            // parent; a different parent on the new side prevents pairing.
+            // Insertion then deletion stays in order.
             // A rendered bookmark, comment range or field (w:fldChar)
             // between the marks separates them; proofing, unreferenced
             // bookmarks and empty runs are transparent.
             (
                 Node::Span(Mark::Deletion, old_by, old),
                 Some(Node::Span(Mark::Insertion, new_by, new)),
-            ) if outer_of(new_by.as_deref()).is_none()
+            ) if same_nest(old_by.as_deref(), new_by.as_deref())
                 && !holds(new_by.as_deref(), old_by.as_deref())
                 && one_change(old_by.as_deref(), new_by.as_deref())
                 && escaping.pairable(old_by.as_deref(), new_by.as_deref())
@@ -1578,6 +1815,44 @@ mod tests {
             ("close", "-"),
         ];
         assert_eq!(script(&triple), "{~~a~>b~~}{--c--}");
+    }
+
+    #[test]
+    fn another_authors_substitution_stays_inside_the_same_kind() {
+        let inside_insertion = [
+            ("by+", "\u{E000}7+8@B"),
+            ("t", "x"),
+            ("by-", "\u{E000}3+4@A"),
+            ("t", "a"),
+            ("close", "-"),
+            ("by+", "\u{E000}3+4@A"),
+            ("t", "b"),
+            ("close", "+"),
+            ("t", "y"),
+            ("close", "+"),
+        ];
+        let inside_deletion = [
+            ("by-", "\u{E000}7+8@B"),
+            ("t", "x"),
+            ("by-", "\u{E000}3+4@A"),
+            ("t", "a"),
+            ("close", "-"),
+            ("by+", "\u{E000}3+4@A"),
+            ("t", "b"),
+            ("close", "+"),
+            ("t", "y"),
+            ("close", "-"),
+        ];
+        // Each side already carries both ids, and this script does not
+        // collapse a repeated whole, so the joined tag names them twice.
+        assert_eq!(
+            script(&inside_insertion),
+            "{++x++}{r7+8 @B}{~~a~>b~~}{r3+4+3+4 @A re r7+8 @B}{++y++}{r7+8 @B}"
+        );
+        assert_eq!(
+            script(&inside_deletion),
+            "{--x--}{r7+8 @B}{~~a~>b~~}{r3+4+3+4 @A re r7+8 @B}{--y--}{r7+8 @B}"
+        );
     }
 
     #[test]

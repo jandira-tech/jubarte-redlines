@@ -736,7 +736,7 @@ impl Opened {
         Self::open_within(bytes, crate::admission::InputLimits::default())
     }
 
-    fn open_within(
+    pub(crate) fn open_within(
         bytes: &[u8],
         limits: crate::admission::InputLimits,
     ) -> Result<Self, InspectError> {
@@ -816,9 +816,11 @@ impl Opened {
                     "header" => summary.headers += 1,
                     "footer" => summary.footers += 1,
                     "comments" => {
-                        summary.comments += part_dom
-                            .descendants(part_root, Some(&W::name("comment")))
-                            .len();
+                        part_dom.for_each_descendant_element(
+                            part_root,
+                            Some(&W::comment()),
+                            |_| summary.comments += 1,
+                        );
                     }
                     "footnotes" => {
                         summary.footnotes += note_count(&part_dom, part_root, "footnote");
