@@ -3449,7 +3449,7 @@ fn indexed_faces(
     // A denial is not an answer. The directory mtime does not change when
     // the folder becomes readable, so recording the miss would serve it
     // from then on (#2051).
-    if !dirs.iter().any(|dir| dir_listing_denied(dir))
+    if !dirs.iter().any(|dir| dir_listing_denied(dir.as_path()))
         && let Ok(mut index) = index.lock()
     {
         index.record(key, &dirs, &faces);
