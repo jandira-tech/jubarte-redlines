@@ -3258,10 +3258,14 @@ impl<'o, 'a> Writer<'o, 'a> {
         let page_break_change = self.page_break_change.take().map(|(kind, tag)| {
             // The change the text before it ends in, when the tag names
             // it too: one `w:del` holds both, as in the source.
-            let before = self.story().iter().rev().find_map(|item| match item {
-                Item::Run(run) => Some(run.change),
-                _ => None,
-            });
+            // ⚡ Bolt: Prevent O(N^2) backward scans by limiting the search to the current paragraph (`index`..).
+            let before = self.story()[index..]
+                .iter()
+                .rev()
+                .find_map(|item| match item {
+                    Item::Run(run) => Some(run.change),
+                    _ => None,
+                });
             match before.flatten() {
                 Some((k, serial))
                     if k == kind
