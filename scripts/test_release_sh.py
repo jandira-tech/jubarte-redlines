@@ -14,6 +14,7 @@ non-main branch, so a run that gets past argument validation stops at the
 from __future__ import annotations
 
 import ast
+import json
 import os
 import re
 import shutil
@@ -813,8 +814,6 @@ esac
 class Header(unittest.TestCase):
     def test_the_step_list_numbers_the_steps_the_script_prints(self) -> None:
         """The header's "What it does" list counts the steps as `say` names them."""
-        import re
-
         text = RELEASE_SH.read_text()
         header = text.split("# What it does, in order:", 1)[1].split("\n#\n", 1)[0]
         listed = [int(n) for n in re.findall(r"^#\s+(\d+)\. ", header, re.M)]
@@ -2404,7 +2403,6 @@ class SecurityGate(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         (tmp / "gh").write_text(GH_SECURITY_STUB)
         (tmp / "gh").chmod(0o755)
-        import json
         (tmp / "repo.json").write_text(json.dumps({"permissions": {"admin": admin, "push": True}}))
         (tmp / "advisories.json").write_text(json.dumps(list(advisories)))
         (tmp / "dependabot.json").write_text(json.dumps(list(dependabot)))
@@ -2562,7 +2560,6 @@ class ReleaseTree(unittest.TestCase):
         self.assertIn("worktree", s0[first:first + 300])
 
     def ci(self, runs: list[dict], **env: str) -> subprocess.CompletedProcess[str]:
-        import json
         (self.tmp / "gh").write_text(GH_CHECKS_STUB)
         (self.tmp / "gh").chmod(0o755)
         (self.tmp / "runs.json").write_text(json.dumps({"check_runs": runs}))

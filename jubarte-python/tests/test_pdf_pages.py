@@ -13,8 +13,7 @@ from pathlib import Path
 
 import pytest
 
-import jubarte_redlines as jubarte
-from jubarte_redlines import _native
+from jubarte_redlines import Document, EditPlan, PdfOptions, Rendered, _native, docx_to_pdf
 from jubarte_redlines.__main__ import main
 
 from docx_fixture import docx, para
@@ -29,26 +28,26 @@ def three_pages() -> bytes:
     return docx(para("Alpha page") + BREAK + revised + BREAK + para("Charlie page"))
 
 
-def commented() -> jubarte.Document:
-    doc = jubarte.Document.from_bytes(docx(para("The cap is 10.")))
-    return doc.edit(jubarte.EditPlan(author="Ann").comment("p0", find="cap", text="Too low")).clean
+def commented() -> Document:
+    doc = Document.from_bytes(docx(para("The cap is 10.")))
+    return doc.edit(EditPlan(author="Ann").comment("p0", find="cap", text="Too low")).clean
 
 
 def pdf_pages(pdf: bytes) -> int:
     return len(re.findall(rb"/Type\s*/Page(?![a-zA-Z])", pdf))
 
 
-def page_texts(rendered: jubarte.Rendered) -> list[str]:
+def page_texts(rendered: Rendered) -> list[str]:
     return [page.text for page in rendered.report.pages]
 
 
 def test_pdf_options_default_to_margin_comments_and_every_page() -> None:
-    options = jubarte.PdfOptions()
+    options = PdfOptions()
     assert (options.move_comments, options.changed_only) == (False, False)
     with pytest.raises(TypeError, match="move_comments"):
-        jubarte.PdfOptions(move_comments="yes")  # type: ignore[arg-type]
+        PdfOptions(move_comments="yes")  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="changed_only"):
-        jubarte.PdfOptions(changed_only=1)  # type: ignore[arg-type]
+        PdfOptions(changed_only=1)  # type: ignore[arg-type]
 
 
 @pytest.mark.integration
@@ -57,7 +56,7 @@ def test_move_comments_lists_them_after_the_last_page() -> None:
     margin = doc.render(pdf=False)
     assert margin.report.page_count == 1
     assert "Too low" in page_texts(margin)[0], "the balloon is on the page"
-    moved = doc.render(pdf=False, options=jubarte.PdfOptions(move_comments=True))
+    moved = doc.render(pdf=False, options=PdfOptions(move_comments=True))
     texts = page_texts(moved)
     assert moved.report.page_count == 2, texts
     assert "Too low" not in texts[0] and "Too low" in texts[1], texts
@@ -65,23 +64,23 @@ def test_move_comments_lists_them_after_the_last_page() -> None:
 
 @pytest.mark.integration
 def test_changed_only_keeps_the_revised_pages() -> None:
-    doc = jubarte.Document.from_bytes(three_pages())
+    doc = Document.from_bytes(three_pages())
     assert doc.render(pdf=False).report.page_count == 3
-    kept = doc.render(pdf=False, png_dpi=12, options=jubarte.PdfOptions(changed_only=True))
+    kept = doc.render(pdf=False, png_dpi=12, options=PdfOptions(changed_only=True))
     assert kept.report.page_count == 1
     assert "Bravo" in page_texts(kept)[0]
     assert len(kept.pngs) == 1
-    assert len(doc.to_png(dpi=12, options=jubarte.PdfOptions(changed_only=True))) == 1
+    assert len(doc.to_png(dpi=12, options=PdfOptions(changed_only=True))) == 1
 
 
 @pytest.mark.integration
 def test_the_byte_api_takes_both_options() -> None:
     data = three_pages()
-    whole = jubarte.docx_to_pdf(data)
-    kept = jubarte.docx_to_pdf(data, changed_only=True)
+    whole = docx_to_pdf(data)
+    kept = docx_to_pdf(data, changed_only=True)
     assert pdf_pages(whole) == 3
     assert pdf_pages(kept) == 1
-    assert pdf_pages(jubarte.docx_to_pdf(commented().to_bytes(), move_comments=True)) == 2
+    assert pdf_pages(docx_to_pdf(commented().to_bytes(), move_comments=True)) == 2
     assert len(_native.docx_to_png(data, dpi=12, changed_only=True)) == 1
 
 

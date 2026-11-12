@@ -12,8 +12,7 @@ from pathlib import Path
 
 import pytest
 
-import jubarte_redlines
-from jubarte_redlines import Document, JubarteError, PageDiff, RenderDiff, diff_render
+from jubarte_redlines import Document, JubarteError, PageDiff, RenderDiff, capabilities, diff_render
 from jubarte_redlines.__main__ import main
 
 from docx_fixture import docx, para
@@ -95,7 +94,7 @@ def test_diff_render_refuses_markdown_text_and_bad_dpi() -> None:
 
 
 def test_capabilities_report_both() -> None:
-    ops = jubarte_redlines.capabilities()["operations"]
+    ops = capabilities()["operations"]
     assert ops["diff_render"] is True  # type: ignore[index]
     assert ops["page_ranges"] is True  # type: ignore[index]
 

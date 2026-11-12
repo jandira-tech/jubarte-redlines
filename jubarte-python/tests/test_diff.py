@@ -13,8 +13,7 @@ from pathlib import Path
 
 import pytest
 
-import jubarte_redlines as jubarte
-from jubarte_redlines import Diff, Document, EditPlan, Hunk
+from jubarte_redlines import Diff, Document, EditPlan, Hunk, diff, read
 
 from docx_fixture import docx, para
 
@@ -62,7 +61,7 @@ def test_a_word_document_against_markdown_is_located_in_the_word_document() -> N
 
 
 def test_two_markdown_texts_keep_their_lines() -> None:
-    d = jubarte.diff(OLD_MD, NEW_MD, **OWNER)
+    d = diff(OLD_MD, NEW_MD, **OWNER)
     assert d.text.startswith(
         f"--- a/old.md\n+++ b/new.md{HEADER}@@ [line:3] @@\nPayment is due in [-30-]{{+45+}} days.\n"
     ), d.text
@@ -75,32 +74,32 @@ def test_paths_name_the_patch_and_read_documents_remember_their_names(tmp_path: 
     old, new = tmp_path / "terms.md", tmp_path / "terms-v2.md"
     old.write_text(OLD_MD)
     new.write_text(NEW_MD)
-    assert jubarte.diff(old, new, **OWNER).text.startswith(f"--- a/terms.md\n+++ b/terms-v2.md{HEADER}")
+    assert diff(old, new, **OWNER).text.startswith(f"--- a/terms.md\n+++ b/terms-v2.md{HEADER}")
     contract = tmp_path / "contract.docx"
     contract.write_bytes(letter().to_bytes())
-    document = jubarte.read(contract)
+    document = read(contract)
     assert document.name == "contract.docx"
     assert document == Document.from_bytes(letter().to_bytes())
     d = document.diff(letter("an"), **OWNER)
     assert d.text.startswith(f"--- a/contract.docx\n+++ b/new.docx{HEADER}")
-    d = jubarte.diff(contract, new, **OWNER)
+    d = diff(contract, new, **OWNER)
     assert d.text.startswith(f"--- a/contract.docx\n+++ b/terms-v2.md{HEADER}")
 
 
 def test_columns_wrap_the_lines_and_zero_does_not() -> None:
     long = "word " * 40
     old, new = f"{long}old.\n", f"{long}new.\n"
-    body = lambda columns: jubarte.diff(old, new, columns=columns, **OWNER).text.splitlines()[3:]  # noqa: E731
+    body = lambda columns: diff(old, new, columns=columns, **OWNER).text.splitlines()[3:]  # noqa: E731
     wrapped = body(72)
     assert len(wrapped) > 1 and all(len(line) <= 72 for line in wrapped)
-    assert jubarte.diff(old, new, **OWNER).text == jubarte.diff(old, new, columns=72, **OWNER).text
+    assert diff(old, new, **OWNER).text == diff(old, new, columns=72, **OWNER).text
     narrow = body(40)
     assert len(narrow) > len(wrapped) and all(len(line) <= 40 for line in narrow)
     assert len(body(0)) == 1
 
 
 def test_critic_format_is_the_whole_document_as_criticmarkup() -> None:
-    d = jubarte.diff(OLD_MD, NEW_MD, format="critic", **OWNER)
+    d = diff(OLD_MD, NEW_MD, format="critic", **OWNER)
     assert d.text == "# Terms\n\nPayment is due in {~~30~>45~~} days.\n\n- Delivery{++\n- Returns++}\n- Warranty\n"
     assert d.hunks == ()
     word = letter().diff(letter("an"), format="critic", **OWNER)
@@ -112,7 +111,7 @@ def test_identical_documents_give_an_empty_patch() -> None:
     d = letter().diff(letter(), **OWNER)
     assert d.text == ""
     assert d.hunks == ()
-    assert jubarte.diff(OLD_MD, OLD_MD, **OWNER).text == ""
+    assert diff(OLD_MD, OLD_MD, **OWNER).text == ""
 
 
 def test_the_owner_defaults_to_redline_not_git_user_name_and_the_date_to_now(
@@ -125,7 +124,7 @@ def test_the_owner_defaults_to_redline_not_git_user_name_and_the_date_to_now(
     monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "user.name")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", "Ana Lima")
-    header = jubarte.diff(OLD_MD, NEW_MD).text.splitlines()[1].split("\t")
+    header = diff(OLD_MD, NEW_MD).text.splitlines()[1].split("\t")
     assert header[:2] == ["+++ b/new.md", "Redline"]
     assert re.fullmatch(r"20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ", header[2]), header
 
@@ -166,20 +165,20 @@ def test_a_deleted_paragraph_carries_its_comment_into_the_redline_and_the_patch(
 
 def test_arguments_are_checked() -> None:
     with pytest.raises(TypeError):
-        jubarte.diff(1, OLD_MD)  # type: ignore[arg-type]
+        diff(1, OLD_MD)  # type: ignore[arg-type]
     with pytest.raises(TypeError):
         letter().diff(1)  # type: ignore[arg-type]
     with pytest.raises(ValueError):
-        jubarte.diff(OLD_MD, NEW_MD, format="html")  # type: ignore[arg-type]
+        diff(OLD_MD, NEW_MD, format="html")  # type: ignore[arg-type]
     with pytest.raises(ValueError):
-        jubarte.diff(OLD_MD, NEW_MD, columns=-1)
+        diff(OLD_MD, NEW_MD, columns=-1)
 
 
 def test_word_bytes_are_a_side_too() -> None:
-    d = jubarte.diff(letter().to_bytes(), letter("an").to_bytes(), **OWNER)
+    d = diff(letter().to_bytes(), letter("an").to_bytes(), **OWNER)
     assert d.text.startswith(f"--- a/old.docx\n+++ b/new.docx{HEADER}@@ [p1] @@\n"), d.text
 
 
 def test_without_git_the_owner_is_redline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("PATH", str(tmp_path))
-    assert jubarte.diff(OLD_MD, NEW_MD).text.splitlines()[1].split("\t")[1] == "Redline"
+    assert diff(OLD_MD, NEW_MD).text.splitlines()[1].split("\t")[1] == "Redline"

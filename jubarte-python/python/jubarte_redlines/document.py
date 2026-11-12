@@ -73,8 +73,6 @@ class EditPlanError(_native.JubarteError):
 
     @classmethod
     def _from_json(cls, payload: str) -> EditPlanError:
-        import json
-
         data = json.loads(payload)
         return cls(
             code=data["code"],
@@ -426,8 +424,6 @@ class Document:
     def repair(self) -> Repaired:
         """A copy with every repairable finding fixed, plus what was fixed and what remains."""
         data, payload = _native.repair_json(self._data)
-        import json
-
         parts = json.loads(payload)
         return Repaired(
             document=Document(data, self.name),
@@ -666,8 +662,6 @@ def capabilities(
     *, operation: str | None = None, field: str | None = None, matrix: bool = False
 ) -> dict[str, object]:
     """Task manifest, focused edit syntax, or support matrix for this Python build."""
-    import json
-
     if matrix or operation is not None or field is not None:
         return json.loads(_native.capability_query(operation, field))
     return json.loads(_native.capabilities_json())

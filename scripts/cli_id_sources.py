@@ -365,7 +365,7 @@ def section(root: Path, cell) -> list[str]:
     lines = [
         "## Where the source accepts an id",
         "",
-        "Read from `src/` (`scripts/cli_id_sources.py`), not from `--help`. A flag with no "
+        "Read from `src/` (`scripts/cli_id_sources.py`), not from `--help`. A flag with no " +
         "`value_parser` reaches its parser after clap; the chains below show which.",
         "",
         "### Id flags (src/cli.rs)",
@@ -398,8 +398,8 @@ def section(root: Path, cell) -> list[str]:
         "",
         "### Id parsers",
         "",
-        "Every public function that reads an id token: in `src/ids.rs` a `&str` in and a `Result`, "
-        "`Option` or `bool` out (or a serde `_de`); elsewhere, any function that refuses a token "
+        "Every public function that reads an id token: in `src/ids.rs` a `&str` in and a `Result`, " +
+        "`Option` or `bool` out (or a serde `_de`); elsewhere, any function that refuses a token " +
         "with an id message. Doc and refusals come from the source.",
         "",
         "| Parser | Signature | Doc | Refusals | Reached from an id flag |",
@@ -418,7 +418,7 @@ def section(root: Path, cell) -> list[str]:
         "",
         "### Where each parser is called",
         "",
-        "Every non-test function that calls an id parser directly: the places the source "
+        "Every non-test function that calls an id parser directly: the places the source " +
         "accepts an id value.",
         "",
         "| Parser | Called from |",
@@ -431,9 +431,9 @@ def section(root: Path, cell) -> list[str]:
         "",
         "### From each id flag to its parsers",
         "",
-        "The shortest call chain from each function that reads the flag down to each id parser "
-        "it reaches. Static: a value carried in a struct (`FlagOp.at`, `ChangeFilter.ids`) and "
-        "read later, or passed through a closure or a trait object, is not followed; the table "
+        "The shortest call chain from each function that reads the flag down to each id parser " +
+        "it reaches. Static: a value carried in a struct (`FlagOp.at`, `ChangeFilter.ids`) and " +
+        "read later, or passed through a closure or a trait object, is not followed; the table " +
         "above has those callers.",
         "",
         "| Flag | Parser | Chain |",

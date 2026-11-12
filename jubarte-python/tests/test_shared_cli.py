@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from jubarte_redlines import _native
+from jubarte_redlines import _native, from_markdown
 from jubarte_redlines.__main__ import build_parser, main
 from docx_fixture import docx, para
 
@@ -126,10 +126,8 @@ def test_paragraph_critic_default_word_output_and_compare_shorthand(tmp_path, ca
 
 @pytest.mark.integration
 def test_text_track_changes_modes_and_convert_output(tmp_path, capsys):
-    import jubarte_redlines as jubarte
-
     source = tmp_path / "tracked.docx"
-    source.write_bytes(jubarte.from_markdown("Due in {~~30~>45~~} days.\n").to_bytes())
+    source.write_bytes(from_markdown("Due in {~~30~>45~~} days.\n").to_bytes())
     for mode, text in (("all", "{~~30~>45~~}"), ("accept", "45"), ("reject", "30")):
         assert main(["text", str(source), "--track-changes", mode]) == 0
         out = capsys.readouterr().out

@@ -100,7 +100,7 @@ def render_class(match: re.Match[str]) -> list[str]:
 def build_block(dts_text: str) -> str:
     parts: list[str] = [
         "Reflects `jubarte-wasm/npm/node/jubarte_wasm.d.ts` (the full Node "
-        "build; the slim entry points drop `docxToPdf` and `pdfPageCount`)."
+        + "build; the slim entry points drop `docxToPdf` and `pdfPageCount`)."
     ]
     # Classes and functions interleaved as they appear in the file.
     decls: list[tuple[int, str, re.Match[str]]] = [

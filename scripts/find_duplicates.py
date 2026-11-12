@@ -22,7 +22,6 @@ OUT = Path(sys.argv[2]) if len(sys.argv) > 2 else None
 MD = ROOT / 'docs' / 'analysis' / 'DUPLICATE_CANDIDATES.md'
 LANG = Language(tsr.language()); parser = Parser(LANG)
 sym = json.loads((ROOT / "docs/symbols/symbols.json").read_text())["symbols"]
-test_lines = defaultdict(list)  # not needed; symbols.json already flags tests
 prod = {(s["file"], s["line"]): s for s in sym if s["kind"] in ("function", "method") and not s["test"]}
 
 LITS = {"string_literal", "raw_string_literal", "integer_literal", "float_literal", "char_literal", "boolean_literal"}

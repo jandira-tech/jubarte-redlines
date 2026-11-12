@@ -17,9 +17,8 @@ import io
 import json
 import sys
 import tempfile
-import unittest
 from pathlib import Path
-from unittest import mock
+from unittest import TestCase, main, mock
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -34,7 +33,7 @@ def _touch(path: Path, text: str = "x") -> None:
     path.write_text(text)
 
 
-class ConvertRevisionModeTests(unittest.TestCase):
+class ConvertRevisionModeTests(TestCase):
     def test_benchmark_conversion_explicitly_uses_word_revision_marks(self) -> None:
         job = cs.Job("sample", Path("source with spaces.docx"), Path("word.pdf"))
 
@@ -61,7 +60,7 @@ class ConvertRevisionModeTests(unittest.TestCase):
         self.assertFalse(Path(argv[4]).parent.exists(), "temporary work is removed")
 
 
-class Discover76Tests(unittest.TestCase):
+class Discover76Tests(TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
@@ -137,7 +136,7 @@ class Discover76Tests(unittest.TestCase):
         self.assertNotIn("stem", members)
 
 
-class Discover398Tests(unittest.TestCase):
+class Discover398Tests(TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.corpus = Path(self.tmp.name) / "corpus"
@@ -186,7 +185,7 @@ class Discover398Tests(unittest.TestCase):
         self.assertIn("source__beta", reason)
 
 
-class RatchetTests(unittest.TestCase):
+class RatchetTests(TestCase):
     def test_tsv_roundtrip(self) -> None:
         rows = [
             cs.ScoreRow("case1", 44.7, 61.2, 100.0),
@@ -256,7 +255,7 @@ class RatchetTests(unittest.TestCase):
         self.assertFalse(result.ok)
 
 
-class MainOutputTests(unittest.TestCase):
+class MainOutputTests(TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
@@ -357,7 +356,7 @@ class MainOutputTests(unittest.TestCase):
         convert.assert_not_called()
 
 
-class LiveTreeTests(unittest.TestCase):
+class LiveTreeTests(TestCase):
     """Skipped in CI when the sibling checkouts are absent."""
 
     def test_real_76_is_seventy_six_complete_pairs(self) -> None:
@@ -376,7 +375,7 @@ class LiveTreeTests(unittest.TestCase):
         self.assertEqual(len(jobs), 398)
 
 
-class Page1DeltaTests(unittest.TestCase):
+class Page1DeltaTests(TestCase):
     def test_first_ink_row_is_first_nonwhite_band(self) -> None:
         mask = [False, False, True, True, False, True]
         self.assertEqual(p1.first_ink_row(mask), 2)
@@ -415,4 +414,4 @@ class Page1DeltaTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    main()

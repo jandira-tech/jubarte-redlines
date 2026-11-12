@@ -24,9 +24,8 @@ import io
 import json
 import shutil
 import tempfile
-import unittest
 from pathlib import Path
-from unittest import mock
+from unittest import TestCase, main, mock
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("api_snapshot", HERE / "api_snapshot.py")
@@ -49,7 +48,7 @@ def function(params: list, where: list) -> dict:
 T_PARAM = {"name": "T", "kind": {"type": {"bounds": [trait("Read")], "default": None, "is_synthetic": False}}}
 
 
-class Signatures(unittest.TestCase):
+class Signatures(TestCase):
     def test_a_bound_is_part_of_the_signature(self) -> None:
         self.assertEqual(api._sig(function([T_PARAM], [])), "<T: Read>(x: T)")
         loose = {"name": "T", "kind": {"type": {"bounds": [], "default": None, "is_synthetic": False}}}
@@ -79,7 +78,7 @@ class Signatures(unittest.TestCase):
         self.assertEqual(api._sig(fn), "(x: u8)")
 
 
-class Snapshot(unittest.TestCase):
+class Snapshot(TestCase):
     def test_the_gzip_is_the_same_bytes_at_any_time(self) -> None:
         # A resumed release rewrites the snapshot; a header timestamp would
         # dirty docs/api and push another build commit (Codex on #247).
@@ -172,7 +171,7 @@ def demo_doc() -> dict:
     }
 
 
-class Listing(unittest.TestCase):
+class Listing(TestCase):
     def test_the_listing_is_the_public_surface_then_the_crate_private_rest(self) -> None:
         self.assertEqual(api.flatten(demo_doc()), [
             "api\tfunction\tpub\tdemo::api::Widget::new ()",
@@ -235,7 +234,7 @@ def entry(surface: str, kind: str, vis: str, path: str, detail: str = "") -> "ap
     return api.Entry(surface, kind, vis, path, detail)
 
 
-class Drift(unittest.TestCase):
+class Drift(TestCase):
     OLD = [
         entry("api", "module", "pub", "demo"),
         entry("api", "module", "pub", "demo::api"),
@@ -321,7 +320,7 @@ class Drift(unittest.TestCase):
         self.assertNotIn("every line:", text)
 
 
-class DocBuild(unittest.TestCase):
+class DocBuild(TestCase):
     """mbx 1.24 refuses `cargo doc --output-format json` before cargo runs
     ("metadata probing failed"), so step 6 died on any machine with a
     nightly: the rustdoc flags go through RUSTDOCFLAGS, never cargo's
@@ -358,7 +357,7 @@ class DocBuild(unittest.TestCase):
         self.assertEqual(env["RUSTC_BOOTSTRAP"], "1")
 
 
-class CommittedSnapshots(unittest.TestCase):
+class CommittedSnapshots(TestCase):
     """The two newest release snapshots under docs/api/, as step 6 reads them."""
 
     PREV, NEW = "v0.11.0", "v0.11.2"
@@ -419,7 +418,7 @@ def _run_added(old: Path, new: Path) -> tuple[int, str, str]:
     return code, out.getvalue(), err.getvalue()
 
 
-class AddedPaths(unittest.TestCase):
+class AddedPaths(TestCase):
     """#1758: public item paths present in NEW and absent in OLD. A method
     body is not a path, and neither is a crate-private item."""
 
@@ -657,4 +656,4 @@ class AddedPaths(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    main()

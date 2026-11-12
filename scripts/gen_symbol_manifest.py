@@ -393,7 +393,6 @@ cargo = (ROOT / "Cargo.toml").read_text()
 EXT = {"std", "core", "alloc"} | {m.group(1).replace("-", "_") for m in re.finditer(r"^([A-Za-z0-9_-]+)\s*=", cargo.split("[dependencies]")[1].split("\n[")[0], re.M)}
 EXT |= {"quick_xml_041", "zip", "serde", "serde_json", "image", "clap", "similar", "sha1", "sha2", "base64", "ttf_parser", "rustybuzz"}
 
-PRELUDE_CTORS = {"Some", "Ok", "Err", "Box", "Vec", "String", "None", "Default", "From", "Into", "drop", "Self"}
 
 CRATE_TYPES = {i.name for i in items if i.kind in ("struct", "enum", "union", "trait", "type alias")}
 
@@ -508,7 +507,6 @@ def short(tid, rel_from=None):
     f = t.file.replace("src/", "")
     return f"`{t.qual}` ({f}:{t.line})"
 
-stats = defaultdict(int)
 perfile = defaultdict(list)
 for i in items: perfile[i.file].append(i)
 

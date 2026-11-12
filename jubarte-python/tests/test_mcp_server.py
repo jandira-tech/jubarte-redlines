@@ -19,7 +19,7 @@ import pytest
 
 pytest.importorskip("mcp")
 import anyio
-from jubarte_redlines import Document
+from jubarte_redlines import Document, EditPlan, __version__
 from jubarte_redlines.mcp_server import INSTRUCTIONS, build_server, main
 from mcp import Client
 from test_document import make_document
@@ -317,13 +317,11 @@ def test_compare_then_list_accept_and_reject(tmp_path: Path) -> None:
 def test_changes_and_comments_carry_short_refs(tmp_path: Path) -> None:
     """`Document.changes()`/`comments()` and MCP `docx_changes`/`docx_comments`
     carry `ref` (`r0`, `c0`) beside the long `id`, as the CLI's JSON does."""
-    import jubarte_redlines as jubarte
-
     original, modified = write_pair(tmp_path)
     red = Document.read(original).compare(Document.read(modified), author="R")
     (tmp_path / "red.docx").write_bytes(red.to_bytes())
     commented = Document.read(original).edit(
-        jubarte.EditPlan(author="Ann").comment("p0", find="fee", text="Check")
+        EditPlan(author="Ann").comment("p0", find="fee", text="Check")
     )
     (tmp_path / "c.docx").write_bytes(commented.clean.to_bytes())
     (listed, noted) = call(
@@ -525,9 +523,8 @@ def test_stdio_smoke_initialize_and_list_tools(tmp_path: Path) -> None:
     assert listed is not None, f"no tools/list reply; stderr: {stderr}"
     assert {t["name"] for t in listed["result"]["tools"]} == TOOLS
     assert initialized is not None
-    import jubarte_redlines
 
-    assert initialized["result"]["serverInfo"] == {"name": "jubarte", "version": jubarte_redlines.__version__}
+    assert initialized["result"]["serverInfo"] == {"name": "jubarte", "version": __version__}
     assert "Traceback" not in stderr
 
 

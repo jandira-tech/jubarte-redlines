@@ -10,10 +10,9 @@ import io
 import os
 import sys
 import tempfile
-import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from unittest import mock
+from unittest import TestCase, main, mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -29,7 +28,7 @@ exit 3
 """
 
 
-class Stack1m(unittest.TestCase):
+class Stack1m(TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -208,7 +207,7 @@ class Stack1m(unittest.TestCase):
         self.assertEqual(self.log.read_text().splitlines(), ["2048"])
 
 
-class Run(unittest.TestCase):
+class Run(TestCase):
     # Fake binaries, not a mocked subprocess: each one ends the way the case needs.
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -257,4 +256,4 @@ class Run(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    main()

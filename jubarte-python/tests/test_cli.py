@@ -21,10 +21,9 @@ from pathlib import Path
 
 import pytest
 
-import jubarte_redlines as jubarte
-import jubarte_redlines.__main__ as cli
 import jubarte_redlines.document as document
-from jubarte_redlines.__main__ import main
+from jubarte_redlines import EditPlan, _native
+from jubarte_redlines.__main__ import CliError, _replace, main
 
 from docx_fixture import docx, para
 
@@ -1041,7 +1040,7 @@ def test_a_flags_command_quotes_flags_in_a_refusal(
     assert "reply_comment" not in err, err
     plan = tmp_path / "plan.json"
     plan.write_text(
-        jubarte.EditPlan(author="Bob Lee", others="keep").edit_comment(0, text="Reworded.").to_json(),
+        EditPlan(author="Bob Lee", others="keep").edit_comment(0, text="Reworded.").to_json(),
         encoding="utf-8",
     )
     assert main(["edit", str(tmp_path / "c.docx"), "--plan", str(plan), "--dry-run"]) == 3
@@ -1292,14 +1291,14 @@ def test_in_place_companion_failure_leaves_the_input(
     letter: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     before = letter.read_bytes()
-    real = cli._replace
+    real = _replace
 
     def fail_pdf(path: Path, data: bytes | str) -> int:
         if str(path).endswith(".pdf"):
-            raise cli.CliError(f"writing {path}: blocked")
+            raise CliError(f"writing {path}: blocked")
         return real(path, data)
 
-    monkeypatch.setattr(cli, "_replace", fail_pdf)
+    monkeypatch.setattr("jubarte_redlines.__main__._replace", fail_pdf)
     # main() catches CliError and returns the exit code. The input must
     # still be the bytes from before the command.
     code, _out, err = _cli(
@@ -1536,8 +1535,6 @@ def test_edit_keeps_its_files_when_the_view_cannot_be_read_back(
 ) -> None:
     """pi review r392b tests F6: the files are written and the report says
     so; a view that cannot be read back is a warning and exit 0."""
-    from jubarte_redlines import _native
-
     def broken(*_args: object, **_kwargs: object) -> str:
         raise _native.JubarteError("read back failed")
 

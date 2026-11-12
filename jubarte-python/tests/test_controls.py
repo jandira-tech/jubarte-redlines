@@ -11,8 +11,7 @@ import json
 
 import pytest
 
-import jubarte_redlines as jubarte
-from jubarte_redlines import ContentControl, Document, EditPlan, EditPlanError, _native
+from jubarte_redlines import ContentControl, Document, EditPlan, EditPlanError, _native, capabilities
 from jubarte_redlines.models import _decode_snapshot
 
 from docx_fixture import docx
@@ -161,6 +160,6 @@ def test_locked_and_bad_choice_refusals_carry_codes() -> None:
 
 
 def test_capabilities_advertise_content_controls() -> None:
-    caps = jubarte.capabilities()
+    caps = capabilities()
     assert caps["operations"]["content_controls"] is True
     assert "fill_control" in caps["edit_operations"]

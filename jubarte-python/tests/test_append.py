@@ -8,10 +8,9 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 
-import jubarte_redlines as jubarte
 import pytest
 from docx_fixture import docx, para
-from jubarte_redlines import Appended, Document
+from jubarte_redlines import Appended, Document, JubarteError, capabilities
 
 
 def texts(document: Document) -> list[str]:
@@ -102,9 +101,9 @@ def test_append_rejects_bad_arguments(other, kwargs, error, message):
 
 def test_a_broken_package_raises_the_public_error():
     a = Document.from_bytes(docx(para("A.")))
-    with pytest.raises(jubarte.JubarteError, match="document B"):
+    with pytest.raises(JubarteError, match="document B"):
         a.append(Document.from_bytes(b"not a docx"))
 
 
 def test_capabilities_list_append():
-    assert jubarte.capabilities()["operations"]["append"] is True
+    assert capabilities()["operations"]["append"] is True

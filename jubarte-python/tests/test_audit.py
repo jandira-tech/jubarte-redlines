@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-import jubarte_redlines as jubarte
-from jubarte_redlines import AuditFinding, Document, JubarteError
+from jubarte_redlines import AuditFinding, Document, JubarteError, capabilities
 
 from docx_fixture import docx, para
 
@@ -59,7 +58,7 @@ def test_rules_must_be_strings() -> None:
 
 
 def test_capabilities_list_the_audit_rules() -> None:
-    caps = jubarte.capabilities()
+    caps = capabilities()
     assert caps["operations"]["audit"] is True
     assert "STALE_FIELD_CACHE" in caps["audit_rules"]
     assert len(caps["audit_rules"]) == 9

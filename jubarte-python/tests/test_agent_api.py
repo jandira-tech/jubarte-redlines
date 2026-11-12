@@ -12,14 +12,19 @@ import json
 
 import pytest
 
-import jubarte_redlines as jubarte
 from jubarte_redlines import (
+    Change,
+    ChangeMember,
     Document,
     EditPlan,
     EditPlanError,
     EditReport,
+    JubarteError,
     Paragraph,
+    ResolvedRevisions,
     Snapshot,
+    __version__,
+    capabilities,
 )
 
 from docx_fixture import docx, para, run
@@ -151,7 +156,7 @@ def test_edit_accepts_a_plain_dict_plan_and_refusals_carry_outcomes() -> None:
     with pytest.raises(EditPlanError) as info:
         doc.edit(plan)
     e = info.value
-    assert isinstance(e, jubarte.JubarteError)
+    assert isinstance(e, JubarteError)
     assert e.code == "ANCHOR_NOT_FOUND"
     assert e.operation == "bad"
     assert [(o.id, o.status) for o in e.outcomes] == [("ok", "ok"), ("bad", "failed")]
@@ -190,7 +195,7 @@ def test_png_pages_and_render_report_come_from_one_layout() -> None:
     only_report = doc.render(pdf=False)
     assert only_report.pdf is None and only_report.pngs == ()
     assert only_report.report.page_count == 1
-    with pytest.raises(jubarte.JubarteError):
+    with pytest.raises(JubarteError):
         Document.from_bytes(b"nope").to_png()
 
 
@@ -329,10 +334,10 @@ def test_watermark_builder_writes_word_watermark_into_a_new_header() -> None:
 
 
 def test_capabilities_manifest_reports_python_runtime() -> None:
-    caps = jubarte.capabilities()
+    caps = capabilities()
     assert caps["schema_version"] == 1
     assert caps["runtime"] == "python"
-    assert caps["engine_version"] == jubarte.__version__
+    assert caps["engine_version"] == __version__
     assert caps["operations"]["edit"] is True
     assert "insert_paragraph" in caps["edit_operations"]
     assert "insert_table" in caps["edit_operations"]
@@ -340,7 +345,7 @@ def test_capabilities_manifest_reports_python_runtime() -> None:
 
 
 def test_capability_query_matrix_and_focused_answers_reach_the_engine() -> None:
-    matrix = jubarte.capabilities(matrix=True)
+    matrix = capabilities(matrix=True)
     assert matrix["runtime"] == "python"
     assert matrix["edit_plan_versions"] == [1]
     advertised = matrix["edit_operations"]
@@ -349,20 +354,20 @@ def test_capability_query_matrix_and_focused_answers_reach_the_engine() -> None:
     # Every kind the matrix advertises answers a focused query as a
     # dispatched v1 operation: the wrapper routes to the engine's table.
     for kind in advertised:
-        answer = jubarte.capabilities(operation=kind)
+        answer = capabilities(operation=kind)
         assert answer["supported"] is True, kind
         v1 = next(p for p in answer["profiles"] if p["plan_version"] == 1)
         assert v1["dispatched"] is True, kind
     # A name the dispatcher refuses is not advertised, and the query says so.
     assert "definitely_not_an_operation" not in advertised
-    refused = jubarte.capabilities(operation="definitely_not_an_operation")
+    refused = capabilities(operation="definitely_not_an_operation")
     assert refused["supported"] is False
     assert refused["reason"] == "unsupported operation"
     # Field queries narrow within an operation and suggest the nearest name.
-    near = jubarte.capabilities(operation="reply_comment", field="tex")
+    near = capabilities(operation="reply_comment", field="tex")
     assert near["supported"] is False
     assert near["nearest"][0] == "text"
-    assert jubarte.capabilities(operation="reply_comment", field="text")["supported"] is True
+    assert capabilities(operation="reply_comment", field="text")["supported"] is True
 
 
 def test_plan_builder_validates_selectors_runs_and_options() -> None:
@@ -430,7 +435,7 @@ def test_a_change_names_the_comment_marks_it_holds() -> None:
 def test_changes_are_listed_by_id_and_resolved_one_by_one() -> None:
     doc = tracked()
     changes = doc.changes()
-    assert all(isinstance(c, jubarte.Change) for c in changes)
+    assert all(isinstance(c, Change) for c in changes)
     assert [(c.id, c.kind, c.target, c.author, c.text) for c in changes] == [
         ("r1", "deletion", "text", "a", "gone"),
         ("r2", "insertion", "text", "b", "new"),
@@ -450,7 +455,7 @@ def test_changes_are_listed_by_id_and_resolved_one_by_one() -> None:
     assert doc.reject(ids=[]).to_bytes() == doc.to_bytes()
     with pytest.raises(TypeError):
         doc.accept(ids="r1")  # type: ignore[arg-type]
-    with pytest.raises(jubarte.JubarteError, match="no tracked change r9"):
+    with pytest.raises(JubarteError, match="no tracked change r9"):
         doc.accept(ids=["r9"])
     # An id that is no change id is a bad argument.
     with pytest.raises(ValueError, match="expected a change id"):
@@ -483,7 +488,7 @@ def test_a_change_word_wrote_as_several_marks_is_one_change() -> None:
         ("r7", "insertion", "2020-01-01T00:01:00Z"),
         ("r8", "insertion", "2020-01-01T00:03:00Z"),
     ]
-    assert isinstance(change.members[0], jubarte.ChangeMember)
+    assert isinstance(change.members[0], ChangeMember)
     with pytest.raises(ValueError, match=r"r7 is part of r7\+8; name the whole change"):
         doc.accept(ids=["r7"])
     assert doc.accept(ids=["r7+r8"]).changes() == ()
@@ -503,7 +508,7 @@ def test_a_plan_resolves_selected_changes_before_it_edits() -> None:
     }
     result = doc.edit(plan)
     assert [p.text for p in result.clean.inspect().paragraphs] == ["hold "]
-    assert result.report.resolved_revisions == jubarte.ResolvedRevisions(
+    assert result.report.resolved_revisions == ResolvedRevisions(
         accepted=("r1",), rejected=("r2",)
     )
     load = json.loads(result.report.to_jsonl().splitlines()[0])

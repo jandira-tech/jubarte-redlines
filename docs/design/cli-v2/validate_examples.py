@@ -365,8 +365,8 @@ def main():
         'source_sha256': digest, 'schema_meta_validation': ['edit-plan-v2-core', 'expectations-v1'],
         'examples': examples, 'semantic_model_cases': semantic_cases,
         'schema_negative_cases': invalid_cases,
-        'limitations': ['No actual DOCX mutation, revision settlement, tracking, comment-range construction, '
-                       'package preservation, publication failure handling, rendering or runtime conformance was tested. '
+        'limitations': ['No actual DOCX mutation, revision settlement, tracking, comment-range construction, ' +
+                       'package preservation, publication failure handling, rendering or runtime conformance was tested. ' +
                        'Attached comments are counted as declarations only. Working-basis drift is a string-model test.']},
         ensure_ascii=False, indent=2))
 

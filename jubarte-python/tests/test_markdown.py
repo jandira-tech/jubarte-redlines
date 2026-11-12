@@ -15,8 +15,7 @@ from zipfile import ZipFile
 
 import pytest
 
-import jubarte_redlines as jubarte
-from jubarte_redlines import _native
+from jubarte_redlines import Document, JubarteError, _native, from_markdown, read
 from jubarte_redlines.__main__ import main
 
 from docx_fixture import docx, para
@@ -44,9 +43,9 @@ def test_native_writes_a_docx_on_letter_by_default_and_a4_on_request() -> None:
 
 
 def test_native_refuses_an_unknown_page_or_track_changes_value() -> None:
-    with pytest.raises(jubarte.JubarteError, match="legal"):
+    with pytest.raises(JubarteError, match="legal"):
         _native.markdown_to_docx("Body.\n", json.dumps({"page": "legal"}))
-    with pytest.raises(jubarte.JubarteError, match="keep"):
+    with pytest.raises(JubarteError, match="keep"):
         _native.markdown_to_docx("Body.\n", json.dumps({"track_changes": "keep"}))
 
 
@@ -56,23 +55,23 @@ def test_native_stamps_the_author_and_date_and_resolves_changes() -> None:
     assert 'w:date="2026-10-02T00:00:00Z"' in kept
     assert "<w:ins " in kept and "<w:del " in kept
 
-    accepted = jubarte.from_markdown(DRAFT, track_changes="accept")
+    accepted = from_markdown(DRAFT, track_changes="accept")
     assert "<w:ins " not in document_xml(accepted.to_bytes())
     assert "45 days" in accepted.markdown()
-    rejected = jubarte.from_markdown(DRAFT, track_changes="reject")
+    rejected = from_markdown(DRAFT, track_changes="reject")
     assert "30 days" in rejected.markdown()
 
 
 def test_critic_false_keeps_the_delimiters_as_text() -> None:
-    doc = jubarte.from_markdown("Due in {++45++} days.\n", critic=False)
+    doc = from_markdown("Due in {++45++} days.\n", critic=False)
     xml = document_xml(doc.to_bytes())
     assert "<w:ins " not in xml
     assert "{++45++}" in doc.markdown()
 
 
 def test_from_markdown_returns_a_document_that_round_trips() -> None:
-    doc = jubarte.from_markdown("# Terms\n\nPayment is due in 30 days.\n")
-    assert isinstance(doc, jubarte.Document)
+    doc = from_markdown("# Terms\n\nPayment is due in 30 days.\n")
+    assert isinstance(doc, Document)
     text = doc.markdown()
     assert "Terms" in text and "Payment is due in 30 days." in text
     assert [p.text for p in doc.inspect().paragraphs] == ["Terms", "Payment is due in 30 days."]
@@ -85,7 +84,7 @@ def test_a_reference_wins_over_page_with_a_warning() -> None:
     assert page_width(data) == "12240"
 
     # A Document is accepted as the reference too, and the default page warns about nothing.
-    doc = jubarte.from_markdown("Body.\n", reference=jubarte.Document.from_bytes(reference))
+    doc = from_markdown("Body.\n", reference=Document.from_bytes(reference))
     assert "Template text." not in doc.markdown()
 
 
@@ -112,12 +111,12 @@ def part(data: bytes, name: str) -> str:
 
 
 def test_from_markdown_takes_scholar_and_tracking() -> None:
-    doc = jubarte.from_markdown("# Title\n\nBody.\n", scholar=True, tracking=True)
+    doc = from_markdown("# Title\n\nBody.\n", scholar=True, tracking=True)
     data = doc.to_bytes()
     assert "Latin Modern Roman" in part(data, "word/styles.xml")
     assert "<w:trackRevisions" in part(data, "word/settings.xml")
     assert "<w:titlePg/>" in document_xml(data)
-    plain = jubarte.from_markdown("Body.\n").to_bytes()
+    plain = from_markdown("Body.\n").to_bytes()
     assert "Latin Modern Roman" not in part(plain, "word/styles.xml")
     assert "<w:trackRevisions" not in part(plain, "word/settings.xml")
 
@@ -147,7 +146,7 @@ def test_cli_convert_renders_markdown_to_pdf_and_resolves_changes(tmp_path: Path
     accepted = tmp_path / "accepted.docx"
     assert main(["convert", str(source), "-o", str(accepted), "--track-changes", "accept", "--no-critic"]) == 0
     # --no-critic wins: the delimiters stay text, so nothing is resolved.
-    doc = jubarte.read(accepted)
+    doc = read(accepted)
     assert "<w:ins " not in document_xml(doc.to_bytes())
     assert [p.text for p in doc.inspect().paragraphs] == [DRAFT.strip()]
 
