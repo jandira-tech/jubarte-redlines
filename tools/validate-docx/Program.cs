@@ -35,7 +35,17 @@ foreach (var path in args)
             bad = 1;
         }
     }
-    catch (Exception ex)
+    catch (OpenXmlPackageException ex)
+    {
+        Console.WriteLine($"{stem}\tOPEN_FAILED\t{ex.Message.Replace('\t', ' ')}\t\t");
+        bad = 1;
+    }
+    catch (IOException ex)
+    {
+        Console.WriteLine($"{stem}\tOPEN_FAILED\t{ex.Message.Replace('\t', ' ')}\t\t");
+        bad = 1;
+    }
+    catch (ArgumentException ex)
     {
         Console.WriteLine($"{stem}\tOPEN_FAILED\t{ex.Message.Replace('\t', ' ')}\t\t");
         bad = 1;

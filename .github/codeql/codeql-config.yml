@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# CodeQL configuration for the default code scanning setup.
+name: jubarte-redlines CodeQL config
+
+paths-ignore:
+  # wasm-bindgen/wasm-pack generated glue, rebuilt from source by
+  # jubarte-wasm/build-npm.sh; the CodeQL warnings there (dead stores,
+  # implicit operand conversions, redundant conditionals in the shim)
+  # are generator idioms, not hand-written code.
+  - "jubarte-wasm/npm/**"
