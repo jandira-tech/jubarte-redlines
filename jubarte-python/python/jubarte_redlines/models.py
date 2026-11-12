@@ -68,7 +68,8 @@ class CompareOptions:
     def native_date(self) -> str | None:
         """Return the timestamp accepted by the existing native function."""
         # __post_init__ turns every datetime into str.
-        assert self.date is None or isinstance(self.date, str)
+        if self.date is not None and not isinstance(self.date, str):
+            raise TypeError("date must be None or a str")
         return self.date
 
     def native_input_limits(self) -> dict[str, int] | None:

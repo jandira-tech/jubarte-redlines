@@ -59,47 +59,48 @@ def tc(*paras, tcpr='<w:tcW w:w="2400" w:type="dxa"/>'):
 def package(name, body, *, sect_refs="", sect_change="", parts=None, rels=None, types=None,
             styles_extra="", core=None, settings=""):
     """Write HERE/name: `body` inside w:body, then the final sectPr."""
-    parts = dict(parts or {})
-    rels = list(rels or [])
-    types = list(types or [])
+    out_parts = dict(parts or {})
+    out_rels = list(rels or [])
+    out_types = list(types or [])
+    styles = styles_extra
     document = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:document {W}><w:body>{body}'
                 f'{SECT.format(refs=sect_refs, change=sect_change)}</w:body></w:document>')
-    parts["word/document.xml"] = document
-    if "word/comments.xml" in parts:
-        styles_extra += ('<w:style w:type="paragraph" w:styleId="CommentText"><w:name w:val="annotation text"/>'
+    out_parts["word/document.xml"] = document
+    if "word/comments.xml" in out_parts:
+        styles += ('<w:style w:type="paragraph" w:styleId="CommentText"><w:name w:val="annotation text"/>'
                          '<w:basedOn w:val="Normal"/><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style>')
-    parts["word/styles.xml"] = STYLES.replace("{extra}", styles_extra)
-    parts["word/settings.xml"] = f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:settings {W}>{settings}</w:settings>'
-    rels = [("rIdStyles", f"{REL}/styles", "styles.xml"), ("rIdSettings", f"{REL}/settings", "settings.xml"), *rels]
-    types = [("/word/document.xml", f"{CT}.document.main+xml"), ("/word/styles.xml", f"{CT}.styles+xml"), ("/word/settings.xml", f"{CT}.settings+xml"), *types]
+    out_parts["word/styles.xml"] = STYLES.replace("{extra}", styles)
+    out_parts["word/settings.xml"] = f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:settings {W}>{settings}</w:settings>'
+    out_rels = [("rIdStyles", f"{REL}/styles", "styles.xml"), ("rIdSettings", f"{REL}/settings", "settings.xml"), *out_rels]
+    out_types = [("/word/document.xml", f"{CT}.document.main+xml"), ("/word/styles.xml", f"{CT}.styles+xml"), ("/word/settings.xml", f"{CT}.settings+xml"), *out_types]
     package_rels = [("rId1", f"{REL}/officeDocument", "word/document.xml")]
     if core is not None:
-        parts["docProps/core.xml"] = (
+        out_parts["docProps/core.xml"] = (
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<cp:coreProperties '
             'xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
             'xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" '
             f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">{core}</cp:coreProperties>')
         package_rels.append(("rId2", "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties", "docProps/core.xml"))
-        types.append(("/docProps/core.xml", "application/vnd.openxmlformats-package.core-properties+xml"))
-    overrides = "".join(f'<Override PartName="{n}" ContentType="{t}"/>' for n, t in types)
-    parts["[Content_Types].xml"] = (
+        out_types.append(("/docProps/core.xml", "application/vnd.openxmlformats-package.core-properties+xml"))
+    overrides = "".join(f'<Override PartName="{n}" ContentType="{t}"/>' for n, t in out_types)
+    out_parts["[Content_Types].xml"] = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
         '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
         f'<Default Extension="xml" ContentType="application/xml"/>{overrides}</Types>')
-    parts["_rels/.rels"] = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="{PKG}">'
+    out_parts["_rels/.rels"] = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="{PKG}">'
                             + "".join(f'<Relationship Id="{i}" Type="{t}" Target="{g}"/>' for i, t, g in package_rels)
                             + "</Relationships>")
-    parts["word/_rels/document.xml.rels"] = (
+    out_parts["word/_rels/document.xml.rels"] = (
         f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="{PKG}">'
         + "".join(f'<Relationship Id="{i}" Type="{t}" Target="{g}"{" TargetMode=\"External\"" if g.startswith("http") else ""}/>'
-                  for i, t, g in rels)
+                  for i, t, g in out_rels)
         + "</Relationships>")
-    order = ["[Content_Types].xml", "_rels/.rels", *sorted(k for k in parts if k not in ("[Content_Types].xml", "_rels/.rels"))]
+    order = ["[Content_Types].xml", "_rels/.rels", *sorted(k for k in out_parts if k not in ("[Content_Types].xml", "_rels/.rels"))]
     with zipfile.ZipFile(HERE / name, "w", zipfile.ZIP_DEFLATED) as z:
         for part in order:
             info = zipfile.ZipInfo(part, date_time=(1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
-            z.writestr(info, parts[part])
+            z.writestr(info, out_parts[part])
 
 
 def story(kind, body):

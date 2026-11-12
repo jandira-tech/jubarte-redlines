@@ -249,7 +249,8 @@ def check_sample_csv(path: Path, header: list[str], paths: list[str], rows: int,
     if len(real) != rows:
         problems.append(f"{path.name}: {len(real)} data rows, want {rows}")
     kind = "sample_redline" if "key" in header else "sample_conversion"
-    key_col, must_col, must_why = KEY_COLUMN[kind], *MUST_HAVE[kind]
+    key_col = KEY_COLUMN[kind]
+    must_col, must_why = MUST_HAVE[kind]
     ki, mi = header.index(key_col), header.index(must_col)
     ms = header.index(f"{must_col}_sha256")
     seen: set[str] = set()
