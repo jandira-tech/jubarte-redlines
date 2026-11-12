@@ -59,25 +59,23 @@ def _version(binary: Path) -> str | None:
     return text.splitlines()[0] if text else None
 
 
-def _reserve_index(log_path: Path):
-    """Reserve run index atomically, returning (index, lock_file).
+def _reserve_index(log_path: Path, lock_file) -> int:
+    """Reserve run index atomically under lock_file's held flock.
 
-    Caller must hold lock_file open through completion-row writing.
+    The caller owns lock_file and must keep it open through
+    completion-row writing.
     """
     import fcntl
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = log_path.with_suffix(".lock")
-    lock_file = lock_path.open("a")
     fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
     if not log_path.is_file():
-        return 1, lock_file
+        return 1
     last = 0
     for line in log_path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         row = json.loads(line)
         last = max(last, int(row.get("run") or 0))
-    return last + 1, lock_file
+    return last + 1
 
 
 def main() -> None:
@@ -120,13 +118,14 @@ def main() -> None:
         raise SystemExit(f"stems not on official track: {missing[:5]}")
     items = [by_stem[stem] for stem in wanted]
 
-    if args.run is not None:
-        run_idx = args.run
-        lock_file = None
-    else:
-        run_idx, lock_file = _reserve_index(args.log)
-
+    lock_file = None
     try:
+        if args.run is not None:
+            run_idx = args.run
+        else:
+            args.log.parent.mkdir(parents=True, exist_ok=True)
+            lock_file = args.log.with_suffix(".lock").open("a")
+            run_idx = _reserve_index(args.log, lock_file)
         work_dir = args.work_dir or (HERE / "work" / f"{track}_run_{run_idx:02d}")
         json_out = args.json_out or (work_dir / "mini_bench.json")
 

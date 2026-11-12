@@ -25,6 +25,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import math
 import sys
@@ -162,15 +163,12 @@ def load_metadata() -> dict:
         # ncpu
         meta["cpu_count"] = os.cpu_count()
         # git sha if in a repo
-        try:
-            sha = subprocess.check_output(
+        with contextlib.suppress(Exception):
+            meta["git_sha"] = subprocess.check_output(
                 ["git", "rev-parse", "HEAD"],
                 stderr=subprocess.DEVNULL,
                 text=True,
             ).strip()
-            meta["git_sha"] = sha
-        except Exception:
-            pass
     except Exception as e:
         meta["error"] = str(e)
     return meta

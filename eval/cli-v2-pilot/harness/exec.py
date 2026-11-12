@@ -328,7 +328,7 @@ def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
         try:
             proc.kill()
         except ProcessLookupError:
-            pass
+            return  # the process is already gone
 
 
 _FIXTURE_CACHE: dict[tuple[str, str], Path] = {}

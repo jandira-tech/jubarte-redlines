@@ -21,6 +21,7 @@ Run with PyYAML: `uv run --with pyyaml python3 scripts/test_jules_workflow.py`.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
@@ -383,12 +384,11 @@ class FixtureIsolation(unittest.TestCase):
             os.environ["GIT_DIR"] = str(sentinel / ".git")
             os.environ["GIT_INDEX_FILE"] = str(sentinel / ".git" / "index")
             try:
-                try:
+                # a leaking fixture can fail midway; the sentinel decides
+                with contextlib.suppress(subprocess.CalledProcessError):
                     fx = Path(tmp) / "fx"
                     fx.mkdir()
                     fixture(fx, {"lib.rs": "fn main() {}\n"})
-                except subprocess.CalledProcessError:
-                    pass  # a leaking fixture can fail midway; the sentinel decides
             finally:
                 for key, value in saved.items():
                     if value is None:

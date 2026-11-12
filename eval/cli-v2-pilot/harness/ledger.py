@@ -75,10 +75,7 @@ def write_jsonl_atomic(path: Path, records: Iterable[BaseModel]) -> int:
             os.fsync(handle.fileno())
         os.replace(tmp_name, path)
     except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except FileNotFoundError:
-            pass
+        Path(tmp_name).unlink(missing_ok=True)
         raise
     return len(records)
 
@@ -116,8 +113,5 @@ def write_json_atomic(path: Path, payload: dict) -> None:
             os.fsync(handle.fileno())
         os.replace(tmp_name, path)
     except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except FileNotFoundError:
-            pass
+        Path(tmp_name).unlink(missing_ok=True)
         raise

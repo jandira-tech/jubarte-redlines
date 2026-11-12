@@ -77,14 +77,13 @@ def crate_version() -> str:
 
 def build_doc_json() -> None:
     """Run rustdoc so target/doc/jubarte.json exists (private items included)."""
-    have_nightly = False
     try:
         out = subprocess.run(
             ["rustup", "toolchain", "list"], capture_output=True, text=True
         )
         have_nightly = "nightly" in out.stdout
     except FileNotFoundError:
-        pass
+        have_nightly = False  # rustup is not installed
     # The rustdoc flags go to rustdoc through RUSTDOCFLAGS, never on cargo's
     # command line: mbx refuses `cargo doc --output-format json` before
     # cargo runs ("metadata probing failed", #1769).

@@ -134,9 +134,10 @@ def when_of(value: str | None, path: Path | None = None) -> datetime:
     if value:
         try:
             dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
-            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
         except ValueError:
-            pass
+            dt = None
+        if dt is not None:
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     if path is not None and path.exists():
         return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
     return datetime(1970, 1, 1, tzinfo=timezone.utc)

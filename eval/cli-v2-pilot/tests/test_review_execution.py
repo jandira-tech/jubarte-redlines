@@ -730,10 +730,8 @@ async def test_row01_invalid_prompt_or_argv_is_validated_before_replacement(
         "load_agent",
         lambda *a: AgentConfig(name="fake", argv=["fake", "{unknown}"]),
     )
-    try:
+    with pytest.raises(ValueError):
         await runner.main(args)
-    except ValueError:
-        pass
     assert sentinel.is_file(), "invalid argv must not even archive the old root"
 
 

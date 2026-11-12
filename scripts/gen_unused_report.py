@@ -48,7 +48,7 @@ for p in ROOT.rglob("*"):
     if p.is_file() and p.suffix in exts and not (set(p.relative_to(ROOT).parts) & skip):
         if p.name in ("Cargo.lock",): continue
         try: corpus[str(p.relative_to(ROOT))] = p.read_text(errors="ignore")
-        except Exception: pass
+        except Exception: continue
 # generated wasm glue and lockfiles are noise
 corpus = {k: v for k, v in corpus.items() if "/npm/" not in k and not k.endswith(".d.ts")}
 name_count = defaultdict(int)
@@ -88,8 +88,12 @@ for s in sym:
     for f, cn in counts.items():
         c = cn.get(s["name"], 0)
         if f == s["file"]: own += c
-        elif f.startswith("src/"): other_src += c; (refs_src.add(f) if c else None)
-        else: outside += c; (refs_out.add(f) if c else None)
+        elif f.startswith("src/"):
+            other_src += c
+            if c: refs_src.add(f)
+        else:
+            outside += c
+            if c: refs_out.add(f)
     own -= 1  # the definition itself
     rows.append({**{k: s[k] for k in ("kind", "name", "qualified", "file", "line", "doc")}, "own": max(own, 0), "src": other_src,
                  "outside": outside, "ambiguous": ambiguous, "in_sig": sorted(sig_names.get(s["name"], set()) - {s["qualified"]})[:2], "refs_src": sorted(refs_src), "refs_out": sorted(refs_out)})

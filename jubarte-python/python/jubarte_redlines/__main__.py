@@ -634,16 +634,12 @@ def _markup_authors(docx: bytes) -> list[str]:
     from . import _native
 
     authors: set[str] = set()
-    try:
+    with contextlib.suppress(json.JSONDecodeError, _native.JubarteError, TypeError, AttributeError):
         for change in json.loads(_native.list_changes_json(docx)):
             authors.add(change.get("author") or "<no author>")
-    except (json.JSONDecodeError, _native.JubarteError, TypeError, AttributeError):
-        pass
-    try:
+    with contextlib.suppress(json.JSONDecodeError, _native.JubarteError, TypeError, AttributeError):
         for comment in json.loads(_native.list_comments_json(docx)):
             authors.add(comment.get("author") or "<no author>")
-    except (json.JSONDecodeError, _native.JubarteError, TypeError, AttributeError):
-        pass
     return sorted(authors)
 
 
