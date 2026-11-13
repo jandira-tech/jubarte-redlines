@@ -2091,7 +2091,7 @@ fn highlight_color(c: &str) -> Option<&'static str> {
         return None;
     }
     Some(
-        crate::edit::HIGHLIGHTS
+        crate::ooxml::HIGHLIGHTS
             .iter()
             .copied()
             .find(|h| *h != "none" && *h == v)

@@ -49,8 +49,6 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::namespaces::{A, M, MC, R, W, W14, W15, WNE, WP};
 use crate::opc::PartFs;
@@ -12965,15 +12963,12 @@ const WEEKDAYS_FULL: [&str; 7] = [
 ];
 const WEEKDAYS_ABBR: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct CivilDateTime {
-    y: i32,
-    m: u32,
-    d: u32,
-    h: u32,
-    min: u32,
-    s: u32,
-}
+pub use crate::util::datetime::utc_now_iso8601;
+use crate::util::datetime::{CivilDateTime, parse_w3cdtf, utc_now};
+#[cfg(test)]
+use crate::util::datetime::{
+    civil_from_unix_days, civil_from_unix_secs, iso8601, unix_days_from_civil,
+};
 
 #[derive(Clone, Copy, Default)]
 struct CoreDates {
@@ -13005,164 +13000,6 @@ fn core_dates() -> CoreDates {
     CORE_DATES.with(Cell::get)
 }
 
-/// The current UTC wall time as Word writes revision dates:
-/// `YYYY-MM-DDTHH:MM:SSZ` (no sub-second precision).
-///
-/// On native targets the time comes from [`SystemTime::now`]; on
-/// `wasm32-unknown-unknown` it comes from `js_sys::Date`.
-pub fn utc_now_iso8601() -> String {
-    iso8601(utc_now())
-}
-
-fn iso8601(CivilDateTime { y, m, d, h, min, s }: CivilDateTime) -> String {
-    format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}Z")
-}
-
-#[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
-mod iso8601_tests {
-    use super::*;
-
-    #[test]
-    fn a_unix_time_is_written_as_word_dates_revisions() {
-        assert_eq!(iso8601(civil_from_unix_secs(0)), "1970-01-01T00:00:00Z");
-        assert_eq!(
-            iso8601(civil_from_unix_secs(1_790_777_100)),
-            "2026-09-30T14:05:00Z"
-        );
-        assert_eq!(utc_now_iso8601().len(), 20);
-    }
-}
-
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-fn utc_now() -> CivilDateTime {
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_secs()).unwrap_or(0))
-        .unwrap_or(0);
-    civil_from_unix_secs(secs)
-}
-
-/// wasm32-unknown-unknown has no clock in std (`SystemTime::now` panics),
-/// so the host's `Date` tells the time.
-#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-fn utc_now() -> CivilDateTime {
-    let now = js_sys::Date::new_0();
-    CivilDateTime {
-        y: i32::try_from(now.get_utc_full_year()).unwrap_or(1970),
-        m: now.get_utc_month() + 1,
-        d: now.get_utc_date(),
-        h: now.get_utc_hours(),
-        min: now.get_utc_minutes(),
-        s: now.get_utc_seconds(),
-    }
-}
-
-/// UTC civil time of a Unix timestamp (TIME/DATE are painted in UTC).
-fn civil_from_unix_secs(secs: i64) -> CivilDateTime {
-    let (y, m, d) = civil_from_unix_days(secs.div_euclid(86_400));
-    let tod = u32::try_from(secs.rem_euclid(86_400)).unwrap_or(0);
-    CivilDateTime {
-        y,
-        m,
-        d,
-        h: tod / 3600,
-        min: (tod % 3600) / 60,
-        s: tod % 60,
-    }
-}
-
-/// Howard Hinnant days_from_civil: UTC (year, month, day) → Unix epoch days.
-fn unix_days_from_civil(y: i32, m: u32, d: u32) -> i64 {
-    let y = i64::from(y) - i64::from(m <= 2);
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let m = i64::from(m);
-    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + i64::from(d) - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
-fn two_digits(s: &str, at: usize) -> Option<u32> {
-    let v = s.get(at..at + 2)?;
-    v.bytes()
-        .all(|b| b.is_ascii_digit())
-        .then(|| v.parse().ok())?
-}
-
-/// W3CDTF (`YYYY-MM-DD`, `…Thh:mm[:ss[.s+]]TZD`) as a UTC instant. A
-/// numeric `±hh:mm` zone is folded in; `Z` or no zone is UTC.
-fn parse_w3cdtf(raw: &str) -> Option<CivilDateTime> {
-    let s = raw.trim();
-    let bytes = s.as_bytes();
-    if s.len() < 10 || bytes[4] != b'-' || bytes[7] != b'-' {
-        return None;
-    }
-    let y: i32 = s.get(0..4)?.parse().ok()?;
-    let (m, d) = (two_digits(s, 5)?, two_digits(s, 8)?);
-    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
-        return None;
-    }
-    let (mut h, mut min, mut sec, mut rest) = (0, 0, 0, &s[10..]);
-    if let Some(t) = rest.strip_prefix(['T', ' ']) {
-        h = two_digits(t, 0)?;
-        if t.as_bytes().get(2) != Some(&b':') {
-            return None;
-        }
-        min = two_digits(t, 3)?;
-        rest = &t[5..];
-        if let Some(ss) = rest.strip_prefix(':') {
-            sec = two_digits(ss, 0)?;
-            rest = ss[2..].trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
-        }
-    }
-    let offset_min: i64 = match rest.as_bytes().first() {
-        None | Some(b'Z') if rest.len() <= 1 => 0,
-        Some(sign @ (b'+' | b'-')) if rest.len() == 6 && rest.as_bytes()[3] == b':' => {
-            let v = i64::from(two_digits(rest, 1)? * 60 + two_digits(rest, 4)?);
-            if *sign == b'+' { v } else { -v }
-        }
-        _ => return None,
-    };
-    let local = unix_days_from_civil(y, m, d) * 86_400 + i64::from(h * 3600 + min * 60 + sec);
-    Some(civil_from_unix_secs(local - offset_min * 60))
-}
-
-/// A revision timestamp ordered by UTC seconds and fractional digits.
-/// As with W3CDTF fields, a missing offset is UTC.
-pub(crate) fn timestamp_order_key(raw: &str) -> Option<(i64, &str)> {
-    crate::util::datetime::parse_datetime(raw).ok()?;
-    let time = parse_w3cdtf(raw)?;
-    let seconds = unix_days_from_civil(time.y, time.m, time.d) * 86_400
-        + i64::from(time.h * 3600 + time.min * 60 + time.s);
-    let fraction = raw[19..]
-        .strip_prefix('.')
-        .unwrap_or_default()
-        .split(['Z', '+', '-'])
-        .next()
-        .unwrap_or_default()
-        .trim_end_matches('0');
-    Some((seconds, fraction))
-}
-
-/// Format an instant in a fixed offset, retaining its fractional seconds.
-pub(crate) fn timestamp_with_offset(seconds: i64, fraction: &str, offset: i64) -> String {
-    let mut value = iso8601(civil_from_unix_secs(seconds + offset));
-    value.pop();
-    if !fraction.is_empty() {
-        value.push('.');
-        value.push_str(fraction);
-    }
-    if offset == 0 {
-        value.push('Z');
-    } else {
-        let sign = if offset < 0 { '-' } else { '+' };
-        let minutes = offset.abs() / 60;
-        value.push_str(&format!("{sign}{:02}:{:02}", minutes / 60, minutes % 60));
-    }
-    value
-}
-
 /// `docProps/core.xml` dates, read as elements (a title that merely
 /// contains "created" is text, not a tag).
 fn core_dates_from_xml(xml: &str) -> CoreDates {
@@ -13188,23 +13025,6 @@ fn load_core_dates(pkg: &PartFs) -> CoreDates {
     pkg.part_string("docProps/core.xml")
         .map(|xml| core_dates_from_xml(&xml))
         .unwrap_or_default()
-}
-
-/// Howard Hinnant civil_from_days: Unix epoch days → UTC (year, month, day).
-fn civil_from_unix_days(unix_days: i64) -> (i32, u32, u32) {
-    let z = unix_days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = u32::try_from(z - era * 146_097).unwrap_or(0);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let mut y = i32::try_from(yoe).unwrap_or(0) + i32::try_from(era).unwrap_or(0) * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    if m <= 2 {
-        y += 1;
-    }
-    (y, m, d)
 }
 
 fn weekday_sun0(y: i32, m: u32, d: u32) -> usize {
