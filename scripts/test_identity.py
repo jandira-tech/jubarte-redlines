@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -222,6 +223,56 @@ class Identity(unittest.TestCase):
                               self.conversion_csv(["clean__x", "clean__y"]))
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("no job wrote an output", r.stdout)
+
+    def test_a_vacuous_run_closes_the_log_before_returning(self) -> None:
+        # The empty-run return sits before log.close(). A wrapper that
+        # flushes only when close() is called must already be closed, and
+        # the summary on disk, when main returns.
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("identity_under_test", SCRIPT)
+        identity = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(identity)
+
+        class Log:
+            def __init__(self, raw: object) -> None:
+                self.raw = raw
+                self.closed = False
+
+            def write(self, text: str) -> int:
+                return self.raw.write(text)  # type: ignore[attr-defined]
+
+            def close(self) -> None:
+                self.closed = True
+                self.raw.close()  # type: ignore[attr-defined]
+
+        opened: list[Log] = []
+        real_open = identity.Path.open
+
+        def tracking_open(self: Path, mode: str = "r", *args: object, **kwargs: object) -> object:
+            raw = real_open(self, mode, *args, **kwargs)
+            if self.name == "identity.log" and mode == "w":
+                wrapped = Log(raw)
+                opened.append(wrapped)
+                return wrapped
+            return raw
+
+        a, b = self.stub("a", FAIL_ON="clean__"), self.stub("b", FAIL_ON="clean__")
+        csv_path = self.conversion_csv(["clean__x", "clean__y"])
+        argv = [str(SCRIPT), str(a), str(b), str(self.out), str(csv_path), "--root", str(self.root), "--jobs", "1"]
+        try:
+            with unittest.mock.patch.object(identity.Path, "open", tracking_open):
+                with unittest.mock.patch.object(sys, "argv", argv):
+                    code = identity.main()
+            self.assertEqual(code, 1)
+            self.assertEqual(len(opened), 1)
+            self.assertTrue(opened[0].closed, "identity.log was still open when main returned")
+            self.assertIn("no job wrote an output", (self.out / "identity.log").read_text())
+        finally:
+            for log in opened:
+                if not log.closed:
+                    log.close()
 
     def test_an_input_the_bench_root_lacks_is_refused(self) -> None:
         # a wrong --root fails every row on both sides: identical, and vacuous

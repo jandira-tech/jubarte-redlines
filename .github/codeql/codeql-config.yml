@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# CodeQL configuration for the default code scanning setup.
+# build-npm.sh copies only the four wasm-bindgen outputs into each
+# target directory. package.json, the READMEs, LICENSE and
+# ENGINE_COMMIT.txt stay in the scan.
+name: jubarte-redlines CodeQL config
+
+paths-ignore:
+  - "jubarte-wasm/npm/*/jubarte_wasm.js"
+  - "jubarte-wasm/npm/*/jubarte_wasm.d.ts"
+  - "jubarte-wasm/npm/*/jubarte_wasm_bg.wasm"
+  - "jubarte-wasm/npm/*/jubarte_wasm_bg.wasm.d.ts"
