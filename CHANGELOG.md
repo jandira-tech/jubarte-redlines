@@ -15,6 +15,21 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+### Fixed
+
+- **The agent view keeps a no-break space.** U+00A0 was written as an ordinary space, and a line of only no-break spaces came back empty. The plain view still collapses it. A leading ASCII space is still `&#32;`.
+- **A row the table line names keeps that mark when the cell text names the same id** (#586, #2343). The cells keep their own insertions, and the row clause comes back.
+
+### Security
+
+- **MCP errors no longer name the server root, an output path, or an OS error** (#2355). A path outside the root, an output that already exists, and a publish failure say what was refused. A missing file still names the path that was asked for.
+- **An edit plan over 1 MiB is refused before the engine sees it, and accept or reject is the only resolve action** (#2395).
+
+### Documentation
+
+- **Field comments are recorded as issued, and the views do not emit them yet** (#2407, #2235, #2236).
+- **Issue #1914 round 3 records that no renderer rule is established** (#2385). No renderer change lands from that evidence.
+
 ## [0.18.0] - 2026-11-10
 
 > **Summary.** Security: unsafe OPC part names, foreign-namespace content-type and relationship roots, and ZIP names falsely flagged UTF-8 are refused on open (#2078, #2080, #2081); `self-update` bounds the archive it unpacks (#2084, #2085); a redaction the leak scan cannot certify is refused (#2086); legacy `.doc` input, field nesting, comment anchors, the font index, the font caches and dashed borders are bounded (#2091, #2087, #2202-#2205, #2215); network and device image paths are refused before they are resolved (#2206); the MCP server refuses a path outside its root that links into it (#2228). Changed: Linux binaries run on glibc 2.28 and later, with static musl archives beside them (#2112); the dependency gate refuses duplicated crates and lists the crates whose build scripts may run (#2088, #2216). New: `apply_markdown_strict` (#2208), `scrub::leak_scan` with its receipt (#2086) and `ChangeError::ExposedFinalMark` (#2096). Over a hundred compare, accept/reject, edit-plan, Markdown-view, validate and table-autofit fixes. On the 600-pair and 860-document sets, scored against Word's own output: redlines mean 74.69 (Docxodus 71.67), counting as 0 the 3 redlines Word 16.115 crashes opening; PDFs mean 78.02 (LibreOffice 58.07) with no failed document. The full Miri suite (cargo miri nextest run) did not run for this release; fuzzing, parity, the Ring-2 validator ratchet, the criterion and parity-ladder gates against 0.17.0, and the bench ran instead.
