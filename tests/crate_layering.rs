@@ -83,29 +83,18 @@ const MODULES: &[(&str, &str)] = &[
 /// Upward paths still to remove, as `file -> crate::path` (first two path
 /// segments when the first names a module with submodule overrides).
 const KNOWN_UPWARD: &[&str] = &[
-    "src/admission.rs -> WmlDocument",
-    "src/admission.rs -> comparer",
-    "src/admission.rs -> edit",
-    "src/admission.rs -> inspect",
     "src/append.rs -> markdown::markdown_to_docx",
-    "src/append.rs -> markdown::package",
     "src/changes.rs -> edit::KeptComment",
-    "src/comparer/deleted_tables.rs -> validate",
-    "src/comparer/final_marks.rs -> validate",
     "src/comparer/finalize.rs -> comments",
     "src/comparer/finalize.rs -> validate",
-    "src/convert/mod.rs -> comparer",
-    "src/convert/mod.rs -> document_comparer",
     "src/convert/mod.rs -> fields",
     "src/debug.rs -> text_diff",
     "src/document_comparer.rs -> changes",
-    "src/document_comparer.rs -> validate",
     "src/inspect.rs -> edit",
     "src/inspect.rs -> edit::apply_plan_json",
     "src/markdown/mod.rs -> markdown::redline",
     "src/markdown/write.rs -> markdown::redline",
     "src/revision_processor.rs -> changes",
-    "src/revision_processor.rs -> validate",
     "src/settings.rs -> markdown::markdown_to_docx",
 ];
 

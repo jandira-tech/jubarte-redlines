@@ -7,7 +7,7 @@
 //! (#1669). Word's Compare pairs a cell's two final marks and puts the
 //! revision on the mark before (Word 16 oracles on #1669). This pass
 //! settles the finished redline, part by part, by the validator's own rule
-//! ([`crate::validate::uncovered_final_marks`]), so the two cannot
+//! ([`crate::validate_dom::uncovered_final_marks`]), so the two cannot
 //! disagree (#1684).
 //!
 //! An inserted final mark changes places with the nearest earlier mark that
@@ -39,7 +39,7 @@
 
 use crate::namespaces::W;
 use crate::revision_processor::RevisionIds;
-use crate::validate::{keeps_words, table_revised};
+use crate::validate_dom::{keeps_words, table_revised};
 use crate::xmllinq::{Dom, NodeId, XName};
 
 /// Settle every cell's final mark under `root`.
@@ -52,7 +52,7 @@ pub fn settle_cell_final_marks(dom: &mut Dom, root: NodeId) {
     for cell in cells {
         // Each step clears the final mark, or joins one paragraph away.
         for _ in 0..=dom.descendants(cell, Some(&W::p())).len() {
-            let Some(&(last, kind)) = crate::validate::uncovered_final_marks(dom, cell).first()
+            let Some(&(last, kind)) = crate::validate_dom::uncovered_final_marks(dom, cell).first()
             else {
                 break;
             };
@@ -72,7 +72,7 @@ fn settle(
     ids: &mut Option<RevisionIds>,
 ) {
     let other = if kind == "ins" { "del" } else { "ins" };
-    let blocks = crate::validate::container_blocks(dom, cell);
+    let blocks = crate::validate_dom::container_blocks(dom, cell);
     let Some(at) = blocks.iter().position(|&b| b == last) else {
         return;
     };
@@ -166,7 +166,7 @@ fn mint_cell_insert_when_body_ends_in_table(dom: &mut Dom, root: NodeId) {
         if !body_tail_is_only_deletions(dom, tail) || !body_tail_holds_paired_mark(dom, tail) {
             continue;
         }
-        let blocks = crate::validate::container_blocks(dom, cell);
+        let blocks = crate::validate_dom::container_blocks(dom, cell);
         let Some((&last, earlier)) = blocks.split_last() else {
             continue;
         };
@@ -328,7 +328,7 @@ fn mark_revised_as(dom: &Dom, paragraph: NodeId, kind: &str) -> bool {
 fn mark_revision(dom: &Dom, paragraph: NodeId, kind: &str) -> Option<NodeId> {
     dom.element(paragraph, &W::p_pr())
         .and_then(|ppr| dom.element(ppr, &W::r_pr()))
-        .and_then(|rpr| dom.element(rpr, &crate::validate::revision_name(kind)))
+        .and_then(|rpr| dom.element(rpr, &crate::validate_dom::revision_name(kind)))
 }
 
 /// The final mark `last`'s insertion moves to `partner`'s mark. Rejected,

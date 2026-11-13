@@ -12,7 +12,7 @@
 //! opened them, and its Accept All and Reject All gave back the revision
 //! and the original (fix23 probe33, rt30). The pass settles the finished
 //! body by the validator's own rule
-//! ([`crate::validate::inserted_text_before_deleted_tables`]), so the two
+//! ([`crate::validate_dom::inserted_text_before_deleted_tables`]), so the two
 //! cannot disagree.
 
 use crate::namespaces::W;
@@ -29,7 +29,7 @@ pub fn move_inserted_text_past_deleted_tables(dom: &mut Dom, root: NodeId) {
     // words then go ahead of the later one's.
     for _ in 0..dom.elements(body, Some(&W::p())).len() {
         let Some(&(paragraph, joined)) =
-            crate::validate::inserted_text_before_deleted_tables(dom, body).last()
+            crate::validate_dom::inserted_text_before_deleted_tables(dom, body).last()
         else {
             break;
         };

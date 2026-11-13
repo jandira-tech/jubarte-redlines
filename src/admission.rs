@@ -21,11 +21,11 @@
 //! document by its relationships and content types. Nothing is extracted to
 //! disk, no macro runs and no external reference is resolved.
 //!
-//! The agent-facing entry points ([`crate::inspect`], [`crate::edit`] and the
+//! The agent-facing entry points (`inspect`, `edit` and the
 //! bindings over them) admit with [`InputLimits::default`]. The redline
-//! comparer (`document_comparer`) and [`crate::WmlDocument`] admit
+//! comparer (`document_comparer`) and `WmlDocument` admit
 //! with the roomier [`InputLimits::compare`], which
-//! [`crate::comparer::WmlComparerSettings::input_limits`] overrides.
+//! `WmlComparerSettings::input_limits` overrides.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -1127,6 +1127,30 @@ fn elements(xml: &[u8], local: &str) -> Vec<BTreeMap<String, String>> {
             Ok(_) => {}
         }
     }
+}
+
+/// Admit one input under `limits`. A refusal keeps the typed
+/// [`AdmissionError`] as the error source (its `code()` is the stable
+/// `INPUT_LIMIT`/`UNSUPPORTED_PACKAGE`/… string) and names which document was refused.
+pub(crate) fn admit_input(
+    side: &str,
+    bytes: &[u8],
+    limits: InputLimits,
+) -> Result<(), crate::opc::OpcError> {
+    admit(bytes, limits).map(drop).map_err(|refusal| {
+        crate::opc::refused(AdmissionError {
+            kind: refusal.kind,
+            message: format!("{side} document: {}", refusal.message),
+        })
+    })
+}
+
+/// Admit a single package under the compare budget before a public entry
+/// point opens it: the package constructor is bounded on its own (#645),
+/// and admission gives the typed refusal with the rules a budget alone
+/// does not check (part-name safety, encryption, XML depth, WML shape).
+pub(crate) fn admit_package(bytes: &[u8]) -> Result<(), crate::opc::OpcError> {
+    admit_input("input", bytes, InputLimits::compare())
 }
 
 /// ZIP fixtures whose entry names carry legacy encodings: raw name bytes

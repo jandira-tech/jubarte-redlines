@@ -1591,7 +1591,7 @@ fn final_marks_of_row(dom: &Dom, carrier: NodeId) -> Vec<NodeId> {
                     .element(cell, &W::tc_pr())
                     .is_some_and(|pr| dom.element(pr, &cell_kind).is_some());
             }
-            if crate::validate::row_revised(dom, row, cell, kind) {
+            if crate::validate_dom::row_revised(dom, row, cell, kind) {
                 return true;
             }
             let Some(&outer) = dom.ancestors(row, Some(&W::tc())).first() else {
@@ -1603,10 +1603,10 @@ fn final_marks_of_row(dom: &Dom, carrier: NodeId) -> Vec<NodeId> {
     dom.descendants_and_self(top, Some(&W::tc()))
         .into_iter()
         .filter(|&cell| !covered_below(cell))
-        .filter_map(|cell| crate::validate::last_block_paragraph(dom, cell))
+        .filter_map(|cell| crate::validate_dom::last_block_paragraph(dom, cell))
         .filter_map(|p| dom.element(p, &W::p_pr()))
         .filter_map(|ppr| dom.element(ppr, &W::r_pr()))
-        .filter_map(|rpr| dom.element(rpr, &crate::validate::revision_name(kind)))
+        .filter_map(|rpr| dom.element(rpr, &crate::validate_dom::revision_name(kind)))
         .collect()
 }
 
@@ -1664,7 +1664,7 @@ struct ExposedMark {
 
 /// Final `w:ins` / `w:del` marks in `pkg`, one per container that ends on
 /// them. A cell counts only when its row does not carry the same revision
-/// ([`crate::validate::uncovered_final_marks`]). The body's, a header's or
+/// ([`crate::validate_dom::uncovered_final_marks`]). The body's, a header's or
 /// footer's, a note's, a text box's and a comment's last paragraph count
 /// on their own: Word resolves a body's final mark, so validate does not
 /// flag it, and a selective pass still must not create one (#1693). Both
@@ -1693,7 +1693,7 @@ fn exposed_final_marks(pkg: &PartFs, main: &str) -> Vec<ExposedMark> {
             node,
         };
         dom.for_each_descendant_element(root, Some(&W::tc()), |cell| {
-            for (paragraph, kind) in crate::validate::uncovered_final_marks(&dom, cell) {
+            for (paragraph, kind) in crate::validate_dom::uncovered_final_marks(&dom, cell) {
                 record_exposed_mark(&mut out, &dom, &site("cell", cell), paragraph, kind);
             }
         });
@@ -1742,7 +1742,7 @@ struct MarkSite<'a> {
 /// The last block of `site`, when it is a paragraph whose mark is inserted
 /// or deleted. A container that ends in a table has no final mark.
 fn record_container_mark(out: &mut Vec<ExposedMark>, dom: &Dom, site: &MarkSite<'_>) {
-    let Some(&paragraph) = crate::validate::container_blocks(dom, site.node).last() else {
+    let Some(&paragraph) = crate::validate_dom::container_blocks(dom, site.node).last() else {
         return;
     };
     if !dom.name_is(paragraph, &W::p()) {
@@ -1764,7 +1764,7 @@ fn record_exposed_mark(
     let Some(revision) = dom
         .element(paragraph, &W::p_pr())
         .and_then(|ppr| dom.element(ppr, &W::r_pr()))
-        .and_then(|rpr| dom.element(rpr, &crate::validate::revision_name(kind)))
+        .and_then(|rpr| dom.element(rpr, &crate::validate_dom::revision_name(kind)))
     else {
         return;
     };
@@ -1818,8 +1818,7 @@ struct ResolutionOutcome {
 
 /// The package, Strict normalized to transitional as `inspect` reads it.
 fn open(docx: &[u8]) -> Result<PartFs, ChangeError> {
-    crate::document_comparer::admit_package(docx)
-        .map_err(|e| ChangeError::Package(e.to_string()))?;
+    crate::admission::admit_package(docx).map_err(|e| ChangeError::Package(e.to_string()))?;
     let normalized = crate::strict_translation::strict_to_transitional_docx(docx)
         .map_err(|e| ChangeError::Package(e.to_string()))?;
     PartFs::open(&normalized).map_err(|e| ChangeError::Package(e.to_string()))
@@ -1840,7 +1839,7 @@ fn move_words_past_deleted_tables(pkg: &mut PartFs, main: &str) {
         return;
     };
     let shaped = dom.element(root, &W::body()).is_some_and(|body| {
-        !crate::validate::inserted_text_before_deleted_tables(&dom, body).is_empty()
+        !crate::validate_dom::inserted_text_before_deleted_tables(&dom, body).is_empty()
     });
     if shaped {
         crate::comparer::deleted_tables::move_inserted_text_past_deleted_tables(&mut dom, root);

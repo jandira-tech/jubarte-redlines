@@ -4488,7 +4488,7 @@ impl RevisionIds {
             for node in dom.descendants_and_self(root, None) {
                 if dom
                     .name(node)
-                    .is_some_and(|name| crate::validate::has_unique_revision_id(&name))
+                    .is_some_and(|name| crate::validate_dom::has_unique_revision_id(&name))
                     && let Some(id) = dom
                         .attribute(node, &W::id())
                         .and_then(|id| id.parse::<u64>().ok())
