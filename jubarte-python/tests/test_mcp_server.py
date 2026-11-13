@@ -126,6 +126,19 @@ def test_text_reads_a_file_under_root_and_refuses_one_outside(tmp_path: Path) ->
     assert "outside root" in error_text(dotted)
 
 
+def test_a_containment_error_does_not_name_the_root_or_the_path(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside.docx"
+    outside.write_bytes(make_document("outside text"))
+    (bad,) = call(root, ("docx_text", {"path": str(outside)}))
+    text = error_text(bad)
+    assert "outside root" in text
+    assert str(root) not in text
+    assert outside.name not in text
+    assert "No such file" not in text
+
+
 def test_relative_paths_resolve_against_root_not_the_process_cwd(tmp_path: Path) -> None:
     (tmp_path / "rel.docx").write_bytes(make_document("relative text"))
     (ok,) = call(tmp_path, ("docx_text", {"path": "rel.docx"}))
@@ -227,7 +240,30 @@ def test_edit_writes_outputs_under_out_dir_and_never_overwrites(tmp_path: Path) 
     assert "_json" not in paths["report"]
     assert paths["pages"] == []
     assert "overwrite" in error_text(second)
+    assert str(tmp_path / "review") not in error_text(second)
     assert not third.is_error
+
+
+def test_an_edit_plan_over_one_megabyte_is_refused_before_any_write(tmp_path: Path) -> None:
+    (tmp_path / "c.docx").write_bytes(make_document("The fee is ten."))
+    plan = {**PLAN, "padding": "x" * (1024 * 1024)}
+    assert len(json.dumps(plan)) > 1024 * 1024
+    (bad,) = call(tmp_path, ("docx_edit", {"path": "c.docx", "plan": plan, "out_dir": "out"}))
+    text = error_text(bad)
+    assert "1MB" in text
+    assert "xxxx" not in text
+    assert not (tmp_path / "out").exists()
+
+
+def test_resolve_accepts_only_accept_and_reject() -> None:
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from jubarte_redlines.mcp_server import resolve_action
+
+    assert resolve_action("accept") == "accept"
+    assert resolve_action("reject") == "reject"
+    with pytest.raises(ToolError, match="invalid action"):
+        resolve_action("changes")
 
 
 def test_edit_can_render_the_redline(tmp_path: Path) -> None:
