@@ -1302,12 +1302,13 @@ pub(super) fn story(
                 out.push_str(&super::math::omml(latex, *display, kind, &mut mark));
             }
             Item::Run(run) => {
-                // Text whose ids the view spent on the row's mark: the
-                // row's mark is the change, and the text has none of its
-                // own. A change the view names no ids for is Word's shape,
-                // the row's mark and the text's.
-                // Each cell's text is its own change (`{++x1++}{r108}`
-                // twice): one that names only the row's ids is carried too.
+                // Text whose ids the view spent on an inferred row mark:
+                // the row's mark is the change, and the text has none of
+                // its own. A change the view names no ids for is Word's
+                // shape, the row's mark and the text's. A row the table
+                // line names is another carrier, so text that names that
+                // same id keeps its own mark. A cell's own mark still
+                // carries text that names only that cell's id.
                 let carried = match (row_change, run.change) {
                     (Some((row_kind, row_by)), Some((kind, by))) if row_kind == kind => {
                         let named = |serial: u32| {
@@ -1324,17 +1325,16 @@ pub(super) fn story(
                         }
                     }
                     _ => false,
-                } || [cell_change, row_own].into_iter().any(|own| {
-                    // Likewise a cell's or a row's own insertion or deletion.
-                    match (own, run.change) {
-                        (Some((own_kind, id)), Some((kind, by))) if own_kind == kind => context
-                            .document
-                            .revision_ids
-                            .get(&by)
-                            .is_some_and(|ids| ids.as_slice() == [id]),
-                        _ => false,
-                    }
-                });
+                } || matches!(
+                    (cell_change, run.change),
+                    (Some((own_kind, id)), Some((kind, by)))
+                        if own_kind == kind
+                            && context
+                                .document
+                                .revision_ids
+                                .get(&by)
+                                .is_some_and(|ids| ids.as_slice() == [id])
+                );
                 if carried {
                     close_mark(context, &natural, &mut out, &mut open);
                 } else if open != run.change

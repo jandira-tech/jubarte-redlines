@@ -53,6 +53,15 @@ INSTRUCTIONS = (
 
 _READ = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 _WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False)
+_RESOLVE_ACTIONS = frozenset({"accept", "reject"})
+_PLAN_LIMIT = 1024 * 1024
+
+
+def resolve_action(action: str) -> str:
+    """The only document methods ``docx_accept`` and ``docx_reject`` may call."""
+    if action not in _RESOLVE_ACTIONS:
+        raise ToolError(f"invalid action {action!r}")
+    return action
 
 
 def _plain(value: Any) -> Any:
@@ -76,14 +85,14 @@ def build_server(*, root: Path) -> MCPServer:
         # resolve() follows symlinks, so a link pointing out of root is refused.
         p = (root / Path(path).expanduser()).resolve()
         if not p.is_relative_to(root):
-            raise ToolError(f"{path} is outside root {root}")
+            raise ToolError("path is outside root directory")
         # Keep the lexical path for capability-relative operations; resolving
         # is only an early diagnostic, never the authorization for actual I/O.
         # The lexical path must lie under root too: an outside link that
         # resolves inside it has no root-relative name to open.
         lexical = root / Path(path).expanduser()
         if not lexical.is_relative_to(root):
-            raise ToolError(f"{path} is outside root {root}")
+            raise ToolError("path is outside root directory")
         return lexical
 
     def load(path: str) -> Document:
@@ -91,16 +100,16 @@ def build_server(*, root: Path) -> MCPServer:
         try:
             return Document(authority.read(p.relative_to(root).as_posix()), p.name)
         except OSError as e:
-            raise ToolError(f"cannot read {path}: {e.strerror or e}") from e
+            raise ToolError(f"cannot read file {path}: {e.strerror or 'OS error'}") from e
 
     def fresh(path: Path, overwrite: bool) -> Path:
         # An output may itself be a symlink (dangling ones report exists() False);
         # resolve it so a write can never follow a link out of root.
         target = path.resolve()
         if not target.is_relative_to(root):
-            raise ToolError(f"{path} is outside root {root}")
+            raise ToolError("path is outside root directory")
         if path.exists() and not overwrite:
-            raise ToolError(f"{path} exists; pass overwrite=true to replace it")
+            raise ToolError("file exists; pass overwrite=true to replace it")
         return path
 
     def publish(files: list[tuple[Path, bytes | str]], overwrite: bool) -> None:
@@ -110,7 +119,7 @@ def build_server(*, root: Path) -> MCPServer:
                 overwrite,
             )
         except (OSError, ValueError) as e:
-            raise ToolError(f"outside root or unsafe/unwritable output: {e}") from e
+            raise ToolError("outside root or unsafe/unwritable output") from e
 
     def write(path: Path, data: bytes | str, overwrite: bool) -> str:
         publish([(path, data)], overwrite)
@@ -172,6 +181,8 @@ def build_server(*, root: Path) -> MCPServer:
         pdf or png_dpi the redline is also rendered to redline.pdf and
         redline-page-NN.png. Existing files are kept unless overwrite is true.
         """
+        if len(json.dumps(plan)) > _PLAN_LIMIT:
+            raise ToolError("Edit plan exceeds 1MB limit")
         doc = load(path)
         out = contained(out_dir)
         try:
@@ -298,7 +309,7 @@ def build_server(*, root: Path) -> MCPServer:
     ) -> dict[str, Any]:
         doc = load(path)
         target = fresh(contained(out), overwrite)
-        method = getattr(doc, action)
+        method = getattr(doc, resolve_action(action))
         result = engine(lambda: method(ids=ids, authors=authors, kinds=kinds))
         return {"out": write(target, result.to_bytes(), overwrite), "remaining": len(engine(result.changes))}
 

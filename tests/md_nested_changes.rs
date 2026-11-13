@@ -3183,3 +3183,34 @@ fn an_id_line_names_a_joined_change_once() {
         assert!(deletions.iter().any(|mark| mark.contains(&id)), "{xml}");
     }
 }
+
+/// An explicit row clause and cell text that name the same id are two
+/// carriers. The cell runs keep their marks, and the row clause comes back.
+#[test]
+fn an_explicit_row_rev_keeps_the_cell_marks_that_name_its_id() {
+    let markdown = "\
+---
+view: tracked
+authors:
+  AL: Ana Lima
+---
+
+<!-- t0 1x2, rev r10 @AL in t0.row0 -->
+| {++x1++}{r10 @AL} | {++x2++}{r10 @AL} |
+|-|-|
+";
+    let docx = written(markdown);
+    let xml = part_string(&docx, "word/document.xml").expect("the body part");
+    for text in ["x1", "x2"] {
+        let held = xml.split("<w:ins").skip(1).any(|mark| {
+            let body = mark.split_once("</w:ins>").map_or("", |(body, _)| body);
+            body.contains(&format!(">{text}<"))
+        });
+        assert!(held, "the cell text {text} keeps its own insertion\n{xml}");
+    }
+    let view = agent(&docx);
+    assert!(
+        view.contains("in t0.row0"),
+        "the row clause comes back\n{view}"
+    );
+}
