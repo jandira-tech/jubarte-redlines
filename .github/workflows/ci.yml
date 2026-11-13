@@ -98,7 +98,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [self-hosted, macos-latest, windows-latest]
+        os: [self-hosted, blacksmith-6vcpu-macos-15, blacksmith-4vcpu-windows-2025]
     runs-on: ${{ matrix.os }}
     steps:
       # tests/corpus keeps the bench's file names, some past Windows'
@@ -214,7 +214,7 @@ jobs:
 
   fuzz-smoke:
     name: fuzz smoke (60 s per target)
-    runs-on: self-hosted
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     # Four ordinary runs, two native runs, and a cold instrumented C build.
     # A cold sanitizer build of jubarte takes 13 min on a free M-series Mac
     # and over 25 min on the shared self-hosted runners: under the old
@@ -223,7 +223,7 @@ jobs:
     # started cold again. 90 minutes lets a cold run finish and save it.
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
       # master branch: the toolchain comes from the input below, not the ref.
@@ -275,9 +275,9 @@ jobs:
 
   package:
     name: publish dry run
-    runs-on: self-hosted
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
@@ -286,9 +286,9 @@ jobs:
 
   python:
     name: python bindings
-    runs-on: self-hosted
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
@@ -302,9 +302,9 @@ jobs:
 
   convert-sweep-unit:
     name: convert-sweep unit
-    runs-on: self-hosted
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
       # Python 3.12 is the scripts' floor, so they are tested on it. The
@@ -363,10 +363,10 @@ jobs:
   # (docs/superpowers/specs/2026-10-13-ids-and-markdown-roundtrip.md §0).
   roundtrip:
     name: md -> docx -> md, exact
-    runs-on: self-hosted
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
