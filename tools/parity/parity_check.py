@@ -493,7 +493,7 @@ def run_python_jobs(jobs: dict, jobs_path: Path, results_path: Path,
         old_argv = sys.argv
         try:
             sys.argv = ["py-driver", str(jobs_path), "", str(results_path)]
-            exec(PY_DRIVER, {"__name__": "__main__"})  # our own source
+            exec(PY_DRIVER, {"__name__": "__main__"})  # noqa: S102 — PY_DRIVER is this file's own source
         except SystemExit:
             raise
         except Exception as e:  # import failure included; KeyboardInterrupt propagates
