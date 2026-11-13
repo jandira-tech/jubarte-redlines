@@ -161,6 +161,32 @@ fn a_paragraph_of_only_formatted_spaces_stays_exact_in_the_plain_view() {
 }
 
 #[test]
+fn a_no_break_space_round_trips_in_the_agent_view() {
+    let nbsp = "\u{a0}";
+    let body = format!(
+        "<w:p>{}{}{}</w:p>",
+        run("", "  "),
+        run("", &format!("A{nbsp}B")),
+        run("<w:u w:val=\"single\"/>", &format!("{nbsp}C"))
+    );
+    let (first, document, second) = round_trip(&docx(&body));
+    assert!(
+        first.contains(&format!("&#32;&#32;A{nbsp}B<u>{nbsp}C</u>")),
+        "{first}"
+    );
+    assert_eq!(
+        marked_text(&document, "<w:u "),
+        format!("{nbsp}C"),
+        "{first}\n{document}"
+    );
+    assert!(document.contains(nbsp), "{document}");
+    assert_eq!(second, first);
+    let plain_view = plain(&docx(&body));
+    assert!(!plain_view.contains(nbsp), "{plain_view}");
+    assert!(plain_view.contains("A B"), "{plain_view}");
+}
+
+#[test]
 fn a_leading_space_keeps_its_strike() {
     let body = format!(
         "<w:p>{}{}</w:p>",

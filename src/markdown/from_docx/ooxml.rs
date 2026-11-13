@@ -1039,9 +1039,15 @@ pub(crate) fn code_fence(text: &str) -> (String, String) {
     (format!("{fence}{pad}"), format!("{pad}{fence}"))
 }
 
+/// Whitespace [`str::trim`] drops, except a no-break space. U+00A0 is a
+/// character Word will not break a line on, so the agent view keeps it.
+fn is_trimmed_ws(c: char) -> bool {
+    c.is_whitespace() && c != '\u{a0}'
+}
+
 fn split_ws(s: &str) -> (&str, &str, &str) {
-    let start = s.len() - s.trim_start().len();
-    let end = s.trim_end().len().max(start);
+    let start = s.len() - s.trim_start_matches(is_trimmed_ws).len();
+    let end = s.trim_end_matches(is_trimmed_ws).len().max(start);
     (&s[..start], &s[start..end], &s[end..])
 }
 
@@ -1049,8 +1055,9 @@ fn split_ws(s: &str) -> (&str, &str, &str) {
 ///
 /// The agent view (`keep_spaces`) keeps a line's leading spaces. Markdown
 /// drops a literal one, so each is `&#32;`, which the writer reads back as
-/// a space. A line of spaces only stays empty. A code block (`verbatim`)
-/// keeps its indent and only loses trailing spaces.
+/// a space. A no-break space stays U+00A0, including inside a mark. A line
+/// of spaces only stays empty. A code block (`verbatim`) keeps its indent
+/// and only loses trailing spaces.
 fn tidy_inline(s: &str, keep_spaces: bool, verbatim: bool) -> String {
     let mut lines = Vec::new();
     for line in s.split('\n') {
@@ -1080,6 +1087,11 @@ fn tidy_inline(s: &str, keep_spaces: bool, verbatim: bool) -> String {
                 // spaces are the equation's, and Word draws each one.
                 let (text, math, next) = equation_split(rest);
                 for c in text.chars() {
+                    if keep_spaces && c == '\u{a0}' {
+                        out.push(c);
+                        prev_space = false;
+                        continue;
+                    }
                     let is_space = c == ' ' || c == '\u{a0}';
                     if is_space {
                         if keep_spaces || !prev_space {
@@ -1137,14 +1149,14 @@ fn equation_split(line: &str) -> (&str, &str, &str) {
 /// One line of [`tidy_inline`].
 fn finish_line(line: &str, keep_spaces: bool, verbatim: bool) -> String {
     if verbatim {
-        return line.trim_end().to_string();
+        return line.trim_end_matches(is_trimmed_ws).to_string();
     }
     if !keep_spaces {
         return line.trim().to_string();
     }
-    let end = line.trim_end();
+    let end = line.trim_end_matches(is_trimmed_ws);
     let spaces = end.chars().take_while(|c| *c == ' ').count();
-    let rest = end[spaces..].trim_start();
+    let rest = end[spaces..].trim_start_matches(is_trimmed_ws);
     if spaces == 0 || rest.is_empty() {
         return rest.to_string();
     }
@@ -1772,6 +1784,41 @@ mod ooxml_package_boundary_tests {
         let mut plain = Inline::default();
         plain.push("  but", false, false, None);
         assert_eq!(plain.render(true), "but");
+    }
+
+    #[test]
+    fn an_agent_line_keeps_a_no_break_space() {
+        let nbsp = "\u{a0}";
+        let mut inline = Inline::default();
+        inline.keep_spaces();
+        inline.push(&format!("A{nbsp}B"), false, false, None);
+        assert_eq!(inline.render(true), format!("A{nbsp}B"));
+        let mut leading = Inline::default();
+        leading.keep_spaces();
+        leading.push(&format!("  {nbsp}but"), false, false, None);
+        assert_eq!(leading.render(true), format!("&#32;&#32;{nbsp}but"));
+        let mut trailing = Inline::default();
+        trailing.keep_spaces();
+        trailing.push(&format!("but{nbsp}"), false, false, None);
+        assert_eq!(trailing.render(true), format!("but{nbsp}"));
+        let mut underlined = Inline::default();
+        underlined.keep_spaces();
+        underlined.push_styled(
+            &format!("{nbsp}C{nbsp}"),
+            Marks {
+                underline: true,
+                ..Marks::default()
+            },
+            None,
+        );
+        assert_eq!(underlined.render(true), format!("<u>{nbsp}C{nbsp}</u>"));
+        let mut only = Inline::default();
+        only.keep_spaces();
+        only.push(nbsp, false, false, None);
+        assert_eq!(only.render(true), nbsp);
+        let mut plain = Inline::default();
+        plain.push(&format!("A{nbsp}B"), false, false, None);
+        assert_eq!(plain.render(true), "A B");
     }
 
     #[test]
