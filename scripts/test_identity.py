@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import contextlib
+import io
 import shutil
 import subprocess
 import sys
@@ -264,7 +266,8 @@ class Identity(unittest.TestCase):
         try:
             with unittest.mock.patch.object(identity.Path, "open", tracking_open):
                 with unittest.mock.patch.object(sys, "argv", argv):
-                    code = identity.main()
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        code = identity.main()
             self.assertEqual(code, 1)
             self.assertEqual(len(opened), 1)
             self.assertTrue(opened[0].closed, "identity.log was still open when main returned")
