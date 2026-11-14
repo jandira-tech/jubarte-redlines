@@ -32,6 +32,22 @@ def facts(pages, page_count=None):
 # --- F12: the WASM text tolerance ---------------------------------------------
 
 
+def test_an_interrupt_in_the_inprocess_driver_propagates(tmp_path, monkeypatch):
+    jobs = tmp_path / "jobs.json"
+    results = tmp_path / "results.json"
+    monkeypatch.setattr(pc, "PY_DRIVER", "raise KeyboardInterrupt\n")
+    with pytest.raises(KeyboardInterrupt):
+        pc.run_python_jobs({"author": "A", "date": "2026-01-01T00:00:00Z", "jobs": []}, jobs, results, None, 1.0)
+
+
+def test_a_driver_exception_stays_a_result(tmp_path, monkeypatch):
+    jobs = tmp_path / "jobs.json"
+    results = tmp_path / "results.json"
+    monkeypatch.setattr(pc, "PY_DRIVER", "raise RuntimeError('driver blew up')\n")
+    out = pc.run_python_jobs({"author": "A", "date": "2026-01-01T00:00:00Z", "jobs": []}, jobs, results, None, 1.0)
+    assert out["error"].startswith("RuntimeError:")
+
+
 def test_a_lost_bullet_fails():
     out = pc.compare_pdfs({"cli": facts(["• one", "• two"]), "wasm": facts(["one", "two"])})
     assert out["mismatches"], "a bullet painted only by the native build must fail"

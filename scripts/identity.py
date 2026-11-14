@@ -179,41 +179,43 @@ def main() -> int:
         return 2
     args.out_dir.mkdir(parents=True, exist_ok=True)
     log = (args.out_dir / "identity.log").open("w")
+    try:
 
-    def say(line: str) -> None:
-        print(line, flush=True)
-        log.write(line + "\n")
+        def say(line: str) -> None:
+            print(line, flush=True)
+            log.write(line + "\n")
 
-    say(f"A: {shown[0]}")
-    say(f"B: {shown[1]}")
+        say(f"A: {shown[0]}")
+        say(f"B: {shown[1]}")
 
-    def one(job: Job) -> tuple[Job, str | None, bool]:
-        paths = (args.out_dir / f"{job.name}-a{job.suffix}", args.out_dir / f"{job.name}-b{job.suffix}")
-        a = run(args.bin_a, job, paths[0], args.timeout)
-        b = run(args.bin_b, job, paths[1], args.timeout)
-        problem = compare(job, a, b, paths)
-        if problem is None:
-            for p in paths:
-                p.unlink(missing_ok=True)
-        return job, problem, a.data is None and b.data is None
+        def one(job: Job) -> tuple[Job, str | None, bool]:
+            paths = (args.out_dir / f"{job.name}-a{job.suffix}", args.out_dir / f"{job.name}-b{job.suffix}")
+            a = run(args.bin_a, job, paths[0], args.timeout)
+            b = run(args.bin_b, job, paths[1], args.timeout)
+            problem = compare(job, a, b, paths)
+            if problem is None:
+                for p in paths:
+                    p.unlink(missing_ok=True)
+            return job, problem, a.data is None and b.data is None
 
-    with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-        results = list(pool.map(one, jobs))
-    problems = [p for _, p, _ in results if p is not None]
-    empty = sum(1 for _, p, none in results if p is None and none)
-    for line in problems:
-        say(line)
-    same = len(results) - len(problems)
-    summary = f"{len(results)} jobs: {same} identical"
-    if problems:
-        summary += f", {len(problems)} different"
-    if empty:
-        summary += f" ({empty} of them no output from either)"
-    say(summary)
-    if empty == len(results):
-        say("identity: no job wrote an output, so the run proves nothing (a flag both binaries reject?)")
-        return 1
-    log.close()
+        with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
+            results = list(pool.map(one, jobs))
+        problems = [p for _, p, _ in results if p is not None]
+        empty = sum(1 for _, p, none in results if p is None and none)
+        for line in problems:
+            say(line)
+        same = len(results) - len(problems)
+        summary = f"{len(results)} jobs: {same} identical"
+        if problems:
+            summary += f", {len(problems)} different"
+        if empty:
+            summary += f" ({empty} of them no output from either)"
+        say(summary)
+        if empty == len(results):
+            say("identity: no job wrote an output, so the run proves nothing (a flag both binaries reject?)")
+            return 1
+    finally:
+        log.close()
     return 1 if problems else 0
 
 
