@@ -36,7 +36,7 @@
 //! bindings over them.
 
 mod anchor;
-pub(crate) mod borders;
+pub(crate) use crate::borders;
 mod critic;
 pub(crate) mod data_stores;
 mod diff;

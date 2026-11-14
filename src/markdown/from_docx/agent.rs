@@ -955,11 +955,11 @@ pub(super) fn shown_branch(alternate: &Element) -> Option<&Element> {
 }
 
 fn requires_understood(choice: &Element) -> bool {
-    crate::comparer::finalize::requires_list_understood(choice.attr("Requires"), |prefix| {
+    crate::markup_simplifier::requires_list_understood(choice.attr("Requires"), |prefix| {
         choice
             .namespaces
             .get(prefix)
-            .is_some_and(|uri| crate::comparer::finalize::word_understands_namespace(uri))
+            .is_some_and(|uri| crate::markup_simplifier::word_understands_namespace(uri))
     })
 }
 

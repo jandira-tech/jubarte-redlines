@@ -934,7 +934,7 @@ fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
     // The borders the table and its cells carry themselves, as a table
     // line prints them.
     let borders = |props: Option<NodeId>, all: &[&'static str]| -> String {
-        use crate::markdown::borders::{self, Border};
+        use crate::borders::{self, Border};
         let found: Vec<_> = props
             .map(|x| dom.elements(x, None))
             .unwrap_or_default()
@@ -955,7 +955,7 @@ fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
     };
     let own = borders(
         tblpr.and_then(|x| child(dom, x, "tblBorders")),
-        &crate::markdown::borders::TABLE_SIDES,
+        &crate::borders::TABLE_SIDES,
     );
     if !own.is_empty() {
         s.push_str(&format!(" borders[{own}]"));
@@ -974,7 +974,7 @@ fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
         }
         let own = borders(
             child(dom, tc, "tcPr").and_then(|x| child(dom, x, "tcBorders")),
-            &crate::markdown::borders::CELL_SIDES,
+            &crate::borders::CELL_SIDES,
         );
         if !own.is_empty() {
             *cell_borders.entry(own).or_default() += 1;

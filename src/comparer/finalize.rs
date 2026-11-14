@@ -1307,56 +1307,10 @@ pub fn resolve_alternate_content(dom: &mut Dom, root: NodeId) {
 /// [`resolve_alternate_content`] for a consumer that understands the
 /// namespaces `understood` accepts: the renderer cannot draw every Choice
 /// Word can (#1876).
-pub(crate) fn resolve_alternate_content_with(
-    dom: &mut Dom,
-    root: NodeId,
-    understood: fn(&str) -> bool,
-) {
-    for ac in dom.descendants_and_self(root, Some(&MC::alternate_content())) {
-        // A nested AltContent inside a discarded Fallback may already be detached.
-        if dom.parent(ac).is_none() {
-            continue;
-        }
-        // Keep drawing/VML fallbacks (Word does); resolve only text feature-gating.
-        let has_drawing = !dom.descendants(ac, Some(&W::drawing())).is_empty()
-            || !dom.descendants(ac, Some(&W::pict())).is_empty();
-        if has_drawing {
-            continue;
-        }
-        // Anchor-internal wrappers (e.g. wp:positionH gating wp14:pctPosHOffset
-        // vs a wp:posOffset fallback) must survive verbatim: Word keeps them,
-        // and resolving to the wp14 Choice leaves the parent schema-EMPTY for
-        // consumers that ignore wp14 → "unreadable content" (strict01 cover
-        // page, bisected in real Word). The whole w:drawing is one atom, so
-        // the original hoisting concern doesn't apply inside it.
-        let inside_drawing = dom
-            .ancestors_and_self(ac, None)
-            .into_iter()
-            .any(|a| dom.name_is(a, &W::drawing()));
-        if inside_drawing {
-            continue;
-        }
-        // MCE branch selection (ISO/IEC 29500-3 §10.1.2; mirrors the SDK's
-        // `mce_choice_replacement_child_bytes` in ooxmlsdk `common/xml.rs`): pick
-        // the FIRST `mc:Choice` whose `@Requires` namespaces are all understood,
-        // else the `mc:Fallback`. Taking `mc:Choice` unconditionally would resolve
-        // to content Word would never keep when the first Choice gates on a
-        // namespace this document doesn't even bind, or when a later Choice/Fallback
-        // is the one Word selects. "Understood" here means every prefix in
-        // `@Requires` is bound to a namespace Word knows: you cannot satisfy a
-        // requirement for a vocabulary the document never declares, and Word
-        // passes over one it declares but does not know (#1876).
-        let src = dom
-            .elements(ac, Some(&MC::choice()))
-            .into_iter()
-            .find(|&choice| choice_requires_understood(dom, choice, understood))
-            .or_else(|| dom.element(ac, &MC::fallback()));
-        if let Some(src) = src {
-            let kids = dom.nodes(src);
-            dom.replace_with(ac, &kids);
-        }
-    }
-}
+pub(crate) use crate::markup_simplifier::{
+    choice_requires_understood, requires_list_understood, resolve_alternate_content_with,
+    selected_alternate_branch, word_understands_namespace,
+};
 
 /// Strip non-standard `w:`-namespace children from `<w:sdtPr>`.
 ///
@@ -1484,79 +1438,6 @@ pub fn unwrap_content_controls_in_pure_revisions(dom: &mut Dom, root: NodeId) {
         }
         unwrap_content_controls(dom, p);
     }
-}
-
-/// True if every namespace prefix listed in a `mc:Choice`'s `@Requires` is bound,
-/// where it is named, to a namespace `understood` accepts (Word's:
-/// [`word_understands_namespace`]). Word 16 passes over a Choice gated on a
-/// namespace it does not know, though the document declares it, for the next
-/// Choice, else the Fallback (#1876, probed). An absent/empty `@Requires` is
-/// vacuously true (the schema requires it, but be lenient). The `@Requires`
-/// attribute is unprefixed (no namespace) per the MCE schema.
-pub(crate) fn choice_requires_understood(
-    dom: &Dom,
-    choice: NodeId,
-    understood: fn(&str) -> bool,
-) -> bool {
-    static REQUIRES: std::sync::OnceLock<crate::xmllinq::XName> = std::sync::OnceLock::new();
-    let requires_name = REQUIRES.get_or_init(|| XNamespace::none().name("Requires"));
-    let Some(requires) = dom.attribute(choice, requires_name) else {
-        return true;
-    };
-    requires
-        .split_whitespace()
-        .all(|prefix| prefix_namespace(dom, choice, prefix).is_some_and(|uri| understood(&uri)))
-}
-
-/// The namespace the nearest `xmlns:prefix` declaration on `node` or its
-/// ancestors binds `prefix` to.
-fn prefix_namespace(dom: &Dom, node: NodeId, prefix: &str) -> Option<String> {
-    dom.ancestors_and_self(node, None)
-        .into_iter()
-        .find_map(|anc| {
-            dom.attributes_iter(anc)
-                .find(|(name, _)| dom.is_namespace_declaration(name) && name.local_name() == prefix)
-                .map(|(_, uri)| uri.to_string())
-        })
-}
-
-/// A namespace Word knows: the OOXML standard's (transitional and strict),
-/// Office's own extensions, and VML's.
-pub(crate) fn word_understands_namespace(uri: &str) -> bool {
-    [
-        "http://schemas.openxmlformats.org/",
-        "http://purl.oclc.org/ooxml/",
-        "http://schemas.microsoft.com/office/",
-        "urn:schemas-microsoft-com:",
-    ]
-    .iter()
-    .any(|root| uri.starts_with(root))
-}
-
-/// Every prefix in a Requires list passes `prefix_understood`. No list means
-/// the choice stands.
-pub(crate) fn requires_list_understood(
-    requires: Option<&str>,
-    prefix_understood: impl Fn(&str) -> bool,
-) -> bool {
-    requires.is_none_or(|requires| requires.split_whitespace().all(prefix_understood))
-}
-
-/// The branch Word shows: the first Choice whose Requires it understands,
-/// otherwise the Fallback.
-pub(crate) fn selected_alternate_branch(dom: &Dom, alternate: NodeId) -> Option<NodeId> {
-    dom.elements(alternate, Some(&MC::choice()))
-        .into_iter()
-        .find(|&choice| {
-            requires_list_understood(
-                dom.attribute(choice, &XNamespace::none().name("Requires")),
-                |prefix| {
-                    prefix_namespace(dom, choice, prefix)
-                        .is_some_and(|uri| word_understands_namespace(&uri))
-                },
-            )
-        })
-        .or_else(|| dom.element(alternate, &MC::fallback()))
 }
 
 /// True when `node` sits in a Choice or Fallback that Word does not show.

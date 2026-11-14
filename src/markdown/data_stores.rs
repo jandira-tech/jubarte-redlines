@@ -27,18 +27,12 @@ use quick_xml::events::{BytesStart, Event};
 
 use super::from_docx::{Element, element_from, parse_xml};
 use super::xml::escape;
+pub(crate) use crate::data_stores::{built_in, stores};
 use crate::opc::{PartFs, relative_rel_target};
 
 const RELS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const DS_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/customXml";
 const PROPS_CT: &str = "application/vnd.openxmlformats-officedocument.customXmlProperties+xml";
-
-/// Word's own stores, which `docProps` holds: the core and the extended
-/// document properties.
-const BUILT_IN: [&str; 2] = [
-    "{6C3C8BC8-F283-45AE-878A-BAB7291924A1}",
-    "{6668398D-A668-4E3E-A5EB-62B293D839F1}",
-];
 
 /// One control's binding: its store, the path's steps (namespace URI and
 /// local name; `None` when the path is not a simple one), and the value
@@ -147,44 +141,6 @@ pub(crate) fn write_missing(package: &mut PartFs, main: &str, warnings: &mut Vec
         let xml = unbound(xml, &store, &xpath);
         package.set_part(&part, xml.into_bytes());
     }
-}
-
-/// The stores the main part reaches, by item ID (upper case): each
-/// `customXml` relationship's item, through its `customXmlProps`
-/// relationship to the properties naming it. Word loads those.
-pub(crate) fn stores(package: &PartFs, main: &str) -> Vec<String> {
-    let related = |source: &str, kind: &str| -> Vec<String> {
-        package
-            .read_rels_for(source)
-            .into_iter()
-            .flat_map(|rels| &rels.items)
-            // Transitional's type or Strict's: the same last segment.
-            .filter(|r| {
-                r.rel_type.rsplit('/').next() == Some(kind)
-                    && r.target_mode.as_deref() != Some("External")
-            })
-            .map(|r| {
-                package
-                    .resolve_rel_target(source, &r.target)
-                    .trim_start_matches('/')
-                    .to_string()
-            })
-            .collect()
-    };
-    related(main, "customXml")
-        .into_iter()
-        .filter(|item| package.part_bytes(item).is_some())
-        .flat_map(|item| related(&item, "customXmlProps"))
-        .filter_map(|props| parse_xml(package.part_bytes(&props)?).ok())
-        .filter(|root| root.is("datastoreItem"))
-        .filter_map(|root| root.attr("itemID").map(str::to_ascii_uppercase))
-        .collect()
-}
-
-/// Whether a binding names one of Word's own stores, which `docProps`
-/// holds.
-pub(crate) fn built_in(store: &str) -> bool {
-    BUILT_IN.iter().any(|id| id.eq_ignore_ascii_case(store))
 }
 
 /// Every bound control under `e`, nested ones too.
