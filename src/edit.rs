@@ -3281,7 +3281,7 @@ impl<'p> Transaction<'p> {
         let date = plan
             .date
             .clone()
-            .unwrap_or_else(crate::convert::utc_now_iso8601);
+            .unwrap_or_else(crate::util::datetime::utc_now_iso8601);
         let initials = plan.initials.clone().unwrap_or_else(|| {
             plan.author
                 .split_whitespace()
@@ -10430,26 +10430,7 @@ fn apply_run_format(dom: &mut Dom, rpr: NodeId, format: &RunFormat) {
     }
 }
 
-/// `ST_HighlightColor`.
-pub(crate) const HIGHLIGHTS: &[&str] = &[
-    "black",
-    "blue",
-    "cyan",
-    "green",
-    "magenta",
-    "red",
-    "yellow",
-    "white",
-    "darkBlue",
-    "darkCyan",
-    "darkGreen",
-    "darkMagenta",
-    "darkRed",
-    "darkYellow",
-    "darkGray",
-    "lightGray",
-    "none",
-];
+pub(crate) use crate::ooxml::HIGHLIGHTS;
 
 /// A format must name a real highlight colour and apply to some text.
 fn check_format(format: &RunFormat, text: &str) -> Result<(), String> {

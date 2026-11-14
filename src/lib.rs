@@ -123,11 +123,13 @@ pub mod ids;
 /// Read-only paragraph/package views and the Markdown projection for agents.
 pub mod inspect;
 pub mod legacy_doc;
+pub(crate) mod limits;
 pub mod markdown;
 /// Markup simplification (PowerTools `MarkupSimplifier` port).
 pub mod markup_simplifier;
 /// WordprocessingML and related namespace / `XName` constants.
 pub mod namespaces;
+pub(crate) mod ooxml;
 /// Open Packaging Conventions adapter (`PartFs`).
 pub mod opc;
 /// P0-LAB-01 stage counters/timers — no-ops unless `perf-profile` is enabled.

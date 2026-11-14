@@ -244,11 +244,11 @@ pub fn select_comments(
                 if record
                     .date
                     .as_deref()
-                    .and_then(crate::convert::timestamp_order_key)
+                    .and_then(crate::util::datetime::timestamp_order_key)
                     >= best
                         .date
                         .as_deref()
-                        .and_then(crate::convert::timestamp_order_key)
+                        .and_then(crate::util::datetime::timestamp_order_key)
                 {
                     *best = record;
                 }
@@ -686,7 +686,7 @@ impl CommentFamily {
     /// The comment instant, sharing the revision reader's offset and fallback rule.
     pub(crate) fn reported_date(&self, id: u32) -> Option<String> {
         let meta = self.meta.get(&id)?;
-        crate::changes::reported_date(
+        crate::util::datetime::reported_date(
             self.dom.attribute(meta.node, &W::date()),
             meta.cex_row
                 .and_then(|row| self.dom.attribute(row, &XName::get("dateUtc", CEX))),

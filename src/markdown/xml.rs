@@ -3481,8 +3481,10 @@ pub(super) fn offset_date_utc(date: &str) -> Option<String> {
     if !matches!(word_date(date), Cow::Owned(_)) {
         return None;
     }
-    let (seconds, fraction) = crate::convert::timestamp_order_key(date)?;
-    Some(crate::convert::timestamp_with_offset(seconds, fraction, 0))
+    let (seconds, fraction) = crate::util::datetime::timestamp_order_key(date)?;
+    Some(crate::util::datetime::timestamp_with_offset(
+        seconds, fraction, 0,
+    ))
 }
 
 fn legacy_date_attribute(date: &str) -> String {

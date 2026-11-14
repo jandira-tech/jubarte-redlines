@@ -1381,7 +1381,7 @@ fn html_attribute(html: &str, name: &str) -> Option<String> {
                 .split(|c: char| c.is_whitespace() || c == '>')
                 .next()?,
         };
-        return Some(crate::convert::altchunk::decode_entities(raw));
+        return Some(crate::util::decode_entities(raw));
     }
     None
 }
@@ -1452,7 +1452,7 @@ fn html_block_text(html: &str) -> (Option<String>, Vec<String>) {
     let mut paragraphs = Vec::new();
     let mut text = String::new();
     let flush = |text: &mut String, paragraphs: &mut Vec<String>| {
-        let decoded = crate::convert::altchunk::decode_entities(text);
+        let decoded = crate::util::decode_entities(text);
         let words: Vec<&str> = decoded.split_whitespace().collect();
         if !words.is_empty() {
             paragraphs.push(words.join(" "));
@@ -1684,7 +1684,7 @@ fn hl_color_class(class: &str) -> Option<&'static str> {
         .get(..3)
         .filter(|prefix| prefix.eq_ignore_ascii_case("hl-"))
         .map(|_| &class[3..])?;
-    crate::edit::HIGHLIGHTS
+    crate::ooxml::HIGHLIGHTS
         .iter()
         .copied()
         .find(|h| *h != "none" && h.eq_ignore_ascii_case(colour))

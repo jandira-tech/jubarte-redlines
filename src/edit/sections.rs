@@ -264,39 +264,7 @@ impl Geometry {
     }
 }
 
-/// `CT_SectPr` child order.
-const SECT_ORDER: &[&str] = &[
-    "headerReference",
-    "footerReference",
-    "footnotePr",
-    "endnotePr",
-    "type",
-    "pgSz",
-    "pgMar",
-    "paperSrc",
-    "pgBorders",
-    "lnNumType",
-    "pgNumType",
-    "cols",
-    "formProt",
-    "vAlign",
-    "noEndnote",
-    "titlePg",
-    "textDirection",
-    "bidi",
-    "rtlGutter",
-    "docGrid",
-    "printerSettings",
-    "sectPrChange",
-];
-
-/// `local`'s position in [`SECT_ORDER`]; unknown names sort last.
-pub(crate) fn sect_rank(local: &str) -> usize {
-    SECT_ORDER
-        .iter()
-        .position(|&n| n == local)
-        .unwrap_or(SECT_ORDER.len())
-}
+pub(crate) use crate::ooxml::sect_rank;
 
 /// `sect`'s child `local`, created at its schema position when absent.
 fn sect_child(dom: &mut Dom, sect: NodeId, local: &str) -> NodeId {

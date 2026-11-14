@@ -25,7 +25,7 @@
 //!
 //! This module reads syntax only. Whether a story, paragraph, change or
 //! comment exists is decided against a document by `edit` (`-p`) and
-//! [`crate::changes`] (`--id`). Every number has one spelling: ASCII digits
+//! `changes` (`--id`). Every number has one spelling: ASCII digits
 //! without leading zeros. A colon long change id carries the `w:id` as the
 //! document spells it, so a change whose `w:id` the short form cannot spell
 //! (`007`) is still named. Every short id is safe unquoted in bash, csh and
@@ -73,7 +73,7 @@ pub(crate) const PARAGRAPH_SPELLINGS: &[&str] = &[
 ];
 
 /// Sample table-id spellings the capabilities manifest advertises
-/// ([`crate::capabilities::Ids::table`]); rows and cells sit under the
+/// (`capabilities::Ids::table`); rows and cells sit under the
 /// table, as in [`PARAGRAPH_SPELLINGS`].
 pub(crate) const TABLE_SPELLINGS: &[&str] = &["t0"];
 

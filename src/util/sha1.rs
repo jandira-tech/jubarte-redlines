@@ -91,7 +91,7 @@ pub fn hex_decode_20(s: &str) -> Option<[u8; 20]> {
 /// SHA-1 of the concatenation of the 40-char lowercase hex encodings of
 /// each digest. Byte-identical to
 /// `sha1_hex_parts(digests.map(|d| hex(d)))`. Used by
-/// [`crate::comparer::atoms::ComparisonUnitWord::new`] to hash a word
+/// `comparer::atoms::ComparisonUnitWord::new` to hash a word
 /// from its atoms' 20-byte digests without allocating a per-atom heap
 /// `String`.
 pub fn sha1_hex_of_digest_hexes<'a, I>(digests: I) -> String

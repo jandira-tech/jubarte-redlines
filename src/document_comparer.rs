@@ -36,28 +36,7 @@ impl std::fmt::Display for StoryDiffError {
 
 impl std::error::Error for StoryDiffError {}
 
-/// A story holds markup the comparer cannot flatten into atoms: a
-/// `w:subDoc`, `w:altChunk`, `w:contentPart` or custom XML markup.
-/// Carried inside [`OpcError::Io`]; callers can downcast its `get_ref()`.
-#[derive(Debug)]
-pub struct UnsupportedContentError {
-    /// The story and the element, such as
-    /// `original document: Document contains subDoc`.
-    pub message: String,
-}
-
-impl std::fmt::Display for UnsupportedContentError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", Self::CODE, self.message)
-    }
-}
-
-impl std::error::Error for UnsupportedContentError {}
-
-impl UnsupportedContentError {
-    /// The stable error code agents and bindings see.
-    pub const CODE: &'static str = "UNSUPPORTED_CONTENT";
-}
+pub use crate::limits::UnsupportedContentError;
 
 fn story_diff_error(part: &str, reason: &'static str) -> OpcError {
     crate::opc::refused(StoryDiffError {

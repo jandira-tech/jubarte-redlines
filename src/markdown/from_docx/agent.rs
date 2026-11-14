@@ -65,8 +65,9 @@ impl Handles {
             .iter()
             .all(|date| {
                 date == first
-                    || crate::convert::timestamp_order_key(date)
-                        .is_some_and(|key| Some(key) == crate::convert::timestamp_order_key(first))
+                    || crate::util::datetime::timestamp_order_key(date).is_some_and(|key| {
+                        Some(key) == crate::util::datetime::timestamp_order_key(first)
+                    })
             })
             .then_some(first.as_str())
     }
@@ -81,7 +82,7 @@ impl Handles {
             .then(|| {
                 dates
                     .iter()
-                    .max_by_key(|date| crate::convert::timestamp_order_key(date))
+                    .max_by_key(|date| crate::util::datetime::timestamp_order_key(date))
                     .map(String::as_str)
             })
             .flatten()

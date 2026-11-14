@@ -1736,7 +1736,7 @@ fn named_highlight(token: &str) -> Option<&'static str> {
         .get(..3)
         .filter(|prefix| prefix.eq_ignore_ascii_case("hl-"))
         .map(|_| &token[3..])?;
-    crate::edit::HIGHLIGHTS
+    crate::ooxml::HIGHLIGHTS
         .iter()
         .copied()
         .find(|highlight| *highlight != "none" && highlight.eq_ignore_ascii_case(colour))
