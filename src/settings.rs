@@ -524,12 +524,7 @@ mod tests {
 
     #[test]
     fn a_part_that_is_not_settings_is_refused() {
-        let mut pkg = PartFs::open(
-            &crate::markdown::markdown_to_docx("x", &Default::default())
-                .unwrap()
-                .docx,
-        )
-        .unwrap();
+        let mut pkg = PartFs::open(include_bytes!("../tests/fixtures/split/minimal.docx")).unwrap();
         let main = pkg.main_document_part().unwrap();
         let part = settings_part(&mut pkg, &main);
         pkg.set_part(&part, b"<nope/>".to_vec());

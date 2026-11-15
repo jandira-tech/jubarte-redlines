@@ -1441,9 +1441,7 @@ mod tests {
     }
 
     fn minimal() -> Vec<u8> {
-        crate::markdown::markdown_to_docx("x", &Default::default())
-            .unwrap()
-            .docx
+        include_bytes!("../tests/fixtures/split/minimal.docx").to_vec()
     }
 }
 

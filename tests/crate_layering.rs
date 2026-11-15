@@ -83,14 +83,10 @@ const MODULES: &[(&str, &str)] = &[
 /// Upward paths still to remove, as `file -> crate::path` (first two path
 /// segments when the first names a module with submodule overrides).
 const KNOWN_UPWARD: &[&str] = &[
-    "src/append.rs -> markdown::markdown_to_docx",
     "src/append.rs -> markdown::package",
     "src/changes.rs -> edit::KeptComment",
-    "src/comparer/finalize.rs -> comments",
-    "src/comparer/finalize.rs -> validate",
     "src/debug.rs -> text_diff",
     "src/document_comparer.rs -> changes",
-    "src/settings.rs -> markdown::markdown_to_docx",
 ];
 
 fn rank(layer: &str) -> usize {

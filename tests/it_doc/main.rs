@@ -6,6 +6,7 @@
 mod common;
 
 mod changes_json_tabs;
+mod comment_records_survive_projection;
 mod customxml_nested_text_box;
 mod edit_numbering_side_effects;
 mod field_inside_deletion;
@@ -26,6 +27,7 @@ mod m_whole_story_final_marks;
 mod m_word_tokens;
 mod move_nested_revision;
 mod package_relationship_carry;
+mod projection_ring1_validity;
 mod repair_move_nest;
 mod strict_nested_text_box;
 mod validate_formatting_history;
