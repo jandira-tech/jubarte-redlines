@@ -7,6 +7,15 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T3.1 (font statics) - 2026-11-15
+
+- FontId::bytes() now returns 16 module-level statics (one per distinct
+  font program) instead of 47 inline include_bytes! arms. Release CLI
+  40,358,448 bytes vs 40,409,312 baseline (smaller); after the post-commit
+  build-npm.sh rebuild the full and slim wasm are 23,163,493 and
+  23,112,788 bytes - byte-identical sizes to the baseline (wasm-opt
+  already merged the duplicate programs). Goldens reproduced.
+
 ## T2.5 (render_options) - 2026-11-15
 
 - MarkLines, RevisionMark, RevisionPalette (+ both impls), RevisionStyle

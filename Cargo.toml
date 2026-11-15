@@ -212,7 +212,6 @@ self_update = { version = "1.3.1", default-features = false, features = ["archiv
 # Host filesystem publication is unavailable to browser/WASM byte APIs.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cap-std = "4"
-uuid = { version = "1", features = ["v4"] }
 
 # A replaced output keeps the destination's extended attributes. Mode bits
 # are copied separately; this crate moves the attributes onto the staged inode.

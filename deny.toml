@@ -57,8 +57,8 @@ highlight = "all"
 # Deny path/git deps in published graph (keep builds reproducible).
 allow-wildcard-paths = true
 skip = [
-    # 0.2 via ring/rustls, 0.3 and 0.4 via tempfile and uuid in the root
-    # graph; the binding workspaces hold one version and warn
+    # 0.2 via ring/rustls, 0.3 and 0.4 via tempfile in the root graph;
+    # the binding workspaces hold one version and warn
     # "unnecessary-skip" for the same shared-policy reason.
     { name = "getrandom" },
     # rustix 0.38 still needs 2.x; newer rustix needs 3.x.

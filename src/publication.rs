@@ -575,7 +575,7 @@ impl Backend for FsBackend<'_> {
             builder.mode(0o700);
             builder
         };
-        let name = format!(".jubarte-{}.partial", uuid::Uuid::new_v4());
+        let name = format!(".jubarte-{}.partial", staging_suffix());
         // Exclusive mkdir: a collision is an error, never an existing staging area.
         parent.create_dir_with(&name, &builder)?;
         let scratch = parent.open_dir(&name).inspect_err(|_| {
@@ -708,10 +708,47 @@ impl Backend for FsBackend<'_> {
     }
 }
 
+/// A staging-directory suffix: 32 lowercase hex characters hashed from the
+/// process id, a process-wide counter and the clock, through two freshly
+/// seeded hashers, so two staging areas never share a name without a uuid
+/// dependency (the exclusive `create_dir_with` below still makes a
+/// collision an error, never an existing staging area).
+fn staging_suffix() -> String {
+    use std::hash::BuildHasher;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64);
+    let pid = u64::from(std::process::id());
+    let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let one = std::hash::RandomState::new().hash_one((pid, count, nanos));
+    let two = std::hash::RandomState::new().hash_one((nanos, count, pid));
+    format!("{one:016x}{two:016x}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn staging_suffixes_are_unique_and_hex() {
+        let suffixes: Vec<String> = (0..10_000).map(|_| staging_suffix()).collect();
+        let distinct: std::collections::HashSet<&String> = suffixes.iter().collect();
+        assert_eq!(distinct.len(), suffixes.len(), "every suffix is distinct");
+        for suffix in &suffixes {
+            assert_eq!(suffix.len(), 32, "{suffix}: 32 characters");
+            assert!(
+                suffix
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                "{suffix}: lowercase hex only"
+            );
+        }
+    }
 
     // Filesystem integration probes: exercise actual handle lifetime and hard links.
     #[test]
