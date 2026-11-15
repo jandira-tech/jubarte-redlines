@@ -79,6 +79,94 @@ class Signatures(unittest.TestCase):
         self.assertEqual(api._sig(fn), "(x: u8)")
 
 
+class CrossCrate(unittest.TestCase):
+    """The facade walk resolves re-exports whose target rustdoc leaves out
+    of the facade's own index (plan A7, T4.0 AC2)."""
+
+    @staticmethod
+    def facade_doc() -> dict:
+        # jubarte::admission re-exports jubarte_opc::admission: one plain
+        # use of a struct, one glob use of the whole module.
+        items = [
+            {"id": 1, "crate_id": 0, "name": "jubarte", "visibility": "public",
+             "inner": {"module": {"is_crate": True, "items": [2]}}},
+            {"id": 2, "crate_id": 0, "name": "admission", "visibility": "public",
+             "inner": {"module": {"is_crate": False, "items": [3, 4]}}},
+            {"id": 3, "crate_id": 0, "name": "InputLimits", "visibility": "public",
+             "inner": {"use": {"id": 100, "source": "jubarte_opc::admission::InputLimits",
+                               "is_glob": False, "name": "InputLimits"}}},
+            {"id": 4, "crate_id": 0, "name": "*", "visibility": "public",
+             "inner": {"use": {"id": 101, "source": "jubarte_opc::admission::*",
+                               "is_glob": True, "name": "*"}}},
+        ]
+        return {
+            "root": 1,
+            "crate_name": "jubarte",
+            "crates": [[0, "jubarte", "0.18.0"], [1, "jubarte_opc", "0.18.0"]],
+            "index": {str(i["id"]): i for i in items},
+            "paths": {
+                "1": {"crate": 0, "path": ["jubarte"], "kind": "module"},
+                "2": {"crate": 0, "path": ["jubarte", "admission"], "kind": "module"},
+                "3": {"crate": 0, "path": ["jubarte", "admission", "InputLimits"], "kind": "import"},
+                "4": {"crate": 0, "path": ["jubarte", "admission"], "kind": "import"},
+                "100": {"crate": 1, "path": ["jubarte_opc", "admission", "InputLimits"], "kind": "struct"},
+                "101": {"crate": 1, "path": ["jubarte_opc", "admission"], "kind": "module"},
+            },
+        }
+
+    @staticmethod
+    def opc_doc() -> dict:
+        # jubarte_opc::admission holds a public struct, a doc(hidden) public
+        # struct, and a public function.
+        def fn_inner(name: str) -> dict:
+            return {"sig": {"inputs": [], "output": None, "is_c_variadic": False},
+                    "generics": {"params": [], "where_predicates": []},
+                    "header": {"is_const": False, "is_unsafe": False, "is_async": False}}
+        items = [
+            {"id": 1, "crate_id": 0, "name": "jubarte_opc", "visibility": "public",
+             "inner": {"module": {"is_crate": True, "items": [2]}}},
+            {"id": 2, "crate_id": 0, "name": "admission", "visibility": "public",
+             "inner": {"module": {"is_crate": False, "items": [3, 4, 5]}}},
+            {"id": 3, "crate_id": 0, "name": "InputLimits", "visibility": "public",
+             "inner": {"struct": {"kind": {"plain": {"fields": [], "has_stripped_fields": False}},
+                                  "impls": []}}},
+            {"id": 4, "crate_id": 0, "name": "Internal", "visibility": "public",
+             "attrs": ["#[doc(hidden)]"],
+             "inner": {"struct": {"kind": {"plain": {"fields": [], "has_stripped_fields": False}},
+                                  "impls": []}}},
+            {"id": 5, "crate_id": 0, "name": "admit", "visibility": "public",
+             "inner": {"function": fn_inner("admit")}},
+        ]
+        return {
+            "root": 1,
+            "crate_name": "jubarte_opc",
+            "crates": [[0, "jubarte_opc", "0.18.0"]],
+            "index": {str(i["id"]): i for i in items},
+            "paths": {},
+        }
+
+    def test_foreign_uses_list_under_facade_paths(self) -> None:
+        lines = [e.line() for e in api.entries(self.facade_doc(), {"jubarte_opc": self.opc_doc()})]
+        # The plain use names the foreign struct, so the struct is part of
+        # the facade surface under its facade path.
+        self.assertIn(
+            "api\tstruct\tpub\tjubarte::admission::InputLimits", lines
+        )
+        # The glob names the foreign module's public children under the
+        # facade path too.
+        self.assertTrue(any(
+            line.startswith("api\tfunction\tpub\tjubarte::admission::admit ")
+            for line in lines
+        ), lines)
+        # Without the other documents, no foreign item resolves.
+        alone = [e.line() for e in api.entries(self.facade_doc())]
+        self.assertFalse(any("admit" in line for line in alone), alone)
+
+    def test_doc_hidden_items_are_left_out(self) -> None:
+        lines = [e.line() for e in api.entries(self.facade_doc(), {"jubarte_opc": self.opc_doc()})]
+        self.assertFalse(any("Internal" in line for line in lines), lines)
+
+
 class Snapshot(unittest.TestCase):
     def test_the_gzip_is_the_same_bytes_at_any_time(self) -> None:
         # A resumed release rewrites the snapshot; a header timestamp would

@@ -29,6 +29,7 @@ const STANDALONE: &[&str] = &[
     "coverage_gates",
     "crate_layering",
     "deny_build_scripts",
+    "facade_surface",
     "foreign_alignment",
     "legacy_doc",
     "legacy_doc_convert",

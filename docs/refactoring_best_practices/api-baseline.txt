@@ -10455,6 +10455,7 @@ internal	function	pub(crate::publication)	jubarte::publication::copy_replaced_xa
 internal	function	pub(crate::publication)	jubarte::publication::finish (result: Result<(), PublishError>, warnings: Vec<String>) -> Result<PublishReport, PublishError>
 internal	function	pub(crate::publication)	jubarte::publication::macos_kernel_label (name: &[u8]) -> bool
 internal	function	pub(crate::publication)	jubarte::publication::replaced_xattr (name: &std::ffi::OsStr) -> bool
+internal	function	pub(crate::publication)	jubarte::publication::staging_suffix () -> String
 internal	function	pub(crate::publication)	jubarte::publication::sync_directory_for_platform (windows: bool, sync: impl FnOnce() -> io::Result<()>) -> io::Result<()>
 internal	function	pub(crate::publication)	jubarte::publication::sync_directory_handle (dir: &cap_std::fs::Dir) -> io::Result<()>
 internal	function	pub(crate::publication)	jubarte::publication::transaction <B: Backend>(backend: &mut B, files: &[(std::path::PathBuf, &[u8])]) -> Result<PublishReport, PublishError>
@@ -12005,7 +12006,23 @@ internal	static	pub(crate::capabilities::discovery)	jubarte::capabilities::disco
 internal	static	pub(crate::comparer::produce)	jubarte::comparer::produce::REV_ID: std::sync::atomic::AtomicU64
 internal	static	pub(crate::convert)	jubarte::convert::preset_geom_data::PRESETS: &[(&str, super::preset_geom::Preset)]
 internal	static	pub(crate::convert)	jubarte::convert::preset_text_rect_data::TEXT_RECTS: &[(&str, super::preset_geom::TextRect)]
+internal	static	pub(crate::convert::font)	jubarte::convert::font::CARLITO_BOLD: &[u8]
+internal	static	pub(crate::convert::font)	jubarte::convert::font::CARLITO_BOLD_ITALIC: &[u8]
+internal	static	pub(crate::convert::font)	jubarte::convert::font::CARLITO_ITALIC: &[u8]
+internal	static	pub(crate::convert::font)	jubarte::convert::font::CARLITO_REGULAR: &[u8]
 internal	static	pub(crate::convert::font)	jubarte::convert::font::FONT_INDEX: std::sync::LazyLock<std::sync::Mutex<FontIndex>>
+internal	static	pub(crate::convert::font)	jubarte::convert::font::MONO_BOLD: &[u8]
+internal	static	pub(crate::convert::font)	jubarte::convert::font::MONO_BOLD_ITALIC: &[u8]
+internal	static	pub(crate::convert::font)	jubarte::convert::font::MONO_ITALIC: &[u8]
+internal	static	pub(crate::convert::font)	jubarte::convert::font::MONO_REGULAR: &[u8]
+internal	static	pub(crate::convert::font)	jubarte::convert::font::SANS_BOLD: &[u8]
+internal	static	pub(crate::convert::font)	jubarte::convert::font::SANS_BOLD_ITALIC: &[u8]
+internal	static	pub(crate::convert::font)	jubarte::convert::font::SANS_ITALIC: &[u8]
+internal	static	pub(crate::convert::font)	jubarte::convert::font::SANS_REGULAR: &[u8]
+internal	static	pub(crate::convert::font)	jubarte::convert::font::SERIF_BOLD: &[u8]
+internal	static	pub(crate::convert::font)	jubarte::convert::font::SERIF_BOLD_ITALIC: &[u8]
+internal	static	pub(crate::convert::font)	jubarte::convert::font::SERIF_ITALIC: &[u8]
+internal	static	pub(crate::convert::font)	jubarte::convert::font::SERIF_REGULAR: &[u8]
 internal	static	pub(crate::convert::word_subst)	jubarte::convert::word_subst::ROWS: std::sync::LazyLock<Vec<SubstRow>>
 internal	static	pub(crate::perf::active)	jubarte::perf::active::COUNTER_ATOMS: std::sync::atomic::AtomicU64
 internal	static	pub(crate::perf::active)	jubarte::perf::active::COUNTER_CORR_RUN_HITS: std::sync::atomic::AtomicU64

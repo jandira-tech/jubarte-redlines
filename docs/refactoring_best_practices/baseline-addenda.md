@@ -7,6 +7,28 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T4.0 (workspace scaffolding, API tooling) - 2026-11-15
+
+- Root manifest is the workspace manifest (A3): members ["."], the four
+  binding workspaces excluded, workspace.package and workspace.lints
+  tables, every dependency line moved verbatim to workspace.dependencies.
+  cargo metadata: 1 package.
+- api_snapshot.py: the doc(hidden) filter is in (no current item leaves
+  the listing - the five hidden sites in comparer/mod.rs never reached
+  the api surface) and the cross-crate re-export resolution is in
+  (ForeignIndex over the workspace's other libraries; plain uses list
+  the foreign item under its facade path, glob uses expand the foreign
+  module's public children). 38 script tests pass, including the two
+  new synthetic cross-crate cases.
+- tests/facade_surface.rs: 886 existence-probe uses generated from the
+  api listing by scripts/gen_facade_surface.py (module-chain-public
+  filter, associated items excluded, rustfmt-ordered). Negative probe:
+  hiding pub mod namespaces breaks its build with 126 errors.
+- bump-version: the workspace version and the = pins bump together
+  (node --test 8/8).
+- api-baseline re-recorded: +18 internal lines (T3.1 font statics, T3.2
+  staging_suffix), the only additions since T2.5.
+
 ## T3.1 (font statics) - 2026-11-15
 
 - FontId::bytes() now returns 16 module-level statics (one per distinct

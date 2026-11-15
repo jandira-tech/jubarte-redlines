@@ -75,6 +75,51 @@ def crate_version() -> str:
     raise SystemExit("no version in Cargo.toml")
 
 
+def build_workspace_docs() -> dict[str, dict]:
+    """Rustdoc JSON of every workspace library, by crate name.
+
+    The facade is the root package's library; the others answer the facade
+    walk's cross-crate re-export resolution (plan A7). Today the workspace
+    holds one library, so this returns the facade alone; the machinery is
+    what T4.1+ rely on.
+    """
+    have_nightly = False
+    try:
+        out = subprocess.run(
+            ["rustup", "toolchain", "list"], capture_output=True, text=True
+        )
+        have_nightly = "nightly" in out.stdout
+    except FileNotFoundError:
+        pass
+    meta = subprocess.run(
+        ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+        capture_output=True, text=True, check=True, cwd=ROOT,
+    )
+    packages = json.loads(meta.stdout)["packages"]
+    docs: dict[str, dict] = {}
+    for package in sorted(packages, key=lambda p: p["name"]):
+        has_lib = any(
+            target.get("kind") == ["lib"] for target in package.get("targets", [])
+        )
+        if not has_lib:
+            continue
+        env = dict(
+            os.environ,
+            RUSTDOCFLAGS="-Z unstable-options --output-format json "
+                         "--document-private-items",
+        )
+        if not have_nightly:
+            env["RUSTC_BOOTSTRAP"] = "1"
+        command = ["cargo", "doc", "--no-deps", "--all-features"]
+        if have_nightly:
+            command.insert(1, "+nightly")
+        subprocess.run(command, cwd=ROOT, check=True, env=env)
+        path = ROOT / "target" / "doc" / f"{package['name'].replace('-', '_')}.json"
+        if path.exists():
+            docs[json.loads(path.read_text())["crate_name"]] = json.loads(path.read_text())
+    return docs
+
+
 def build_doc_json() -> None:
     """Run rustdoc so target/doc/jubarte.json exists (private items included)."""
     have_nightly = False
@@ -457,6 +502,87 @@ def _local_target(inner: dict, index: dict) -> str | None:
     return None
 
 
+def _doc_hidden(item: dict) -> bool:
+    """The item carries `#[doc(hidden)]`: never part of the api listing."""
+    return any("doc(hidden)" in attr for attr in (item.get("attrs") or []))
+
+
+class ForeignIndex:
+    """The items of the workspace's other library crates, by full path.
+
+    A facade re-export names a foreign item whose id rustdoc leaves out of
+    the facade's own index; `paths` still carries the id's crate and path
+    (plan A7), and this index answers with the defining item so the facade
+    walk can list it under its facade path.
+    """
+
+    def __init__(self, facade_doc: dict, others: dict[str, dict]) -> None:
+        self._by_crate: dict[str, dict[str, tuple[str, dict, str]]] = {}
+        crates = {
+            crate_id: name
+            for crate_id, name in (
+                (str(c[0]), c[1]) for c in facade_doc.get("crates", [])
+            )
+        }
+        for doc in others.values():
+            index: dict[str, tuple[str, dict, str]] = {}
+            parent: dict[str, str] = {}
+            ids = sorted(doc["index"], key=lambda iid: (len(iid), iid))
+            for iid in ids:
+                for kid in _children(doc["index"][iid]):
+                    parent.setdefault(kid, iid)
+            crate_name = doc.get("crate_name", "")
+            for iid in ids:
+                item = doc["index"][iid]
+                kind, inner = _kind(item)
+                if kind in ("extern_crate", "import", "keyword", "primitive", "impl"):
+                    continue
+                parts = [item.get("name") or "_"]
+                pid = parent.get(iid)
+                root = str(doc["root"])
+                while pid and pid != root:
+                    parts.append(doc["index"][pid].get("name") or "_")
+                    pid = parent.get(pid)
+                path = "::".join([crate_name, *reversed(parts)])
+                index[path] = (kind, inner, _vis(item.get("visibility")), _doc_hidden(item))
+            self._by_crate[crate_name] = index
+        self._crates = crates
+
+    def resolve(self, facade_doc: dict, target_id: str) -> tuple[str, dict, str, bool] | None:
+        """The foreign item a facade `use` names, or None when unknown."""
+        info = facade_doc.get("paths", {}).get(target_id)
+        if not info:
+            return None
+        crate = self._crates.get(str(info.get("crate", -1)))
+        if crate is None or crate == facade_doc.get("crate_name"):
+            return None
+        index = self._by_crate.get(crate)
+        if index is None:
+            return None
+        path = "::".join(info.get("path", []))
+        return index.get(path)
+
+    def glob_entries(self, facade_doc: dict, target_id: str, prefix: str) -> list:
+        """Entry lines for `pub use other::<module>::*`: the module's public
+        children, each under its facade path."""
+        info = facade_doc.get("paths", {}).get(target_id)
+        if not info:
+            return []
+        crate = self._crates.get(str(info.get("crate", -1)))
+        index = self._by_crate.get(crate or "")
+        if index is None:
+            return []
+        module_path = "::".join(info.get("path", []))
+        out = []
+        for path, (kind, inner, vis, hidden) in sorted(index.items()):
+            rest = path.removeprefix(module_path + "::")
+            if not rest or "::" in rest or vis != "pub" or hidden:
+                continue  # not a direct public child, or doc(hidden)
+            facade = f"{prefix}::{rest}" if prefix else rest
+            out.append(Entry("api", kind, vis, facade, _detail(kind, inner)))
+        return out
+
+
 def _public_surface(index: dict, root: str, impls: list[str]) -> set[str]:
     """Ids a user of the crate can name."""
     api: set[str] = set()
@@ -466,6 +592,8 @@ def _public_surface(index: dict, root: str, impls: list[str]) -> set[str]:
             return
         api.add(iid)
         item = index[iid]
+        if _doc_hidden(item):
+            return  # re-exported internals: never part of the api surface
         kind, _ = _kind(item)
         for kid in _children(item):
             if kid not in index:
@@ -504,9 +632,10 @@ def _public_surface(index: dict, root: str, impls: list[str]) -> set[str]:
     return api
 
 
-def entries(doc: dict) -> list[Entry]:
+def entries(doc: dict, others: dict[str, dict] | None = None) -> list[Entry]:
     index: dict = doc["index"]
     paths: dict = doc.get("paths", {})
+    foreign = ForeignIndex(doc, others) if others else None
     # Every walk goes in id order, so the listing never depends on the order
     # rustdoc happened to write the index in.
     ids = sorted(index, key=lambda iid: (len(iid), iid))
@@ -585,12 +714,30 @@ def entries(doc: dict) -> list[Entry]:
         if kind == "use" and iid in api and isinstance(inner, dict) and inner.get("is_glob"):
             parent_id = parent.get(iid)
             prefix = full_path(parent_id) if parent_id else ""
-            out.extend(_glob_entries(index, str(inner.get("id")), prefix))
+            target_id = str(inner.get("id"))
+            if target_id in index:
+                out.extend(_glob_entries(index, target_id, prefix))
+            elif foreign is not None:
+                out.extend(foreign.glob_entries(doc, target_id, prefix))
+        elif kind == "use" and iid in api and foreign is not None:
+            # A plain re-export of a foreign item: the item itself is part
+            # of this surface under its facade path (plan A7); rustdoc JSON
+            # never inlines foreign items, so resolve by path.
+            target_id = str(inner.get("id"))
+            if target_id not in index:
+                resolved = foreign.resolve(doc, target_id)
+                if resolved is not None:
+                    f_kind, f_inner, _f_vis, f_hidden = resolved
+                    if not f_hidden:
+                        out.append(Entry(
+                            "api", f_kind, _vis(item.get("visibility")),
+                            full_path(iid), _detail(f_kind, f_inner),
+                        ))
     return sorted(set(out))
 
 
-def flatten(doc: dict) -> list[str]:
-    return sorted({e.line() for e in entries(doc)})
+def flatten(doc: dict, others: dict[str, dict] | None = None) -> list[str]:
+    return sorted({e.line() for e in entries(doc, others)})
 
 
 # --- drift between two snapshots ---------------------------------------------
@@ -855,7 +1002,11 @@ def main(argv: list[str] | None = None) -> None:
 
     build_doc_json()
     doc = json.loads(DOC_JSON.read_text())
-    text = "\n".join(flatten(doc)) + "\n"
+    others = {
+        name: d for name, d in build_workspace_docs().items()
+        if name != doc.get("crate_name")
+    }
+    text = "\n".join(flatten(doc, others or None)) + "\n"
     if args.emit:
         Path(args.emit).write_text(text)
         print(f"{args.emit} written")
