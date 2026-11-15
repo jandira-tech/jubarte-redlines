@@ -378,6 +378,15 @@ fn nested_group_regressions_match_direct_imports() {
 }
 
 #[test]
+fn raw_identifier_segments_match_plain_segments() {
+    let plain = crate_paths("crate::markdown::patch");
+    let raw = crate_paths("crate::markdown::r#patch");
+    assert_eq!(raw, plain);
+    assert_eq!(layer_of(&raw[0]), Some("edit"));
+    assert!(!allowed("markdown", "edit"));
+}
+
+#[test]
 fn whitespace_around_separators_keeps_full_path() {
     for text in [
         "use crate::{markdown:: redline::{self}};",

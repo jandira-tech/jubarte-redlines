@@ -12,6 +12,33 @@ use crate::xmllinq::{Dom, NodeId, XName};
 /// Paragraphs whose content should move ahead of deleted tables when Accept All
 /// would otherwise join their inserted words onto an empty or colliding trailing
 /// paragraph mark (#1851, #1926).
+///
+/// `INSERTED_TEXT_BEFORE_DELETED_TABLE`'s rule, which the comparer's pass
+/// applies too: each paragraph of `body` whose inserted words Accept All
+/// joins across a deleted table, with the paragraph they join. The
+/// paragraph's mark is deleted, its own `w:ins` children hold the only
+/// words Accept All keeps of it, and no section break ends it. A table
+/// every row of which is deleted follows it right away, then more such
+/// tables or none, with only paragraphs Accept All removes whole between
+/// them (a deleted mark, deleted words, no section break), then the
+/// paragraph the words join: its mark is not deleted. Zero-width markers
+/// between blocks (bookmarks, comment ranges, permissions, proofing marks)
+/// do not count.
+///
+/// Only a paragraph right before the table: 6 of the 16 such
+/// release-sample redlines crashed Word 16.115. With deleted paragraphs
+/// between the two, 2 of 42 crashed, near the sample's 23 in 600, and
+/// moving their words cost their views Word's placement: 14.8
+/// bench points on average, against Word's own redlines (#1851).
+///
+/// A single deleted table does not count when the paragraph after it
+/// keeps no words, no deleted table precedes this one, and this
+/// paragraph's own content is nothing but insertions. Word writes those
+/// words on the deleted mark, ahead of that table (#1926). A paragraph
+/// that also holds the original's deleted words still moves: that text
+/// against the deleted row crashed Word 16.115 (diff_before16 ×
+/// diff_before19). So does a paragraph between two deleted tables
+/// (w06, s278).
 pub(crate) fn inserted_text_before_deleted_tables(
     dom: &Dom,
     body: NodeId,

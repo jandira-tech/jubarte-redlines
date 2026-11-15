@@ -5360,33 +5360,6 @@ fn refuse_unatomizable(dom: &Dom, root: NodeId, story: &str) -> Result<(), OpcEr
     bad.map_or(Ok(()), |e| Err(invalid_content(format!("{story}: {e}"))))
 }
 
-/// Admit one compare input under `limits`. A refusal keeps the typed
-/// [`AdmissionError`](crate::admission::AdmissionError) as the error source
-/// (its `code()` is the stable `INPUT_LIMIT`/`UNSUPPORTED_PACKAGE`/… string)
-/// and names which document was refused.
-fn admit_input(
-    side: &str,
-    bytes: &[u8],
-    limits: crate::admission::InputLimits,
-) -> Result<(), OpcError> {
-    crate::admission::admit(bytes, limits)
-        .map(drop)
-        .map_err(|refusal| {
-            crate::opc::refused(crate::admission::AdmissionError {
-                kind: refusal.kind,
-                message: format!("{side} document: {}", refusal.message),
-            })
-        })
-}
-
-/// Admit a single package under the compare budget before a public entry
-/// point opens it: the package constructor is bounded on its own (#645),
-/// and admission gives the typed refusal with the rules a budget alone
-/// does not check (part-name safety, encryption, XML depth, WML shape).
-pub(crate) fn admit_package(bytes: &[u8]) -> Result<(), OpcError> {
-    admit_input("input", bytes, crate::admission::InputLimits::compare())
-}
-
 /// The namespace declarations C# attaches to a freshly-created
 /// `w:footnotes`/`w:endnotes` root (`NamespaceAttributes`/
 /// `FreshNamespaceAttributes` :1580–:1602), verbatim.
@@ -5419,7 +5392,7 @@ const NOTES_ROOT_NAMESPACE_ATTRS: &str = concat!(
 /// [`OpcError`] when admission refuses the input or the OPC layer cannot
 /// parse / serialise the package.
 pub fn accept_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
-    admit_package(docx)?;
+    crate::admission::admit_package(docx)?;
     let mut pkg = PartFs::open(docx)?;
     crate::revision_processor::accept_revisions_package(&mut pkg);
     repair_resolved_package_validity(&mut pkg);
@@ -5443,7 +5416,7 @@ fn accept_source_revisions(
 /// tracked revision across main + headers/footers + notes + comments +
 /// styles parts.
 pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
-    admit_package(docx)?;
+    crate::admission::admit_package(docx)?;
     let mut pkg = PartFs::open(docx)?;
     crate::revision_processor::reject_revisions_package(&mut pkg);
     repair_resolved_package_validity(&mut pkg);
@@ -6802,7 +6775,7 @@ pub fn get_revisions(
 ) -> Result<Vec<crate::comparer::WmlComparerRevision>, OpcError> {
     use crate::comparer::{preprocess, revisions};
 
-    admit_input("input", docx, settings.input_limits)?;
+    crate::admission::admit_input("input", docx, settings.input_limits)?;
     let pkg = PartFs::open_within(docx, settings.input_limits)?;
     let main = pkg
         .main_document_part()
@@ -7035,7 +7008,7 @@ fn compare_documents_impl(
     // Admit both packages before anything inflates them: the central
     // directory's sizes are untrusted, and an unbounded inflate aborts the
     // Python and WASM hosts rather than failing the call.
-    admit_input("original", original, settings.input_limits)?;
+    crate::admission::admit_input("original", original, settings.input_limits)?;
     // IDENTICAL-INPUT-01: same input bytes → empty redline is the (accepted)
     // original package. Avoids dual package prep, Dom parse, LCS, and produce.
     // Critical for self-compare fixtures (e.g. redline × self).
@@ -7058,7 +7031,7 @@ fn compare_documents_impl(
     // PartFs::open sees them (mirrors the OpenXML SDK's pre-compare step).
     // Transitional packages round-trip byte-identical (zero-churn), so the
     // golden/parity paths are unaffected; only Strict inputs are rewritten.
-    admit_input("modified", modified, settings.input_limits)?;
+    crate::admission::admit_input("modified", modified, settings.input_limits)?;
     let mut original_owned = crate::strict_translation::strict_to_transitional_docx_within(
         original,
         settings.input_limits,
@@ -11519,7 +11492,7 @@ mod coverage_boundary_tests {
             max_compressed_bytes: 0,
             ..crate::admission::InputLimits::compare()
         };
-        let err = admit_input("revised", &[1], limits).unwrap_err();
+        let err = crate::admission::admit_input("revised", &[1], limits).unwrap_err();
         assert!(err.to_string().contains("revised document:"), "{err}");
         assert!(err.to_string().contains("INPUT_LIMIT"), "{err}");
         let OpcError::Io(io) = &err else {
@@ -11532,9 +11505,9 @@ mod coverage_boundary_tests {
             .downcast_ref::<crate::admission::AdmissionError>()
             .unwrap();
         assert_eq!(refusal.code(), "INPUT_LIMIT");
-        assert!(admit_package(b"not a ZIP").is_err());
+        assert!(crate::admission::admit_package(b"not a ZIP").is_err());
         let bytes = include_bytes!("../tests/fixtures/word_probes/tokens/cell_a.docx");
-        assert!(admit_package(bytes).is_ok());
+        assert!(crate::admission::admit_package(bytes).is_ok());
         assert!(!docx_has_tracked_changes(
             b"not a ZIP",
             crate::admission::InputLimits::compare()
