@@ -739,7 +739,7 @@ pub fn docx_render_report(docx: &[u8], options: PdfOptions) -> Result<RenderRepo
 }
 
 /// What one layout pass learned about pages, for writing field results back
-/// into the package (`crate::fields`).
+/// into the package (`jubarte::fields`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct LayoutFacts {
     /// Pages laid out (the `NUMPAGES` result).

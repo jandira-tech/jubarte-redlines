@@ -28,7 +28,7 @@ pub(crate) use tables::top_level_table_nodes;
 
 pub use tables::{NestedTable, Table, TableCell};
 
-/// Wire schema version of legacy [`crate::edit`] plans and reports.
+/// Wire schema version of legacy `jubarte::edit` plans and reports.
 pub const SCHEMA_VERSION: u32 = 1;
 
 /// Snapshot wire schema. Version 2 numbers top-level tables only and nests
@@ -134,7 +134,7 @@ pub struct Summary {
 }
 
 /// Snapshot of a package as it stood at inspection time, serialized by
-/// [`inspect_json`] and consumed by [`crate::edit::apply_plan_json`].
+/// [`inspect_json`] and consumed by `jubarte::edit::apply_plan_json`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Snapshot {
     /// Wire schema version.

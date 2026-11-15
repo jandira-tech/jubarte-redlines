@@ -88,14 +88,8 @@ const KNOWN_UPWARD: &[&str] = &[
     "src/changes.rs -> edit::KeptComment",
     "src/comparer/finalize.rs -> comments",
     "src/comparer/finalize.rs -> validate",
-    "src/convert/mod.rs -> fields",
     "src/debug.rs -> text_diff",
     "src/document_comparer.rs -> changes",
-    "src/inspect.rs -> edit",
-    "src/inspect.rs -> edit::apply_plan_json",
-    "src/markdown/mod.rs -> markdown::redline",
-    "src/markdown/write.rs -> markdown::redline",
-    "src/revision_processor.rs -> changes",
     "src/settings.rs -> markdown::markdown_to_docx",
 ];
 

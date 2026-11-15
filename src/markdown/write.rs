@@ -8,7 +8,7 @@
 //! [`markdown_to_docx`] and the redline task
 //! use to convert one Markdown document to a Word document package.
 //! Backs `jubarte convert FILE.md`, the Markdown side of
-//! [`crate::markdown::redline()`], and the Python / WASM
+//! `jubarte::markdown::redline()`, and the Python / WASM
 //! `markdown_to_docx` binding.
 
 use std::borrow::Cow;

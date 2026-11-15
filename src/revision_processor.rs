@@ -4465,7 +4465,7 @@ pub fn reject_revisions_package(pkg: &mut crate::opc::PartFs) {
 }
 
 /// Revision elements renamed into this namespace sit a resolution out and
-/// come back unchanged ([`crate::changes`]).
+/// come back unchanged (`jubarte::changes`).
 pub(crate) const FROZEN_NS: &str = "urn:jubarte:frozen-revision";
 
 /// Package-wide ids reserved before any revision is frozen or removed.
