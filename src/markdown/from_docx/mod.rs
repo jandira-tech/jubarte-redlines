@@ -3405,7 +3405,7 @@ impl Writer<'_> {
         // level makes Word print no label and no list indent, though the
         // paragraph counted above (probe lvl_undef_1010): no list item.
         let text = level.text.unwrap_or_else(|| format!("%{}.", ilvl + 1));
-        if crate::convert::names_deeper_level(&text, u32::try_from(ilvl).unwrap_or(u32::MAX)) {
+        if crate::numbering::names_deeper_level(&text, u32::try_from(ilvl).unwrap_or(u32::MAX)) {
             return None;
         }
         let mut label = String::new();
@@ -3425,7 +3425,7 @@ impl Writer<'_> {
                 continue;
             };
             let n = counters[k].unwrap_or(i64::from(at.start));
-            label.push_str(&crate::convert::list_number(
+            label.push_str(&crate::numbering::list_number(
                 &at.format,
                 u32::try_from(n.max(0)).unwrap_or(u32::MAX),
             ));

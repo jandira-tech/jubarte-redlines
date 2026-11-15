@@ -545,14 +545,14 @@ impl NumberFormat {
     /// Past 780 in letters or 32767 in Roman numerals Word writes
     /// `UNREPRESENTABLE` (probes bn1006 and bn1006b).
     fn write(self, n: u32) -> Option<String> {
-        use crate::convert::{ALPHA_LABEL_MAX, ROMAN_LABEL_MAX};
+        use crate::numbering::{ALPHA_LABEL_MAX, ROMAN_LABEL_MAX};
         Some(match self {
             Self::Arabic => n.to_string(),
             Self::Roman(_) | Self::Alpha(_) if n == 0 => " ".to_string(),
             Self::Roman(_) if n > ROMAN_LABEL_MAX => UNREPRESENTABLE.to_string(),
             Self::Alpha(_) if n > ALPHA_LABEL_MAX => UNREPRESENTABLE.to_string(),
-            Self::Roman(upper) => crate::convert::roman_label(n, upper),
-            Self::Alpha(upper) => crate::convert::alpha_label(n, upper),
+            Self::Roman(upper) => crate::numbering::roman_label(n, upper),
+            Self::Alpha(upper) => crate::numbering::alpha_label(n, upper),
         })
     }
 }

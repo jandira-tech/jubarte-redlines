@@ -7,6 +7,16 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T2.4 (numbering, table_dom) - 2026-11-15
+
+- api-baseline.txt re-recorded again: the w:numFmt label family
+  (NumFmt, format_num and 23 label functions), append_numbering with
+  numbering_part/max_attribute/attribute_values, and the four table DOM
+  helpers (table_look/TblLook/cell_is_deleted/wrapped_children) moved to
+  the pub(crate) modules crate::numbering and crate::table_dom, so the
+  listing's internal lines renamed with them. All 259 diff lines are
+  internal; no publicly nameable path changed.
+
 ## T2.3 (comment_settlement) - 2026-11-15
 
 - api-baseline.txt re-recorded after a reviewed, intentional drift: the

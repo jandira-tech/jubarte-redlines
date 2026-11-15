@@ -870,7 +870,7 @@ fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
     let tblpr = child(dom, t, "tblPr");
     // Wrapper-held rows are the table's own, as the converter lays them
     // out (`customXml`, and `sdt`/`sdtContent` as Strict files spell them).
-    let rows: Vec<NodeId> = crate::convert::wrapped_children(dom, t, "tr");
+    let rows: Vec<NodeId> = crate::table_dom::wrapped_children(dom, t, "tr");
     // The columns the converter lays out: the grid, or the widest row
     // (its spans, grid before/after and, with a live `w:cellDel`, the
     // "Deleted Cells" column Word's All Markup appends).
@@ -884,7 +884,7 @@ fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
                     .and_then(|g| attr(dom, g, "val").parse::<usize>().ok())
                     .unwrap_or(0)
             };
-            let cells = crate::convert::wrapped_children(dom, row, "tc");
+            let cells = crate::table_dom::wrapped_children(dom, row, "tc");
             let spans: usize = cells
                 .iter()
                 .map(|&tc| {
@@ -897,7 +897,7 @@ fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
                 .sum();
             let stamp = cells
                 .iter()
-                .any(|&tc| crate::convert::cell_is_deleted(dom, tc));
+                .any(|&tc| crate::table_dom::cell_is_deleted(dom, tc));
             skip("gridBefore") + spans + skip("gridAfter") + usize::from(stamp)
         })
         .max()
@@ -993,7 +993,7 @@ fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
     }
     // The conditions the table's look turns off paint nothing (the
     // converter's own reading of `w:tblLook`).
-    let look = crate::convert::table_look(dom, t);
+    let look = crate::table_dom::table_look(dom, t);
     let conds: Vec<(String, String)> = styles
         .table_shd(&style)
         .into_iter()
@@ -1009,10 +1009,10 @@ fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
         s.push_str(&format!(" style-shd[{}]", items.join(",")));
     }
     if let Some(first) = rows.first() {
-        let texts: Vec<String> = crate::convert::wrapped_children(dom, *first, "tc")
+        let texts: Vec<String> = crate::table_dom::wrapped_children(dom, *first, "tc")
             .into_iter()
             .map(|tc| {
-                crate::convert::wrapped_children(dom, tc, "p")
+                crate::table_dom::wrapped_children(dom, tc, "p")
                     .into_iter()
                     .map(|p| own_text(dom, p, p))
                     .collect::<Vec<_>>()

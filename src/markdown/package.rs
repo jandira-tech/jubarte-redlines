@@ -13,6 +13,8 @@ use super::xml::{self, Context, Document, Relate, escape};
 use super::{DocxOptions, MarkdownError, PageSize};
 use crate::comments::CommentFamily;
 use crate::namespaces::W;
+pub(crate) use crate::numbering::numbering_part;
+use crate::numbering::{append_numbering, attribute_values, max_attribute};
 use crate::opc::{PartFs, relative_rel_target};
 use crate::xmllinq::{Dom, serialize_element};
 
@@ -1200,57 +1202,6 @@ fn with_named_styles(styles: &str, named: &BTreeSet<String>) -> String {
     }
 }
 
-/// The largest value of attribute `name` on elements `element` in `xml`.
-fn max_attribute(xml: &str, element: &str, name: &str) -> Option<i64> {
-    attribute_values(xml, element, name).into_iter().max()
-}
-
-/// Every numeric `name` attribute of `element` in `xml`.
-fn attribute_values(xml: &str, element: &str, name: &str) -> Vec<i64> {
-    let mut values = Vec::new();
-    let mut rest = xml;
-    let open = format!("<{element} ");
-    let key = format!("{name}=\"");
-    while let Some(at) = rest.find(&open) {
-        let tag_end = rest[at..].find('>').map_or(rest.len(), |i| at + i);
-        let tag = &rest[at..tag_end];
-        if let Some(value) = tag
-            .find(&key)
-            .map(|i| &tag[i + key.len()..])
-            .and_then(|v| v[..v.find('"')?].parse::<i64>().ok())
-        {
-            values.push(value);
-        }
-        rest = &rest[tag_end..];
-    }
-    values
-}
-
-/// The numbering part `main` relates to, made empty when there is none.
-pub(crate) fn numbering_part(package: &mut PartFs, main: &str) -> String {
-    related(package, main, "/numbering").unwrap_or_else(|| {
-        let part = sibling(main, "numbering.xml");
-        package.add_document_relationship(
-            main,
-            &format!("{RELS}/numbering"),
-            &relative_rel_target(main, &part),
-        );
-        package.add_content_type_override(
-            &format!("/{part}"),
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
-        );
-        package.set_part(
-            &part,
-            format!(
-                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
-                 <w:numbering xmlns:w=\"{W_NS}\"></w:numbering>"
-            )
-            .into_bytes(),
-        );
-        part
-    })
-}
-
 /// Adds the document's lists to the numbering part, making one if needed;
 /// returns each list's `w:numId`.
 fn numbering(package: &mut PartFs, main: &str, document: &Document) -> Vec<u32> {
@@ -1284,46 +1235,6 @@ fn label_numbering(package: &mut PartFs, main: &str, document: &Document) -> Vec
         return Vec::new();
     };
     (first_num..).take(document.label_uses.len()).collect()
-}
-
-/// Appends `w:abstractNum`s and `w:num`s to `main`'s numbering part, making
-/// one if needed. `build` gets the first free abstract and num ids and
-/// returns the `(abstracts, nums)` markup; returns those first ids.
-pub(crate) fn append_numbering(
-    package: &mut PartFs,
-    main: &str,
-    build: impl FnOnce(u32, u32) -> (String, String),
-) -> Option<(u32, u32)> {
-    let part = numbering_part(package, main);
-    let existing = package.part_string(&part)?;
-    let next = |value: Option<i64>| u32::try_from(value.unwrap_or(0).max(0) + 1).unwrap_or(1);
-    let first_abstract = next(max_attribute(&existing, "w:abstractNum", "w:abstractNumId"));
-    let first_num = next(max_attribute(&existing, "w:num", "w:numId"));
-    let (abstracts, nums) = build(first_abstract, first_num);
-    // Every w:abstractNum precedes every w:num.
-    let abstract_at = [
-        "<w:num ",
-        "<w:num>",
-        "<w:numIdMacAtCleanup",
-        "</w:numbering>",
-    ]
-    .iter()
-    .filter_map(|tag| existing.find(tag))
-    .min();
-    let num_at = ["<w:numIdMacAtCleanup", "</w:numbering>"]
-        .iter()
-        .filter_map(|tag| existing.find(tag))
-        .min();
-    if let (Some(a), Some(n)) = (abstract_at, num_at) {
-        let updated = format!(
-            "{}{abstracts}{}{nums}{}",
-            &existing[..a],
-            &existing[a..n],
-            &existing[n..]
-        );
-        package.set_part(&part, updated.into_bytes());
-    }
-    Some((first_abstract, first_num))
 }
 
 /// The footnotes part `main` relates to; created with Word's separator and

@@ -5173,8 +5173,6 @@ internal	constant	pub(crate)	jubarte::capabilities::IDS_NOTE: &str
 internal	constant	pub(crate)	jubarte::changes::FORMATTING: &[&str]
 internal	constant	pub(crate)	jubarte::cli::REMOVED_TASKS: &[Retired]
 internal	constant	pub(crate)	jubarte::comparer::comments::FAMILY: [(&str, &str, &str); 4]
-internal	constant	pub(crate)	jubarte::convert::ALPHA_LABEL_MAX: u32
-internal	constant	pub(crate)	jubarte::convert::ROMAN_LABEL_MAX: u32
 internal	constant	pub(crate)	jubarte::convert::font::CJK_FALLBACK: &str
 internal	constant	pub(crate)	jubarte::convert::font::CJK_FALLBACK_GOTHIC: &str
 internal	constant	pub(crate)	jubarte::convert::font::CJK_FALLBACK_JA: &str
@@ -5219,6 +5217,8 @@ internal	constant	pub(crate)	jubarte::markdown::xml::SHD_VALS: &[&str]
 internal	constant	pub(crate)	jubarte::markdown::xml::TAB_LEADERS: &[&str]
 internal	constant	pub(crate)	jubarte::markdown::xml::TAB_POS_LIMIT: i64
 internal	constant	pub(crate)	jubarte::markdown::xml::TAB_VALS: &[&str]
+internal	constant	pub(crate)	jubarte::numbering::ALPHA_LABEL_MAX: u32
+internal	constant	pub(crate)	jubarte::numbering::ROMAN_LABEL_MAX: u32
 internal	constant	pub(crate)	jubarte::ooxml::HIGHLIGHTS: &[&str]
 internal	constant	pub(crate)	jubarte::result::ENVELOPE_SCHEMA_VERSION: u32
 internal	constant	pub(crate)	jubarte::revision_processor::FROZEN_NS: &str
@@ -5295,35 +5295,19 @@ internal	constant	pub(crate::comparer::parts)	jubarte::comparer::parts::MAX_CARR
 internal	constant	pub(crate::comparer::preprocess)	jubarte::comparer::preprocess::WML_DEFAULT_XMLNS: &str
 internal	constant	pub(crate::comparer::produce)	jubarte::comparer::produce::MAX_TABLE_WIDTH: i64
 internal	constant	pub(crate::comparer::produce)	jubarte::comparer::produce::TBLPR_CHILD_ORDER: &[&str]
-internal	constant	pub(crate::convert)	jubarte::convert::AIUEO: [char; 46]
-internal	constant	pub(crate::convert)	jubarte::convert::ARABIC_ABJAD: [char; 28]
-internal	constant	pub(crate::convert)	jubarte::convert::ARABIC_ALPHA: [char; 28]
 internal	constant	pub(crate::convert)	jubarte::convert::BOOKMARK_NOT_DEFINED: &str
 internal	constant	pub(crate::convert)	jubarte::convert::CHAP_PAGE_MARK: &str
 internal	constant	pub(crate::convert)	jubarte::convert::CHECKBOX_SPACE: &str
-internal	constant	pub(crate::convert)	jubarte::convert::CHINESE_DIGITS: [char; 10]
-internal	constant	pub(crate::convert)	jubarte::convert::CHOSUNG: [char; 14]
 internal	constant	pub(crate::convert)	jubarte::convert::COLUMN_BREAK_MARK: char
 internal	constant	pub(crate::convert)	jubarte::convert::CORE_DATES: $crate::thread::LocalKey<std::cell::Cell<CoreDates>>
-internal	constant	pub(crate::convert)	jubarte::convert::DECIMAL_ENCLOSED_CIRCLE: [char; 20]
-internal	constant	pub(crate::convert)	jubarte::convert::DECIMAL_ENCLOSED_FULLSTOP: [char; 20]
-internal	constant	pub(crate::convert)	jubarte::convert::DECIMAL_ENCLOSED_PAREN: [char; 20]
 internal	constant	pub(crate::convert)	jubarte::convert::FIXED_COL_PAST_GRID: f32
 internal	constant	pub(crate::convert)	jubarte::convert::FOOTNOTE_SEP_W: f32
-internal	constant	pub(crate::convert)	jubarte::convert::GANADA: [char; 14]
-internal	constant	pub(crate::convert)	jubarte::convert::HEBREW2: [char; 22]
 internal	constant	pub(crate::convert)	jubarte::convert::HF_LINE_BREAK: &str
 internal	constant	pub(crate::convert)	jubarte::convert::HF_REV_COLOR: [f32; 3]
-internal	constant	pub(crate::convert)	jubarte::convert::HINDI_CONSONANTS: [char; 11]
-internal	constant	pub(crate::convert)	jubarte::convert::HINDI_VOWELS: [char; 33]
-internal	constant	pub(crate::convert)	jubarte::convert::IDEOGRAPH_BRANCHES: [char; 12]
-internal	constant	pub(crate::convert)	jubarte::convert::IDEOGRAPH_STEMS: [char; 10]
 internal	constant	pub(crate::convert)	jubarte::convert::INLINE_PIC: char
-internal	constant	pub(crate::convert)	jubarte::convert::IROHA: [char; 47]
 internal	constant	pub(crate::convert)	jubarte::convert::JUSTIFY_SQUEEZE: Squeeze
 internal	constant	pub(crate::convert)	jubarte::convert::LABEL_OVERRUN: f32
 internal	constant	pub(crate::convert)	jubarte::convert::MATH_ALPHANUMERICS: $crate::thread::LocalKey<std::cell::RefCell<MathFace>>
-internal	constant	pub(crate::convert)	jubarte::convert::MAX_CHICAGO_MARKS: usize
 internal	constant	pub(crate::convert)	jubarte::convert::MIN_SIDE_FLOAT_ROOM_PT: f32
 internal	constant	pub(crate::convert)	jubarte::convert::MIN_SIDE_FRAME_ROOM_PT: f32
 internal	constant	pub(crate::convert)	jubarte::convert::MONTHS_ABBR: [&str; 12]
@@ -5337,11 +5321,8 @@ internal	constant	pub(crate::convert)	jubarte::convert::PUNCT_SQUEEZE: Squeeze
 internal	constant	pub(crate::convert)	jubarte::convert::REF_NOT_FOUND: &str
 internal	constant	pub(crate::convert)	jubarte::convert::RENUMBER_AUTHOR: &str
 internal	constant	pub(crate::convert)	jubarte::convert::REVISIONS: $crate::thread::LocalKey<std::cell::Cell<RevisionStyle>>
-internal	constant	pub(crate::convert)	jubarte::convert::RUSSIAN_LOWER: [char; 33]
-internal	constant	pub(crate::convert)	jubarte::convert::RUSSIAN_UPPER: [char; 33]
 internal	constant	pub(crate::convert)	jubarte::convert::SQUEEZE_WORD_SHARE: f32
 internal	constant	pub(crate::convert)	jubarte::convert::TEMPLATE_NORMAL: &str
-internal	constant	pub(crate::convert)	jubarte::convert::THAI_LETTERS: [char; 42]
 internal	constant	pub(crate::convert)	jubarte::convert::TXBX_INSETS: [f32; 4]
 internal	constant	pub(crate::convert)	jubarte::convert::VML_BOXES: [&str; 6]
 internal	constant	pub(crate::convert)	jubarte::convert::W16SE: &str
@@ -5597,6 +5578,27 @@ internal	constant	pub(crate::markdown::write)	jubarte::markdown::write::MOST_BOO
 internal	constant	pub(crate::markdown::write)	jubarte::markdown::write::SCHOLAR_STYLES: [(&str, &str); 4]
 internal	constant	pub(crate::markdown::xml)	jubarte::markdown::xml::MOST_TABLE_PERCENT: f64
 internal	constant	pub(crate::markdown::xml)	jubarte::markdown::xml::MOST_TABLE_TWIPS: f64
+internal	constant	pub(crate::numbering)	jubarte::numbering::AIUEO: [char; 46]
+internal	constant	pub(crate::numbering)	jubarte::numbering::ARABIC_ABJAD: [char; 28]
+internal	constant	pub(crate::numbering)	jubarte::numbering::ARABIC_ALPHA: [char; 28]
+internal	constant	pub(crate::numbering)	jubarte::numbering::CHINESE_DIGITS: [char; 10]
+internal	constant	pub(crate::numbering)	jubarte::numbering::CHOSUNG: [char; 14]
+internal	constant	pub(crate::numbering)	jubarte::numbering::DECIMAL_ENCLOSED_CIRCLE: [char; 20]
+internal	constant	pub(crate::numbering)	jubarte::numbering::DECIMAL_ENCLOSED_FULLSTOP: [char; 20]
+internal	constant	pub(crate::numbering)	jubarte::numbering::DECIMAL_ENCLOSED_PAREN: [char; 20]
+internal	constant	pub(crate::numbering)	jubarte::numbering::GANADA: [char; 14]
+internal	constant	pub(crate::numbering)	jubarte::numbering::HEBREW2: [char; 22]
+internal	constant	pub(crate::numbering)	jubarte::numbering::HINDI_CONSONANTS: [char; 11]
+internal	constant	pub(crate::numbering)	jubarte::numbering::HINDI_VOWELS: [char; 33]
+internal	constant	pub(crate::numbering)	jubarte::numbering::IDEOGRAPH_BRANCHES: [char; 12]
+internal	constant	pub(crate::numbering)	jubarte::numbering::IDEOGRAPH_STEMS: [char; 10]
+internal	constant	pub(crate::numbering)	jubarte::numbering::IROHA: [char; 47]
+internal	constant	pub(crate::numbering)	jubarte::numbering::MAX_CHICAGO_MARKS: usize
+internal	constant	pub(crate::numbering)	jubarte::numbering::RELS: &str
+internal	constant	pub(crate::numbering)	jubarte::numbering::RUSSIAN_LOWER: [char; 33]
+internal	constant	pub(crate::numbering)	jubarte::numbering::RUSSIAN_UPPER: [char; 33]
+internal	constant	pub(crate::numbering)	jubarte::numbering::THAI_LETTERS: [char; 42]
+internal	constant	pub(crate::numbering)	jubarte::numbering::W_NS: &str
 internal	constant	pub(crate::ooxml)	jubarte::ooxml::SECT_ORDER: &[&str]
 internal	constant	pub(crate::opc)	jubarte::opc::CUSTOM_XML_RELATIONSHIPS: [&str; 2]
 internal	constant	pub(crate::opc::archive)	jubarte::opc::archive::CENTRAL_HEADER: HeaderShape
@@ -5689,6 +5691,7 @@ internal	enum	pub(crate)	jubarte::markdown::view_notes::CellMark
 internal	enum	pub(crate)	jubarte::markdown::view_notes::Owner
 internal	enum	pub(crate)	jubarte::markdown::view_styles::TableBorders
 internal	enum	pub(crate)	jubarte::markdown::xml::ListFormat
+internal	enum	pub(crate)	jubarte::numbering::NumFmt
 internal	enum	pub(crate)	jubarte::opc::archive::ZipDefectKind
 internal	enum	pub(crate)	jubarte::revision_processor::sections::Resolution
 internal	enum	pub(crate::changes)	jubarte::changes::Group
@@ -5719,7 +5722,6 @@ internal	enum	pub(crate::convert)	jubarte::convert::FontHint
 internal	enum	pub(crate::convert)	jubarte::convert::ImageKind
 internal	enum	pub(crate::convert)	jubarte::convert::ImageSlot
 internal	enum	pub(crate::convert)	jubarte::convert::MathFace
-internal	enum	pub(crate::convert)	jubarte::convert::NumFmt
 internal	enum	pub(crate::convert)	jubarte::convert::PageNumFmt
 internal	enum	pub(crate::convert)	jubarte::convert::PrefWidth
 internal	enum	pub(crate::convert)	jubarte::convert::RelFrame
@@ -5902,10 +5904,8 @@ internal	function	pub(crate)	jubarte::comparer::lcs_table::rows_preserving_horiz
 internal	function	pub(crate)	jubarte::comparer::lcs_table::shared_word_row_sequences (dom: &crate::xmllinq::Dom, rows1: &[super::atoms::ComparisonUnit], rows2: &[super::atoms::ComparisonUnit]) -> Option<Vec<super::atoms::CorrelatedSequence>>
 internal	function	pub(crate)	jubarte::comparer::moves::promote_skip_ahead_equals_with_source (dom: &crate::xmllinq::Dom, seqs: &mut Vec<super::atoms::CorrelatedSequence>, settings: &super::WmlComparerSettings)
 internal	function	pub(crate)	jubarte::comparer::textbox::shell (dom: &mut crate::xmllinq::Dom, shape: crate::xmllinq::NodeId) -> String
-internal	function	pub(crate)	jubarte::convert::alpha_label (n: u32, upper: bool) -> String
 internal	function	pub(crate)	jubarte::convert::altchunk::expand (xml: &str, load: impl Fn(&str) -> Option<Vec<u8>>) -> String
 internal	function	pub(crate)	jubarte::convert::altchunk::html_to_wml (html: &str) -> String
-internal	function	pub(crate)	jubarte::convert::cell_is_deleted (dom: &crate::xmllinq::Dom, cell: crate::xmllinq::NodeId) -> bool
 internal	function	pub(crate)	jubarte::convert::font::Face::advance_pt (self: &Self, ch: char, size: f32) -> f32
 internal	function	pub(crate)	jubarte::convert::font::Face::ascent_pt (self: &Self, size: f32) -> f32
 internal	function	pub(crate)	jubarte::convert::font::Face::bytes (self: &Self) -> &[u8]
@@ -5969,7 +5969,6 @@ internal	function	pub(crate)	jubarte::convert::font_table::parse_font_key (guid:
 internal	function	pub(crate)	jubarte::convert::font_table::parse_font_table_xml (xml: &str) -> FontTable
 internal	function	pub(crate)	jubarte::convert::layout_facts (docx: &[u8]) -> Result<LayoutFacts, ConvertError>
 internal	function	pub(crate)	jubarte::convert::leading_rprs (dom: &crate::xmllinq::Dom, run: crate::xmllinq::NodeId) -> Vec<crate::xmllinq::NodeId>
-internal	function	pub(crate)	jubarte::convert::list_number (num_fmt: &str, n: u32) -> String
 internal	function	pub(crate)	jubarte::convert::main_rel_part (pkg: &crate::opc::PartFs, kind: &str, fallback: &str) -> String
 internal	function	pub(crate)	jubarte::convert::math_alphanumerics_cover (from: &str, mapped: &str) -> bool
 internal	function	pub(crate)	jubarte::convert::math_font::Glyph::depth (self: Self) -> f32
@@ -5987,7 +5986,6 @@ internal	function	pub(crate)	jubarte::convert::math_font::MathFontGuard::set (fo
 internal	function	pub(crate)	jubarte::convert::math_font::with_current_math_font <T>(f: impl FnOnce(&MathFont) -> T) -> T
 internal	function	pub(crate)	jubarte::convert::math_layout::layout_node (dom: &crate::xmllinq::Dom, node: crate::xmllinq::NodeId, font: &super::math_font::MathFont, size: f32, display: bool) -> MathBox
 internal	function	pub(crate)	jubarte::convert::metafile::render (bytes: &[u8]) -> Option<(u32, u32, Vec<u8>, Vec<MetaText>)>
-internal	function	pub(crate)	jubarte::convert::names_deeper_level (text: &str, ilvl: u32) -> bool
 internal	function	pub(crate)	jubarte::convert::pdf::Op::hidden (self: Self) -> Self
 internal	function	pub(crate)	jubarte::convert::pdf::Op::scaled (self: Self, scale: f32) -> Self
 internal	function	pub(crate)	jubarte::convert::pdf::Op::shift_y (self: &mut Self, dy: f32)
@@ -6003,8 +6001,6 @@ internal	function	pub(crate)	jubarte::convert::preset_geom::text_rect (name: &st
 internal	function	pub(crate)	jubarte::convert::raster::encode_png (pixmap: &tiny_skia::Pixmap) -> Vec<u8>
 internal	function	pub(crate)	jubarte::convert::raster::page_text (fonts: &super::font::Fonts<'_>, page: &super::pdf::Page) -> String
 internal	function	pub(crate)	jubarte::convert::raster::paint_page (fonts: &super::font::Fonts<'_>, page: &super::pdf::Page, dpi: f32) -> Option<tiny_skia::Pixmap>
-internal	function	pub(crate)	jubarte::convert::roman_label (n: u32, upper: bool) -> String
-internal	function	pub(crate)	jubarte::convert::table_look (dom: &crate::xmllinq::Dom, table: crate::xmllinq::NodeId) -> TblLook
 internal	function	pub(crate)	jubarte::convert::word_subst::entry_generic (entry: &super::font_table::FontEntry) -> &'static str
 internal	function	pub(crate)	jubarte::convert::word_subst::lookup_physical (requested: &str) -> Option<String>
 internal	function	pub(crate)	jubarte::convert::word_subst::parse_table (src: &str) -> Vec<SubstRow>
@@ -6012,7 +6008,6 @@ internal	function	pub(crate)	jubarte::convert::word_subst::rows () -> &'static [
 internal	function	pub(crate)	jubarte::convert::word_subst::script_face (entry: &super::font_table::FontEntry) -> Option<&'static str>
 internal	function	pub(crate)	jubarte::convert::word_subst::unknown_physical () -> String
 internal	function	pub(crate)	jubarte::convert::word_subst::word_name_substitute (name: &str) -> Option<&'static str>
-internal	function	pub(crate)	jubarte::convert::wrapped_children (dom: &crate::xmllinq::Dom, parent: crate::xmllinq::NodeId, local: &str) -> Vec<crate::xmllinq::NodeId>
 internal	function	pub(crate)	jubarte::data_stores::built_in (store: &str) -> bool
 internal	function	pub(crate)	jubarte::data_stores::stores (package: &crate::opc::PartFs, main: &str) -> Vec<String>
 internal	function	pub(crate)	jubarte::debug::cell_ends_in_paragraph (dom: &crate::xmllinq::Dom, tc: crate::xmllinq::NodeId) -> bool
@@ -6303,10 +6298,8 @@ internal	function	pub(crate)	jubarte::markdown::from_docx::ooxml::parse_xml (byt
 internal	function	pub(crate)	jubarte::markdown::from_docx::ooxml::parse_xml_with_limits (bytes: &[u8], limits: crate::admission::InputLimits) -> Result<Element, String>
 internal	function	pub(crate)	jubarte::markdown::from_docx::ooxml::titled (url: &str, title: Option<&str>) -> String
 internal	function	pub(crate)	jubarte::markdown::from_docx::revise::resolve (element: &super::ooxml::Element, accept: bool) -> super::ooxml::Element
-internal	function	pub(crate)	jubarte::markdown::package::append_numbering (package: &mut crate::opc::PartFs, main: &str, build: impl FnOnce(u32, u32) -> (String, String)) -> Option<(u32, u32)>
 internal	function	pub(crate)	jubarte::markdown::package::ensure_footnotes_part (package: &mut crate::opc::PartFs, main: &str) -> String
 internal	function	pub(crate)	jubarte::markdown::package::max_drawing_id (package: &crate::opc::PartFs) -> u32
-internal	function	pub(crate)	jubarte::markdown::package::numbering_part (package: &mut crate::opc::PartFs, main: &str) -> String
 internal	function	pub(crate)	jubarte::markdown::package::styles_part (package: &mut crate::opc::PartFs, main: &str) -> String
 internal	function	pub(crate)	jubarte::markdown::view_notes::style_token (style: &str) -> String
 internal	function	pub(crate)	jubarte::markdown::write::read_picture (bytes: Vec<u8>, alt: &str) -> Option<super::xml::Picture>
@@ -6322,6 +6315,44 @@ internal	function	pub(crate)	jubarte::markup_simplifier::requires_list_understoo
 internal	function	pub(crate)	jubarte::markup_simplifier::resolve_alternate_content_with (dom: &mut crate::xmllinq::Dom, root: crate::xmllinq::NodeId, understood: fn(&str) -> bool)
 internal	function	pub(crate)	jubarte::markup_simplifier::selected_alternate_branch (dom: &crate::xmllinq::Dom, alternate: crate::xmllinq::NodeId, understood: fn(&str) -> bool) -> Option<crate::xmllinq::NodeId>
 internal	function	pub(crate)	jubarte::markup_simplifier::word_understands_namespace (uri: &str) -> bool
+internal	function	pub(crate)	jubarte::numbering::alpha_label (n: u32, upper: bool) -> String
+internal	function	pub(crate)	jubarte::numbering::append_numbering (package: &mut crate::opc::PartFs, main: &str, build: impl FnOnce(u32, u32) -> (String, String)) -> Option<(u32, u32)>
+internal	function	pub(crate)	jubarte::numbering::attribute_values (xml: &str, element: &str, name: &str) -> Vec<i64>
+internal	function	pub(crate)	jubarte::numbering::cardinal_label (n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::chicago_label (n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::chinese_counting_label (n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::chinese_counting_thousand (n: u32, zero: char, myriad: char) -> String
+internal	function	pub(crate)	jubarte::numbering::cjk_counting (n: u32, legal: bool) -> String
+internal	function	pub(crate)	jubarte::numbering::cycle_cjk (chars: &[char], n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::decimal_fullwidth_label (n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::enclosed_decimal_label (n: u32, glyphs: &[char; 20]) -> String
+internal	function	pub(crate)	jubarte::numbering::format_num (fmt: NumFmt, n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::hebrew1_label (n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::hindi_counting_label (n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::hindi_numbers_label (n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::ideograph_digital_label (n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::ideograph_enclosed_circle_label (n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::ideograph_legal_traditional_label (n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::ideograph_zodiac_traditional_label (n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::japanese_counting_label (n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::korean_counting_label (n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::korean_digital2_label (n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::korean_digital_label (n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::korean_legal_label (n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::list_number (num_fmt: &str, n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::max_attribute (xml: &str, element: &str, name: &str) -> Option<i64>
+internal	function	pub(crate)	jubarte::numbering::names_deeper_level (text: &str, ilvl: u32) -> bool
+internal	function	pub(crate)	jubarte::numbering::numbering_part (package: &mut crate::opc::PartFs, main: &str) -> String
+internal	function	pub(crate)	jubarte::numbering::ordinal_label (n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::ordinal_suffix (n: u32) -> &'static str
+internal	function	pub(crate)	jubarte::numbering::ordinal_text_label (n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::ordinal_text_ones (one: &str) -> String
+internal	function	pub(crate)	jubarte::numbering::parse_num_fmt (val: &str) -> NumFmt
+internal	function	pub(crate)	jubarte::numbering::related (package: &crate::opc::PartFs, main: &str, kind: &str) -> Option<String>
+internal	function	pub(crate)	jubarte::numbering::roman_label (n: u32, upper: bool) -> String
+internal	function	pub(crate)	jubarte::numbering::sibling (main: &str, name: &str) -> String
+internal	function	pub(crate)	jubarte::numbering::thai_counting_label (n: u32) -> String
+internal	function	pub(crate)	jubarte::numbering::thai_numbers_label (n: u32) -> String
 internal	function	pub(crate)	jubarte::ooxml::sect_rank (local: &str) -> usize
 internal	function	pub(crate)	jubarte::ooxml::text_box_names () -> [crate::xmllinq::XName; 2]
 internal	function	pub(crate)	jubarte::opc::PartFs::open_within (bytes: &[u8], limits: crate::admission::InputLimits) -> Result<Self, OpcError>
@@ -6359,6 +6390,9 @@ internal	function	pub(crate)	jubarte::revision_processor::xml_has_tracked_revisi
 internal	function	pub(crate)	jubarte::scrub::leaks_within (docx: &[u8], needle: &str, limits: crate::admission::InputLimits) -> Vec<String>
 internal	function	pub(crate)	jubarte::settings::no_stretched_line_breaks (docx: &[u8]) -> Result<Vec<u8>, String>
 internal	function	pub(crate)	jubarte::strict_translation::transitional_part <'a>(name: &str, text: &'a str) -> std::borrow::Cow<'a, str>
+internal	function	pub(crate)	jubarte::table_dom::cell_is_deleted (dom: &crate::xmllinq::Dom, cell: crate::xmllinq::NodeId) -> bool
+internal	function	pub(crate)	jubarte::table_dom::table_look (dom: &crate::xmllinq::Dom, table: crate::xmllinq::NodeId) -> TblLook
+internal	function	pub(crate)	jubarte::table_dom::wrapped_children (dom: &crate::xmllinq::Dom, parent: crate::xmllinq::NodeId, local: &str) -> Vec<crate::xmllinq::NodeId>
 internal	function	pub(crate)	jubarte::text_diff::critic_literal (text: &str) -> String
 internal	function	pub(crate)	jubarte::util::collapse_whitespace (text: &str) -> String
 internal	function	pub(crate)	jubarte::util::datetime::civil_from_unix_days (unix_days: i64) -> (i32, u32, u32)
@@ -7334,7 +7368,7 @@ internal	function	pub(crate::convert)	jubarte::convert::apply_rfonts (dom: &crat
 internal	function	pub(crate::convert)	jubarte::convert::apply_rpr (dom: &crate::xmllinq::Dom, rpr: crate::xmllinq::NodeId, style: &mut RunStyle, theme: &ThemeFonts)
 internal	function	pub(crate::convert)	jubarte::convert::apply_sect_pr (dom: &crate::xmllinq::Dom, sect: crate::xmllinq::NodeId, fallback: &PageSetup) -> PageSetup
 internal	function	pub(crate::convert)	jubarte::convert::apply_tab_stops (stops: &mut Vec<TabStop>, dom: &crate::xmllinq::Dom, ppr: crate::xmllinq::NodeId)
-internal	function	pub(crate::convert)	jubarte::convert::apply_tbl_style (rows: &mut [Vec<TableCell>], tdef: &TblStyle, look: &TblLook)
+internal	function	pub(crate::convert)	jubarte::convert::apply_tbl_style (rows: &mut [Vec<TableCell>], tdef: &TblStyle, look: &crate::table_dom::TblLook)
 internal	function	pub(crate::convert)	jubarte::convert::apply_theme_script_fonts (style: &mut RunStyle, theme: &ThemeFonts)
 internal	function	pub(crate::convert)	jubarte::convert::apply_w14_text_fill (dom: &crate::xmllinq::Dom, rpr: crate::xmllinq::NodeId, style: &mut RunStyle, theme: &ThemeFonts)
 internal	function	pub(crate::convert)	jubarte::convert::arc_points (x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)>
@@ -7361,7 +7395,6 @@ internal	function	pub(crate::convert)	jubarte::convert::border_el (dom: &crate::
 internal	function	pub(crate::convert)	jubarte::convert::boxed_picture_extent (dom: &crate::xmllinq::Dom, blip: crate::xmllinq::NodeId, drawing: crate::xmllinq::NodeId) -> Option<(f32, f32)>
 internal	function	pub(crate::convert)	jubarte::convert::breaks_after (run: &TextRun, tok: &str) -> bool
 internal	function	pub(crate::convert)	jubarte::convert::bullet_glyph (raw: &str) -> String
-internal	function	pub(crate::convert)	jubarte::convert::cardinal_label (n: u32) -> String
 internal	function	pub(crate::convert)	jubarte::convert::cell_baseline_drop (face: &font::Face<'_>, size: f32, line: &[TextRun], line_box: f32, exact: bool, grid_pad: f32) -> f32
 internal	function	pub(crate::convert)	jubarte::convert::cell_children_in_order (dom: &crate::xmllinq::Dom, node: crate::xmllinq::NodeId, out: &mut Vec<crate::xmllinq::NodeId>)
 internal	function	pub(crate::convert)	jubarte::convert::cell_content_extent (fonts: &font::Fonts<'_>, cell: &TableCell) -> (f32, f32)
@@ -7409,9 +7442,6 @@ internal	function	pub(crate::convert)	jubarte::convert::chart_ser_name (dom: &cr
 internal	function	pub(crate::convert)	jubarte::convert::chart_title (dom: &crate::xmllinq::Dom, root: crate::xmllinq::NodeId) -> String
 internal	function	pub(crate::convert)	jubarte::convert::chart_val_ax_scaling (dom: &crate::xmllinq::Dom, root: crate::xmllinq::NodeId) -> ((Option<f32>, Option<f32>), (Option<f32>, Option<f32>))
 internal	function	pub(crate::convert)	jubarte::convert::chevron_points (x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)>
-internal	function	pub(crate::convert)	jubarte::convert::chicago_label (n: u32) -> String
-internal	function	pub(crate::convert)	jubarte::convert::chinese_counting_label (n: u32) -> String
-internal	function	pub(crate::convert)	jubarte::convert::chinese_counting_thousand (n: u32, zero: char, myriad: char) -> String
 internal	function	pub(crate::convert)	jubarte::convert::chord_points (x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)>
 internal	function	pub(crate::convert)	jubarte::convert::chrome_band (fonts: &font::Fonts<'_>, runs: &[TextRun], tables: &[ChromeTable], avail: f32) -> f32
 internal	function	pub(crate::convert)	jubarte::convert::chrome_empty_pads (fonts: &font::Fonts<'_>, runs: &[TextRun]) -> (f32, f32)
@@ -7429,7 +7459,6 @@ internal	function	pub(crate::convert)	jubarte::convert::chrome_pic_top (fonts: &
 internal	function	pub(crate::convert)	jubarte::convert::chrome_present (part: &ChromePart) -> bool
 internal	function	pub(crate::convert)	jubarte::convert::chrome_size (runs: &[TextRun]) -> f32
 internal	function	pub(crate::convert)	jubarte::convert::chrome_tables_h (fonts: &font::Fonts<'_>, tables: &[ChromeTable], avail: f32, before: Option<bool>) -> f32
-internal	function	pub(crate::convert)	jubarte::convert::cjk_counting (n: u32, legal: bool) -> String
 internal	function	pub(crate::convert)	jubarte::convert::cjk_hangs (c: char) -> bool
 internal	function	pub(crate::convert)	jubarte::convert::cjk_no_line_end (c: char) -> bool
 internal	function	pub(crate::convert)	jubarte::convert::cjk_no_line_start (c: char) -> bool
@@ -7468,11 +7497,9 @@ internal	function	pub(crate::convert)	jubarte::convert::core_dates_from_xml (xml
 internal	function	pub(crate::convert)	jubarte::convert::count_run (chars: &[char], start: usize, want: char) -> usize
 internal	function	pub(crate::convert)	jubarte::convert::curved_connector_cubics (x: f32, y: f32, dw: f32, dh: f32, flip_h: bool, flip_v: bool) -> ConnectorCubic
 internal	function	pub(crate::convert)	jubarte::convert::cust_geom (dom: &crate::xmllinq::Dom, shape: crate::xmllinq::NodeId) -> Option<preset_geom::CustomGeom>
-internal	function	pub(crate::convert)	jubarte::convert::cycle_cjk (chars: &[char], n: u32) -> String
 internal	function	pub(crate::convert)	jubarte::convert::date_picture (instr: &str) -> Option<String>
 internal	function	pub(crate::convert)	jubarte::convert::datetime_field_text (instr: &str) -> String
 internal	function	pub(crate::convert)	jubarte::convert::datetime_field_text_at (instr: &str, now: crate::util::datetime::CivilDateTime) -> String
-internal	function	pub(crate::convert)	jubarte::convert::decimal_fullwidth_label (n: u32) -> String
 internal	function	pub(crate::convert)	jubarte::convert::declared_table_width (geom: &TableGeom, avail: f32) -> Option<f32>
 internal	function	pub(crate::convert)	jubarte::convert::decode_image (bytes: Vec<u8>) -> Option<ImageKind>
 internal	function	pub(crate::convert)	jubarte::convert::default_run_style () -> RunStyle
@@ -7514,9 +7541,8 @@ internal	function	pub(crate::convert)	jubarte::convert::emit_flow_pictures (ctx:
 internal	function	pub(crate::convert)	jubarte::convert::emit_math_box (ctx: &mut RunCollect<'_>, node: crate::xmllinq::NodeId, mark: RevMark, author: &str, runs: &mut Vec<TextRun>)
 internal	function	pub(crate::convert)	jubarte::convert::empty_chrome () -> ChromePart
 internal	function	pub(crate::convert)	jubarte::convert::emu_attr (dom: &crate::xmllinq::Dom, node: crate::xmllinq::NodeId, name: &str) -> f32
-internal	function	pub(crate::convert)	jubarte::convert::enclosed_decimal_label (n: u32, glyphs: &[char; 20]) -> String
 internal	function	pub(crate::convert)	jubarte::convert::ended_by_breaks (lines: &[Vec<TextRun>]) -> Vec<bool>
-internal	function	pub(crate::convert)	jubarte::convert::endnote_num_format (pkg: &crate::opc::PartFs, dom: &crate::xmllinq::Dom, sects: &[crate::xmllinq::NodeId]) -> (NumFmt, u32)
+internal	function	pub(crate::convert)	jubarte::convert::endnote_num_format (pkg: &crate::opc::PartFs, dom: &crate::xmllinq::Dom, sects: &[crate::xmllinq::NodeId]) -> (crate::numbering::NumFmt, u32)
 internal	function	pub(crate::convert)	jubarte::convert::endnote_pos_is_sect_end (dom: &crate::xmllinq::Dom, sect: crate::xmllinq::NodeId) -> bool
 internal	function	pub(crate::convert)	jubarte::convert::exact_baseline (line_box: f32) -> f32
 internal	function	pub(crate::convert)	jubarte::convert::face_lacks_ink (face: &font::Face<'_>, text: &str) -> bool
@@ -7561,7 +7587,6 @@ internal	function	pub(crate::convert)	jubarte::convert::for_each_block_runs (blo
 internal	function	pub(crate::convert)	jubarte::convert::form_checkbox (dom: &crate::xmllinq::Dom, run: crate::xmllinq::NodeId) -> Option<(Option<f32>, bool)>
 internal	function	pub(crate::convert)	jubarte::convert::form_dropdown (dom: &crate::xmllinq::Dom, fld: crate::xmllinq::NodeId) -> Option<String>
 internal	function	pub(crate::convert)	jubarte::convert::format_datetime_picture (pic: &str, dt: crate::util::datetime::CivilDateTime) -> String
-internal	function	pub(crate::convert)	jubarte::convert::format_num (fmt: NumFmt, n: u32) -> String
 internal	function	pub(crate::convert)	jubarte::convert::frame_attr <'a>(attrs: &'a [(String, String)], name: &str) -> Option<&'a str>
 internal	function	pub(crate::convert)	jubarte::convert::frame_box (ctx: &WalkCtx<'_>, dom: &crate::xmllinq::Dom, paras: &[crate::xmllinq::NodeId], numbering: &mut Numbering) -> Option<LaidTextBox>
 internal	function	pub(crate::convert)	jubarte::convert::gear6_points (x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)>
@@ -7578,7 +7603,6 @@ internal	function	pub(crate::convert)	jubarte::convert::group_children (dom: &cr
 internal	function	pub(crate::convert)	jubarte::convert::group_pictures (dom: &crate::xmllinq::Dom, drawing: crate::xmllinq::NodeId) -> Vec<([f32; 4], crate::xmllinq::NodeId)>
 internal	function	pub(crate::convert)	jubarte::convert::hanging_punct_width (fonts: &font::Fonts<'_>, unit: &[(&'_ TextRun, &'_ str, f32)]) -> f32
 internal	function	pub(crate::convert)	jubarte::convert::heart_points (x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)>
-internal	function	pub(crate::convert)	jubarte::convert::hebrew1_label (n: u32) -> String
 internal	function	pub(crate::convert)	jubarte::convert::heptagon_points (x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)>
 internal	function	pub(crate::convert)	jubarte::convert::hexagon_points (x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)>
 internal	function	pub(crate::convert)	jubarte::convert::hf_border_pad (above: Option<&ParaStyle>, para: &ParaStyle) -> f32
@@ -7606,15 +7630,9 @@ internal	function	pub(crate::convert)	jubarte::convert::hf_text_frame_key (dom: 
 internal	function	pub(crate::convert)	jubarte::convert::hf_unbound_inline_pic_h (dom: &crate::xmllinq::Dom, para: crate::xmllinq::NodeId, bound: &std::collections::HashSet<u32>) -> f32
 internal	function	pub(crate::convert)	jubarte::convert::hf_wrap_tab_pieces (fonts: &font::Fonts<'_>, pieces: Vec<Vec<TextRun>>, width: f32) -> Vec<Vec<TextRun>>
 internal	function	pub(crate::convert)	jubarte::convert::highlight_color (val: &str) -> Option<[f32; 3]>
-internal	function	pub(crate::convert)	jubarte::convert::hindi_counting_label (n: u32) -> String
-internal	function	pub(crate::convert)	jubarte::convert::hindi_numbers_label (n: u32) -> String
 internal	function	pub(crate::convert)	jubarte::convert::home_plate_points (x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)>
 internal	function	pub(crate::convert)	jubarte::convert::hsl_to_rgb (h: f32, s: f32, l: f32) -> [f32; 3]
 internal	function	pub(crate::convert)	jubarte::convert::hyphen_wrap_pieces (tok: &str, ideograph_breaks: bool, hyphen_breaks: bool) -> Vec<&str>
-internal	function	pub(crate::convert)	jubarte::convert::ideograph_digital_label (n: u32) -> String
-internal	function	pub(crate::convert)	jubarte::convert::ideograph_enclosed_circle_label (n: u32) -> String
-internal	function	pub(crate::convert)	jubarte::convert::ideograph_legal_traditional_label (n: u32) -> String
-internal	function	pub(crate::convert)	jubarte::convert::ideograph_zodiac_traditional_label (n: u32) -> String
 internal	function	pub(crate::convert)	jubarte::convert::inherited_ref_id (dom: &crate::xmllinq::Dom, sect: crate::xmllinq::NodeId, local: &str, want: &str) -> Option<String>
 internal	function	pub(crate::convert)	jubarte::convert::ink_face (fonts: &font::Fonts<'_>, style: &RunStyle, text: &str) -> font::FaceRef
 internal	function	pub(crate::convert)	jubarte::convert::ink_is_dark (under: Option<[f32; 3]>) -> bool
@@ -7651,17 +7669,12 @@ internal	function	pub(crate::convert)	jubarte::convert::is_thai (c: char) -> boo
 internal	function	pub(crate::convert)	jubarte::convert::is_time_field (instr: &str) -> bool
 internal	function	pub(crate::convert)	jubarte::convert::is_toc_style (style: &ParaStyle) -> bool
 internal	function	pub(crate::convert)	jubarte::convert::is_wrap_space (c: char) -> bool
-internal	function	pub(crate::convert)	jubarte::convert::japanese_counting_label (n: u32) -> String
 internal	function	pub(crate::convert)	jubarte::convert::jpeg_info (data: &[u8]) -> Option<(u32, u32, u8)>
 internal	function	pub(crate::convert)	jubarte::convert::keep_changed_pages (pages: &mut Vec<pdf::Page>)
 internal	function	pub(crate::convert)	jubarte::convert::keep_lines_need_pt (fonts: &font::Fonts<'_>, runs: &[TextRun], style: &ParaStyle, width: f32, grid_pitch: f32) -> f32
 internal	function	pub(crate::convert)	jubarte::convert::keep_next_follow_pt (fonts: &font::Fonts<'_>, avail: f32, block: &Block, grid_pitch: f32, para_lines: usize) -> f32
 internal	function	pub(crate::convert)	jubarte::convert::keep_opening_row_mark (blocks: &mut [Block])
 internal	function	pub(crate::convert)	jubarte::convert::keep_table_spacing_unset_by_style (pstyle: &mut ParaStyle, table: &TableParaSpacing<'_>, style_sets: [bool; 3])
-internal	function	pub(crate::convert)	jubarte::convert::korean_counting_label (n: u32) -> String
-internal	function	pub(crate::convert)	jubarte::convert::korean_digital2_label (n: u32) -> String
-internal	function	pub(crate::convert)	jubarte::convert::korean_digital_label (n: u32) -> String
-internal	function	pub(crate::convert)	jubarte::convert::korean_legal_label (n: u32) -> String
 internal	function	pub(crate::convert)	jubarte::convert::label_order (label: &str) -> (usize, usize)
 internal	function	pub(crate::convert)	jubarte::convert::label_rev <'a>(dom: &'a crate::xmllinq::Dom, para: crate::xmllinq::NodeId, sheet: &StyleSheet, num_id: &str, ilvl: u32) -> Option<(RevMark, &'a str)>
 internal	function	pub(crate::convert)	jubarte::convert::lang_to_ooxml_script (lang: &str) -> Option<&'static str>
@@ -7727,7 +7740,7 @@ internal	function	pub(crate::convert)	jubarte::convert::note_is_structural (dom:
 internal	function	pub(crate::convert)	jubarte::convert::notes_for (ctx: &mut RunCollect<'_>, ids: &[String]) -> Vec<CommentNote>
 internal	function	pub(crate::convert)	jubarte::convert::num_pr (dom: &crate::xmllinq::Dom, ppr: crate::xmllinq::NodeId) -> (Option<String>, u32)
 internal	function	pub(crate::convert)	jubarte::convert::number_comments (dom: &crate::xmllinq::Dom, body: crate::xmllinq::NodeId, comments: &mut std::collections::HashMap<String, CommentRec>, parents: &std::collections::HashMap<String, String>)
-internal	function	pub(crate::convert)	jubarte::convert::number_endnote_refs (blocks: &mut [Block], (fmt, start): (NumFmt, u32))
+internal	function	pub(crate::convert)	jubarte::convert::number_endnote_refs (blocks: &mut [Block], (fmt, start): (crate::numbering::NumFmt, u32))
 internal	function	pub(crate::convert)	jubarte::convert::number_footnote_refs (blocks: &mut [Block]) -> std::collections::HashMap<String, String>
 internal	function	pub(crate::convert)	jubarte::convert::number_formats_write (xml: &str, test: fn(char) -> bool) -> bool
 internal	function	pub(crate::convert)	jubarte::convert::numeric_field_kind (instr: &str) -> Option<FieldKind>
@@ -7738,10 +7751,6 @@ internal	function	pub(crate::convert)	jubarte::convert::ooxml_ang_rad (sixtieths
 internal	function	pub(crate::convert)	jubarte::convert::ooxml_arc_to_y_down (cur: &mut (f32, f32), wr: f32, hr: f32, st_ang: f32, sw_ang: f32, pts: &mut Vec<(f32, f32)>, map: impl Fn(f32, f32) -> (f32, f32))
 internal	function	pub(crate::convert)	jubarte::convert::op_left (op: &pdf::Op) -> Option<f32>
 internal	function	pub(crate::convert)	jubarte::convert::open_tint (ctx: &mut RunCollect<'_>) -> Option<[f32; 3]>
-internal	function	pub(crate::convert)	jubarte::convert::ordinal_label (n: u32) -> String
-internal	function	pub(crate::convert)	jubarte::convert::ordinal_suffix (n: u32) -> &'static str
-internal	function	pub(crate::convert)	jubarte::convert::ordinal_text_label (n: u32) -> String
-internal	function	pub(crate::convert)	jubarte::convert::ordinal_text_ones (one: &str) -> String
 internal	function	pub(crate::convert)	jubarte::convert::page_background (dom: &crate::xmllinq::Dom, node: crate::xmllinq::NodeId) -> bool
 internal	function	pub(crate::convert)	jubarte::convert::page_frame_key (dom: &crate::xmllinq::Dom, para: crate::xmllinq::NodeId, sheet: &StyleSheet) -> Option<String>
 internal	function	pub(crate::convert)	jubarte::convert::pageref_bookmark (instr: &str) -> Option<String>
@@ -7778,7 +7787,6 @@ internal	function	pub(crate::convert)	jubarte::convert::parse_fmt_scheme (dom: &
 internal	function	pub(crate::convert)	jubarte::convert::parse_header_watermark (dom: &crate::xmllinq::Dom, root: crate::xmllinq::NodeId) -> Option<Watermark>
 internal	function	pub(crate::convert)	jubarte::convert::parse_hex_color (val: &str) -> Option<[f32; 3]>
 internal	function	pub(crate::convert)	jubarte::convert::parse_len (s: &str) -> Option<f32>
-internal	function	pub(crate::convert)	jubarte::convert::parse_num_fmt (val: &str) -> NumFmt
 internal	function	pub(crate::convert)	jubarte::convert::parse_num_level (dom: &crate::xmllinq::Dom, lvl: crate::xmllinq::NodeId) -> NumLevel
 internal	function	pub(crate::convert)	jubarte::convert::parse_numbering_xml (xml: &str, media: impl Fn(&str) -> Option<Vec<u8>>) -> Numbering
 internal	function	pub(crate::convert)	jubarte::convert::parse_pct_offset (dom: &crate::xmllinq::Dom, parent: crate::xmllinq::NodeId, local: &str) -> Option<f32>
@@ -7844,7 +7852,7 @@ internal	function	pub(crate::convert)	jubarte::convert::round2_diag_rect_points 
 internal	function	pub(crate::convert)	jubarte::convert::round2_same_rect_points (x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)>
 internal	function	pub(crate::convert)	jubarte::convert::round_rect_points (x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)>
 internal	function	pub(crate::convert)	jubarte::convert::rounded_box (x0: f32, y0: f32, x1: f32, y1: f32, r: f32) -> Vec<(f32, f32)>
-internal	function	pub(crate::convert)	jubarte::convert::row_band_fill (tdef: &TblStyle, look: &TblLook, row: usize) -> Option<[f32; 3]>
+internal	function	pub(crate::convert)	jubarte::convert::row_band_fill (tdef: &TblStyle, look: &crate::table_dom::TblLook, row: usize) -> Option<[f32; 3]>
 internal	function	pub(crate::convert)	jubarte::convert::row_bottom_rule (row: &[TableCell], geom: &TableGeom, ri: usize) -> f32
 internal	function	pub(crate::convert)	jubarte::convert::row_cell_mar (dom: &crate::xmllinq::Dom, row: crate::xmllinq::NodeId, table: [f32; 4]) -> [f32; 4]
 internal	function	pub(crate::convert)	jubarte::convert::row_exception_cell_borders (b: TblBorders, first_row: bool, last_row: bool, first_col: bool, last_col: bool) -> CellBorders
@@ -7987,8 +7995,6 @@ internal	function	pub(crate::convert)	jubarte::convert::teardrop_points (x: f32,
 internal	function	pub(crate::convert)	jubarte::convert::text_box_image (b: LaidTextBox, effect: [f32; 4]) -> LaidImage
 internal	function	pub(crate::convert)	jubarte::convert::textbox_insets (dom: &crate::xmllinq::Dom, shape: crate::xmllinq::NodeId) -> [f32; 4]
 internal	function	pub(crate::convert)	jubarte::convert::textbox_text_insets (dom: &crate::xmllinq::Dom, shape: crate::xmllinq::NodeId, theme: &ThemeFonts) -> [f32; 4]
-internal	function	pub(crate::convert)	jubarte::convert::thai_counting_label (n: u32) -> String
-internal	function	pub(crate::convert)	jubarte::convert::thai_numbers_label (n: u32) -> String
 internal	function	pub(crate::convert)	jubarte::convert::theme_bidi_face (theme: &ThemeFonts, which: &str) -> Option<String>
 internal	function	pub(crate::convert)	jubarte::convert::theme_script_face (theme: &ThemeFonts, slot: &str) -> Option<String>
 internal	function	pub(crate::convert)	jubarte::convert::theme_slot_color (slot: &str) -> Option<[f32; 3]>
@@ -9996,7 +10002,6 @@ internal	function	pub(crate::markdown::math)	jubarte::markdown::math::take_base 
 internal	function	pub(crate::markdown::math)	jubarte::markdown::math::token_latex (token: &Token) -> String
 internal	function	pub(crate::markdown::math)	jubarte::markdown::math::tokens (latex: &str) -> Vec<Token>
 internal	function	pub(crate::markdown::math)	jubarte::markdown::math::trimmed (nodes: Vec<Node>) -> Vec<Node>
-internal	function	pub(crate::markdown::package)	jubarte::markdown::package::attribute_values (xml: &str, element: &str, name: &str) -> Vec<i64>
 internal	function	pub(crate::markdown::package)	jubarte::markdown::package::built_in (id: &str) -> Option<(String, String)>
 internal	function	pub(crate::markdown::package)	jubarte::markdown::package::built_in_table_style (id: &str, theme: &str) -> Option<String>
 internal	function	pub(crate::markdown::package)	jubarte::markdown::package::comment_spans (markdown: &str) -> Vec<std::ops::Range<usize>>
@@ -10013,7 +10018,6 @@ internal	function	pub(crate::markdown::package)	jubarte::markdown::package::fram
 internal	function	pub(crate::markdown::package)	jubarte::markdown::package::hls_to_rgb (h: f64, l: f64, s: f64) -> (f64, f64, f64)
 internal	function	pub(crate::markdown::package)	jubarte::markdown::package::label_numbering (package: &mut crate::opc::PartFs, main: &str, document: &super::xml::Document) -> Vec<u32>
 internal	function	pub(crate::markdown::package)	jubarte::markdown::package::listed (tokens: &[&str]) -> String
-internal	function	pub(crate::markdown::package)	jubarte::markdown::package::max_attribute (xml: &str, element: &str, name: &str) -> Option<i64>
 internal	function	pub(crate::markdown::package)	jubarte::markdown::package::numbering (package: &mut crate::opc::PartFs, main: &str, document: &super::xml::Document) -> Vec<u32>
 internal	function	pub(crate::markdown::package)	jubarte::markdown::package::prune (package: &mut crate::opc::PartFs, main: &str)
 internal	function	pub(crate::markdown::package)	jubarte::markdown::package::renamed (xml: &str, name: &str) -> String
@@ -10629,6 +10633,13 @@ internal	function	pub(crate::strict_translation)	jubarte::strict_translation::ro
 internal	function	pub(crate::strict_translation)	jubarte::strict_translation::split_opaque_markup (s: &str) -> Option<(&str, &str)>
 internal	function	pub(crate::strict_translation)	jubarte::strict_translation::split_tag (s: &str) -> Option<(&str, &str)>
 internal	function	pub(crate::strict_translation)	jubarte::strict_translation::translate (text: &str, table: &[(&str, &str)], site: UriSite) -> String
+internal	function	pub(crate::table_dom)	jubarte::table_dom::attr_any <'a>(dom: &'a crate::xmllinq::Dom, node: crate::xmllinq::NodeId, local: &str) -> Option<&'a str>
+internal	function	pub(crate::table_dom)	jubarte::table_dom::cell_pr (dom: &crate::xmllinq::Dom, cell: crate::xmllinq::NodeId) -> Option<crate::xmllinq::NodeId>
+internal	function	pub(crate::table_dom)	jubarte::table_dom::direct_named (dom: &crate::xmllinq::Dom, node: crate::xmllinq::NodeId, local: &str) -> Option<crate::xmllinq::NodeId>
+internal	function	pub(crate::table_dom)	jubarte::table_dom::first_named (dom: &crate::xmllinq::Dom, node: crate::xmllinq::NodeId, local: &str) -> Option<crate::xmllinq::NodeId>
+internal	function	pub(crate::table_dom)	jubarte::table_dom::local_name_is (dom: &crate::xmllinq::Dom, node: crate::xmllinq::NodeId, local: &str) -> bool
+internal	function	pub(crate::table_dom)	jubarte::table_dom::table_pr (dom: &crate::xmllinq::Dom, table: crate::xmllinq::NodeId) -> Option<crate::xmllinq::NodeId>
+internal	function	pub(crate::table_dom)	jubarte::table_dom::under_prior_change (dom: &crate::xmllinq::Dom, root: crate::xmllinq::NodeId, n: crate::xmllinq::NodeId) -> bool
 internal	function	pub(crate::text_diff)	jubarte::text_diff::Piece::len (self: &Self) -> usize
 internal	function	pub(crate::text_diff)	jubarte::text_diff::Piece::texts (self: &Self) -> [&str; 2]
 internal	function	pub(crate::text_diff)	jubarte::text_diff::accepted_text (text: &str, accept: bool) -> std::borrow::Cow<'_, str>
@@ -11057,10 +11068,6 @@ internal	impl		jubarte::convert::MathFace::(impl Debug)
 internal	impl		jubarte::convert::MathFace::(impl Default)
 internal	impl		jubarte::convert::MathFace::(impl Eq)
 internal	impl		jubarte::convert::MathFace::(impl PartialEq)
-internal	impl		jubarte::convert::NumFmt::(impl Clone)
-internal	impl		jubarte::convert::NumFmt::(impl Copy)
-internal	impl		jubarte::convert::NumFmt::(impl Eq)
-internal	impl		jubarte::convert::NumFmt::(impl PartialEq)
 internal	impl		jubarte::convert::NumLevel::(impl Clone)
 internal	impl		jubarte::convert::Numbering::(impl Clone)
 internal	impl		jubarte::convert::Numbering::(impl Default)
@@ -11121,8 +11128,6 @@ internal	impl		jubarte::convert::TableCell::(impl Clone)
 internal	impl		jubarte::convert::TableGeom::(impl Clone)
 internal	impl		jubarte::convert::TblBorders::(impl Clone)
 internal	impl		jubarte::convert::TblBorders::(impl Copy)
-internal	impl		jubarte::convert::TblLook::(impl Clone)
-internal	impl		jubarte::convert::TblLook::(impl Copy)
 internal	impl		jubarte::convert::TblStyle::(impl Clone)
 internal	impl		jubarte::convert::TblWidth::(impl Clone)
 internal	impl		jubarte::convert::TblWidth::(impl Copy)
@@ -11833,6 +11838,10 @@ internal	impl		jubarte::markdown::xml::TextBox::(impl Clone)
 internal	impl		jubarte::markdown::xml::TextBox::(impl Debug)
 internal	impl		jubarte::markdown::xml::TextBox::(impl Eq)
 internal	impl		jubarte::markdown::xml::TextBox::(impl PartialEq)
+internal	impl		jubarte::numbering::NumFmt::(impl Clone)
+internal	impl		jubarte::numbering::NumFmt::(impl Copy)
+internal	impl		jubarte::numbering::NumFmt::(impl Eq)
+internal	impl		jubarte::numbering::NumFmt::(impl PartialEq)
 internal	impl		jubarte::opc::archive::ZipDefect::(impl Debug)
 internal	impl		jubarte::opc::archive::ZipDefectKind::(impl Clone)
 internal	impl		jubarte::opc::archive::ZipDefectKind::(impl Copy)
@@ -11867,6 +11876,8 @@ internal	impl		jubarte::revision_processor::style_records::Slot::(impl PartialEq
 internal	impl		jubarte::revision_processor::style_records::Slot::(impl PartialOrd)
 internal	impl		jubarte::strict_translation::UriSite::(impl Clone)
 internal	impl		jubarte::strict_translation::UriSite::(impl Copy)
+internal	impl		jubarte::table_dom::TblLook::(impl Clone)
+internal	impl		jubarte::table_dom::TblLook::(impl Copy)
 internal	impl		jubarte::text_diff::Row::(impl Debug)
 internal	impl		jubarte::text_diff::Row::(impl Eq)
 internal	impl		jubarte::text_diff::Row::(impl PartialEq)
@@ -11911,9 +11922,11 @@ internal	module	pub(crate)	jubarte::markdown::from_docx::drawing
 internal	module	pub(crate)	jubarte::markdown::from_docx::ooxml
 internal	module	pub(crate)	jubarte::markdown::package
 internal	module	pub(crate)	jubarte::markdown::xml
+internal	module	pub(crate)	jubarte::numbering
 internal	module	pub(crate)	jubarte::ooxml
 internal	module	pub(crate)	jubarte::revision_processor::comments
 internal	module	pub(crate)	jubarte::revision_processor::style_records
+internal	module	pub(crate)	jubarte::table_dom
 internal	module	pub(crate)	jubarte::util::datetime
 internal	module	pub(crate)	jubarte::validate_dom
 internal	module	pub(crate)	jubarte::word_default_theme
@@ -12011,7 +12024,6 @@ internal	struct	pub(crate)	jubarte::comments::CommentFamily
 internal	struct	pub(crate)	jubarte::comments::NewComment
 internal	struct	pub(crate)	jubarte::comparer::lcs::U64IdentityHasher
 internal	struct	pub(crate)	jubarte::convert::LayoutFacts
-internal	struct	pub(crate)	jubarte::convert::TblLook
 internal	struct	pub(crate)	jubarte::convert::font::Face
 internal	struct	pub(crate)	jubarte::convert::font::FaceKey
 internal	struct	pub(crate)	jubarte::convert::font::Fonts
@@ -12078,6 +12090,7 @@ internal	struct	pub(crate)	jubarte::markdown::view_styles::BorderSide
 internal	struct	pub(crate)	jubarte::markdown::xml::Picture
 internal	struct	pub(crate)	jubarte::opc::archive::ZipDefect
 internal	struct	pub(crate)	jubarte::revision_processor::RevisionIds
+internal	struct	pub(crate)	jubarte::table_dom::TblLook
 internal	struct	pub(crate)	jubarte::util::datetime::CivilDateTime
 internal	struct	pub(crate)	jubarte::xmllinq::parse::TagPolicy
 internal	struct	pub(crate::append)	jubarte::append::CarriedNotes
@@ -13499,9 +13512,6 @@ internal	struct_field	pub(crate)	jubarte::comments::NewComment::parent: Option<u
 internal	struct_field	pub(crate)	jubarte::comments::NewComment::text: &'a str
 internal	struct_field	pub(crate)	jubarte::convert::LayoutFacts::bookmark_pages: std::collections::BTreeMap<String, String>
 internal	struct_field	pub(crate)	jubarte::convert::LayoutFacts::page_count: usize
-internal	struct_field	pub(crate)	jubarte::convert::TblLook::first_col: bool
-internal	struct_field	pub(crate)	jubarte::convert::TblLook::first_row: bool
-internal	struct_field	pub(crate)	jubarte::convert::TblLook::no_h_band: bool
 internal	struct_field	pub(crate)	jubarte::convert::metafile::MetaText::align: u16
 internal	struct_field	pub(crate)	jubarte::convert::metafile::MetaText::aspect: f32
 internal	struct_field	pub(crate)	jubarte::convert::metafile::MetaText::bold: bool
@@ -13562,6 +13572,9 @@ internal	struct_field	pub(crate)	jubarte::markdown::from_docx::ooxml::Package::i
 internal	struct_field	pub(crate)	jubarte::markdown::repair::InlineRun::format: super::xml::RunFormat
 internal	struct_field	pub(crate)	jubarte::markdown::repair::InlineRun::kind: RunKind
 internal	struct_field	pub(crate)	jubarte::markdown::repair::InlineRun::link: Option<(String, Option<String>)>
+internal	struct_field	pub(crate)	jubarte::table_dom::TblLook::first_col: bool
+internal	struct_field	pub(crate)	jubarte::table_dom::TblLook::first_row: bool
+internal	struct_field	pub(crate)	jubarte::table_dom::TblLook::no_h_band: bool
 internal	struct_field	pub(crate)	jubarte::util::datetime::CivilDateTime::d: u32
 internal	struct_field	pub(crate)	jubarte::util::datetime::CivilDateTime::h: u32
 internal	struct_field	pub(crate)	jubarte::util::datetime::CivilDateTime::m: u32
@@ -14127,7 +14140,7 @@ internal	struct_field	pub(crate::convert)	jubarte::convert::NamedStyle::sets_siz
 internal	struct_field	pub(crate::convert)	jubarte::convert::NamedStyle::sets_spacing: [bool; 3]
 internal	struct_field	pub(crate::convert)	jubarte::convert::NumLevel::bold: bool
 internal	struct_field	pub(crate::convert)	jubarte::convert::NumLevel::family: String
-internal	struct_field	pub(crate::convert)	jubarte::convert::NumLevel::fmt: NumFmt
+internal	struct_field	pub(crate::convert)	jubarte::convert::NumLevel::fmt: crate::numbering::NumFmt
 internal	struct_field	pub(crate::convert)	jubarte::convert::NumLevel::hanging: f32
 internal	struct_field	pub(crate::convert)	jubarte::convert::NumLevel::italic: bool
 internal	struct_field	pub(crate::convert)	jubarte::convert::NumLevel::jc: Option<Align>
@@ -15842,53 +15855,6 @@ internal	variant		jubarte::convert::ImageSlot::Float
 internal	variant		jubarte::convert::ImageSlot::Flow
 internal	variant		jubarte::convert::MathFace::All
 internal	variant		jubarte::convert::MathFace::Only
-internal	variant		jubarte::convert::NumFmt::Aiueo
-internal	variant		jubarte::convert::NumFmt::ArabicAbjad
-internal	variant		jubarte::convert::NumFmt::ArabicAlpha
-internal	variant		jubarte::convert::NumFmt::Bullet
-internal	variant		jubarte::convert::NumFmt::CardinalText
-internal	variant		jubarte::convert::NumFmt::Chicago
-internal	variant		jubarte::convert::NumFmt::ChineseCounting
-internal	variant		jubarte::convert::NumFmt::ChineseCountingThousand
-internal	variant		jubarte::convert::NumFmt::Chosung
-internal	variant		jubarte::convert::NumFmt::Decimal
-internal	variant		jubarte::convert::NumFmt::DecimalEnclosedCircle
-internal	variant		jubarte::convert::NumFmt::DecimalEnclosedFullstop
-internal	variant		jubarte::convert::NumFmt::DecimalEnclosedParen
-internal	variant		jubarte::convert::NumFmt::DecimalFullWidth
-internal	variant		jubarte::convert::NumFmt::DecimalZero
-internal	variant		jubarte::convert::NumFmt::Ganada
-internal	variant		jubarte::convert::NumFmt::Hebrew1
-internal	variant		jubarte::convert::NumFmt::Hebrew2
-internal	variant		jubarte::convert::NumFmt::Hex
-internal	variant		jubarte::convert::NumFmt::HindiConsonants
-internal	variant		jubarte::convert::NumFmt::HindiCounting
-internal	variant		jubarte::convert::NumFmt::HindiNumbers
-internal	variant		jubarte::convert::NumFmt::HindiVowels
-internal	variant		jubarte::convert::NumFmt::IdeographDigital
-internal	variant		jubarte::convert::NumFmt::IdeographEnclosedCircle
-internal	variant		jubarte::convert::NumFmt::IdeographLegalTraditional
-internal	variant		jubarte::convert::NumFmt::IdeographTraditional
-internal	variant		jubarte::convert::NumFmt::IdeographZodiac
-internal	variant		jubarte::convert::NumFmt::IdeographZodiacTraditional
-internal	variant		jubarte::convert::NumFmt::Iroha
-internal	variant		jubarte::convert::NumFmt::JapaneseCounting
-internal	variant		jubarte::convert::NumFmt::KoreanCounting
-internal	variant		jubarte::convert::NumFmt::KoreanDigital
-internal	variant		jubarte::convert::NumFmt::KoreanDigital2
-internal	variant		jubarte::convert::NumFmt::KoreanLegal
-internal	variant		jubarte::convert::NumFmt::LowerLetter
-internal	variant		jubarte::convert::NumFmt::LowerRoman
-internal	variant		jubarte::convert::NumFmt::Ordinal
-internal	variant		jubarte::convert::NumFmt::OrdinalText
-internal	variant		jubarte::convert::NumFmt::RussianLower
-internal	variant		jubarte::convert::NumFmt::RussianUpper
-internal	variant		jubarte::convert::NumFmt::TaiwaneseCountingThousand
-internal	variant		jubarte::convert::NumFmt::ThaiCounting
-internal	variant		jubarte::convert::NumFmt::ThaiLetters
-internal	variant		jubarte::convert::NumFmt::ThaiNumbers
-internal	variant		jubarte::convert::NumFmt::UpperLetter
-internal	variant		jubarte::convert::NumFmt::UpperRoman
 internal	variant		jubarte::convert::PageNumFmt::Aiueo
 internal	variant		jubarte::convert::PageNumFmt::ArabicAbjad
 internal	variant		jubarte::convert::PageNumFmt::ArabicAlpha
@@ -16477,6 +16443,53 @@ internal	variant		jubarte::markdown::xml::StyleChangeKind::Run
 internal	variant		jubarte::markdown::xml::TableWidth::Auto
 internal	variant		jubarte::markdown::xml::TableWidth::Fiftieths
 internal	variant		jubarte::markdown::xml::TableWidth::Twips
+internal	variant		jubarte::numbering::NumFmt::Aiueo
+internal	variant		jubarte::numbering::NumFmt::ArabicAbjad
+internal	variant		jubarte::numbering::NumFmt::ArabicAlpha
+internal	variant		jubarte::numbering::NumFmt::Bullet
+internal	variant		jubarte::numbering::NumFmt::CardinalText
+internal	variant		jubarte::numbering::NumFmt::Chicago
+internal	variant		jubarte::numbering::NumFmt::ChineseCounting
+internal	variant		jubarte::numbering::NumFmt::ChineseCountingThousand
+internal	variant		jubarte::numbering::NumFmt::Chosung
+internal	variant		jubarte::numbering::NumFmt::Decimal
+internal	variant		jubarte::numbering::NumFmt::DecimalEnclosedCircle
+internal	variant		jubarte::numbering::NumFmt::DecimalEnclosedFullstop
+internal	variant		jubarte::numbering::NumFmt::DecimalEnclosedParen
+internal	variant		jubarte::numbering::NumFmt::DecimalFullWidth
+internal	variant		jubarte::numbering::NumFmt::DecimalZero
+internal	variant		jubarte::numbering::NumFmt::Ganada
+internal	variant		jubarte::numbering::NumFmt::Hebrew1
+internal	variant		jubarte::numbering::NumFmt::Hebrew2
+internal	variant		jubarte::numbering::NumFmt::Hex
+internal	variant		jubarte::numbering::NumFmt::HindiConsonants
+internal	variant		jubarte::numbering::NumFmt::HindiCounting
+internal	variant		jubarte::numbering::NumFmt::HindiNumbers
+internal	variant		jubarte::numbering::NumFmt::HindiVowels
+internal	variant		jubarte::numbering::NumFmt::IdeographDigital
+internal	variant		jubarte::numbering::NumFmt::IdeographEnclosedCircle
+internal	variant		jubarte::numbering::NumFmt::IdeographLegalTraditional
+internal	variant		jubarte::numbering::NumFmt::IdeographTraditional
+internal	variant		jubarte::numbering::NumFmt::IdeographZodiac
+internal	variant		jubarte::numbering::NumFmt::IdeographZodiacTraditional
+internal	variant		jubarte::numbering::NumFmt::Iroha
+internal	variant		jubarte::numbering::NumFmt::JapaneseCounting
+internal	variant		jubarte::numbering::NumFmt::KoreanCounting
+internal	variant		jubarte::numbering::NumFmt::KoreanDigital
+internal	variant		jubarte::numbering::NumFmt::KoreanDigital2
+internal	variant		jubarte::numbering::NumFmt::KoreanLegal
+internal	variant		jubarte::numbering::NumFmt::LowerLetter
+internal	variant		jubarte::numbering::NumFmt::LowerRoman
+internal	variant		jubarte::numbering::NumFmt::Ordinal
+internal	variant		jubarte::numbering::NumFmt::OrdinalText
+internal	variant		jubarte::numbering::NumFmt::RussianLower
+internal	variant		jubarte::numbering::NumFmt::RussianUpper
+internal	variant		jubarte::numbering::NumFmt::TaiwaneseCountingThousand
+internal	variant		jubarte::numbering::NumFmt::ThaiCounting
+internal	variant		jubarte::numbering::NumFmt::ThaiLetters
+internal	variant		jubarte::numbering::NumFmt::ThaiNumbers
+internal	variant		jubarte::numbering::NumFmt::UpperLetter
+internal	variant		jubarte::numbering::NumFmt::UpperRoman
 internal	variant		jubarte::opc::ZipEntry::Part
 internal	variant		jubarte::opc::ZipEntry::Rels
 internal	variant		jubarte::opc::archive::ZipDefectKind::Descriptor

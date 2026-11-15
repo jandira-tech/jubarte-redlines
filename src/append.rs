@@ -1041,15 +1041,12 @@ fn carry_styles_and_numbering(
         let part_before = related(dest, a_main, "/numbering")
             .and_then(|part| dest.part_bytes(&part).map(<[u8]>::to_vec));
         let mut built = None;
-        let spliced = crate::markdown::package::append_numbering(
-            dest,
-            a_main,
-            |first_abstract, first_num| {
+        let spliced =
+            crate::numbering::append_numbering(dest, a_main, |first_abstract, first_num| {
                 let (abstracts_xml, nums_xml, map) = lists.build(dom, first_abstract, first_num);
                 built = Some(map);
                 (abstracts_xml, nums_xml)
-            },
-        );
+            });
         let part = related(dest, a_main, "/numbering");
         let part_after = part.as_deref().and_then(|part| dest.part_bytes(part));
         num_map = if spliced.is_some() && part_after != part_before.as_deref() {

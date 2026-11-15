@@ -134,6 +134,7 @@ pub mod markdown;
 pub mod markup_simplifier;
 /// WordprocessingML and related namespace / `XName` constants.
 pub mod namespaces;
+pub(crate) mod numbering;
 pub(crate) mod ooxml;
 /// Open Packaging Conventions adapter (`PartFs`).
 pub mod opc;
@@ -146,6 +147,7 @@ pub mod scrub;
 pub mod settings;
 /// ISO Strict → Transitional package normalization.
 pub mod strict_translation;
+pub(crate) mod table_dom;
 pub mod text_diff;
 pub mod unid;
 /// `jubarte self-update`: install a GitHub release, only when asked.
