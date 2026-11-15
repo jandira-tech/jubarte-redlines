@@ -222,7 +222,15 @@ changes present, so both revision styles draw) in the default convention and
 
 Hashes: \`$DOCS/golden.sha256\`. Any task of the split must reproduce them
 byte for byte; \`scripts/split_baseline.sh verify\` is the measurer.
+
+## Addenda
+
 EOF
+  # Hand-maintained measurements after T0.1 (baseline-addenda.md) survive
+  # every re-recording.
+  if [ -f "$DOCS/baseline-addenda.md" ]; then
+    tail -n +7 "$DOCS/baseline-addenda.md" >>"$DOCS/baseline.md"
+  fi
   echo "recorded: $DOCS/baseline.md, api-baseline.txt, golden.sha256"
 }
 

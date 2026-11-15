@@ -123,7 +123,7 @@ fn cli_edit_prints_the_paragraph_when_the_anchor_is_not_found() {
 
 - [ ] **Step 2: Run them**
 
-Run: `cargo test --test edit_anchor_normalization a_missing && cargo test --test agent_text_view cli_edit_prints_the_paragraph`
+Run: `cargo test --test it_edit edit_anchor_normalization::a_missing && cargo test --test it_cli agent_text_view::cli_edit_prints_the_paragraph`
 Expected: FAIL (`paragraph_text` does not exist).
 
 - [ ] **Step 3: Implement**
@@ -137,7 +137,7 @@ Expected: FAIL (`paragraph_text` does not exist).
 
 - [ ] **Step 4: Run and commit**
 
-Run: `cargo test --test edit_anchor_normalization && cargo test --test agent_text_view && cargo test --lib edit::`
+Run: `cargo test --test it_edit edit_anchor_normalization && cargo test --test it_cli agent_text_view && cargo test --lib edit::`
 Expected: PASS.
 
 ```bash
@@ -175,7 +175,7 @@ fn nth_picks_one_occurrence_of_a_repeated_anchor() {
 
 - [ ] **Step 2: Run it**
 
-Run: `cargo test --test agent_text_view nth_picks`
+Run: `cargo test --test it_cli agent_text_view nth_picks`
 Expected: FAIL, `--nth` unknown.
 
 - [ ] **Step 3: Implement**
@@ -184,7 +184,7 @@ Expected: FAIL, `--nth` unknown.
 
 - [ ] **Step 4: Run and commit**
 
-Run: `cargo test --test agent_text_view && cargo test --test cli_parser`
+Run: `cargo test --test it_cli agent_text_view && cargo test --test it_cli cli_parser`
 Expected: PASS.
 
 ```bash
@@ -274,7 +274,7 @@ fn a_new_paragraph_gets_a_fresh_pid_unique_in_the_package() {
 
 - [ ] **Step 2: Run them**
 
-Run: `cargo test --test agent_text_view pids_print && cargo test --test edit_short_ids a_new_paragraph`
+Run: `cargo test --test it_cli agent_text_view::pids_print && cargo test --test it_cli edit_short_ids::a_new_paragraph`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement**
@@ -286,7 +286,7 @@ Expected: FAIL.
 
 - [ ] **Step 4: Run and commit**
 
-Run: `cargo test --test agent_text_view && cargo test --test edit_short_ids && cargo test --lib edit:: && cargo test --test docx_markdown_round_trip`
+Run: `cargo test --test it_cli agent_text_view && cargo test --test it_cli edit_short_ids && cargo test --lib edit:: && cargo test --test it_markdown docx_markdown_round_trip`
 Expected: PASS.
 
 ```bash
@@ -352,7 +352,7 @@ Expected: FAIL (`allow_detach` does not exist; no refusal today, or a different 
 
 - [ ] **Step 4: Run and commit**
 
-Run: `cargo test --test edit_comment_anchors && cargo test --test agent_text_view && cargo test --lib edit::`
+Run: `cargo test --test edit_comment_anchors && cargo test --test it_cli agent_text_view && cargo test --lib edit::`
 Expected: PASS.
 
 ```bash
