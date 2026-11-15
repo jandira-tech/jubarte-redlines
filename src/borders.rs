@@ -270,7 +270,7 @@ pub(super) fn parse(text: &str, all: &[&'static str]) -> Option<Sides> {
         let named: Option<Vec<&'static str>> = words
             .first()?
             .split(',')
-            .map(|name| all.iter().copied().find(|&s| s == name))
+            .map(|name| side(name, all))
             .collect();
         let (sides, border) = match named {
             Some(sides) => (sides, Border::parse(&words[1..])?),
@@ -386,6 +386,15 @@ mod tests {
         assert_eq!(side("start", &TABLE_SIDES), Some("left"));
         assert_eq!(side("end", &CELL_SIDES), Some("right"));
         assert_eq!(side("tl2br", &TABLE_SIDES), None);
+        let thin = Border::new("single", Some("4"), None, None);
+        assert_eq!(
+            parse("start,end single 0.5pt", &TABLE_SIDES),
+            Some(vec![("left", thin.clone()), ("right", thin)])
+        );
+        assert_eq!(
+            parse("left,start single 0.5pt", &TABLE_SIDES),
+            Some(vec![("left", Border::new("single", Some("4"), None, None))])
+        );
         for bad in [
             "",
             "top",

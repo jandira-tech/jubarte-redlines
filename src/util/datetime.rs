@@ -253,6 +253,27 @@ pub(crate) fn timestamp_order_key(raw: &str) -> Option<(i64, &str)> {
     Some((seconds, fraction))
 }
 
+/// The numeric `±hh:mm` zone of an xsd:dateTime, in seconds. `Z` and a
+/// missing zone are UTC, not an explicit offset.
+fn explicit_offset(raw: &str) -> Option<i64> {
+    let b = raw.as_bytes();
+    let mut i = 19;
+    if b.get(i) == Some(&b'.') {
+        i += 1;
+        while b.get(i).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
+    }
+    let sign = match b.get(i) {
+        Some(sign @ (b'+' | b'-')) => *sign,
+        _ => return None,
+    };
+    let hours = two_digits(raw, i + 1)?;
+    let minutes = two_digits(raw, i + 4)?;
+    let secs = i64::from(hours * 3600 + minutes * 60);
+    Some(if sign == b'-' { -secs } else { secs })
+}
+
 /// Format an instant in a fixed offset, retaining its fractional seconds.
 pub(crate) fn timestamp_with_offset(seconds: i64, fraction: &str, offset: i64) -> String {
     let mut value = iso8601(civil_from_unix_secs(seconds + offset));
@@ -294,9 +315,18 @@ pub(crate) fn reported_date(local: Option<&str>, utc: Option<&str>) -> Option<St
         .filter(|(_, (wall, digits))| {
             digits == &fraction && (wall - instant) % 60 == 0 && (wall - instant).abs() <= 14 * 3600
         });
+    // A local date that names its own offset keeps it: the normalized
+    // instants cannot show it. The legacy paired encoding, whose local
+    // date is a bare wall clock, still infers the offset.
+    let explicit = paired
+        .is_some()
+        .then(|| local.and_then(explicit_offset))
+        .flatten();
     // Equivalent fractions can have different precision. Keep the local
     // spelling so writing the view preserves the original w:date bytes.
-    let (offset, display) = paired.map_or((0, utc), |(date, (wall, _))| (wall - instant, date));
+    let (offset, display) = paired.map_or((0, utc), |(date, (wall, _))| {
+        (explicit.unwrap_or(wall - instant), date)
+    });
     if offset == 0 && display.ends_with('Z') {
         return Some(display.to_string());
     }
@@ -330,6 +360,25 @@ mod tests {
             )
             .as_deref(),
             Some("2026-09-30T14:05:00Z")
+        );
+        // A local date naming its own offset keeps it; the normalized
+        // instants alone would report the same instant as UTC.
+        assert_eq!(
+            reported_date(
+                Some("2026-09-30T14:05:00+02:00"),
+                Some("2026-09-30T12:05:00Z")
+            )
+            .as_deref(),
+            Some("2026-09-30T14:05:00+02:00")
+        );
+        // The legacy paired encoding (bare wall clock) still infers it.
+        assert_eq!(
+            reported_date(
+                Some("2026-09-30T14:05:00"),
+                Some("2026-09-30T12:05:00Z")
+            )
+            .as_deref(),
+            Some("2026-09-30T14:05:00+02:00")
         );
     }
 
