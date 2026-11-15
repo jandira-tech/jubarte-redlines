@@ -44,8 +44,15 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     if root.join(".git").exists() {
         // --git-path resolves worktree .git files and shared ref storage.
+        // Cargo reruns the script on every build while a watched path is
+        // missing, and a fresh CI checkout has no packed-refs: watching it
+        // there recompiled the crate on every cargo command. A later
+        // `git pack-refs` removes the loose ref watched below, so the
+        // script still reruns when the refs are packed.
         for name in ["HEAD", "packed-refs"] {
-            if let Some(path) = git(root, &["rev-parse", "--git-path", name]) {
+            if let Some(path) = git(root, &["rev-parse", "--git-path", name])
+                && root.join(&path).exists()
+            {
                 println!("cargo:rerun-if-changed={path}");
             }
         }

@@ -154,10 +154,13 @@ def main() -> None:
         ("word/_rels/document.xml.rels", DOC_RELS),
         ("word/styles.xml", STYLES),
     ]
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+    # Stored, not deflated: the deflate bytes depend on the zlib build
+    # Python links (Windows CPython ships zlib-ng), and the plans pin this
+    # file's sha256.
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as z:
         for name, xml in parts:
             info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
-            info.compress_type = zipfile.ZIP_DEFLATED
+            info.compress_type = zipfile.ZIP_STORED
             # ZipInfo records the host OS (0 on Windows, 3 elsewhere) and the
             # plans pin this file's sha256: pin the OS too.
             info.create_system = 3

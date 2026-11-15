@@ -4124,6 +4124,13 @@ mod tests {
         let mut denied = readable.clone();
         denied.set_mode(0o0);
         fs::set_permissions(&fonts, denied).expect("deny");
+        // Root (the self-hosted CI runners) lists a mode-000 folder anyway,
+        // so the denial this test needs cannot happen there.
+        if fs::read_dir(&fonts).is_ok() {
+            fs::set_permissions(&fonts, readable).expect("restore");
+            eprintln!("skipped: this user can list a mode-000 folder");
+            return;
+        }
         let index = Mutex::new(FontIndex::load(Some(index_path.clone())));
         assert!(
             indexed_faces(&index, "cloud", scan).is_empty(),
