@@ -7,6 +7,22 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T2.3 (comment_settlement) - 2026-11-15
+
+- api-baseline.txt re-recorded after a reviewed, intentional drift: the
+  module moved from the private `jubarte::edit::comment_settlement` path to
+  the private `jubarte::comment_settlement` path, so the listing's internal
+  lines renamed with it, `changes::ResolvedChanges::kept_comments` renders
+  its element type through the new path, and `EditError` gained a
+  `From<SettlementError>` impl. No publicly nameable path changed:
+  `jubarte::edit::{KeptComment, RemovedComment}` still resolve (re-export)
+  and no public item was added or lost (diff reviewed line by line).
+- Plan deviation recorded on #2428: the plan's critic_literal move to
+  debug.rs is infeasible (it calls markdown's CriticMarkup reader through
+  diff_markdown; defining it in the doc layer would trade the
+  debug.rs->text_diff edge for a worse debug.rs->markdown edge). The edge
+  stays in KNOWN_UPWARD until Phase 4 composes the critic view.
+
 ## T1.1 (test suites) - 2026-11-15
 
 - Test cases: 10,692 before and after the move (nothing lost, nothing added

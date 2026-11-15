@@ -37,6 +37,31 @@ pub struct KeptComment {
 
 use crate::revision_processor::Resolution;
 
+/// A settlement step failed on the source document: the code a settlement
+/// error carries (`INVALID_DOCUMENT`, a comment error's code) and its
+/// message. The edit layer turns this into its `EditError`; `changes`
+/// stringifies it, as it did before the type moved down a layer.
+#[derive(Debug)]
+pub(crate) struct SettlementError {
+    pub(crate) code: String,
+    pub(crate) message: String,
+}
+
+impl SettlementError {
+    fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for SettlementError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
 /// The pass that removed a thread: how it resolved, and the change ids it
 /// selected (`None` for a blanket pass over every change left).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -78,7 +103,7 @@ impl AnchorChanges {
     pub fn records(
         &self,
         source: &[u8],
-    ) -> Result<(Vec<RemovedComment>, Vec<KeptComment>), super::EditError> {
+    ) -> Result<(Vec<RemovedComment>, Vec<KeptComment>), SettlementError> {
         assert!(
             self.removed.iter().all(|id| !self.kept.contains(id)),
             "a comment cannot be both removed and kept"
@@ -87,7 +112,7 @@ impl AnchorChanges {
             return Ok((Vec::new(), Vec::new()));
         }
         let comments = crate::comments::list_comments(source)
-            .map_err(|e| super::err("INVALID_DOCUMENT", None, e.to_string()))?;
+            .map_err(|e| SettlementError::new("INVALID_DOCUMENT", e.to_string()))?;
         let groups = |ids: &[String]| {
             // Receipts name each `w:id` as written. The reader parsed it.
             let wanted: std::collections::HashSet<u32> =
@@ -126,7 +151,7 @@ impl AnchorChanges {
             (Vec::new(), std::collections::HashMap::new())
         } else {
             let invalid = |e: crate::changes::ChangeError| {
-                super::err("INVALID_DOCUMENT", None, e.to_string())
+                SettlementError::new("INVALID_DOCUMENT", e.to_string())
             };
             (
                 crate::changes::list_changes_tolerant(source).map_err(invalid)?,
@@ -194,9 +219,10 @@ pub(crate) fn threads_the_clean_copy_drops(
     redline: &[u8],
     already: &[RemovedComment],
     deleted: &std::collections::HashSet<String>,
-) -> Result<Vec<RemovedComment>, super::EditError> {
-    let invalid =
-        |error: crate::comments::CommentError| super::err(error.code(), None, error.to_string());
+) -> Result<Vec<RemovedComment>, SettlementError> {
+    let invalid = |error: crate::comments::CommentError| {
+        SettlementError::new(error.code(), error.to_string())
+    };
     let on_redline = crate::comments::list_comments(redline).map_err(invalid)?;
     let on_clean = crate::comments::list_comments(clean).map_err(invalid)?;
     let kept: std::collections::HashSet<u32> = on_clean.iter().map(|comment| comment.id).collect();

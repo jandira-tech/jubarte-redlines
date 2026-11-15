@@ -1874,7 +1874,7 @@ fn produce(
         .unwrap_or(report.paragraphs.from);
     report.revisions = revision_counts(&redline);
     report.fields = fields;
-    report.clean_removed_comments = super::comment_settlement::threads_the_clean_copy_drops(
+    report.clean_removed_comments = crate::comment_settlement::threads_the_clean_copy_drops(
         &clean,
         &redline,
         &report.removed_comments,

@@ -1354,6 +1354,18 @@ api	impl		jubarte::cli::edit_template::TemplateOptions::(impl Args)
 api	impl		jubarte::cli::edit_template::TemplateOptions::(impl Debug)
 api	impl		jubarte::cli::edit_template::TemplateOptions::(impl FromArgMatches)
 api	impl		jubarte::cli::edit_template::TemplateOptions::(impl Serialize)
+api	impl		jubarte::comment_settlement::KeptComment::(impl Clone)
+api	impl		jubarte::comment_settlement::KeptComment::(impl Debug)
+api	impl		jubarte::comment_settlement::KeptComment::(impl Deserialize<'0>)
+api	impl		jubarte::comment_settlement::KeptComment::(impl Eq)
+api	impl		jubarte::comment_settlement::KeptComment::(impl PartialEq)
+api	impl		jubarte::comment_settlement::KeptComment::(impl Serialize)
+api	impl		jubarte::comment_settlement::RemovedComment::(impl Clone)
+api	impl		jubarte::comment_settlement::RemovedComment::(impl Debug)
+api	impl		jubarte::comment_settlement::RemovedComment::(impl Deserialize<'0>)
+api	impl		jubarte::comment_settlement::RemovedComment::(impl Eq)
+api	impl		jubarte::comment_settlement::RemovedComment::(impl PartialEq)
+api	impl		jubarte::comment_settlement::RemovedComment::(impl Serialize)
 api	impl		jubarte::comments::CommentError::(impl Debug)
 api	impl		jubarte::comments::CommentError::(impl Display)
 api	impl		jubarte::comments::CommentError::(impl Error)
@@ -1571,6 +1583,7 @@ api	impl		jubarte::edit::EditError::(impl Deserialize<'0>)
 api	impl		jubarte::edit::EditError::(impl Display)
 api	impl		jubarte::edit::EditError::(impl Eq)
 api	impl		jubarte::edit::EditError::(impl Error)
+api	impl		jubarte::edit::EditError::(impl From<SettlementError>)
 api	impl		jubarte::edit::EditError::(impl PartialEq)
 api	impl		jubarte::edit::EditError::(impl Serialize)
 api	impl		jubarte::edit::EditOutcome::(impl Clone)
@@ -1759,18 +1772,6 @@ api	impl		jubarte::edit::anchor_error::AnchorRefusal::(impl Debug)
 api	impl		jubarte::edit::anchor_error::Working::(impl Clone)
 api	impl		jubarte::edit::anchor_error::Working::(impl Copy)
 api	impl		jubarte::edit::anchor_error::Working::(impl Debug)
-api	impl		jubarte::edit::comment_settlement::KeptComment::(impl Clone)
-api	impl		jubarte::edit::comment_settlement::KeptComment::(impl Debug)
-api	impl		jubarte::edit::comment_settlement::KeptComment::(impl Deserialize<'0>)
-api	impl		jubarte::edit::comment_settlement::KeptComment::(impl Eq)
-api	impl		jubarte::edit::comment_settlement::KeptComment::(impl PartialEq)
-api	impl		jubarte::edit::comment_settlement::KeptComment::(impl Serialize)
-api	impl		jubarte::edit::comment_settlement::RemovedComment::(impl Clone)
-api	impl		jubarte::edit::comment_settlement::RemovedComment::(impl Debug)
-api	impl		jubarte::edit::comment_settlement::RemovedComment::(impl Deserialize<'0>)
-api	impl		jubarte::edit::comment_settlement::RemovedComment::(impl Eq)
-api	impl		jubarte::edit::comment_settlement::RemovedComment::(impl PartialEq)
-api	impl		jubarte::edit::comment_settlement::RemovedComment::(impl Serialize)
 api	impl		jubarte::edit::controls::ControlSelector::(impl Clone)
 api	impl		jubarte::edit::controls::ControlSelector::(impl Debug)
 api	impl		jubarte::edit::controls::ControlSelector::(impl Deserialize<'0>)
@@ -2875,6 +2876,8 @@ api	struct	pub	jubarte::cli::edit_actions::TextPayload
 api	struct	pub	jubarte::cli::edit_actions::TypedEdit
 api	struct	pub	jubarte::cli::edit_template::TemplateDispatch
 api	struct	pub	jubarte::cli::edit_template::TemplateOptions
+api	struct	pub	jubarte::comment_settlement::KeptComment
+api	struct	pub	jubarte::comment_settlement::RemovedComment
 api	struct	pub	jubarte::comments::CommentRecord
 api	struct	pub	jubarte::comparer::CompareContext
 api	struct	pub	jubarte::comparer::NotesContext
@@ -2929,8 +2932,6 @@ api	struct	pub	jubarte::edit::RunSpec
 api	struct	pub	jubarte::edit::anchor::NearMatches
 api	struct	pub	jubarte::edit::anchor::NearOccurrence
 api	struct	pub	jubarte::edit::anchor_error::AnchorRefusal
-api	struct	pub	jubarte::edit::comment_settlement::KeptComment
-api	struct	pub	jubarte::edit::comment_settlement::RemovedComment
 api	struct	pub	jubarte::edit::flags::FlagOp
 api	struct	pub	jubarte::edit::flags::FlagPlan
 api	struct	pub	jubarte::edit::for_edit::Blocker
@@ -3629,7 +3630,7 @@ api	struct_field	pub	jubarte::changes::ChangeMember::target: &'static str
 api	struct_field	pub	jubarte::changes::ChangeMember::text: String
 api	struct_field	pub	jubarte::changes::ResolvedChanges::comment_changes_left: usize
 api	struct_field	pub	jubarte::changes::ResolvedChanges::document: Vec<u8>
-api	struct_field	pub	jubarte::changes::ResolvedChanges::kept_comments: Vec<crate::edit::KeptComment>
+api	struct_field	pub	jubarte::changes::ResolvedChanges::kept_comments: Vec<crate::comment_settlement::KeptComment>
 api	struct_field	pub	jubarte::changes::ResolvedChanges::removed_comments: Vec<crate::comments::CommentRecord>
 api	struct_field	pub	jubarte::changes::ResolvedChanges::removed_why: Vec<String>
 api	struct_field	pub	jubarte::cli::Cli::command: Option<Command>
@@ -3770,6 +3771,14 @@ api	struct_field	pub	jubarte::cli::edit_template::TemplateOptions::report: Optio
 api	struct_field	pub	jubarte::cli::edit_template::TemplateOptions::select: Option<String>
 api	struct_field	pub	jubarte::cli::edit_template::TemplateOptions::story: String
 api	struct_field	pub	jubarte::cli::edit_template::TemplateOptions::track: String
+api	struct_field	pub	jubarte::comment_settlement::KeptComment::anchor: String
+api	struct_field	pub	jubarte::comment_settlement::KeptComment::id: String
+api	struct_field	pub	jubarte::comment_settlement::KeptComment::replies: Vec<String>
+api	struct_field	pub	jubarte::comment_settlement::RemovedComment::author: String
+api	struct_field	pub	jubarte::comment_settlement::RemovedComment::decision: Option<String>
+api	struct_field	pub	jubarte::comment_settlement::RemovedComment::id: String
+api	struct_field	pub	jubarte::comment_settlement::RemovedComment::replies: Vec<String>
+api	struct_field	pub	jubarte::comment_settlement::RemovedComment::why: String
 api	struct_field	pub	jubarte::comments::CommentRecord::after: String
 api	struct_field	pub	jubarte::comments::CommentRecord::anchor_text: String
 api	struct_field	pub	jubarte::comments::CommentRecord::author: String
@@ -4024,14 +4033,6 @@ api	struct_field	pub	jubarte::edit::anchor_error::AnchorRefusal::anchor: &'a str
 api	struct_field	pub	jubarte::edit::anchor_error::AnchorRefusal::operation: Option<&'a str>
 api	struct_field	pub	jubarte::edit::anchor_error::AnchorRefusal::path: Option<&'a str>
 api	struct_field	pub	jubarte::edit::anchor_error::AnchorRefusal::target: &'a str
-api	struct_field	pub	jubarte::edit::comment_settlement::KeptComment::anchor: String
-api	struct_field	pub	jubarte::edit::comment_settlement::KeptComment::id: String
-api	struct_field	pub	jubarte::edit::comment_settlement::KeptComment::replies: Vec<String>
-api	struct_field	pub	jubarte::edit::comment_settlement::RemovedComment::author: String
-api	struct_field	pub	jubarte::edit::comment_settlement::RemovedComment::decision: Option<String>
-api	struct_field	pub	jubarte::edit::comment_settlement::RemovedComment::id: String
-api	struct_field	pub	jubarte::edit::comment_settlement::RemovedComment::replies: Vec<String>
-api	struct_field	pub	jubarte::edit::comment_settlement::RemovedComment::why: String
 api	struct_field	pub	jubarte::edit::flags::FlagOp::accept: bool
 api	struct_field	pub	jubarte::edit::flags::FlagOp::anchor: Option<String>
 api	struct_field	pub	jubarte::edit::flags::FlagOp::at: String
@@ -4647,7 +4648,7 @@ api	use	pub	jubarte::edit::AnchorRefusal = anchor_error::AnchorRefusal
 api	use	pub	jubarte::edit::CandidateChecks = prepared::CandidateChecks
 api	use	pub	jubarte::edit::ControlSelector = controls::ControlSelector
 api	use	pub	jubarte::edit::CustomPage = sections::CustomPage
-api	use	pub	jubarte::edit::KeptComment = comment_settlement::KeptComment
+api	use	pub	jubarte::edit::KeptComment = crate::comment_settlement::KeptComment
 api	use	pub	jubarte::edit::Margins = sections::Margins
 api	use	pub	jubarte::edit::NearMatches = anchor::NearMatches
 api	use	pub	jubarte::edit::NearOccurrence = anchor::NearOccurrence
@@ -4659,7 +4660,7 @@ api	use	pub	jubarte::edit::PrepareOptions = prepared::PrepareOptions
 api	use	pub	jubarte::edit::PreparedEdit = prepared::PreparedEdit
 api	use	pub	jubarte::edit::PrimaryBytes = prepared::PrimaryBytes
 api	use	pub	jubarte::edit::PrimaryRole = prepared::PrimaryRole
-api	use	pub	jubarte::edit::RemovedComment = comment_settlement::RemovedComment
+api	use	pub	jubarte::edit::RemovedComment = crate::comment_settlement::RemovedComment
 api	use	pub	jubarte::edit::SectionScope = sections::SectionScope
 api	use	pub	jubarte::edit::SkippedOperation = skip::SkippedOperation
 api	use	pub	jubarte::edit::Working = anchor_error::Working
@@ -5805,14 +5806,14 @@ internal	function		jubarte::publication::Backend::stage (self: &mut Self, path: 
 internal	function		jubarte::publication::Backend::step (self: &mut Self, staged: &mut <Self as >::Staged, phase: Phase, bytes: &[u8]) -> io::Result<()>
 internal	function		jubarte::xmllinq::serialize::XmlBuf::push (self: &mut Self, c: char)
 internal	function		jubarte::xmllinq::serialize::XmlBuf::push_str (self: &mut Self, s: &str)
+internal	function	pub	jubarte::comment_settlement::AnchorChanges::extend (self: &mut Self, removed: Vec<String>, kept: Vec<String>, resolution: Resolution, settled: Option<&[String]>)
+internal	function	pub	jubarte::comment_settlement::AnchorChanges::records (self: &Self, source: &[u8]) -> Result<(Vec<RemovedComment>, Vec<KeptComment>), SettlementError>
 internal	function	pub	jubarte::comparer::deleted_tables::move_inserted_text_past_deleted_tables (dom: &mut crate::xmllinq::Dom, root: crate::xmllinq::NodeId)
 internal	function	pub	jubarte::comparer::final_marks::settle_cell_final_marks (dom: &mut crate::xmllinq::Dom, root: crate::xmllinq::NodeId)
 internal	function	pub	jubarte::comparer::replaced_tables::pair_replaced_tables (dom: &mut crate::xmllinq::Dom, seqs: &mut Vec<super::atoms::CorrelatedSequence>, settings: &super::WmlComparerSettings)
 internal	function	pub	jubarte::comparer::table_split::TableStyleNames::original (styles_xml: Option<&str>) -> Self
 internal	function	pub	jubarte::comparer::table_split::TableStyleNames::revision (styles_xml: Option<&str>) -> Self
 internal	function	pub	jubarte::comparer::table_split::split_rows_by_table_identity (dom: &mut crate::xmllinq::Dom, root: crate::xmllinq::NodeId, old_names: &TableStyleNames, new_names: &TableStyleNames)
-internal	function	pub	jubarte::edit::comment_settlement::AnchorChanges::extend (self: &mut Self, removed: Vec<String>, kept: Vec<String>, resolution: Resolution, settled: Option<&[String]>)
-internal	function	pub	jubarte::edit::comment_settlement::AnchorChanges::records (self: &Self, source: &[u8]) -> Result<(Vec<RemovedComment>, Vec<KeptComment>), super::EditError>
 internal	function	pub	jubarte::opc::zip32::zip32_plan (entries: &[(&str, u64)]) -> Result<(), Zip32Limit>
 internal	function	pub(crate)	jubarte::admission::admit_input (side: &str, bytes: &[u8], limits: InputLimits) -> Result<(), crate::opc::OpcError>
 internal	function	pub(crate)	jubarte::admission::admit_package (bytes: &[u8]) -> Result<(), crate::opc::OpcError>
@@ -5859,6 +5860,7 @@ internal	function	pub(crate)	jubarte::changes::why_removed (changes: &[Change], 
 internal	function	pub(crate)	jubarte::cli::apply_retired (task: &mut Command, retired: &[(&str, &str)])
 internal	function	pub(crate)	jubarte::cli::removed_task_note (old: &str, now: &str) -> String
 internal	function	pub(crate)	jubarte::cli::removed_tasks <'a>(argv: impl IntoIterator<Item>) -> Vec<(&'static str, &'static str)>
+internal	function	pub(crate)	jubarte::comment_settlement::threads_the_clean_copy_drops (clean: &[u8], redline: &[u8], already: &[RemovedComment], deleted: &std::collections::HashSet<String>) -> Result<Vec<RemovedComment>, SettlementError>
 internal	function	pub(crate)	jubarte::comments::CommentFamily::add (self: &mut Self, new: &NewComment<'_>)
 internal	function	pub(crate)	jubarte::comments::CommentFamily::adopt (self: &mut Self, xml: &str, id: u32, parent: Option<u32>, done: bool, date_utc: Option<&str>)
 internal	function	pub(crate)	jubarte::comments::CommentFamily::author (self: &Self, id: u32) -> Option<&str>
@@ -6033,7 +6035,6 @@ internal	function	pub(crate)	jubarte::edit::Transaction::final_paragraph (self: 
 internal	function	pub(crate)	jubarte::edit::Transaction::final_replacement (self: &Self, para: usize) -> Option<usize>
 internal	function	pub(crate)	jubarte::edit::Transaction::note_rewrites (self: &mut Self, outcome: usize, resolved: &[Resolved])
 internal	function	pub(crate)	jubarte::edit::Transaction::paragraph_walk (self: &Self) -> Vec<NodeId>
-internal	function	pub(crate)	jubarte::edit::comment_settlement::threads_the_clean_copy_drops (clean: &[u8], redline: &[u8], already: &[RemovedComment], deleted: &std::collections::HashSet<String>) -> Result<Vec<RemovedComment>, super::EditError>
 internal	function	pub(crate)	jubarte::edit::flags::record_into (plan: Option<super::EditPlan>, more: super::EditPlan) -> Result<super::EditPlan, String>
 internal	function	pub(crate)	jubarte::edit::flags::renumber_notes (notes: Vec<String>, before: usize) -> Vec<String>
 internal	function	pub(crate)	jubarte::edit::guard_keep_others (source: &[u8], author: &str, selection: Option<&ResolveRevisions>, wholesale: Option<&str>, settle_comment_bodies: bool, syntax: PlanSyntax) -> Result<(), EditError>
@@ -6614,6 +6615,7 @@ internal	function	pub(crate::cli)	jubarte::cli::view_given (matches: &clap::ArgM
 internal	function	pub(crate::cli)	jubarte::cli::view_is_output (args: &serde_json::Value) -> bool
 internal	function	pub(crate::cli)	jubarte::cli::view_not_supported (command: &mut clap::Command) -> clap::Error
 internal	function	pub(crate::cli::edit_template)	jubarte::cli::edit_template::author_filter (value: &str) -> Result<String, String>
+internal	function	pub(crate::comment_settlement)	jubarte::comment_settlement::SettlementError::new (code: impl Into<String>, message: impl Into<String>) -> Self
 internal	function	pub(crate::comments)	jubarte::comments::Anchors::fill (self: &mut Self, record: &mut CommentRecord) -> Result<(), CommentError>
 internal	function	pub(crate::comments)	jubarte::comments::Anchors::scan (self: &mut Self, story_id: &str, dom: &mut Dom, root: NodeId, body: bool)
 internal	function	pub(crate::comments)	jubarte::comments::Anchors::write_anchor (self: &Self, record: &mut CommentRecord)
@@ -8812,7 +8814,7 @@ internal	function	pub(crate::edit)	jubarte::edit::removes_content (change: &crat
 internal	function	pub(crate::edit)	jubarte::edit::replacement_order::typing_order (bytes: &[u8]) -> Result<Vec<u8>, super::EditError>
 internal	function	pub(crate::edit)	jubarte::edit::replies_to (record: &crate::comments::CommentRecord, root: u32, by_id: &std::collections::HashMap<u32, &crate::comments::CommentRecord>) -> bool
 internal	function	pub(crate::edit)	jubarte::edit::resolve_done () -> bool
-internal	function	pub(crate::edit)	jubarte::edit::resolve_selected (source: &[u8], selection: Option<&ResolveRevisions>, policy: RemovedAnchorComments, syntax: PlanSyntax) -> Result<(Option<Vec<u8>>, ResolvedRevisions, comment_settlement::AnchorChanges), EditError>
+internal	function	pub(crate::edit)	jubarte::edit::resolve_selected (source: &[u8], selection: Option<&ResolveRevisions>, policy: RemovedAnchorComments, syntax: PlanSyntax) -> Result<(Option<Vec<u8>>, ResolvedRevisions, crate::comment_settlement::AnchorChanges), EditError>
 internal	function	pub(crate::edit)	jubarte::edit::resolved <'a>(source: &'a [u8], plan: &'a EditPlan, syntax: PlanSyntax) -> Result<Transaction<'a>, EditError>
 internal	function	pub(crate::edit)	jubarte::edit::revision_counts (redline: &[u8]) -> RevisionCounts
 internal	function	pub(crate::edit)	jubarte::edit::rewrite::apply_ranges (old: &str, edits: &[(usize, usize, String)]) -> String
@@ -10902,6 +10904,16 @@ internal	impl		jubarte::changes::logical::Phase::(impl Clone)
 internal	impl		jubarte::changes::logical::Phase::(impl Copy)
 internal	impl		jubarte::changes::logical::Phase::(impl Eq)
 internal	impl		jubarte::changes::logical::Phase::(impl PartialEq)
+internal	impl		jubarte::comment_settlement::AnchorChanges::(impl Debug)
+internal	impl		jubarte::comment_settlement::AnchorChanges::(impl Default)
+internal	impl		jubarte::comment_settlement::AnchorChanges::(impl Eq)
+internal	impl		jubarte::comment_settlement::AnchorChanges::(impl PartialEq)
+internal	impl		jubarte::comment_settlement::Pass::(impl Clone)
+internal	impl		jubarte::comment_settlement::Pass::(impl Debug)
+internal	impl		jubarte::comment_settlement::Pass::(impl Eq)
+internal	impl		jubarte::comment_settlement::Pass::(impl PartialEq)
+internal	impl		jubarte::comment_settlement::SettlementError::(impl Debug)
+internal	impl		jubarte::comment_settlement::SettlementError::(impl Display)
 internal	impl		jubarte::comments::Anchors::(impl Default)
 internal	impl		jubarte::comparer::bookmarks::Textless::(impl Clone)
 internal	impl		jubarte::comparer::bookmarks::Textless::(impl Copy)
@@ -11263,14 +11275,6 @@ internal	impl		jubarte::edit::ThreadOp::(impl Clone)
 internal	impl		jubarte::edit::ThreadOp::(impl Debug)
 internal	impl		jubarte::edit::TocSpec::(impl Clone)
 internal	impl		jubarte::edit::TocSpec::(impl Debug)
-internal	impl		jubarte::edit::comment_settlement::AnchorChanges::(impl Debug)
-internal	impl		jubarte::edit::comment_settlement::AnchorChanges::(impl Default)
-internal	impl		jubarte::edit::comment_settlement::AnchorChanges::(impl Eq)
-internal	impl		jubarte::edit::comment_settlement::AnchorChanges::(impl PartialEq)
-internal	impl		jubarte::edit::comment_settlement::Pass::(impl Clone)
-internal	impl		jubarte::edit::comment_settlement::Pass::(impl Debug)
-internal	impl		jubarte::edit::comment_settlement::Pass::(impl Eq)
-internal	impl		jubarte::edit::comment_settlement::Pass::(impl PartialEq)
 internal	impl		jubarte::edit::controls::FillValue::(impl Clone)
 internal	impl		jubarte::edit::controls::FillValue::(impl Debug)
 internal	impl		jubarte::edit::flags::Answer::(impl Clone)
@@ -11891,13 +11895,13 @@ internal	macro	pub(crate)	jubarte::namespaces::cached_xname
 internal	macro	pub(crate)	jubarte::namespaces::ns_struct
 internal	module	pub(crate)	jubarte::borders
 internal	module	pub(crate)	jubarte::builtin_styles
+internal	module	pub(crate)	jubarte::comment_settlement
 internal	module	pub(crate)	jubarte::comparer::deleted_tables
 internal	module	pub(crate)	jubarte::comparer::final_marks
 internal	module	pub(crate)	jubarte::comparer::replaced_tables
 internal	module	pub(crate)	jubarte::comparer::table_split
 internal	module	pub(crate)	jubarte::convert::altchunk
 internal	module	pub(crate)	jubarte::data_stores
-internal	module	pub(crate)	jubarte::edit::comment_settlement
 internal	module	pub(crate)	jubarte::edit::native_keys
 internal	module	pub(crate)	jubarte::edit::sections
 internal	module	pub(crate)	jubarte::limits
@@ -12001,6 +12005,8 @@ internal	struct	pub(crate)	jubarte::changes::AuditMarker
 internal	struct	pub(crate)	jubarte::changes::AuditStory
 internal	struct	pub(crate)	jubarte::changes::CommentBodies
 internal	struct	pub(crate)	jubarte::changes::Recorded
+internal	struct	pub(crate)	jubarte::comment_settlement::AnchorChanges
+internal	struct	pub(crate)	jubarte::comment_settlement::SettlementError
 internal	struct	pub(crate)	jubarte::comments::CommentFamily
 internal	struct	pub(crate)	jubarte::comments::NewComment
 internal	struct	pub(crate)	jubarte::comparer::lcs::U64IdentityHasher
@@ -12034,7 +12040,6 @@ internal	struct	pub(crate)	jubarte::convert::preset_geom::TextRect
 internal	struct	pub(crate)	jubarte::convert::word_subst::SubstRow
 internal	struct	pub(crate)	jubarte::edit::EmptyPlacement
 internal	struct	pub(crate)	jubarte::edit::RevisionCounter
-internal	struct	pub(crate)	jubarte::edit::comment_settlement::AnchorChanges
 internal	struct	pub(crate)	jubarte::edit::record::RecordOptions
 internal	struct	pub(crate)	jubarte::inspect::Opened
 internal	struct	pub(crate)	jubarte::inspect::Projection
@@ -12088,6 +12093,7 @@ internal	struct	pub(crate::changes)	jubarte::changes::ExposedMark
 internal	struct	pub(crate::changes)	jubarte::changes::MarkSite
 internal	struct	pub(crate::changes)	jubarte::changes::ResolutionOutcome
 internal	struct	pub(crate::cli)	jubarte::cli::Spelled
+internal	struct	pub(crate::comment_settlement)	jubarte::comment_settlement::Pass
 internal	struct	pub(crate::comments)	jubarte::comments::Anchors
 internal	struct	pub(crate::comments)	jubarte::comments::Meta
 internal	struct	pub(crate::comments)	jubarte::comments::Part
@@ -12247,7 +12253,6 @@ internal	struct	pub(crate::edit)	jubarte::edit::v2_apply::SourceModel
 internal	struct	pub(crate::edit)	jubarte::edit::watermark::Spec
 internal	struct	pub(crate::edit)	jubarte::edit::whole::Mark
 internal	struct	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::Suggestions
-internal	struct	pub(crate::edit::comment_settlement)	jubarte::edit::comment_settlement::Pass
 internal	struct	pub(crate::edit::for_edit)	jubarte::edit::for_edit::NativeKeys
 internal	struct	pub(crate::edit::for_edit)	jubarte::edit::for_edit::RowCtx
 internal	struct	pub(crate::edit::for_edit)	jubarte::edit::for_edit::Selection
@@ -12938,6 +12943,8 @@ internal	struct_field	pub	jubarte::changes::CommentBodies::comments: std::collec
 internal	struct_field	pub	jubarte::changes::CommentBodies::owners: std::collections::HashMap<String, Option<String>>
 internal	struct_field	pub	jubarte::changes::Recorded::characters: Option<(usize, usize)>
 internal	struct_field	pub	jubarte::changes::Recorded::payload: String
+internal	struct_field	pub	jubarte::comment_settlement::AnchorChanges::kept: Vec<String>
+internal	struct_field	pub	jubarte::comment_settlement::AnchorChanges::removed: Vec<String>
 internal	struct_field	pub	jubarte::convert::font::Face::avg_char_width: f32
 internal	struct_field	pub	jubarte::convert::font::Face::bbox: [i16; 4]
 internal	struct_field	pub	jubarte::convert::font::Face::descent: f32
@@ -13049,8 +13056,6 @@ internal	struct_field	pub	jubarte::convert::preset_geom::TextRect::rect: [&'stat
 internal	struct_field	pub	jubarte::convert::word_subst::SubstRow::key: String
 internal	struct_field	pub	jubarte::convert::word_subst::SubstRow::physical: String
 internal	struct_field	pub	jubarte::convert::word_subst::SubstRow::stems: Vec<String>
-internal	struct_field	pub	jubarte::edit::comment_settlement::AnchorChanges::kept: Vec<String>
-internal	struct_field	pub	jubarte::edit::comment_settlement::AnchorChanges::removed: Vec<String>
 internal	struct_field	pub	jubarte::edit::record::RecordOptions::author: Option<String>
 internal	struct_field	pub	jubarte::edit::record::RecordOptions::date: Option<String>
 internal	struct_field	pub	jubarte::edit::record::RecordOptions::default_plan: bool
@@ -13484,6 +13489,8 @@ internal	struct_field	pub	jubarte::markdown::xml::TextBox::items: Vec<Item>
 internal	struct_field	pub	jubarte::markdown::xml::TextBox::mark: FormatMark
 internal	struct_field	pub	jubarte::opc::archive::ZipDefect::detail: String
 internal	struct_field	pub	jubarte::opc::archive::ZipDefect::kind: ZipDefectKind
+internal	struct_field	pub(crate)	jubarte::comment_settlement::SettlementError::code: String
+internal	struct_field	pub(crate)	jubarte::comment_settlement::SettlementError::message: String
 internal	struct_field	pub(crate)	jubarte::comments::NewComment::author: &'a str
 internal	struct_field	pub(crate)	jubarte::comments::NewComment::date: &'a str
 internal	struct_field	pub(crate)	jubarte::comments::NewComment::id: u32
@@ -13626,6 +13633,9 @@ internal	struct_field	pub(crate::changes)	jubarte::changes::ResolutionOutcome::k
 internal	struct_field	pub(crate::changes)	jubarte::changes::ResolutionOutcome::removed: Vec<String>
 internal	struct_field	pub(crate::cli)	jubarte::cli::Spelled::at: usize
 internal	struct_field	pub(crate::cli)	jubarte::cli::Spelled::name: String
+internal	struct_field	pub(crate::comment_settlement)	jubarte::comment_settlement::AnchorChanges::passes: std::collections::HashMap<String, Pass>
+internal	struct_field	pub(crate::comment_settlement)	jubarte::comment_settlement::Pass::resolution: sections::Resolution
+internal	struct_field	pub(crate::comment_settlement)	jubarte::comment_settlement::Pass::settled: Option<Vec<String>>
 internal	struct_field	pub(crate::comments)	jubarte::comments::Anchors::budget: usize
 internal	struct_field	pub(crate::comments)	jubarte::comments::Anchors::ends: std::collections::HashMap<String, (usize, usize, usize)>
 internal	struct_field	pub(crate::comments)	jubarte::comments::Anchors::references: std::collections::HashMap<String, (usize, usize)>
@@ -14751,7 +14761,7 @@ internal	struct_field	pub(crate::edit)	jubarte::edit::ScheduledEdit::replacement
 internal	struct_field	pub(crate::edit)	jubarte::edit::ScheduledEdit::start: usize
 internal	struct_field	pub(crate::edit)	jubarte::edit::Settled::base: Vec<u8>
 internal	struct_field	pub(crate::edit)	jubarte::edit::Settled::changed: bool
-internal	struct_field	pub(crate::edit)	jubarte::edit::Settled::comment_changes: comment_settlement::AnchorChanges
+internal	struct_field	pub(crate::edit)	jubarte::edit::Settled::comment_changes: crate::comment_settlement::AnchorChanges
 internal	struct_field	pub(crate::edit)	jubarte::edit::Settled::opened: crate::inspect::Opened
 internal	struct_field	pub(crate::edit)	jubarte::edit::Settled::resolved_revisions: ResolvedRevisions
 internal	struct_field	pub(crate::edit)	jubarte::edit::Spacing::after: Option<Points>
@@ -14830,9 +14840,6 @@ internal	struct_field	pub(crate::edit)	jubarte::edit::tracked::TrackedParagraphs
 internal	struct_field	pub(crate::edit)	jubarte::edit::tracked::TrackedParagraphs::output_states: Option<Vec<super::v2_apply::FinalView>>
 internal	struct_field	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::Suggestions::list: Vec<(String, usize)>
 internal	struct_field	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::Suggestions::more: usize
-internal	struct_field	pub(crate::edit::comment_settlement)	jubarte::edit::comment_settlement::AnchorChanges::passes: std::collections::HashMap<String, Pass>
-internal	struct_field	pub(crate::edit::comment_settlement)	jubarte::edit::comment_settlement::Pass::resolution: sections::Resolution
-internal	struct_field	pub(crate::edit::comment_settlement)	jubarte::edit::comment_settlement::Pass::settled: Option<Vec<String>>
 internal	struct_field	pub(crate::edit::for_edit)	jubarte::edit::for_edit::NativeKeys::counts: Vec<std::collections::HashMap<u32, usize>>
 internal	struct_field	pub(crate::edit::for_edit)	jubarte::edit::for_edit::RowCtx::comments: &'a std::collections::HashMap<usize, Vec<CommentRef>>
 internal	struct_field	pub(crate::edit::for_edit)	jubarte::edit::for_edit::RowCtx::fates: &'a [super::origin::Fate]

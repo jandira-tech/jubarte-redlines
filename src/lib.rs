@@ -106,6 +106,7 @@ pub mod capabilities;
 pub mod changes;
 #[cfg(feature = "cli")]
 pub mod cli;
+pub(crate) mod comment_settlement;
 pub mod comments;
 /// Core WmlComparer engine (atomize → LCS → produce → finalize).
 pub mod comparer;

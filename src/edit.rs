@@ -64,13 +64,12 @@ mod visible;
 mod watermark;
 mod whole;
 
-pub(crate) mod comment_settlement;
 #[cfg(feature = "cli")]
 /// Compile typed inline CLI actions into the same source-bound PlanV2 contract.
 pub mod inline;
 pub mod v2;
-use comment_settlement::AnchorChanges;
-pub use comment_settlement::{KeptComment, RemovedComment};
+use crate::comment_settlement::AnchorChanges;
+pub use crate::comment_settlement::{KeptComment, RemovedComment};
 pub mod v2_apply;
 
 /// `read --for-edit`: the working document, hashes and readiness (V2-10).
@@ -2191,6 +2190,12 @@ pub fn paragraph_ids(docx: &[u8], ids: &[&str]) -> Result<Vec<Result<String, Str
             },
         })
         .collect())
+}
+
+impl From<crate::comment_settlement::SettlementError> for EditError {
+    fn from(error: crate::comment_settlement::SettlementError) -> Self {
+        err(&error.code, None, error.message)
+    }
 }
 
 fn err(code: &str, operation: Option<&str>, message: impl Into<String>) -> EditError {

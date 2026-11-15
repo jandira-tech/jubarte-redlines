@@ -306,7 +306,7 @@ pub(super) fn result_v2_with_paragraphs(
         .unwrap_or(report.paragraphs.from);
     report.revisions = revision_counts(&redline, &tx.plan.author, &tx.date, &own);
     report.split_revisions = splits(&paragraphs.insertion_origins);
-    report.clean_removed_comments = super::comment_settlement::threads_the_clean_copy_drops(
+    report.clean_removed_comments = crate::comment_settlement::threads_the_clean_copy_drops(
         &clean,
         &redline,
         &report.removed_comments,
@@ -334,7 +334,7 @@ fn result_with_order(
         .unwrap_or(report.paragraphs.from);
     report.revisions = revision_counts(&redline, &tx.plan.author, &tx.date, &own);
     report.split_revisions = splits(&paragraphs.insertion_origins);
-    report.clean_removed_comments = super::comment_settlement::threads_the_clean_copy_drops(
+    report.clean_removed_comments = crate::comment_settlement::threads_the_clean_copy_drops(
         &clean,
         &redline,
         &report.removed_comments,

@@ -69,7 +69,6 @@ const MODULES: &[(&str, &str)] = &[
     ("markdown::borders", "opc"),
     ("markdown::data_stores", "opc"),
     ("edit", "edit"),
-    ("edit::comment_settlement", "doc"),
     ("edit::inline", "cli"),
     ("text_diff", "edit"),
     ("expect", "edit"),
@@ -84,7 +83,6 @@ const MODULES: &[(&str, &str)] = &[
 /// segments when the first names a module with submodule overrides).
 const KNOWN_UPWARD: &[&str] = &[
     "src/append.rs -> markdown::package",
-    "src/changes.rs -> edit::KeptComment",
     "src/debug.rs -> text_diff",
     "src/document_comparer.rs -> changes",
 ];

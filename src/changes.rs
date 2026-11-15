@@ -1167,7 +1167,7 @@ pub struct ResolvedChanges {
     /// Threads rescued onto empty anchors, in source comment ids; the CLI's
     /// `--keep-nested-comment` opt-in (#1279). Empty when settlement
     /// removed the threads (Word's behaviour, and the default).
-    pub kept_comments: Vec<crate::edit::KeptComment>,
+    pub kept_comments: Vec<crate::comment_settlement::KeptComment>,
 }
 
 /// `anchor removed by accepting r13`: the verb of `resolution`, and the
@@ -1391,7 +1391,7 @@ fn resolve_keeping_comments(
     } else {
         removed_comment_report(docx, &out.removed, filter, resolution)?
     };
-    let mut anchors = crate::edit::comment_settlement::AnchorChanges::default();
+    let mut anchors = crate::comment_settlement::AnchorChanges::default();
     anchors.extend(Vec::new(), out.kept, resolution, None);
     let (_removed_records, kept_comments) = anchors
         .records(docx)
