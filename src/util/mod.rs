@@ -149,7 +149,7 @@ pub(crate) fn decode_entities(s: &str) -> String {
     while let Some(a) = rest.find('&') {
         out.push_str(&rest[..a]);
         let tail = &rest[a..];
-        let semi = tail.as_bytes().iter().take(11).position(|&b| b == b';');
+        let semi = tail.find(';');
         let decoded = semi.and_then(|e| {
             let ent = &tail[1..e];
             let ch = match ent {
@@ -346,6 +346,8 @@ mod tests {
             ("&#x10000;", "\u{10000}"),
             ("&#x10FFFF;", "\u{10ffff}"),
             ("&#1114111;", "\u{10ffff}"),
+            ("&#000000000000000000065;", "A"),
+            ("&#x0000000000000041;", "A"),
         ] {
             assert_eq!(decode_entities(reference), expected, "{reference}");
         }

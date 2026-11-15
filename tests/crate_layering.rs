@@ -250,17 +250,21 @@ fn collect_group<'a>(group: &'a str, prefix: &[&'a str], paths: &mut Vec<Vec<&'a
     }
 }
 
-/// Every path named after `crate::`, expanding `crate::{a, b::c}` groups.
+/// Every path named after `crate` and its `::`, expanding `crate::{a, b::c}`
+/// groups. Rust allows whitespace and comments around the first `::` too.
 fn crate_paths(text: &str) -> Vec<Vec<&str>> {
     let mut paths = Vec::new();
     let mut from = 0;
-    while let Some(found) = text[from..].find("crate::") {
+    while let Some(found) = text[from..].find("crate") {
         let start = from + found;
-        from = start + "crate::".len();
+        from = start + "crate".len();
         if start > 0 && is_ident(text.as_bytes()[start - 1]) {
             continue;
         }
-        collect_path(&text[from..], &[], &mut paths);
+        let Some(rest) = skip_trivia(&text[from..]).strip_prefix("::") else {
+            continue;
+        };
+        collect_path(rest, &[], &mut paths);
     }
     paths
 }
@@ -381,6 +385,9 @@ fn whitespace_around_separators_keeps_full_path() {
         "use crate::markdown :: redline;",
         "use crate::markdown:: redline;",
         "use crate:: markdown::redline;",
+        "use crate :: markdown::redline;",
+        "use crate\n\t::markdown::redline;",
+        "use crate ::{markdown::redline};",
     ] {
         let paths = crate_paths(text);
         assert_eq!(paths, vec![vec!["markdown", "redline"]], "{text}");
@@ -397,6 +404,9 @@ fn comments_are_whitespace_inside_paths_and_groups() {
         "use crate::{/* } , */ markdown::redline};",
         "use crate::{markdown::{/*{*/redline/*}*/}};",
         "use crate::markdown::redline; // trailing",
+        "use crate/*c*/::markdown::redline;",
+        "use crate // note\n::markdown::redline;",
+        "use crate /* } , */ :: markdown::redline;",
     ] {
         let paths = crate_paths(text);
         assert!(

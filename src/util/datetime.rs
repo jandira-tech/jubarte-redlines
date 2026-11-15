@@ -373,11 +373,7 @@ mod tests {
         );
         // The legacy paired encoding (bare wall clock) still infers it.
         assert_eq!(
-            reported_date(
-                Some("2026-09-30T14:05:00"),
-                Some("2026-09-30T12:05:00Z")
-            )
-            .as_deref(),
+            reported_date(Some("2026-09-30T14:05:00"), Some("2026-09-30T12:05:00Z")).as_deref(),
             Some("2026-09-30T14:05:00+02:00")
         );
     }
