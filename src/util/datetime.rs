@@ -320,4 +320,20 @@ mod tests {
             Some("2026-09-30T14:05:00Z")
         );
     }
+
+    #[test]
+    fn w3cdtf_rejects_impossible_dates_and_clocks() {
+        for bad in [
+            "2023-02-30",
+            "2024-02-30",
+            "2023-04-31",
+            "2023-01-01T24:00:00Z",
+            "2023-01-01T23:60:00Z",
+            "2023-01-01T23:59:60Z",
+        ] {
+            assert_eq!(parse_w3cdtf(bad), None, "{bad}");
+        }
+        assert!(parse_w3cdtf("2024-02-29").is_some());
+        assert!(parse_w3cdtf("2023-02-28T23:59:59Z").is_some());
+    }
 }
