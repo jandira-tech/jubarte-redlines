@@ -177,6 +177,8 @@ jubarte-cli      = { path = "crates/jubarte-cli",      version = "=0.18.0", defa
 [workspace.lints.clippy]  # today's [lints.clippy] table, moved verbatim
 ```
 
+T4.0 applies these tables with `members = ["."]` only: the `crates/*` glob matches nothing until T4.1 creates the first crate, and an unmatched member glob fails `cargo metadata` (T4.0 AC1). T4.1 adds `"crates/*"` to `members` in the same commit that creates `crates/jubarte-dom`.
+
 Every member sets `version.workspace = true`, `edition.workspace = true`, `rust-version.workspace = true`, `license.workspace = true`, `repository.workspace = true`, `[lints] workspace = true`, and its own `description`, `readme`, `keywords` (at most 5), `categories`, anchored `include`, and `[package.metadata.docs.rs] all-features = true`. Each crate directory holds a real copy of `LICENSE` and a short `README.md`. Each `lib.rs` starts with the attributes the root has today: `#![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]`, `#![forbid(unsafe_code)]`, `#![warn(missing_docs)]`.
 
 `[package.metadata.release-notes]` and `[patch.crates-io]` stay in the root manifest. The cargo-semver-checks deny table must apply to every published crate; keep `scripts/semver_lints.py` passing for each.
@@ -735,7 +737,7 @@ Splitting a file inside one crate does not change what the compiler builds; the 
 
 **Stack:** `split/t7.<n>-<file>`
 
-- [ ] Step 1: move each inline `#[cfg(test)] mod x_tests { … }` to `<name>/tests/x_tests.rs`, declared `#[cfg(test)] mod x_tests;`. Commit.
+- [ ] Step 1: move each inline `#[cfg(test)] mod x_tests { … }` to `<name>/tests/x_tests.rs`, declared `#[cfg(test)] #[path = "tests/x_tests.rs"] mod x_tests;` — a plain `mod x_tests;` in `<name>/mod.rs` resolves to `<name>/x_tests.rs`, not `<name>/tests/x_tests.rs`. Commit.
 - [ ] Step 2: split production code along the file's existing seams (section banners, one `impl` block or one cluster of functions that call each other per file). The v4 file names (`coalesce.rs`, `moves.rs`, `myers.rs`, `pipeline.rs`, and so on) are suggestions; use a name only if the code that would live there exists.
 - [ ] Step 3: run AC1 to AC4, commit.
 

@@ -185,7 +185,15 @@ pub(crate) fn parse_w3cdtf(raw: &str) -> Option<CivilDateTime> {
     }
     let y: i32 = s.get(0..4)?.parse().ok()?;
     let (m, d) = (two_digits(s, 5)?, two_digits(s, 8)?);
-    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let days = match m {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        1..=12 => 31,
+        _ => 0,
+    };
+    if !(1..=days).contains(&d) {
         return None;
     }
     let (mut h, mut min, mut sec, mut rest) = (0, 0, 0, &s[10..]);
@@ -200,6 +208,9 @@ pub(crate) fn parse_w3cdtf(raw: &str) -> Option<CivilDateTime> {
             sec = two_digits(ss, 0)?;
             rest = ss[2..].trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
         }
+    }
+    if h > 23 || min > 59 || sec > 59 {
+        return None;
     }
     let offset_min: i64 = match rest.as_bytes().first() {
         None | Some(b'Z') if rest.len() <= 1 => 0,
