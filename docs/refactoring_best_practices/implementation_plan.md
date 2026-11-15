@@ -241,7 +241,7 @@ pub mod edit {
 ## A7. API and semver gates
 
 - Per crate: `cargo semver-checks check-release -p <crate>` for every published crate that has a prior release. A crate's first release has no crates.io baseline, so step 0 records the skip for that crate and the facade listing remains its API gate until the next release. This is the only place the tool can see item definitions.
-- Facade listing: `scripts/api_snapshot.py` builds rustdoc JSON for every workspace library, indexes each by item path, and when the facade walk meets a `use` whose target id is absent from the facade `index`, resolves `paths[target_id]` in the owning crate's index (expanding glob re-exports to the target module's public children). It skips items whose `attrs` contain `doc(hidden)`. The listing keeps facade paths (`jubarte::admission::InputLimits`), never sub-crate paths. Each line also carries the item's signature, the `path sig` form `api_snapshot.py` already emits for the monolith: a function's parameters and return type, a struct's or enum's fields with their types, a trait's associated items, and the generics of every item, so a signature change reads as listing drift while the path, kind and visibility rules above stay the gate.
+- Facade listing: `scripts/api_snapshot.py` builds rustdoc JSON for every workspace library, indexes each by item path, and when the facade walk meets a `use` whose target id is absent from the facade `index`, resolves `paths[target_id]` in the owning crate's index (expanding glob re-exports to the target module's public children). It skips items whose `attrs` contain `doc(hidden)`. The listing keeps facade paths (`jubarte::admission::InputLimits`), never sub-crate paths. Each line also carries the item's signature, the `path sig` form `api_snapshot.py` already emits for the monolith: a function's parameter names and types and its return type, a struct's or enum's fields with their types, a trait's associated items, and the generics of every item. The baseline diff fails when a retained function path has a changed signature, while the path, kind, visibility, facade-path and `doc(hidden)` rules above stay unchanged.
 - Facade compile test: `tests/facade_surface.rs`, generated from the baseline listing, holds one `use jubarte::<path> as _;` per listed module, struct, enum, union, trait, function, constant, static, type alias and macro.
 
 ## A8. Integration test layout
@@ -274,7 +274,7 @@ Branch naming: `split/<task-id>-<slug>`, each based on the previous task's branc
 - Produces: the baseline numbers and files that every later acceptance criterion compares against.
 
 **Acceptance criteria:**
-- AC1: every new registry name is free or already owned by the project. Measure: for each of `jubarte jubarte-dom jubarte-opc jubarte-render jubarte-doc jubarte-markdown jubarte-edit jubarte-cli`, `curl -s -o /dev/null -w '%{http_code}' -A 'jubarte-release (github.com/jandira-tech/jubarte-redlines)' https://crates.io/api/v1/crates/<name>` prints `404`; a non-404 crates.io answer passes only when `curl -s -A 'jubarte-release (github.com/jandira-tech/jubarte-redlines)' https://crates.io/api/v1/crates/<name>/owners` lists the project's crates.io account among the owners — otherwise stop. `https://pypi.org/pypi/jubarte/json` returns `404`; a `429` or `5xx` answer is inconclusive — retry the probe and act only on a response that establishes availability, never dropping the Python package on a service error. A non-404 PyPI answer affects only the Python package decision — drop the Python `jubarte` package in T5.3 — and never triggers the D1 alternative on its own. The D1 alternative resolves only the root/compare naming choice; it does not free a taken sub-crate name such as `jubarte-dom` — for each unavailable crate name, choose a replacement, record it in `baseline.md`, and keep the release blocked until every crate name is secured.
+- AC1: every new registry name is free or already owned by the project. Measure: for each of `jubarte jubarte-dom jubarte-opc jubarte-render jubarte-doc jubarte-markdown jubarte-edit jubarte-cli`, `curl -s -o /dev/null -w '%{http_code}' -A 'jubarte-release (github.com/jandira-tech/jubarte-redlines)' https://crates.io/api/v1/crates/<name>` prints `404`; a non-404 crates.io answer passes only when `curl -s -A 'jubarte-release (github.com/jandira-tech/jubarte-redlines)' https://crates.io/api/v1/crates/<name>/owners` lists the project's crates.io account among the owners. If another owner holds `jubarte`, take the D1 alternative: retain `jubarte-redlines` for the facade, select `jubarte-compare` for the compare crate, and require `jubarte-compare` to pass the same availability and ownership probe before proceeding; for any other crate name that fails the probe, stop. `https://pypi.org/pypi/jubarte/json` returns `404`; a `429` or `5xx` answer is inconclusive — retry the probe and act only on a response that establishes availability, never dropping the Python package on a service error. A non-404 PyPI answer affects only the Python package decision — drop the Python `jubarte` package in T5.3 — and never triggers the D1 alternative on its own. The D1 alternative resolves only the root/compare naming choice and does not resolve an unavailable sub-crate name such as `jubarte-dom`: keep checking every sub-crate name independently, and for each unavailable crate name choose a replacement, record it in `baseline.md`, and keep the release blocked until every crate name is secured.
 - AC2: `baseline.md` records, each with the exact command used: test-case count (`cargo nextest list --all-features --message-format json`, count the test cases); `python3 scripts/api_snapshot.py --emit docs/refactoring_best_practices/api-baseline.txt` line count; the two `.wasm` sizes; release CLI size (`cargo build --release --bin jubarte`); `cargo bench --bench redline -- --save-baseline pre-split` medians; wall time of `cargo build --release` and of `cargo nextest run --all-features --no-run`; `cargo tree -e normal --no-default-features --prefix none | sort -u | wc -l`; `cargo package --list --allow-dirty | wc -l`; the number of test binaries nextest reports.
 - AC3: `docs/refactoring_best_practices/golden.sha256` holds the sha256 of the release CLI's redline output for three fixture pairs from `tests/fixtures/redline/` and its PDF output for three fixtures, produced with author and datetime pinned by the CLI flags. Measure: a second run of the same script prints identical hashes.
 
@@ -780,3 +780,30 @@ Checked while writing: every number in the evidence table against the repository
 Not verified, and guarded by a measurer instead: whether the guard is red at HEAD (static replica only; T0.2 Step 1); registry name availability (T0.1 AC1); the maturin key for extra Python packages (T5.3 AC1); the exact JSON shape of `cargo nextest list` (T0.1 records the command used); whether `missing_docs` stays quiet on `#[doc(hidden)] pub` items (S6); how the cargo-semver-checks lint table is best shared across crates (A3).
 
 Still to do before execution: an independent review of this plan by a model from another corpus, and the owner's confirmation of D1, D2 and D3.
+
+## Execution notes (branch refactor/opc-helpers, 2026-11-15)
+
+Findings while executing this plan task by task; they refine, not replace,
+the tasks above.
+
+- T1.1 classifier: it_edit 46 / it_markdown 55, not 45/56.
+  `markdown_redline.rs` references `jubarte::markdown::redline`, which
+  A8's own submodule override maps to the edit layer. The guard, not the
+  counts, is the invariant.
+- T2.3 infeasible as written: critic_literal escapes through
+  `crate::markdown::diff_markdown` (the CriticMarkup reader), so defining
+  it in debug.rs would trade `debug.rs -> text_diff` for a worse
+  `debug.rs -> markdown` edge. That edge stays in KNOWN_UPWARD until
+  Phase 4 composes the critic view.
+- api_snapshot.py keys items by their DEFINING module, so a type moved
+  down a layer with a re-export at its old public path still reads as
+  listing drift (T2.3 internal paths, T2.5 public canonical paths). The
+  drift is reviewed per task and re-baselined in
+  docs/refactoring_best_practices/baseline-addenda.md; T4.0's cross-crate
+  resolution supersedes these listings anyway.
+- T2.5 correction: no RevisionColor type exists; palette colours are
+  [u8; 3] fields on RevisionMark (which moves with the palette as plain
+  data).
+- PyPI `jubarte` is taken by a third party (T0.1 probe), so T5.3 takes
+  the collision branch: the Python import package keeps only
+  `jubarte_redlines`, never `jubarte`.

@@ -1,4 +1,3 @@
-api	assoc_const	pub	jubarte::convert::RevisionPalette::CONVENTIONAL: Self
 api	assoc_const	pub	jubarte::edit::hint::PlanSyntax::ALL: [Self; 4]
 api	assoc_const	pub	jubarte::limits::AdmissionErrorKind::ALL: [Self; 7]
 api	assoc_const	pub	jubarte::limits::UnsupportedContentError::CODE: &'static str
@@ -20,6 +19,7 @@ api	assoc_const	pub	jubarte::namespaces::W::URI: &'static str
 api	assoc_const	pub	jubarte::namespaces::WNE::URI: &'static str
 api	assoc_const	pub	jubarte::namespaces::WP14::URI: &'static str
 api	assoc_const	pub	jubarte::namespaces::WP::URI: &'static str
+api	assoc_const	pub	jubarte::render_options::RevisionPalette::CONVENTIONAL: Self
 api	assoc_const	pub	jubarte::result::ExitStatus::CHECK_FINDINGS: Self
 api	assoc_const	pub	jubarte::result::ExitStatus::COMPARISON_DIFFERENCE: Self
 api	assoc_const	pub	jubarte::result::ExitStatus::DEADLINE_EXCEEDED: Self
@@ -110,10 +110,7 @@ api	enum	pub	jubarte::comparer::WmlComparerRevisionType
 api	enum	pub	jubarte::comparer::atoms::ComparisonUnit
 api	enum	pub	jubarte::comparer::footnotes::RectifyError
 api	enum	pub	jubarte::comparison_log::ComparisonLogCode
-api	enum	pub	jubarte::convert::CommentPlacement
 api	enum	pub	jubarte::convert::ConvertError
-api	enum	pub	jubarte::convert::MarkLines
-api	enum	pub	jubarte::convert::RevisionStyle
 api	enum	pub	jubarte::convert::font::FontStep
 api	enum	pub	jubarte::debug::Check
 api	enum	pub	jubarte::edit::Alignment
@@ -165,6 +162,9 @@ api	enum	pub	jubarte::markdown::TrackChanges
 api	enum	pub	jubarte::markdown::redline::Source
 api	enum	pub	jubarte::markdown::unified::Locator
 api	enum	pub	jubarte::perf::Stage
+api	enum	pub	jubarte::render_options::CommentPlacement
+api	enum	pub	jubarte::render_options::MarkLines
+api	enum	pub	jubarte::render_options::RevisionStyle
 api	enum	pub	jubarte::result::CommitState
 api	enum	pub	jubarte::result::Effect
 api	enum	pub	jubarte::result::MediaRole
@@ -407,8 +407,6 @@ api	function	pub	jubarte::comparison_log::ComparisonLog::new () -> Self
 api	function	pub	jubarte::comparison_log::ComparisonLog::warning (self: &mut Self, message: impl Into<String>)
 api	function	pub	jubarte::convert::RenderReport::page_starts (self: &Self) -> Vec<String>
 api	function	pub	jubarte::convert::RenderReport::to_json (self: &Self) -> String
-api	function	pub	jubarte::convert::RevisionPalette::parse (spec: &str) -> Result<Self, String>
-api	function	pub	jubarte::convert::RevisionStyle::from_choice (name: &str, palette: Option<&str>) -> Result<Self, String>
 api	function	pub	jubarte::convert::diff_render::PageDiff::differs (self: &Self) -> bool
 api	function	pub	jubarte::convert::diff_render::RenderDiff::differs (self: &Self) -> bool
 api	function	pub	jubarte::convert::diff_render::diff_render (a: &[u8], b: &[u8], options: &DiffOptions) -> Result<RenderDiff, super::ConvertError>
@@ -792,6 +790,8 @@ api	function	pub	jubarte::publication::StagedFile::commit (self: Self) -> Result
 api	function	pub	jubarte::publication::StagedFile::prepare (path: &Path, bytes: &[u8], overwrite: bool) -> io::Result<Self>
 api	function	pub	jubarte::publication::publish_paths (files: &[(std::path::PathBuf, &[u8])], overwrite: bool) -> Result<PublishReport, PublishError>
 api	function	pub	jubarte::publication::sync_directory (path: &std::path::Path) -> io::Result<()>
+api	function	pub	jubarte::render_options::RevisionPalette::parse (spec: &str) -> Result<Self, String>
+api	function	pub	jubarte::render_options::RevisionStyle::from_choice (name: &str, palette: Option<&str>) -> Result<Self, String>
 api	function	pub	jubarte::result::Artifact::committed (path: impl Into<String>, role: MediaRole, media_type: impl Into<String>, payload: &[u8]) -> Self
 api	function	pub	jubarte::result::Artifact::new (path: impl Into<String>, role: MediaRole, media_type: impl Into<String>, payload: &[u8]) -> Self
 api	function	pub	jubarte::result::Artifact::with_committed (self: Self, committed: bool) -> Self
@@ -1459,12 +1459,6 @@ api	impl		jubarte::comparison_log::ComparisonLogCode::(impl Eq)
 api	impl		jubarte::comparison_log::ComparisonLogCode::(impl PartialEq)
 api	impl		jubarte::comparison_log::ComparisonLogEntry::(impl Clone)
 api	impl		jubarte::comparison_log::ComparisonLogEntry::(impl Debug)
-api	impl		jubarte::convert::CommentPlacement::(impl Clone)
-api	impl		jubarte::convert::CommentPlacement::(impl Copy)
-api	impl		jubarte::convert::CommentPlacement::(impl Debug)
-api	impl		jubarte::convert::CommentPlacement::(impl Default)
-api	impl		jubarte::convert::CommentPlacement::(impl Eq)
-api	impl		jubarte::convert::CommentPlacement::(impl PartialEq)
 api	impl		jubarte::convert::ConvertError::(impl Debug)
 api	impl		jubarte::convert::ConvertError::(impl Display)
 api	impl		jubarte::convert::ConvertError::(impl Error)
@@ -1472,50 +1466,18 @@ api	impl		jubarte::convert::ConvertedPdf::(impl Clone)
 api	impl		jubarte::convert::ConvertedPdf::(impl Debug)
 api	impl		jubarte::convert::ConvertedPdf::(impl Eq)
 api	impl		jubarte::convert::ConvertedPdf::(impl PartialEq)
-api	impl		jubarte::convert::MarkLines::(impl Clone)
-api	impl		jubarte::convert::MarkLines::(impl Copy)
-api	impl		jubarte::convert::MarkLines::(impl Debug)
-api	impl		jubarte::convert::MarkLines::(impl Default)
-api	impl		jubarte::convert::MarkLines::(impl Eq)
-api	impl		jubarte::convert::MarkLines::(impl PartialEq)
 api	impl		jubarte::convert::PageText::(impl Clone)
 api	impl		jubarte::convert::PageText::(impl Debug)
 api	impl		jubarte::convert::PageText::(impl Eq)
 api	impl		jubarte::convert::PageText::(impl PartialEq)
-api	impl		jubarte::convert::PdfOptions::(impl Clone)
-api	impl		jubarte::convert::PdfOptions::(impl Copy)
-api	impl		jubarte::convert::PdfOptions::(impl Debug)
-api	impl		jubarte::convert::PdfOptions::(impl Default)
-api	impl		jubarte::convert::PdfOptions::(impl Eq)
-api	impl		jubarte::convert::PdfOptions::(impl PartialEq)
 api	impl		jubarte::convert::RenderReport::(impl Clone)
 api	impl		jubarte::convert::RenderReport::(impl Debug)
 api	impl		jubarte::convert::RenderReport::(impl Eq)
 api	impl		jubarte::convert::RenderReport::(impl PartialEq)
-api	impl		jubarte::convert::RenderRequest::(impl Clone)
-api	impl		jubarte::convert::RenderRequest::(impl Debug)
-api	impl		jubarte::convert::RenderRequest::(impl Default)
-api	impl		jubarte::convert::RenderRequest::(impl PartialEq)
 api	impl		jubarte::convert::Rendered::(impl Clone)
 api	impl		jubarte::convert::Rendered::(impl Debug)
 api	impl		jubarte::convert::Rendered::(impl Eq)
 api	impl		jubarte::convert::Rendered::(impl PartialEq)
-api	impl		jubarte::convert::RevisionMark::(impl Clone)
-api	impl		jubarte::convert::RevisionMark::(impl Copy)
-api	impl		jubarte::convert::RevisionMark::(impl Debug)
-api	impl		jubarte::convert::RevisionMark::(impl Eq)
-api	impl		jubarte::convert::RevisionMark::(impl PartialEq)
-api	impl		jubarte::convert::RevisionPalette::(impl Clone)
-api	impl		jubarte::convert::RevisionPalette::(impl Copy)
-api	impl		jubarte::convert::RevisionPalette::(impl Debug)
-api	impl		jubarte::convert::RevisionPalette::(impl Eq)
-api	impl		jubarte::convert::RevisionPalette::(impl PartialEq)
-api	impl		jubarte::convert::RevisionStyle::(impl Clone)
-api	impl		jubarte::convert::RevisionStyle::(impl Copy)
-api	impl		jubarte::convert::RevisionStyle::(impl Debug)
-api	impl		jubarte::convert::RevisionStyle::(impl Default)
-api	impl		jubarte::convert::RevisionStyle::(impl Eq)
-api	impl		jubarte::convert::RevisionStyle::(impl PartialEq)
 api	impl		jubarte::convert::diff_render::DiffOptions::(impl Clone)
 api	impl		jubarte::convert::diff_render::DiffOptions::(impl Copy)
 api	impl		jubarte::convert::diff_render::DiffOptions::(impl Debug)
@@ -2471,6 +2433,44 @@ api	impl		jubarte::publication::PublishError::(impl Error)
 api	impl		jubarte::publication::PublishReport::(impl Debug)
 api	impl		jubarte::publication::PublishReport::(impl Default)
 api	impl		jubarte::publication::StagedFile::(impl Drop)
+api	impl		jubarte::render_options::CommentPlacement::(impl Clone)
+api	impl		jubarte::render_options::CommentPlacement::(impl Copy)
+api	impl		jubarte::render_options::CommentPlacement::(impl Debug)
+api	impl		jubarte::render_options::CommentPlacement::(impl Default)
+api	impl		jubarte::render_options::CommentPlacement::(impl Eq)
+api	impl		jubarte::render_options::CommentPlacement::(impl PartialEq)
+api	impl		jubarte::render_options::MarkLines::(impl Clone)
+api	impl		jubarte::render_options::MarkLines::(impl Copy)
+api	impl		jubarte::render_options::MarkLines::(impl Debug)
+api	impl		jubarte::render_options::MarkLines::(impl Default)
+api	impl		jubarte::render_options::MarkLines::(impl Eq)
+api	impl		jubarte::render_options::MarkLines::(impl PartialEq)
+api	impl		jubarte::render_options::PdfOptions::(impl Clone)
+api	impl		jubarte::render_options::PdfOptions::(impl Copy)
+api	impl		jubarte::render_options::PdfOptions::(impl Debug)
+api	impl		jubarte::render_options::PdfOptions::(impl Default)
+api	impl		jubarte::render_options::PdfOptions::(impl Eq)
+api	impl		jubarte::render_options::PdfOptions::(impl PartialEq)
+api	impl		jubarte::render_options::RenderRequest::(impl Clone)
+api	impl		jubarte::render_options::RenderRequest::(impl Debug)
+api	impl		jubarte::render_options::RenderRequest::(impl Default)
+api	impl		jubarte::render_options::RenderRequest::(impl PartialEq)
+api	impl		jubarte::render_options::RevisionMark::(impl Clone)
+api	impl		jubarte::render_options::RevisionMark::(impl Copy)
+api	impl		jubarte::render_options::RevisionMark::(impl Debug)
+api	impl		jubarte::render_options::RevisionMark::(impl Eq)
+api	impl		jubarte::render_options::RevisionMark::(impl PartialEq)
+api	impl		jubarte::render_options::RevisionPalette::(impl Clone)
+api	impl		jubarte::render_options::RevisionPalette::(impl Copy)
+api	impl		jubarte::render_options::RevisionPalette::(impl Debug)
+api	impl		jubarte::render_options::RevisionPalette::(impl Eq)
+api	impl		jubarte::render_options::RevisionPalette::(impl PartialEq)
+api	impl		jubarte::render_options::RevisionStyle::(impl Clone)
+api	impl		jubarte::render_options::RevisionStyle::(impl Copy)
+api	impl		jubarte::render_options::RevisionStyle::(impl Debug)
+api	impl		jubarte::render_options::RevisionStyle::(impl Default)
+api	impl		jubarte::render_options::RevisionStyle::(impl Eq)
+api	impl		jubarte::render_options::RevisionStyle::(impl PartialEq)
 api	impl		jubarte::result::Artifact::(impl Clone)
 api	impl		jubarte::result::Artifact::(impl Debug)
 api	impl		jubarte::result::Artifact::(impl Deserialize<'0>)
@@ -2898,12 +2898,8 @@ api	struct	pub	jubarte::comparison_log::ComparisonLog
 api	struct	pub	jubarte::comparison_log::ComparisonLogEntry
 api	struct	pub	jubarte::convert::ConvertedPdf
 api	struct	pub	jubarte::convert::PageText
-api	struct	pub	jubarte::convert::PdfOptions
 api	struct	pub	jubarte::convert::RenderReport
-api	struct	pub	jubarte::convert::RenderRequest
 api	struct	pub	jubarte::convert::Rendered
-api	struct	pub	jubarte::convert::RevisionMark
-api	struct	pub	jubarte::convert::RevisionPalette
 api	struct	pub	jubarte::convert::diff_render::DiffOptions
 api	struct	pub	jubarte::convert::diff_render::PageDiff
 api	struct	pub	jubarte::convert::diff_render::RenderDiff
@@ -3044,6 +3040,10 @@ api	struct	pub	jubarte::publication::OutputRoot
 api	struct	pub	jubarte::publication::PublishError
 api	struct	pub	jubarte::publication::PublishReport
 api	struct	pub	jubarte::publication::StagedFile
+api	struct	pub	jubarte::render_options::PdfOptions
+api	struct	pub	jubarte::render_options::RenderRequest
+api	struct	pub	jubarte::render_options::RevisionMark
+api	struct	pub	jubarte::render_options::RevisionPalette
 api	struct	pub	jubarte::result::Artifact
 api	struct	pub	jubarte::result::Context
 api	struct	pub	jubarte::result::Counts
@@ -3301,7 +3301,6 @@ api	struct_field		jubarte::convert::ConvertError::PageNotKept::requested: usize
 api	struct_field		jubarte::convert::ConvertError::PageOutOfRange::page_count: usize
 api	struct_field		jubarte::convert::ConvertError::PageOutOfRange::requested: usize
 api	struct_field		jubarte::convert::ConvertError::Raster::0: String
-api	struct_field		jubarte::convert::RevisionStyle::Custom::0: RevisionPalette
 api	struct_field		jubarte::edit::OperationKind::Comment::find: Option<String>
 api	struct_field		jubarte::edit::OperationKind::Comment::occurrence: Option<usize>
 api	struct_field		jubarte::edit::OperationKind::Comment::paragraph: Selector
@@ -3506,6 +3505,7 @@ api	struct_field		jubarte::markdown::redline::Source::Markdown::0: &'a str
 api	struct_field		jubarte::markdown::unified::Locator::Line::0: usize
 api	struct_field		jubarte::markdown::unified::Locator::Paragraph::index: usize
 api	struct_field		jubarte::markdown::unified::Locator::Paragraph::story: String
+api	struct_field		jubarte::render_options::RevisionStyle::Custom::0: RevisionPalette
 api	struct_field		jubarte::result::ResultDataError::EffectRequired::effect: Effect
 api	struct_field		jubarte::result::ResultDataError::EffectRequired::phase: Phase
 api	struct_field		jubarte::result::ResultDataError::NotAppliedRequired::effect: Effect
@@ -3873,28 +3873,13 @@ api	struct_field	pub	jubarte::convert::ConvertedPdf::pdf: Vec<u8>
 api	struct_field	pub	jubarte::convert::PageText::index: usize
 api	struct_field	pub	jubarte::convert::PageText::number: usize
 api	struct_field	pub	jubarte::convert::PageText::text: String
-api	struct_field	pub	jubarte::convert::PdfOptions::changed_only: bool
-api	struct_field	pub	jubarte::convert::PdfOptions::comment_notes: bool
-api	struct_field	pub	jubarte::convert::PdfOptions::comments: CommentPlacement
-api	struct_field	pub	jubarte::convert::PdfOptions::compress: bool
-api	struct_field	pub	jubarte::convert::PdfOptions::revisions: RevisionStyle
 api	struct_field	pub	jubarte::convert::RenderReport::document_pages: usize
 api	struct_field	pub	jubarte::convert::RenderReport::fonts: Vec<FontReportEntry>
 api	struct_field	pub	jubarte::convert::RenderReport::page_count: usize
 api	struct_field	pub	jubarte::convert::RenderReport::pages: Vec<PageText>
-api	struct_field	pub	jubarte::convert::RenderRequest::pages: Option<Vec<usize>>
-api	struct_field	pub	jubarte::convert::RenderRequest::pdf: bool
-api	struct_field	pub	jubarte::convert::RenderRequest::png_dpi: Option<f32>
 api	struct_field	pub	jubarte::convert::Rendered::pdf: Option<Vec<u8>>
 api	struct_field	pub	jubarte::convert::Rendered::pngs: Vec<Vec<u8>>
 api	struct_field	pub	jubarte::convert::Rendered::report: RenderReport
-api	struct_field	pub	jubarte::convert::RevisionMark::color: [u8; 3]
-api	struct_field	pub	jubarte::convert::RevisionMark::strike: MarkLines
-api	struct_field	pub	jubarte::convert::RevisionMark::underline: MarkLines
-api	struct_field	pub	jubarte::convert::RevisionPalette::deleted: RevisionMark
-api	struct_field	pub	jubarte::convert::RevisionPalette::inserted: RevisionMark
-api	struct_field	pub	jubarte::convert::RevisionPalette::moved_from: RevisionMark
-api	struct_field	pub	jubarte::convert::RevisionPalette::moved_to: RevisionMark
 api	struct_field	pub	jubarte::convert::diff_render::DiffOptions::dpi: f32
 api	struct_field	pub	jubarte::convert::diff_render::DiffOptions::overlay: bool
 api	struct_field	pub	jubarte::convert::diff_render::DiffOptions::pdf: super::PdfOptions
@@ -4473,6 +4458,21 @@ api	struct_field	pub	jubarte::publication::PublishError::durability_uncertain: b
 api	struct_field	pub	jubarte::publication::PublishError::source: io::Error
 api	struct_field	pub	jubarte::publication::PublishError::warnings: Vec<String>
 api	struct_field	pub	jubarte::publication::PublishReport::warnings: Vec<String>
+api	struct_field	pub	jubarte::render_options::PdfOptions::changed_only: bool
+api	struct_field	pub	jubarte::render_options::PdfOptions::comment_notes: bool
+api	struct_field	pub	jubarte::render_options::PdfOptions::comments: CommentPlacement
+api	struct_field	pub	jubarte::render_options::PdfOptions::compress: bool
+api	struct_field	pub	jubarte::render_options::PdfOptions::revisions: RevisionStyle
+api	struct_field	pub	jubarte::render_options::RenderRequest::pages: Option<Vec<usize>>
+api	struct_field	pub	jubarte::render_options::RenderRequest::pdf: bool
+api	struct_field	pub	jubarte::render_options::RenderRequest::png_dpi: Option<f32>
+api	struct_field	pub	jubarte::render_options::RevisionMark::color: [u8; 3]
+api	struct_field	pub	jubarte::render_options::RevisionMark::strike: MarkLines
+api	struct_field	pub	jubarte::render_options::RevisionMark::underline: MarkLines
+api	struct_field	pub	jubarte::render_options::RevisionPalette::deleted: RevisionMark
+api	struct_field	pub	jubarte::render_options::RevisionPalette::inserted: RevisionMark
+api	struct_field	pub	jubarte::render_options::RevisionPalette::moved_from: RevisionMark
+api	struct_field	pub	jubarte::render_options::RevisionPalette::moved_to: RevisionMark
 api	struct_field	pub	jubarte::result::Artifact::byte_size: u64
 api	struct_field	pub	jubarte::result::Artifact::committed: bool
 api	struct_field	pub	jubarte::result::Artifact::media_role: MediaRole
@@ -4635,11 +4635,18 @@ api	use	pub	jubarte::capabilities::discovery_text = discovery::discovery_text
 api	use	pub	jubarte::cli::FlagOp = crate::edit::flags::FlagOp
 api	use	pub	jubarte::cli::shell_word = crate::util::shell_word
 api	use	pub	jubarte::comparer::WmlComparerRevision = atoms::WmlComparerRevision
+api	use	pub	jubarte::convert::CommentPlacement = crate::render_options::CommentPlacement
 api	use	pub	jubarte::convert::DiffOptions = diff_render::DiffOptions
 api	use	pub	jubarte::convert::FontReportEntry = font::FontReportEntry
 api	use	pub	jubarte::convert::FontStep = font::FontStep
+api	use	pub	jubarte::convert::MarkLines = crate::render_options::MarkLines
 api	use	pub	jubarte::convert::PageDiff = diff_render::PageDiff
+api	use	pub	jubarte::convert::PdfOptions = crate::render_options::PdfOptions
 api	use	pub	jubarte::convert::RenderDiff = diff_render::RenderDiff
+api	use	pub	jubarte::convert::RenderRequest = crate::render_options::RenderRequest
+api	use	pub	jubarte::convert::RevisionMark = crate::render_options::RevisionMark
+api	use	pub	jubarte::convert::RevisionPalette = crate::render_options::RevisionPalette
+api	use	pub	jubarte::convert::RevisionStyle = crate::render_options::RevisionStyle
 api	use	pub	jubarte::convert::diff_render = diff_render::diff_render
 api	use	pub	jubarte::convert::font_report_json = font::font_report_json
 api	use	pub	jubarte::convert::utc_now_iso8601 = crate::util::datetime::utc_now_iso8601
@@ -4876,20 +4883,12 @@ api	variant		jubarte::comparer::footnotes::RectifyError::UnsupportedReferenceSta
 api	variant		jubarte::comparison_log::ComparisonLogCode::Error
 api	variant		jubarte::comparison_log::ComparisonLogCode::Info
 api	variant		jubarte::comparison_log::ComparisonLogCode::Warning
-api	variant		jubarte::convert::CommentPlacement::End
-api	variant		jubarte::convert::CommentPlacement::Margin
 api	variant		jubarte::convert::ConvertError::Emit
 api	variant		jubarte::convert::ConvertError::MissingDocument
 api	variant		jubarte::convert::ConvertError::OpenPackage
 api	variant		jubarte::convert::ConvertError::PageNotKept
 api	variant		jubarte::convert::ConvertError::PageOutOfRange
 api	variant		jubarte::convert::ConvertError::Raster
-api	variant		jubarte::convert::MarkLines::Double
-api	variant		jubarte::convert::MarkLines::None
-api	variant		jubarte::convert::MarkLines::Single
-api	variant		jubarte::convert::RevisionStyle::Conventional
-api	variant		jubarte::convert::RevisionStyle::Custom
-api	variant		jubarte::convert::RevisionStyle::Word
 api	variant		jubarte::convert::font::FontStep::AltName
 api	variant		jubarte::convert::font::FontStep::Embedded
 api	variant		jubarte::convert::font::FontStep::Explicit
@@ -5101,6 +5100,14 @@ api	variant		jubarte::perf::Stage::Produce
 api	variant		jubarte::perf::Stage::Serialize
 api	variant		jubarte::perf::Stage::Unitize
 api	variant		jubarte::perf::Stage::Zip
+api	variant		jubarte::render_options::CommentPlacement::End
+api	variant		jubarte::render_options::CommentPlacement::Margin
+api	variant		jubarte::render_options::MarkLines::Double
+api	variant		jubarte::render_options::MarkLines::None
+api	variant		jubarte::render_options::MarkLines::Single
+api	variant		jubarte::render_options::RevisionStyle::Conventional
+api	variant		jubarte::render_options::RevisionStyle::Custom
+api	variant		jubarte::render_options::RevisionStyle::Word
 api	variant		jubarte::result::CommitState::Committed
 api	variant		jubarte::result::CommitState::NotCommitted
 api	variant		jubarte::result::CommitState::Unknown
@@ -11924,6 +11931,7 @@ internal	module	pub(crate)	jubarte::markdown::package
 internal	module	pub(crate)	jubarte::markdown::xml
 internal	module	pub(crate)	jubarte::numbering
 internal	module	pub(crate)	jubarte::ooxml
+internal	module	pub(crate)	jubarte::render_options
 internal	module	pub(crate)	jubarte::revision_processor::comments
 internal	module	pub(crate)	jubarte::revision_processor::style_records
 internal	module	pub(crate)	jubarte::table_dom

@@ -7,6 +7,43 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T2.5 (render_options) - 2026-11-15
+
+- MarkLines, RevisionMark, RevisionPalette (+ both impls), RevisionStyle
+  (+ impl), PdfOptions, CommentPlacement and RenderRequest moved to the
+  pub(crate) module crate::render_options (opc layer); convert re-exports
+  them, so every jubarte::convert::… path still resolves (doctests
+  14/14). Plan correction: there is no RevisionColor type; the palette's
+  colours are [u8; 3] fields on RevisionMark.
+- api-baseline re-recorded: the listing keys items by their DEFINING
+  module, so 151 public lines renamed convert::… -> render_options::…
+  even though the convert paths remain valid through pub use. Same shape
+  as the end state (jubarte-opc::render_options owning the types).
+
+### Render inventory (T2.5 deliverable)
+
+Public items above the renderer whose bodies (not just their option
+types) call into convert, to be gated with `#[cfg(feature = "render")]`
+by T4.5-T4.8:
+
+- doc layer
+  - jubarte::audit::word_layout (audit.rs:147) calls
+    docx_render_report and returns convert's RenderReport; LayoutPass
+    (audit.rs:161) and the audit helpers at 276-277 carry it too.
+  - jubarte::fields: FieldError::Layout (fields.rs:79) holds a
+    ConvertError; update_fields (115) calls layout_facts (170);
+    LayoutFacts appears in the public update machinery (257) and tests
+    (1499, 2299).
+  - jubarte::debug's render check (debug/render.rs:1162 calls
+    docx_render_report).
+- markdown layer
+  - jubarte::markdown::page_texts (markdown/mod.rs:1098) calls
+    convert::render (1113); markdown/pages.rs:47 links
+    RenderReport::pages in docs only.
+- edit layer
+  - capabilities.rs links convert::docx_to_pdf / docx_to_png /
+    diff_render in doc comments only (125, 127, 155); no body calls.
+
 ## T2.4 (numbering, table_dom) - 2026-11-15
 
 - api-baseline.txt re-recorded again: the w:numFmt label family

@@ -250,12 +250,9 @@ pub(crate) fn choice_requires_understood(
 ) -> bool {
     static REQUIRES: std::sync::OnceLock<XName> = std::sync::OnceLock::new();
     let requires_name = REQUIRES.get_or_init(|| XNamespace::none().name("Requires"));
-    let Some(requires) = dom.attribute(choice, requires_name) else {
-        return true;
-    };
-    requires
-        .split_whitespace()
-        .all(|prefix| prefix_namespace(dom, choice, prefix).is_some_and(|uri| understood(&uri)))
+    requires_list_understood(dom.attribute(choice, requires_name), |prefix| {
+        prefix_namespace(dom, choice, prefix).is_some_and(|uri| understood(&uri))
+    })
 }
 
 /// The namespace the nearest `xmlns:prefix` declaration on `node` or its

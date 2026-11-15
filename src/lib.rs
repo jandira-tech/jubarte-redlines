@@ -140,6 +140,7 @@ pub(crate) mod ooxml;
 pub mod opc;
 /// P0-LAB-01 stage counters/timers — no-ops unless `perf-profile` is enabled.
 pub mod perf;
+pub(crate) mod render_options;
 pub mod result;
 /// Accept / reject tracked revisions across a package.
 pub mod revision_processor;
