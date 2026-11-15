@@ -240,7 +240,7 @@ pub mod edit {
 
 ## A7. API and semver gates
 
-- Per crate: `cargo semver-checks check-release -p <crate>` for every published crate. This is the only place the tool can see item definitions.
+- Per crate: `cargo semver-checks check-release -p <crate>` for every published crate that has a prior release. A crate's first release has no crates.io baseline, so step 0 records the skip for that crate and the facade listing remains its API gate until the next release. This is the only place the tool can see item definitions.
 - Facade listing: `scripts/api_snapshot.py` builds rustdoc JSON for every workspace library, indexes each by item path, and when the facade walk meets a `use` whose target id is absent from the facade `index`, resolves `paths[target_id]` in the owning crate's index (expanding glob re-exports to the target module's public children). It skips items whose `attrs` contain `doc(hidden)`. The listing keeps facade paths (`jubarte::admission::InputLimits`), never sub-crate paths.
 - Facade compile test: `tests/facade_surface.rs`, generated from the baseline listing, holds one `use jubarte::<path> as _;` per listed module, struct, enum, union, trait, function, constant, static, type alias and macro.
 
@@ -268,22 +268,21 @@ Branch naming: `split/<task-id>-<slug>`, each based on the previous task's branc
 ### Task T0.1: Record the baseline and pass the name gate
 
 **Files:**
-- Create: `docs/refactoring_best_practices/baseline.md`
-- Create (untracked): `.scratch/split/api-baseline.txt`, `.scratch/split/golden.sha256`
+- Create: `docs/refactoring_best_practices/baseline.md`, `docs/refactoring_best_practices/api-baseline.txt`, `docs/refactoring_best_practices/golden.sha256`, `scripts/split_baseline.sh`
 
 **Interfaces:**
 - Produces: the baseline numbers and files that every later acceptance criterion compares against.
 
 **Acceptance criteria:**
-- AC1: every new registry name is free or already owned by the project. Measure: for each of `jubarte jubarte-dom jubarte-opc jubarte-render jubarte-doc jubarte-markdown jubarte-edit jubarte-cli`, `curl -s -o /dev/null -w '%{http_code}' -A 'jubarte-release (github.com/jandira-tech/jubarte-redlines)' https://crates.io/api/v1/crates/<name>` prints `404`; `https://pypi.org/pypi/jubarte/json` returns `404`. Any other answer: stop and apply the D1 alternative (and drop the Python `jubarte` package in T5.3 if only PyPI fails).
-- AC2: `baseline.md` records, each with the exact command used: test-case count (`cargo nextest list --all-features --message-format json`, count the test cases); `python3 scripts/api_snapshot.py --emit .scratch/split/api-baseline.txt` line count; the two `.wasm` sizes; release CLI size (`cargo build --release --bin jubarte`); `cargo bench --bench redline -- --save-baseline pre-split` medians; wall time of `cargo build --release` and of `cargo nextest run --all-features --no-run`; `cargo tree -e normal --no-default-features --prefix none | sort -u | wc -l`; `cargo package --list --allow-dirty | wc -l`; the number of test binaries nextest reports.
-- AC3: `.scratch/split/golden.sha256` holds the sha256 of the release CLI's redline output for three fixture pairs from `tests/fixtures/redline/` and its PDF output for three fixtures, produced with author and datetime pinned by the CLI flags. Measure: a second run of the same script prints identical hashes.
+- AC1: every new registry name is free or already owned by the project. Measure: for each of `jubarte jubarte-dom jubarte-opc jubarte-render jubarte-doc jubarte-markdown jubarte-edit jubarte-cli`, `curl -s -o /dev/null -w '%{http_code}' -A 'jubarte-release (github.com/jandira-tech/jubarte-redlines)' https://crates.io/api/v1/crates/<name>` prints `404`; `https://pypi.org/pypi/jubarte/json` returns `404`. A non-404 crates.io answer: stop and apply the D1 alternative. A non-404 PyPI answer affects only the Python package decision — drop the Python `jubarte` package in T5.3 — and never triggers the D1 alternative on its own.
+- AC2: `baseline.md` records, each with the exact command used: test-case count (`cargo nextest list --all-features --message-format json`, count the test cases); `python3 scripts/api_snapshot.py --emit docs/refactoring_best_practices/api-baseline.txt` line count; the two `.wasm` sizes; release CLI size (`cargo build --release --bin jubarte`); `cargo bench --bench redline -- --save-baseline pre-split` medians; wall time of `cargo build --release` and of `cargo nextest run --all-features --no-run`; `cargo tree -e normal --no-default-features --prefix none | sort -u | wc -l`; `cargo package --list --allow-dirty | wc -l`; the number of test binaries nextest reports.
+- AC3: `docs/refactoring_best_practices/golden.sha256` holds the sha256 of the release CLI's redline output for three fixture pairs from `tests/fixtures/redline/` and its PDF output for three fixtures, produced with author and datetime pinned by the CLI flags. Measure: a second run of the same script prints identical hashes.
 
 **Stack:** branch `split/t0.1-baseline` on `main`
 
 - [ ] Step 1: run the AC1 probes; record the answers in `baseline.md`.
-- [ ] Step 2: write `.scratch/split/baseline.sh` that produces every AC2 and AC3 number; run it twice; confirm the hashes repeat.
-- [ ] Step 3: commit `baseline.md` only.
+- [ ] Step 2: write `scripts/split_baseline.sh` that produces every AC2 and AC3 artifact, including the committed API listing and golden hashes; run it twice and confirm the hashes repeat.
+- [ ] Step 3: commit `baseline.md`, `api-baseline.txt`, `golden.sha256`, and `scripts/split_baseline.sh` so later stack branches can diff the API listing and reproduce the golden outputs without relying on `.scratch` state.
 
 ### Task T0.2: Make the layering guard green
 
@@ -343,7 +342,7 @@ Done first because it shortens every later build-and-test cycle and touches only
 
 After this phase `KNOWN_UPWARD` holds exactly one entry, `src/document_comparer.rs -> changes`. That edge and two that the guard cannot see (`markdown/mod.rs` declaring and re-exporting `patch`, `redline`, `unified`; `edit.rs` declaring `inline`) are resolved by facade composition in Phase 4.
 
-Every Phase 2 task shares these criteria: `cargo nextest run --test crate_layering` passes with the entries named in the task removed from `KNOWN_UPWARD`; `cargo nextest run --all-features` passes with the T1.1 test count (plus tests the task adds); `cargo clippy --all-targets --all-features -- -D warnings`, `cargo clippy --all-targets --no-default-features -- -D warnings` and `RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --all-features` exit 0; `.scratch/split/golden.sha256` is reproduced. First step of each task: remove the entries from `KNOWN_UPWARD` and watch the guard fail (RED).
+Every Phase 2 task shares these criteria: `cargo nextest run --test crate_layering` passes with the entries named in the task removed from `KNOWN_UPWARD`; `cargo nextest run --all-features` passes with the T1.1 test count (plus tests the task adds); `cargo clippy --all-targets --all-features -- -D warnings`, `cargo clippy --all-targets --no-default-features -- -D warnings` and `RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --all-features` exit 0; `docs/refactoring_best_practices/golden.sha256` is reproduced. First step of each task: remove the entries from `KNOWN_UPWARD` and watch the guard fail (RED).
 
 ### Task T2.1: Remove upward intra-doc links
 
@@ -376,7 +375,7 @@ Every Phase 2 task shares these criteria: `cargo nextest run --test crate_layeri
 
 **Interfaces:** Produces `crate::comment_settlement::{KeptComment, RemovedComment, AnchorChanges}` and `crate::debug::critic_literal`; `KNOWN_UPWARD` without `changes.rs -> edit::KeptComment` and `debug.rs -> text_diff` (2 left).
 
-**Acceptance criteria:** the shared criteria, plus: `python3 scripts/api_snapshot.py --emit .scratch/split/api.txt && diff .scratch/split/api-baseline.txt .scratch/split/api.txt` prints nothing.
+**Acceptance criteria:** the shared criteria, plus: `python3 scripts/api_snapshot.py --emit .scratch/split/api.txt && diff docs/refactoring_best_practices/api-baseline.txt .scratch/split/api.txt` prints nothing.
 
 **Stack:** `split/t2.3-doc-settle`
 
@@ -418,7 +417,7 @@ Every Phase 2 task shares these criteria: `cargo nextest run --test crate_layeri
 
 **Acceptance criteria:**
 - AC1: Measure: `grep -c '^static [A-Z0-9_]*: &\[u8\]' src/convert/font.rs` prints 16, and `sed -n '/fn bytes(/,/^    }/p' src/convert/font.rs | grep -c 'include_bytes!'` prints 0.
-- AC2: Measure: `.scratch/split/golden.sha256` (PDF hashes included) is reproduced.
+- AC2: Measure: `docs/refactoring_best_practices/golden.sha256` (PDF hashes included) is reproduced.
 - AC3: Measure: release CLI size and, after `jubarte-wasm/build-npm.sh`, the full `.wasm` size are no larger than baseline; record both in `baseline.md`.
 
 **Stack:** `split/t3.1-font-statics`
@@ -455,8 +454,8 @@ Every Phase 2 task shares these criteria: `cargo nextest run --test crate_layeri
 **Shared Phase 4 criteria (every task T4.1 to T4.9):**
 - S1: Measure: `cargo check -p <name> --no-default-features` and `cargo check -p <name> --all-features` exit 0.
 - S2: Measure: `cargo nextest run --workspace --all-features` passes; the test-case count is not lower than before the task.
-- S3: Measure: `python3 scripts/api_snapshot.py --emit .scratch/split/api.txt && diff .scratch/split/api-baseline.txt .scratch/split/api.txt` prints nothing; `cargo nextest run --test facade_surface` passes.
-- S4: Measure: `.scratch/split/golden.sha256` is reproduced.
+- S3: Measure: `python3 scripts/api_snapshot.py --emit .scratch/split/api.txt && diff docs/refactoring_best_practices/api-baseline.txt .scratch/split/api.txt` prints nothing; `cargo nextest run --test facade_surface` passes.
+- S4: Measure: `docs/refactoring_best_practices/golden.sha256` is reproduced.
 - S5: Measure: `cargo tree -p <name> -e normal --prefix none | sort -u` names no workspace crate above `<name>` in A1.
 - S6: Measure: `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo fmt --all --check`, `RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --workspace --all-features` exit 0.
 
@@ -471,13 +470,13 @@ Every Phase 2 task shares these criteria: `cargo nextest run --test crate_layeri
 
 **Acceptance criteria:**
 - AC1: Measure: `cargo metadata --format-version 1 --no-deps | jq '.packages | length'` prints 1 and `cargo nextest run --all-features` passes (nothing moved yet).
-- AC2: Measure: `python3 scripts/api_snapshot.py --emit .scratch/split/api.txt && diff .scratch/split/api-baseline.txt .scratch/split/api.txt` prints nothing; `python3 scripts/test_api_snapshot.py` passes with two new cases: a facade document whose `use` target id is missing from its own `index` and is found by path in a second crate's document (plain and glob re-export), listed under the facade path; and a `doc(hidden)` item that is left out.
+- AC2: Measure: `python3 scripts/api_snapshot.py --emit .scratch/split/api.txt && diff docs/refactoring_best_practices/api-baseline.txt .scratch/split/api.txt` prints nothing; `python3 scripts/test_api_snapshot.py` passes with two new cases: a facade document whose `use` target id is missing from its own `index` and is found by path in a second crate's document (plain and glob re-export), listed under the facade path; and a `doc(hidden)` item that is left out.
 - AC3: Measure: `cargo nextest run --test facade_surface` passes; after commenting out one `pub mod` line in `src/lib.rs` it fails to compile (restore).
 - AC4: Measure: `node --test scripts/bump-version.test.mjs` passes with a case that bumps the workspace version and the pins.
 
 **Stack:** `split/t4.0-scaffold` on the last Phase 3 branch
 
-- [ ] Step 1 (RED): write `scripts/gen_facade_surface.py` and generate the test from `api-baseline.txt`; add the two `test_api_snapshot.py` cases and the bump-script case; run AC2's script test and AC4 (both fail) and AC3's negative probe.
+- [ ] Step 1 (RED): write `scripts/gen_facade_surface.py` and generate the test from `docs/refactoring_best_practices/api-baseline.txt`; add the two `test_api_snapshot.py` cases and the bump-script case; run AC2's script test and AC4 (both fail) and AC3's negative probe.
 - [ ] Step 2: edit `Cargo.toml`; implement the `api_snapshot.py` cross-crate resolution and the `doc(hidden)` filter; extend the bump script.
 - [ ] Step 3 (GREEN): run AC1 to AC4 and S6; add `facade_surface` to the `suite_membership` standalone list; commit.
 
@@ -531,7 +530,7 @@ Every Phase 2 task shares these criteria: `cargo nextest run --test crate_layeri
 - AC1: Measure: `cargo tree -p jubarte-redlines -e normal --prefix none | grep -E '^(rustybuzz|ttf-parser|tiny-skia|image|pulldown-cmark|schemars|clap) '` prints nothing.
 - AC2: Measure: `cargo nextest run --test crate_layering` passes with `KNOWN_UPWARD` empty.
 - AC3: Measure: a scratch crate under `.scratch/split/compare-only/` depending only on `jubarte-redlines` by path compiles `jubarte_redlines::document_comparer::compare_documents(&a, &b, "x")`.
-- AC4 (benchmark gate): Measure: `cargo bench --bench redline -- --baseline pre-split` reports no regression above 3% on any benchmark (default bench profile, no LTO: what a crates.io consumer gets). On failure, profile, add `#[inline]` to the small non-generic `jubarte-dom` accessors the profile names, and re-measure. If that does not close the gap, set `lto = "thin"` in the root `[profile.release]` and `[profile.bench]` (D8) and record the remaining gap for library consumers in `baseline.md`.
+- AC4 (benchmark gate): Measure the consumer configuration, not the workspace profile: `CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_RELEASE_LTO=false cargo bench --bench redline -- --baseline pre-split` reports no regression above 3% on any benchmark. The env overrides keep this the required no-LTO gate a crates.io consumer gets even if the D8 fallback later sets `lto = "thin"` in the root `[profile.release]` and `[profile.bench]`; workspace LTO must not make a regression appear to pass. On failure, profile, add `#[inline]` to the small non-generic `jubarte-dom` accessors the profile names, and re-measure with the same env overrides. If that does not close the gap, set `lto = "thin"` in the root `[profile.release]` and `[profile.bench]` (D8) and record the remaining gap for library consumers in `baseline.md`.
 
 **Stack:** `split/t4.3b-redlines`
 
@@ -696,10 +695,10 @@ Every Phase 2 task shares these criteria: `cargo nextest run --test crate_layeri
 
 **Files:** Modify `scripts/release.sh` and `scripts/test_release_sh.py`, `.github/workflows/release.yml`, `docs/VERSIONING.md`.
 
-**Interfaces:** Produces: step 0 runs `cargo semver-checks check-release -p <crate>` for each published crate plus the facade listing gate (A7); step 7 runs `cargo publish --workspace --dry-run`; the publish job publishes in the order dom, opc, redlines, render, doc, markdown, edit, cli, jubarte, asking crates.io for `<crate>/<version>` before each and skipping what is already live (a workspace publish is not atomic, so a rerun must resume); the packaged root manifest still carries `[package.metadata.release-notes]`.
+**Interfaces:** Produces: step 0 runs `cargo semver-checks check-release -p <crate>` for each published crate that has a prior release, records `no published baseline` and skips the comparison for a crate's first release, and always runs the facade listing gate (A7); step 7 runs `cargo publish --workspace --dry-run`; the publish job publishes in the order dom, opc, redlines, render, doc, markdown, edit, cli, jubarte, asking crates.io for `<crate>/<version>` before each and skipping what is already live (a workspace publish is not atomic, so a rerun must resume); the packaged root manifest still carries `[package.metadata.release-notes]`.
 
 **Acceptance criteria:**
-- AC1: Measure: `uv run --with pyyaml python3 scripts/test_release_workflow.py` and `python3 scripts/test_release_sh.py` pass with new cases for the per-crate loop and the resume path.
+- AC1: Measure: `uv run --with pyyaml python3 scripts/test_release_workflow.py` and `python3 scripts/test_release_sh.py` pass with new cases for the per-crate loop, the first-release skip, the prior-release check, and the resume path.
 - AC2: Measure: `cargo publish --workspace --dry-run` exits 0 on the stack head.
 - AC3: the release checklist in `scripts/release.sh` gains a "before" item: for the first release, publish all crates with a token (`--local-publish`), then register `jandira-tech/jubarte-redlines`, workflow `release.yml`, environment `release` as Trusted Publisher on each of the eight new crates before the next release. crates.io requires the first release of a crate to be published manually. Measure: `grep -n 'Trusted' scripts/release.sh` shows the item naming all eight.
 

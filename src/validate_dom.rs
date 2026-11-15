@@ -5,7 +5,7 @@
 //! Pure WordprocessingML DOM structural predicates shared between the
 //! redline comparer and document validator.
 
-use crate::markup_simplifier::{choice_requires_understood, word_understands_namespace};
+use crate::markup_simplifier::{selected_alternate_branch, word_understands_namespace};
 use crate::namespaces::{M, MC, W};
 use crate::xmllinq::{Dom, NodeId, XName};
 
@@ -296,11 +296,7 @@ fn shown_alternate_branch(dom: &Dom, node: NodeId) -> Option<NodeId> {
     if dom.elements(node, None).into_iter().any(pictured) {
         return None;
     }
-    let understood = word_understands_namespace;
-    dom.elements(node, Some(&MC::choice()))
-        .into_iter()
-        .find(|&choice| choice_requires_understood(dom, choice, understood))
-        .or_else(|| dom.element(node, &MC::fallback()))
+    selected_alternate_branch(dom, node, word_understands_namespace)
 }
 
 /// The paragraphs and tables of `container` in order, through block

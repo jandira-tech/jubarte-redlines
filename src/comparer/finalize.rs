@@ -1451,7 +1451,7 @@ pub(crate) fn in_unselected_alternate(dom: &Dom, node: NodeId) -> bool {
         if !dom.name_is(alternate, &MC::alternate_content()) {
             return false;
         }
-        selected_alternate_branch(dom, alternate) != Some(ancestor)
+        selected_alternate_branch(dom, alternate, word_understands_namespace) != Some(ancestor)
     })
 }
 

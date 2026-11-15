@@ -206,7 +206,14 @@ pub(crate) fn parse_w3cdtf(raw: &str) -> Option<CivilDateTime> {
         rest = &t[5..];
         if let Some(ss) = rest.strip_prefix(':') {
             sec = two_digits(ss, 0)?;
-            rest = ss[2..].trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
+            rest = &ss[2..];
+            if let Some(fraction) = rest.strip_prefix('.') {
+                let digits = fraction.bytes().take_while(u8::is_ascii_digit).count();
+                if digits == 0 {
+                    return None;
+                }
+                rest = &fraction[digits..];
+            }
         }
     }
     if h > 23 || min > 59 || sec > 59 {
@@ -215,7 +222,12 @@ pub(crate) fn parse_w3cdtf(raw: &str) -> Option<CivilDateTime> {
     let offset_min: i64 = match rest.as_bytes().first() {
         None | Some(b'Z') if rest.len() <= 1 => 0,
         Some(sign @ (b'+' | b'-')) if rest.len() == 6 && rest.as_bytes()[3] == b':' => {
-            let v = i64::from(two_digits(rest, 1)? * 60 + two_digits(rest, 4)?);
+            let hours = two_digits(rest, 1)?;
+            let minutes = two_digits(rest, 4)?;
+            if minutes > 59 || hours * 60 + minutes > 14 * 60 {
+                return None;
+            }
+            let v = i64::from(hours * 60 + minutes);
             if *sign == b'+' { v } else { -v }
         }
         _ => return None,
@@ -330,10 +342,17 @@ mod tests {
             "2023-01-01T24:00:00Z",
             "2023-01-01T23:60:00Z",
             "2023-01-01T23:59:60Z",
+            "2023-01-01T23:59:56.Z",
+            "2023-01-01T23:59:56.5.5Z",
+            "2023-01-01T23:59:56.5junkZ",
+            "2023-01-01T23:59:56+14:60",
+            "2023-01-01T23:59:56+14:01",
+            "2023-01-01T23:59:56+99:99",
         ] {
             assert_eq!(parse_w3cdtf(bad), None, "{bad}");
         }
         assert!(parse_w3cdtf("2024-02-29").is_some());
         assert!(parse_w3cdtf("2023-02-28T23:59:59Z").is_some());
+        assert!(parse_w3cdtf("2023-02-28T23:59:59.5+14:00").is_some());
     }
 }

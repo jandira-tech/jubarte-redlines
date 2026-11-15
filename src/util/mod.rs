@@ -149,7 +149,7 @@ pub(crate) fn decode_entities(s: &str) -> String {
     while let Some(a) = rest.find('&') {
         out.push_str(&rest[..a]);
         let tail = &rest[a..];
-        let semi = tail.find(';').filter(|&e| e <= 10);
+        let semi = tail.as_bytes().iter().take(11).position(|&b| b == b';');
         let decoded = semi.and_then(|e| {
             let ent = &tail[1..e];
             let ch = match ent {
@@ -159,13 +159,7 @@ pub(crate) fn decode_entities(s: &str) -> String {
                 "quot" => Some('"'),
                 "apos" => Some('\''),
                 "nbsp" => Some('\u{a0}'),
-                _ if ent.starts_with("#x") || ent.starts_with("#X") => {
-                    u32::from_str_radix(&ent[2..], 16)
-                        .ok()
-                        .and_then(char::from_u32)
-                }
-                _ if ent.starts_with('#') => ent[1..].parse().ok().and_then(char::from_u32),
-                _ => None,
+                _ => decode_numeric_reference(ent),
             };
             ch.map(|c| (c, e))
         });
@@ -179,6 +173,37 @@ pub(crate) fn decode_entities(s: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// The character a numeric character reference names, when its digits are
+/// non-empty ASCII for the radix and the code point is XML 1.0 `Char`.
+fn decode_numeric_reference(ent: &str) -> Option<char> {
+    let (digits, radix) =
+        if let Some(digits) = ent.strip_prefix("#x").or_else(|| ent.strip_prefix("#X")) {
+            (digits, 16)
+        } else {
+            (ent.strip_prefix('#')?, 10)
+        };
+    let digits_valid = if radix == 16 {
+        digits.bytes().all(|b| b.is_ascii_hexdigit())
+    } else {
+        digits.bytes().all(|b| b.is_ascii_digit())
+    };
+    if digits.is_empty() || !digits_valid {
+        return None;
+    }
+    let value = u32::from_str_radix(digits, radix).ok()?;
+    let c = char::from_u32(value)?;
+    is_xml_char(c).then_some(c)
+}
+
+/// XML 1.0 `Char`: tab, LF, CR, then the planes' allowed ranges.
+fn is_xml_char(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\r' | '\u{20}'..='\u{d7ff}' | '\u{e000}'..='\u{fffd}'
+            | '\u{10000}'..='\u{10ffff}'
+    )
 }
 
 #[cfg(test)]
@@ -303,5 +328,51 @@ mod tests {
             decode_entities("&amp;&lt;&gt;&quot;&apos;&nbsp;&#65;&#x41;"),
             "&<>\"'\u{a0}AA"
         );
+    }
+
+    #[test]
+    fn numeric_references_decode_only_xml_chars() {
+        for (reference, expected) in [
+            ("&#65;", "A"),
+            ("&#x41;", "A"),
+            ("&#X41;", "A"),
+            ("&#x9;", "\t"),
+            ("&#xA;", "\n"),
+            ("&#xD;", "\r"),
+            ("&#x20;", " "),
+            ("&#xD7FF;", "\u{d7ff}"),
+            ("&#xE000;", "\u{e000}"),
+            ("&#xFFFD;", "\u{fffd}"),
+            ("&#x10000;", "\u{10000}"),
+            ("&#x10FFFF;", "\u{10ffff}"),
+            ("&#1114111;", "\u{10ffff}"),
+        ] {
+            assert_eq!(decode_entities(reference), expected, "{reference}");
+        }
+        for reference in [
+            "&#+65;",
+            "&#x+41;",
+            "&#x-41;",
+            "&#;",
+            "&#x;",
+            "&#xG;",
+            "&#12a;",
+            "&#0;",
+            "&#x0;",
+            "&#x1;",
+            "&#x8;",
+            "&#xB;",
+            "&#xC;",
+            "&#xE;",
+            "&#x1F;",
+            "&#xD800;",
+            "&#xDFFF;",
+            "&#xFFFE;",
+            "&#xFFFF;",
+            "&#x110000;",
+            "&#1114112;",
+        ] {
+            assert_eq!(decode_entities(reference), reference, "{reference}");
+        }
     }
 }

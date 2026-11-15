@@ -228,11 +228,7 @@ pub(crate) fn resolve_alternate_content_with(
         if inside_drawing {
             continue;
         }
-        let src = dom
-            .elements(ac, Some(&MC::choice()))
-            .into_iter()
-            .find(|&choice| choice_requires_understood(dom, choice, understood))
-            .or_else(|| dom.element(ac, &MC::fallback()));
+        let src = selected_alternate_branch(dom, ac, understood);
         if let Some(src) = src {
             let kids = dom.nodes(src);
             dom.replace_with(ac, &kids);
@@ -296,19 +292,15 @@ pub(crate) fn requires_list_understood(
     requires.is_none_or(|requires| requires.split_whitespace().all(prefix_understood))
 }
 
-/// The branch Word shows: the first Choice whose Requires it understands,
-/// otherwise the Fallback.
-pub(crate) fn selected_alternate_branch(dom: &Dom, alternate: NodeId) -> Option<NodeId> {
+/// The branch a consumer shows: the first Choice whose Requires satisfy
+/// `understood`, otherwise the Fallback.
+pub(crate) fn selected_alternate_branch(
+    dom: &Dom,
+    alternate: NodeId,
+    understood: fn(&str) -> bool,
+) -> Option<NodeId> {
     dom.elements(alternate, Some(&MC::choice()))
         .into_iter()
-        .find(|&choice| {
-            requires_list_understood(
-                dom.attribute(choice, &XNamespace::none().name("Requires")),
-                |prefix| {
-                    prefix_namespace(dom, choice, prefix)
-                        .is_some_and(|uri| word_understands_namespace(&uri))
-                },
-            )
-        })
+        .find(|&choice| choice_requires_understood(dom, choice, understood))
         .or_else(|| dom.element(alternate, &MC::fallback()))
 }

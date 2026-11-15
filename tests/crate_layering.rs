@@ -143,18 +143,57 @@ fn is_ident(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
+/// Byte length of the comment `s` opens with (`//` through its newline, `/*`
+/// through the matching `*/`, nested), or `None` when `s` opens no comment.
+fn comment_len(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    if bytes.starts_with(b"//") {
+        return Some(s.find('\n').map_or(s.len(), |newline| newline + 1));
+    }
+    if !bytes.starts_with(b"/*") {
+        return None;
+    }
+    let mut depth = 1usize;
+    let mut i = 2;
+    while i + 1 < bytes.len() && depth > 0 {
+        if bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            depth += 1;
+            i += 2;
+        } else if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+            depth -= 1;
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    Some(if depth == 0 { i } else { s.len() })
+}
+
+/// `s` past any leading whitespace and comments, which Rust allows anywhere
+/// whitespace is.
+fn skip_trivia(mut s: &str) -> &str {
+    loop {
+        s = s.trim_start();
+        match comment_len(s) {
+            Some(len) => s = &s[len..],
+            None => return s,
+        }
+    }
+}
+
 /// Every leading `ident(::ident)*` segment of `text`, and what follows them.
 fn path_segments(text: &str) -> (Vec<&str>, &str) {
     let mut segments = Vec::new();
-    let mut rest = text;
+    let mut rest = skip_trivia(text);
     loop {
         let end = rest.bytes().take_while(|byte| is_ident(*byte)).count();
         if end == 0 {
             return (segments, rest);
         }
         segments.push(&rest[..end]);
-        match rest[end..].strip_prefix("::") {
-            Some(next) => rest = next,
+        let after = skip_trivia(&rest[end..]);
+        match after.strip_prefix("::") {
+            Some(next) => rest = skip_trivia(next),
             None => return (segments, &rest[end..]),
         }
     }
@@ -163,12 +202,12 @@ fn path_segments(text: &str) -> (Vec<&str>, &str) {
 /// The `crate::` path(s) in `rest`, expanding `{…}` groups (which nest) into
 /// their leaf paths. Each result keeps only its first two segments.
 fn collect_path<'a>(rest: &'a str, prefix: &[&'a str], paths: &mut Vec<Vec<&'a str>>) {
-    if let Some(group) = rest.strip_prefix('{') {
+    if let Some(group) = skip_trivia(rest).strip_prefix('{') {
         collect_group(group, prefix, paths);
         return;
     }
     let (segments, remainder) = path_segments(rest);
-    if let Some(group) = remainder.trim_start().strip_prefix('{') {
+    if let Some(group) = skip_trivia(remainder).strip_prefix('{') {
         let mut prefix: Vec<&str> = prefix.to_vec();
         prefix.extend(segments);
         collect_group(group, &prefix, paths);
@@ -184,8 +223,15 @@ fn collect_path<'a>(rest: &'a str, prefix: &[&'a str], paths: &mut Vec<Vec<&'a s
 fn collect_group<'a>(group: &'a str, prefix: &[&'a str], paths: &mut Vec<Vec<&'a str>>) {
     let mut depth = 1usize;
     let mut item_start = 0;
-    for (index, byte) in group.bytes().enumerate() {
-        match byte {
+    let mut index = 0;
+    while index < group.len() {
+        if group.as_bytes()[index] == b'/'
+            && let Some(len) = comment_len(&group[index..])
+        {
+            index += len;
+            continue;
+        }
+        match group.as_bytes()[index] {
             b'{' => depth += 1,
             b'}' | b',' if depth == 1 => {
                 let item = group[item_start..index].trim();
@@ -193,13 +239,14 @@ fn collect_group<'a>(group: &'a str, prefix: &[&'a str], paths: &mut Vec<Vec<&'a
                     collect_path(item, prefix, paths);
                 }
                 item_start = index + 1;
-                if byte == b'}' {
+                if group.as_bytes()[index] == b'}' {
                     break;
                 }
             }
             b'}' => depth -= 1,
             _ => {}
         }
+        index += 1;
     }
 }
 
@@ -310,6 +357,54 @@ fn nested_groups_reach_submodule_overrides() {
             .expect("markdown path");
         assert_eq!(to, "edit");
         assert!(!allowed("markdown", to), "{text}");
+    }
+}
+
+#[test]
+fn nested_group_regressions_match_direct_imports() {
+    for text in [
+        "crate::markdown::{redline}",
+        "crate::{markdown::{redline}}",
+        "crate::markdown::redline",
+    ] {
+        let paths = crate_paths(text);
+        assert_eq!(paths, vec![vec!["markdown", "redline"]], "{text}");
+        assert_eq!(layer_of(&paths[0]), Some("edit"), "{text}");
+    }
+}
+
+#[test]
+fn whitespace_around_separators_keeps_full_path() {
+    for text in [
+        "use crate::{markdown:: redline::{self}};",
+        "use crate::markdown:: redline::{self};",
+        "use crate::markdown :: redline;",
+        "use crate::markdown:: redline;",
+        "use crate:: markdown::redline;",
+    ] {
+        let paths = crate_paths(text);
+        assert_eq!(paths, vec![vec!["markdown", "redline"]], "{text}");
+        assert_eq!(layer_of(&paths[0]), Some("edit"), "{text}");
+        assert!(!allowed("markdown", "edit"), "{text}");
+    }
+}
+
+#[test]
+fn comments_are_whitespace_inside_paths_and_groups() {
+    for text in [
+        "use crate::markdown/*{,}*/::redline;",
+        "use crate::{markdown/*{,}*/::redline};",
+        "use crate::{/* } , */ markdown::redline};",
+        "use crate::{markdown::{/*{*/redline/*}*/}};",
+        "use crate::markdown::redline; // trailing",
+    ] {
+        let paths = crate_paths(text);
+        assert!(
+            paths.contains(&vec!["markdown", "redline"]),
+            "{text}: {paths:?}"
+        );
+        assert_eq!(layer_of(&paths[0]), Some("edit"), "{text}");
+        assert!(!allowed("markdown", "edit"), "{text}");
     }
 }
 
