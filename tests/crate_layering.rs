@@ -186,15 +186,16 @@ fn path_segments(text: &str) -> (Vec<&str>, &str) {
     let mut segments = Vec::new();
     let mut rest = skip_trivia(text);
     loop {
-        let end = rest.bytes().take_while(|byte| is_ident(*byte)).count();
+        let segment = rest.strip_prefix("r#").unwrap_or(rest);
+        let end = segment.bytes().take_while(|byte| is_ident(*byte)).count();
         if end == 0 {
             return (segments, rest);
         }
-        segments.push(&rest[..end]);
-        let after = skip_trivia(&rest[end..]);
+        segments.push(&segment[..end]);
+        let after = skip_trivia(&segment[end..]);
         match after.strip_prefix("::") {
             Some(next) => rest = skip_trivia(next),
-            None => return (segments, &rest[end..]),
+            None => return (segments, &segment[end..]),
         }
     }
 }

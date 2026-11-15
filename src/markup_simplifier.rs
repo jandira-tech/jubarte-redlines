@@ -270,17 +270,26 @@ fn prefix_namespace(dom: &Dom, node: NodeId, prefix: &str) -> Option<String> {
         })
 }
 
-/// A namespace Word knows: the OOXML standard's (transitional and strict),
-/// Office's own extensions, and VML's.
+/// A namespace Word knows: the OOXML standard's (transitional and strict)
+/// and Office's own extensions. Those are open-ended families — dated
+/// `chartex` URIs, year-suffixed `wordml` — so they match by root. VML's
+/// `urn:schemas-microsoft-com:` set is closed: OOXML uses exactly its
+/// `vml`, `office:office` and `office:word` namespaces, so it matches by
+/// exact URI and anything else under the root is one Word does not know.
 pub(crate) fn word_understands_namespace(uri: &str) -> bool {
     [
         "http://schemas.openxmlformats.org/",
         "http://purl.oclc.org/ooxml/",
         "http://schemas.microsoft.com/office/",
-        "urn:schemas-microsoft-com:",
     ]
     .iter()
     .any(|root| uri.starts_with(root))
+        || matches!(
+            uri,
+            "urn:schemas-microsoft-com:vml"
+                | "urn:schemas-microsoft-com:office:office"
+                | "urn:schemas-microsoft-com:office:word"
+        )
 }
 
 /// Every prefix in a Requires list passes `prefix_understood`. No list means
