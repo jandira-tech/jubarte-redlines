@@ -159,7 +159,7 @@ self-update = ["cli", "dep:self_update", "dep:ed25519-dalek"]
 [dependencies]
 # Upstream OPC types on zip 9 and patched quick-xml 0.41. The adapter keeps
 # its duplicate-repair and canonical-writing policy; optional crypto stays off.
-oxml-opc = { version = "0.14.4", default-features = false } # OPC types; encryption/signatures stay disabled
+oxml-opc = { version = "0.15.0", default-features = false } # OPC types; encryption/signatures stay disabled
 zip = { version = "9.0.5", default-features = false, features = ["deflate"] } # deterministic package writer and direct ZIP access; pure-Rust Deflate; >= 9.0.5 closes GHSA-m665-v7pm-7grj (zip cloaking, SECURITY.md)
 sha1 = "0.11"
 ttf-parser = "0.25" # DOCX→PDF glyph metrics + TTF embed (Carlito / Liberation)
