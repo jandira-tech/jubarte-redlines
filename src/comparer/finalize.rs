@@ -1308,8 +1308,7 @@ pub fn resolve_alternate_content(dom: &mut Dom, root: NodeId) {
 /// namespaces `understood` accepts: the renderer cannot draw every Choice
 /// Word can (#1876).
 pub(crate) use crate::markup_simplifier::{
-    choice_requires_understood, requires_list_understood, resolve_alternate_content_with,
-    selected_alternate_branch, word_understands_namespace,
+    resolve_alternate_content_with, selected_alternate_branch, word_understands_namespace,
 };
 
 /// Strip non-standard `w:`-namespace children from `<w:sdtPr>`.

@@ -96,6 +96,8 @@
 pub mod admission;
 pub mod append;
 pub mod audit;
+/// Table, cell and paragraph border views shared by render, markdown and debug.
+pub(crate) mod borders;
 /// Word's built-in style names.
 mod builtin_styles;
 /// Machine-readable manifest of what this build can do.
@@ -111,6 +113,8 @@ pub mod comparer;
 pub mod comparison_log;
 /// Independent DOCX → PDF conversion (not LibreOffice).
 pub mod convert;
+/// Custom XML and built-in data stores shared by the OPC layer.
+pub(crate) mod data_stores;
 /// `jubarte debug`: short Word-validity triage of a package, or two compared.
 pub mod debug;
 /// Byte-level package API: compare, list, accept, and reject revisions.
@@ -149,6 +153,8 @@ pub mod update;
 /// Shared small utilities.
 pub mod util;
 pub mod validate;
+/// Pure DOM structural predicates shared by validate and the comparers.
+pub(crate) mod validate_dom;
 /// `WmlDocument` — document bytes + lazily parsed main part.
 pub mod wml_document;
 /// Word's default theme part, for originals without one.

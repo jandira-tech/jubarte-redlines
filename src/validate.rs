@@ -87,7 +87,7 @@ use serde::{Deserialize, Serialize};
 use crate::admission::{AdmissionError, InputLimits};
 use crate::changes::{Change, ChangeError, ChangeFilter, list_changes, reject_changes};
 use crate::inspect::InspectError;
-use crate::namespaces::{M, MC, R, VML, W, W14, WP};
+use crate::namespaces::{MC, R, VML, W, W14, WP};
 use crate::opc::PartFs;
 use crate::xmllinq::serialize::{well_known_namespace, well_known_prefix};
 use crate::xmllinq::{Dom, NodeId, XName};
@@ -1643,9 +1643,9 @@ fn check_inserted_text_before_deleted_tables(pkg: &PartFs, out: &mut Vec<Finding
 /// A single deleted table does not count when the paragraph after it
 /// keeps no words, no deleted table precedes this one, and this
 pub(crate) use crate::validate_dom::holds_page_field;
-use crate::validate_dom::{
-    closing_paragraph, has_unique_revision_id, inserted_text_before_deleted_tables,
-    uncovered_final_marks,
+pub(crate) use crate::validate_dom::{
+    closing_paragraph, container_blocks, has_unique_revision_id,
+    inserted_text_before_deleted_tables, uncovered_final_marks,
 };
 
 /// A table cell's final paragraph mark inserted or deleted while its row

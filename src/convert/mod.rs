@@ -19034,7 +19034,7 @@ fn alternate_choice(dom: &Dom, node: NodeId) -> Option<NodeId> {
     for i in 0..dom.child_count(node) {
         let child = dom.child_at(node, i);
         if dom.name_is(child, &choice)
-            && crate::comparer::finalize::choice_requires_understood(
+            && crate::markup_simplifier::choice_requires_understood(
                 dom,
                 child,
                 renderer_understands_namespace,
@@ -22381,12 +22381,12 @@ fn story_parts_xml(pkg: &PartFs, main: &str) -> Vec<String> {
 const W16SE: &str = "http://schemas.microsoft.com/office/word/2015/wordml/symex";
 
 /// A namespace whose Choice the renderer draws: Word's
-/// ([`crate::comparer::finalize::word_understands_namespace`]) but `w16se`.
+/// ([`crate::markup_simplifier::word_understands_namespace`]) but `w16se`.
 /// The renderer draws no `w16se:symEx`, so it takes the Fallback, which
 /// holds the same character as text in the same font (#1876: `a1cfa10c32`'s
 /// emoji).
 fn renderer_understands_namespace(uri: &str) -> bool {
-    uri != W16SE && crate::comparer::finalize::word_understands_namespace(uri)
+    uri != W16SE && crate::markup_simplifier::word_understands_namespace(uri)
 }
 
 /// Put in place of each `mc:AlternateContent` that holds no drawing, in the
@@ -22422,7 +22422,7 @@ fn resolve_text_alternates(pkg: &mut PartFs, main: &str) {
             continue;
         };
         let before = wrappers(&dom, root);
-        crate::comparer::finalize::resolve_alternate_content_with(
+        crate::markup_simplifier::resolve_alternate_content_with(
             &mut dom,
             root,
             renderer_understands_namespace,

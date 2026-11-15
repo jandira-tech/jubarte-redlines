@@ -68,7 +68,14 @@ pub(crate) fn built_in(store: &str) -> bool {
 #[cfg(test)]
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
+    use std::io::{Cursor, Write};
+
+    use zip::ZipWriter;
+    use zip::write::SimpleFileOptions;
+
     use super::*;
+
+    const RELS_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
 
     #[test]
     fn built_in_recognizes_core_and_extended_properties_case_insensitively() {
@@ -79,23 +86,31 @@ mod tests {
 
     #[test]
     fn stores_resolves_uppercased_item_ids_through_custom_xml_props() {
-        let mut pkg = PartFs::empty();
-        pkg.set_part("word/document.xml", b"<w:document/>".to_vec());
-        pkg.add_document_relationship(
-            "word/document.xml",
-            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml",
-            "../customXml/item1.xml",
-        );
-        pkg.set_part("customXml/item1.xml", b"<root/>".to_vec());
-        pkg.add_document_relationship(
-            "customXml/item1.xml",
-            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXmlProps",
-            "itemProps1.xml",
-        );
-        pkg.set_part(
-            "customXml/itemProps1.xml",
-            br#"<ds:datastoreItem ds:itemID="{abcdef01-2345-6789-abcd-ef0123456789}" xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml"/>"#.to_vec(),
-        );
+        let mut buf = Vec::new();
+        {
+            let mut z = ZipWriter::new(Cursor::new(&mut buf));
+            let opt = SimpleFileOptions::default();
+            let rel = |kind: &str, target: &str| {
+                format!(
+                    r#"<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}" Target="{target}"/>"#
+                )
+            };
+            let parts: [(&str, String); 7] = [
+                ("[Content_Types].xml", r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/></Types>"#.to_string()),
+                ("_rels/.rels", format!(r#"<Relationships xmlns="{RELS_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#)),
+                ("word/document.xml", "<w:document/>".to_string()),
+                ("word/_rels/document.xml.rels", format!(r#"<Relationships xmlns="{RELS_NS}">{}</Relationships>"#, rel("customXml", "../customXml/item1.xml"))),
+                ("customXml/item1.xml", "<root/>".to_string()),
+                ("customXml/_rels/item1.xml.rels", format!(r#"<Relationships xmlns="{RELS_NS}">{}</Relationships>"#, rel("customXmlProps", "itemProps1.xml"))),
+                ("customXml/itemProps1.xml", r#"<ds:datastoreItem ds:itemID="{abcdef01-2345-6789-abcd-ef0123456789}" xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml"/>"#.to_string()),
+            ];
+            for (name, xml) in parts {
+                z.start_file(name, opt).unwrap();
+                z.write_all(xml.as_bytes()).unwrap();
+            }
+            z.finish().unwrap();
+        }
+        let pkg = PartFs::open(&buf).unwrap();
         assert_eq!(
             stores(&pkg, "word/document.xml"),
             vec!["{ABCDEF01-2345-6789-ABCD-EF0123456789}".to_string()]

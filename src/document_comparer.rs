@@ -594,8 +594,8 @@ fn story_closes_with_page_field(pkg: &PartFs, part: &str) -> bool {
     let mut dom = Dom::new();
     let doc = dom.parse_xdocument(&xml);
     dom.root(doc)
-        .and_then(|story| crate::validate::closing_paragraph(&dom, story))
-        .is_some_and(|p| crate::validate::holds_page_field(&dom, p))
+        .and_then(|story| crate::validate_dom::closing_paragraph(&dom, story))
+        .is_some_and(|p| crate::validate_dom::holds_page_field(&dom, p))
 }
 
 /// A document's sections in order: each paragraph mark's `w:sectPr`, then
@@ -8811,7 +8811,7 @@ fn sweep_part_validity(out: &mut PartFs, main: &str, comparison: Option<&Compari
             && vd
                 .descendants(vr, Some(&W::tc()))
                 .into_iter()
-                .any(|cell| !crate::validate::uncovered_final_marks(&vd, cell).is_empty());
+                .any(|cell| !crate::validate_dom::uncovered_final_marks(&vd, cell).is_empty());
         if unsettled {
             crate::comparer::final_marks::settle_cell_final_marks(&mut vd, vr);
             // The finalizers the sweep above runs, so a renamed story keeps

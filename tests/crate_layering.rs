@@ -84,6 +84,7 @@ const MODULES: &[(&str, &str)] = &[
 /// segments when the first names a module with submodule overrides).
 const KNOWN_UPWARD: &[&str] = &[
     "src/append.rs -> markdown::markdown_to_docx",
+    "src/append.rs -> markdown::package",
     "src/changes.rs -> edit::KeptComment",
     "src/comparer/finalize.rs -> comments",
     "src/comparer/finalize.rs -> validate",

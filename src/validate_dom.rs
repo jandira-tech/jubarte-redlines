@@ -12,7 +12,10 @@ use crate::xmllinq::{Dom, NodeId, XName};
 /// Paragraphs whose content should move ahead of deleted tables when Accept All
 /// would otherwise join their inserted words onto an empty or colliding trailing
 /// paragraph mark (#1851, #1926).
-pub(crate) fn inserted_text_before_deleted_tables(dom: &Dom, body: NodeId) -> Vec<(NodeId, NodeId)> {
+pub(crate) fn inserted_text_before_deleted_tables(
+    dom: &Dom,
+    body: NodeId,
+) -> Vec<(NodeId, NodeId)> {
     let markers = [
         W::bookmark_start(),
         W::bookmark_end(),
@@ -375,7 +378,7 @@ mod tests {
         let doc = dom.parse_xdocument(
             r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
                 <w:body>
-                    <w:p><w:fldSimple w:instr=" PAGE "/></w:p>
+                    <w:p><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:p>
                 </w:body>
             </w:document>"#,
         );
