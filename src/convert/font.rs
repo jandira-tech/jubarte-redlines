@@ -672,6 +672,27 @@ impl FaceId {
     }
 }
 
+/// The 16 embedded font programs, one static each: every alias of a
+/// face (Aptos, Verdana, Cambria, ...) shares its bytes and its one
+/// read-only data entry instead of re-including the file per arm.
+static CARLITO_REGULAR: &[u8] = include_bytes!("../../assets/fonts/Carlito-Regular.ttf");
+static CARLITO_BOLD: &[u8] = include_bytes!("../../assets/fonts/Carlito-Bold.ttf");
+static CARLITO_ITALIC: &[u8] = include_bytes!("../../assets/fonts/Carlito-Italic.ttf");
+static CARLITO_BOLD_ITALIC: &[u8] = include_bytes!("../../assets/fonts/Carlito-BoldItalic.ttf");
+static SANS_REGULAR: &[u8] = include_bytes!("../../assets/fonts/LiberationSans-Regular.ttf");
+static SANS_BOLD: &[u8] = include_bytes!("../../assets/fonts/LiberationSans-Bold.ttf");
+static SANS_ITALIC: &[u8] = include_bytes!("../../assets/fonts/LiberationSans-Italic.ttf");
+static SANS_BOLD_ITALIC: &[u8] = include_bytes!("../../assets/fonts/LiberationSans-BoldItalic.ttf");
+static SERIF_REGULAR: &[u8] = include_bytes!("../../assets/fonts/LiberationSerif-Regular.ttf");
+static SERIF_BOLD: &[u8] = include_bytes!("../../assets/fonts/LiberationSerif-Bold.ttf");
+static SERIF_ITALIC: &[u8] = include_bytes!("../../assets/fonts/LiberationSerif-Italic.ttf");
+static SERIF_BOLD_ITALIC: &[u8] =
+    include_bytes!("../../assets/fonts/LiberationSerif-BoldItalic.ttf");
+static MONO_REGULAR: &[u8] = include_bytes!("../../assets/fonts/LiberationMono-Regular.ttf");
+static MONO_BOLD: &[u8] = include_bytes!("../../assets/fonts/LiberationMono-Bold.ttf");
+static MONO_ITALIC: &[u8] = include_bytes!("../../assets/fonts/LiberationMono-Italic.ttf");
+static MONO_BOLD_ITALIC: &[u8] = include_bytes!("../../assets/fonts/LiberationMono-BoldItalic.ttf");
+
 impl FaceId {
     pub(crate) fn all() -> [Self; 47] {
         [
@@ -727,95 +748,67 @@ impl FaceId {
 
     pub(crate) fn bytes(self) -> &'static [u8] {
         match self {
-            Self::CarlitoRegular => include_bytes!("../../assets/fonts/Carlito-Regular.ttf"),
-            Self::CarlitoBold => include_bytes!("../../assets/fonts/Carlito-Bold.ttf"),
-            Self::CarlitoItalic => include_bytes!("../../assets/fonts/Carlito-Italic.ttf"),
-            Self::CarlitoBoldItalic => include_bytes!("../../assets/fonts/Carlito-BoldItalic.ttf"),
-            Self::SansRegular => include_bytes!("../../assets/fonts/LiberationSans-Regular.ttf"),
-            Self::SansBold => include_bytes!("../../assets/fonts/LiberationSans-Bold.ttf"),
-            Self::SansItalic => include_bytes!("../../assets/fonts/LiberationSans-Italic.ttf"),
-            Self::SansBoldItalic => {
-                include_bytes!("../../assets/fonts/LiberationSans-BoldItalic.ttf")
-            }
-            Self::SerifRegular => include_bytes!("../../assets/fonts/LiberationSerif-Regular.ttf"),
-            Self::SerifBold => include_bytes!("../../assets/fonts/LiberationSerif-Bold.ttf"),
-            Self::SerifItalic => include_bytes!("../../assets/fonts/LiberationSerif-Italic.ttf"),
-            Self::SerifBoldItalic => {
-                include_bytes!("../../assets/fonts/LiberationSerif-BoldItalic.ttf")
-            }
-            Self::MonoRegular => include_bytes!("../../assets/fonts/LiberationMono-Regular.ttf"),
-            Self::MonoBold => include_bytes!("../../assets/fonts/LiberationMono-Bold.ttf"),
-            Self::MonoItalic => include_bytes!("../../assets/fonts/LiberationMono-Italic.ttf"),
-            Self::MonoBoldItalic => {
-                include_bytes!("../../assets/fonts/LiberationMono-BoldItalic.ttf")
-            }
-            Self::AptosRegular => include_bytes!("../../assets/fonts/Carlito-Regular.ttf"),
-            Self::AptosBold => include_bytes!("../../assets/fonts/Carlito-Bold.ttf"),
-            Self::AptosItalic => include_bytes!("../../assets/fonts/Carlito-Italic.ttf"),
-            Self::AptosBoldItalic => include_bytes!("../../assets/fonts/Carlito-BoldItalic.ttf"),
+            Self::CarlitoRegular => CARLITO_REGULAR,
+            Self::CarlitoBold => CARLITO_BOLD,
+            Self::CarlitoItalic => CARLITO_ITALIC,
+            Self::CarlitoBoldItalic => CARLITO_BOLD_ITALIC,
+            Self::SansRegular => SANS_REGULAR,
+            Self::SansBold => SANS_BOLD,
+            Self::SansItalic => SANS_ITALIC,
+            Self::SansBoldItalic => SANS_BOLD_ITALIC,
+            Self::SerifRegular => SERIF_REGULAR,
+            Self::SerifBold => SERIF_BOLD,
+            Self::SerifItalic => SERIF_ITALIC,
+            Self::SerifBoldItalic => SERIF_BOLD_ITALIC,
+            Self::MonoRegular => MONO_REGULAR,
+            Self::MonoBold => MONO_BOLD,
+            Self::MonoItalic => MONO_ITALIC,
+            Self::MonoBoldItalic => MONO_BOLD_ITALIC,
+            Self::AptosRegular => CARLITO_REGULAR,
+            Self::AptosBold => CARLITO_BOLD,
+            Self::AptosItalic => CARLITO_ITALIC,
+            Self::AptosBoldItalic => CARLITO_BOLD_ITALIC,
             // System/Word CloudFonts Aptos Display overlays these.
-            Self::AptosDisplayRegular => include_bytes!("../../assets/fonts/Carlito-Regular.ttf"),
-            Self::AptosDisplayBold => include_bytes!("../../assets/fonts/Carlito-Bold.ttf"),
-            Self::AptosDisplayItalic => include_bytes!("../../assets/fonts/Carlito-Italic.ttf"),
-            Self::AptosDisplayBoldItalic => {
-                include_bytes!("../../assets/fonts/Carlito-BoldItalic.ttf")
-            }
+            Self::AptosDisplayRegular => CARLITO_REGULAR,
+            Self::AptosDisplayBold => CARLITO_BOLD,
+            Self::AptosDisplayItalic => CARLITO_ITALIC,
+            Self::AptosDisplayBoldItalic => CARLITO_BOLD_ITALIC,
             // System calibril.ttf overlays these.
-            Self::CalibriLightRegular => include_bytes!("../../assets/fonts/Carlito-Regular.ttf"),
-            Self::CalibriLightItalic => include_bytes!("../../assets/fonts/Carlito-Italic.ttf"),
+            Self::CalibriLightRegular => CARLITO_REGULAR,
+            Self::CalibriLightItalic => CARLITO_ITALIC,
             // System Verdana overlays these; Liberation Sans is the
             // Arial-metric fallback when Word DFonts are absent.
-            Self::VerdanaRegular => include_bytes!("../../assets/fonts/LiberationSans-Regular.ttf"),
-            Self::VerdanaBold => include_bytes!("../../assets/fonts/LiberationSans-Bold.ttf"),
-            Self::VerdanaItalic => include_bytes!("../../assets/fonts/LiberationSans-Italic.ttf"),
-            Self::VerdanaBoldItalic => {
-                include_bytes!("../../assets/fonts/LiberationSans-BoldItalic.ttf")
-            }
+            Self::VerdanaRegular => SANS_REGULAR,
+            Self::VerdanaBold => SANS_BOLD,
+            Self::VerdanaItalic => SANS_ITALIC,
+            Self::VerdanaBoldItalic => SANS_BOLD_ITALIC,
             // System Cambria overlays these; Liberation Serif is the
             // fallback when Word DFonts are absent.
-            Self::CambriaRegular => {
-                include_bytes!("../../assets/fonts/LiberationSerif-Regular.ttf")
-            }
-            Self::CambriaBold => include_bytes!("../../assets/fonts/LiberationSerif-Bold.ttf"),
-            Self::CambriaItalic => include_bytes!("../../assets/fonts/LiberationSerif-Italic.ttf"),
-            Self::CambriaBoldItalic => {
-                include_bytes!("../../assets/fonts/LiberationSerif-BoldItalic.ttf")
-            }
+            Self::CambriaRegular => SERIF_REGULAR,
+            Self::CambriaBold => SERIF_BOLD,
+            Self::CambriaItalic => SERIF_ITALIC,
+            Self::CambriaBoldItalic => SERIF_BOLD_ITALIC,
             // System Consolas overlays these; Liberation Mono is the
             // fallback when Word DFonts are absent.
-            Self::ConsolasRegular => {
-                include_bytes!("../../assets/fonts/LiberationMono-Regular.ttf")
-            }
-            Self::ConsolasBold => include_bytes!("../../assets/fonts/LiberationMono-Bold.ttf"),
-            Self::ConsolasItalic => include_bytes!("../../assets/fonts/LiberationMono-Italic.ttf"),
-            Self::ConsolasBoldItalic => {
-                include_bytes!("../../assets/fonts/LiberationMono-BoldItalic.ttf")
-            }
+            Self::ConsolasRegular => MONO_REGULAR,
+            Self::ConsolasBold => MONO_BOLD,
+            Self::ConsolasItalic => MONO_ITALIC,
+            Self::ConsolasBoldItalic => MONO_BOLD_ITALIC,
             // System Georgia overlays these; Liberation Serif is the
             // fallback when Georgia.ttf is absent.
-            Self::GeorgiaRegular => {
-                include_bytes!("../../assets/fonts/LiberationSerif-Regular.ttf")
-            }
-            Self::GeorgiaBold => include_bytes!("../../assets/fonts/LiberationSerif-Bold.ttf"),
-            Self::GeorgiaItalic => include_bytes!("../../assets/fonts/LiberationSerif-Italic.ttf"),
-            Self::GeorgiaBoldItalic => {
-                include_bytes!("../../assets/fonts/LiberationSerif-BoldItalic.ttf")
-            }
+            Self::GeorgiaRegular => SERIF_REGULAR,
+            Self::GeorgiaBold => SERIF_BOLD,
+            Self::GeorgiaItalic => SERIF_ITALIC,
+            Self::GeorgiaBoldItalic => SERIF_BOLD_ITALIC,
             // Word DFonts Book Antiqua / Palatino Linotype overlay these;
             // Liberation Serif is the fallback when those faces are absent.
-            Self::BookAntiquaRegular => {
-                include_bytes!("../../assets/fonts/LiberationSerif-Regular.ttf")
-            }
-            Self::BookAntiquaBold => include_bytes!("../../assets/fonts/LiberationSerif-Bold.ttf"),
-            Self::BookAntiquaItalic => {
-                include_bytes!("../../assets/fonts/LiberationSerif-Italic.ttf")
-            }
-            Self::BookAntiquaBoldItalic => {
-                include_bytes!("../../assets/fonts/LiberationSerif-BoldItalic.ttf")
-            }
+            Self::BookAntiquaRegular => SERIF_REGULAR,
+            Self::BookAntiquaBold => SERIF_BOLD,
+            Self::BookAntiquaItalic => SERIF_ITALIC,
+            Self::BookAntiquaBoldItalic => SERIF_BOLD_ITALIC,
             // System Symbol overlays this; Liberation Sans U+2022 is the
             // fallback when Symbol.ttf is absent.
-            Self::Symbol => include_bytes!("../../assets/fonts/LiberationSans-Regular.ttf"),
+            Self::Symbol => SANS_REGULAR,
         }
     }
 
