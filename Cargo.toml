@@ -2,19 +2,33 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-# Standalone workspace (also shields the crate from any enclosing workspace
-# while this checkout sits inside another repo).
+# Workspace root (plan A3): the facade package sits at `.`, the split crates
+# join under `crates/*` as T4.1+ extract them. The standalone binding
+# workspaces keep their own lockfiles and profiles. This table also shields
+# the crate from any enclosing workspace while this checkout sits inside
+# another repo.
 [workspace]
+resolver = "3"
+members = ["."]
+exclude = ["jubarte-python", "jubarte-wasm", "jubarte-rust-inproc", "fuzz"]
 
-[package]
-name = "jubarte-redlines"
-version = "0.18.0"
+[workspace.package]
+version = "0.18.0" # the release script bumps this and the "=" pins together
 edition = "2024"
 rust-version = "1.94"
 authors = ["Jandira Technologies, LLC"]
 license = "AGPL-3.0-only"
-description = "Word-faithful DOCX redline engine — compare two Word documents into a tracked-changes document that opens cleanly in Microsoft Word; list, accept, or reject revisions"
 repository = "https://github.com/jandira-tech/jubarte-redlines"
+
+[package]
+name = "jubarte-redlines"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Word-faithful DOCX redline engine — compare two Word documents into a tracked-changes document that opens cleanly in Microsoft Word; list, accept, or reject revisions"
 documentation = "https://docs.rs/jubarte-redlines"
 readme = "README.crates.md"
 keywords = ["docx", "redline", "track-changes", "word", "pdf"]
@@ -109,7 +123,7 @@ pub_const_added = "deny"
 pub_static_added = "deny"
 repr_c_added = "deny"
 repr_c_enum_struct_variant_fields_reordered = "deny"
-repr_c_plain_struct_fields_reordered = "deny"
+repr_c_plain_enum_struct_variant_fields_reordered = "deny"
 struct_must_use_removed = "deny"
 struct_no_longer_has_non_pub_fields = "deny"
 struct_no_longer_non_exhaustive = "deny"
@@ -122,11 +136,11 @@ union_must_use_removed = "deny"
 
 # Workspace lint policy (plan A1). Groups at priority = -1; pedantic is NOT
 # enabled as a group — only individually chosen low-hit pedantic lints.
-[lints.rust]
+[workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage, coverage_nightly)'] }
 unsafe_code = "deny" # the library and CLI forbid it outright; the allocation-counting examples and tests need it
 
-[lints.clippy]
+[workspace.lints.clippy]
 correctness = { level = "deny", priority = -1 }
 suspicious = { level = "warn", priority = -1 }
 perf = { level = "warn", priority = -1 }
@@ -136,6 +150,9 @@ semicolon_if_nothing_returned = "warn"
 uninlined_format_args = "warn"
 manual_let_else = "warn"
 needless_pass_by_value = "warn"
+
+[lints]
+workspace = true
 
 [features]
 default = ["cli", "fast-alloc", "self-update"]
@@ -156,7 +173,7 @@ perf-profile = []
 # and get no network code.
 self-update = ["cli", "dep:self_update", "dep:ed25519-dalek"]
 
-[dependencies]
+[workspace.dependencies]
 # Upstream OPC types on zip 9 and patched quick-xml 0.41. The adapter keeps
 # its duplicate-repair and canonical-writing policy; optional crypto stays off.
 oxml-opc = { version = "0.14.4", default-features = false } # OPC types; encryption/signatures stay disabled
@@ -171,7 +188,7 @@ flate2 = "1.1" # optional `/FlateDecode` on PDF streams (already in the tree via
 quick-xml = "0.42" # checked XML admission (`xmllinq::parse::validate_xml`) before the permissive DOM parser
 # `OpcError::Xml`/`XmlAttr` (oxml-opc 0.14.4) carry quick-xml 0.41's error types,
 # and 0.42's (`QName` now wraps `&str`, new error paths) do not convert to them.
-# The OPC record scanner reads with the same 0.41 the payload uses, so a syntax
+# The OPC record scanner reads with the same 0.41 the payload has, so a syntax
 # error surfaces as `OpcError::Xml` instead of an I/O refusal (#524, #1069).
 quick-xml-041 = { package = "quick-xml", version = "0.41", default-features = false }
 sha2 = "0.11" # SHA-256 snapshot guard shared by `inspect` and `edit`
@@ -184,55 +201,31 @@ tiny-skia = "0.12" # DOCX→PNG page raster over the layout display list
 pulldown-cmark = { version = "0.13", default-features = false } # Markdown → DOCX (`jubarte::markdown`); CommonMark + GFM tables/footnotes
 similar = { version = "3", default-features = false, features = ["text"] } # Markdown and Git/GitHub unified text diffs
 foldhash = "0.2" # the XML name interner's hasher: well mixed low bits for short, similar names, unlike SipHash (slow) or FNV (clustered)
-clap = { version = "4.5", features = ["derive", "string", "wrap_help"], optional = true }
+clap = { version = "4.5", features = ["derive", "string", "wrap_help"] }
 # CLI file identity: a side file that names the input through a hard link,
 # a symlink or another case is refused (Windows has no stable std API).
-same-file = { version = "1", optional = true }
+same-file = "1"
 # CLI-only global allocator. The redline pipeline is ~41% allocation self-time
 # (xmllinq node clone/drop churn, measured via samply on the RFP17 fixtures);
 # mimalloc cuts that per-alloc cost with zero behaviour change. Kept out of the
 # pure-library dependency tree so downstream consumers pick their own allocator.
-mimalloc = { version = "0.1", default-features = false, optional = true }
+mimalloc = { version = "0.1", default-features = false }
 # `jubarte self-update`: release lookup, SHA256SUMS.txt check, archive
 # extraction and binary replacement. Only the command contacts the network.
-self_update = { version = "1.3.1", default-features = false, features = ["ureq", "rustls", "github", "archive-tar", "compression-tar-gz", "checksums"], optional = true }
+self_update = { version = "1.3.1", default-features = false, features = ["ureq", "rustls", "github", "archive-tar", "compression-tar-gz", "checksums"] }
 # The zipsign signature check (src/update/zipsign.rs, enforced once a release
 # key is committed: docs/SELF_UPDATE.md): ed25519ph over SHA-512. Not
 # `self_update`'s `signatures`, whose zipsign-api 0.2 pins ed25519-dalek 2 and
 # with it block-buffer 0.10.4 (GHSA-qwgh-2vcv-g2f7, #1705).
-ed25519-dalek = { version = "3", default-features = false, features = ["digest"], optional = true }
-
-# Windows releases are .zip. Zip support stays off elsewhere: it turns on the
-# zip crate's `time` feature, which stamps wall-clock times into our own
-# archives unless every entry sets its time (986c526). The zip signature
-# check needs no zip support: it hashes the bytes after the signatures.
-[target.'cfg(windows)'.dependencies]
-self_update = { version = "1.3.1", default-features = false, features = ["archive-zip", "compression-zip-deflate"], optional = true }
-
+ed25519-dalek = { version = "3", default-features = false, features = ["digest"] }
 # Host filesystem publication is unavailable to browser/WASM byte APIs.
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cap-std = "4"
-
 # A replaced output keeps the destination's extended attributes. Mode bits
 # are copied separately; this crate moves the attributes onto the staged inode.
-[target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
 xattr = "1.6.1"
-
 # wasm32-unknown-unknown has no clock in std: `SystemTime::now` panics. The
 # host's `Date` dates new comments and DATE/TIME fields there instead.
-[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 js-sys = { version = "0.3", default-features = false }
-
-[[bin]]
-name = "jubarte"
-required-features = ["cli"]
-
-# scripts/cli_flags.sh: every flag from clap's model, as Markdown.
-[[example]]
-name = "cli_flags"
-required-features = ["cli"]
-
-[dev-dependencies]
 # Dev-only JSON Schema validator. `parse_expectations` (src/expect.rs)
 # enforces the same constraints in plain Rust so the WASM and Python
 # lockfiles do not pull this crate in at runtime. The tests load the
@@ -246,6 +239,71 @@ ooxmlsdk = { version = "0.13.2", default-features = false, features = ["parts"] 
 # tests/agent_text_view.rs: the agent view's header must parse as YAML.
 saphyr = "0.3"
 tempfile = "3"
+
+[dependencies]
+oxml-opc = { workspace = true }
+zip = { workspace = true }
+sha1.workspace = true
+ttf-parser = { workspace = true }
+rustybuzz = { workspace = true }
+unicode-segmentation = { workspace = true }
+unicode-properties = { workspace = true }
+image = { workspace = true }
+flate2 = { workspace = true }
+quick-xml = { workspace = true }
+quick-xml-041 = { workspace = true }
+sha2 = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+regex = { workspace = true }
+tiny-skia = { workspace = true }
+pulldown-cmark = { workspace = true }
+similar = { workspace = true }
+foldhash = { workspace = true }
+clap = { workspace = true, optional = true }
+same-file = { workspace = true, optional = true }
+mimalloc = { workspace = true, optional = true }
+self_update = { workspace = true, optional = true }
+ed25519-dalek = { workspace = true, optional = true }
+
+# Windows releases are .zip. Zip support stays off elsewhere: it turns on the
+# zip crate's `time` feature, which stamps wall-clock times into our own
+# archives unless every entry sets its time (986c526). The zip signature
+# check needs no zip support: it hashes the bytes after the signatures.
+[target.'cfg(windows)'.dependencies]
+self_update = { workspace = true, optional = true, features = ["archive-zip", "compression-zip-deflate"] }
+
+# Host filesystem publication is unavailable to browser/WASM byte APIs.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cap-std = { workspace = true }
+
+# A replaced output keeps the destination's extended attributes. Mode bits
+# are copied separately; this crate moves the attributes onto the staged inode.
+[target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
+xattr = { workspace = true }
+
+# wasm32-unknown-unknown has no clock in std: `SystemTime::now` panics. The
+# host's `Date` dates new comments and DATE/TIME fields there instead.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+js-sys = { workspace = true }
+
+[[bin]]
+name = "jubarte"
+required-features = ["cli"]
+
+# scripts/cli_flags.sh: every flag from clap's model, as Markdown.
+[[example]]
+name = "cli_flags"
+required-features = ["cli"]
+
+[dev-dependencies]
+jsonschema = { workspace = true }
+criterion = { workspace = true }
+ooxmlsdk = { workspace = true }
+saphyr = { workspace = true }
+tempfile = { workspace = true }
 
 [[bench]]
 name = "redline"

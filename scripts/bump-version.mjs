@@ -41,6 +41,26 @@ export function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** The Cargo manifest's version lines moved to `next`: the standalone
+ * `version = "x.y.z"` of `[workspace.package]`, and every exact
+ * `version = "=x.y.z"` pin with which the workspace crates hold each other
+ * (plan A3; the pins never exist outside [workspace.dependencies], so a
+ * blanket replace cannot touch a third-party requirement). Exported for
+ * scripts/bump-version.test.mjs.
+ * @param {string} cargo the manifest text
+ * @param {string} next the new x.y.z
+ * @returns {string} the manifest with every workspace version moved */
+export function bumpCargoVersions(cargo, next) {
+  const standalone = cargo.replace(
+    /^version = "\d+\.\d+\.\d+"$/m,
+    `version = "${next}"`,
+  );
+  return standalone.replace(
+    /version = "=\d+\.\d+\.\d+"/g,
+    `version = "=${next}"`,
+  );
+}
+
 /** The README's version pins moved from `prev` to `next`. Exported for
  * scripts/bump-version.test.mjs, which feeds it pins a hostile version
  * must not be able to bend. */
@@ -108,10 +128,7 @@ function main() {
     process.exit(1);
   }
 
-  const cargoNext = cargo.replace(
-    /^version = "\d+\.\d+\.\d+"$/m,
-    `version = "${next}"`,
-  );
+  const cargoNext = bumpCargoVersions(cargo, next);
   writeFileSync(cargoPath, cargoNext);
 
   // Optional: README badge / install line if present
