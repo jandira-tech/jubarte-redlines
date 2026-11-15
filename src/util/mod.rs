@@ -149,7 +149,11 @@ pub(crate) fn decode_entities(s: &str) -> String {
     while let Some(a) = rest.find('&') {
         out.push_str(&rest[..a]);
         let tail = &rest[a..];
-        let semi = tail.find(';');
+        // A reference cannot span the next `&`: bound the `;` search to
+        // this candidate's own text so a later `&…;` stays available.
+        let body = &tail[1..];
+        let limit = body.find('&').unwrap_or(body.len());
+        let semi = body[..limit].find(';').map(|e| e + 1);
         let decoded = semi.and_then(|e| {
             let ent = &tail[1..e];
             let ch = match ent {
