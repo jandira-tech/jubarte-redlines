@@ -153,3 +153,19 @@ pub fn redline(
     compare_documents_with_settings(&original, &modified, &options.settings)
         .map_err(|e| MarkdownError::Package(format!("comparing: {e}")))
 }
+
+#[cfg(test)]
+mod debug_shape_tests {
+    use super::*;
+
+    #[test]
+    fn default_redline_options_debug_names_its_flags() {
+        // Moved from markdown's options test (T4.6): the Debug shape this
+        // type hand-writes is an edit-layer contract.
+        let debug = format!("{:?}", RedlineOptions::default());
+        assert!(
+            debug.contains("critic: false") && debug.contains("images: false"),
+            "{debug}"
+        );
+    }
+}

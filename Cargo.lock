@@ -1563,6 +1563,7 @@ dependencies = [
  "jsonschema",
  "jubarte-doc",
  "jubarte-dom",
+ "jubarte-markdown",
  "jubarte-opc",
  "jubarte-redlines",
  "jubarte-render",
@@ -1623,6 +1624,30 @@ dependencies = [
  "sha2 0.11.1",
  "unicode-properties",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "jubarte-markdown"
+version = "0.18.0"
+dependencies = [
+ "base64 0.23.1",
+ "image",
+ "jubarte-doc",
+ "jubarte-dom",
+ "jubarte-opc",
+ "jubarte-redlines",
+ "jubarte-render",
+ "pulldown-cmark",
+ "quick-xml 0.42.0",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "similar",
+ "tempfile",
+ "unicode-properties",
+ "unicode-segmentation",
+ "zip",
 ]
 
 [[package]]

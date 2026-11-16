@@ -148,7 +148,8 @@ pub use jubarte_doc::fields;
 pub use jubarte_doc::inspect;
 #[doc(inline)]
 pub use jubarte_dom::ids;
-pub mod legacy_doc;
+#[doc(inline)]
+pub use jubarte_markdown::legacy_doc;
 pub mod markdown;
 /// WordprocessingML and related namespace / `XName` constants.
 #[doc(inline)]
