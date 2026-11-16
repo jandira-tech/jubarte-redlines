@@ -14,7 +14,8 @@ use super::xml::Label;
 
 /// An author of the `authors:` table and its timestamps.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Author {
+#[doc(hidden)]
+pub struct Author {
     pub name: String,
     /// The timestamp every change and comment shares, when they share one.
     pub date: Option<String>,
@@ -27,7 +28,8 @@ pub(super) struct Author {
 
 /// The `authors:` table of a YAML header, by handle. `document_owner` is
 /// not an author.
-pub(super) fn authors(yaml: &str) -> HashMap<String, Author> {
+#[doc(hidden)]
+pub fn authors(yaml: &str) -> HashMap<String, Author> {
     let mut table = HashMap::new();
     let mut inside = false;
     for line in yaml.lines() {
@@ -222,7 +224,8 @@ fn day_range(text: &str) -> Option<(String, String)> {
 
 /// Who owns the document, as `authors: document_owner:` and its note say.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Owner {
+#[doc(hidden)]
+pub enum Owner {
     /// `dc:creator`; a name with no note, too.
     Creator(String),
     /// `cp:lastModifiedBy`, and no `dc:creator`.
@@ -317,7 +320,8 @@ fn is_handle(text: &str) -> bool {
 }
 
 /// The handle of a mark with no author's name.
-pub(super) const UNNAMED: &str = "??";
+#[doc(hidden)]
+pub const UNNAMED: &str = "??";
 
 /// A YAML scalar as `header::scalar` writes it (plain, or a JSON-quoted
 /// string), and the `# comment` after it.
@@ -358,7 +362,8 @@ pub(super) fn scalar_and_comment(text: &str) -> (String, Option<&str>) {
 
 /// One tag of a revision note: who and, when the note says, when.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Tag {
+#[doc(hidden)]
+pub struct Tag {
     pub handle: String,
     pub date: Option<String>,
     /// The `w:id`s it names, in order (`r1+2` → 1, 2); none for `noid`.
@@ -368,7 +373,8 @@ pub(super) struct Tag {
 /// The tags of a revision note, `r1+2 @AC` or `r1 @AC; r2 @JD 2026-…`;
 /// `None` for any other comment text. Each id part must be a change id
 /// (`crate::ids`), or `noid` for a mark without a `w:id`.
-pub(super) fn revision_tags(text: &str) -> Option<Vec<Tag>> {
+#[doc(hidden)]
+pub fn revision_tags(text: &str) -> Option<Vec<Tag>> {
     text.trim()
         .split("; ")
         .map(|tag| {
@@ -405,7 +411,8 @@ pub(super) fn revision_tags(text: &str) -> Option<Vec<Tag>> {
 /// when, as stored (`r5 Ana Lima (2026-…)`, `r1+2 (2026-…)`, `r7 Di Eng`,
 /// `r7`). An absent author or date stays empty.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct PlainRevision {
+#[doc(hidden)]
+pub struct PlainRevision {
     pub ids: Vec<u32>,
     pub author: String,
     pub date: String,
@@ -415,7 +422,8 @@ pub(super) struct PlainRevision {
 /// r1 @AL` is Ben's deletion inside Ana's insertion, each tag with its
 /// own date as [`revision_tags`] reads it. `None` for any other comment
 /// text.
-pub(super) fn nested_revision_tags(text: &str) -> Option<Vec<Tag>> {
+#[doc(hidden)]
+pub fn nested_revision_tags(text: &str) -> Option<Vec<Tag>> {
     let tags = nested_parts(text, one_tag)?;
     (tags.len() > 1).then_some(tags)
 }
@@ -534,7 +542,8 @@ fn nested_parts<T>(text: &str, one: fn(&str) -> Option<T>) -> Option<Vec<T>> {
 /// The plain view's revision note; `None` for any other comment text. The
 /// ids come first, as in [`revision_tags`]; what follows is `Name (date)`,
 /// `(date)`, a name with no colon or bracket, or nothing.
-pub(super) fn plain_revision(text: &str) -> Option<PlainRevision> {
+#[doc(hidden)]
+pub fn plain_revision(text: &str) -> Option<PlainRevision> {
     let text = text.trim();
     let (id, rest) = text.split_once(' ').unwrap_or((text, ""));
     let id_ok = !id.starts_with(|c: char| c.is_ascii_digit())
@@ -566,7 +575,8 @@ pub(super) fn plain_revision(text: &str) -> Option<PlainRevision> {
 
 /// Plain attributions of a substitution whose sides retain distinct dates.
 /// A semicolon separates complete revision parts, as in the handle grammar.
-pub(super) fn plain_revisions(text: &str) -> Option<Vec<PlainRevision>> {
+#[doc(hidden)]
+pub fn plain_revisions(text: &str) -> Option<Vec<PlainRevision>> {
     text.split("; ")
         .map(plain_revision)
         .collect::<Option<Vec<_>>>()
@@ -599,7 +609,8 @@ pub(super) struct CommentHead {
 
 /// The cells a `cell-borders` group names: every cell, a row's, or one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum CellsAt {
+#[doc(hidden)]
+pub enum CellsAt {
     All,
     Row(usize),
     Cell(usize, usize),
@@ -709,7 +720,8 @@ pub(super) fn paragraph_mark(marks: &[(bool, Tag)]) -> Option<(bool, &Tag)> {
 
 /// A cell's own change: `w:cellIns`, `w:cellDel` or `w:cellMerge`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CellMark {
+#[doc(hidden)]
+pub enum CellMark {
     Insert,
     Delete,
     Merge,
@@ -2378,7 +2390,8 @@ pub(super) const WORD_PAGE_SIZES: &[(&str, u32, u32)] = &[
 /// A section's page as the view's YAML header prints it (`page: A4
 /// landscape, margins 0.5in, header/footer 0.49in`), in twips.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct PageSetup {
+#[doc(hidden)]
+pub struct PageSetup {
     pub width: u32,
     pub height: u32,
     pub landscape: bool,

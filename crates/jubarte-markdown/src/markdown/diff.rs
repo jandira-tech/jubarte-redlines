@@ -180,7 +180,8 @@ fn opaque_units(text: &str) -> Vec<&str> {
 /// The length of a line's block markers: indentation, `>` quote markers, a
 /// list marker with its task box, or a heading's `#`s. A change starts
 /// after them.
-pub(super) fn marker_len(line: &str) -> usize {
+#[doc(hidden)]
+pub fn marker_len(line: &str) -> usize {
     let bytes = line.as_bytes();
     let mut at = bytes
         .iter()
@@ -230,14 +231,16 @@ pub(super) fn marker_len(line: &str) -> usize {
 
 /// Whether a line continues the paragraph of a non-blank line before it:
 /// it has text and no block marker, and is not a table row or code fence.
-pub(super) fn continues(line: &str) -> bool {
+#[doc(hidden)]
+pub fn continues(line: &str) -> bool {
     let trimmed = line.trim_start();
     !trimmed.is_empty() && marker_len(line) == 0 && !trimmed.starts_with("```") && !table_row(line)
 }
 
 /// Whether text may continue after a line: not blank, not a heading, a
 /// table row or a code fence.
-pub(super) fn open_paragraph(line: &str) -> bool {
+#[doc(hidden)]
+pub fn open_paragraph(line: &str) -> bool {
     let trimmed = line.trim_start();
     !trimmed.is_empty()
         && !trimmed.starts_with('#')
@@ -246,7 +249,8 @@ pub(super) fn open_paragraph(line: &str) -> bool {
 }
 
 /// A table row: the line starts with a pipe.
-pub(super) fn table_row(line: &str) -> bool {
+#[doc(hidden)]
+pub fn table_row(line: &str) -> bool {
     line.trim_start().starts_with('|')
 }
 
@@ -865,7 +869,8 @@ fn marker_shape(line: &str) -> String {
 /// longest common subsequence of their words over the sizes summed. The
 /// subsequence comes from Myers on the words — O((n+m)·d) — not from a
 /// score matrix.
-pub(super) fn similarity(old: &str, new: &str) -> f64 {
+#[doc(hidden)]
+pub fn similarity(old: &str, new: &str) -> f64 {
     let (a, b) = (words(old), words(new));
     if a.is_empty() && b.is_empty() {
         return 1.0;

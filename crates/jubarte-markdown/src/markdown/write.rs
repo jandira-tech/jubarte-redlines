@@ -580,7 +580,8 @@ fn scholar(markdown: &str, stories: bool) -> String {
 }
 
 /// A YAML front matter block's text and the Markdown after it.
-pub(super) fn split_front_matter(markdown: &str) -> Option<(&str, &str)> {
+#[doc(hidden)]
+pub fn split_front_matter(markdown: &str) -> Option<(&str, &str)> {
     let rest = markdown
         .strip_prefix("---\n")
         .or_else(|| markdown.strip_prefix("---\r\n"))?;
@@ -6849,7 +6850,8 @@ fn attribution(text: &str) -> Option<(Option<String>, &str)> {
 /// note they come percent-spelled (`%28`, `%29`, with `%` itself `%25`,
 /// and a space that would read as ` re ` before a revision id as `%20`)
 /// and are read back off the name.
-pub(super) fn named(text: &str) -> Option<(Option<String>, &str, &str)> {
+#[doc(hidden)]
+pub fn named(text: &str) -> Option<(Option<String>, &str, &str)> {
     // The first group that is a date after a name: a later one belongs to
     // the text after the attribution (`Ana (d1): moved to (d2)`), and an
     // earlier one that is no date to the name (`Ana (Legal) (d1)`).

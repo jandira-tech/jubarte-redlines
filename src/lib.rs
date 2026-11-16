@@ -100,7 +100,6 @@ pub use jubarte_doc::audit;
 #[doc(inline)]
 pub use jubarte_opc::admission;
 /// Table, cell and paragraph border views shared by render, markdown and debug.
-pub(crate) use jubarte_opc::borders;
 /// Word's built-in style names.
 /// Machine-readable manifest of what this build can do.
 pub mod capabilities;
@@ -116,7 +115,6 @@ pub use jubarte_doc::comments;
 #[doc(inline)]
 pub use jubarte_doc::debug;
 /// Custom XML and built-in data stores shared by the OPC layer.
-pub(crate) use jubarte_opc::data_stores;
 /// Core WmlComparer engine (atomize → LCS → produce → finalize).
 #[doc(inline)]
 pub use jubarte_redlines::comparer;
@@ -161,7 +159,6 @@ pub use jubarte_dom::perf;
 /// Markup simplification (PowerTools `MarkupSimplifier` port).
 #[doc(inline)]
 pub use jubarte_opc::markup_simplifier;
-pub(crate) use jubarte_opc::numbering;
 /// Open Packaging Conventions adapter (`PartFs`).
 #[doc(inline)]
 pub use jubarte_opc::opc;
@@ -192,7 +189,6 @@ pub use jubarte_dom::util;
 pub use jubarte_dom::xmllinq;
 /// Pure DOM structural predicates shared by validate and the comparers.
 /// Word's default theme part, for originals without one.
-pub(crate) use jubarte_opc::word_default_theme;
 /// `WmlDocument` — document bytes + lazily parsed main part.
 #[doc(inline)]
 pub use jubarte_redlines::wml_document;

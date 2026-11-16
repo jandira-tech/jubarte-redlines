@@ -12,5 +12,9 @@ mod patch;
 mod redline;
 mod unified;
 
+pub use patch::{Patched, apply_markdown, apply_markdown_strict};
 pub use redline::{RedlineOptions, Source, redline};
-pub use unified::{Patched, apply_markdown, apply_markdown_strict};
+pub use unified::{
+    Attribution, Change, Comment, DEFAULT_COLUMNS, Hunk, Locator, Patch, PatchOptions,
+    patch_critic, patch_documents, patch_markdown, patch_own_changes, patch_redline,
+};

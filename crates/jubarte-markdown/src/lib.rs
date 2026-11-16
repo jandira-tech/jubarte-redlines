@@ -22,14 +22,11 @@
 
 // A5 shims: the floors', the compare product's and the doc layer's
 // modules under the names the moved code uses.
+pub use jubarte_doc::{changes, comments, debug, inspect, validate};
+pub(crate) use jubarte_dom::ooxml;
 pub use jubarte_dom::{ids, namespaces, util, xmllinq};
 pub use jubarte_opc::{admission, opc, settings, strict_translation};
-pub(crate) use jubarte_dom::ooxml;
-pub(crate) use jubarte_opc::{
-    borders, markup_simplifier, numbering, render_options, table_dom, validate_dom,
-    word_default_theme,
-};
-pub use jubarte_doc::{changes, comments, debug, inspect, validate};
+pub(crate) use jubarte_opc::{borders, markup_simplifier, numbering, word_default_theme};
 pub use jubarte_redlines::{comparer, document_comparer};
 
 /// Word 97-2003 `.doc` reading: text, headings and tables.

@@ -129,7 +129,7 @@ impl<'a> Package<'a> {
     }
 
     /// Read and parse an XML entry, or `None` when it does not exist.
-#[doc(hidden)]
+    #[doc(hidden)]
     pub fn xml(&mut self, name: &str) -> Result<Option<Element>, ConvertError> {
         match self.read(name)? {
             Some(bytes) => parse_xml_with_limits(&bytes, self.input_limits)

@@ -2047,7 +2047,7 @@ impl Styles {
             .map(|n| n.clamp(1, 6))
     }
 
-#[doc(hidden)]
+    #[doc(hidden)]
     pub fn num(&self, id: &str) -> Option<(String, usize)> {
         self.chain(id).into_iter().find_map(|s| s.num.clone())
     }

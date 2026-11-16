@@ -13,7 +13,8 @@ use super::xml::{self, Context, Document, Relate, escape};
 use super::{DocxOptions, MarkdownError, PageSize};
 use crate::comments::CommentFamily;
 use crate::namespaces::W;
-pub(crate) use crate::numbering::numbering_part;
+#[doc(hidden)]
+pub use crate::numbering::numbering_part;
 use crate::numbering::{append_numbering, attribute_values, max_attribute};
 use crate::opc::{PartFs, relative_rel_target};
 use crate::xmllinq::{Dom, serialize_element};
@@ -2053,8 +2054,10 @@ mod literal_package_metadata_contract_tests {
                 "<dc:description>untouched</dc:description><dc:title>Ω &amp; &lt;Title&gt;</dc:title><dc:creator>Ada &amp; Bo</dc:creator>",
             ),
         ] {
-            let mut package =
-                PartFs::open(include_bytes!("../../../../tests/fixtures/redline/original.docx")).unwrap();
+            let mut package = PartFs::open(include_bytes!(
+                "../../../../tests/fixtures/redline/original.docx"
+            ))
+            .unwrap();
             package.set_part(
                 "docProps/core.xml",
                 format!("{root}{body}</cp:coreProperties>").into_bytes(),
@@ -2111,8 +2114,10 @@ mod literal_package_metadata_contract_tests {
                 source.replace("owned author", "new author"),
             ),
         ] {
-            let mut package =
-                PartFs::open(include_bytes!("../../../../tests/fixtures/redline/original.docx")).unwrap();
+            let mut package = PartFs::open(include_bytes!(
+                "../../../../tests/fixtures/redline/original.docx"
+            ))
+            .unwrap();
             package.set_part("docProps/core.xml", source.as_bytes().to_vec());
             core_properties(
                 &mut package,

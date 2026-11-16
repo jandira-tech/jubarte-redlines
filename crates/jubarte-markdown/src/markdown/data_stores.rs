@@ -31,9 +31,9 @@ use quick_xml::events::{BytesStart, Event};
 
 use super::from_docx::{Element, element_from, parse_xml};
 use super::xml::escape;
+use crate::opc::{PartFs, relative_rel_target};
 #[doc(hidden)]
 pub use jubarte_opc::data_stores::{built_in, stores};
-use crate::opc::{PartFs, relative_rel_target};
 
 const RELS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const DS_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/customXml";

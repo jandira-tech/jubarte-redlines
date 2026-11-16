@@ -70,7 +70,8 @@ const MAX_PENDING: usize = 4096;
 /// relationship ids symbolized (`r1`, `d3.2` — part 3's second relationship),
 /// and every part they resolve to.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct Drawing {
+#[doc(hidden)]
+pub struct Drawing {
     /// The captured element, verbatim but for symbolized relationship ids,
     /// `wp:docPr` ids normalized to `0`, and the `xmlns:*` declarations
     /// injected on its root.

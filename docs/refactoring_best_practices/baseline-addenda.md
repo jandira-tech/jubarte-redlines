@@ -7,6 +7,36 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T4.6 (jubarte-markdown extracted) - 2026-11-16
+
+- Seventh workspace package: the markdown layer (anchor, critic,
+  data_stores, diff, frames, from_docx, math, package, pages, repair,
+  view_notes, view_stories, view_styles, write, xml) plus legacy_doc,
+  on the doc layer and everything below through the A5 shims. The
+  patch, redline and unified modules stay beside the facade for T4.7:
+  src/markdown/mod.rs is now the A6 composition (the crate's markdown
+  glob plus the three local mods and their re-exports), so every
+  jubarte::markdown path holds without rewriting a call site.
+- The render feature gates page_texts, with_page_markers and the
+  read/from_docx layout probes (A4; AC1 zero/one jubarte-render,
+  AC2 492/492 tests pass both ways). The writer's data-stores half
+  re-exports jubarte-opc's lookup half.
+- V2 promotions were broader than any crate yet (the edit layer and the
+  three staying files reach deep): diff's diff helpers, view_notes'
+  revision/author machinery, xml's element model (Document, Item, Kind
+  and their field types), view_stories/view_styles formats, write's
+  front matter, package's part helpers - one visibility promotion loop
+  including pub(super), plus a private-in-public loop for the xml model.
+- KNOWN_UPWARD stays empty; the guard's src/ tree now holds only the
+  facade, the three composed markdown files and the edit/cli layers.
+- Battery: S1 both ways, clippy both, fmt, RUSTDOCFLAGS doc (module
+  headers qualify; Patch and RevisionPalette mentions became
+  backticks - facade items the crate cannot link), gates 37/37,
+  goldens identical, listing re-baselined (1553 reviewed lines: the
+  V2 promotions' omission plus def-site renames, 9 additions), full
+  workspace suite 10,692/10,692 (one new: the RedlineOptions Debug-shape
+  test moved beside its type).
+
 ## T4.5 (jubarte-doc extracted) - 2026-11-16
 
 - Sixth workspace package: the doc operations (changes, comments,

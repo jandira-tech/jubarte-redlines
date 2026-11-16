@@ -32,7 +32,8 @@ const RELS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relati
 
 /// One header or footer of a section.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Story {
+#[doc(hidden)]
+pub struct Story {
     /// `header` or `footer`.
     pub kind: &'static str,
     /// `first`, `default` or `even`.
@@ -65,7 +66,8 @@ pub(super) struct Story {
 
 /// One header or footer paragraph's own formatting.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct ParaFormat {
+#[doc(hidden)]
+pub struct ParaFormat {
     /// `center`, `right`, a stated `left` or `justify`; `None` when it
     /// names none.
     pub align: Option<&'static str>,
@@ -97,7 +99,8 @@ pub(super) struct ParaFormat {
 
 /// One `w:tab`: its alignment, an optional leader, and its position in twips.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct TabStop {
+#[doc(hidden)]
+pub struct TabStop {
     val: String,
     leader: Option<String>,
     pos: i64,
@@ -985,7 +988,8 @@ fn story(kind: &'static str, ty: &str, entries: &[(String, Value)]) -> Option<St
 /// What a section's headers and footers say: its stories, and whether its
 /// first page has its own (`first: none` says so with no story).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct Stories {
+#[doc(hidden)]
+pub struct Stories {
     pub stories: Vec<Story>,
     pub title_page: Option<bool>,
     /// The entries that did not read (`footers: default`), for a warning.

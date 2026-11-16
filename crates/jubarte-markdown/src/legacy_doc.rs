@@ -45,9 +45,11 @@
 //! What Markdown cannot say is put back afterwards: Title and Heading
 //! 7-9, empty paragraphs, and which rows repeat as a header.
 //!
-//! Entry points: [`is_compound_file`] for the cheap check; [`read`] for
-//! the structured [`LegacyDocument`]; [`doc_to_markdown`] and
-//! [`doc_to_docx`] for the two written outputs.
+//! Entry points: [`is_compound_file`](crate::legacy_doc::is_compound_file) for
+//! the cheap check; [`read`](crate::legacy_doc::read) for
+//! the structured [`LegacyDocument`](crate::legacy_doc::LegacyDocument);
+//! [`doc_to_markdown`](crate::legacy_doc::doc_to_markdown) and
+//! [`doc_to_docx`](crate::legacy_doc::doc_to_docx) for the two written outputs.
 
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};

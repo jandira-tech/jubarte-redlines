@@ -2139,7 +2139,7 @@ pub struct Pieces {
 impl Pieces {
     /// Calls `emit` with the pieces of `text`. Escaped characters come out as
     /// text; escape characters themselves never do.
-#[doc(hidden)]
+    #[doc(hidden)]
     pub fn feed(&mut self, text: &str, mut emit: impl FnMut(Piece<'_>)) {
         let mut start = 0;
         for (at, c) in text.char_indices() {

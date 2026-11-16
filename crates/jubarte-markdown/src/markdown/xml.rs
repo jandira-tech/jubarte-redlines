@@ -12,7 +12,8 @@ use super::view_styles::TableBorders;
 
 /// An inserted or a deleted tracked change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Kind {
+#[doc(hidden)]
+pub enum Kind {
     Insert,
     Delete,
 }
@@ -23,7 +24,8 @@ pub(super) type Change = (Kind, u32);
 
 /// Direct run formatting.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct RunFormat {
+#[doc(hidden)]
+pub struct RunFormat {
     pub bold: bool,
     pub italic: bool,
     pub strike: bool,
@@ -41,7 +43,8 @@ pub(super) struct RunFormat {
 
 /// What a run holds.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Content {
+#[doc(hidden)]
+pub enum Content {
     Text(String),
     Break,
     /// A page break (`w:br w:type="page"`).
@@ -74,7 +77,8 @@ pub(super) enum Content {
 /// A run: content, formatting, the change it belongs to and the comment
 /// scope (`{==…==}`) group it is in.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Run {
+#[doc(hidden)]
+pub struct Run {
     pub content: Content,
     pub format: RunFormat,
     pub change: Option<Change>,
@@ -83,7 +87,8 @@ pub(super) struct Run {
 
 /// Paragraph properties.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct Paragraph {
+#[doc(hidden)]
+pub struct Paragraph {
     /// Its style: a built-in one the reader defines when the docx lacks it
     /// (`Heading1`), or the one an id line names (`<!-- p0 TitlePage -->`).
     pub style: Option<Cow<'static, str>>,
@@ -146,7 +151,8 @@ pub(super) struct Paragraph {
 /// paragraph's `rev` clause names it, and the box's content, its runs
 /// carrying the changes the header's `unplaced:` names for the paragraph.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct TextBox {
+#[doc(hidden)]
+pub struct TextBox {
     /// Whether the anchor's change inserts (`rev`) or deletes (`rev-del`).
     pub inserted: bool,
     /// The anchor run's mark: its id, author and date.
@@ -160,7 +166,8 @@ pub(super) struct TextBox {
 /// changed the formatting, not what it was: the change keeps what is
 /// there, so rejecting it changes nothing.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct FormatMark {
+#[doc(hidden)]
+pub struct FormatMark {
     pub id: Option<u32>,
     pub author: String,
     pub date: String,
@@ -169,7 +176,8 @@ pub(super) struct FormatMark {
 /// Which property a `style_changes` tag names. `FormatMark` stays the mark
 /// itself: sections and note separators use it with no property kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum StyleChangeKind {
+#[doc(hidden)]
+pub enum StyleChangeKind {
     /// The style's own `w:pPrChange`.
     Paragraph,
     /// The style's own `w:rPrChange`.
@@ -181,7 +189,8 @@ pub(super) enum StyleChangeKind {
 /// The formatting changes a table line names: the table's own, a row's
 /// (`in t0.row1`) and a cell's (`in t0.row1.cell0`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct TableFormats {
+#[doc(hidden)]
+pub struct TableFormats {
     pub table: Option<FormatMark>,
     /// The grid's change (`w:tblGridChange`): an id, no author.
     pub grid: Option<u32>,
@@ -232,7 +241,8 @@ pub(crate) fn char_hundredths(value: &str) -> Option<i64> {
 /// A paragraph's `w:ind`: each side in twips, and in hundredths of a
 /// character when the paragraph states a character unit.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct Indent {
+#[doc(hidden)]
+pub struct Indent {
     pub first_line_chars: Option<i64>,
     pub hanging_chars: Option<i64>,
     pub left_chars: Option<i64>,
@@ -259,7 +269,8 @@ pub(super) fn size_half_points(value: &str) -> Option<u32> {
 /// stores it, a height in 240ths of a line for `auto` or in twips for
 /// `exact` and `atLeast`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct Spacing {
+#[doc(hidden)]
+pub struct Spacing {
     pub before: Option<u32>,
     pub after: Option<u32>,
     pub before_auto: bool,
@@ -276,7 +287,8 @@ pub(super) struct Spacing {
 /// what the writer writes by itself: an even split of the text width over
 /// 100% of it, no indent, an autofit layout.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct TableGeometry {
+#[doc(hidden)]
+pub struct TableGeometry {
     /// Each grid column's width (`w:gridCol`), in twips.
     pub widths: Option<Vec<u32>>,
     /// The table's preferred width (`w:tblW`).
@@ -289,7 +301,8 @@ pub(super) struct TableGeometry {
 
 /// A table's preferred width, as `w:tblW` types it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum TableWidth {
+#[doc(hidden)]
+pub enum TableWidth {
     Auto,
     /// `dxa`, in twips.
     Twips(u32),
@@ -493,14 +506,16 @@ pub(crate) fn shading_colour(value: &str) -> bool {
 
 /// A hyperlink's target.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Link {
+#[doc(hidden)]
+pub enum Link {
     External(String),
     Anchor(String),
 }
 
 /// One element of a story, in document order.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Item {
+#[doc(hidden)]
+pub enum Item {
     Paragraph(Paragraph),
     ParagraphEnd,
     Run(Run),
@@ -546,7 +561,8 @@ pub(super) enum Item {
 /// A numbering instance: a bullet list, or an ordered list and where it
 /// starts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct List {
+#[doc(hidden)]
+pub struct List {
     pub ordered: bool,
     pub level: u32,
     pub start: u32,
@@ -567,7 +583,8 @@ pub struct Picture {
 /// A footnote or an endnote: its items and the change of its reference,
 /// which the note shares when its own text has none.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct Note {
+#[doc(hidden)]
+pub struct Note {
     pub items: Vec<Item>,
     pub change: Option<Change>,
     /// The view names it an endnote (`<!-- endnotes.p0 -->`).
@@ -576,7 +593,8 @@ pub(super) struct Note {
 
 /// A comment's paragraphs.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct Comment {
+#[doc(hidden)]
+pub struct Comment {
     pub id: u32,
     pub paragraphs: Vec<String>,
     /// Author and date the comment names (`Ana (2026-01-02T03:04:00Z): ...`).
@@ -599,7 +617,8 @@ pub(super) struct Comment {
 
 /// A Markdown document read into Word items.
 #[derive(Clone, Debug, Default)]
-pub(super) struct Document {
+#[doc(hidden)]
+pub struct Document {
     pub body: Vec<Item>,
     /// Footnotes in reference order.
     pub notes: Vec<Note>,
@@ -763,7 +782,8 @@ impl Document {
 /// A paragraph numbered with a label: which one, at which list level, and
 /// the number its list counts it (`2.` in `2. Text`), when it says.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct LabelUse {
+#[doc(hidden)]
+pub struct LabelUse {
     pub label: usize,
     pub level: u32,
     pub start: Option<u32>,
@@ -771,7 +791,8 @@ pub(super) struct LabelUse {
 
 /// A list label an id line names, written as it reads.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Label {
+#[doc(hidden)]
+pub enum Label {
     Bullet,
     Text(String),
 }
@@ -1924,7 +1945,12 @@ fn held_event_change(document: &Document, item: &Item) -> Option<Change> {
 /// pieces name the same ids, or a change `open` resumes after, which the
 /// open mark then holds.
 #[doc(hidden)]
-pub fn continues(document: &Document, rest: &[Item], open: Option<Change>, marks: &[Change]) -> bool {
+pub fn continues(
+    document: &Document,
+    rest: &[Item],
+    open: Option<Change>,
+    marks: &[Change],
+) -> bool {
     let Some(at) = rest.iter().position(|item| {
         !matches!(
             item,

@@ -4,7 +4,7 @@
 
 //! Markdown to Word.
 //!
-//! [`markdown_to_docx`] writes CommonMark, with GitHub's tables,
+//! [`markdown_to_docx`](crate::markdown::markdown_to_docx) writes CommonMark, with GitHub's tables,
 //! strikethrough, task lists and footnotes, as a `.docx`. CriticMarkup in the
 //! Markdown becomes Word tracked changes and comments:
 //!
@@ -27,12 +27,13 @@
 //! `Quote`, `ListParagraph`, `FootnoteText`, `Hyperlink`, `TableGrid`...)
 //! and pandoc's for code (`SourceCode`, `VerbatimChar`), so a reference
 //! document made by Word or by pandoc styles the output
-//! ([`DocxOptions::reference`]).
+//! ([`DocxOptions::reference`](crate::markdown::DocxOptions::reference)).
 //!
 //! Backs `jubarte convert FILE.md`, `jubarte convert FILE.docx -t md`,
 //! `jubarte read`, the redline task's Markdown side
 //! (`jubarte::markdown::RedlineOptions`, `jubarte::markdown::redline()`) and
-//! the patch task ([`crate::markdown::Patch`]), plus the Python and WASM
+//! the patch task (`Patch`, composed into the facade's markdown), plus
+//! the Python and WASM
 //! bindings over them.
 
 mod anchor;
@@ -58,15 +59,19 @@ pub mod write;
 #[doc(hidden)]
 pub mod xml;
 
-pub(crate) use anchor::plain_anchor_with_removed;
+#[doc(hidden)]
+pub use anchor::plain_anchor_with_removed;
 pub use anchor::{plain_anchor, unescape_markdown};
 pub use diff::diff_markdown;
 pub use pages::paginate;
 pub use write::{image_targets, markdown_to_docx};
 
-pub(crate) use package::{ensure_footnotes_part, max_drawing_id};
-pub(crate) use write::read_picture;
-pub(crate) use xml::{Picture, drawing_xml};
+#[doc(hidden)]
+pub use package::{ensure_footnotes_part, max_drawing_id};
+#[doc(hidden)]
+pub use write::read_picture;
+#[doc(hidden)]
+pub use xml::{Picture, drawing_xml};
 
 /// What happens to the tracked changes a Markdown / `.docx` document
 /// describes. Backs the `convert`, `read`, and `diff` CLI flags of the
@@ -1088,7 +1093,7 @@ pub fn changed_view(
 ///   or keep them.
 /// - `revisions` — how the layout pass paints revision marks (the
 ///   conventional red/blue/green redline, the Word-style marks, or a
-///   [`crate::convert::RevisionPalette`]). The bench suite measures
+///   `RevisionPalette`). The bench suite measures
 ///   against `RevisionStyle::Word`; call sites that compare a `jubarte`
 ///   PDF against a Word one must pass `RevisionStyle::Word`.
 ///

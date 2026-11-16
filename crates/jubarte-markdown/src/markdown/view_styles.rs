@@ -331,7 +331,8 @@ fn direct_child_span(block: &str, own: &Own, local: &str) -> Option<std::ops::Ra
 
 /// One style the legend describes.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct StyleSpec {
+#[doc(hidden)]
+pub struct StyleSpec {
     pub id: String,
     /// The style's name, when the legend gives one (`, named …`).
     pub name: Option<String>,
@@ -510,7 +511,8 @@ fn unquote(value: &str) -> Option<String> {
 
 /// A table style's borders as its legend entry states them.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum TableBorders {
+#[doc(hidden)]
+pub enum TableBorders {
     /// `all borders 0.5pt`: every side one single line of this size, in
     /// eighths of a point.
     All(u32),
@@ -521,7 +523,8 @@ pub(crate) enum TableBorders {
 
 /// One side of a `borders …` clause: `top single 1.5pt #FF0000 space 2pt`.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct BorderSide {
+#[doc(hidden)]
+pub struct BorderSide {
     /// `top`, `left`, `bottom`, `right`, `insideH` or `insideV`.
     pub side: String,
     /// The `w:val`: `single`, `double`, `nil`, …
