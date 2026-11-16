@@ -455,7 +455,8 @@ fn properties(name: &XName) -> bool {
 
 /// One character per visible element that is not text: what a run holding
 /// a tab, a break or a drawing covers.
-pub(crate) fn atom(name: &XName) -> Option<char> {
+#[doc(hidden)]
+pub fn atom(name: &XName) -> Option<char> {
     if name.namespace_name() != W::URI {
         return None;
     }
@@ -474,7 +475,8 @@ pub(crate) fn atom(name: &XName) -> Option<char> {
 
 /// Whether `run` covers any character [`run_characters`] counts: text
 /// outside its properties, or an atom ([`atom`]).
-pub(crate) fn run_has_characters(dom: &Dom, run: NodeId) -> bool {
+#[doc(hidden)]
+pub fn run_has_characters(dom: &Dom, run: NodeId) -> bool {
     let (t, del_text) = (W::t(), W::del_text());
     let mut pending: Vec<NodeId> = dom.elements(run, None);
     while let Some(node) = pending.pop() {
@@ -561,7 +563,8 @@ fn run_characters(
 /// ([`recorded_properties`]) and, a run's, the characters it covers
 /// ([`run_characters`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Recorded {
+#[doc(hidden)]
+pub struct Recorded {
     pub payload: String,
     pub characters: Option<(usize, usize)>,
 }
@@ -577,13 +580,15 @@ pub(crate) type Records = HashMap<String, Vec<Recorded>>;
 /// id repeats in two comments. A comment an edit removes takes its body's
 /// changes with it (#1706).
 #[derive(Debug, Default)]
-pub(crate) struct CommentBodies {
+#[doc(hidden)]
+pub struct CommentBodies {
     pub comments: HashSet<String>,
     pub owners: HashMap<String, Option<String>>,
 }
 
 /// [`CommentBodies`] of `docx`; empty when it has no comments part.
-pub(crate) fn comment_bodies(docx: &[u8]) -> Result<CommentBodies, ChangeError> {
+#[doc(hidden)]
+pub fn comment_bodies(docx: &[u8]) -> Result<CommentBodies, ChangeError> {
     let pkg = open(docx)?;
     let mut bodies = CommentBodies::default();
     let Some(part) = crate::revision_processor::comments_part(&pkg) else {
@@ -636,7 +641,8 @@ pub(crate) fn comment_bodies(docx: &[u8]) -> Result<CommentBodies, ChangeError> 
 /// [`list_changes`] and its formatting changes' [`Records`], from one
 /// parse of each story. The content of a change `skip` names, and the
 /// paragraph mark it inserts, count for nothing in the characters.
-pub(crate) fn changes_and_records(
+#[doc(hidden)]
+pub fn changes_and_records(
     docx: &[u8],
     skip: &dyn Fn(&Change) -> bool,
 ) -> Result<(Vec<Change>, Records), ChangeError> {
@@ -1009,7 +1015,8 @@ pub fn list_logical_changes(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
 
 /// The id of the marks `ids` names together, in their order: `r7+8`,
 /// `header1.r1+2`. One mark keeps its own id, whatever its spelling.
-pub(crate) fn composite_id(ids: &[String]) -> String {
+#[doc(hidden)]
+pub fn composite_id(ids: &[String]) -> String {
     match ids {
         [one] => one.clone(),
         _ => logical::joined(ids.iter().map(String::as_str)),
@@ -1032,7 +1039,8 @@ pub fn by_authors(changes: Vec<Change>, authors: &[String]) -> Vec<Change> {
 }
 
 /// The logical changes of an opened package ([`list_logical_changes`]).
-pub(crate) fn logical_changes_in(pkg: &PartFs) -> Vec<Change> {
+#[doc(hidden)]
+pub fn logical_changes_in(pkg: &PartFs) -> Vec<Change> {
     let mut out = Vec::new();
     for_each_story(pkg, |dom, root, story| {
         out.extend(logical::logical(dom, root, &carriers(dom, root, story)));
@@ -1044,7 +1052,8 @@ pub(crate) fn logical_changes_in(pkg: &PartFs) -> Vec<Change> {
 /// ([`ChangeError::PartOfChange`]): the check `accept` and `reject` make,
 /// for an edit plan's `resolve_revisions` and the edit flags to make on
 /// their source before they resolve anything.
-pub(crate) fn check_whole_changes(docx: &[u8], filter: &ChangeFilter) -> Result<(), ChangeError> {
+#[doc(hidden)]
+pub fn check_whole_changes(docx: &[u8], filter: &ChangeFilter) -> Result<(), ChangeError> {
     let filter = filter.normalized()?;
     if filter.ids.is_none() {
         return Ok(());
@@ -1055,13 +1064,15 @@ pub(crate) fn check_whole_changes(docx: &[u8], filter: &ChangeFilter) -> Result<
 /// [`list_changes`] for a view that already renders the package: no
 /// admission, and a part that does not parse lists nothing, so the view's
 /// count fails only where the package itself does.
-pub(crate) fn list_changes_tolerant(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
+#[doc(hidden)]
+pub fn list_changes_tolerant(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
     Ok(changes_in(&tolerant(docx)?))
 }
 
 /// [`list_logical_changes`] as [`list_changes_tolerant`] lists the marks:
 /// the changes a view's tags name.
-pub(crate) fn list_logical_changes_tolerant(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
+#[doc(hidden)]
+pub fn list_logical_changes_tolerant(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
     Ok(logical_changes_in(&tolerant(docx)?))
 }
 
@@ -1089,7 +1100,8 @@ fn tolerant(docx: &[u8]) -> Result<PartFs, ChangeError> {
 
 /// The changes of an opened (transitional) package, as [`list_changes`]
 /// lists them. A comment-body revision is `comments.rN` (#1706).
-pub(crate) fn changes_in(pkg: &PartFs) -> Vec<Change> {
+#[doc(hidden)]
+pub fn changes_in(pkg: &PartFs) -> Vec<Change> {
     let mut out = Vec::new();
     for_each_story(pkg, |dom, root, story| {
         out.extend(
@@ -1433,7 +1445,8 @@ type CommentResolution = (Vec<u8>, Vec<String>, Vec<String>);
 
 /// Settlement driven by an edit plan, with stable comment ids and opt-in
 /// empty anchors. Removed ids come directly from package pruning.
-pub(crate) fn resolve_for_edit(
+#[doc(hidden)]
+pub fn resolve_for_edit(
     docx: &[u8],
     filter: &ChangeFilter,
     resolution: Resolution,
@@ -1618,7 +1631,8 @@ fn final_marks_of_row(dom: &Dom, carrier: NodeId) -> Vec<NodeId> {
 ///
 /// [`ChangeError::ExposedFinalMark`] for the first newly exposed mark;
 /// [`ChangeError::Package`] when either package cannot be read.
-pub(crate) fn check_exposed_final_marks(before: &[u8], after: &[u8]) -> Result<(), ChangeError> {
+#[doc(hidden)]
+pub fn check_exposed_final_marks(before: &[u8], after: &[u8]) -> Result<(), ChangeError> {
     let before = open(before)?;
     let after = open(after)?;
     newly_exposed(
@@ -1817,7 +1831,8 @@ struct ResolutionOutcome {
 }
 
 /// The package, Strict normalized to transitional as `inspect` reads it.
-fn open(docx: &[u8]) -> Result<PartFs, ChangeError> {
+#[doc(hidden)]
+pub fn open(docx: &[u8]) -> Result<PartFs, ChangeError> {
     crate::admission::admit_package(docx).map_err(|e| ChangeError::Package(e.to_string()))?;
     let normalized = crate::strict_translation::strict_to_transitional_docx(docx)
         .map_err(|e| ChangeError::Package(e.to_string()))?;
@@ -1877,7 +1892,8 @@ struct Carrier {
 }
 
 /// Formatting changes: each records the properties it replaced.
-pub(crate) const FORMATTING: &[&str] = &[
+#[doc(hidden)]
+pub const FORMATTING: &[&str] = &[
     "rPrChange",
     "pPrChange",
     "sectPrChange",

@@ -7,9 +7,9 @@
 //!
 //! [`validate`] runs the Ring-1 invariants (the checks the test suite has
 //! gated every produced package on) and the five `jubarte debug` triage
-//! checks, and returns one [`Finding`] per problem with a stable `code`.
-//! [`repair`] fixes the findings that have a deterministic fix and reports
-//! what it could not fix. [`audit_tracked`] is `validate.py --original
+//! checks, and returns one [`Finding`](crate::validate::Finding) per problem with a stable `code`.
+//! [`repair`](crate::validate::repair) fixes the findings that have a deterministic fix and reports
+//! what it could not fix. [`audit_tracked`](crate::validate::audit_tracked) is `validate.py --original
 //! --author` without an XSD: every visible-text difference between an
 //! original and an edited document must sit in a revision by one author.
 //!
@@ -18,7 +18,7 @@
 //! answer.
 //!
 //! Codes, with whether Word refuses or repairs the file for them
-//! (`word_fatal`) and whether [`repair`] fixes them (`repairable`):
+//! (`word_fatal`) and whether [`repair`](crate::validate::repair) fixes them (`repairable`):
 //!
 //! | Code | `word_fatal` | `repairable` |
 //! |---|---|---|
@@ -132,7 +132,8 @@ pub struct Finding {
 }
 
 /// Every rule set `validate` runs, `word` (the default) first.
-pub(crate) const RULE_SETS: &[&str] = &["word", "edits", "a11y", "style", "structure"];
+#[doc(hidden)]
+pub const RULE_SETS: &[&str] = &["word", "edits", "a11y", "style", "structure"];
 
 impl Finding {
     /// A `word` finding with `word_fatal` and `repairable` taken from the
@@ -330,6 +331,7 @@ pub struct Repaired {
     pub remaining: Vec<Finding>,
 }
 
+#[cfg(feature = "render")]
 /// [`validate`] with rule sets: `word` (the default), `edits`, and the
 /// [`crate::audit`] sets or codes (`a11y`, `style`, `structure`,
 /// `LITERAL_BULLET`, ...). `original` (the document before the edits and the
@@ -391,6 +393,7 @@ pub fn validate_with(
 /// same original ([`baseline_keyed`], each side's keys read in its own
 /// document by [`identities`]). That original is `base` unless `original`
 /// names another; `author` turns the `edits` rule on as `validate_with`'s
+#[cfg(feature = "render")]
 /// `original` does, so the other party's changes `base` already had are
 /// the input's, not the edit's. `Baselined::authors` names who signed the
 /// markup `docx` gained over the baseline, whoever that is (#1893): the
@@ -617,7 +620,8 @@ impl Finding {
     /// [`normalised`] and without the numbers that stand alone. Names stay
     /// (a bookmark's `Clause1`, a style's); revision ids, counts and
     /// indices, which a rerun of fewer operations shifts, do not.
-    pub(crate) fn unnumbered(&self) -> String {
+    #[doc(hidden)]
+    pub fn unnumbered(&self) -> String {
         let location = if self.location.contains('[') {
             let mut out = String::with_capacity(self.location.len());
             for (i, step) in self.location.split('/').enumerate() {
@@ -1622,10 +1626,12 @@ fn check_inserted_text_before_deleted_tables(pkg: &PartFs, out: &mut Vec<Finding
     }
 }
 
+#[doc(hidden)]
+pub use crate::validate_dom::container_blocks;
 pub(crate) use crate::validate_dom::holds_page_field;
 pub(crate) use crate::validate_dom::{
-    closing_paragraph, container_blocks, has_unique_revision_id,
-    inserted_text_before_deleted_tables, uncovered_final_marks,
+    closing_paragraph, has_unique_revision_id, inserted_text_before_deleted_tables,
+    uncovered_final_marks,
 };
 
 /// A table cell's final paragraph mark inserted or deleted while its row
@@ -2660,7 +2666,8 @@ fn range_start_of(end: &str) -> Option<&'static str> {
 /// How often each revision id occurs, by the scope `DUPLICATE_REVISION_ID`
 /// checks: part, then record type and id ([`revision_id_key`]). A Strict
 /// package is read as the Transitional one an edit writes.
-pub(crate) fn revision_id_occurrences(
+#[doc(hidden)]
+pub fn revision_id_occurrences(
     docx: &[u8],
 ) -> Result<HashMap<(String, String), usize>, ValidateError> {
     let transitional = crate::strict_translation::strict_to_transitional_docx(docx)
@@ -3848,10 +3855,8 @@ fn drop_dangling_relationship_attributes(dom: &mut Dom, root: NodeId, ids: &Hash
 /// from the part's highest `w:id` upwards; a range start takes its end
 /// along. An end is never renumbered on its own: which start it closes is
 /// not known. Accepted cross-kind pairs retain their ids.
-pub(crate) fn renumber_duplicate_revision_ids(
-    dom: &mut Dom,
-    root: NodeId,
-) -> Vec<(String, String)> {
+#[doc(hidden)]
+pub fn renumber_duplicate_revision_ids(dom: &mut Dom, root: NodeId) -> Vec<(String, String)> {
     let id_name = W::id();
     let all: Vec<NodeId> = dom.descendants(root, None);
     let mut next: u64 = all
@@ -5255,7 +5260,10 @@ mod validation_boundary_tests {
     use super::*;
 
     fn pkg() -> PartFs {
-        PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap()
+        PartFs::open(include_bytes!(
+            "../../../tests/fixtures/redline/original.docx"
+        ))
+        .unwrap()
     }
 
     fn xml(dom: &mut Dom, body: &str) -> NodeId {
@@ -5476,7 +5484,10 @@ mod validation_boundary_tests {
 mod validation_owner_boundary_tests {
     use super::*;
     fn package() -> PartFs {
-        PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap()
+        PartFs::open(include_bytes!(
+            "../../../tests/fixtures/redline/original.docx"
+        ))
+        .unwrap()
     }
     #[test]
     fn relationship_target_diagnostics_distinguish_owned_payloads_from_unresolved_and_external_targets()
@@ -5753,8 +5764,10 @@ mod validation_owner_boundary_tests {
 mod public_memory_validator_owner_boundary_tests {
     use super::*;
     fn package(body: &str) -> PartFs {
-        let mut pkg =
-            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let mut pkg = PartFs::open(include_bytes!(
+            "../../../tests/fixtures/redline/original.docx"
+        ))
+        .unwrap();
         pkg.set_part("word/document.xml",format!("<w:document xmlns:w=\"{}\" xmlns:w14=\"{}\" xmlns:mc=\"{}\" mc:Ignorable=\"w14\"><w:body>{body}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr></w:body></w:document>",W::URI,W14::URI,MC::URI).into_bytes());
         pkg
     }
@@ -5989,8 +6002,10 @@ mod paragraph_id_collision_owner_tests {
     #[test]
     fn paragraph_id_collision_repair_preserves_all_owners_and_shared_references() {
         for old_id in ["00000000", "80000000", "80000001", "FFFFFFFF"] {
-            let mut pkg =
-                PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+            let mut pkg = PartFs::open(include_bytes!(
+                "../../../tests/fixtures/redline/original.docx"
+            ))
+            .unwrap();
             let document = format!(
                 r#"<w:document xmlns:w="{}" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w:body><w:p w14:paraId="00000001" w14:textId="00000002"><w:pPr><w:spacing w:after="80"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>existing ids</w:t></w:r></w:p><w:p w14:paraId="7FFFFFFF"><w:r><w:t>upper existing id</w:t></w:r></w:p><w:p w14:paraId="{old_id}" w14:textId="{old_id}"><w:pPr><w:keepNext/><w:pPrChange w:id="51" w:author="Source" w:date="2026-10-09T00:00:00Z"><w:pPr><w:spacing w:before="120"/></w:pPr></w:pPrChange></w:pPr><w:r><w:rPr><w:i/><w:color w:val="123456"/></w:rPr><w:t>ação τέλος</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>"#,
                 W::URI
@@ -6075,8 +6090,10 @@ mod authored_comment_family_validation_contract_tests {
     use super::*;
 
     fn package() -> PartFs {
-        let mut pkg =
-            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let mut pkg = PartFs::open(include_bytes!(
+            "../../../tests/fixtures/redline/original.docx"
+        ))
+        .unwrap();
         pkg.set_part("word/document.xml",format!("<w:document xmlns:w='{}'><w:body><w:p><w:r><w:t>Owned body</w:t></w:r></w:p></w:body></w:document>",W::URI).into_bytes());
         pkg
     }
@@ -6218,8 +6235,10 @@ mod retained_namespace_finding_source_contract_tests {
             } else {
                 "UnknownFoo UnknownBar"
             };
-            let mut pkg =
-                PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+            let mut pkg = PartFs::open(include_bytes!(
+                "../../../tests/fixtures/redline/original.docx"
+            ))
+            .unwrap();
             let body = format!(
                 "<w:document xmlns:w='{}' xmlns:mc='{}' mc:Ignorable='{ignorable}'><w:body><w:p><w:pPr><w:spacing w:after='120'/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Owned body</w:t></w:r></w:p></w:body></w:document>",
                 W::URI,
@@ -6315,8 +6334,10 @@ mod duplicate_drawing_owned_repair_contract_tests {
 
     #[test]
     fn duplicate_drawing_repair_renumbers_only_ids_and_preserves_every_shape_owner() {
-        let mut pkg =
-            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let mut pkg = PartFs::open(include_bytes!(
+            "../../../tests/fixtures/redline/original.docx"
+        ))
+        .unwrap();
         let drawing = |id, name, color| {
             format!(
                 "<w:r><w:rPr><w:b/></w:rPr><w:drawing><wp:inline><wp:extent cx='914400' cy='457200'/><wp:docPr id='{id}' name='{name}' descr='Owned shape'/><a:graphic><a:graphicData uri='http://schemas.microsoft.com/office/word/2010/wordprocessingShape'><wps:wsp><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x='0' y='0'/><a:ext cx='914400' cy='457200'/></a:xfrm><a:prstGeom prst='rect'><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val='{color}'/></a:solidFill></wps:spPr><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"
@@ -6367,8 +6388,10 @@ mod duplicate_drawing_owned_repair_contract_tests {
         // Word saves a text box twice (DrawingML choice, VML fallback) and a
         // picture inside it twice with one docPr id; w12's header and Word's
         // own redline of it carry such a twin and open clean (2026-10-27).
-        let mut pkg =
-            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let mut pkg = PartFs::open(include_bytes!(
+            "../../../tests/fixtures/redline/original.docx"
+        ))
+        .unwrap();
         let picture = |id| {
             format!(
                 "<w:p><w:r><w:drawing><wp:inline><wp:extent cx='914400' cy='457200'/><wp:docPr id='{id}' name='Picture {id}'/></wp:inline></w:drawing></w:r></w:p>"

@@ -15,9 +15,9 @@
 //! resolutions, and `STALE_FIELD_CACHE` compares a cached `NUMPAGES` result
 //! with the laid-out page count. The pass runs only when one of them is
 //! selected and has something to read, and it lays out in
-//! [`RevisionStyle::Word`] because the cached page count it is checked
-//! against is Word's. [`AuditReport::layout`] says whether it ran.
-//! [`audit_report_with`] takes the pass from the caller, or none, for builds
+//! [`RevisionStyle::Word`](jubarte_render::convert::RevisionStyle::Word) because the cached page count it is checked
+//! against is Word's. [`AuditReport::layout`](crate::audit::AuditReport::layout) says whether it ran.
+//! [`audit_report_with`](crate::audit::audit_report_with) takes the pass from the caller, or none, for builds
 //! that leave the renderer out.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -25,13 +25,14 @@ use std::fmt;
 
 use serde::Serialize;
 
-use crate::convert::{PdfOptions, RenderReport, RevisionStyle, docx_render_report};
 use crate::inspect::{
     InspectError, Opened, body_paragraph_nodes, parse_part, project_paragraph,
     story_paragraph_nodes,
 };
 use crate::namespaces::{MC, W, WP};
 use crate::xmllinq::{Dom, NodeId, XName};
+#[cfg(feature = "render")]
+use jubarte_render::convert::{PdfOptions, RenderReport, RevisionStyle, docx_render_report};
 
 /// Every rule: `(code, rule set, severity)`, in report order.
 pub const RULES: &[(&str, &str, &str)] = &[
@@ -48,7 +49,8 @@ pub const RULES: &[(&str, &str, &str)] = &[
 
 /// The rule sets [`RULES`] groups codes into: the last three of
 /// [`crate::validate::RULE_SETS`].
-const RULE_SETS: &[&str] = crate::validate::RULE_SETS.split_at(2).1;
+#[doc(hidden)]
+pub const RULE_SETS: &[&str] = crate::validate::RULE_SETS.split_at(2).1;
 
 /// Characters typed as list markers instead of using Word numbering.
 const LITERAL_MARKERS: &[char] = &['•', '◦', '▪', '-', '*', '·'];
@@ -124,19 +126,23 @@ impl From<InspectError> for AuditError {
 /// [`AuditError::UnknownRule`] when a rule is neither a known set nor a
 /// known code; [`AuditError::Layout`] when the layout pass fails;
 /// [`AuditError::Inspect`] when the package cannot be admitted or read.
+#[cfg(feature = "render")]
 pub fn audit(docx: &[u8], rules: &[&str]) -> Result<Vec<AuditFinding>, AuditError> {
     Ok(audit_report(docx, rules)?.findings)
 }
 
+#[cfg(feature = "render")]
 /// [`audit`] plus the codes that ran and whether a layout pass ran.
 ///
 /// # Errors
 ///
 /// As [`audit`].
+#[cfg(feature = "render")]
 pub fn audit_report(docx: &[u8], rules: &[&str]) -> Result<AuditReport, AuditError> {
     audit_report_with(docx, rules, Some(&mut word_layout))
 }
 
+#[cfg(feature = "render")]
 /// The native layout pass: the document laid out in
 /// [`RevisionStyle::Word`], whose page count the `NUMPAGES` cache is
 /// checked against.
@@ -153,13 +159,16 @@ pub fn word_layout(docx: &[u8]) -> Result<RenderReport, AuditError> {
 }
 
 /// True when `rule` is one of the audit's rule sets or codes.
-pub(crate) fn is_rule(rule: &str) -> bool {
+#[doc(hidden)]
+pub fn is_rule(rule: &str) -> bool {
     RULE_SETS.contains(&rule) || RULES.iter().any(|known| known.0 == rule)
 }
 
+#[cfg(feature = "render")]
 /// A layout pass [`audit_report_with`] calls at most once.
 pub type LayoutPass<'a> = &'a mut dyn FnMut(&[u8]) -> Result<RenderReport, AuditError>;
 
+#[cfg(feature = "render")]
 /// [`audit_report`] with the layout pass supplied by the caller, so a build
 /// without the renderer (the slim WASM build) can audit without linking it.
 ///
@@ -270,6 +279,7 @@ fn select(
         .collect())
 }
 
+#[cfg(feature = "render")]
 /// The layout report, computed by `pass` on first use.
 fn lay_out<'a>(
     docx: &[u8],
@@ -959,8 +969,10 @@ mod public_memory_spacer_ownership_tests {
     use crate::opc::PartFs;
 
     fn package(body: &str) -> PartFs {
-        let mut pkg =
-            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let mut pkg = PartFs::open(include_bytes!(
+            "../../../tests/fixtures/redline/original.docx"
+        ))
+        .unwrap();
         pkg.set_part("word/document.xml",format!("<w:document xmlns:w='{}'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI).into_bytes());
         pkg
     }
@@ -976,6 +988,7 @@ mod public_memory_spacer_ownership_tests {
             .collect()
     }
 
+    #[cfg(feature = "render")]
     #[test]
     fn spacer_audit_respects_authored_sections_page_breaks_and_table_cell_ownership() {
         let blank = "<w:p><w:pPr><w:spacing w:after='80'/></w:pPr></w:p>";

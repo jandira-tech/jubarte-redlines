@@ -23,8 +23,10 @@ use crate::namespaces::{MC, W, W14, W15};
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName};
 
-mod tables;
-pub(crate) use tables::top_level_table_nodes;
+#[doc(hidden)]
+pub mod tables;
+#[doc(hidden)]
+pub use tables::top_level_table_nodes;
 
 pub use tables::{NestedTable, Table, TableCell};
 
@@ -40,7 +42,8 @@ pub const SNAPSHOT_SCHEMA_VERSION: u32 = 3;
 
 /// The story every document has; its paragraph ids are `pN`, and a
 /// selector without a `story` searches it.
-pub(crate) const BODY_STORY: &str = "body";
+#[doc(hidden)]
+pub const BODY_STORY: &str = "body";
 
 /// Kinds of part an edit plan addresses as a story besides the body, in
 /// the order [`stories`] lists them. Each is the last segment of the part's
@@ -48,7 +51,8 @@ pub(crate) const BODY_STORY: &str = "body";
 /// `footer2`, `footnotes`, `endnotes`) and [`Story::kind`] is one of these.
 /// Comments and text boxes are not stories. `capabilities` advertises this
 /// list after `body`, so the manifest and the parser cannot drift.
-pub(crate) const STORY_KINDS: &[&str] = &["header", "footer", "footnotes", "endnotes"];
+#[doc(hidden)]
+pub const STORY_KINDS: &[&str] = &["header", "footer", "footnotes", "endnotes"];
 
 /// One paragraph of the body or a story. `index` and `id` are valid for this
 /// exact snapshot.
@@ -186,7 +190,8 @@ impl Snapshot {
     /// [`Snapshot::retain`], keeping too the changes and comments in
     /// `stories` (`header1`, `footnotes`): those a `--changed` selection
     /// changed.
-    pub(crate) fn retain_with(&mut self, body_paragraphs: &[usize], stories: &[String]) {
+    #[doc(hidden)]
+    pub fn retain_with(&mut self, body_paragraphs: &[usize], stories: &[String]) {
         let kept: BTreeSet<usize> = body_paragraphs.iter().copied().collect();
         self.paragraphs
             .retain(|p| body_index(Some(&p.id)).is_some_and(|n| kept.contains(&n)));
@@ -310,7 +315,8 @@ pub fn paragraphs(docx: &[u8]) -> Result<Vec<Paragraph>, InspectError> {
 
 /// Paragraph locations for a comparison rendered under its active budget.
 /// One admitted open serves both the body and its related stories.
-pub(crate) fn paragraphs_and_stories_within(
+#[doc(hidden)]
+pub fn paragraphs_and_stories_within(
     docx: &[u8],
     limits: crate::admission::InputLimits,
 ) -> Result<(Vec<Paragraph>, Vec<Story>), InspectError> {
@@ -696,9 +702,10 @@ fn emphasize(piece: &str, span: &Span) -> String {
 // `reset_reopened_packages`. Tests that must not pay for a reparse of bytes
 // they already hold reset the counter, run the phase under test, and read
 // it back.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 thread_local! {
-    pub(crate) static REOPENED_PACKAGES: std::cell::Cell<usize> =
+    #[doc(hidden)]
+    pub static REOPENED_PACKAGES: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
 }
 
@@ -710,23 +717,26 @@ fn bump_reopened_packages() {
 }
 
 /// Zero this thread's [`REOPENED_PACKAGES`].
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
-pub(crate) fn reset_reopened_packages() {
+#[doc(hidden)]
+pub fn reset_reopened_packages() {
     REOPENED_PACKAGES.with(|count| count.set(0));
 }
 
 /// A parsed main document part plus its package.
-pub(crate) struct Opened {
-    pub(crate) pkg: PartFs,
-    pub(crate) main: String,
-    pub(crate) dom: Dom,
-    pub(crate) document: NodeId,
-    pub(crate) body: NodeId,
+#[doc(hidden)]
+pub struct Opened {
+    pub pkg: PartFs,
+    pub main: String,
+    pub dom: Dom,
+    pub document: NodeId,
+    pub body: NodeId,
 }
 
 impl Opened {
-    pub(crate) fn open(bytes: &[u8]) -> Result<Self, InspectError> {
+    #[doc(hidden)]
+    pub fn open(bytes: &[u8]) -> Result<Self, InspectError> {
         Self::open_within(bytes, crate::admission::InputLimits::default())
     }
 
@@ -854,7 +864,8 @@ impl Opened {
     /// Internal targets of the main part's relationships of one kind.
     /// Header, footer and note parts: `(story id, kind, part name)`. The id
     /// is the part's file stem; `header2` sorts before `header10`.
-    pub(crate) fn story_parts(&self) -> Vec<(String, &'static str, String)> {
+    #[doc(hidden)]
+    pub fn story_parts(&self) -> Vec<(String, &'static str, String)> {
         let mut out = Vec::new();
         for kind in STORY_KINDS.iter().copied() {
             let mut parts: Vec<String> = self.related(kind).into_iter().collect();
@@ -895,7 +906,8 @@ impl Opened {
             .collect()
     }
 
-    pub(crate) fn related(&self, kind: &str) -> BTreeSet<String> {
+    #[doc(hidden)]
+    pub fn related(&self, kind: &str) -> BTreeSet<String> {
         self.pkg
             .read_rels_for(&self.main)
             .into_iter()
@@ -919,7 +931,8 @@ fn main_part(pkg: &PartFs) -> Result<String, InspectError> {
 }
 
 /// Parse one XML part through the checked reader: `(dom, document, root)`.
-pub(crate) fn parse_part(pkg: &PartFs, name: &str) -> Result<(Dom, NodeId, NodeId), InspectError> {
+#[doc(hidden)]
+pub fn parse_part(pkg: &PartFs, name: &str) -> Result<(Dom, NodeId, NodeId), InspectError> {
     parse_part_within(pkg, name, crate::admission::InputLimits::default())
 }
 
@@ -950,7 +963,8 @@ fn has_ancestor(dom: &Dom, node: NodeId, name: &XName) -> bool {
 pub(crate) use crate::ooxml::text_box_names;
 
 /// Whether `node` sits inside a text box.
-pub(crate) fn in_text_box(dom: &Dom, node: NodeId) -> bool {
+#[doc(hidden)]
+pub fn in_text_box(dom: &Dom, node: NodeId) -> bool {
     text_box_names()
         .iter()
         .any(|name| has_ancestor(dom, node, name))
@@ -976,7 +990,8 @@ fn note_count(dom: &Dom, root: NodeId, local: &str) -> usize {
 }
 
 /// The body paragraphs (`w:p` outside text boxes) in document order.
-pub(crate) fn body_paragraph_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
+#[doc(hidden)]
+pub fn body_paragraph_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
     dom.descendants(body, Some(&W::p()))
         .into_iter()
         .filter(|&p| !in_text_box(dom, p))
@@ -985,7 +1000,8 @@ pub(crate) fn body_paragraph_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
 
 /// The body's content controls (`w:sdt` outside text boxes) in document
 /// order, the order [`collect_controls`] numbers them in.
-pub(crate) fn body_control_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
+#[doc(hidden)]
+pub fn body_control_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
     dom.descendants(body, Some(&W::sdt()))
         .into_iter()
         .filter(|&sdt| !in_text_box(dom, sdt))
@@ -993,7 +1009,8 @@ pub(crate) fn body_control_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
 }
 
 /// One record per [`body_control_nodes`] entry.
-pub(crate) fn collect_controls(dom: &Dom, body: NodeId) -> Vec<ContentControl> {
+#[doc(hidden)]
+pub fn collect_controls(dom: &Dom, body: NodeId) -> Vec<ContentControl> {
     let paragraphs = body_paragraph_nodes(dom, body);
     let index: std::collections::HashMap<NodeId, usize> = paragraphs
         .iter()
@@ -1166,7 +1183,8 @@ fn control_kind(dom: &Dom, pr: NodeId) -> &'static str {
 }
 
 /// A header, footer or notes part's paragraphs, separator notes left out.
-pub(crate) fn story_paragraph_nodes(dom: &Dom, root: NodeId) -> Vec<NodeId> {
+#[doc(hidden)]
+pub fn story_paragraph_nodes(dom: &Dom, root: NodeId) -> Vec<NodeId> {
     body_paragraph_nodes(dom, root)
         .into_iter()
         .filter(|&p| {
@@ -1214,7 +1232,8 @@ fn paragraphs_of(dom: &Dom, nodes: Vec<NodeId>, story: &str) -> Vec<Paragraph> {
 
 /// What one visible piece of paragraph text maps back to.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Piece {
+#[doc(hidden)]
+pub enum Piece {
     /// A `w:t` element and the `w:r` that owns it.
     Text { t: NodeId, run: NodeId },
     /// A non-text run child projected as one char (`w:tab`, `w:br`, ...).
@@ -1223,25 +1242,27 @@ pub(crate) enum Piece {
 
 /// One projected segment: `text[start..end]` (bytes) comes from `piece`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Segment {
-    pub(crate) start: usize,
-    pub(crate) end: usize,
-    pub(crate) piece: Piece,
+#[doc(hidden)]
+pub struct Segment {
+    pub start: usize,
+    pub end: usize,
+    pub piece: Piece,
     /// The run is a direct child of the paragraph (editable position).
-    pub(crate) direct: bool,
+    pub direct: bool,
 }
 
 /// Visible projection of one paragraph, with the segment map edits need.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Projection {
-    pub(crate) text: String,
-    pub(crate) segments: Vec<Segment>,
+#[doc(hidden)]
+pub struct Projection {
+    pub text: String,
+    pub segments: Vec<Segment>,
     pub(crate) spans: Vec<Span>,
     pub(crate) page_break: bool,
-    pub(crate) limitations: BTreeSet<String>,
+    pub limitations: BTreeSet<String>,
     /// Byte offsets of complex-field `w:fldChar` markers. A field with an
     /// empty result adds no text, so its markers are the only trace of it.
-    pub(crate) field_marks: Vec<usize>,
+    pub field_marks: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1253,7 +1274,8 @@ struct Format {
 }
 
 /// Project one `w:p` (see module docs for the rules).
-pub(crate) fn project_paragraph(dom: &Dom, paragraph: NodeId) -> Projection {
+#[doc(hidden)]
+pub fn project_paragraph(dom: &Dom, paragraph: NodeId) -> Projection {
     let mut projection = Projection::default();
     let mut formats: Vec<(usize, usize, Format)> = Vec::new();
     let mut fields = 0;

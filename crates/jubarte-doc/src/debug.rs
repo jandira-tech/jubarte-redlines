@@ -52,6 +52,7 @@ use std::io::{Cursor, Read};
 use crate::xmllinq::{Dom, NodeId};
 
 pub mod diff;
+#[cfg(feature = "render")]
 mod render;
 
 /// Which reports to print.
@@ -112,6 +113,7 @@ pub enum Check {
     /// highlight, run shading, hidden text, requested fonts and the order of
     /// deleted and inserted runs; `(layout)` adds jubarte's page count and
     /// the face each font resolved to.
+    #[cfg(feature = "render")]
     Render,
 }
 
@@ -1709,7 +1711,18 @@ fn numbering_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
 /// `text`: one line per paragraph, table and row of a story part, indented
 /// by table and text box depth; with `props`, the `runs` view. Returns the
 /// lines and the paragraph count.
-fn text_lines(dom: &Dom, root: NodeId, props: bool, critic: bool) -> (Vec<String>, usize) {
+/// Escapes CriticMarkup delimiters in literal text (the markdown layer's
+/// `critic_literal`, passed in by callers above it; this crate cannot
+/// name markdown - plan A5 seam).
+pub type CriticEscape = fn(&str) -> String;
+
+fn text_lines(
+    dom: &Dom,
+    root: NodeId,
+    props: bool,
+    critic: bool,
+    escape: CriticEscape,
+) -> (Vec<String>, usize) {
     fn mark(dom: &Dom, n: NodeId, props: &str) -> &'static str {
         let Some(pr) = dom.nodes(n).into_iter().find(|&c| local(dom, c) == props) else {
             return " ";
@@ -1782,6 +1795,7 @@ fn text_lines(dom: &Dom, root: NodeId, props: bool, critic: bool) -> (Vec<String
         paras: usize,
         props: bool,
         critic: bool,
+        escape: CriticEscape,
     }
     fn nested(dom: &Dom, n: NodeId, depth: usize, w: &mut Walk) {
         for c in dom.nodes(n) {
@@ -1805,7 +1819,7 @@ fn text_lines(dom: &Dom, root: NodeId, props: bool, critic: bool) -> (Vec<String
                         .map(|(k, f, t)| {
                             let f = f.as_ref().map(|f| format!("«{f}»")).unwrap_or_default();
                             if w.critic {
-                                let t = crate::text_diff::critic_literal(t);
+                                let t = (w.escape)(t);
                                 return match k {
                                     1 => format!("{{++{t}++}}"),
                                     2 => format!("{{--{t}--}}"),
@@ -1848,6 +1862,7 @@ fn text_lines(dom: &Dom, root: NodeId, props: bool, critic: bool) -> (Vec<String
         paras: 0,
         props,
         critic,
+        escape,
     };
     walk(dom, root, 0, &mut w);
     (w.out, w.paras)
@@ -1963,7 +1978,7 @@ fn table_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
                 }
                 // The cell's own paragraphs: `text` lines at depth 0.
                 cell.push_str(": ");
-                let lines = text_lines(dom, tc, false, false).0;
+                let lines = text_lines(dom, tc, false, false, |_| String::new()).0;
                 for (i, l) in lines.iter().filter(|l| l.starts_with("  ¶")).enumerate() {
                     if i > 0 {
                         cell.push_str(" | ");
@@ -2306,11 +2321,14 @@ fn story_roles_all(pkg: &Package) -> HashMap<String, Vec<String>> {
 /// Ordered, complete lines underlying every debug listing.
 fn listing_lines(pkg: &Package, check: Check, opts: &Options) -> PartLines {
     // `render` reads the package as a whole; the others part by part.
+    #[cfg(feature = "render")]
     let (mut map, entries) = if check == Check::Render {
         (render::render_parts(pkg, opts.part.as_deref()), &[][..])
     } else {
         (BTreeMap::new(), &pkg.entries[..])
     };
+    #[cfg(not(feature = "render"))]
+    let (mut map, entries) = (BTreeMap::new(), &pkg.entries[..]);
     for e in entries {
         if opts.part.as_deref().is_some_and(|p| !e.name.contains(p)) {
             continue;
@@ -2359,7 +2377,7 @@ fn listing_lines(pkg: &Package, check: Check, opts: &Options) -> PartLines {
         if TEXT_PARTS.contains(&local(&dom, root).as_str()) {
             map.insert(
                 e.name.clone(),
-                text_lines(&dom, root, check == Check::Runs, false),
+                text_lines(&dom, root, check == Check::Runs, false, |_| String::new()),
             );
         }
     }
@@ -2374,20 +2392,28 @@ fn listing_lines(pkg: &Package, check: Check, opts: &Options) -> PartLines {
 
 /// A complete text snapshot for unified diffs, with no report clipping.
 /// Header/footer roles are stable when Word renumbers their ZIP parts.
-pub(crate) fn document_text(bytes: &[u8]) -> Result<String, String> {
-    document_text_with_critic(bytes, false)
+#[doc(hidden)]
+pub fn document_text(bytes: &[u8]) -> Result<String, String> {
+    document_text_with_critic(bytes, false, |_| String::new())
 }
 
 /// The complete snapshot with revision spans rendered at their XML source.
-pub(crate) fn document_text_with_critic(bytes: &[u8], critic: bool) -> Result<String, String> {
-    document_text_view(bytes, critic, false)
+#[doc(hidden)]
+pub fn document_text_with_critic(
+    bytes: &[u8],
+    critic: bool,
+    escape: CriticEscape,
+) -> Result<String, String> {
+    document_text_view(bytes, critic, false, escape)
 }
 
 /// Validated document snapshot with an explicit revision policy.
-pub(crate) fn document_text_view(
+#[doc(hidden)]
+pub fn document_text_view(
     bytes: &[u8],
     critic: bool,
     accept: bool,
+    escape: CriticEscape,
 ) -> Result<String, String> {
     let admitted = crate::admission::admit(bytes, crate::admission::InputLimits::default())
         .map_err(|e| e.to_string())?;
@@ -2522,7 +2548,7 @@ pub(crate) fn document_text_view(
             }
             root = crate::revision_processor::accept_revisions_for_part_content(&mut dom, root);
         }
-        parts.insert(name, text_lines(&dom, root, false, critic).0);
+        parts.insert(name, text_lines(&dom, root, false, critic, escape).0);
     }
     let mut out = String::new();
     for (part, lines) in parts {
@@ -2543,6 +2569,7 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
         Check::Tables => "tables",
         Check::StyleDefs => "styledefs",
         Check::Numbering => "numbering",
+        #[cfg(feature = "render")]
         Check::Render => "render",
         _ => "text",
     };
@@ -2560,7 +2587,7 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
                 line(&mut out, &format!("{part}: {paras} styles"));
             } else if check == Check::Numbering {
                 line(&mut out, &format!("{part}: {paras} lists"));
-            } else if check == Check::Render && part == "(layout)" {
+            } else if is_render_layout(&check, part) {
                 line(&mut out, &format!("{part}: {paras} pages"));
             } else {
                 line(&mut out, &format!("{part}: {paras} paragraphs"));
@@ -2860,6 +2887,35 @@ fn finding_code(kind: &str) -> String {
     code.to_string()
 }
 
+/// Whether this part line is the render check's whole-package layout
+/// summary (the feature-gated variant names it).
+fn is_render_layout(check: &Check, part: &str) -> bool {
+    #[cfg(feature = "render")]
+    {
+        *check == Check::Render && part == "(layout)"
+    }
+    #[cfg(not(feature = "render"))]
+    {
+        false
+    }
+}
+
+/// Whether a check lists the package part by part (render reads it whole).
+fn is_listing_check(c: &Check) -> bool {
+    match c {
+        Check::Text
+        | Check::Xml
+        | Check::Runs
+        | Check::Changes
+        | Check::Tables
+        | Check::StyleDefs
+        | Check::Numbering => true,
+        #[cfg(feature = "render")]
+        Check::Render => true,
+        _ => false,
+    }
+}
+
 /// The report for one package, or the differences between two.
 ///
 /// # Errors
@@ -2867,19 +2923,7 @@ fn finding_code(kind: &str) -> String {
 /// A message naming which package is not a readable zip, or which zip
 /// entry failed to read.
 pub fn report(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, String> {
-    let is_listing = |c: &Check| {
-        matches!(
-            c,
-            Check::Text
-                | Check::Xml
-                | Check::Runs
-                | Check::Changes
-                | Check::Tables
-                | Check::StyleDefs
-                | Check::Numbering
-                | Check::Render
-        )
-    };
+    let is_listing = |c: &Check| is_listing_check(c);
     if opts.checks.iter().any(is_listing) {
         let pa = Package::open(a)?;
         let pb = match b {
@@ -4037,6 +4081,7 @@ mod tests {
         ])
     }
 
+    #[cfg(feature = "render")]
     /// `render` lists, for every story part and not only the body, what
     /// should reach the page: tables with their style, float and shading
     /// (direct, per cell, and from the table style), shaded, highlighted,
@@ -4110,6 +4155,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: `color auto`, `highlight none` and a nil `shd` are
     /// resets, not absences. Direct on a run, or in a style over its base,
     /// they stop the style's value from reaching the page, so `render`
@@ -4147,6 +4193,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "render")]
     /// `render` over a body and a styles part (PR #247 review probes).
     fn render_of(body: &str, styles: &str) -> String {
         let w = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
@@ -4164,6 +4211,7 @@ mod tests {
 
     const ONE_CELL: &str = r#"<w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc></w:tr>"#;
 
+    #[cfg(feature = "render")]
     /// PR #247 review: a derived table style keeps its base's conditions
     /// (the base's whole-table fill under the derived first row).
     #[test]
@@ -4179,6 +4227,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: a replacement inside a hyperlink, smart tag or
     /// content control still reports its order.
     #[test]
@@ -4200,6 +4249,7 @@ mod tests {
         assert!(!render_of(split, "").contains("revisions"));
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: the old `w:sectPr` a `w:sectPrChange` records is
     /// history, not a live section.
     #[test]
@@ -4213,6 +4263,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: a derived paragraph style's nil `shd` stops its
     /// base's fill.
     #[test]
@@ -4227,6 +4278,7 @@ mod tests {
         assert!(!out.contains("\"calm\""), "{out}");
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: a `w:customXml` row is a row of its table, as the
     /// converter lays it out.
     #[test]
@@ -4236,6 +4288,7 @@ mod tests {
         assert!(out.contains("  table 1 2x1 \"A1\"\n"), "{out}");
     }
 
+    #[cfg(feature = "render")]
     /// A `w:sdt` row and a `w:sdt` cell's paragraphs are the table's own,
     /// as Strict files and content controls spell them.
     #[test]
@@ -4245,6 +4298,7 @@ mod tests {
         assert!(out.contains("  table 1 2x1 \"A1\"\n"), "{out}");
     }
 
+    #[cfg(feature = "render")]
     /// Strict parts reach the checks translated: the package the SDK's
     /// strict→transitional load writes is what `render` describes, so a
     /// Strict `w:tbl` and `w:pgSz` list like Transitional ones.
@@ -4316,6 +4370,7 @@ mod tests {
         assert!(!text.contains("purl.oclc.org"), "{text}");
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: `behindDoc="true"` is behind the text, like `"1"`.
     #[test]
     fn render_marks_a_true_behind_doc_anchor() {
@@ -4331,6 +4386,7 @@ mod tests {
         assert!(!render_of(&anchor("false"), "").contains(" behind "));
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: each font slot a run asks for is reported, explicit
     /// or theme, not only the first.
     #[test]
@@ -4346,6 +4402,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: unequal columns report their widths and gaps, so
     /// two builds that move them differ.
     #[test]
@@ -4360,6 +4417,7 @@ mod tests {
         assert!(!render_of(&sect("4000", "4000"), "").contains("3000"));
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: only the branch Word renders counts; a DrawingML
     /// `mc:Choice` and its VML `mc:Fallback` are one picture.
     #[test]
@@ -4370,6 +4428,7 @@ mod tests {
         assert!(!out.contains("vml pict"), "{out}");
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: an unstyled paragraph takes the default paragraph
     /// style's shading and run colour, as the converter paints them.
     #[test]
@@ -4380,6 +4439,7 @@ mod tests {
         assert!(out.contains("color C00000 via \"Normal\""), "{out}");
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: a frame from the paragraph style's chain is the
     /// paragraph's frame; direct attributes override the style's.
     #[test]
@@ -4393,6 +4453,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: a theme colour's tint and shade change the ink, so
     /// they are part of the colour.
     #[test]
@@ -4403,6 +4464,7 @@ mod tests {
         assert!(out.contains("color theme:accent1/tint:99 ×1"), "{out}");
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: fonts a run takes from its character or paragraph
     /// style are the fonts it paints in.
     #[test]
@@ -4414,6 +4476,7 @@ mod tests {
         assert!(out.contains("rfonts \"Georgia\" via \"Quote\""), "{out}");
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: a run's leading `w:rPr` blocks apply in order, as
     /// the converter folds them; an `rPr` after the run's content does not.
     #[test]
@@ -4427,6 +4490,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: a direct `w:rFonts` overrides only the slots it
     /// names; the style's other slots still reach the page.
     #[test]
@@ -4442,6 +4506,7 @@ mod tests {
         assert!(!out.contains("Georgia"), "{out}");
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: a run that paints nothing does not separate a
     /// deletion from the insertion after it.
     #[test]
@@ -4451,6 +4516,7 @@ mod tests {
         assert!(out.contains("  revisions del→ins ×1 \"oldnew\"\n"), "{out}");
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: `docDefaults` paint the unstyled text, so their
     /// colour, highlight and shading are reported as the last layer.
     #[test]
@@ -4474,6 +4540,7 @@ mod tests {
         assert!(!out.contains("112233"), "{out}");
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: a derived table style's nil `shd` resets the
     /// condition its base fills.
     #[test]
@@ -4489,6 +4556,7 @@ mod tests {
         assert!(!out.contains("style-shd"), "{out}");
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: first-row cells inside a content control or
     /// customXml are the row's cells, as the converter lays them out.
     #[test]
@@ -4498,6 +4566,7 @@ mod tests {
         assert!(out.contains("  table 1 1x2 \"A1 | B1\"\n"), "{out}");
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: the conditions a table's `w:tblLook` turns off
     /// paint nothing, so they are not reported.
     #[test]
@@ -4522,6 +4591,7 @@ mod tests {
         assert!(out.contains(" style-shd[firstCol=FF0000] "), "{out}");
     }
 
+    #[cfg(feature = "render")]
     /// PR #247 review: a row with a live `w:cellDel` gains the "Deleted
     /// Cells" column the converter paints.
     #[test]

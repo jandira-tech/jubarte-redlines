@@ -68,7 +68,8 @@ pub(crate) fn opaque_table(dom: &Dom, table: NodeId) -> bool {
 }
 
 /// The tables numbered by the view: outside cells, text boxes and AC.
-pub(crate) fn top_level_table_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
+#[doc(hidden)]
+pub fn top_level_table_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
     dom.descendants(body, Some(&W::tbl()))
         .into_iter()
         .filter(|&table| nearest(dom, table, &W::tc()).is_none() && !opaque_table(dom, table))

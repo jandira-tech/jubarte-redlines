@@ -82,7 +82,7 @@ const MODULES: &[(&str, &str)] = &[
 
 /// Upward paths still to remove, as `file -> crate::path` (first two path
 /// segments when the first names a module with submodule overrides).
-const KNOWN_UPWARD: &[&str] = &["src/debug.rs -> text_diff"];
+const KNOWN_UPWARD: &[&str] = &[];
 
 fn rank(layer: &str) -> usize {
     LAYERS

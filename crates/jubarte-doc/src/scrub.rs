@@ -23,8 +23,8 @@
 //!
 //! Text, tracked changes and formatting stay. Revision dates stay.
 //!
-//! [`leaks`] is the check behind the `redact` plan operation: the parts of a
-//! package where a text still occurs. [`leak_scan`] is that check with a
+//! [`leaks`](crate::scrub::leaks) is the check behind the `redact` plan operation: the parts of a
+//! package where a text still occurs. [`leak_scan`](crate::scrub::leak_scan) is that check with a
 //! completeness receipt, so an encoding this scanner does not certify is
 //! not reported as "the text is absent".
 
@@ -738,8 +738,10 @@ mod public_memory_leak_boundary_tests {
     use super::*;
 
     fn package(body: &str) -> PartFs {
-        let mut pkg =
-            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let mut pkg = PartFs::open(include_bytes!(
+            "../../../tests/fixtures/redline/original.docx"
+        ))
+        .unwrap();
         pkg.set_part("word/document.xml",format!("<w:document xmlns:w='{}'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI).into_bytes());
         pkg
     }

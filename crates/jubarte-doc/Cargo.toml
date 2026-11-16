@@ -1,0 +1,56 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[package]
+name = "jubarte-doc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The document operations of the jubarte engine above compare: changes, comments, validation, audit, scrub, append, fields and the debug views"
+readme = "README.md"
+keywords = ["docx", "changes", "comments", "validate", "word"]
+categories = ["text-processing", "parser-implementations"]
+include = ["/src/**", "/README.md", "/LICENSE"]
+[lib]
+name = "jubarte_doc"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Layout needs the renderer (plan A4): audit's word_layout, the fields
+# update API, the debug render check.
+render = ["dep:jubarte-render"]
+# The changes types' JSON Schema derives, which the edit layer's plan
+# schema needs (as on the floors).
+schema = ["dep:schemars"]
+# Cross-crate test helpers (A4), forwarded down.
+test-support = ["jubarte-opc/test-support"]
+
+[dependencies]
+jubarte-dom = { workspace = true }
+jubarte-opc = { workspace = true }
+jubarte-redlines = { workspace = true }
+schemars = { workspace = true, optional = true }
+quick-xml = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+# The renderer is optional: without it no layout runs, and the public
+# items that need it do not exist (A4).
+jubarte-render = { workspace = true, optional = true }
+
+[dev-dependencies]
+jubarte-dom = { workspace = true, features = ["test-support"] }
+jubarte-opc = { workspace = true, features = ["schema", "test-support"] }
+jubarte-redlines = { workspace = true, features = ["test-support"] }
+tempfile = { workspace = true }
+zip = { workspace = true }

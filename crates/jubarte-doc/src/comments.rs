@@ -461,15 +461,22 @@ fn tail(text: &str, n: usize) -> String {
 }
 
 /// A new comment for [`CommentFamily::add`].
-pub(crate) struct NewComment<'a> {
-    pub(crate) id: u32,
-    pub(crate) author: &'a str,
-    pub(crate) date: &'a str,
-    pub(crate) initials: &'a str,
+#[doc(hidden)]
+pub struct NewComment<'a> {
+    #[doc(hidden)]
+    pub id: u32,
+    #[doc(hidden)]
+    pub author: &'a str,
+    #[doc(hidden)]
+    pub date: &'a str,
+    #[doc(hidden)]
+    pub initials: &'a str,
     /// `\n` starts a new line (a `w:br`), as the edit plan writes comments.
-    pub(crate) text: &'a str,
+    #[doc(hidden)]
+    pub text: &'a str,
     /// The comment replied to; the reply joins that comment's thread.
-    pub(crate) parent: Option<u32>,
+    #[doc(hidden)]
+    pub parent: Option<u32>,
 }
 
 /// One parsed part of the family.
@@ -491,7 +498,8 @@ struct Meta {
 
 /// The comment part family of one package, loaded for reading and editing
 /// (module docs).
-pub(crate) struct CommentFamily {
+#[doc(hidden)]
+pub struct CommentFamily {
     dom: Dom,
     /// comments, commentsExtended, commentsIds, commentsExtensible.
     parts: [Option<Part>; 4],
@@ -504,7 +512,8 @@ pub(crate) struct CommentFamily {
 
 impl CommentFamily {
     /// Load the family the main part `main` relates to.
-    pub(crate) fn load(pkg: &PartFs, main: &str) -> Result<Self, String> {
+    #[doc(hidden)]
+    pub fn load(pkg: &PartFs, main: &str) -> Result<Self, String> {
         let mut dom = Dom::new();
         let mut parts: [Option<Part>; 4] = [None, None, None, None];
         for (k, (_, _, rel_type)) in FAMILY.iter().enumerate() {
@@ -599,23 +608,27 @@ impl CommentFamily {
     }
 
     /// No comment is defined.
-    pub(crate) fn is_empty(&self) -> bool {
+    #[doc(hidden)]
+    pub fn is_empty(&self) -> bool {
         self.meta.is_empty()
     }
 
     /// Whether comment `id` is defined.
-    pub(crate) fn contains(&self, id: u32) -> bool {
+    #[doc(hidden)]
+    pub fn contains(&self, id: u32) -> bool {
         self.meta.contains_key(&id)
     }
 
     /// The `w:author` comment `id` is recorded under, when it names one.
-    pub(crate) fn author(&self, id: u32) -> Option<&str> {
+    #[doc(hidden)]
+    pub fn author(&self, id: u32) -> Option<&str> {
         let meta = self.meta.get(&id)?;
         self.dom.attribute(meta.node, &W::author())
     }
 
     /// Comment ids in `comments.xml` order.
-    pub(crate) fn order(&self) -> Vec<u32> {
+    #[doc(hidden)]
+    pub fn order(&self) -> Vec<u32> {
         let Some(comments) = &self.parts[0] else {
             return Vec::new();
         };
@@ -632,7 +645,8 @@ impl CommentFamily {
     }
 
     /// The first comment of `id`'s thread.
-    pub(crate) fn thread_root(&self, mut id: u32) -> u32 {
+    #[doc(hidden)]
+    pub fn thread_root(&self, mut id: u32) -> u32 {
         let mut seen = HashSet::new();
         while let Some(parent) = self.meta.get(&id).and_then(|m| m.parent) {
             if !seen.insert(id) {
@@ -644,7 +658,8 @@ impl CommentFamily {
     }
 
     /// `id` and every comment that replies to it, directly or not.
-    pub(crate) fn with_replies(&self, id: u32) -> Vec<u32> {
+    #[doc(hidden)]
+    pub fn with_replies(&self, id: u32) -> Vec<u32> {
         let mut out = vec![id];
         let mut i = 0;
         while i < out.len() {
@@ -684,7 +699,8 @@ impl CommentFamily {
     }
 
     /// The comment instant, sharing the revision reader's offset and fallback rule.
-    pub(crate) fn reported_date(&self, id: u32) -> Option<String> {
+    #[doc(hidden)]
+    pub fn reported_date(&self, id: u32) -> Option<String> {
         let meta = self.meta.get(&id)?;
         crate::util::datetime::reported_date(
             self.dom.attribute(meta.node, &W::date()),
@@ -695,7 +711,8 @@ impl CommentFamily {
 
     /// Add a comment; a reply goes right after the last comment of its
     /// thread and hangs off the thread's first comment.
-    pub(crate) fn add(&mut self, new: &NewComment<'_>) {
+    #[doc(hidden)]
+    pub fn add(&mut self, new: &NewComment<'_>) {
         let root = self.comments_root();
         let dom = &mut self.dom;
         let comment = dom.new_element(W::comment());
@@ -763,7 +780,8 @@ impl CommentFamily {
 
     /// Comment `id`'s thread parent, resolution and UTC date
     /// (`w16cex:dateUtc`), when `id` is defined.
-    pub(crate) fn thread_state(&self, id: u32) -> Option<(Option<u32>, bool, Option<String>)> {
+    #[doc(hidden)]
+    pub fn thread_state(&self, id: u32) -> Option<(Option<u32>, bool, Option<String>)> {
         let meta = self.meta.get(&id)?;
         let date = meta
             .cex_row
@@ -773,7 +791,8 @@ impl CommentFamily {
     }
 
     /// Set a linked UTC date before storing the existing comment family.
-    pub(crate) fn set_date_utc(&mut self, id: u32, date: &str) {
+    #[doc(hidden)]
+    pub fn set_date_utc(&mut self, id: u32, date: &str) {
         let Some(meta) = self.meta.get_mut(&id) else {
             return;
         };
@@ -840,7 +859,8 @@ impl CommentFamily {
 
     /// Replace a comment's text. Its last paragraph stays (with its paraId,
     /// the comment's key in the extended parts); the others go.
-    pub(crate) fn set_text(&mut self, id: u32, text: &str) {
+    #[doc(hidden)]
+    pub fn set_text(&mut self, id: u32, text: &str) {
         let Some(meta) = self.meta.get(&id) else {
             return;
         };
@@ -866,7 +886,8 @@ impl CommentFamily {
     /// Set comment `id`'s thread: the comment it replies to (it hangs off
     /// that comment's thread root, Word threads being one level deep) and
     /// whether it is resolved. A parent the family lacks is ignored.
-    pub(crate) fn set_thread(&mut self, id: u32, parent: Option<u32>, done: bool) {
+    #[doc(hidden)]
+    pub fn set_thread(&mut self, id: u32, parent: Option<u32>, done: bool) {
         let parent = parent
             .filter(|p| *p != id && self.meta.contains_key(p))
             .map(|p| self.thread_root(p));
@@ -877,7 +898,8 @@ impl CommentFamily {
     }
 
     /// Mark `id` and its replies resolved (or open again).
-    pub(crate) fn set_done(&mut self, id: u32, done: bool) {
+    #[doc(hidden)]
+    pub fn set_done(&mut self, id: u32, done: bool) {
         for c in self.with_replies(id) {
             if let Some(meta) = self.meta.get_mut(&c) {
                 meta.done = done;
@@ -886,7 +908,8 @@ impl CommentFamily {
     }
 
     /// Remove `id` and its replies; the removed ids.
-    pub(crate) fn remove(&mut self, id: u32) -> Vec<u32> {
+    #[doc(hidden)]
+    pub fn remove(&mut self, id: u32) -> Vec<u32> {
         let removed = self.with_replies(id);
         for c in &removed {
             if let Some(meta) = self.meta.remove(c) {
@@ -901,7 +924,8 @@ impl CommentFamily {
 
     /// Write the family back into `pkg`: every part present and consistent,
     /// or none of them when no comment is left; `people.xml` follows.
-    pub(crate) fn store(mut self, pkg: &mut PartFs, main: &str) {
+    #[doc(hidden)]
+    pub fn store(mut self, pkg: &mut PartFs, main: &str) {
         let remaining_authors: HashSet<String> = self
             .meta
             .values()
@@ -1307,7 +1331,10 @@ mod people_and_text_boundary_tests {
     use super::*;
 
     fn pkg() -> PartFs {
-        PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap()
+        PartFs::open(include_bytes!(
+            "../../../tests/fixtures/redline/original.docx"
+        ))
+        .unwrap()
     }
 
     fn people(pkg: &mut PartFs, xml: &str) {
@@ -1451,8 +1478,10 @@ mod public_memory_anchor_boundary_tests {
     use super::*;
 
     fn package(body: &str) -> PartFs {
-        let mut pkg =
-            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let mut pkg = PartFs::open(include_bytes!(
+            "../../../tests/fixtures/redline/original.docx"
+        ))
+        .unwrap();
         pkg.set_part("word/document.xml",format!("<w:document xmlns:w='{}'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI).into_bytes());
         pkg
     }
@@ -1704,8 +1733,10 @@ mod authored_thread_reference_contract_tests {
     use super::*;
 
     fn family(parents: [Option<usize>; 3]) -> (PartFs, CommentFamily) {
-        let mut pkg =
-            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let mut pkg = PartFs::open(include_bytes!(
+            "../../../tests/fixtures/redline/original.docx"
+        ))
+        .unwrap();
         let comments = (0..3).map(|i| format!("<w:comment w:id='{i}' w:author='Owner{i}' w:date='2025-01-0{}T00:00:00Z'><w:p w14:paraId='{:08X}'><w:pPr><w:spacing w:after='{}'/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Comment owner {i}</w:t></w:r></w:p></w:comment>",i+1,i+1,80+i)).collect::<String>();
         let extended = parents
             .iter()
@@ -1780,8 +1811,10 @@ mod authored_thread_reference_contract_tests {
 
     #[test]
     fn paragraph_id_scan_reserves_only_complete_hex_ids_from_other_xml_parts() {
-        let mut pkg =
-            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let mut pkg = PartFs::open(include_bytes!(
+            "../../../tests/fixtures/redline/original.docx"
+        ))
+        .unwrap();
         pkg.set_part("word/document.xml",b"<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:body/></w:document>".to_vec());
         pkg.set_part(
             "word/owned.xml",

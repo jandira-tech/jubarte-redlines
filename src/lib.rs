@@ -94,21 +94,27 @@
 //! upstream attribution texts without changing the repository license.
 
 #[doc(inline)]
+pub use jubarte_doc::append;
+#[doc(inline)]
+pub use jubarte_doc::audit;
+#[doc(inline)]
 pub use jubarte_opc::admission;
-pub mod append;
-pub mod audit;
 /// Table, cell and paragraph border views shared by render, markdown and debug.
 pub(crate) use jubarte_opc::borders;
 /// Word's built-in style names.
-pub(crate) use jubarte_opc::builtin_styles;
 /// Machine-readable manifest of what this build can do.
 pub mod capabilities;
 /// Tracked changes one at a time: list, accept or reject a selection.
-pub mod changes;
+#[doc(inline)]
+pub use jubarte_doc::changes;
 #[cfg(feature = "cli")]
 pub mod cli;
-pub(crate) mod comment_settlement;
-pub mod comments;
+pub(crate) use jubarte_doc::comment_settlement;
+#[doc(inline)]
+pub use jubarte_doc::comments;
+/// `jubarte debug`: short Word-validity triage of a package, or two compared.
+#[doc(inline)]
+pub use jubarte_doc::debug;
 /// Custom XML and built-in data stores shared by the OPC layer.
 pub(crate) use jubarte_opc::data_stores;
 /// Core WmlComparer engine (atomize → LCS → produce → finalize).
@@ -120,8 +126,6 @@ pub use jubarte_redlines::comparison_log;
 /// Independent DOCX → PDF conversion (not LibreOffice).
 #[doc(inline)]
 pub use jubarte_render::convert;
-/// `jubarte debug`: short Word-validity triage of a package, or two compared.
-pub mod debug;
 /// Byte-level package API: compare, list, accept, and reject revisions.
 /// One-call document comparison and revision accept/reject. Composed
 /// per A6: the compare crate's module, plus the comment-keeping
@@ -137,11 +141,13 @@ pub mod document_comparer {
 pub mod edit;
 /// V2-13 (issue #845): the checker core for `--expect` evaluations.
 pub mod expect;
-pub mod fields;
+#[doc(inline)]
+pub use jubarte_doc::fields;
+/// Read-only paragraph/package views and the Markdown projection for agents.
+#[doc(inline)]
+pub use jubarte_doc::inspect;
 #[doc(inline)]
 pub use jubarte_dom::ids;
-/// Read-only paragraph/package views and the Markdown projection for agents.
-pub mod inspect;
 pub mod legacy_doc;
 pub mod markdown;
 /// WordprocessingML and related namespace / `XName` constants.
@@ -159,31 +165,31 @@ pub(crate) use jubarte_opc::numbering;
 #[doc(inline)]
 pub use jubarte_opc::opc;
 pub mod result;
-/// Accept / reject tracked revisions across a package.
 #[doc(inline)]
-pub use jubarte_redlines::revision_processor;
-pub mod scrub;
+pub use jubarte_doc::scrub;
 #[doc(inline)]
 pub use jubarte_opc::settings;
 /// ISO Strict → Transitional package normalization.
 #[doc(inline)]
 pub use jubarte_opc::strict_translation;
-pub(crate) use jubarte_opc::table_dom;
+/// Accept / reject tracked revisions across a package.
+#[doc(inline)]
+pub use jubarte_redlines::revision_processor;
 pub mod text_diff;
 #[doc(inline)]
 pub use jubarte_dom::unid;
 /// `jubarte self-update`: install a GitHub release, only when asked.
 #[cfg(feature = "self-update")]
 pub mod update;
+#[doc(inline)]
+pub use jubarte_doc::validate;
 /// Shared small utilities.
 #[doc(inline)]
 pub use jubarte_dom::util;
-pub mod validate;
 /// Arena DOM (`xmllinq`) used by the comparer.
 #[doc(inline)]
 pub use jubarte_dom::xmllinq;
 /// Pure DOM structural predicates shared by validate and the comparers.
-pub(crate) use jubarte_opc::validate_dom;
 /// Word's default theme part, for originals without one.
 pub(crate) use jubarte_opc::word_default_theme;
 /// `WmlDocument` — document bytes + lazily parsed main part.

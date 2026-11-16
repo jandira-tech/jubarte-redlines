@@ -272,6 +272,7 @@ use jubarte::convert::render as _;
 use jubarte::convert::utc_now_iso8601 as _;
 use jubarte::debug as _;
 use jubarte::debug::Check as _;
+use jubarte::debug::CriticEscape as _;
 use jubarte::debug::Options as _;
 use jubarte::debug::TRIAGE as _;
 use jubarte::debug::diff as _;

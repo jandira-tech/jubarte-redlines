@@ -7,6 +7,37 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T4.5 (jubarte-doc extracted) - 2026-11-16
+
+- Sixth workspace package: the doc operations (changes, comments,
+  comment_settlement, validate, audit, scrub, append, fields, debug,
+  inspect) on the compare product and the floors through the A5 shims.
+  The facade re-exports every public module; comment_settlement stays
+  pub(crate).
+- The render feature (A4): off by default; audit's layout tier
+  (audit/audit_report/word_layout/audit_report_with), validate's
+  baselined tier, fields (whole module) and debug's Check::Render
+  variant + render submodule exist only with it. AC1: no jubarte-render
+  in the tree without the feature, exactly one with it; AC2: the
+  crate's tests pass both ways (175 without, 249 with).
+- KNOWN_UPWARD is EMPTY - the debug.rs -> text_diff edge (T2.3's
+  documented deviation) resolved here through a seam: debug's
+  CriticEscape is a passed-in fn (text_diff supplies critic_literal
+  from above), so doc never names the edit layer.
+- inspect's reopened-packages counter moved behind
+  cfg(any(test, feature = "test-support")) (A4's named helper), with
+  bump kept cfg(test). NewComment's fields and a broad set of
+  inspect/changes internals took V2 promotions for the edit and
+  markdown layers above.
+- Rustdoc lesson refined for T4.6+: SHORT links resolve in item docs
+  within a module but not in module //! headers (and vice versa in a
+  few spots) - an automated toggle (short <-> crate-qualified, run to
+  fixpoint) settles every site in a few passes.
+- Battery: S1 both ways, clippy both, fmt, RUSTDOCFLAGS doc, gates
+  37/37, goldens identical, listing re-baselined (251 reviewed lines),
+  facade_surface 889 probes, full workspace suite 10,691/10,691
+  (first run, no failures).
+
 ## T4.4 (jubarte-render extracted) - 2026-11-16
 
 - Fourth workspace crate: the render product (src/convert, now

@@ -1561,6 +1561,7 @@ dependencies = [
  "image",
  "js-sys",
  "jsonschema",
+ "jubarte-doc",
  "jubarte-dom",
  "jubarte-opc",
  "jubarte-redlines",
@@ -1588,6 +1589,23 @@ dependencies = [
  "unicode-properties",
  "unicode-segmentation",
  "xattr",
+ "zip",
+]
+
+[[package]]
+name = "jubarte-doc"
+version = "0.18.0"
+dependencies = [
+ "jubarte-dom",
+ "jubarte-opc",
+ "jubarte-redlines",
+ "jubarte-render",
+ "quick-xml 0.42.0",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
  "zip",
 ]
 

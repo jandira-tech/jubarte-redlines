@@ -1155,11 +1155,11 @@ fn anchor(dom: &Dom, a: NodeId) -> String {
 /// `docDefaults`, the theme and `fontTable.xml`.
 fn layout_lines(pkg: &Package, rels: &[Rel]) -> (Vec<String>, usize) {
     let mut out = Vec::new();
-    let options = crate::convert::PdfOptions {
-        revisions: crate::convert::RevisionStyle::Word,
+    let options = jubarte_render::convert::PdfOptions {
+        revisions: jubarte_render::convert::RevisionStyle::Word,
         ..Default::default()
     };
-    let pages = match crate::convert::docx_render_report(&pkg.raw, options) {
+    let pages = match jubarte_render::convert::docx_render_report(&pkg.raw, options) {
         Ok(report) => {
             let mut fonts: Vec<String> = report
                 .fonts

@@ -4,7 +4,7 @@
 
 //! Refresh the cached results of fields from jubarte's own layout.
 //!
-//! [`update_fields`] rebuilds every body `TOC` from the heading paragraphs,
+//! [`update_fields`](crate::fields::update_fields) rebuilds every body `TOC` from the heading paragraphs,
 //! lays the document out once, then writes the results of `PAGEREF`, `REF`,
 //! `NUMPAGES` and `SEQ` fields in the body, headers, footers and notes. The
 //! field codes stay, so Word can refresh them later; `w:updateFields` is
@@ -18,8 +18,8 @@
 //! differs on every page.
 //!
 //! The error strings Word writes for an unresolvable reference
-//! ([`BOOKMARK_NOT_DEFINED`], [`REFERENCE_NOT_FOUND`],
-//! [`NO_TOC_ENTRIES`]) are the public side of that fallback.
+//! ([`BOOKMARK_NOT_DEFINED`](crate::fields::BOOKMARK_NOT_DEFINED), [`REFERENCE_NOT_FOUND`](crate::fields::REFERENCE_NOT_FOUND),
+//! [`NO_TOC_ENTRIES`](crate::fields::NO_TOC_ENTRIES)) are the public side of that fallback.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
@@ -76,7 +76,7 @@ pub enum FieldError {
     /// The package could not be opened or read (`InspectError`).
     Inspect(InspectError),
     /// The layout pass that pages the document failed.
-    Layout(crate::convert::ConvertError),
+    Layout(jubarte_render::convert::ConvertError),
     /// The package could not be serialized back to bytes.
     Package(String),
 }
@@ -109,7 +109,7 @@ impl From<InspectError> for FieldError {
 ///
 /// - [`FieldError::Inspect`] when the package cannot be opened or read;
 /// - [`FieldError::Layout`] when the layout pass that backs page numbers
-///   fails (see [`crate::convert::ConvertError`]);
+///   fails (see [`jubarte_render::convert::ConvertError`]);
 /// - [`FieldError::Package`] when the rewritten package cannot be
 ///   serialized back to bytes.
 pub fn update_fields(docx: &[u8]) -> Result<Updated, FieldError> {
@@ -167,7 +167,7 @@ pub fn update_fields(docx: &[u8]) -> Result<Updated, FieldError> {
     let staged = pkg
         .to_zip()
         .map_err(|err| FieldError::Package(err.to_string()))?;
-    let facts = crate::convert::layout_facts(&staged).map_err(FieldError::Layout)?;
+    let facts = jubarte_render::convert::layout_facts(&staged).map_err(FieldError::Layout)?;
 
     let defined: BTreeSet<String> = stories
         .iter()
@@ -254,7 +254,7 @@ fn write_stories(pkg: &mut PartFs, stories: &mut [Story]) {
 
 /// What every result is computed from.
 struct Context<'a> {
-    facts: &'a crate::convert::LayoutFacts,
+    facts: &'a jubarte_render::convert::LayoutFacts,
     defined: &'a BTreeSet<String>,
 }
 
@@ -1496,7 +1496,7 @@ mod tests {
             r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="2" w:name="_Toc2"/><w:r><w:t>B</w:t></w:r><w:bookmarkEnd w:id="2"/></w:p>"#,
             r#"<w:bookmarkStart w:id="3" w:name="outside"/><w:bookmarkEnd w:id="3"/>"#,
         );
-        let facts = crate::convert::layout_facts(&tiny_docx(body)).unwrap();
+        let facts = jubarte_render::convert::layout_facts(&tiny_docx(body)).unwrap();
         assert_eq!(facts.page_count, 2);
         let pages: Vec<(&str, &str)> = facts
             .bookmark_pages
@@ -2296,7 +2296,7 @@ mod authored_field_projection_contract_tests {
 
     #[test]
     fn unsupported_field_arguments_keep_their_complete_authored_cache() {
-        let facts = crate::convert::LayoutFacts {
+        let facts = jubarte_render::convert::LayoutFacts {
             page_count: 7,
             ..Default::default()
         };

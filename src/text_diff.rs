@@ -145,7 +145,9 @@ fn accepted_text(text: &str, accept: bool) -> std::borrow::Cow<'_, str> {
 fn view_snapshot(source: Source<'_>, accept: bool, critic: bool) -> Result<String, String> {
     match source {
         Source::Markdown(text) => Ok(accepted_text(text, accept).into_owned()),
-        Source::Docx(bytes) => crate::debug::document_text_view(bytes, critic, accept),
+        Source::Docx(bytes) => {
+            crate::debug::document_text_view(bytes, critic, accept, critic_literal)
+        }
     }
 }
 

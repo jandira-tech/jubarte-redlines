@@ -10,7 +10,7 @@
 //! win: a B style whose type and name A already has takes A's definition
 //! (built-in names pair in any case, custom names only exactly, as Word pairs
 //! them). B's comments are removed and reported as `COMMENTS_DROPPED`
-//! unless [`AppendOptions::comments`] is [`AppendComments::Carry`]; then the
+//! unless [`AppendOptions::comments`](crate::append::AppendOptions::comments) is [`AppendComments::Carry`](crate::append::AppendComments::Carry); then the
 //! comments B's body anchors come along with fresh ids, their threads,
 //! resolution, links and styles. Comments anchored in B's notes, headers
 //! and footers are always dropped: `validate` checks comment anchors in the
@@ -313,7 +313,8 @@ fn invalid(document: &'static str, message: impl Into<String>) -> AppendError {
     }
 }
 
-fn open(document: &'static str, bytes: &[u8]) -> Result<PartFs, AppendError> {
+#[doc(hidden)]
+pub fn open(document: &'static str, bytes: &[u8]) -> Result<PartFs, AppendError> {
     crate::admission::admit(bytes, InputLimits::default())
         .map_err(|error| AppendError::Admission { document, error })?;
     let normalized =
@@ -763,7 +764,8 @@ fn carry_notes(
 
 /// The internal part `main` relates to with a relationship type ending in
 /// `kind`, when the part exists.
-fn related(pkg: &PartFs, main: &str, kind: &str) -> Option<String> {
+#[doc(hidden)]
+pub fn related(pkg: &PartFs, main: &str, kind: &str) -> Option<String> {
     let rel = pkg
         .read_rels_for(main)?
         .items
@@ -1438,7 +1440,7 @@ mod tests {
     }
 
     fn minimal() -> Vec<u8> {
-        include_bytes!("../tests/fixtures/split/minimal.docx").to_vec()
+        include_bytes!("../../../tests/fixtures/split/minimal.docx").to_vec()
     }
 }
 
@@ -1480,8 +1482,10 @@ mod public_memory_append_owner_boundary_tests {
         )
     }
     fn package(body: &str) -> PartFs {
-        let mut pkg =
-            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let mut pkg = PartFs::open(include_bytes!(
+            "../../../tests/fixtures/redline/original.docx"
+        ))
+        .unwrap();
         pkg.set_part("word/document.xml", document(body).into_bytes());
         pkg.set_part(
             "customXml/source-owned.bin",

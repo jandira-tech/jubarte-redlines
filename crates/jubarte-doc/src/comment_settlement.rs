@@ -42,9 +42,10 @@ use crate::revision_processor::Resolution;
 /// message. The edit layer turns this into its `EditError`; `changes`
 /// stringifies it, as it did before the type moved down a layer.
 #[derive(Debug)]
-pub(crate) struct SettlementError {
-    pub(crate) code: String,
-    pub(crate) message: String,
+#[doc(hidden)]
+pub struct SettlementError {
+    pub code: String,
+    pub message: String,
 }
 
 impl SettlementError {
@@ -71,7 +72,8 @@ struct Pass {
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
-pub(crate) struct AnchorChanges {
+#[doc(hidden)]
+pub struct AnchorChanges {
     pub removed: Vec<String>,
     pub kept: Vec<String>,
     passes: std::collections::HashMap<String, Pass>,
@@ -214,7 +216,8 @@ impl AnchorChanges {
 /// order. Threads already named by settlement stay on that receipt.
 /// `deleted` holds the ids of the paragraphs the plan deleted whole: a
 /// thread on any other paragraph lost only its words.
-pub(crate) fn threads_the_clean_copy_drops(
+#[doc(hidden)]
+pub fn threads_the_clean_copy_drops(
     clean: &[u8],
     redline: &[u8],
     already: &[RemovedComment],
