@@ -31,6 +31,10 @@ perf-profile = ["jubarte-dom/perf-profile"]
 # `#[cfg(test)]` helpers another crate's tests need, without a stability
 # promise and out of the documented API.
 test-support = ["jubarte-dom/test-support"]
+# The settings types' JSON Schema derives, which the edit layer's plan
+# schema needs; jubarte-redlines does not enable it, keeping the compare
+# tree free of schemars (plan A2).
+schema = ["dep:schemars", "jubarte-dom/schema"]
 
 [dependencies]
 jubarte-dom = { workspace = true }
@@ -40,6 +44,6 @@ quick-xml = { workspace = true }
 quick-xml-041 = { workspace = true }
 sha1 = { workspace = true }
 sha2 = { workspace = true }
-schemars = { workspace = true }
+schemars = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

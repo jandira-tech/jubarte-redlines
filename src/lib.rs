@@ -110,9 +110,11 @@ pub mod cli;
 pub(crate) mod comment_settlement;
 pub mod comments;
 /// Core WmlComparer engine (atomize → LCS → produce → finalize).
-pub mod comparer;
+#[doc(inline)]
+pub use jubarte_redlines::comparer;
 /// Structured comparison log (info / warning / error entries).
-pub mod comparison_log;
+#[doc(inline)]
+pub use jubarte_redlines::comparison_log;
 /// Independent DOCX → PDF conversion (not LibreOffice).
 pub mod convert;
 /// Custom XML and built-in data stores shared by the OPC layer.
@@ -120,7 +122,17 @@ pub(crate) use jubarte_opc::data_stores;
 /// `jubarte debug`: short Word-validity triage of a package, or two compared.
 pub mod debug;
 /// Byte-level package API: compare, list, accept, and reject revisions.
-pub mod document_comparer;
+/// One-call document comparison and revision accept/reject. Composed
+/// per A6: the compare crate's module, plus the comment-keeping
+/// accept/reject the doc layer owns.
+pub mod document_comparer {
+    #[doc(inline)]
+    pub use crate::changes::{
+        accept_revisions_keeping_comments, reject_revisions_keeping_comments,
+    };
+    #[doc(inline)]
+    pub use jubarte_redlines::document_comparer::*;
+}
 pub mod edit;
 /// V2-13 (issue #845): the checker core for `--expect` evaluations.
 pub mod expect;
@@ -130,7 +142,6 @@ pub use jubarte_dom::ids;
 /// Read-only paragraph/package views and the Markdown projection for agents.
 pub mod inspect;
 pub mod legacy_doc;
-pub(crate) use jubarte_dom::limits;
 pub mod markdown;
 /// WordprocessingML and related namespace / `XName` constants.
 #[doc(inline)]
@@ -149,7 +160,8 @@ pub use jubarte_opc::opc;
 pub(crate) use jubarte_opc::render_options;
 pub mod result;
 /// Accept / reject tracked revisions across a package.
-pub mod revision_processor;
+#[doc(inline)]
+pub use jubarte_redlines::revision_processor;
 pub mod scrub;
 #[doc(inline)]
 pub use jubarte_opc::settings;
@@ -167,18 +179,19 @@ pub mod update;
 #[doc(inline)]
 pub use jubarte_dom::util;
 pub mod validate;
-/// Pure DOM structural predicates shared by validate and the comparers.
-pub(crate) use jubarte_opc::validate_dom;
-/// `WmlDocument` — document bytes + lazily parsed main part.
-pub mod wml_document;
 /// Arena DOM (`xmllinq`) used by the comparer.
 #[doc(inline)]
 pub use jubarte_dom::xmllinq;
+/// Pure DOM structural predicates shared by validate and the comparers.
+pub(crate) use jubarte_opc::validate_dom;
 /// Word's default theme part, for originals without one.
 pub(crate) use jubarte_opc::word_default_theme;
+/// `WmlDocument` — document bytes + lazily parsed main part.
+#[doc(inline)]
+pub use jubarte_redlines::wml_document;
 
 /// [`WmlDocument`] re-export for the common library entry point.
-pub use wml_document::WmlDocument;
+pub use jubarte_redlines::WmlDocument;
 
 /// Capability-confined, staged filesystem publication for host applications.
 #[cfg(not(target_arch = "wasm32"))]

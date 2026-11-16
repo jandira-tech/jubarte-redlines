@@ -17189,7 +17189,7 @@ mod deep_lcs_source_conservation_tests {
         }
     }
     fn public_package(paragraphs: &[&str], table_text: Option<&str>) -> Vec<u8> {
-        const FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/relids/image_doc.docx");
+        const FIXTURE: &[u8] = include_bytes!("../../../../tests/fixtures/relids/image_doc.docx");
         let mut pkg = crate::opc::PartFs::open(FIXTURE).unwrap();
         let mut dom = Dom::new();
         let root = dom.new_element(W::document());
@@ -19153,7 +19153,7 @@ mod coverage_real_source_route_matrix_tests {
     fn assert_public_numbered_admission_sources(left: &str, right: &str, label: &str) {
         let package = |story: &str| {
             let mut package = crate::opc::PartFs::open(include_bytes!(
-                "../../tests/fixtures/relids/image_doc.docx"
+                "../../../../tests/fixtures/relids/image_doc.docx"
             ))
             .unwrap();
             package.set_part(
@@ -19779,7 +19779,7 @@ mod coverage_real_source_route_matrix_tests {
     fn public_table_comparison_keeps_body_equations_and_every_source_payload_in_order() {
         let package = |fragment: String| {
             let mut package = crate::opc::PartFs::open(include_bytes!(
-                "../../tests/fixtures/relids/image_doc.docx"
+                "../../../../tests/fixtures/relids/image_doc.docx"
             ))
             .unwrap();
             package.set_part("word/document.xml",format!("<w:document xmlns:w='{}' xmlns:m='{}'><w:body>{fragment}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI,M::URI).into_bytes());
@@ -19865,7 +19865,7 @@ mod coverage_real_source_route_matrix_tests {
                 })
                 .collect::<String>();
             let mut package = crate::opc::PartFs::open(include_bytes!(
-                "../../tests/fixtures/relids/image_doc.docx"
+                "../../../../tests/fixtures/relids/image_doc.docx"
             ))
             .unwrap();
             package.set_part("word/document.xml",format!("<w:document xmlns:w='{}'><w:body>{fragment}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI).into_bytes());

@@ -12,6 +12,16 @@ resolver = "3"
 members = [".", "crates/*"]
 exclude = ["jubarte-python", "jubarte-wasm", "jubarte-rust-inproc", "fuzz"]
 
+# D8 (plan T4.3b AC4): the workspace's own release and bench builds thin-LTO
+# the split crates back together; a crates.io consumer without LTO still
+# pays the cross-crate boundary, a measured gap recorded in
+# docs/refactoring_best_practices/baseline-addenda.md.
+[profile.release]
+lto = "thin"
+
+[profile.bench]
+lto = "thin"
+
 [workspace.package]
 version = "0.18.0" # the release script bumps this and the "=" pins together
 edition = "2024"
@@ -175,6 +185,7 @@ self-update = ["cli", "dep:self_update", "dep:ed25519-dalek"]
 # #[doc(hidden)] internals to each other (plan A3/D4).
 jubarte-dom = { path = "crates/jubarte-dom", version = "=0.18.0" }
 jubarte-opc = { path = "crates/jubarte-opc", version = "=0.18.0", default-features = false }
+jubarte-redlines = { path = "crates/jubarte-redlines", version = "=0.18.0", default-features = false }
 
 # Upstream OPC types on zip 9 and patched quick-xml 0.41. The adapter keeps
 # its duplicate-repair and canonical-writing policy; optional crypto stays off.
@@ -244,7 +255,8 @@ tempfile = "3"
 
 [dependencies]
 jubarte-dom = { workspace = true }
-jubarte-opc = { workspace = true }
+jubarte-opc = { workspace = true, features = ["schema"] }
+jubarte-redlines = { workspace = true }
 oxml-opc = { workspace = true }
 zip = { workspace = true }
 sha1.workspace = true
@@ -305,6 +317,7 @@ required-features = ["cli"]
 [dev-dependencies]
 jubarte-dom = { workspace = true, features = ["test-support"] }
 jubarte-opc = { workspace = true, features = ["test-support"] }
+jubarte-redlines = { workspace = true, features = ["test-support"] }
 jsonschema = { workspace = true }
 criterion = { workspace = true }
 ooxmlsdk = { workspace = true }

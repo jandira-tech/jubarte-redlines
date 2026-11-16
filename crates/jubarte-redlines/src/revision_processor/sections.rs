@@ -20,7 +20,8 @@ use crate::xmllinq::{Dom, NodeId};
 
 /// Accept All or Reject All.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Resolution {
+#[doc(hidden)]
+pub enum Resolution {
     Accept,
     Reject,
 }

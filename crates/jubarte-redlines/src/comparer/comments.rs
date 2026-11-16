@@ -38,7 +38,8 @@ use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 /// (part name, content type, relationship type) for the comment part family.
-pub(crate) const FAMILY: [(&str, &str, &str); 4] = [
+#[doc(hidden)]
+pub const FAMILY: [(&str, &str, &str); 4] = [
     (
         "word/comments.xml",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
@@ -1922,7 +1923,7 @@ mod deeper_boundary_tests {
 
     const MAIN: &str = "word/document.xml";
     // The same bundled, in-memory package used by comparer::parts tests.
-    const PACKAGE: &[u8] = include_bytes!("../../tests/fixtures/relids/image_doc.docx");
+    const PACKAGE: &[u8] = include_bytes!("../../../../tests/fixtures/relids/image_doc.docx");
 
     fn xml(local: &str, contents: &str) -> String {
         format!(

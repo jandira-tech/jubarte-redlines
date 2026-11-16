@@ -1440,7 +1440,8 @@ pub fn unwrap_content_controls_in_pure_revisions(dom: &mut Dom, root: NodeId) {
 }
 
 /// True when `node` sits in a Choice or Fallback that Word does not show.
-pub(crate) fn in_unselected_alternate(dom: &Dom, node: NodeId) -> bool {
+#[doc(hidden)]
+pub fn in_unselected_alternate(dom: &Dom, node: NodeId) -> bool {
     dom.ancestors(node, None).into_iter().any(|ancestor| {
         if !dom.name_is(ancestor, &MC::choice()) && !dom.name_is(ancestor, &MC::fallback()) {
             return false;
@@ -6655,7 +6656,8 @@ pub fn reorder_replacements_ins_before_del(dom: &mut Dom, node: NodeId) {
 
 /// Every field char under `node` belongs to a field that begins and ends
 /// under it: no `fldChar` at all, or begins and ends that nest and balance.
-pub(crate) fn fields_complete(dom: &Dom, node: NodeId, fld_char: &XName) -> bool {
+#[doc(hidden)]
+pub fn fields_complete(dom: &Dom, node: NodeId, fld_char: &XName) -> bool {
     let mut depth = 0i32;
     for fc in dom.descendants(node, Some(fld_char)) {
         match dom.attribute(fc, &W::name("fldCharType")) {
@@ -6678,7 +6680,8 @@ pub(crate) fn fields_complete(dom: &Dom, node: NodeId, fld_char: &XName) -> bool
 /// super_editor hyperlink_multiple_runs × diff_before10, corpus a098bd5ad9,
 /// writes "One two" inserted before the deleted "Click here now" link;
 /// the swap saw a hyperlink, not a deletion, and left the link first).
-pub(crate) fn revision_wrapper(dom: &Dom, node: NodeId) -> Option<(bool, String, String)> {
+#[doc(hidden)]
+pub fn revision_wrapper(dom: &Dom, node: NodeId) -> Option<(bool, String, String)> {
     if !dom.is_element(node) {
         return None;
     }
@@ -24359,9 +24362,10 @@ mod row_nontext_ownership_regressions {
     }
 
     fn package(body: &str) -> Vec<u8> {
-        let mut pkg =
-            crate::opc::PartFs::open(include_bytes!("../../tests/fixtures/relids/image_doc.docx"))
-                .unwrap();
+        let mut pkg = crate::opc::PartFs::open(include_bytes!(
+            "../../../../tests/fixtures/relids/image_doc.docx"
+        ))
+        .unwrap();
         pkg.set_part(
             "word/document.xml",
             format!(
@@ -26610,7 +26614,7 @@ mod coverage_real_revision_merge_matrix_tests {
         }
         fn package(body: &str, container: &str) -> Vec<u8> {
             let mut package = crate::opc::PartFs::open(include_bytes!(
-                "../../tests/fixtures/relids/image_doc.docx"
+                "../../../../tests/fixtures/relids/image_doc.docx"
             ))
             .unwrap();
             // Every referenced style is defined and has distinct inherited
@@ -28487,9 +28491,10 @@ mod coverage_real_revision_merge_matrix_tests {
             ),
             _ => panic!("scope"),
         };
-        let mut package =
-            crate::opc::PartFs::open(include_bytes!("../../tests/fixtures/relids/image_doc.docx"))
-                .expect("bundled upstream package fixture");
+        let mut package = crate::opc::PartFs::open(include_bytes!(
+            "../../../../tests/fixtures/relids/image_doc.docx"
+        ))
+        .expect("bundled upstream package fixture");
         package.set_part("word/document.xml", format!("<w:document xmlns:w='{}'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/><w:pgMar w:top='720' w:right='900' w:bottom='720' w:left='900'/></w:sectPr></w:body></w:document>", W::URI).into_bytes());
         package.set_part("word/styles.xml", format!("<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/></w:style><w:style w:type='paragraph' w:styleId='BodyText'><w:name w:val='Body Text'/><w:pPr><w:jc w:val='left'/></w:pPr></w:style><w:style w:type='paragraph' w:styleId='Heading1'><w:name w:val='heading 1'/><w:pPr><w:keepNext/><w:outlineLvl w:val='0'/></w:pPr></w:style><w:style w:type='paragraph' w:styleId='ListParagraph'><w:name w:val='List Paragraph'/><w:pPr><w:spacing w:after='40'/></w:pPr></w:style></w:styles>", W::URI).into_bytes());
         let levels = (0..2).map(|level| format!("<w:lvl w:ilvl='{level}'><w:start w:val='1'/><w:numFmt w:val='decimal'/><w:lvlText w:val='%{}.'/><w:lvlJc w:val='left'/></w:lvl>", level + 1)).collect::<String>();
@@ -33270,16 +33275,22 @@ mod public_body_heuristic_story_scope_tests {
         let corpus = [
             (
                 "f1-word-redline",
-                document_xml(include_bytes!("../../tests/fixtures/f1/word-redline.docx")),
+                document_xml(include_bytes!(
+                    "../../../../tests/fixtures/f1/word-redline.docx"
+                )),
             ),
             (
                 "f4-word-redline",
-                document_xml(include_bytes!("../../tests/fixtures/f4/word-redline.docx")),
+                document_xml(include_bytes!(
+                    "../../../../tests/fixtures/f4/word-redline.docx"
+                )),
             ),
             ("synthetic-body", synthetic_body()),
         ];
+        // The committed snapshots stay beside the root package's tests;
+        // this crate sits two directories below the repository root.
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/finalize-snapshots");
+            .join("../../tests/fixtures/finalize-snapshots");
         let bless = std::env::var_os("JUBARTE_BLESS").is_some();
         for (name, xml) in corpus {
             let actual = format!(

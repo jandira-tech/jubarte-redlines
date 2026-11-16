@@ -1563,6 +1563,7 @@ dependencies = [
  "jsonschema",
  "jubarte-dom",
  "jubarte-opc",
+ "jubarte-redlines",
  "mimalloc",
  "ooxmlsdk",
  "oxml-opc",
@@ -1619,6 +1620,15 @@ dependencies = [
  "sha1",
  "sha2 0.11.1",
  "zip",
+]
+
+[[package]]
+name = "jubarte-redlines"
+version = "0.18.0"
+dependencies = [
+ "jubarte-dom",
+ "jubarte-opc",
+ "similar",
 ]
 
 [[package]]

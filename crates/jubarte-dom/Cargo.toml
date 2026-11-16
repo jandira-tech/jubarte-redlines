@@ -31,12 +31,16 @@ perf-profile = []
 # `#[cfg(test)]` helpers another crate's tests need, without a stability
 # promise and out of the documented API.
 test-support = []
+# The id types' JSON Schema derives, which the edit layer's plan schema
+# needs; the compare tree does not enable it (plan A2: jubarte-redlines
+# stays free of schemars).
+schema = ["dep:schemars"]
 
 [dependencies]
 foldhash = { workspace = true }
 sha1 = { workspace = true }
 quick-xml = { workspace = true }
-schemars = { workspace = true }
+schemars = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

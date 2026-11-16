@@ -2725,7 +2725,7 @@ mod public_option_source_ownership_tests {
             };
             let body = words.iter().enumerate().map(|(index, text)| format!("<w:p><w:pPr><w:spacing w:before='120' w:after='80'/><w:ind w:left='180'/></w:pPr><w:r>{properties}<w:t xml:space='preserve'>{text}</w:t></w:r>{}</w:p>", if index == 1 { extra.as_str() } else { "" })).collect::<String>();
             let mut pkg = crate::opc::PartFs::open(include_bytes!(
-                "../../tests/fixtures/relids/image_doc.docx"
+                "../../../../tests/fixtures/relids/image_doc.docx"
             ))
             .unwrap();
             pkg.set_part("word/styles.xml", format!("<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/></w:style></w:styles>", W::URI).into_bytes());
@@ -2836,7 +2836,7 @@ mod public_option_source_ownership_tests {
                     );
                     let body = lines.iter().enumerate().map(|(index,text)| format!("<w:p><w:pPr><w:spacing w:before='120' w:after='80'/><w:ind w:left='180'/></w:pPr><w:r>{rpr}<w:t>{text}</w:t></w:r>{}</w:p>", if index == 1 { format!("<w:r>{rpr}<w:footnoteReference w:id='42'/></w:r>") } else { String::new() })).collect::<String>();
                     let mut pkg = crate::opc::PartFs::open(include_bytes!(
-                        "../../tests/fixtures/relids/image_doc.docx"
+                        "../../../../tests/fixtures/relids/image_doc.docx"
                     ))
                     .unwrap();
                     pkg.set_part("word/styles.xml", format!("<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/></w:style><w:style w:type='character' w:styleId='FootnoteReference'><w:name w:val='footnote reference'/><w:rPr><w:vertAlign w:val='superscript'/></w:rPr></w:style></w:styles>",W::URI).into_bytes());
@@ -2968,7 +2968,7 @@ mod public_option_source_ownership_tests {
                     };
                     let package = |revised| {
                         let mut pkg = crate::opc::PartFs::open(include_bytes!(
-                            "../../tests/fixtures/relids/image_doc.docx"
+                            "../../../../tests/fixtures/relids/image_doc.docx"
                         ))
                         .unwrap();
                         pkg.set_part("word/styles.xml", format!("<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/></w:style></w:styles>",W::URI).into_bytes());
@@ -3071,7 +3071,7 @@ mod public_option_source_ownership_tests {
                 _ => unreachable!(),
             };
             let mut pkg = crate::opc::PartFs::open(include_bytes!(
-                "../../tests/fixtures/word_probes/tokens/cell_a.docx"
+                "../../../../tests/fixtures/word_probes/tokens/cell_a.docx"
             ))
             .unwrap();
             pkg.set_part("word/document.xml",format!("<w:document xmlns:w='{}'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/><w:pgMar w:top='1440' w:right='1440' w:bottom='1440' w:left='1440' w:header='720' w:footer='720' w:gutter='0'/></w:sectPr></w:body></w:document>",W::URI).into_bytes());
@@ -3195,7 +3195,7 @@ mod public_option_source_ownership_tests {
         ] {
             let package = |payload| {
                 let mut pkg = crate::opc::PartFs::open(include_bytes!(
-                    "../../tests/fixtures/word_probes/tokens/cell_a.docx"
+                    "../../../../tests/fixtures/word_probes/tokens/cell_a.docx"
                 ))
                 .unwrap();
                 pkg.set_part("word/styles.xml",format!("<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/></w:style></w:styles>",W::URI).into_bytes());
@@ -3374,7 +3374,7 @@ mod public_option_source_ownership_tests {
         ];
         let package = |paragraphs: &[&str]| {
             let mut pkg = crate::opc::PartFs::open(include_bytes!(
-                "../../tests/fixtures/relids/image_doc.docx"
+                "../../../../tests/fixtures/relids/image_doc.docx"
             ))
             .unwrap();
             pkg.set_part("word/styles.xml", format!("<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/></w:style></w:styles>", W::URI).into_bytes());

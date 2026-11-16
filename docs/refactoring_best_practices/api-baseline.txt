@@ -198,6 +198,7 @@ api	function	pub	jubarte::changes::accept_changes (docx: &[u8], filter: &ChangeF
 api	function	pub	jubarte::changes::accept_changes_keeping_comments (docx: &[u8], filter: &ChangeFilter) -> Result<ResolvedChanges, ChangeError>
 api	function	pub	jubarte::changes::accept_changes_with_report (docx: &[u8], filter: &ChangeFilter) -> Result<ResolvedChanges, ChangeError>
 api	function	pub	jubarte::changes::accept_elements (docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError>
+api	function	pub	jubarte::changes::accept_revisions_keeping_comments (docx: &[u8]) -> Result<ResolvedChanges, ChangeError>
 api	function	pub	jubarte::changes::by_authors (changes: Vec<Change>, authors: &[String]) -> Vec<Change>
 api	function	pub	jubarte::changes::changes_text (changes: &[Change]) -> String
 api	function	pub	jubarte::changes::comment_changes_in (pkg: &crate::opc::PartFs) -> Vec<Change>
@@ -207,6 +208,7 @@ api	function	pub	jubarte::changes::reject_changes (docx: &[u8], filter: &ChangeF
 api	function	pub	jubarte::changes::reject_changes_keeping_comments (docx: &[u8], filter: &ChangeFilter) -> Result<ResolvedChanges, ChangeError>
 api	function	pub	jubarte::changes::reject_changes_with_report (docx: &[u8], filter: &ChangeFilter) -> Result<ResolvedChanges, ChangeError>
 api	function	pub	jubarte::changes::reject_elements (docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError>
+api	function	pub	jubarte::changes::reject_revisions_keeping_comments (docx: &[u8]) -> Result<ResolvedChanges, ChangeError>
 api	function	pub	jubarte::cli::Cli::try_parse_from <I, T>(arguments: I) -> Result<Self, clap::Error> where I: IntoIterator<Item>, T: Into<std::ffi::OsString> + Clone
 api	function	pub	jubarte::cli::EditOptions::target (self: &Self, file: &Path) -> EditTarget
 api	function	pub	jubarte::cli::ExistingArg::from_choice (choice: &str) -> Option<Self>
@@ -420,7 +422,6 @@ api	function	pub	jubarte::debug::findings (docx: &[u8]) -> Result<Vec<crate::val
 api	function	pub	jubarte::debug::list (a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, String>
 api	function	pub	jubarte::debug::report (a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, String>
 api	function	pub	jubarte::document_comparer::accept_revisions (docx: &[u8]) -> Result<Vec<u8>, crate::opc::OpcError>
-api	function	pub	jubarte::document_comparer::accept_revisions_keeping_comments (docx: &[u8]) -> Result<crate::changes::ResolvedChanges, crate::changes::ChangeError>
 api	function	pub	jubarte::document_comparer::compare_documents (original: &[u8], modified: &[u8], author: &str) -> Result<Vec<u8>, crate::opc::OpcError>
 api	function	pub	jubarte::document_comparer::compare_documents_internal (original: &[u8], modified: &[u8], author: &str, date: &str, pre_process_original: bool) -> Result<Vec<u8>, crate::opc::OpcError>
 api	function	pub	jubarte::document_comparer::compare_documents_with_options (original: &[u8], modified: &[u8], author: &str, date: &str) -> Result<Vec<u8>, crate::opc::OpcError>
@@ -428,7 +429,6 @@ api	function	pub	jubarte::document_comparer::compare_documents_with_settings (or
 api	function	pub	jubarte::document_comparer::get_revisions (docx: &[u8], settings: &crate::comparer::WmlComparerSettings) -> Result<Vec<crate::comparer::WmlComparerRevision>, crate::opc::OpcError>
 api	function	pub	jubarte::document_comparer::pre_process_markup (pkg: &mut crate::opc::PartFs, starting_id_for_footnotes_endnotes: i32) -> Result<Vec<String>, crate::opc::OpcError>
 api	function	pub	jubarte::document_comparer::reject_revisions (docx: &[u8]) -> Result<Vec<u8>, crate::opc::OpcError>
-api	function	pub	jubarte::document_comparer::reject_revisions_keeping_comments (docx: &[u8]) -> Result<crate::changes::ResolvedChanges, crate::changes::ChangeError>
 api	function	pub	jubarte::document_comparer::revision_to_json (r: &crate::comparer::WmlComparerRevision) -> String
 api	function	pub	jubarte::document_comparer::revisions_to_json (revs: &[crate::comparer::WmlComparerRevision]) -> String
 api	function	pub	jubarte::edit::EditError::revision_next_actions (self: &Self, source_path: &str, source_digest: &str) -> Vec<NextAction>
@@ -2768,6 +2768,7 @@ api	module	pub	jubarte::wml_document
 api	module	pub	jubarte::xmllinq
 api	module	pub	jubarte::xmllinq::parse
 api	module	pub	jubarte::xmllinq::serialize
+api	struct	pub	jubarte::WmlDocument
 api	struct	pub	jubarte::admission::AdmittedPackage
 api	struct	pub	jubarte::append::AppendOptions
 api	struct	pub	jubarte::append::Appended
@@ -4496,6 +4497,7 @@ api	type_alias	pub	jubarte::audit::LayoutPass = &'a mut dyn FnMut(&[u8]) -> Resu
 api	type_alias	pub	jubarte::comparer::preprocess::RelHashResolver = dyn Fn(&str) -> Option<String> + 'a
 api	type_alias	pub	jubarte::markdown::ImageLoader = &'a dyn Fn(&str) -> Option<Vec<u8>>
 api	type_alias	pub	jubarte::update::zipsign::ReleaseKey = [u8; 32]
+api	use	pub	jubarte::WmlDocument = jubarte_redlines::WmlDocument
 api	use	pub	jubarte::WmlDocument = wml_document::WmlDocument
 api	use	pub	jubarte::admission = jubarte_opc::admission
 api	use	pub	jubarte::admission::AdmissionError = crate::limits::AdmissionError
@@ -4507,7 +4509,9 @@ api	use	pub	jubarte::capabilities::discovery = discovery::discovery
 api	use	pub	jubarte::capabilities::discovery_text = discovery::discovery_text
 api	use	pub	jubarte::cli::FlagOp = crate::edit::flags::FlagOp
 api	use	pub	jubarte::cli::shell_word = crate::util::shell_word
+api	use	pub	jubarte::comparer = jubarte_redlines::comparer
 api	use	pub	jubarte::comparer::WmlComparerRevision = atoms::WmlComparerRevision
+api	use	pub	jubarte::comparison_log = jubarte_redlines::comparison_log
 api	use	pub	jubarte::convert::CommentPlacement = crate::render_options::CommentPlacement
 api	use	pub	jubarte::convert::DiffOptions = diff_render::DiffOptions
 api	use	pub	jubarte::convert::FontReportEntry = font::FontReportEntry
@@ -4523,7 +4527,11 @@ api	use	pub	jubarte::convert::RevisionStyle = crate::render_options::RevisionSty
 api	use	pub	jubarte::convert::diff_render = diff_render::diff_render
 api	use	pub	jubarte::convert::font_report_json = font::font_report_json
 api	use	pub	jubarte::convert::utc_now_iso8601 = crate::util::datetime::utc_now_iso8601
+api	use	pub	jubarte::document_comparer::* = jubarte_redlines::document_comparer
 api	use	pub	jubarte::document_comparer::UnsupportedContentError = crate::limits::UnsupportedContentError
+api	use	pub	jubarte::document_comparer::_ = crate::limits::UnsupportedContentError
+api	use	pub	jubarte::document_comparer::accept_revisions_keeping_comments = crate::changes::accept_revisions_keeping_comments
+api	use	pub	jubarte::document_comparer::reject_revisions_keeping_comments = crate::changes::reject_revisions_keeping_comments
 api	use	pub	jubarte::edit::AnchorRefusal = anchor_error::AnchorRefusal
 api	use	pub	jubarte::edit::CandidateChecks = prepared::CandidateChecks
 api	use	pub	jubarte::edit::ControlSelector = controls::ControlSelector
@@ -4595,6 +4603,7 @@ api	use	pub	jubarte::opc::OpcError = oxml_opc::OpcError
 api	use	pub	jubarte::opc::Relationship = oxml_opc::Relationship
 api	use	pub	jubarte::opc::Zip32Limit = zip32::Zip32Limit
 api	use	pub	jubarte::perf = jubarte_dom::perf
+api	use	pub	jubarte::revision_processor = jubarte_redlines::revision_processor
 api	use	pub	jubarte::settings = jubarte_opc::settings
 api	use	pub	jubarte::strict_translation = jubarte_opc::strict_translation
 api	use	pub	jubarte::unid = jubarte_dom::unid
@@ -4608,6 +4617,7 @@ api	use	pub	jubarte::util::sha1_hex = sha1::sha1_hex
 api	use	pub	jubarte::util::sha1_hex_bytes = sha1::sha1_hex_bytes
 api	use	pub	jubarte::util::sha1_hex_parts = sha1::sha1_hex_parts
 api	use	pub	jubarte::util::word_tokens = words::word_tokens
+api	use	pub	jubarte::wml_document = jubarte_redlines::wml_document
 api	use	pub	jubarte::xmllinq = jubarte_dom::xmllinq
 api	use	pub	jubarte::xmllinq::parse_xdocument = parse::parse_xdocument
 api	use	pub	jubarte::xmllinq::serialize_document = serialize::serialize_document
@@ -5044,7 +5054,6 @@ internal	constant	pub(crate)	jubarte::capabilities::DIFF_EXTENSIONS: &[&str]
 internal	constant	pub(crate)	jubarte::capabilities::IDS_NOTE: &str
 internal	constant	pub(crate)	jubarte::changes::FORMATTING: &[&str]
 internal	constant	pub(crate)	jubarte::cli::REMOVED_TASKS: &[Retired]
-internal	constant	pub(crate)	jubarte::comparer::comments::FAMILY: [(&str, &str, &str); 4]
 internal	constant	pub(crate)	jubarte::convert::font::CJK_FALLBACK: &str
 internal	constant	pub(crate)	jubarte::convert::font::CJK_FALLBACK_GOTHIC: &str
 internal	constant	pub(crate)	jubarte::convert::font::CJK_FALLBACK_JA: &str
@@ -5080,7 +5089,6 @@ internal	constant	pub(crate)	jubarte::markdown::xml::TAB_LEADERS: &[&str]
 internal	constant	pub(crate)	jubarte::markdown::xml::TAB_POS_LIMIT: i64
 internal	constant	pub(crate)	jubarte::markdown::xml::TAB_VALS: &[&str]
 internal	constant	pub(crate)	jubarte::result::ENVELOPE_SCHEMA_VERSION: u32
-internal	constant	pub(crate)	jubarte::revision_processor::FROZEN_NS: &str
 internal	constant	pub(crate)	jubarte::validate::RULE_SETS: &[&str]
 internal	constant	pub(crate)	jubarte::xmllinq::parse::MAX_ATTRIBUTE_NAME_BYTES: usize
 internal	constant	pub(crate)	jubarte::xmllinq::parse::MAX_ATTRIBUTE_VALUE_BYTES: usize
@@ -5523,7 +5531,6 @@ internal	enum	pub(crate)	jubarte::markdown::view_notes::CellMark
 internal	enum	pub(crate)	jubarte::markdown::view_notes::Owner
 internal	enum	pub(crate)	jubarte::markdown::view_styles::TableBorders
 internal	enum	pub(crate)	jubarte::markdown::xml::ListFormat
-internal	enum	pub(crate)	jubarte::revision_processor::sections::Resolution
 internal	enum	pub(crate::changes)	jubarte::changes::Group
 internal	enum	pub(crate::changes::logical)	jubarte::changes::logical::Event
 internal	enum	pub(crate::changes::logical)	jubarte::changes::logical::Phase
@@ -5640,7 +5647,6 @@ internal	function		jubarte::xmllinq::serialize::XmlBuf::push (self: &mut Self, c
 internal	function		jubarte::xmllinq::serialize::XmlBuf::push_str (self: &mut Self, s: &str)
 internal	function	pub	jubarte::comment_settlement::AnchorChanges::extend (self: &mut Self, removed: Vec<String>, kept: Vec<String>, resolution: Resolution, settled: Option<&[String]>)
 internal	function	pub	jubarte::comment_settlement::AnchorChanges::records (self: &Self, source: &[u8]) -> Result<(Vec<RemovedComment>, Vec<KeptComment>), SettlementError>
-internal	function	pub	jubarte::comparer::deleted_tables::move_inserted_text_past_deleted_tables (dom: &mut crate::xmllinq::Dom, root: crate::xmllinq::NodeId)
 internal	function	pub	jubarte::comparer::final_marks::settle_cell_final_marks (dom: &mut crate::xmllinq::Dom, root: crate::xmllinq::NodeId)
 internal	function	pub	jubarte::comparer::replaced_tables::pair_replaced_tables (dom: &mut crate::xmllinq::Dom, seqs: &mut Vec<super::atoms::CorrelatedSequence>, settings: &super::WmlComparerSettings)
 internal	function	pub	jubarte::comparer::table_split::TableStyleNames::original (styles_xml: Option<&str>) -> Self
@@ -5669,9 +5675,9 @@ internal	function	pub(crate)	jubarte::changes::list_logical_changes_tolerant (do
 internal	function	pub(crate)	jubarte::changes::logical_changes_in (pkg: &crate::opc::PartFs) -> Vec<Change>
 internal	function	pub(crate)	jubarte::changes::member_wholes (docx: &[u8]) -> Result<std::collections::HashMap<String, String>, ChangeError>
 internal	function	pub(crate)	jubarte::changes::recorded_properties (dom: &crate::xmllinq::Dom, record: crate::xmllinq::NodeId) -> String
-internal	function	pub(crate)	jubarte::changes::resolve_for_edit (docx: &[u8], filter: &ChangeFilter, resolution: sections::Resolution, keep_comments: bool) -> Result<(Vec<u8>, Vec<String>, Vec<String>), ChangeError>
+internal	function	pub(crate)	jubarte::changes::resolve_for_edit (docx: &[u8], filter: &ChangeFilter, resolution: crate::revision_processor::Resolution, keep_comments: bool) -> Result<(Vec<u8>, Vec<String>, Vec<String>), ChangeError>
 internal	function	pub(crate)	jubarte::changes::run_has_characters (dom: &crate::xmllinq::Dom, run: crate::xmllinq::NodeId) -> bool
-internal	function	pub(crate)	jubarte::changes::why_removed (changes: &[Change], thread: &[String], resolution: sections::Resolution, settled: Option<&[String]>, wholes: &std::collections::HashMap<String, String>) -> String
+internal	function	pub(crate)	jubarte::changes::why_removed (changes: &[Change], thread: &[String], resolution: crate::revision_processor::Resolution, settled: Option<&[String]>, wholes: &std::collections::HashMap<String, String>) -> String
 internal	function	pub(crate)	jubarte::cli::apply_retired (task: &mut Command, retired: &[(&str, &str)])
 internal	function	pub(crate)	jubarte::cli::removed_task_note (old: &str, now: &str) -> String
 internal	function	pub(crate)	jubarte::cli::removed_tasks <'a>(argv: impl IntoIterator<Item>) -> Vec<(&'static str, &'static str)>
@@ -5697,8 +5703,6 @@ internal	function	pub(crate)	jubarte::comments::CommentFamily::with_replies (sel
 internal	function	pub(crate)	jubarte::comments::comments_in (opened: &mut crate::inspect::Opened) -> Result<Vec<CommentRecord>, CommentError>
 internal	function	pub(crate)	jubarte::comments::list_comments_within (docx: &[u8], limits: crate::admission::InputLimits) -> Result<Vec<CommentRecord>, CommentError>
 internal	function	pub(crate)	jubarte::comparer::bookmarks::carry_permission_union (dom: &mut crate::xmllinq::Dom, root: crate::xmllinq::NodeId, original: (&crate::opc::PartFs, &str), revised: (&crate::opc::PartFs, &str), author: &str)
-internal	function	pub(crate)	jubarte::comparer::bookmarks::carry_permissions (dom: &mut crate::xmllinq::Dom, root: crate::xmllinq::NodeId, original: (&crate::opc::PartFs, &str), revised: (&crate::opc::PartFs, &str), author: &str)
-internal	function	pub(crate)	jubarte::comparer::bookmarks::fresh_permission_id (reserved: &mut std::collections::HashSet<String>, next: &mut u64) -> String
 internal	function	pub(crate)	jubarte::comparer::final_marks::is_inert_body_marker (dom: &crate::xmllinq::Dom, node: crate::xmllinq::NodeId) -> bool
 internal	function	pub(crate)	jubarte::comparer::fixups::fix_up_drawing_ids_in_package_within (docx: &[u8], limits: crate::admission::InputLimits, preserve_untouched: bool) -> Result<Vec<u8>, crate::opc::OpcError>
 internal	function	pub(crate)	jubarte::comparer::fixups::rename_repeated_doc_pr_ids (dom: &mut crate::xmllinq::Dom, root: crate::xmllinq::NodeId)
@@ -5716,7 +5720,6 @@ internal	function	pub(crate)	jubarte::comparer::lcs_table::rows_preserving_horiz
 internal	function	pub(crate)	jubarte::comparer::lcs_table::rows_preserving_horizontal_partitions_for (dom: &crate::xmllinq::Dom, original: &[super::atoms::ComparisonUnit], revised: &[super::atoms::ComparisonUnit], settings: &super::WmlComparerSettings) -> Option<Vec<super::atoms::CorrelatedSequence>>
 internal	function	pub(crate)	jubarte::comparer::lcs_table::shared_word_row_sequences (dom: &crate::xmllinq::Dom, rows1: &[super::atoms::ComparisonUnit], rows2: &[super::atoms::ComparisonUnit]) -> Option<Vec<super::atoms::CorrelatedSequence>>
 internal	function	pub(crate)	jubarte::comparer::moves::promote_skip_ahead_equals_with_source (dom: &crate::xmllinq::Dom, seqs: &mut Vec<super::atoms::CorrelatedSequence>, settings: &super::WmlComparerSettings)
-internal	function	pub(crate)	jubarte::comparer::textbox::shell (dom: &mut crate::xmllinq::Dom, shape: crate::xmllinq::NodeId) -> String
 internal	function	pub(crate)	jubarte::convert::altchunk::expand (xml: &str, load: impl Fn(&str) -> Option<Vec<u8>>) -> String
 internal	function	pub(crate)	jubarte::convert::altchunk::html_to_wml (html: &str) -> String
 internal	function	pub(crate)	jubarte::convert::font::Face::advance_pt (self: &Self, ch: char, size: f32) -> f32
@@ -5825,8 +5828,6 @@ internal	function	pub(crate)	jubarte::debug::cell_ends_in_paragraph (dom: &crate
 internal	function	pub(crate)	jubarte::debug::document_text (bytes: &[u8]) -> Result<String, String>
 internal	function	pub(crate)	jubarte::debug::document_text_view (bytes: &[u8], critic: bool, accept: bool) -> Result<String, String>
 internal	function	pub(crate)	jubarte::debug::document_text_with_critic (bytes: &[u8], critic: bool) -> Result<String, String>
-internal	function	pub(crate)	jubarte::document_comparer::compare_documents_for_edit (original: &[u8], modified: &[u8], settings: &crate::comparer::WmlComparerSettings) -> Result<Vec<u8>, crate::opc::OpcError>
-internal	function	pub(crate)	jubarte::document_comparer::section_story_parts (dom: &crate::xmllinq::Dom, root: crate::xmllinq::NodeId, pkg: &crate::opc::PartFs, main: &str) -> Vec<(bool, Vec<String>)>
 internal	function	pub(crate)	jubarte::edit::EmptyPlacement::place (self: &mut Self, dom: &mut Dom, paragraph: NodeId, node: NodeId, attach_before: bool)
 internal	function	pub(crate)	jubarte::edit::Others::keeps (self: Self) -> bool
 internal	function	pub(crate)	jubarte::edit::RemovedAnchorComments::is_remove (self: &Self) -> bool
@@ -6117,18 +6118,6 @@ internal	function	pub(crate)	jubarte::markdown::xml::style_definition (id: &str)
 internal	function	pub(crate)	jubarte::opc::metadata_document (xml: &[u8], root: &str, namespace: &str) -> Result<(), String>
 internal	function	pub(crate)	jubarte::opc::rels_path_to_part_name (name: &str) -> Option<String>
 internal	function	pub(crate)	jubarte::opc::typed_as_xml (content_types: Option<&[u8]>) -> impl Fn(&str) -> bool + []
-internal	function	pub(crate)	jubarte::revision_processor::RevisionIds::allocate (self: &mut Self) -> u64
-internal	function	pub(crate)	jubarte::revision_processor::RevisionIds::from_used (used: HashSet<u64>) -> Self
-internal	function	pub(crate)	jubarte::revision_processor::RevisionIds::new (pkg: &crate::opc::PartFs) -> Self
-internal	function	pub(crate)	jubarte::revision_processor::accept_deleted (dom: &crate::xmllinq::Dom, node: crate::xmllinq::NodeId) -> Option<crate::xmllinq::NodeId>
-internal	function	pub(crate)	jubarte::revision_processor::clone_with_fresh_property_ids (dom: &mut crate::xmllinq::Dom, source: crate::xmllinq::NodeId, next_id: &mut RevisionIds) -> crate::xmllinq::NodeId
-internal	function	pub(crate)	jubarte::revision_processor::comments::prune_orphan_comments (pkg: &mut crate::opc::PartFs, story_parts: &[String], comments_part: Option<&str>) -> Vec<String>
-internal	function	pub(crate)	jubarte::revision_processor::comments::renumber_rescued_comments (pkg: &mut crate::opc::PartFs, kept: &[String])
-internal	function	pub(crate)	jubarte::revision_processor::comments_part (pkg: &crate::opc::PartFs) -> Option<String>
-internal	function	pub(crate)	jubarte::revision_processor::refresh_property_ids (dom: &mut crate::xmllinq::Dom, copy: crate::xmllinq::NodeId, allocate: impl FnMut(Option<u64>) -> u64)
-internal	function	pub(crate)	jubarte::revision_processor::resolve_package (pkg: &mut crate::opc::PartFs, resolution: sections::Resolution, freeze: Option<&'_ dyn Fn(&str, &mut crate::xmllinq::Dom, crate::xmllinq::NodeId)>) -> Vec<String>
-internal	function	pub(crate)	jubarte::revision_processor::resolve_package_for_edit (pkg: &mut crate::opc::PartFs, resolution: sections::Resolution, freeze: Option<&'_ dyn Fn(&str, &mut crate::xmllinq::Dom, crate::xmllinq::NodeId)>, keep_comments: bool) -> (Vec<String>, Vec<String>)
-internal	function	pub(crate)	jubarte::revision_processor::revision_bearing_parts (pkg: &crate::opc::PartFs) -> Vec<(String, bool)>
 internal	function	pub(crate)	jubarte::revision_processor::style_records::complete_from_original_chain (dom: &mut crate::xmllinq::Dom, old: crate::xmllinq::NodeId, a_root: crate::xmllinq::NodeId, a_style: crate::xmllinq::NodeId, block_local: &str, recorded: &dyn Fn(crate::xmllinq::NodeId) -> bool) -> bool
 internal	function	pub(crate)	jubarte::revision_processor::word_save::drop_unreferenced_headers_footers (pkg: &mut crate::opc::PartFs)
 internal	function	pub(crate)	jubarte::revision_processor::xml_has_tracked_revisions (xml: &str) -> bool
@@ -6262,11 +6251,11 @@ internal	function	pub(crate::changes)	jubarte::changes::properties (name: &crate
 internal	function	pub(crate::changes)	jubarte::changes::record_container_mark (out: &mut Vec<ExposedMark>, dom: &crate::xmllinq::Dom, site: &MarkSite<'_>)
 internal	function	pub(crate::changes)	jubarte::changes::record_exposed_mark (out: &mut Vec<ExposedMark>, dom: &crate::xmllinq::Dom, site: &MarkSite<'_>, paragraph: crate::xmllinq::NodeId, kind: &'static str)
 internal	function	pub(crate::changes)	jubarte::changes::recorded_marks (dom: &crate::xmllinq::Dom, e: crate::xmllinq::NodeId) -> Vec<crate::xmllinq::NodeId>
-internal	function	pub(crate::changes)	jubarte::changes::removed_comment_report (docx: &[u8], removed: &[String], filter: &ChangeFilter, resolution: sections::Resolution) -> Result<(Vec<crate::comments::CommentRecord>, Vec<String>), ChangeError>
-internal	function	pub(crate::changes)	jubarte::changes::resolve (docx: &[u8], filter: &ChangeFilter, resolution: sections::Resolution) -> Result<(Vec<u8>, Vec<String>, usize), ChangeError>
-internal	function	pub(crate::changes)	jubarte::changes::resolve_for_edit_or_cli (docx: &[u8], filter: &ChangeFilter, resolution: sections::Resolution, edit: Option<bool>, whole: bool) -> Result<ResolutionOutcome, ChangeError>
-internal	function	pub(crate::changes)	jubarte::changes::resolve_keeping_comments (docx: &[u8], filter: &ChangeFilter, resolution: sections::Resolution) -> Result<ResolvedChanges, ChangeError>
-internal	function	pub(crate::changes)	jubarte::changes::resolve_with_report (docx: &[u8], filter: &ChangeFilter, resolution: sections::Resolution) -> Result<ResolvedChanges, ChangeError>
+internal	function	pub(crate::changes)	jubarte::changes::removed_comment_report (docx: &[u8], removed: &[String], filter: &ChangeFilter, resolution: crate::revision_processor::Resolution) -> Result<(Vec<crate::comments::CommentRecord>, Vec<String>), ChangeError>
+internal	function	pub(crate::changes)	jubarte::changes::resolve (docx: &[u8], filter: &ChangeFilter, resolution: crate::revision_processor::Resolution) -> Result<(Vec<u8>, Vec<String>, usize), ChangeError>
+internal	function	pub(crate::changes)	jubarte::changes::resolve_for_edit_or_cli (docx: &[u8], filter: &ChangeFilter, resolution: crate::revision_processor::Resolution, edit: Option<bool>, whole: bool) -> Result<ResolutionOutcome, ChangeError>
+internal	function	pub(crate::changes)	jubarte::changes::resolve_keeping_comments (docx: &[u8], filter: &ChangeFilter, resolution: crate::revision_processor::Resolution) -> Result<ResolvedChanges, ChangeError>
+internal	function	pub(crate::changes)	jubarte::changes::resolve_with_report (docx: &[u8], filter: &ChangeFilter, resolution: crate::revision_processor::Resolution) -> Result<ResolvedChanges, ChangeError>
 internal	function	pub(crate::changes)	jubarte::changes::run_characters (dom: &crate::xmllinq::Dom, root: crate::xmllinq::NodeId, skipped: &std::collections::HashSet<crate::xmllinq::NodeId>) -> (std::collections::HashMap<crate::xmllinq::NodeId, (usize, usize)>, Vec<String>)
 internal	function	pub(crate::changes)	jubarte::changes::story_id (main: &str, part: &str) -> String
 internal	function	pub(crate::changes)	jubarte::changes::target (dom: &crate::xmllinq::Dom, e: crate::xmllinq::NodeId, local: &str) -> &'static str
@@ -11523,11 +11512,6 @@ internal	impl		jubarte::revision_processor::TableMerge::(impl Clone)
 internal	impl		jubarte::revision_processor::TableMerge::(impl Copy)
 internal	impl		jubarte::revision_processor::TableMerge::(impl Eq)
 internal	impl		jubarte::revision_processor::TableMerge::(impl PartialEq)
-internal	impl		jubarte::revision_processor::sections::Resolution::(impl Clone)
-internal	impl		jubarte::revision_processor::sections::Resolution::(impl Copy)
-internal	impl		jubarte::revision_processor::sections::Resolution::(impl Debug)
-internal	impl		jubarte::revision_processor::sections::Resolution::(impl Eq)
-internal	impl		jubarte::revision_processor::sections::Resolution::(impl PartialEq)
 internal	impl		jubarte::revision_processor::style_records::Levels::(impl Default)
 internal	impl		jubarte::revision_processor::style_records::Slot::(impl Clone)
 internal	impl		jubarte::revision_processor::style_records::Slot::(impl Eq)
@@ -11558,7 +11542,6 @@ internal	impl		jubarte::xmllinq::serialize::HashXmlBuf::(impl XmlBuf)
 internal	macro	pub(crate)	jubarte::namespaces::cached_xname
 internal	macro	pub(crate)	jubarte::namespaces::ns_struct
 internal	module	pub(crate)	jubarte::comment_settlement
-internal	module	pub(crate)	jubarte::comparer::deleted_tables
 internal	module	pub(crate)	jubarte::comparer::final_marks
 internal	module	pub(crate)	jubarte::comparer::replaced_tables
 internal	module	pub(crate)	jubarte::comparer::table_split
@@ -11746,7 +11729,6 @@ internal	struct	pub(crate)	jubarte::markdown::from_docx::ooxml::Span
 internal	struct	pub(crate)	jubarte::markdown::repair::InlineRun
 internal	struct	pub(crate)	jubarte::markdown::view_styles::BorderSide
 internal	struct	pub(crate)	jubarte::markdown::xml::Picture
-internal	struct	pub(crate)	jubarte::revision_processor::RevisionIds
 internal	struct	pub(crate::append)	jubarte::append::CarriedNotes
 internal	struct	pub(crate::append)	jubarte::append::ListCopy
 internal	struct	pub(crate::append)	jubarte::append::NoteKind
@@ -13279,7 +13261,7 @@ internal	struct_field	pub(crate::changes)	jubarte::changes::ResolutionOutcome::r
 internal	struct_field	pub(crate::cli)	jubarte::cli::Spelled::at: usize
 internal	struct_field	pub(crate::cli)	jubarte::cli::Spelled::name: String
 internal	struct_field	pub(crate::comment_settlement)	jubarte::comment_settlement::AnchorChanges::passes: std::collections::HashMap<String, Pass>
-internal	struct_field	pub(crate::comment_settlement)	jubarte::comment_settlement::Pass::resolution: sections::Resolution
+internal	struct_field	pub(crate::comment_settlement)	jubarte::comment_settlement::Pass::resolution: crate::revision_processor::Resolution
 internal	struct_field	pub(crate::comment_settlement)	jubarte::comment_settlement::Pass::settled: Option<Vec<String>>
 internal	struct_field	pub(crate::comments)	jubarte::comments::Anchors::budget: usize
 internal	struct_field	pub(crate::comments)	jubarte::comments::Anchors::ends: std::collections::HashMap<String, (usize, usize, usize)>
@@ -15243,8 +15225,6 @@ internal	struct_field	pub(crate::publication)	jubarte::publication::StagedFile::
 internal	struct_field	pub(crate::publication)	jubarte::publication::StagedFile::scratch_name: Option<String>
 internal	struct_field	pub(crate::publication)	jubarte::publication::StagedFile::target: std::ffi::OsString
 internal	struct_field	pub(crate::result)	jubarte::result::ProgressEvent::value: serde_json::Value
-internal	struct_field	pub(crate::revision_processor)	jubarte::revision_processor::RevisionIds::next: u64
-internal	struct_field	pub(crate::revision_processor)	jubarte::revision_processor::RevisionIds::used: std::collections::HashSet<u64>
 internal	struct_field	pub(crate::revision_processor)	jubarte::revision_processor::comments::Parsed::dom: crate::xmllinq::Dom
 internal	struct_field	pub(crate::revision_processor)	jubarte::revision_processor::comments::Parsed::root: crate::xmllinq::NodeId
 internal	struct_field	pub(crate::revision_processor::comments)	jubarte::revision_processor::comments::Parsed::doc: crate::xmllinq::NodeId
@@ -16079,8 +16059,6 @@ internal	variant		jubarte::revision_processor::OrphanMovePass::AcceptElements
 internal	variant		jubarte::revision_processor::OrphanMovePass::RejectMoveToMarkers
 internal	variant		jubarte::revision_processor::TableMerge::Revised
 internal	variant		jubarte::revision_processor::TableMerge::WordSave
-internal	variant		jubarte::revision_processor::sections::Resolution::Accept
-internal	variant		jubarte::revision_processor::sections::Resolution::Reject
 internal	variant		jubarte::strict_translation::UriSite::NamespaceDeclaration
 internal	variant		jubarte::strict_translation::UriSite::RelationshipType
 internal	variant		jubarte::text_diff::Piece::Delete

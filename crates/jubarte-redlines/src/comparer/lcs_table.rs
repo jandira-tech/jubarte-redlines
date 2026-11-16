@@ -736,9 +736,10 @@ mod horizontal_partition_tests {
         )
     }
     fn package(body: &str) -> Vec<u8> {
-        let mut pkg =
-            crate::opc::PartFs::open(include_bytes!("../../tests/fixtures/relids/image_doc.docx"))
-                .unwrap();
+        let mut pkg = crate::opc::PartFs::open(include_bytes!(
+            "../../../../tests/fixtures/relids/image_doc.docx"
+        ))
+        .unwrap();
         pkg.set_part("word/document.xml", format!("<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>{body}<w:p/><w:sectPr/></w:body></w:document>").into_bytes());
         pkg.to_zip().unwrap()
     }
@@ -1331,7 +1332,7 @@ mod horizontal_partition_tests {
             + &paragraph("Justified text spreads evenly across the full width of the line.");
         let source_package = |body: &str| {
             let mut pkg = crate::opc::PartFs::open(include_bytes!(
-                "../../tests/fixtures/relids/image_doc.docx"
+                "../../../../tests/fixtures/relids/image_doc.docx"
             ))
             .unwrap();
             pkg.set_part(

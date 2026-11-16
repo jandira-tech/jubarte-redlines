@@ -99,6 +99,8 @@ def facade_uses(listing: str) -> list[str]:
             continue
         if _is_associated(path):
             continue  # an inherent or trait method: not `use`-able
+        if path.endswith("::*") or path.endswith("::_"):
+            continue  # a glob re-export names its children, not itself
         segments = path.split("::")
         prefixes = [
             "::".join(segments[:i]) for i in range(2, len(segments))

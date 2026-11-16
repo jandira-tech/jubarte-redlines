@@ -277,7 +277,8 @@ fn referenced_part(pkg: &PartFs, main: &str, target: &str) -> String {
 /// the header/footer parts it references). A paragraph's `w:sectPr` whose
 /// mark is deleted is a deleted break; any other paragraph's, and the
 /// body's own, is a live section.
-pub(crate) fn section_story_parts(
+#[doc(hidden)]
+pub fn section_story_parts(
     dom: &Dom,
     root: NodeId,
     pkg: &PartFs,
@@ -5423,30 +5424,6 @@ pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
     pkg.to_zip()
 }
 
-/// Accept every revision through the processor, rescuing wholly removed
-/// comment threads onto empty anchors (#1279). The CLI's
-/// `--keep-nested-comment` opt-in on `convert --track-changes accept`.
-///
-/// # Errors
-/// Refused input, an unreadable package or unreadable comment records.
-pub fn accept_revisions_keeping_comments(
-    docx: &[u8],
-) -> Result<crate::changes::ResolvedChanges, crate::changes::ChangeError> {
-    crate::changes::accept_changes_keeping_comments(docx, &crate::changes::ChangeFilter::default())
-}
-
-/// Reject every revision through the processor, rescuing wholly removed
-/// comment threads onto empty anchors (#1279). The CLI's
-/// `--keep-nested-comment` opt-in on `convert --track-changes reject`.
-///
-/// # Errors
-/// As [`accept_revisions_keeping_comments`].
-pub fn reject_revisions_keeping_comments(
-    docx: &[u8],
-) -> Result<crate::changes::ResolvedChanges, crate::changes::ChangeError> {
-    crate::changes::reject_changes_keeping_comments(docx, &crate::changes::ChangeFilter::default())
-}
-
 /// Collision-proof target name for copying `want` (with `bytes`) into `out`:
 /// free name or byte-identical existing part → `want` unchanged; an existing
 /// part with DIFFERENT content → the first free or identical candidate: a
@@ -6914,7 +6891,8 @@ pub fn compare_documents_with_settings(
 }
 
 /// Edit restores permissions under its own revised-by-id policy (#1176).
-pub(crate) fn compare_documents_for_edit(
+#[doc(hidden)]
+pub fn compare_documents_for_edit(
     original: &[u8],
     modified: &[u8],
     settings: &WmlComparerSettings,
@@ -9785,7 +9763,7 @@ mod coverage_boundary_tests {
 
     fn package(content: &str) -> PartFs {
         let mut pkg = PartFs::open(include_bytes!(
-            "../tests/fixtures/word_probes/tokens/cell_a.docx"
+            "../../../tests/fixtures/word_probes/tokens/cell_a.docx"
         ))
         .unwrap();
         for part in pkg.parts() {
@@ -11506,7 +11484,7 @@ mod coverage_boundary_tests {
             .unwrap();
         assert_eq!(refusal.code(), "INPUT_LIMIT");
         assert!(crate::admission::admit_package(b"not a ZIP").is_err());
-        let bytes = include_bytes!("../tests/fixtures/word_probes/tokens/cell_a.docx");
+        let bytes = include_bytes!("../../../tests/fixtures/word_probes/tokens/cell_a.docx");
         assert!(crate::admission::admit_package(bytes).is_ok());
         assert!(!docx_has_tracked_changes(
             b"not a ZIP",
@@ -12985,7 +12963,7 @@ mod coverage_package_source_matrix_tests {
         header: bool,
     ) -> PartFs {
         let mut pkg = PartFs::open(include_bytes!(
-            "../tests/fixtures/word_probes/tokens/cell_a.docx"
+            "../../../tests/fixtures/word_probes/tokens/cell_a.docx"
         ))
         .unwrap();
         for part in pkg.parts() {
@@ -13359,7 +13337,10 @@ mod coverage_package_source_matrix_tests {
 mod comparer_relationship_contract_tests {
     use super::*;
     fn package() -> PartFs {
-        PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap()
+        PartFs::open(include_bytes!(
+            "../../../tests/fixtures/redline/original.docx"
+        ))
+        .unwrap()
     }
     #[test]
     fn referenced_relationship_agreement_requires_matching_type_mode_and_payload_or_external_target()
@@ -13720,7 +13701,7 @@ mod isolated_header_container_revision_boundary_tests {
                         let (source, root) = parsed(&xml);
                         let expected = semantic(&source, root);
                         let mut pkg = PartFs::open(include_bytes!(
-                            "../tests/fixtures/word_probes/tokens/cell_a.docx"
+                            "../../../tests/fixtures/word_probes/tokens/cell_a.docx"
                         ))
                         .unwrap();
                         pkg.set_part(part, xml.into_bytes());
@@ -14009,11 +13990,13 @@ mod adopted_story_relationship_owner_tests {
     }
     #[test]
     fn adopted_root_and_nested_stories_keep_colliding_media_relationships_resolvable() {
-        let images =
-            PartFs::open(include_bytes!("../tests/fixtures/relids/image_doc.docx")).unwrap();
+        let images = PartFs::open(include_bytes!(
+            "../../../tests/fixtures/relids/image_doc.docx"
+        ))
+        .unwrap();
         let revised_image = images.part_bytes("word/media/image1.png").unwrap().to_vec();
         let original_package = PartFs::open(include_bytes!(
-            "../tests/fixtures/word_probes/keep_next_picture_kn_1001.docx"
+            "../../../tests/fixtures/word_probes/keep_next_picture_kn_1001.docx"
         ))
         .unwrap();
         let original_image = original_package
@@ -14033,9 +14016,10 @@ mod adopted_story_relationship_owner_tests {
                         let kind = if footer { "footer" } else { "header" };
                         let root_name = if footer { "ftr" } else { "hdr" };
                         let part = format!("{directory}owned-{kind}.xml");
-                        let mut source =
-                            PartFs::open(include_bytes!("../tests/fixtures/relids/image_doc.docx"))
-                                .unwrap();
+                        let mut source = PartFs::open(include_bytes!(
+                            "../../../tests/fixtures/relids/image_doc.docx"
+                        ))
+                        .unwrap();
                         source.set_part(MAIN, empty_main().into_bytes());
                         source.set_part(media, revised_image.clone());
                         source.add_content_type_default("png", "image/png");
@@ -14066,9 +14050,10 @@ mod adopted_story_relationship_owner_tests {
                             })
                             .collect::<Vec<_>>();
                         let source_rels = format!("{:?}", source.read_rels_for(&part).unwrap());
-                        let mut out =
-                            PartFs::open(include_bytes!("../tests/fixtures/relids/image_doc.docx"))
-                                .unwrap();
+                        let mut out = PartFs::open(include_bytes!(
+                            "../../../tests/fixtures/relids/image_doc.docx"
+                        ))
+                        .unwrap();
                         out.set_part(MAIN, empty_main().into_bytes());
                         if collision {
                             out.set_part(media, original_image.clone());
@@ -14376,8 +14361,10 @@ mod public_numbering_definition_source_owner_tests {
         changed_indent: bool,
         overrides: bool,
     ) -> Vec<u8> {
-        let mut pkg =
-            PartFs::open(include_bytes!("../tests/fixtures/relids/image_doc.docx")).unwrap();
+        let mut pkg = PartFs::open(include_bytes!(
+            "../../../tests/fixtures/relids/image_doc.docx"
+        ))
+        .unwrap();
         let id = if revised && !collision { 7 } else { 1 };
         let format = if revised { "upperRoman" } else { "decimal" };
         let start = if revised { 3 } else { 1 };
@@ -14531,8 +14518,10 @@ mod story_diff_failure_tests {
 
     #[test]
     fn neutralization_preserves_resolved_internal_references_and_source_package() {
-        let mut pkg =
-            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let mut pkg = PartFs::open(include_bytes!(
+            "../../../tests/fixtures/redline/original.docx"
+        ))
+        .unwrap();
         let part = "word/header1.xml";
         pkg.set_part("word/media/owned.bin", vec![1, 2, 3]);
         let rid =
@@ -14579,7 +14568,10 @@ mod story_diff_failure_tests {
 
     #[test]
     fn rootless_story_cannot_be_neutralized_into_a_silent_copy() {
-        let pkg = PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let pkg = PartFs::open(include_bytes!(
+            "../../../tests/fixtures/redline/original.docx"
+        ))
+        .unwrap();
         let err = neutralize_story_relationships(&pkg, "word/footer1.xml", "").unwrap_err();
         assert!(
             err.to_string()

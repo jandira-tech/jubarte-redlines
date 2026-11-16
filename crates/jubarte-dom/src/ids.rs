@@ -319,7 +319,8 @@ pub fn comment_text_id(token: &str) -> Option<u32> {
 }
 
 // The same wire shape feeds deserialization and legacy field discovery.
-#[derive(Deserialize, schemars::JsonSchema)]
+#[derive(Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 #[doc(hidden)]
 pub enum RawCommentId {

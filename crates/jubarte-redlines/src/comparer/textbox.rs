@@ -165,7 +165,8 @@ fn lift_run(dom: &mut Dom, run: NodeId) {
 /// (drawing/shape ids, VML spids and shapetype references), so boxes that
 /// differ only in text compare equal. VML fixups preserve unique ids and
 /// spids; only collisions are renamed, except in untouched Fallback copies.
-pub(crate) fn shell(dom: &mut Dom, shape: NodeId) -> String {
+#[doc(hidden)]
+pub fn shell(dom: &mut Dom, shape: NodeId) -> String {
     let copy = dom.clone_subtree(shape);
     for b in dom.descendants(copy, Some(&W::txbx_content())) {
         for c in dom.nodes(b) {

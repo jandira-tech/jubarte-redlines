@@ -731,7 +731,7 @@ fn reconcile_one_part(dest: &mut PartFs, part: &str, a: &PartFs, b: &PartFs) {
 mod tests {
     use super::*;
 
-    const PACKAGE: &[u8] = include_bytes!("../../tests/fixtures/relids/image_doc.docx");
+    const PACKAGE: &[u8] = include_bytes!("../../../../tests/fixtures/relids/image_doc.docx");
 
     #[test]
     fn media_name_is_the_sha256_of_the_bytes_and_ignores_earlier_calls() {
@@ -1060,7 +1060,7 @@ mod tests {
 mod coverage_recursive_part_ownership {
     use super::*;
     use crate::namespaces::R;
-    const PACKAGE: &[u8] = include_bytes!("../../tests/fixtures/relids/image_doc.docx");
+    const PACKAGE: &[u8] = include_bytes!("../../../../tests/fixtures/relids/image_doc.docx");
     const TY: &str = "urn:jandira:document/attachment";
 
     #[test]

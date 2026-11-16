@@ -798,7 +798,8 @@ fn leave_permission_revision_boundary(dom: &mut Dom, endpoint: NodeId, after: bo
 }
 
 /// Allocate outside every source/output id reserved by the caller (#1190).
-pub(crate) fn fresh_permission_id(reserved: &mut HashSet<String>, next: &mut u64) -> String {
+#[doc(hidden)]
+pub fn fresh_permission_id(reserved: &mut HashSet<String>, next: &mut u64) -> String {
     while reserved.contains(&next.to_string()) {
         *next += 1;
     }
@@ -962,7 +963,8 @@ pub(crate) fn carry_permission_union(
 /// Edit-only permission carry-over. Reuse bookmark projection and content-control
 /// boundaries, preferring the revised pair by id and retaining original-only
 /// pairs on the deleted side. Compare deliberately does not call this.
-pub(crate) fn carry_permissions(
+#[doc(hidden)]
+pub fn carry_permissions(
     dom: &mut Dom,
     root: NodeId,
     original: (&PartFs, &str),

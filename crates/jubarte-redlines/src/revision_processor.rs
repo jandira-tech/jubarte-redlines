@@ -24,8 +24,12 @@ mod sections;
 pub(crate) mod style_records;
 mod word_save;
 
-pub(crate) use comments::{prune_orphan_comments, renumber_rescued_comments};
-pub(crate) use sections::Resolution;
+// The doc and edit layers above reach these through the facade's
+// revision_processor re-export (changes, edit, scrub).
+#[doc(hidden)]
+pub use comments::{prune_orphan_comments, renumber_rescued_comments};
+#[doc(hidden)]
+pub use sections::Resolution;
 pub(crate) use word_save::drop_unreferenced_headers_footers;
 
 use std::collections::{HashMap, HashSet};
@@ -4042,7 +4046,8 @@ fn mark_emptied_controls(dom: &mut Dom, root: NodeId) {
 // ─────────────── A.10 — the full AcceptRevisionsForPart pipeline ────────────
 
 /// The `w:del` or `w:moveFrom` that holds `node`, when accept will remove it.
-pub(crate) fn accept_deleted(dom: &Dom, node: NodeId) -> Option<NodeId> {
+#[doc(hidden)]
+pub fn accept_deleted(dom: &Dom, node: NodeId) -> Option<NodeId> {
     let mut cur = dom.parent(node);
     while let Some(ancestor) = cur {
         if dom.name_is(ancestor, &W::del()) || dom.name_is(ancestor, &W::move_from()) {
@@ -4378,7 +4383,8 @@ fn numbering_part(pkg: &crate::opc::PartFs) -> Option<String> {
 /// The main document's comments part (`word/comments.xml`), when it has
 /// one. Its revisions resolve like every other part's and are listed as
 /// `comments.rN` (#1706).
-pub(crate) fn comments_part(pkg: &crate::opc::PartFs) -> Option<String> {
+#[doc(hidden)]
+pub fn comments_part(pkg: &crate::opc::PartFs) -> Option<String> {
     related_part(pkg, "comments")
 }
 
@@ -4386,7 +4392,8 @@ pub(crate) fn comments_part(pkg: &crate::opc::PartFs) -> Option<String> {
 /// order — main, headers, footers, endnotes, footnotes, then styles
 /// (flagged) — with the comments part Word's own Accept/Reject All also
 /// settles (#1223) between the notes and the styles.
-pub(crate) fn revision_bearing_parts(pkg: &crate::opc::PartFs) -> Vec<(String, bool)> {
+#[doc(hidden)]
+pub fn revision_bearing_parts(pkg: &crate::opc::PartFs) -> Vec<(String, bool)> {
     let main = pkg
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
@@ -4466,17 +4473,20 @@ pub fn reject_revisions_package(pkg: &mut crate::opc::PartFs) {
 
 /// Revision elements renamed into this namespace sit a resolution out and
 /// come back unchanged (`jubarte::changes`).
-pub(crate) const FROZEN_NS: &str = "urn:jubarte:frozen-revision";
+#[doc(hidden)]
+pub const FROZEN_NS: &str = "urn:jubarte:frozen-revision";
 
 /// Package-wide ids reserved before any revision is frozen or removed.
 /// Annotation ids and XML parts outside the revision pipeline have other scopes.
-pub(crate) struct RevisionIds {
+#[doc(hidden)]
+pub struct RevisionIds {
     next: u64,
     used: HashSet<u64>,
 }
 
 impl RevisionIds {
-    pub(crate) fn new(pkg: &crate::opc::PartFs) -> Self {
+    #[doc(hidden)]
+    pub fn new(pkg: &crate::opc::PartFs) -> Self {
         let mut used = HashSet::new();
         for (part, _) in revision_bearing_parts(pkg) {
             let Some(xml) = pkg.part_string(&part) else {
@@ -4500,14 +4510,16 @@ impl RevisionIds {
         Self::from_used(used)
     }
 
-    pub(crate) fn from_used(used: HashSet<u64>) -> Self {
+    #[doc(hidden)]
+    pub fn from_used(used: HashSet<u64>) -> Self {
         let next = used.iter().max().map_or(0, |id| id.saturating_add(1));
         Self { next, used }
     }
 
     /// Keep max + 1 until Word's signed 32-bit range is exhausted, then
     /// allocate the lowest unused id. Reserve copies immediately, too.
-    pub(crate) fn allocate(&mut self) -> u64 {
+    #[doc(hidden)]
+    pub fn allocate(&mut self) -> u64 {
         const MAX: u64 = i32::MAX as u64;
         if self.next > MAX {
             self.next = 0;
@@ -4525,7 +4537,8 @@ impl RevisionIds {
 
 /// A copied property history is a distinct record. Allocate at the copy
 /// site, leaving the original's attribution, payload and id untouched.
-pub(crate) fn clone_with_fresh_property_ids(
+#[doc(hidden)]
+pub fn clone_with_fresh_property_ids(
     dom: &mut Dom,
     source: NodeId,
     next_id: &mut RevisionIds,
@@ -4539,7 +4552,8 @@ pub(crate) fn clone_with_fresh_property_ids(
 /// `allocate`, which is passed the id the record had, leaving its
 /// attribution and payload untouched: a copy of a record is a distinct
 /// record.
-pub(crate) fn refresh_property_ids(
+#[doc(hidden)]
+pub fn refresh_property_ids(
     dom: &mut Dom,
     copy: NodeId,
     mut allocate: impl FnMut(Option<u64>) -> u64,
@@ -4564,7 +4578,8 @@ pub(crate) type Freeze<'a> = &'a dyn Fn(&str, &mut Dom, NodeId);
 /// Accept or reject every revision `freeze` leaves in place. Bookmark and
 /// comment ids are identifiers: the ones kept keep their ids, whatever is
 /// left (#1264). Return the removed comments' original ids.
-pub(crate) fn resolve_package(
+#[doc(hidden)]
+pub fn resolve_package(
     pkg: &mut crate::opc::PartFs,
     resolution: Resolution,
     freeze: Option<Freeze<'_>>,
@@ -4574,7 +4589,8 @@ pub(crate) fn resolve_package(
 
 /// [`resolve_package`] for an edit plan, the only entry point that can
 /// rescue removed anchors.
-pub(crate) fn resolve_package_for_edit(
+#[doc(hidden)]
+pub fn resolve_package_for_edit(
     pkg: &mut crate::opc::PartFs,
     resolution: Resolution,
     freeze: Option<Freeze<'_>>,
@@ -5485,7 +5501,7 @@ mod public_block_control_ownership_tests {
 
     fn package(content: &str) -> Vec<u8> {
         let mut pkg = PartFs::open(include_bytes!(
-            "../tests/fixtures/word_probes/tokens/cell_a.docx"
+            "../../../tests/fixtures/word_probes/tokens/cell_a.docx"
         ))
         .unwrap();
         for part in pkg.parts() {
@@ -5818,7 +5834,7 @@ mod body_equation_paragraph_mark_ownership_tests {
                 let expected = semantic(&dom, dom.elements(body, None)[1]);
                 let xml = dom.serialize_element(root);
                 let mut pkg = PartFs::open(include_bytes!(
-                    "../tests/fixtures/word_probes/tokens/cell_a.docx"
+                    "../../../tests/fixtures/word_probes/tokens/cell_a.docx"
                 ))
                 .unwrap();
                 pkg.set_part("word/document.xml", xml.into_bytes());
@@ -6040,7 +6056,7 @@ mod deleted_title_equation_barrier_tests {
             );
             let (dom, root) = parse(&content);
             let mut pkg = PartFs::open(include_bytes!(
-                "../tests/fixtures/word_probes/tokens/cell_a.docx"
+                "../../../tests/fixtures/word_probes/tokens/cell_a.docx"
             ))
             .unwrap();
             pkg.set_part(

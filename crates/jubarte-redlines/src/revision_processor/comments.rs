@@ -348,7 +348,8 @@ fn remove_marker(dom: &mut Dom, marker: NodeId, live: bool) {
 /// rescued thread keeps its source id only when it is still the lowest
 /// free one. Skipped while any revision is pending: surviving annotations
 /// still name the changes that hold them.
-pub(crate) fn renumber_rescued_comments(pkg: &mut PartFs, kept: &[String]) {
+#[doc(hidden)]
+pub fn renumber_rescued_comments(pkg: &mut PartFs, kept: &[String]) {
     if kept.is_empty() {
         return;
     }
@@ -470,7 +471,8 @@ pub(crate) fn renumber_rescued_comments(pkg: &mut PartFs, kept: &[String]) {
 /// Drop the comments Accept / Reject All left without a reference, prune the
 /// comment family and `people.xml` (module docs). Return their ids, so
 /// callers can report precisely what went.
-pub(crate) fn prune_orphan_comments(
+#[doc(hidden)]
+pub fn prune_orphan_comments(
     pkg: &mut PartFs,
     story_parts: &[String],
     comments_part: Option<&str>,

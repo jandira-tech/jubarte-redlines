@@ -2322,3 +2322,25 @@ fn owner_text(dom: &Dom, change: NodeId) -> String {
         .map(|owner| text_of(dom, owner))
         .unwrap_or_default()
 }
+
+/// Accept every revision through the processor, rescuing wholly removed
+/// comment threads onto empty anchors (#1279). The CLI's
+/// `--keep-nested-comment` opt-in on `convert --track-changes accept`.
+/// Lives here in the doc layer with the settlement it drives; the
+/// facade's `document_comparer` module composes it back.
+///
+/// # Errors
+/// Refused input, an unreadable package or unreadable comment records.
+pub fn accept_revisions_keeping_comments(docx: &[u8]) -> Result<ResolvedChanges, ChangeError> {
+    accept_changes_keeping_comments(docx, &ChangeFilter::default())
+}
+
+/// Reject every revision through the processor, rescuing wholly removed
+/// comment threads onto empty anchors (#1279). The CLI's
+/// `--keep-nested-comment` opt-in on `convert --track-changes reject`.
+///
+/// # Errors
+/// As [`accept_revisions_keeping_comments`].
+pub fn reject_revisions_keeping_comments(docx: &[u8]) -> Result<ResolvedChanges, ChangeError> {
+    reject_changes_keeping_comments(docx, &ChangeFilter::default())
+}

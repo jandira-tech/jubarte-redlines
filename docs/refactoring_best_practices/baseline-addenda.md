@@ -7,6 +7,42 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T4.3b (jubarte-redlines extracted) - 2026-11-16
+
+- Third workspace crate: the compare product (comparer,
+  document_comparer, revision_processor, wml_document, comparison_log)
+  on jubarte-opc and jubarte-dom through the A5 shims. accept/+
+  reject_revisions_keeping_comments moved into the doc layer's
+  changes.rs first, and the facade composes jubarte::document_comparer
+  per A6 (the crate's module plus those two), so every public path
+  holds. The crate re-exports admission/opc/strict_translation/
+  xmllinq/namespaces (A2): one dependency is enough for a consumer.
+- schemars left both floors by feature: jubarte-dom's ids and
+  jubarte-opc's settings derive JsonSchema only under `schema`
+  (forwarded opc -> dom), which the root enables for the edit plan's
+  schema. The compare tree is clean of renderer, markdown and CLI deps
+  (AC1: zero matches).
+- KNOWN_UPWARD loses document_comparer.rs -> changes (the file moved);
+  one entry remains, the documented debug.rs -> text_diff deviation.
+- The include rebasing across the moved tree needed an existence-tested
+  rewrite (a first regex pass corrupted three files; restored from git
+  and redone per-file - lesson recorded for T4.4+).
+- gen_facade_surface skips glob and anonymous re-export lines (a
+  composed module's `pub use ...::*` lines cannot take `as _`).
+- Battery: S1 both feature sets; AC1 tree clean; AC2 guards green;
+  AC3 a scratch crate comparing the fixture pair on the crate alone;
+  S3 listing re-baselined (62 reviewed lines) + facade_surface 888
+  probes; S4 goldens identical; S6 clippy both, fmt, RUSTDOCFLAGS doc;
+  AC4 bench gate: the required no-LTO consumer configuration regressed
+  +32% to +56% on all four benchmarks (comparer's Dom calls now cross
+  crate boundaries without cross-crate inlining); #[inline] on the nine
+  hottest accessors moved nothing and was reverted. D8 applied: thin
+  LTO at the root [profile.release] and [profile.bench] - the
+  workspace's own builds IMPROVED 5-11% against pre-split on all four
+  benchmarks. The no-LTO consumer gap stands, recorded here per the
+  plan, for T4.9 to re-measure. (Release CLI with thin LTO:
+  41,343,248 bytes.)
+
 ## T4.3a (root package renamed to jubarte) - 2026-11-15
 
 - The root package is `jubarte` (D1); the [lib] section is gone (name
