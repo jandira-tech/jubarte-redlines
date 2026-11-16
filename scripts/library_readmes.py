@@ -276,9 +276,15 @@ def version_from_cargo() -> str:
     text = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
     block = text.split("[package]", 1)[1]
     match = re.search(r'^version\s*=\s*"([^"]+)"', block, re.M)
-    if not match:
-        raise SystemExit("error: no [package] version in Cargo.toml")
-    return match.group(1)
+    if match:
+        return match.group(1)
+    if re.search(r"^version\.workspace\s*=\s*true$", block, re.M):
+        # The workspace manifest holds the version every member inherits.
+        workspace = text.split("[workspace.package]", 1)[1]
+        inherited = re.search(r'^version\s*=\s*"([^"]+)"', workspace, re.M)
+        if inherited:
+            return inherited.group(1)
+    raise SystemExit("error: no [package] version in Cargo.toml")
 
 
 def render(lib: Library, root_text: str, version: str, root: Path = ROOT) -> str:

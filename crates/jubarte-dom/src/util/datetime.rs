@@ -118,7 +118,8 @@ pub fn utc_now() -> CivilDateTime {
 /// wasm32-unknown-unknown has no clock in std (`SystemTime::now` panics),
 /// so the host's `Date` tells the time.
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-pub(crate) fn utc_now() -> CivilDateTime {
+#[doc(hidden)]
+pub fn utc_now() -> CivilDateTime {
     let now = js_sys::Date::new_0();
     CivilDateTime {
         y: i32::try_from(now.get_utc_full_year()).unwrap_or(1970),

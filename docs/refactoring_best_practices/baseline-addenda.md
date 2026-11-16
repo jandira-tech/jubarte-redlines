@@ -7,6 +7,36 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T4.3a (root package renamed to jubarte) - 2026-11-15
+
+- The root package is `jubarte` (D1); the [lib] section is gone (name
+  and path are the defaults), documentation points at docs.rs/jubarte,
+  and the four bindings depend on it under the new key with refreshed
+  lockfiles. deny.toml's build-script entries, release.sh's mechanical
+  names (semver-checks -p, the packaged crate tarball, the crates.io
+  resume probe), the README crates.io/docs.rs badges and AGENTS.md's
+  naming section follow. bump-version's badge and install-pin regexes
+  accept both names now.
+- Found along the way: a T4.0a typo in the semver lint table
+  (repr_c_plain_enum_struct_variant_fields_reordered for
+  repr_c_plain_struct_fields_reordered), library_readmes now resolves
+  the workspace-inherited version, release_metadata's lock guard checks
+  the jubarte entry, and jubarte-dom's wasm-only utc_now gained the V2
+  promotion the native dead-code analysis could not see (the wasm
+  binding compiles that cfg block).
+- AC review of the remaining jubarte-redlines hits: GitHub repo URLs,
+  PyPI/npm package names (python and wasm bindings, README installs,
+  npx/pip instructions), the app lock check (T4.3b's world), benchmark
+  data under tools/, committed fixtures, and codemod tests over
+  historic trees.
+- Battery: cargo metadata (jubarte, jubarte-dom, jubarte-opc); all
+  four bindings check green from their own directories (wasm for
+  wasm32); test_release_sh 282/282, test_release_workflow OK, bump
+  tests 8/8 and the Python ones, semver_lints PASS, library_readmes
+  regenerated and green; guards 15/15; clippy both feature sets, fmt,
+  RUSTDOCFLAGS doc; goldens identical; full workspace suite
+  10,691/10,691.
+
 ## T4.2 (jubarte-opc extracted) - 2026-11-15
 
 - Second workspace crate: crates/jubarte-opc (opc, admission,

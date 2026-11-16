@@ -308,7 +308,9 @@ class Listing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             built = Path(tmp) / "jubarte.json"
             built.write_text(json.dumps(demo_doc()))
-            with mock.patch.object(api, "build_doc_json"):
+            with mock.patch.object(api, "build_doc_json"), mock.patch.object(
+                api, "build_workspace_docs", return_value={}
+            ):
                 with mock.patch.object(api, "DOC_JSON", built):
                     with mock.patch.object(api, "API_DIR", Path(tmp) / "api"):
                         with contextlib.redirect_stdout(io.StringIO()):
@@ -735,7 +737,9 @@ class AddedPaths(unittest.TestCase):
             built = Path(tmp) / "jubarte.json"
             built.write_text(json.dumps(demo_doc()))
             out = Path(tmp) / "head.api.txt"
-            with mock.patch.object(api, "build_doc_json"):
+            with mock.patch.object(api, "build_doc_json"), mock.patch.object(
+                api, "build_workspace_docs", return_value={}
+            ):
                 with mock.patch.object(api, "DOC_JSON", built):
                     with mock.patch.object(api, "API_DIR", Path(tmp) / "api"):
                         with contextlib.redirect_stdout(io.StringIO()):

@@ -77,13 +77,13 @@ export function bumpReadmePins(readme, prev, next) {
     // Socket badge: image and link both pin the version; a stale pin
     // (a skipped bump) is corrected too, not only the previous version.
     .replace(
-      /(badge\.socket\.dev\/cargo\/package\/jubarte-redlines\/)\d+\.\d+\.\d+/g,
+      /(badge\.socket\.dev\/cargo\/package\/jubarte(?:-redlines)?\/)\d+\.\d+\.\d+/g,
       `$1${next}`,
     )
     // Library install pin: `version = "x.y"` (a caret requirement), so a
     // patch leaves it and a minor moves it. It stayed "0.9" through 0.10.1.
     .replace(
-      /(jubarte-redlines\s*=\s*\{\s*version\s*=\s*")\d+\.\d+(")/g,
+      /(jubarte(?:-redlines)?\s*=\s*\{\s*version\s*=\s*")\d+\.\d+(")/g,
       `$1${next.split(".").slice(0, 2).join(".")}$2`,
     );
 }

@@ -19,9 +19,11 @@ and must not be edited, built, benchmarked, or treated as current evidence.
 The names used at each boundary are intentional:
 
 - local source folder: `jubarte-redlines`
-- GitHub repository: `jandira-tech/jubarte-redlines` (crates.io: `jubarte-redlines`; Rust path: `jubarte::`)
-- Cargo library target and CLI binary: `jubarte` (the Cargo package is
-  `jubarte-redlines`)
+- GitHub repository: `jandira-tech/jubarte-redlines` (PyPI and npm keep
+  `jubarte-redlines`; Rust path: `jubarte::`)
+- Cargo package, library target and CLI binary: `jubarte` (0.19.0 takes
+  the name; the compare-only crate `jubarte-redlines` arrives with the
+  split's T4.3b)
 - benchmark native vendor/method: `jubarte-rust`
 - benchmark WASM adapter: `jubarte-wasm`
 

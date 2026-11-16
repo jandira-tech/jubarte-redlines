@@ -338,8 +338,8 @@ fn cargo_lock_is_consistent_with_the_new_dependencies() {
     // The workspace member's own lock entry must track the manifest version.
     let v = env!("CARGO_PKG_VERSION");
     assert!(
-        lock.contains(&format!("name = \"jubarte-redlines\"\nversion = \"{v}\"")),
-        "Cargo.lock's jubarte-redlines entry is not pinned to {v}"
+        lock.contains(&format!("name = \"jubarte\"\nversion = \"{v}\"")),
+        "Cargo.lock's jubarte entry is not pinned to {v}"
     );
 }
 

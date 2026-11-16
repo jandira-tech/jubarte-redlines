@@ -21,7 +21,7 @@ license = "AGPL-3.0-only"
 repository = "https://github.com/jandira-tech/jubarte-redlines"
 
 [package]
-name = "jubarte-redlines"
+name = "jubarte"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -29,7 +29,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Word-faithful DOCX redline engine — compare two Word documents into a tracked-changes document that opens cleanly in Microsoft Word; list, accept, or reject revisions"
-documentation = "https://docs.rs/jubarte-redlines"
+documentation = "https://docs.rs/jubarte"
 readme = "README.crates.md"
 keywords = ["docx", "redline", "track-changes", "word", "pdf"]
 categories = ["text-processing", "parser-implementations", "command-line-utilities", "wasm"]
@@ -57,8 +57,9 @@ include = [
   "/keys/*.pub",
 ]
 
-# Rust import path stays `jubarte::…` (historical library name). The crates.io
-# package / GitHub repo are `jubarte-redlines`.
+# The package is `jubarte` (D1: 0.19.0 repurposes the name; the compare
+# crate takes `jubarte-redlines` in T4.3b). The GitHub repo keeps its
+# historical name, and the library name is the package name.
 
 [package.metadata.release-notes]
 "0.9.2" = "DOCX to PDF closer to Microsoft Word: Word-probed layout rules, painted revision marks (PdfOptions::revisions), comment balloons, East Asian layout, smaller PDFs. compare_documents output unchanged."
@@ -76,10 +77,6 @@ include = [
 "0.16.0" = "Breaking: changes/comments --json put input_validity on stderr (#1925). validate resolves relationship attributes by namespace and checks every relationships part and nameless move ranges; PDF tables past their grid take Word's widths; keep-path rewrites mark one change per phrase; start-of-paragraph edits no longer panic; --version names the build commit."
 "0.17.0" = "Security hardening: XML element budget, DTDs refused in every part, read limits before layout, a compare story-unit budget and UNSUPPORTED_CONTENT instead of atomizer panics, optional JUBARTE_TIMEOUT. Breaking: InputLimits and InputBudget gain fields; one-shot edit/add need an author; accept/reject -o INPUT replaced by --in-place; --keep-others guards other authors markup. New read --find and validate --baseline verdicts."
 "0.18.0" = "Hardened package open (unsafe part names, foreign roots, false UTF-8 ZIP names refused); bounded legacy .doc, fields, anchors, font caches; apply_markdown_strict; leak_scan receipt; ExposedFinalMark; glibc 2.28 Linux binaries plus musl; over a hundred compare, accept/reject, edit and Markdown fixes."
-[lib]
-name = "jubarte"
-path = "src/lib.rs"
-
 [package.metadata.docs.rs]
 all-features = true
 
@@ -123,7 +120,7 @@ pub_const_added = "deny"
 pub_static_added = "deny"
 repr_c_added = "deny"
 repr_c_enum_struct_variant_fields_reordered = "deny"
-repr_c_plain_enum_struct_variant_fields_reordered = "deny"
+repr_c_plain_struct_fields_reordered = "deny"
 struct_must_use_removed = "deny"
 struct_no_longer_has_non_pub_fields = "deny"
 struct_no_longer_non_exhaustive = "deny"

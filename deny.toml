@@ -117,7 +117,7 @@ allow-build-scripts = [
     "io-extras",
     "io-lifetimes",
     "jsonschema-value",
-    "jubarte-redlines",
+    "jubarte",
     "libc",
     "libfuzzer-sys",
     "libm",
@@ -158,5 +158,5 @@ allow-build-scripts = [
 # script only records the version. The checksum skips that walk until
 # the script itself changes.
 [[bans.build.bypass]]
-name = "jubarte-redlines"
-build-script = "e0180992bf7eeb204ceac3cf8882d78a0acbca893149f5079c1458fcb45d1050"
+name = "jubarte"
+build-script= "e0180992bf7eeb204ceac3cf8882d78a0acbca893149f5079c1458fcb45d1050"
