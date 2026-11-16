@@ -55,7 +55,7 @@ did not author:
 - `LICENSES/OFL-1.1.txt` — SIL Open Font License 1.1 text for the bundled
   metric-compatible fonts: Carlito ((c) 2010-2013 tyPoland Lukasz Dziedzic)
   and Liberation ((c) 2010 Google Corporation, 2012 Red Hat, Inc.) under
-  `assets/fonts/`, and Selawik ((c) 2015 Microsoft Corporation), the open
+  `crates/jubarte-render/assets/fonts/`, and Selawik ((c) 2015 Microsoft Corporation), the open
   stand-in for Segoe UI, under `assets/fonts/extra/`.
 
 These records are not a menu of licenses for this repository. They do not

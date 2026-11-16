@@ -517,16 +517,18 @@ pub fn docx_render_report(docx: &[u8], options: PdfOptions) -> Result<RenderRepo
 /// What one layout pass learned about pages, for writing field results back
 /// into the package (`jubarte::fields`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct LayoutFacts {
+#[doc(hidden)]
+pub struct LayoutFacts {
     /// Pages laid out (the `NUMPAGES` result).
-    pub(crate) page_count: usize,
+    pub page_count: usize,
     /// Bookmark name to the page label a `PAGEREF` to it shows (the section's
     /// number format and chapter prefix applied, so "iii" or "2-1").
-    pub(crate) bookmark_pages: BTreeMap<String, String>,
+    pub bookmark_pages: BTreeMap<String, String>,
 }
 
 /// Lay `docx` out as the default convert does and report its page facts.
-pub(crate) fn layout_facts(docx: &[u8]) -> Result<LayoutFacts, ConvertError> {
+#[doc(hidden)]
+pub fn layout_facts(docx: &[u8]) -> Result<LayoutFacts, ConvertError> {
     // Every page, whatever the caller's conversion asks for: the facts
     // are the whole document's.
     with_options(PdfOptions::default(), || {
@@ -46556,7 +46558,13 @@ mod comments_spacing_tests {
 
     #[test]
     fn strict01_section_break_census() {
-        let bytes = std::fs::read("tests/fixtures/strict/Strict01.docx").expect("strict");
+        // The committed fixtures stay beside the root package's tests;
+        // anchor to the repository root, not the test binary's cwd.
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/strict/Strict01.docx"
+        ))
+        .expect("strict");
         let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
@@ -54938,7 +54946,7 @@ mod coverage_round_three_tests {
 
         fn review_hf(content: &str) -> Vec<TextRun> {
             let pkg = PartFs::open(include_bytes!(
-                "../../tests/fixtures/inline-pictures/1975-header.docx"
+                "../../../../tests/fixtures/inline-pictures/1975-header.docx"
             ))
             .unwrap();
             let (dom, root) = xml(&format!("<w:p>{content}</w:p>"));
@@ -59155,7 +59163,7 @@ mod rendering_uncovered_contract_tests {
     // oracle is the supplied Word 16.115 PDF for 1975-textbox.docx (#1979).
     fn issue_1979_fixture_xml() -> String {
         PartFs::open(include_bytes!(
-            "../../tests/fixtures/inline-pictures/1975-textbox.docx"
+            "../../../../tests/fixtures/inline-pictures/1975-textbox.docx"
         ))
         .unwrap()
         .part_string("word/document.xml")

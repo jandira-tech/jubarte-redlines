@@ -23,7 +23,7 @@ STAMP_FILE=jubarte-wasm/npm/ENGINE_COMMIT.txt
 # not one: jubarte-wasm is its own [workspace] and resolves from its own lock,
 # which is checked apart, below.
 ENGINE_PATHS=(
-  src Cargo.toml assets schemas
+  src crates Cargo.toml assets schemas
   jubarte-wasm/src jubarte-wasm/Cargo.toml jubarte-wasm/.cargo
 )
 WASM_LOCK=jubarte-wasm/Cargo.lock

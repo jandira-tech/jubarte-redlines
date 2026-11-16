@@ -95,7 +95,7 @@ class CheckEngineCommit(unittest.TestCase):
         # the RUSTFLAGS in its .cargo/config.toml.
         for rel in [
             "Cargo.toml", "assets/fonts/a.ttf", "schemas/edit-plan-v2.schema.json",
-            "src/convert/word_substitutions.toml",
+            "src/convert/word_substitutions.toml", "crates/jubarte-render/src/lib.rs",
             "jubarte-wasm/src/lib.rs", "jubarte-wasm/Cargo.toml",
             "jubarte-wasm/Cargo.lock", "jubarte-wasm/.cargo/config.toml",
         ]:

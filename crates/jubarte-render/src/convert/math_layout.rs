@@ -772,7 +772,7 @@ mod tests {
     use super::*;
 
     const SIZE: f32 = 12.0;
-    const STIX: &[u8] = include_bytes!("../../tests/fixtures/fonts/STIXTwoMath.otf");
+    const STIX: &[u8] = include_bytes!("../../../../tests/fixtures/fonts/STIXTwoMath.otf");
 
     const BAR: &str = r#"<m:f><m:num><m:r><m:t>a</m:t></m:r></m:num><m:den><m:r><m:t>b</m:t></m:r></m:den></m:f>"#;
     const RAD: &str = r#"<m:rad><m:radPr><m:degHide m:val="1"/></m:radPr><m:deg/><m:e><m:r><m:t>x</m:t></m:r></m:e></m:rad>"#;

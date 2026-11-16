@@ -4512,6 +4512,7 @@ api	use	pub	jubarte::cli::shell_word = crate::util::shell_word
 api	use	pub	jubarte::comparer = jubarte_redlines::comparer
 api	use	pub	jubarte::comparer::WmlComparerRevision = atoms::WmlComparerRevision
 api	use	pub	jubarte::comparison_log = jubarte_redlines::comparison_log
+api	use	pub	jubarte::convert = jubarte_render::convert
 api	use	pub	jubarte::convert::CommentPlacement = crate::render_options::CommentPlacement
 api	use	pub	jubarte::convert::DiffOptions = diff_render::DiffOptions
 api	use	pub	jubarte::convert::FontReportEntry = font::FontReportEntry
@@ -5783,7 +5784,6 @@ internal	function	pub(crate)	jubarte::convert::font_table::load_embedded_fonts (
 internal	function	pub(crate)	jubarte::convert::font_table::load_font_table (pkg: &crate::opc::PartFs) -> FontTable
 internal	function	pub(crate)	jubarte::convert::font_table::parse_font_key (guid: &str) -> Option<[u8; 16]>
 internal	function	pub(crate)	jubarte::convert::font_table::parse_font_table_xml (xml: &str) -> FontTable
-internal	function	pub(crate)	jubarte::convert::layout_facts (docx: &[u8]) -> Result<LayoutFacts, ConvertError>
 internal	function	pub(crate)	jubarte::convert::leading_rprs (dom: &crate::xmllinq::Dom, run: crate::xmllinq::NodeId) -> Vec<crate::xmllinq::NodeId>
 internal	function	pub(crate)	jubarte::convert::main_rel_part (pkg: &crate::opc::PartFs, kind: &str, fallback: &str) -> String
 internal	function	pub(crate)	jubarte::convert::math_alphanumerics_cover (from: &str, mapped: &str) -> bool
@@ -10713,11 +10713,6 @@ internal	impl		jubarte::convert::ImageSlot::(impl Copy)
 internal	impl		jubarte::convert::LaidImage::(impl Clone)
 internal	impl		jubarte::convert::LastLine::(impl Clone)
 internal	impl		jubarte::convert::LastLine::(impl Copy)
-internal	impl		jubarte::convert::LayoutFacts::(impl Clone)
-internal	impl		jubarte::convert::LayoutFacts::(impl Debug)
-internal	impl		jubarte::convert::LayoutFacts::(impl Default)
-internal	impl		jubarte::convert::LayoutFacts::(impl Eq)
-internal	impl		jubarte::convert::LayoutFacts::(impl PartialEq)
 internal	impl		jubarte::convert::LineFit::(impl Clone)
 internal	impl		jubarte::convert::LineFit::(impl Copy)
 internal	impl		jubarte::convert::LineFit::(impl Default)
@@ -11664,7 +11659,6 @@ internal	struct	pub(crate)	jubarte::comment_settlement::SettlementError
 internal	struct	pub(crate)	jubarte::comments::CommentFamily
 internal	struct	pub(crate)	jubarte::comments::NewComment
 internal	struct	pub(crate)	jubarte::comparer::lcs::U64IdentityHasher
-internal	struct	pub(crate)	jubarte::convert::LayoutFacts
 internal	struct	pub(crate)	jubarte::convert::font::Face
 internal	struct	pub(crate)	jubarte::convert::font::FaceKey
 internal	struct	pub(crate)	jubarte::convert::font::Fonts
@@ -13133,8 +13127,6 @@ internal	struct_field	pub(crate)	jubarte::comments::NewComment::id: u32
 internal	struct_field	pub(crate)	jubarte::comments::NewComment::initials: &'a str
 internal	struct_field	pub(crate)	jubarte::comments::NewComment::parent: Option<u32>
 internal	struct_field	pub(crate)	jubarte::comments::NewComment::text: &'a str
-internal	struct_field	pub(crate)	jubarte::convert::LayoutFacts::bookmark_pages: std::collections::BTreeMap<String, String>
-internal	struct_field	pub(crate)	jubarte::convert::LayoutFacts::page_count: usize
 internal	struct_field	pub(crate)	jubarte::convert::metafile::MetaText::align: u16
 internal	struct_field	pub(crate)	jubarte::convert::metafile::MetaText::aspect: f32
 internal	struct_field	pub(crate)	jubarte::convert::metafile::MetaText::bold: bool

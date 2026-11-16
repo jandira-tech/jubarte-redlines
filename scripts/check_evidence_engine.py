@@ -37,7 +37,7 @@ from pathlib import Path
 
 # the files the CLI embeds or is built from: the Rust sources under src/
 # outside their comments, every other file (an .rs elsewhere too) byte for byte
-INPUTS = ("src", "assets", "schemas", "keys")
+INPUTS = ("src", "crates", "assets", "schemas", "keys")
 # [package] fields cargo builds nothing from: the version, the metadata
 # tables and the crates.io listing and packaging
 LISTING = frozenset({

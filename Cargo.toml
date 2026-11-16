@@ -51,7 +51,6 @@ categories = ["text-processing", "parser-implementations", "command-line-utiliti
 include = [
   "/src/**",
   "/schemas/**",
-  "/assets/fonts/**",
   "/benches/**",
   "/Cargo.toml",
   "/build.rs",
@@ -186,6 +185,7 @@ self-update = ["cli", "dep:self_update", "dep:ed25519-dalek"]
 jubarte-dom = { path = "crates/jubarte-dom", version = "=0.18.0" }
 jubarte-opc = { path = "crates/jubarte-opc", version = "=0.18.0", default-features = false }
 jubarte-redlines = { path = "crates/jubarte-redlines", version = "=0.18.0", default-features = false }
+jubarte-render = { path = "crates/jubarte-render", version = "=0.18.0", default-features = false }
 
 # Upstream OPC types on zip 9 and patched quick-xml 0.41. The adapter keeps
 # its duplicate-repair and canonical-writing policy; optional crypto stays off.
@@ -257,6 +257,7 @@ tempfile = "3"
 jubarte-dom = { workspace = true }
 jubarte-opc = { workspace = true, features = ["schema"] }
 jubarte-redlines = { workspace = true }
+jubarte-render = { workspace = true }
 oxml-opc = { workspace = true }
 zip = { workspace = true }
 sha1.workspace = true
@@ -316,8 +317,9 @@ required-features = ["cli"]
 
 [dev-dependencies]
 jubarte-dom = { workspace = true, features = ["test-support"] }
-jubarte-opc = { workspace = true, features = ["test-support"] }
+jubarte-opc = { workspace = true, features = ["schema", "test-support"] }
 jubarte-redlines = { workspace = true, features = ["test-support"] }
+jubarte-render = { workspace = true, features = ["test-support"] }
 jsonschema = { workspace = true }
 criterion = { workspace = true }
 ooxmlsdk = { workspace = true }

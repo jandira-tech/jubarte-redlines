@@ -7,6 +7,44 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T4.4 (jubarte-render extracted) - 2026-11-16
+
+- Fourth workspace crate: the render product (src/convert, now
+  crates/jubarte-render/src/convert) with the 16 embedded TTFs and both
+  font license files moved beside it (D6; assets/fonts/extra stays at
+  the root for release.yml and install.sh, both untouched - AC2). The
+  facade re-exports jubarte_render::convert; the option types still
+  live in jubarte-opc's render_options and convert re-exports them, so
+  every jubarte::convert:: path holds. The render crate's deps: the two
+  floors plus ttf-parser, rustybuzz, tiny-skia, image, flate2, zip, and
+  tempfile for its tests.
+- AC1: the render tree names none of jubarte-redlines, similar,
+  pulldown-cmark, schemars or clap. AC3: cargo package -p
+  jubarte-render lists exactly 16 .ttf. LayoutFacts and its fields
+  gained the V2 promotion (the fields layer reads them).
+- Font-path follow-ups: release_metadata's font paths, the include
+  guard and the font-dependency guard now read the render crate's
+  manifest; convert_docx_to_pdf's Carlito include rebased; REUSE.toml,
+  LICENSES.md and SRC_MANIFEST.md paths follow; the evidence-engine and
+  engine-commit scripts hash crates/ now, with the watched-input test
+  extended to a crates fixture. The root include drops /assets/fonts/**
+  (extra stays in the repository; the render crate ships its own).
+- A listing lesson for T4.5+: a library's own decorative root
+  re-exports rebase into phantom facade paths - jubarte-render's
+  `pub use convert::{...}` made jubarte::PdfOptions look nameable at
+  the root. The re-exports were dropped (convert already provides every
+  path) and the listing re-recorded clean (21 reviewed lines).
+- Battery: S1 both feature sets, clippy both, fmt, RUSTDOCFLAGS doc,
+  guards 33/33, goldens identical (the renderer moved byte-faithfully:
+  every PDF golden reproduced). tuning_audit and docs/TUNING_AUDIT.md
+  follow the moved tree (the parser accepts crates/ rows; 136 doc paths
+  rebased), and the evidence scripts hash crates/ now. Three
+  path-depth lessons found by the full suite, all fixed: the finalize
+  snapshot and Strict01 census anchor to CARGO_MANIFEST_DIR/../.., and
+  the supplemental-font folder helper is TWO up from the crate (a
+  first three-up fix pointed at the repository's parent - the
+  instrumented probe caught it). Full workspace suite: 10,691/10,691.
+
 ## T4.3b (jubarte-redlines extracted) - 2026-11-16
 
 - Third workspace crate: the compare product (comparer,

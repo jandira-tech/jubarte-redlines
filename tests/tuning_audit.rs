@@ -29,10 +29,10 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// `src/convert/**/*.rs` lines whose text matches a word-boundary `mini`
+/// `crates/jubarte-render/src/convert/**/*.rs` lines whose text matches a word-boundary `mini`
 /// (the plan.md grep; excludes `minimum`).
 fn mini_sites(root: &Path) -> Vec<(String, usize, String)> {
-    let dir = root.join("src/convert");
+    let dir = root.join("crates/jubarte-render/src/convert");
     let mut sites = Vec::new();
     let mut files = Vec::new();
     rust_files(&dir, &mut files);
@@ -105,7 +105,9 @@ fn audit_table(body: &str) -> (HashMap<String, (char, String)>, Vec<AuditRow>) {
         let symbol = cells[2].trim().to_string();
         let class = cells[3].chars().next().unwrap_or('?').to_ascii_lowercase();
         let disposition = cells[4].to_string();
-        if file.starts_with("src/") && line_no.chars().all(|c| c.is_ascii_digit()) {
+        if (file.starts_with("src/") || file.starts_with("crates/"))
+            && line_no.chars().all(|c| c.is_ascii_digit())
+        {
             by_line.insert(format!("{file}:{line_no}"), (class, disposition.clone()));
             rows.push(AuditRow {
                 file: file.to_string(),
@@ -142,7 +144,7 @@ fn tuning_audit_covers_every_mini_comment_site() {
     let sites = mini_sites(&root);
     assert!(
         !sites.is_empty(),
-        "expected mini comment sites under src/convert"
+        "expected mini comment sites under crates/jubarte-render/src/convert"
     );
     let path = root.join("docs/TUNING_AUDIT.md");
     let body = fs::read_to_string(&path).unwrap_or_default();

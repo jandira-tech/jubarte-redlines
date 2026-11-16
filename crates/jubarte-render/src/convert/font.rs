@@ -4690,7 +4690,10 @@ mod tests {
     }
 
     fn repo_font_dir() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts/extra")
+        // The supplemental font folder stays at the repository root
+        // (release.yml and install.sh read it there), three up from
+        // this crate.
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fonts/extra")
     }
 
     #[test]

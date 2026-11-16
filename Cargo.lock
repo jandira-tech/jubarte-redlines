@@ -1564,6 +1564,7 @@ dependencies = [
  "jubarte-dom",
  "jubarte-opc",
  "jubarte-redlines",
+ "jubarte-render",
  "mimalloc",
  "ooxmlsdk",
  "oxml-opc",
@@ -1629,6 +1630,23 @@ dependencies = [
  "jubarte-dom",
  "jubarte-opc",
  "similar",
+]
+
+[[package]]
+name = "jubarte-render"
+version = "0.18.0"
+dependencies = [
+ "flate2",
+ "image",
+ "jubarte-dom",
+ "jubarte-opc",
+ "rustybuzz",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tiny-skia",
+ "ttf-parser",
+ "zip",
 ]
 
 [[package]]

@@ -339,7 +339,7 @@ fn stretch_vertical(face: &ttf_parser::Face<'_>, base: u16, target: f32) -> Stre
 mod tests {
     use super::*;
 
-    const STIX: &[u8] = include_bytes!("../../tests/fixtures/fonts/STIXTwoMath.otf");
+    const STIX: &[u8] = include_bytes!("../../../../tests/fixtures/fonts/STIXTwoMath.otf");
 
     fn stix() -> MathFont {
         MathFont::from_bytes(STIX).expect("STIX Two Math parses")

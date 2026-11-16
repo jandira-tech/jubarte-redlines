@@ -109,6 +109,8 @@ pub mod changes;
 pub mod cli;
 pub(crate) mod comment_settlement;
 pub mod comments;
+/// Custom XML and built-in data stores shared by the OPC layer.
+pub(crate) use jubarte_opc::data_stores;
 /// Core WmlComparer engine (atomize → LCS → produce → finalize).
 #[doc(inline)]
 pub use jubarte_redlines::comparer;
@@ -116,9 +118,8 @@ pub use jubarte_redlines::comparer;
 #[doc(inline)]
 pub use jubarte_redlines::comparison_log;
 /// Independent DOCX → PDF conversion (not LibreOffice).
-pub mod convert;
-/// Custom XML and built-in data stores shared by the OPC layer.
-pub(crate) use jubarte_opc::data_stores;
+#[doc(inline)]
+pub use jubarte_render::convert;
 /// `jubarte debug`: short Word-validity triage of a package, or two compared.
 pub mod debug;
 /// Byte-level package API: compare, list, accept, and reject revisions.
@@ -157,7 +158,6 @@ pub(crate) use jubarte_opc::numbering;
 /// Open Packaging Conventions adapter (`PartFs`).
 #[doc(inline)]
 pub use jubarte_opc::opc;
-pub(crate) use jubarte_opc::render_options;
 pub mod result;
 /// Accept / reject tracked revisions across a package.
 #[doc(inline)]
