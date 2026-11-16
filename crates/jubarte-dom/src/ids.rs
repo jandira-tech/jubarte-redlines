@@ -44,26 +44,34 @@ pub(crate) const CHANGE_EXPECTED: &str = "expected a change id such as r12, r1+2
 /// Why a comment id was refused.
 pub(crate) const COMMENT_EXPECTED: &str = "expected a comment id such as c27";
 /// Why a `-p` value was refused, when no narrower reason applies.
-pub(crate) const LOCATION_EXPECTED: &str = "-p takes a paragraph (p12), a story or its paragraph (header1, header1.p2, footnotes.p3), a cell (t0.row1.cell2), a comment (c5), the text a comment covers (c5.text) or a revision (r12)";
+#[doc(hidden)]
+pub const LOCATION_EXPECTED: &str = "-p takes a paragraph (p12), a story or its paragraph (header1, header1.p2, footnotes.p3), a cell (t0.row1.cell2), a comment (c5), the text a comment covers (c5.text) or a revision (r12)";
 /// Why a settled id `-p` cannot edit yet was refused.
-pub(crate) const LOCATION_NOT_YET: &str = "a settled id, but -p does not edit tables, rows, nested tables, text boxes, content controls, ranges, sections or tables of contents yet";
+#[doc(hidden)]
+pub const LOCATION_NOT_YET: &str = "a settled id, but -p does not edit tables, rows, nested tables, text boxes, content controls, ranges, sections or tables of contents yet";
 /// Why a table id without its row and cell was refused.
-pub(crate) const TABLE_NEEDS_CELL: &str = "a table id needs a row and a cell, as t0.row1.cell2";
+#[doc(hidden)]
+pub const TABLE_NEEDS_CELL: &str = "a table id needs a row and a cell, as t0.row1.cell2";
 /// Message returned for a `-p` value that names a row or cell without its
 /// table.
-pub(crate) const CELL_NEEDS_TABLE: &str = "a row or cell needs its table, as t0.row1.cell2";
+#[doc(hidden)]
+pub const CELL_NEEDS_TABLE: &str = "a row or cell needs its table, as t0.row1.cell2";
 
 /// The change spellings the manifest advertises: the settled ones only
 /// (module doc).
-pub(crate) const CHANGE_SPELLINGS: &[&str] = &["r12", "r1+2", "header1.r1", "footnotes.r3"];
+#[doc(hidden)]
+pub const CHANGE_SPELLINGS: &[&str] = &["r12", "r1+2", "header1.r1", "footnotes.r3"];
 /// The comment spellings the manifest advertises.
-pub(crate) const COMMENT_SPELLINGS: &[&str] = &["c27"];
+#[doc(hidden)]
+pub const COMMENT_SPELLINGS: &[&str] = &["c27"];
 /// The spellings of the text a comment covers the manifest advertises.
-pub(crate) const COMMENT_TEXT_SPELLINGS: &[&str] = &["c27.text"];
+#[doc(hidden)]
+pub const COMMENT_TEXT_SPELLINGS: &[&str] = &["c27.text"];
 /// The paragraph spellings the manifest advertises. `t0.row1.cell2.p1` is
 /// the pre-contract nested spelling; the 17 October 2026 contract spells a
 /// cell's own paragraphs `t0.row1.cell2.ps1`.
-pub(crate) const PARAGRAPH_SPELLINGS: &[&str] = &[
+#[doc(hidden)]
+pub const PARAGRAPH_SPELLINGS: &[&str] = &[
     "p12",
     "header1",
     "header1.p2",
@@ -75,11 +83,13 @@ pub(crate) const PARAGRAPH_SPELLINGS: &[&str] = &[
 /// Sample table-id spellings the capabilities manifest advertises
 /// (`capabilities::Ids::table`); rows and cells sit under the
 /// table, as in [`PARAGRAPH_SPELLINGS`].
-pub(crate) const TABLE_SPELLINGS: &[&str] = &["t0"];
+#[doc(hidden)]
+pub const TABLE_SPELLINGS: &[&str] = &["t0"];
 
 /// The content control spellings the manifest advertises: a block control,
 /// one in a paragraph, and one in a cell's first paragraph.
-pub(crate) const CONTROL_SPELLINGS: &[&str] = &["cc0", "p12.cc0", "t0.row1.cell2.cc0"];
+#[doc(hidden)]
+pub const CONTROL_SPELLINGS: &[&str] = &["cc0", "p12.cc0", "t0.row1.cell2.cc0"];
 
 /// A refused id: what was given and what was expected.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -217,7 +227,8 @@ fn number<T: FromStr>(digits: &str) -> Option<T> {
 
 /// The number after `prefix` in a part of a short id (`p12`, `t0`): ASCII
 /// digits without leading zeros.
-pub(crate) fn short_number(text: &str, prefix: char) -> Option<usize> {
+#[doc(hidden)]
+pub fn short_number(text: &str, prefix: char) -> Option<usize> {
     number(text.strip_prefix(prefix)?)
 }
 
@@ -273,7 +284,8 @@ pub fn parse_comment_id(token: &str) -> Result<u32, IdError> {
 /// The spellings of `hint` (`p12, r12 or c12`) that name what an option
 /// takes: a refusal never suggests a spelling the same option refuses
 /// (`--id body:p:12` suggests nothing, `read -p 12` only `p12`).
-pub(crate) fn hint_where(hint: Option<String>, keep: impl Fn(&ShortId) -> bool) -> Option<String> {
+#[doc(hidden)]
+pub fn hint_where(hint: Option<String>, keep: impl Fn(&ShortId) -> bool) -> Option<String> {
     let hint = hint?;
     let kept: Vec<&str> = hint
         .split(" or ")
@@ -298,7 +310,8 @@ fn settled_as(token: &str, prefix: char) -> Option<String> {
 
 /// `c5.text` → 5: the comment whose covered text a `-p` or a plan's
 /// `paragraph` names.
-pub(crate) fn comment_text_id(token: &str) -> Option<u32> {
+#[doc(hidden)]
+pub fn comment_text_id(token: &str) -> Option<u32> {
     match token.parse::<ShortId>() {
         Ok(ShortId::CommentText(n)) => Some(n),
         _ => None,
@@ -308,14 +321,16 @@ pub(crate) fn comment_text_id(token: &str) -> Option<u32> {
 // The same wire shape feeds deserialization and legacy field discovery.
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
-pub(crate) enum RawCommentId {
+#[doc(hidden)]
+pub enum RawCommentId {
     Number(u32),
     Text(String),
 }
 
 /// A serde `deserialize_with` for a comment id: a JSON number (a typed
 /// value, not a spelling), or a string [`parse_comment_id`] reads (`"c27"`).
-pub(crate) fn comment_id_de<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+#[doc(hidden)]
+pub fn comment_id_de<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
     match RawCommentId::deserialize(deserializer)? {
         RawCommentId::Number(n) => Ok(n),
         RawCommentId::Text(text) => parse_comment_id(&text).map_err(serde::de::Error::custom),
@@ -323,7 +338,8 @@ pub(crate) fn comment_id_de<'de, D: Deserializer<'de>>(deserializer: D) -> Resul
 }
 
 /// What a `-p` value names (see the module doc).
-pub(crate) fn parse_location(token: &str) -> Result<Location, IdError> {
+#[doc(hidden)]
+pub fn parse_location(token: &str) -> Result<Location, IdError> {
     let refuse = |why| Err(IdError::new(token, why));
     // A colon long id parses only when it is what jubarte prints: an id
     // with no short spelling (module doc).
@@ -389,7 +405,8 @@ pub(crate) fn parse_location(token: &str) -> Result<Location, IdError> {
 /// each byte outside `A-Z`, `a-z`, `0-9`, `.`, `_` and `-` spelled `%XX`,
 /// and a leading `-` too, so every id built on it is safe unquoted in bash,
 /// csh and zsh: `word/hdr!old.xml` → `hdr%21old`.
-pub(crate) fn part_story(part: &str) -> String {
+#[doc(hidden)]
+pub fn part_story(part: &str) -> String {
     let file = part.rsplit('/').next().unwrap_or(part);
     let stem = file.strip_suffix(".xml").unwrap_or(file);
     let mut out = String::with_capacity(stem.len());

@@ -116,7 +116,33 @@ def main(argv: list[str]) -> int:
     if not uses:
         print(f"no api items found in {listing_path}", file=sys.stderr)
         return 1
-    body = HEADER + "\n".join(uses) + "\n\n#[test]\nfn facade_surface_resolves() {}\n"
+    plain = [
+        u for u in uses
+        if not u.startswith("use jubarte::cli::")
+        and u != "use jubarte::cli as _;"
+        and not u.startswith("use jubarte::edit::inline")
+        and not u.startswith("use jubarte::update")
+    ]
+    cli_uses = [u for u in uses if u not in plain]
+    update_uses = [u for u in uses if u.startswith("use jubarte::update")]
+    cli_uses = [u for u in cli_uses if u not in update_uses]
+    gated = ""
+    if cli_uses:
+        gated += (
+            "#[cfg(feature = \"cli\")]\nmod cli_gated {\n"
+            + "".join(f"    {u}\n" for u in cli_uses)
+            + "}\n"
+        )
+    if update_uses:
+        gated += (
+            "#[cfg(feature = \"self-update\")]\nmod update_gated {\n"
+            + "".join(f"    {u}\n" for u in update_uses)
+            + "}\n"
+        )
+    body = (
+        HEADER + "\n".join(plain) + "\n" + gated
+        + "\n#[test]\nfn facade_surface_resolves() {}\n"
+    )
     out_path.write_text(body)
     # rustfmt's import order (a version sort, not plain ASCII) is the one
     # `cargo fmt --check` enforces on the committed file.

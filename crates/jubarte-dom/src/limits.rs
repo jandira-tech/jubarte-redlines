@@ -231,7 +231,8 @@ pub struct AdmissionError {
 }
 
 impl AdmissionError {
-    pub(crate) fn new(kind: AdmissionErrorKind, message: impl Into<String>) -> Self {
+    #[doc(hidden)]
+    pub fn new(kind: AdmissionErrorKind, message: impl Into<String>) -> Self {
         Self {
             kind,
             message: message.into(),

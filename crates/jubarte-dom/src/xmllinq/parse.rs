@@ -144,7 +144,8 @@ pub fn try_parse_xdocument_with_limits(
 /// The deepest nesting a package part may have where nothing admitted it
 /// first: the agent view reads that deep, and [`parse_xdocument`] recurses
 /// through it safely.
-pub(crate) const PERMISSIVE_MAX_DEPTH: usize = 512;
+#[doc(hidden)]
+pub const PERMISSIVE_MAX_DEPTH: usize = 512;
 
 /// Whether `xml` nests deeper than `limit` elements, read the way
 /// [`parse_xdocument`] reads it. The scan shares the parser's start-tag
@@ -152,7 +153,8 @@ pub(crate) const PERMISSIVE_MAX_DEPTH: usize = 512;
 /// processing instructions, a `<!x>` inside an element as an element), so
 /// markup a strict reader stops at counts as deep as the parser would
 /// recurse into it (#1353 review). It keeps a counter, not a stack.
-pub(crate) fn nests_deeper(xml: &str, limit: usize) -> bool {
+#[doc(hidden)]
+pub fn nests_deeper(xml: &str, limit: usize) -> bool {
     let xml = xml.strip_prefix('\u{feff}').unwrap_or(xml);
     let mut dom = Dom::new();
     let mut p = Parser {
@@ -233,7 +235,8 @@ impl NsScope {
 /// attribute counts and sizes, namespace budgets, and expanded-name
 /// duplicate detection. Shared by `validate_xml` and the package admission
 /// scan; `try_parse_xdocument` gets it through `validate_xml`.
-pub(crate) struct TagPolicy {
+#[doc(hidden)]
+pub struct TagPolicy {
     limits: InputLimits,
     scope: NsScope,
     /// Undo marks of open elements, parallel to the reader's depth.
@@ -248,7 +251,8 @@ pub(crate) struct TagPolicy {
 impl TagPolicy {
     /// The strict gate's policy: every attribute must be well-formed XML,
     /// quoted and with a value.
-    pub(crate) fn new(limits: InputLimits) -> Self {
+    #[doc(hidden)]
+    pub fn new(limits: InputLimits) -> Self {
         TagPolicy {
             limits,
             scope: NsScope::default(),
@@ -262,7 +266,8 @@ impl TagPolicy {
     /// permissive parser, which reads unquoted and valueless attributes, so
     /// those pass here; the budgets and the duplicate checks still apply to
     /// them.
-    pub(crate) fn tolerant(limits: InputLimits) -> Self {
+    #[doc(hidden)]
+    pub fn tolerant(limits: InputLimits) -> Self {
         TagPolicy {
             html_attributes: true,
             ..Self::new(limits)
@@ -274,7 +279,8 @@ impl TagPolicy {
     /// # Errors
     ///
     /// A `String` naming the budget or rule the tag violates.
-    pub(crate) fn open(&mut self, tag: &quick_xml::events::BytesStart<'_>) -> Result<(), String> {
+    #[doc(hidden)]
+    pub fn open(&mut self, tag: &quick_xml::events::BytesStart<'_>) -> Result<(), String> {
         self.enter(tag, 2)
     }
 
@@ -296,7 +302,8 @@ impl TagPolicy {
     /// # Errors
     ///
     /// As [`Self::open`].
-    pub(crate) fn empty(&mut self, tag: &quick_xml::events::BytesStart<'_>) -> Result<(), String> {
+    #[doc(hidden)]
+    pub fn empty(&mut self, tag: &quick_xml::events::BytesStart<'_>) -> Result<(), String> {
         let mark = self.scope.mark();
         let result = self
             .check_tag(tag, 3)
@@ -307,7 +314,8 @@ impl TagPolicy {
 
     /// Pop the declarations of the innermost open element. Safe to call
     /// once per `End` event the reader reports.
-    pub(crate) fn close(&mut self) {
+    #[doc(hidden)]
+    pub fn close(&mut self) {
         if let Some(mark) = self.marks.pop() {
             self.scope.pop(mark);
         }

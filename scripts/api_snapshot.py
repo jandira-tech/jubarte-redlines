@@ -110,13 +110,16 @@ def build_workspace_docs() -> dict[str, dict]:
         )
         if not have_nightly:
             env["RUSTC_BOOTSTRAP"] = "1"
-        command = ["cargo", "doc", "--no-deps", "--all-features"]
+        # -p per package: a bare workspace `cargo doc` only emits the
+        # JSON of the primary crate, dependencies get no output-format.
+        command = ["cargo", "doc", "-p", package["name"], "--no-deps", "--all-features"]
         if have_nightly:
             command.insert(1, "+nightly")
         subprocess.run(command, cwd=ROOT, check=True, env=env)
-        path = ROOT / "target" / "doc" / f"{package['name'].replace('-', '_')}.json"
+        lib = package["name"].replace("-", "_")
+        path = ROOT / "target" / "doc" / f"{lib}.json"
         if path.exists():
-            docs[json.loads(path.read_text())["crate_name"]] = json.loads(path.read_text())
+            docs[lib] = json.loads(path.read_text())
     return docs
 
 
@@ -518,20 +521,13 @@ class ForeignIndex:
 
     def __init__(self, facade_doc: dict, others: dict[str, dict]) -> None:
         self._by_crate: dict[str, dict[str, tuple[str, dict, str]]] = {}
-        crates = {
-            crate_id: name
-            for crate_id, name in (
-                (str(c[0]), c[1]) for c in facade_doc.get("crates", [])
-            )
-        }
-        for doc in others.values():
+        for crate_name, doc in others.items():
             index: dict[str, tuple[str, dict, str]] = {}
             parent: dict[str, str] = {}
             ids = sorted(doc["index"], key=lambda iid: (len(iid), iid))
             for iid in ids:
                 for kid in _children(doc["index"][iid]):
                     parent.setdefault(kid, iid)
-            crate_name = doc.get("crate_name", "")
             for iid in ids:
                 item = doc["index"][iid]
                 kind, inner = _kind(item)
@@ -546,15 +542,16 @@ class ForeignIndex:
                 path = "::".join([crate_name, *reversed(parts)])
                 index[path] = (kind, inner, _vis(item.get("visibility")), _doc_hidden(item))
             self._by_crate[crate_name] = index
-        self._crates = crates
 
     def resolve(self, facade_doc: dict, target_id: str) -> tuple[str, dict, str, bool] | None:
         """The foreign item a facade `use` names, or None when unknown."""
         info = facade_doc.get("paths", {}).get(target_id)
         if not info:
             return None
-        crate = self._crates.get(str(info.get("crate", -1)))
-        if crate is None or crate == facade_doc.get("crate_name"):
+        # The path's first segment names the defining crate; this rustdoc
+        # emits no `crates` table to ask instead.
+        crate = (info.get("path") or [""])[0]
+        if crate not in self._by_crate:
             return None
         index = self._by_crate.get(crate)
         if index is None:
@@ -568,8 +565,8 @@ class ForeignIndex:
         info = facade_doc.get("paths", {}).get(target_id)
         if not info:
             return []
-        crate = self._crates.get(str(info.get("crate", -1)))
-        index = self._by_crate.get(crate or "")
+        crate = (info.get("path") or [""])[0]
+        index = self._by_crate.get(crate)
         if index is None:
             return []
         module_path = "::".join(info.get("path", []))
@@ -1004,9 +1001,22 @@ def main(argv: list[str] | None = None) -> None:
     doc = json.loads(DOC_JSON.read_text())
     others = {
         name: d for name, d in build_workspace_docs().items()
-        if name != doc.get("crate_name")
+        if name != "jubarte"
     }
-    text = "\n".join(flatten(doc, others or None)) + "\n"
+    lines = set(flatten(doc, others or None))
+    for lib, other in others.items():
+        # Every library's own listing joins the facade listing with its
+        # paths rebased under the facade: `jubarte_dom::xmllinq::Dom`
+        # reads (and is nameable as) `jubarte::xmllinq::Dom` there. The
+        # per-item cross-crate resolution above covers the re-export
+        # lines; this covers everything beneath them, signatures
+        # included.
+        lines.update(
+            line.replace(f"{lib}::", "jubarte::")
+            for line in flatten(other)
+            if not line.endswith(f"\t{lib}")
+        )  # the crate's own root-module line is not nameable in the facade
+    text = "\n".join(sorted(lines)) + "\n"
     if args.emit:
         Path(args.emit).write_text(text)
         print(f"{args.emit} written")

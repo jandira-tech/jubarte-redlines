@@ -10,19 +10,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Decomposed UTC civil timestamp.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct CivilDateTime {
-    pub(crate) y: i32,
-    pub(crate) m: u32,
-    pub(crate) d: u32,
-    pub(crate) h: u32,
-    pub(crate) min: u32,
-    pub(crate) s: u32,
+#[doc(hidden)]
+pub struct CivilDateTime {
+    pub y: i32,
+    pub m: u32,
+    pub d: u32,
+    pub h: u32,
+    pub min: u32,
+    pub s: u32,
 }
 
 /// A revision timestamp: an xsd:dateTime as Word writes `w:date`
 /// (`2026-10-01T09:00:00Z`, optional fraction and offset of at most 14:00).
 /// xsd's `24:00:00` and leap second `:60` are refused: Word writes neither.
-pub(crate) fn parse_datetime(value: &str) -> Result<String, String> {
+#[doc(hidden)]
+pub fn parse_datetime(value: &str) -> Result<String, String> {
     let bad = || "expected an ISO 8601 date and time such as 2026-10-01T09:00:00Z".to_string();
     let b = value.as_bytes();
     let digits = |from: usize, to: usize| -> Option<u32> {
@@ -98,12 +100,14 @@ pub fn utc_now_iso8601() -> String {
     iso8601(utc_now())
 }
 
-pub(crate) fn iso8601(CivilDateTime { y, m, d, h, min, s }: CivilDateTime) -> String {
+#[doc(hidden)]
+pub fn iso8601(CivilDateTime { y, m, d, h, min, s }: CivilDateTime) -> String {
     format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}Z")
 }
 
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-pub(crate) fn utc_now() -> CivilDateTime {
+#[doc(hidden)]
+pub fn utc_now() -> CivilDateTime {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| i64::try_from(d.as_secs()).unwrap_or(0))
@@ -127,7 +131,8 @@ pub(crate) fn utc_now() -> CivilDateTime {
 }
 
 /// UTC civil time of a Unix timestamp (TIME/DATE are painted in UTC).
-pub(crate) fn civil_from_unix_secs(secs: i64) -> CivilDateTime {
+#[doc(hidden)]
+pub fn civil_from_unix_secs(secs: i64) -> CivilDateTime {
     let (y, m, d) = civil_from_unix_days(secs.div_euclid(86_400));
     let tod = u32::try_from(secs.rem_euclid(86_400)).unwrap_or(0);
     CivilDateTime {
@@ -141,7 +146,8 @@ pub(crate) fn civil_from_unix_secs(secs: i64) -> CivilDateTime {
 }
 
 /// Howard Hinnant days_from_civil: Unix epoch days → UTC (year, month, day).
-pub(crate) fn unix_days_from_civil(y: i32, m: u32, d: u32) -> i64 {
+#[doc(hidden)]
+pub fn unix_days_from_civil(y: i32, m: u32, d: u32) -> i64 {
     let y = i64::from(y) - i64::from(m <= 2);
     let era = y.div_euclid(400);
     let yoe = y - era * 400;
@@ -152,7 +158,8 @@ pub(crate) fn unix_days_from_civil(y: i32, m: u32, d: u32) -> i64 {
 }
 
 /// Howard Hinnant civil_from_days: Unix epoch days → UTC (year, month, day).
-pub(crate) fn civil_from_unix_days(unix_days: i64) -> (i32, u32, u32) {
+#[doc(hidden)]
+pub fn civil_from_unix_days(unix_days: i64) -> (i32, u32, u32) {
     let z = unix_days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = u32::try_from(z - era * 146_097).unwrap_or(0);
@@ -177,7 +184,8 @@ fn two_digits(s: &str, at: usize) -> Option<u32> {
 
 /// W3CDTF (`YYYY-MM-DD`, `…Thh:mm[:ss[.s+]]TZD`) as a UTC instant. A
 /// numeric `±hh:mm` zone is folded in; `Z` or no zone is UTC.
-pub(crate) fn parse_w3cdtf(raw: &str) -> Option<CivilDateTime> {
+#[doc(hidden)]
+pub fn parse_w3cdtf(raw: &str) -> Option<CivilDateTime> {
     let s = raw.trim();
     let bytes = s.as_bytes();
     if s.len() < 10 || bytes[4] != b'-' || bytes[7] != b'-' {
@@ -238,7 +246,8 @@ pub(crate) fn parse_w3cdtf(raw: &str) -> Option<CivilDateTime> {
 
 /// A revision timestamp ordered by UTC seconds and fractional digits.
 /// As with W3CDTF fields, a missing offset is UTC.
-pub(crate) fn timestamp_order_key(raw: &str) -> Option<(i64, &str)> {
+#[doc(hidden)]
+pub fn timestamp_order_key(raw: &str) -> Option<(i64, &str)> {
     parse_datetime(raw).ok()?;
     let time = parse_w3cdtf(raw)?;
     let seconds = unix_days_from_civil(time.y, time.m, time.d) * 86_400
@@ -275,7 +284,8 @@ fn explicit_offset(raw: &str) -> Option<i64> {
 }
 
 /// Format an instant in a fixed offset, retaining its fractional seconds.
-pub(crate) fn timestamp_with_offset(seconds: i64, fraction: &str, offset: i64) -> String {
+#[doc(hidden)]
+pub fn timestamp_with_offset(seconds: i64, fraction: &str, offset: i64) -> String {
     let mut value = iso8601(civil_from_unix_secs(seconds + offset));
     value.pop();
     if !fraction.is_empty() {
@@ -293,7 +303,8 @@ pub(crate) fn timestamp_with_offset(seconds: i64, fraction: &str, offset: i64) -
 }
 
 /// The recorded instant with the author's offset, else the stored legacy date.
-pub(crate) fn revision_date<'a>(
+#[doc(hidden)]
+pub fn revision_date<'a>(
     mut attribute: impl FnMut(&str, &str) -> Option<&'a str>,
 ) -> Option<String> {
     let utc = attribute(
@@ -304,7 +315,8 @@ pub(crate) fn revision_date<'a>(
 }
 
 /// Revisions and comments share Word's wall-clock/UTC pair encoding.
-pub(crate) fn reported_date(local: Option<&str>, utc: Option<&str>) -> Option<String> {
+#[doc(hidden)]
+pub fn reported_date(local: Option<&str>, utc: Option<&str>) -> Option<String> {
     let Some((utc, (instant, fraction))) =
         utc.and_then(|utc| timestamp_order_key(utc).map(|key| (utc, key)))
     else {

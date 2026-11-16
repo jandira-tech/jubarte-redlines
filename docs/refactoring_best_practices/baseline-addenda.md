@@ -7,6 +7,34 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T4.1 (jubarte-dom extracted) - 2026-11-15
+
+- First workspace crate: crates/jubarte-dom (xmllinq, namespaces, ids,
+  unid, perf, util, ooxml, limits) with its own Cargo.toml (workspace
+  tables, =0.18.0 pin, perf-profile and test-support features),
+  README and LICENSE copy. The facade re-exports every public module at
+  its jubarte:: path (doc(inline) pub use) and the two private ones as
+  pub(crate) use, so no call site changed (D9).
+- Cross-layer internals became #[doc(hidden)] pub (V2, 43 promotions by
+  the dead-code list plus nine by the workspace check: hint_where,
+  well_known_prefix, is_namespace_prefix_list, TagPolicy with
+  new/open/empty/close, Dom::set_attributes, CivilDateTime's fields),
+  xmllinq::shrink_arena_to_fit moved behind
+  cfg(any(test, feature = "test-support")) (A4), and util::datetime
+  opened as a doc(hidden) module.
+- coverage_gates accepts crates/*/src roots now (the plan's file list
+  said so).
+- api-baseline re-recorded with a 168-line reviewed drift: rustdoc JSON
+  omits doc(hidden) items entirely, so the V2 promotions and the
+  limits/ooxml subtrees leave the listing (their types stay nameable
+  through the public re-exports that always carried them, and the
+  compile is the stronger gate); the facade listing adds the six
+  re-export use lines. The T4.0 cross-crate machinery carries
+  everything else: each library's own listing joins the facade listing
+  rebased under jubarte:: paths, and cargo doc now builds per package
+  (-p), because a bare workspace doc run writes only the primary
+  crate's JSON.
+
 ## T4.0 (workspace scaffolding, API tooling) - 2026-11-15
 
 - Root manifest is the workspace manifest (A3): members ["."], the four

@@ -417,8 +417,9 @@ impl Dom {
     /// Shrink the arena's backing `Vec` capacity to its current length so
     /// any subsequent internal push provably reallocates. Test-only helper
     /// that pins `capacity == length` for the MEM-ATTRIBUTE-01 invariant.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     #[cfg_attr(all(coverage_nightly, test), coverage(off))]
+    #[doc(hidden)]
     pub fn shrink_arena_to_fit(&mut self) {
         self.nodes.shrink_to_fit();
     }
@@ -932,7 +933,8 @@ impl Dom {
     /// present (existing, or repeated in `attrs` after expansion) keeps
     /// its first declaration-order slot and takes the latest value — what
     /// N `set_attribute_value` calls produce.
-    pub(crate) fn set_attributes(&mut self, id: NodeId, attrs: Vec<(XName, String)>) {
+    #[doc(hidden)]
+    pub fn set_attributes(&mut self, id: NodeId, attrs: Vec<(XName, String)>) {
         let data = self.data_mut(id);
         if attrs.is_empty() {
             return;

@@ -9,7 +9,7 @@
 # another repo.
 [workspace]
 resolver = "3"
-members = ["."]
+members = [".", "crates/*"]
 exclude = ["jubarte-python", "jubarte-wasm", "jubarte-rust-inproc", "fuzz"]
 
 [workspace.package]
@@ -174,6 +174,10 @@ perf-profile = []
 self-update = ["cli", "dep:self_update", "dep:ed25519-dalek"]
 
 [workspace.dependencies]
+# The workspace's own crates: exact pins, because the layers expose
+# #[doc(hidden)] internals to each other (plan A3/D4).
+jubarte-dom = { path = "crates/jubarte-dom", version = "=0.18.0" }
+
 # Upstream OPC types on zip 9 and patched quick-xml 0.41. The adapter keeps
 # its duplicate-repair and canonical-writing policy; optional crypto stays off.
 oxml-opc = { version = "0.14.4", default-features = false } # OPC types; encryption/signatures stay disabled
@@ -241,6 +245,7 @@ saphyr = "0.3"
 tempfile = "3"
 
 [dependencies]
+jubarte-dom = { workspace = true }
 oxml-opc = { workspace = true }
 zip = { workspace = true }
 sha1.workspace = true
@@ -299,6 +304,7 @@ name = "cli_flags"
 required-features = ["cli"]
 
 [dev-dependencies]
+jubarte-dom = { workspace = true, features = ["test-support"] }
 jsonschema = { workspace = true }
 criterion = { workspace = true }
 ooxmlsdk = { workspace = true }

@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[package]
+name = "jubarte-dom"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The XML arena DOM, namespace names and shared utilities under the jubarte redline engine"
+readme = "README.md"
+keywords = ["xml", "dom", "docx", "ooxml"]
+categories = ["text-processing", "parser-implementations"]
+include = ["/src/**", "/README.md", "/LICENSE"]
+[lib]
+name = "jubarte_dom"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true
+
+[features]
+# P0-LAB-01: compiled-out stage counters / coarse timers (src/perf.rs).
+perf-profile = []
+# Cross-crate test helpers shared with the layers above (A4): the
+# `#[cfg(test)]` helpers another crate's tests need, without a stability
+# promise and out of the documented API.
+test-support = []
+
+[dependencies]
+foldhash = { workspace = true }
+sha1 = { workspace = true }
+quick-xml = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+unicode-properties = { workspace = true }
+unicode-segmentation = { workspace = true }
+
+# wasm32-unknown-unknown has no clock in std: `SystemTime::now` panics. The
+# host's `Date` dates new comments and DATE/TIME fields there instead.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+js-sys = { workspace = true }

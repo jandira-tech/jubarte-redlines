@@ -226,7 +226,7 @@ pub enum CommentPlacement {
     End,
 }
 
-/// What [`render`] should produce from its single layout pass. All fields
+/// What `convert::render` should produce from its single layout pass. All fields
 /// default to "off"; `pdf = true` writes the PDF, `png_dpi = Some(d)`
 /// rasterizes, `pages = Some([…])` narrows any of the above to a chosen
 /// set of document pages.
@@ -242,8 +242,8 @@ pub struct RenderRequest {
     /// writes every page. They count the document's pages whatever
     /// [`PdfOptions::changed_only`] keeps, then the listing pages of
     /// [`CommentPlacement::End`]. A page it dropped is
-    /// [`ConvertError::PageNotKept`]; one past the last is
-    /// [`ConvertError::PageOutOfRange`]; an empty list writes no page and
+    /// `ConvertError::PageNotKept`; one past the last is
+    /// `ConvertError::PageOutOfRange`; an empty list writes no page and
     /// no PDF. Layout always covers the whole document.
     pub pages: Option<Vec<usize>>,
 }

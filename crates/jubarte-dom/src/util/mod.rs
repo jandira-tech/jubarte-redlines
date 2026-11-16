@@ -20,7 +20,8 @@
 //! `jubarte` CLI calls into `sha1_hex` (block hash) and
 //! `word_tokens` (diff mark rendering).
 
-pub(crate) mod datetime;
+#[doc(hidden)]
+pub mod datetime;
 pub mod group_adjacent;
 pub mod sha1;
 pub mod words;
@@ -43,7 +44,8 @@ pub fn shell_word(arg: &str) -> String {
 /// `text` with each run of whitespace (`char::is_whitespace`) written as
 /// one space and none at either end, built in one pass without collecting
 /// the words first.
-pub(crate) fn collapse_whitespace(text: &str) -> String {
+#[doc(hidden)]
+pub fn collapse_whitespace(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for word in text.split_whitespace() {
         if !out.is_empty() {
@@ -58,12 +60,14 @@ pub(crate) fn collapse_whitespace(text: &str) -> String {
 /// twips, `None` for a plain number or an unknown unit. Strict packages write
 /// these on attributes whose Transitional form is integer twips
 /// (`ST_UniversalMeasure`/`ST_TwipsMeasure`).
-pub(crate) fn universal_measure_twips(value: &str) -> Option<f64> {
+#[doc(hidden)]
+pub fn universal_measure_twips(value: &str) -> Option<f64> {
     universal_measure(value, 20.0)
 }
 
 /// The same measure as half-points (`ST_HpsMeasure`, `w:sz`): points × 2.
-pub(crate) fn universal_measure_half_points(value: &str) -> Option<f64> {
+#[doc(hidden)]
+pub fn universal_measure_half_points(value: &str) -> Option<f64> {
     universal_measure(value, 2.0)
 }
 
@@ -111,21 +115,24 @@ fn schema_number(s: &str) -> Option<f64> {
 /// float (`1e40` as `f32`) read as absent, the same as a token that does
 /// not parse. Finite values, including negatives and a finite exponent
 /// (`1e2`), are unchanged.
-pub(crate) fn parse_finite_f32(s: &str) -> Option<f32> {
+#[doc(hidden)]
+pub fn parse_finite_f32(s: &str) -> Option<f32> {
     let v: f32 = s.parse().ok()?;
     v.is_finite().then_some(v)
 }
 
 /// [`parse_finite_f32`] for an `f64` attribute. `1e40` is finite here;
 /// a later narrowing to `f32` has to check again.
-pub(crate) fn parse_finite_f64(s: &str) -> Option<f64> {
+#[doc(hidden)]
+pub fn parse_finite_f64(s: &str) -> Option<f64> {
     let v: f64 = s.parse().ok()?;
     v.is_finite().then_some(v)
 }
 
 /// `v` as `f32` when that value is finite. A finite `f64` past the `f32`
 /// range (`1e40`) is absent, the same as an infinity.
-pub(crate) fn narrow_finite_f32(v: f64) -> Option<f32> {
+#[doc(hidden)]
+pub fn narrow_finite_f32(v: f64) -> Option<f32> {
     let n = v as f32;
     n.is_finite().then_some(n)
 }
@@ -140,7 +147,8 @@ pub fn source_sha256(bytes: &[u8]) -> String {
 
 /// Decode the five predefined XML entities, `&nbsp;`, and numeric character
 /// references; unknown or invalid references remain literal.
-pub(crate) fn decode_entities(s: &str) -> String {
+#[doc(hidden)]
+pub fn decode_entities(s: &str) -> String {
     if !s.contains('&') {
         return s.to_string();
     }

@@ -178,7 +178,8 @@ const WELL_KNOWN_PREFIXES: [(&str, &str); 37] = [
 ];
 
 /// The conventional prefix for `ns`.
-pub(crate) fn well_known_prefix(ns: &str) -> Option<&'static str> {
+#[doc(hidden)]
+pub fn well_known_prefix(ns: &str) -> Option<&'static str> {
     WELL_KNOWN_PREFIXES
         .iter()
         .find(|(uri, _)| *uri == ns)
@@ -187,7 +188,8 @@ pub(crate) fn well_known_prefix(ns: &str) -> Option<&'static str> {
 
 /// The namespace a conventional prefix stands for: what an `mc:Choice
 /// Requires="wps"` means when nothing in scope binds `wps`.
-pub(crate) fn well_known_namespace(prefix: &str) -> Option<&'static str> {
+#[doc(hidden)]
+pub fn well_known_namespace(prefix: &str) -> Option<&'static str> {
     WELL_KNOWN_PREFIXES
         .iter()
         .find(|(_, p)| *p == prefix)
@@ -362,7 +364,8 @@ impl<'a> Scope<'a> {
 /// rewritten when prefixes are rebound in this scope. An unqualified
 /// `Requires` is one only on `mc:Choice`; elsewhere (a custom XML part) it is
 /// application data.
-pub(crate) fn is_namespace_prefix_list(element: &XName, name: &XName) -> bool {
+#[doc(hidden)]
+pub fn is_namespace_prefix_list(element: &XName, name: &XName) -> bool {
     let ns = name.namespace_name();
     let local = name.local_name();
     if ns.is_empty() {

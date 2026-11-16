@@ -35,7 +35,8 @@ const SECT_ORDER: &[&str] = &[
 ];
 
 /// `local`'s position in `SECT_ORDER`; unknown names sort last.
-pub(crate) fn sect_rank(local: &str) -> usize {
+#[doc(hidden)]
+pub fn sect_rank(local: &str) -> usize {
     SECT_ORDER
         .iter()
         .position(|&n| n == local)
@@ -43,7 +44,8 @@ pub(crate) fn sect_rank(local: &str) -> usize {
 }
 
 /// `ST_HighlightColor`.
-pub(crate) const HIGHLIGHTS: &[&str] = &[
+#[doc(hidden)]
+pub const HIGHLIGHTS: &[&str] = &[
     "black",
     "blue",
     "cyan",
@@ -66,7 +68,8 @@ pub(crate) const HIGHLIGHTS: &[&str] = &[
 /// The two names a text box's content goes by: `w:txbxContent`, and the
 /// `wne:txbxContent` a Strict package's shapes hold (the agent view skips
 /// both by local name, so every id walk must too).
-pub(crate) fn text_box_names() -> [XName; 2] {
+#[doc(hidden)]
+pub fn text_box_names() -> [XName; 2] {
     [W::txbx_content(), WNE::name("txbxContent")]
 }
 

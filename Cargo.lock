@@ -1548,6 +1548,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "jubarte-dom"
+version = "0.18.0"
+dependencies = [
+ "foldhash",
+ "js-sys",
+ "quick-xml 0.42.0",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2 0.11.1",
+ "unicode-properties",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "jubarte-redlines"
 version = "0.18.0"
 dependencies = [
@@ -1561,6 +1577,7 @@ dependencies = [
  "image",
  "js-sys",
  "jsonschema",
+ "jubarte-dom",
  "mimalloc",
  "ooxmlsdk",
  "oxml-opc",

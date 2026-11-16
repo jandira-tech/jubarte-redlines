@@ -124,22 +124,25 @@ pub mod edit;
 /// V2-13 (issue #845): the checker core for `--expect` evaluations.
 pub mod expect;
 pub mod fields;
-pub mod ids;
+#[doc(inline)]
+pub use jubarte_dom::ids;
 /// Read-only paragraph/package views and the Markdown projection for agents.
 pub mod inspect;
 pub mod legacy_doc;
-pub(crate) mod limits;
+pub(crate) use jubarte_dom::limits;
 pub mod markdown;
 /// Markup simplification (PowerTools `MarkupSimplifier` port).
 pub mod markup_simplifier;
 /// WordprocessingML and related namespace / `XName` constants.
-pub mod namespaces;
+#[doc(inline)]
+pub use jubarte_dom::namespaces;
 pub(crate) mod numbering;
-pub(crate) mod ooxml;
+pub(crate) use jubarte_dom::ooxml;
 /// Open Packaging Conventions adapter (`PartFs`).
 pub mod opc;
 /// P0-LAB-01 stage counters/timers — no-ops unless `perf-profile` is enabled.
-pub mod perf;
+#[doc(inline)]
+pub use jubarte_dom::perf;
 pub(crate) mod render_options;
 pub mod result;
 /// Accept / reject tracked revisions across a package.
@@ -150,12 +153,14 @@ pub mod settings;
 pub mod strict_translation;
 pub(crate) mod table_dom;
 pub mod text_diff;
-pub mod unid;
+#[doc(inline)]
+pub use jubarte_dom::unid;
 /// `jubarte self-update`: install a GitHub release, only when asked.
 #[cfg(feature = "self-update")]
 pub mod update;
 /// Shared small utilities.
-pub mod util;
+#[doc(inline)]
+pub use jubarte_dom::util;
 pub mod validate;
 /// Pure DOM structural predicates shared by validate and the comparers.
 pub(crate) mod validate_dom;
@@ -164,7 +169,8 @@ pub mod wml_document;
 /// Word's default theme part, for originals without one.
 mod word_default_theme;
 /// Arena DOM (`xmllinq`) used by the comparer.
-pub mod xmllinq;
+#[doc(inline)]
+pub use jubarte_dom::xmllinq;
 
 /// [`WmlDocument`] re-export for the common library entry point.
 pub use wml_document::WmlDocument;
