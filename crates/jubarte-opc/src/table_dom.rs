@@ -90,13 +90,15 @@ fn local_name_is(dom: &Dom, node: NodeId, local: &str) -> bool {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct TblLook {
-    pub(crate) first_row: bool,
-    pub(crate) first_col: bool,
-    pub(crate) no_h_band: bool,
+#[doc(hidden)]
+pub struct TblLook {
+    pub first_row: bool,
+    pub first_col: bool,
+    pub no_h_band: bool,
 }
 
-pub(crate) fn table_look(dom: &Dom, table: NodeId) -> TblLook {
+#[doc(hidden)]
+pub fn table_look(dom: &Dom, table: NodeId) -> TblLook {
     let mut look = TblLook {
         first_row: true,
         first_col: false,
@@ -120,7 +122,8 @@ pub(crate) fn table_look(dom: &Dom, table: NodeId) -> TblLook {
     look
 }
 
-pub(crate) fn cell_is_deleted(dom: &Dom, cell: NodeId) -> bool {
+#[doc(hidden)]
+pub fn cell_is_deleted(dom: &Dom, cell: NodeId) -> bool {
     let Some(pr) = cell_pr(dom, cell) else {
         return false;
     };
@@ -130,7 +133,8 @@ pub(crate) fn cell_is_deleted(dom: &Dom, cell: NodeId) -> bool {
 
 /// `parent`'s `w:<local>` children, also those a content control or a
 /// custom-XML wrapper holds (003c9ddd's tr > sdt > sdtContent > tc).
-pub(crate) fn wrapped_children(dom: &Dom, parent: NodeId, local: &str) -> Vec<NodeId> {
+#[doc(hidden)]
+pub fn wrapped_children(dom: &Dom, parent: NodeId, local: &str) -> Vec<NodeId> {
     let mut out = Vec::new();
     for i in 0..dom.child_count(parent) {
         let child = dom.child_at(parent, i);

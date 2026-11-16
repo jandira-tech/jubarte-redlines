@@ -39,10 +39,8 @@ use crate::xmllinq::{Dom, NodeId, XName};
 /// against the deleted row crashed Word 16.115 (diff_before16 ×
 /// diff_before19). So does a paragraph between two deleted tables
 /// (w06, s278).
-pub(crate) fn inserted_text_before_deleted_tables(
-    dom: &Dom,
-    body: NodeId,
-) -> Vec<(NodeId, NodeId)> {
+#[doc(hidden)]
+pub fn inserted_text_before_deleted_tables(dom: &Dom, body: NodeId) -> Vec<(NodeId, NodeId)> {
     let markers = [
         W::bookmark_start(),
         W::bookmark_end(),
@@ -143,7 +141,8 @@ fn keeps_only_inserted_words(dom: &Dom, paragraph: NodeId) -> bool {
 /// under no revision that resolution removes, up to `node`. Accept All
 /// (`"del"`) removes what is deleted or moved away, Reject All (`"ins"`)
 /// what is inserted or moved in.
-pub(crate) fn keeps_words(dom: &Dom, node: NodeId, kind: &str) -> bool {
+#[doc(hidden)]
+pub fn keeps_words(dom: &Dom, node: NodeId, kind: &str) -> bool {
     let gone = if kind == "del" {
         [W::del(), W::move_from()]
     } else {
@@ -168,7 +167,8 @@ pub(crate) fn keeps_words(dom: &Dom, node: NodeId, kind: &str) -> bool {
 
 /// Whether every row of `table` (its own, not a nested table's) is
 /// inserted or deleted as `kind` says.
-pub(crate) fn table_revised(dom: &Dom, table: NodeId, kind: &str) -> bool {
+#[doc(hidden)]
+pub fn table_revised(dom: &Dom, table: NodeId, kind: &str) -> bool {
     let rows: Vec<NodeId> = dom
         .descendants(table, Some(&W::tr()))
         .into_iter()
@@ -183,7 +183,8 @@ pub(crate) fn table_revised(dom: &Dom, table: NodeId, kind: &str) -> bool {
 
 /// A story's closing paragraph: its last block when that is a paragraph of
 /// its own, not one in a content control, a custom XML element or a table.
-pub(crate) fn closing_paragraph(dom: &Dom, story: NodeId) -> Option<NodeId> {
+#[doc(hidden)]
+pub fn closing_paragraph(dom: &Dom, story: NodeId) -> Option<NodeId> {
     let blocks = [W::p(), W::tbl(), W::sdt(), W::custom_xml()];
     dom.elements(story, None)
         .into_iter()
@@ -198,7 +199,8 @@ pub(crate) fn closing_paragraph(dom: &Dom, story: NodeId) -> Option<NodeId> {
 /// `separate` (or `end`), split across runs as Word often writes it; a
 /// `w:fldSimple`'s is its `w:instr`. Code outside any field in `p` (its
 /// `begin` in an earlier paragraph) counts piece by piece.
-pub(crate) fn holds_page_field(dom: &Dom, p: NodeId) -> bool {
+#[doc(hidden)]
+pub fn holds_page_field(dom: &Dom, p: NodeId) -> bool {
     let page = |code: &str| {
         code.split_whitespace().next().is_some_and(|word| {
             word.eq_ignore_ascii_case("PAGE") || word.eq_ignore_ascii_case("NUMPAGES")
@@ -248,7 +250,8 @@ pub(crate) fn holds_page_field(dom: &Dom, p: NodeId) -> bool {
 /// around it count, through nested tables (an outer row's revision covers
 /// a nested table's cells), each with the row that holds it, through any
 /// content control between them.
-pub(crate) fn uncovered_final_marks(dom: &Dom, cell: NodeId) -> Vec<(NodeId, &'static str)> {
+#[doc(hidden)]
+pub fn uncovered_final_marks(dom: &Dom, cell: NodeId) -> Vec<(NodeId, &'static str)> {
     let Some(last) = last_block_paragraph(dom, cell) else {
         return Vec::new();
     };
@@ -278,7 +281,8 @@ pub(crate) fn uncovered_final_marks(dom: &Dom, cell: NodeId) -> Vec<(NodeId, &'s
 /// Whether `row` (or the cell itself) is inserted or deleted as `kind`
 /// says: `w:trPr/w:ins` or `w:trPr/w:del`, or the cell's
 /// `w:tcPr/w:cellIns` or `w:tcPr/w:cellDel`.
-pub(crate) fn row_revised(dom: &Dom, row: NodeId, cell: NodeId, kind: &str) -> bool {
+#[doc(hidden)]
+pub fn row_revised(dom: &Dom, row: NodeId, cell: NodeId, kind: &str) -> bool {
     let cell_kind = if kind == "ins" {
         W::cell_ins()
     } else {
@@ -292,14 +296,16 @@ pub(crate) fn row_revised(dom: &Dom, row: NodeId, cell: NodeId, kind: &str) -> b
 }
 
 /// `w:ins` for `"ins"`, `w:del` for `"del"`.
-pub(crate) fn revision_name(kind: &str) -> XName {
+#[doc(hidden)]
+pub fn revision_name(kind: &str) -> XName {
     if kind == "ins" { W::ins() } else { W::del() }
 }
 
 /// The last paragraph among a container's blocks, through block content
 /// controls, custom XML elements, and the alternate-content branch Word
 /// shows, not into nested tables.
-pub(crate) fn last_block_paragraph(dom: &Dom, container: NodeId) -> Option<NodeId> {
+#[doc(hidden)]
+pub fn last_block_paragraph(dom: &Dom, container: NodeId) -> Option<NodeId> {
     container_blocks(dom, container)
         .into_iter()
         .rev()
@@ -329,7 +335,8 @@ fn shown_alternate_branch(dom: &Dom, node: NodeId) -> Option<NodeId> {
 /// The paragraphs and tables of `container` in order, through block
 /// content controls, custom XML elements, and the alternate-content branch
 /// Word shows, not into nested tables.
-pub(crate) fn container_blocks(dom: &Dom, container: NodeId) -> Vec<NodeId> {
+#[doc(hidden)]
+pub fn container_blocks(dom: &Dom, container: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
     for child in dom.elements(container, None) {
         if dom.name_is(child, &W::p()) || dom.name_is(child, &W::tbl()) {
@@ -353,7 +360,8 @@ pub(crate) fn container_blocks(dom: &Dom, container: NodeId) -> Vec<NodeId> {
 /// A range end shares its start's id, but two ends of one kind may not
 /// share one; OpenXmlValidator lets two `customXmlMoveToRangeEnd` do so.
 /// Comment and bookmark ids have other scopes.
-pub(crate) fn has_unique_revision_id(name: &XName) -> bool {
+#[doc(hidden)]
+pub fn has_unique_revision_id(name: &XName) -> bool {
     name.namespace_name() == W::URI
         && (name.local_name().ends_with("PrChange")
             || matches!(

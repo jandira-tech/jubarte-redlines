@@ -16,7 +16,8 @@ const RELS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relati
 const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
 /// The part name beside `main` (`word/document.xml` -> `word/<name>`).
-pub(crate) fn sibling(main: &str, name: &str) -> String {
+#[doc(hidden)]
+pub fn sibling(main: &str, name: &str) -> String {
     match main.rsplit_once('/') {
         Some((dir, _)) => format!("{dir}/{name}"),
         None => name.to_string(),
@@ -24,7 +25,8 @@ pub(crate) fn sibling(main: &str, name: &str) -> String {
 }
 
 /// The part `main` relates to with the relationship type ending in `kind`.
-pub(crate) fn related(package: &PartFs, main: &str, kind: &str) -> Option<String> {
+#[doc(hidden)]
+pub fn related(package: &PartFs, main: &str, kind: &str) -> Option<String> {
     let rels = package.read_rels_for(main)?;
     let rel = rels
         .items
@@ -35,12 +37,14 @@ pub(crate) fn related(package: &PartFs, main: &str, kind: &str) -> Option<String
 }
 
 /// The largest value of attribute `name` on elements `element` in `xml`.
-pub(crate) fn max_attribute(xml: &str, element: &str, name: &str) -> Option<i64> {
+#[doc(hidden)]
+pub fn max_attribute(xml: &str, element: &str, name: &str) -> Option<i64> {
     attribute_values(xml, element, name).into_iter().max()
 }
 
 /// Every numeric `name` attribute of `element` in `xml`.
-pub(crate) fn attribute_values(xml: &str, element: &str, name: &str) -> Vec<i64> {
+#[doc(hidden)]
+pub fn attribute_values(xml: &str, element: &str, name: &str) -> Vec<i64> {
     let mut values = Vec::new();
     let mut rest = xml;
     let open = format!("<{element} ");
@@ -61,7 +65,8 @@ pub(crate) fn attribute_values(xml: &str, element: &str, name: &str) -> Vec<i64>
 }
 
 /// The numbering part `main` relates to, made empty when there is none.
-pub(crate) fn numbering_part(package: &mut PartFs, main: &str) -> String {
+#[doc(hidden)]
+pub fn numbering_part(package: &mut PartFs, main: &str) -> String {
     related(package, main, "/numbering").unwrap_or_else(|| {
         let part = sibling(main, "numbering.xml");
         package.add_document_relationship(
@@ -88,7 +93,8 @@ pub(crate) fn numbering_part(package: &mut PartFs, main: &str) -> String {
 /// Appends `w:abstractNum`s and `w:num`s to `main`'s numbering part, making
 /// one if needed. `build` gets the first free abstract and num ids and
 /// returns the `(abstracts, nums)` markup; returns those first ids.
-pub(crate) fn append_numbering(
+#[doc(hidden)]
+pub fn append_numbering(
     package: &mut PartFs,
     main: &str,
     build: impl FnOnce(u32, u32) -> (String, String),
@@ -126,7 +132,8 @@ pub(crate) fn append_numbering(
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum NumFmt {
+#[doc(hidden)]
+pub enum NumFmt {
     Decimal,
     DecimalZero,
     CardinalText,
@@ -179,7 +186,8 @@ pub(crate) enum NumFmt {
 /// Whether a level text names a level deeper than `ilvl` (`%3` on level 1,
 /// 0-based). Word then prints no label and no list indent, though the
 /// paragraph still counts (probe lvl_undef_1010).
-pub(crate) fn names_deeper_level(text: &str, ilvl: u32) -> bool {
+#[doc(hidden)]
+pub fn names_deeper_level(text: &str, ilvl: u32) -> bool {
     let mut chars = text.chars();
     while let Some(c) = chars.next() {
         if c == '%'
@@ -193,7 +201,8 @@ pub(crate) fn names_deeper_level(text: &str, ilvl: u32) -> bool {
     false
 }
 
-pub(crate) fn parse_num_fmt(val: &str) -> NumFmt {
+#[doc(hidden)]
+pub fn parse_num_fmt(val: &str) -> NumFmt {
     match val {
         "lowerLetter" => NumFmt::LowerLetter,
         "upperLetter" => NumFmt::UpperLetter,
@@ -247,11 +256,13 @@ pub(crate) fn parse_num_fmt(val: &str) -> NumFmt {
 
 /// A list counter in a `w:numFmt` (`lowerLetter`, `upperRoman`, …), as the
 /// layout prints it; for the agent view's id lines.
-pub(crate) fn list_number(num_fmt: &str, n: u32) -> String {
+#[doc(hidden)]
+pub fn list_number(num_fmt: &str, n: u32) -> String {
     format_num(parse_num_fmt(num_fmt), n)
 }
 
-pub(crate) fn format_num(fmt: NumFmt, n: u32) -> String {
+#[doc(hidden)]
+pub fn format_num(fmt: NumFmt, n: u32) -> String {
     match fmt {
         NumFmt::Decimal => n.to_string(),
         NumFmt::DecimalZero => format!("{n:02}"),
@@ -303,7 +314,8 @@ pub(crate) fn format_num(fmt: NumFmt, n: u32) -> String {
     }
 }
 
-pub(crate) fn cardinal_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn cardinal_label(n: u32) -> String {
     const ONES: [&str; 20] = [
         "Zero",
         "One",
@@ -344,11 +356,13 @@ pub(crate) fn cardinal_label(n: u32) -> String {
     n.to_string()
 }
 
-pub(crate) fn ordinal_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn ordinal_label(n: u32) -> String {
     format!("{n}{}", ordinal_suffix(n))
 }
 
-pub(crate) fn ordinal_suffix(n: u32) -> &'static str {
+#[doc(hidden)]
+pub fn ordinal_suffix(n: u32) -> &'static str {
     if matches!(n % 100, 11..=13) {
         "th"
     } else {
@@ -361,7 +375,8 @@ pub(crate) fn ordinal_suffix(n: u32) -> &'static str {
     }
 }
 
-pub(crate) fn ordinal_text_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn ordinal_text_label(n: u32) -> String {
     match n {
         1 => "First".into(),
         2 => "Second".into(),
@@ -401,7 +416,8 @@ pub(crate) fn ordinal_text_label(n: u32) -> String {
     }
 }
 
-pub(crate) fn ordinal_text_ones(one: &str) -> String {
+#[doc(hidden)]
+pub fn ordinal_text_ones(one: &str) -> String {
     match one {
         "One" => "First".into(),
         "Two" => "Second".into(),
@@ -418,13 +434,15 @@ pub(crate) fn ordinal_text_ones(one: &str) -> String {
 /// cycle (`u32::MAX` would ask for about a gigabyte of label bytes).
 const MAX_CHICAGO_MARKS: usize = 256;
 
-pub(crate) fn chicago_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn chicago_label(n: u32) -> String {
     const MARKS: [&str; 4] = ["*", "†", "‡", "§"];
     let i = n.saturating_sub(1) as usize;
     MARKS[i % 4].repeat((i / 4 + 1).min(MAX_CHICAGO_MARKS))
 }
 
-pub(crate) fn ideograph_digital_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn ideograph_digital_label(n: u32) -> String {
     const DIGITS: [char; 10] = ['〇', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
     if n == 0 {
         return "〇".into();
@@ -445,17 +463,20 @@ const IDEOGRAPH_BRANCHES: [char; 12] = [
     '子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥',
 ];
 
-pub(crate) fn cycle_cjk(chars: &[char], n: u32) -> String {
+#[doc(hidden)]
+pub fn cycle_cjk(chars: &[char], n: u32) -> String {
     let i = n.saturating_sub(1) as usize % chars.len();
     chars[i].to_string()
 }
 
-pub(crate) fn ideograph_zodiac_traditional_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn ideograph_zodiac_traditional_label(n: u32) -> String {
     let i = n.saturating_sub(1) as usize;
     format!("{}{}", IDEOGRAPH_STEMS[i % 10], IDEOGRAPH_BRANCHES[i % 12])
 }
 
-pub(crate) fn ideograph_legal_traditional_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn ideograph_legal_traditional_label(n: u32) -> String {
     cjk_counting(n, true)
 }
 
@@ -463,7 +484,8 @@ pub(crate) fn ideograph_legal_traditional_label(n: u32) -> String {
 /// `legal`: traditional financial forms — 壹 is written before 佰/仟/萬
 /// (only a leading 拾 below 20 stays bare) and one 零 marks a gap.
 /// Japanese counting drops 一 before 十/百/千 and writes no zero.
-pub(crate) fn cjk_counting(n: u32, legal: bool) -> String {
+#[doc(hidden)]
+pub fn cjk_counting(n: u32, legal: bool) -> String {
     const JAPANESE: [char; 10] = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
     // Traditional legal digits: [MS-DOCX] U+58F9, U+8CB3, U+53C3, …
     const LEGAL: [char; 10] = ['零', '壹', '貳', '參', '肆', '伍', '陸', '柒', '捌', '玖'];
@@ -503,7 +525,8 @@ pub(crate) fn cjk_counting(n: u32, legal: bool) -> String {
     out
 }
 
-pub(crate) fn ideograph_enclosed_circle_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn ideograph_enclosed_circle_label(n: u32) -> String {
     // U+3220..=U+3229 are ㈠–㈩. Past them Word writes plain decimal
     // (Word 16, a list and a footer PAGE at 11: "11", not 一一).
     const ENCLOSED: [char; 10] = ['㈠', '㈡', '㈢', '㈣', '㈤', '㈥', '㈦', '㈧', '㈨', '㈩'];
@@ -518,7 +541,8 @@ const CHINESE_DIGITS: [char; 10] = ['〇', '一', '二', '三', '四', '五', '�
 
 /// chineseCounting / taiwaneseCounting as Word writes them: counting words
 /// to 九十九, then digit by digit with ○ (U+25CB) for zero (一○一).
-pub(crate) fn chinese_counting_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn chinese_counting_label(n: u32) -> String {
     let digit = |d: u32| CHINESE_DIGITS[d as usize];
     match n {
         0 => '○'.to_string(),
@@ -548,7 +572,8 @@ pub(crate) fn chinese_counting_label(n: u32) -> String {
 /// chineseCountingThousand / taiwaneseCountingThousand as Word writes them:
 /// 一百〇一, 一百一十, 一千〇一十, 一万〇一 (one `zero` per gap, 一十 after
 /// a higher unit, a bare 十 only at the front).
-pub(crate) fn chinese_counting_thousand(n: u32, zero: char, myriad: char) -> String {
+#[doc(hidden)]
+pub fn chinese_counting_thousand(n: u32, zero: char, myriad: char) -> String {
     // `front`: nothing precedes, so ten is a bare 十 (十九, but 一百一十).
     fn below_myriad(n: u32, zero: char, front: bool) -> String {
         let mut out = String::new();
@@ -597,7 +622,8 @@ pub(crate) fn chinese_counting_thousand(n: u32, zero: char, myriad: char) -> Str
 
 /// MS-DOCX japaneseCounting: 一, 二, …, 十, 十一, 百, 千, 一万 (not
 /// digit-wise 一〇).
-pub(crate) fn japanese_counting_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn japanese_counting_label(n: u32) -> String {
     cjk_counting(n, false)
 }
 
@@ -616,7 +642,8 @@ const IROHA: [char; 47] = [
 ];
 
 /// MS-DOCX decimalFullWidth: U+FF10…U+FF19 (０１２…).
-pub(crate) fn decimal_fullwidth_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn decimal_fullwidth_label(n: u32) -> String {
     const DIGITS: [char; 10] = ['０', '１', '２', '３', '４', '５', '６', '７', '８', '９'];
     n.to_string()
         .bytes()
@@ -650,7 +677,8 @@ const DECIMAL_ENCLOSED_FULLSTOP: [char; 20] = [
     '⒛',
 ];
 
-pub(crate) fn enclosed_decimal_label(n: u32, glyphs: &[char; 20]) -> String {
+#[doc(hidden)]
+pub fn enclosed_decimal_label(n: u32, glyphs: &[char; 20]) -> String {
     if (1..=20).contains(&n) {
         glyphs[(n - 1) as usize].to_string()
     } else {
@@ -660,7 +688,8 @@ pub(crate) fn enclosed_decimal_label(n: u32, glyphs: &[char; 20]) -> String {
 
 /// MS-DOCX hebrew1: Hebrew numerals א, י, ק… (U+05D0, U+05D9, U+05E7).
 /// Additive gematria without geresh; 15=טו, 16=טז. After 999, decimal.
-pub(crate) fn hebrew1_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn hebrew1_label(n: u32) -> String {
     if n == 0 || n > 999 {
         return n.to_string();
     }
@@ -724,7 +753,8 @@ const RUSSIAN_UPPER: [char; 33] = [
 ];
 
 /// MS-DOCX thaiNumbers: U+0E51… (๑๒๓). Digit-wise, like decimalFullWidth.
-pub(crate) fn thai_numbers_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn thai_numbers_label(n: u32) -> String {
     const DIGITS: [char; 10] = ['๐', '๑', '๒', '๓', '๔', '๕', '๖', '๗', '๘', '๙'];
     n.to_string()
         .bytes()
@@ -740,7 +770,8 @@ const THAI_LETTERS: [char; 42] = [
 ];
 
 /// MS-DOCX thaiCounting: หนึ่ง, สอง, สาม… (U+0E2B U+0E19 U+0E36 U+0E48 U+0E07).
-pub(crate) fn thai_counting_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn thai_counting_label(n: u32) -> String {
     const ONES: [&str; 10] = [
         "",
         "หนึ่ง",
@@ -778,7 +809,8 @@ pub(crate) fn thai_counting_label(n: u32) -> String {
 }
 
 /// MS-DOCX hindiNumbers: U+0967… (१२३). Digit-wise Devanagari.
-pub(crate) fn hindi_numbers_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn hindi_numbers_label(n: u32) -> String {
     const DIGITS: [char; 10] = ['०', '१', '२', '३', '४', '५', '६', '७', '८', '९'];
     n.to_string()
         .bytes()
@@ -796,7 +828,8 @@ const HINDI_VOWELS: [char; 33] = [
 const HINDI_CONSONANTS: [char; 11] = ['अ', 'आ', 'इ', 'ई', 'उ', 'ऊ', 'ऋ', 'ए', 'ऐ', 'ओ', 'औ'];
 
 /// MS-DOCX hindiCounting: एक, दो, तीन… (U+090F U+0915). After 20, decimal.
-pub(crate) fn hindi_counting_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn hindi_counting_label(n: u32) -> String {
     const WORDS: [&str; 21] = [
         "शून्य",
         "एक",
@@ -829,7 +862,8 @@ pub(crate) fn hindi_counting_label(n: u32) -> String {
 
 /// MS-DOCX koreanCounting: 일, 이, 삼, 십, 십일, 백 (U+C77C). Not digit-wise 일영.
 /// A unit multiplier of one is dropped (십, 백, 천, never 일십).
-pub(crate) fn korean_counting_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn korean_counting_label(n: u32) -> String {
     const DIGITS: [&str; 10] = ["영", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"];
     const UNITS: [(u32, &str); 3] = [(1000, "천"), (100, "백"), (10, "십")];
     if n == 0 || n > 9999 {
@@ -854,7 +888,8 @@ pub(crate) fn korean_counting_label(n: u32) -> String {
 }
 
 /// MS-DOCX koreanDigital: 일, 일영, 일영영… Hangul digits with 영 for 0.
-pub(crate) fn korean_digital_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn korean_digital_label(n: u32) -> String {
     const DIGITS: [&str; 10] = ["영", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"];
     n.to_string()
         .bytes()
@@ -863,7 +898,8 @@ pub(crate) fn korean_digital_label(n: u32) -> String {
 }
 
 /// MS-DOCX koreanDigital2: 一, 一零… (U+96F6), not ideographDigital 一〇 (U+3007).
-pub(crate) fn korean_digital2_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn korean_digital2_label(n: u32) -> String {
     const DIGITS: [char; 10] = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
     n.to_string()
         .bytes()
@@ -872,7 +908,8 @@ pub(crate) fn korean_digital2_label(n: u32) -> String {
 }
 
 /// MS-DOCX koreanLegal: 하나, 둘, 셋… (U+D558 U+B098). Native Korean.
-pub(crate) fn korean_legal_label(n: u32) -> String {
+#[doc(hidden)]
+pub fn korean_legal_label(n: u32) -> String {
     const ONES: [&str; 10] = [
         "", "하나", "둘", "셋", "넷", "다섯", "여섯", "일곱", "여덟", "아홉",
     ];
@@ -896,15 +933,18 @@ pub(crate) fn korean_legal_label(n: u32) -> String {
 }
 
 /// The last letter label Word writes, thirty z's.
-pub(crate) const ALPHA_LABEL_MAX: u32 = 26 * 30;
+#[doc(hidden)]
+pub const ALPHA_LABEL_MAX: u32 = 26 * 30;
 /// The last Roman numeral Word writes.
-pub(crate) const ROMAN_LABEL_MAX: u32 = 32767;
+#[doc(hidden)]
+pub const ROMAN_LABEL_MAX: u32 = 32767;
 
 /// `lowerLetter` / `upperLetter` and `\* alphabetic`: past z Word repeats
 /// the letter, 27 "aa", 28 "bb", 53 "aaa" (Word 16 probes la1006 and
 /// nf1006, 2026-10-06). Past thirty z's (780) a list label starts again
 /// at "a" (probe bn1006b). Zero counts as 1.
-pub(crate) fn alpha_label(n: u32, upper: bool) -> String {
+#[doc(hidden)]
+pub fn alpha_label(n: u32, upper: bool) -> String {
     let n = (n.max(1) - 1) % ALPHA_LABEL_MAX;
     let ch = char::from(b'a' + (n % 26) as u8);
     let ch = if upper { ch.to_ascii_uppercase() } else { ch };
@@ -913,7 +953,8 @@ pub(crate) fn alpha_label(n: u32, upper: bool) -> String {
 
 /// Past 3999 Word adds M's (4000 "MMMM"); past 32767 a list label starts
 /// again at "I", 100000 "MDCXCIX" (Word 16 probe bn1006b, 2026-10-06).
-pub(crate) fn roman_label(n: u32, upper: bool) -> String {
+#[doc(hidden)]
+pub fn roman_label(n: u32, upper: bool) -> String {
     if n == 0 {
         return "0".into();
     }

@@ -93,13 +93,14 @@
 //! (MIT). The repository itself is AGPL-3.0-only; `LICENSES/` preserves those
 //! upstream attribution texts without changing the repository license.
 
-pub mod admission;
+#[doc(inline)]
+pub use jubarte_opc::admission;
 pub mod append;
 pub mod audit;
 /// Table, cell and paragraph border views shared by render, markdown and debug.
-pub(crate) mod borders;
+pub(crate) use jubarte_opc::borders;
 /// Word's built-in style names.
-mod builtin_styles;
+pub(crate) use jubarte_opc::builtin_styles;
 /// Machine-readable manifest of what this build can do.
 pub mod capabilities;
 /// Tracked changes one at a time: list, accept or reject a selection.
@@ -115,7 +116,7 @@ pub mod comparison_log;
 /// Independent DOCX → PDF conversion (not LibreOffice).
 pub mod convert;
 /// Custom XML and built-in data stores shared by the OPC layer.
-pub(crate) mod data_stores;
+pub(crate) use jubarte_opc::data_stores;
 /// `jubarte debug`: short Word-validity triage of a package, or two compared.
 pub mod debug;
 /// Byte-level package API: compare, list, accept, and reject revisions.
@@ -131,27 +132,31 @@ pub mod inspect;
 pub mod legacy_doc;
 pub(crate) use jubarte_dom::limits;
 pub mod markdown;
-/// Markup simplification (PowerTools `MarkupSimplifier` port).
-pub mod markup_simplifier;
 /// WordprocessingML and related namespace / `XName` constants.
 #[doc(inline)]
 pub use jubarte_dom::namespaces;
-pub(crate) mod numbering;
 pub(crate) use jubarte_dom::ooxml;
-/// Open Packaging Conventions adapter (`PartFs`).
-pub mod opc;
 /// P0-LAB-01 stage counters/timers — no-ops unless `perf-profile` is enabled.
 #[doc(inline)]
 pub use jubarte_dom::perf;
-pub(crate) mod render_options;
+/// Markup simplification (PowerTools `MarkupSimplifier` port).
+#[doc(inline)]
+pub use jubarte_opc::markup_simplifier;
+pub(crate) use jubarte_opc::numbering;
+/// Open Packaging Conventions adapter (`PartFs`).
+#[doc(inline)]
+pub use jubarte_opc::opc;
+pub(crate) use jubarte_opc::render_options;
 pub mod result;
 /// Accept / reject tracked revisions across a package.
 pub mod revision_processor;
 pub mod scrub;
-pub mod settings;
+#[doc(inline)]
+pub use jubarte_opc::settings;
 /// ISO Strict → Transitional package normalization.
-pub mod strict_translation;
-pub(crate) mod table_dom;
+#[doc(inline)]
+pub use jubarte_opc::strict_translation;
+pub(crate) use jubarte_opc::table_dom;
 pub mod text_diff;
 #[doc(inline)]
 pub use jubarte_dom::unid;
@@ -163,14 +168,14 @@ pub mod update;
 pub use jubarte_dom::util;
 pub mod validate;
 /// Pure DOM structural predicates shared by validate and the comparers.
-pub(crate) mod validate_dom;
+pub(crate) use jubarte_opc::validate_dom;
 /// `WmlDocument` — document bytes + lazily parsed main part.
 pub mod wml_document;
-/// Word's default theme part, for originals without one.
-mod word_default_theme;
 /// Arena DOM (`xmllinq`) used by the comparer.
 #[doc(inline)]
 pub use jubarte_dom::xmllinq;
+/// Word's default theme part, for originals without one.
+pub(crate) use jubarte_opc::word_default_theme;
 
 /// [`WmlDocument`] re-export for the common library entry point.
 pub use wml_document::WmlDocument;

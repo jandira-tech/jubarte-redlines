@@ -5,6 +5,10 @@
 //! The custom XML data stores of the content controls the writer writes
 //! bound to one (#1427).
 //!
+//! (This module stays in the markdown layer: its builder walks the
+//! writer's Element model from `super::from_docx`. The lookup half it
+//! names `crate::data_stores` lives in the opc crate's `data_stores`.)
+//!
 //! Word fills a bound control (`w:sdtPr/w:dataBinding`) from its store when
 //! it opens the file. A drawing payload (a cover page's text box) keeps its
 //! controls' bindings, but the store is a package part the drawing never

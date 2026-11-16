@@ -74,7 +74,8 @@ impl DerefMut for Relationships {
 /// [`std::io::Error`] source, so `Display` carries its message and
 /// `io::Error::get_ref` lets a caller downcast it (for example to
 /// [`crate::admission::AdmissionError`] and read its stable code).
-pub(crate) fn refused<E>(err: E) -> OpcError
+#[doc(hidden)]
+pub fn refused<E>(err: E) -> OpcError
 where
     E: std::error::Error + Send + Sync + 'static,
 {
@@ -103,12 +104,17 @@ use zip::{CompressionMethod, ZipWriter};
 
 mod archive;
 mod zip32;
-pub(crate) use archive::{
+// The ZIP archive probes the doc layer and the CLI reach through the
+// facade's opc re-export (debug, scrub); doc(hidden) keeps them out of
+// the documented API (V2).
+#[doc(hidden)]
+pub use archive::{
     ZipDefect, ZipDefectKind, duplicate_parts, open_archive, open_archive_unchecked,
     open_archive_within, zip_defects,
 };
 pub use zip32::Zip32Limit;
-pub(crate) use zip32::zip32_plan;
+#[doc(hidden)]
+pub use zip32::zip32_plan;
 
 /// Exactly one leading slash: callers build `/{part}` from names that may
 /// already be absolute, and a `//word/…` part name is invalid OPC.
@@ -407,7 +413,8 @@ fn read_relationships(xml: &[u8]) -> Result<Relationships, OpcError> {
 
 /// Whether `name` ends with `suffix`, ASCII case-blind (OPC compares part
 /// names so).
-pub(crate) fn ends_with_ignore_case(name: &str, suffix: &str) -> bool {
+#[doc(hidden)]
+pub fn ends_with_ignore_case(name: &str, suffix: &str) -> bool {
     name.len()
         .checked_sub(suffix.len())
         .and_then(|at| name.get(at..))
@@ -416,7 +423,8 @@ pub(crate) fn ends_with_ignore_case(name: &str, suffix: &str) -> bool {
 
 /// Whether a content type names XML: `…+xml`, `application/xml` or
 /// `text/xml`, ASCII case-blind.
-pub(crate) fn is_xml_content_type(content_type: &str) -> bool {
+#[doc(hidden)]
+pub fn is_xml_content_type(content_type: &str) -> bool {
     ends_with_ignore_case(content_type, "+xml")
         || content_type.eq_ignore_ascii_case("application/xml")
         || content_type.eq_ignore_ascii_case("text/xml")
@@ -433,7 +441,8 @@ const CUSTOM_XML_RELATIONSHIPS: [&str; 2] = [
 /// `customXml` relationships reach, by their exact type. Such a part holds
 /// the application's own XML. A part another relationship reaches too (the
 /// main document, a header) is that part, whatever else points at it.
-pub(crate) fn custom_xml_data<'a>(
+#[doc(hidden)]
+pub fn custom_xml_data<'a>(
     rels: impl IntoIterator<Item = (&'a str, &'a Relationships)>,
 ) -> Vec<String> {
     // By ASCII-lowercase name: OPC compares part names so.
@@ -784,7 +793,8 @@ pub struct PartFs {
 }
 
 /// Canonical target resolution shared by package APIs and text story labels.
-pub(crate) fn resolve_rel_target(source_part: &str, rel_target: &str) -> String {
+#[doc(hidden)]
+pub fn resolve_rel_target(source_part: &str, rel_target: &str) -> String {
     // The upstream resolver already returns the normalized absolute
     // name (`.`/`..`/empty segments collapsed under a leading '/');
     // PartFs stores the no-leading-slash form.
@@ -828,7 +838,8 @@ impl PartFs {
     /// admit an input under their own limits (the comparer's settings)
     /// open it under the same budget here, so a looser caller budget still
     /// governs and a tighter one has already refused the package.
-    pub(crate) fn open_within(
+    #[doc(hidden)]
+    pub fn open_within(
         bytes: &[u8],
         limits: crate::admission::InputLimits,
     ) -> Result<Self, OpcError> {
@@ -1285,7 +1296,8 @@ impl PartFs {
 
     /// All parsed relationships, including those whose source part is absent.
     /// The package's own relationships have the empty source name.
-    pub(crate) fn relationship_parts(&self) -> Vec<(&str, &Relationships)> {
+    #[doc(hidden)]
+    pub fn relationship_parts(&self) -> Vec<(&str, &Relationships)> {
         let mut parts: Vec<_> = self
             .part_rels
             .iter()

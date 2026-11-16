@@ -56,7 +56,7 @@ impl std::error::Error for Zip32Limit {}
 ///
 /// - more than 65,534 entries (65,535 is the ZIP64 count marker);
 /// - an entry whose uncompressed size reaches `0xFFFFFFFF`, or whose
-///   worst-case compressed size ([`deflate_bound`]) does;
+///   worst-case compressed size (`deflate_bound`) does;
 /// - a local-header offset, central-directory start or central-directory
 ///   size that reaches `0xFFFFFFFF`.
 ///

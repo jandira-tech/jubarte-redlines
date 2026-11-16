@@ -5,16 +5,16 @@
 //! Document settings an edit plan writes into `word/settings.xml`: Track
 //! Changes on or off, `updateFields` on open, and editing restrictions.
 //!
-//! Every element lands in `CT_Settings` sequence ([`SETTINGS_ORDER`], the
+//! Every element lands in `CT_Settings` sequence ([`SETTINGS_ORDER`](crate::settings::SETTINGS_ORDER), the
 //! schema order held by `tests/schema_consistency.rs` against
 //! `tests/data/wml_main_schema.json`), so Word reads the part back. A
 //! package without a settings part gets one, with its relationship and
 //! content type, the first time a request is applied.
 //!
-//! Entry points: [`apply_settings`] to write into an open [`PartFs`] given
-//! the main part's name, and [`apply_settings_to_docx`] for the byte-for-byte
-//! form an edit plan returns. [`SettingsRequest`] is what an operation
-//! builds; [`Protection`] and [`ProtectionEdit`] cover `documentProtection`.
+//! Entry points: [`apply_settings`](crate::settings::apply_settings) to write into an open [`PartFs`](crate::opc::PartFs) given
+//! the main part's name, and [`apply_settings_to_docx`](crate::settings::apply_settings_to_docx) for the byte-for-byte
+//! form an edit plan returns. [`SettingsRequest`](crate::settings::SettingsRequest) is what an operation
+//! builds; [`Protection`](crate::settings::Protection) and [`ProtectionEdit`](crate::settings::ProtectionEdit) cover `documentProtection`.
 
 use serde::{Deserialize, Serialize};
 
@@ -402,7 +402,8 @@ fn do_not_expand_shift_return(dom: &mut Dom, root: NodeId) {
 
 /// [`do_not_expand_shift_return`] on a whole package: a justified line
 /// that ends in a line break is not stretched to the margin.
-pub(crate) fn no_stretched_line_breaks(docx: &[u8]) -> Result<Vec<u8>, String> {
+#[doc(hidden)]
+pub fn no_stretched_line_breaks(docx: &[u8]) -> Result<Vec<u8>, String> {
     let mut pkg = PartFs::open(docx).map_err(|e| e.to_string())?;
     let main = pkg
         .main_document_part()
@@ -524,7 +525,8 @@ mod tests {
 
     #[test]
     fn a_part_that_is_not_settings_is_refused() {
-        let mut pkg = PartFs::open(include_bytes!("../tests/fixtures/split/minimal.docx")).unwrap();
+        let mut pkg =
+            PartFs::open(include_bytes!("../../../tests/fixtures/split/minimal.docx")).unwrap();
         let main = pkg.main_document_part().unwrap();
         let part = settings_part(&mut pkg, &main);
         pkg.set_part(&part, b"<nope/>".to_vec());

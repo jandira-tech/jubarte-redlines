@@ -17,9 +17,8 @@ use zip::result::{ZipError, ZipResult};
 /// maintainer triage tool — uses it so a package every other route
 /// refuses can still be inspected, and `admit` uses it so its own
 /// consistency check can refuse with a typed code.
-pub(crate) fn open_archive_unchecked<R: Read + Seek + Clone>(
-    reader: R,
-) -> ZipResult<ZipArchive<R>> {
+#[doc(hidden)]
+pub fn open_archive_unchecked<R: Read + Seek + Clone>(reader: R) -> ZipResult<ZipArchive<R>> {
     // zip 9's offset detection scans the payload even for ordinary packages.
     let config = Config {
         archive_offset: ArchiveOffset::Known(0),
@@ -39,7 +38,8 @@ pub(crate) fn open_archive_unchecked<R: Read + Seek + Clone>(
 /// fails the open. The error carries `admit`'s typed
 /// [`crate::admission::AdmissionError`] as its source, so the refusal
 /// code reads the same whichever route met the file.
-pub(crate) fn open_archive<R: Read + Seek + Clone>(reader: R) -> ZipResult<ZipArchive<R>> {
+#[doc(hidden)]
+pub fn open_archive<R: Read + Seek + Clone>(reader: R) -> ZipResult<ZipArchive<R>> {
     open_archive_within(reader, true)
 }
 
@@ -47,7 +47,8 @@ pub(crate) fn open_archive<R: Read + Seek + Clone>(reader: R) -> ZipResult<ZipAr
 /// the same identity itself, with the typed `OpcError::DuplicatePartName`
 /// its callers match on (ZIP-15/#600); every other defect still refuses
 /// here.
-pub(crate) fn open_archive_within<R: Read + Seek + Clone>(
+#[doc(hidden)]
+pub fn open_archive_within<R: Read + Seek + Clone>(
     reader: R,
     refuse_duplicates: bool,
 ) -> ZipResult<ZipArchive<R>> {
@@ -323,7 +324,8 @@ fn descriptor_extent<R: Read + Seek>(
 /// A structural defect in a package: the class that decides the refusal
 /// code, plus the detail naming the entry and what was wrong.
 #[derive(Debug)]
-pub(crate) struct ZipDefect {
+#[doc(hidden)]
+pub struct ZipDefect {
     /// The defect class.
     pub kind: ZipDefectKind,
     /// What disagreed, naming the entry and both values.
@@ -339,7 +341,8 @@ pub(crate) struct ZipDefect {
 /// only `debug` constructs — every reading route refuses them through
 /// its own CRC stream or open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ZipDefectKind {
+#[doc(hidden)]
+pub enum ZipDefectKind {
     /// A local file header field disagrees with the central record.
     HeaderMismatch,
     /// An entry's extent overlaps another or reaches the central directory.
@@ -363,7 +366,8 @@ pub(crate) enum ZipDefectKind {
 
 impl ZipDefect {
     /// The typed refusal this defect produces on a reading route.
-    pub(crate) fn refusal(&self) -> crate::admission::AdmissionError {
+    #[doc(hidden)]
+    pub fn refusal(&self) -> crate::admission::AdmissionError {
         use crate::admission::{AdmissionError, AdmissionErrorKind as K};
         match self.kind {
             ZipDefectKind::HeaderMismatch => AdmissionError::new(
@@ -386,7 +390,8 @@ impl ZipDefect {
     }
 
     /// The `debug` finding kind this defect reports as.
-    pub(crate) fn finding_kind(&self) -> &'static str {
+    #[doc(hidden)]
+    pub fn finding_kind(&self) -> &'static str {
         match self.kind {
             ZipDefectKind::HeaderMismatch => "zip-header-mismatch",
             ZipDefectKind::Extent => "zip-extent",
@@ -496,10 +501,8 @@ fn special_entry(index: usize, name: &str, central: &HeaderFields) -> Option<Zip
 /// Unicode Path field. A local time or extra field disagreement is not
 /// reported: it hides no content and Word opens such packages. An entry
 /// zip cannot index is left to the read that will refuse it.
-pub(crate) fn zip_defects<R: Read + Seek>(
-    archive: &ZipArchive<R>,
-    reader: &mut R,
-) -> Vec<ZipDefect> {
+#[doc(hidden)]
+pub fn zip_defects<R: Read + Seek>(archive: &ZipArchive<R>, reader: &mut R) -> Vec<ZipDefect> {
     let mut defects = Vec::new();
     let mut extents: Vec<(usize, String, u64, u64)> = Vec::with_capacity(archive.len());
     for i in 0..archive.len() {
@@ -752,10 +755,8 @@ fn declared_records<R: Read + Seek>(reader: &mut R) -> Option<u64> {
 /// trailing data cannot desynchronize it. Each defect pairs with the
 /// second entry's decoded name — the spelling `PartFs`'s typed refusal
 /// names.
-pub(crate) fn duplicate_parts<R: Read + Seek>(
-    reader: &mut R,
-    mut at: u64,
-) -> Vec<(String, ZipDefect)> {
+#[doc(hidden)]
+pub fn duplicate_parts<R: Read + Seek>(reader: &mut R, mut at: u64) -> Vec<(String, ZipDefect)> {
     // No end record parses only for a stream the open refuses on its
     // own; walking to the first non-central header then loses nothing.
     let records = declared_records(reader).unwrap_or(u64::MAX);
@@ -1133,7 +1134,9 @@ mod tests {
     /// headers the check cannot tolerate — loosen nothing, investigate.
     #[test]
     fn every_committed_docx_opens_under_header_consistency() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+        // The repository root, three up from this crate: the walk reads
+        // the committed fixtures, which stay beside the root package.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests");
         let mut stack = vec![root];
         let mut files = Vec::new();
         while let Some(dir) = stack.pop() {

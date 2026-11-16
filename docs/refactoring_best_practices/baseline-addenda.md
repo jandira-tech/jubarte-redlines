@@ -7,6 +7,41 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T4.2 (jubarte-opc extracted) - 2026-11-15
+
+- Second workspace crate: crates/jubarte-opc (opc, admission,
+  markup_simplifier, strict_translation, settings, word_default_theme,
+  builtin_styles, borders, data_stores, validate_dom, render_options,
+  numbering, table_dom), on jubarte-dom through the A5 shims (the dom
+  modules under their old crate:: names) so no moved line changed paths.
+  The facade re-exports the five public modules (#[doc(inline)] pub use)
+  and keeps the eight private ones as pub(crate) use.
+- Plan correction: markdown/data_stores.rs (the writer's store builder)
+  could NOT merge into data_stores - its builder walks the writer's
+  Element model (super::from_docx). It stays a markdown module
+  (MODULES maps markdown::data_stores -> markdown now); only the
+  opc-clean lookup half is in jubarte-opc.
+- V2 promotions: 81 by the dead-code list plus the workspace loop's
+  (validate_dom's keeps_words/table_revised family, admission's
+  preindex_budget/tally_inflated/shown/part_declared_over,
+  opc's refused/open_within/resolve_rel_target and the ZIP archive
+  probes, borders' parse/xml/with_effects, table_dom's TblLook fields,
+  zip32_plan). admission's test-support helpers (zip_names,
+  limit_test_support) moved to cfg(any(test, feature = "test-support"))
+  per A4, and admission's checked-math deny now exempts that feature
+  too (test scaffolding, not untrusted input). settings' test fixture
+  path rebased three directories up (a cfg(test) include, allowed by E5).
+- rustdoc: short-form intra-doc links in module headers stopped
+  resolving inside the crate (explicit crate:: paths work; recorded
+  here for T4.3+ to reuse the pattern), and one public doc's link to a
+  private helper became backticked text (A5).
+- api-baseline re-recorded with a 342-line reviewed drift: same classes
+  as T4.1 (doc(hidden) items leave; signatures re-render through the
+  new crate paths) plus the five facade re-export use lines.
+- Battery: check -p no-default-features and all-features, clippy both
+  feature sets, fmt, RUSTDOCFLAGS doc, tree (dom + opc only), guards,
+  facade_surface, goldens identical, full workspace suite (below).
+
 ## T4.1 (jubarte-dom extracted) - 2026-11-15
 
 - First workspace crate: crates/jubarte-dom (xmllinq, namespaces, ids,

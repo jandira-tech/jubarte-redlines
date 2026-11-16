@@ -199,11 +199,8 @@ fn strip_rsids(dom: &mut Dom, node: NodeId, keep_rows: bool) -> Option<NodeId> {
 /// Resolve each non-drawing `mc:AlternateContent` under `root`, picking the
 /// first `mc:Choice` whose `@Requires` namespaces satisfy `understood`, or
 /// else `mc:Fallback`.
-pub(crate) fn resolve_alternate_content_with(
-    dom: &mut Dom,
-    root: NodeId,
-    understood: fn(&str) -> bool,
-) {
+#[doc(hidden)]
+pub fn resolve_alternate_content_with(dom: &mut Dom, root: NodeId, understood: fn(&str) -> bool) {
     for ac in dom.descendants_and_self(root, Some(&MC::alternate_content())) {
         // A nested AltContent inside a discarded Fallback may already be detached.
         if dom.parent(ac).is_none() {
@@ -243,11 +240,8 @@ pub(crate) fn resolve_alternate_content_with(
 /// Choice, else the Fallback (#1876, probed). An absent/empty `@Requires` is
 /// vacuously true (the schema requires it, but be lenient). The `@Requires`
 /// attribute is unprefixed (no namespace) per the MCE schema.
-pub(crate) fn choice_requires_understood(
-    dom: &Dom,
-    choice: NodeId,
-    understood: fn(&str) -> bool,
-) -> bool {
+#[doc(hidden)]
+pub fn choice_requires_understood(dom: &Dom, choice: NodeId, understood: fn(&str) -> bool) -> bool {
     static REQUIRES: std::sync::OnceLock<XName> = std::sync::OnceLock::new();
     let requires_name = REQUIRES.get_or_init(|| XNamespace::none().name("Requires"));
     requires_list_understood(dom.attribute(choice, requires_name), |prefix| {
@@ -273,7 +267,8 @@ fn prefix_namespace(dom: &Dom, node: NodeId, prefix: &str) -> Option<String> {
 /// `urn:schemas-microsoft-com:` set is closed: OOXML uses exactly its
 /// `vml`, `office:office` and `office:word` namespaces, so it matches by
 /// exact URI and anything else under the root is one Word does not know.
-pub(crate) fn word_understands_namespace(uri: &str) -> bool {
+#[doc(hidden)]
+pub fn word_understands_namespace(uri: &str) -> bool {
     [
         "http://schemas.openxmlformats.org/",
         "http://purl.oclc.org/ooxml/",
@@ -291,7 +286,8 @@ pub(crate) fn word_understands_namespace(uri: &str) -> bool {
 
 /// Every prefix in a Requires list passes `prefix_understood`. No list means
 /// the choice stands.
-pub(crate) fn requires_list_understood(
+#[doc(hidden)]
+pub fn requires_list_understood(
     requires: Option<&str>,
     prefix_understood: impl Fn(&str) -> bool,
 ) -> bool {
@@ -300,7 +296,8 @@ pub(crate) fn requires_list_understood(
 
 /// The branch a consumer shows: the first Choice whose Requires satisfy
 /// `understood`, otherwise the Fallback.
-pub(crate) fn selected_alternate_branch(
+#[doc(hidden)]
+pub fn selected_alternate_branch(
     dom: &Dom,
     alternate: NodeId,
     understood: fn(&str) -> bool,

@@ -663,7 +663,8 @@ fn replace_all(text: &str, table: &[(&str, &str)]) -> String {
 /// a `.rels` part's relationship `Type` values, are rewritten when they are
 /// Strict URIs. Text and every other byte stay. A part that does not carry
 /// the Strict marker is returned unchanged.
-pub(crate) fn transitional_part<'a>(name: &str, text: &'a str) -> std::borrow::Cow<'a, str> {
+#[doc(hidden)]
+pub fn transitional_part<'a>(name: &str, text: &'a str) -> std::borrow::Cow<'a, str> {
     if !text.contains(STRICT_MARKER) {
         return std::borrow::Cow::Borrowed(text);
     }

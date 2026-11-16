@@ -17,7 +17,6 @@ api	assoc_const	pub	jubarte::namespaces::W::URI: &'static str
 api	assoc_const	pub	jubarte::namespaces::WNE::URI: &'static str
 api	assoc_const	pub	jubarte::namespaces::WP14::URI: &'static str
 api	assoc_const	pub	jubarte::namespaces::WP::URI: &'static str
-api	assoc_const	pub	jubarte::render_options::RevisionPalette::CONVENTIONAL: Self
 api	assoc_const	pub	jubarte::result::ExitStatus::CHECK_FINDINGS: Self
 api	assoc_const	pub	jubarte::result::ExitStatus::COMPARISON_DIFFERENCE: Self
 api	assoc_const	pub	jubarte::result::ExitStatus::DEADLINE_EXCEEDED: Self
@@ -159,9 +158,6 @@ api	enum	pub	jubarte::markdown::TrackChanges
 api	enum	pub	jubarte::markdown::redline::Source
 api	enum	pub	jubarte::markdown::unified::Locator
 api	enum	pub	jubarte::perf::Stage
-api	enum	pub	jubarte::render_options::CommentPlacement
-api	enum	pub	jubarte::render_options::MarkLines
-api	enum	pub	jubarte::render_options::RevisionStyle
 api	enum	pub	jubarte::result::CommitState
 api	enum	pub	jubarte::result::Effect
 api	enum	pub	jubarte::result::MediaRole
@@ -783,8 +779,6 @@ api	function	pub	jubarte::publication::StagedFile::commit (self: Self) -> Result
 api	function	pub	jubarte::publication::StagedFile::prepare (path: &Path, bytes: &[u8], overwrite: bool) -> io::Result<Self>
 api	function	pub	jubarte::publication::publish_paths (files: &[(std::path::PathBuf, &[u8])], overwrite: bool) -> Result<PublishReport, PublishError>
 api	function	pub	jubarte::publication::sync_directory (path: &std::path::Path) -> io::Result<()>
-api	function	pub	jubarte::render_options::RevisionPalette::parse (spec: &str) -> Result<Self, String>
-api	function	pub	jubarte::render_options::RevisionStyle::from_choice (name: &str, palette: Option<&str>) -> Result<Self, String>
 api	function	pub	jubarte::result::Artifact::committed (path: impl Into<String>, role: MediaRole, media_type: impl Into<String>, payload: &[u8]) -> Self
 api	function	pub	jubarte::result::Artifact::new (path: impl Into<String>, role: MediaRole, media_type: impl Into<String>, payload: &[u8]) -> Self
 api	function	pub	jubarte::result::Artifact::with_committed (self: Self, committed: bool) -> Self
@@ -2398,44 +2392,6 @@ api	impl		jubarte::publication::PublishError::(impl Error)
 api	impl		jubarte::publication::PublishReport::(impl Debug)
 api	impl		jubarte::publication::PublishReport::(impl Default)
 api	impl		jubarte::publication::StagedFile::(impl Drop)
-api	impl		jubarte::render_options::CommentPlacement::(impl Clone)
-api	impl		jubarte::render_options::CommentPlacement::(impl Copy)
-api	impl		jubarte::render_options::CommentPlacement::(impl Debug)
-api	impl		jubarte::render_options::CommentPlacement::(impl Default)
-api	impl		jubarte::render_options::CommentPlacement::(impl Eq)
-api	impl		jubarte::render_options::CommentPlacement::(impl PartialEq)
-api	impl		jubarte::render_options::MarkLines::(impl Clone)
-api	impl		jubarte::render_options::MarkLines::(impl Copy)
-api	impl		jubarte::render_options::MarkLines::(impl Debug)
-api	impl		jubarte::render_options::MarkLines::(impl Default)
-api	impl		jubarte::render_options::MarkLines::(impl Eq)
-api	impl		jubarte::render_options::MarkLines::(impl PartialEq)
-api	impl		jubarte::render_options::PdfOptions::(impl Clone)
-api	impl		jubarte::render_options::PdfOptions::(impl Copy)
-api	impl		jubarte::render_options::PdfOptions::(impl Debug)
-api	impl		jubarte::render_options::PdfOptions::(impl Default)
-api	impl		jubarte::render_options::PdfOptions::(impl Eq)
-api	impl		jubarte::render_options::PdfOptions::(impl PartialEq)
-api	impl		jubarte::render_options::RenderRequest::(impl Clone)
-api	impl		jubarte::render_options::RenderRequest::(impl Debug)
-api	impl		jubarte::render_options::RenderRequest::(impl Default)
-api	impl		jubarte::render_options::RenderRequest::(impl PartialEq)
-api	impl		jubarte::render_options::RevisionMark::(impl Clone)
-api	impl		jubarte::render_options::RevisionMark::(impl Copy)
-api	impl		jubarte::render_options::RevisionMark::(impl Debug)
-api	impl		jubarte::render_options::RevisionMark::(impl Eq)
-api	impl		jubarte::render_options::RevisionMark::(impl PartialEq)
-api	impl		jubarte::render_options::RevisionPalette::(impl Clone)
-api	impl		jubarte::render_options::RevisionPalette::(impl Copy)
-api	impl		jubarte::render_options::RevisionPalette::(impl Debug)
-api	impl		jubarte::render_options::RevisionPalette::(impl Eq)
-api	impl		jubarte::render_options::RevisionPalette::(impl PartialEq)
-api	impl		jubarte::render_options::RevisionStyle::(impl Clone)
-api	impl		jubarte::render_options::RevisionStyle::(impl Copy)
-api	impl		jubarte::render_options::RevisionStyle::(impl Debug)
-api	impl		jubarte::render_options::RevisionStyle::(impl Default)
-api	impl		jubarte::render_options::RevisionStyle::(impl Eq)
-api	impl		jubarte::render_options::RevisionStyle::(impl PartialEq)
 api	impl		jubarte::result::Artifact::(impl Clone)
 api	impl		jubarte::result::Artifact::(impl Debug)
 api	impl		jubarte::result::Artifact::(impl Deserialize<'0>)
@@ -3001,10 +2957,6 @@ api	struct	pub	jubarte::publication::OutputRoot
 api	struct	pub	jubarte::publication::PublishError
 api	struct	pub	jubarte::publication::PublishReport
 api	struct	pub	jubarte::publication::StagedFile
-api	struct	pub	jubarte::render_options::PdfOptions
-api	struct	pub	jubarte::render_options::RenderRequest
-api	struct	pub	jubarte::render_options::RevisionMark
-api	struct	pub	jubarte::render_options::RevisionPalette
 api	struct	pub	jubarte::result::Artifact
 api	struct	pub	jubarte::result::Context
 api	struct	pub	jubarte::result::Counts
@@ -3466,7 +3418,6 @@ api	struct_field		jubarte::markdown::redline::Source::Markdown::0: &'a str
 api	struct_field		jubarte::markdown::unified::Locator::Line::0: usize
 api	struct_field		jubarte::markdown::unified::Locator::Paragraph::index: usize
 api	struct_field		jubarte::markdown::unified::Locator::Paragraph::story: String
-api	struct_field		jubarte::render_options::RevisionStyle::Custom::0: RevisionPalette
 api	struct_field		jubarte::result::ResultDataError::EffectRequired::effect: Effect
 api	struct_field		jubarte::result::ResultDataError::EffectRequired::phase: Phase
 api	struct_field		jubarte::result::ResultDataError::NotAppliedRequired::effect: Effect
@@ -4394,21 +4345,6 @@ api	struct_field	pub	jubarte::publication::PublishError::durability_uncertain: b
 api	struct_field	pub	jubarte::publication::PublishError::source: io::Error
 api	struct_field	pub	jubarte::publication::PublishError::warnings: Vec<String>
 api	struct_field	pub	jubarte::publication::PublishReport::warnings: Vec<String>
-api	struct_field	pub	jubarte::render_options::PdfOptions::changed_only: bool
-api	struct_field	pub	jubarte::render_options::PdfOptions::comment_notes: bool
-api	struct_field	pub	jubarte::render_options::PdfOptions::comments: CommentPlacement
-api	struct_field	pub	jubarte::render_options::PdfOptions::compress: bool
-api	struct_field	pub	jubarte::render_options::PdfOptions::revisions: RevisionStyle
-api	struct_field	pub	jubarte::render_options::RenderRequest::pages: Option<Vec<usize>>
-api	struct_field	pub	jubarte::render_options::RenderRequest::pdf: bool
-api	struct_field	pub	jubarte::render_options::RenderRequest::png_dpi: Option<f32>
-api	struct_field	pub	jubarte::render_options::RevisionMark::color: [u8; 3]
-api	struct_field	pub	jubarte::render_options::RevisionMark::strike: MarkLines
-api	struct_field	pub	jubarte::render_options::RevisionMark::underline: MarkLines
-api	struct_field	pub	jubarte::render_options::RevisionPalette::deleted: RevisionMark
-api	struct_field	pub	jubarte::render_options::RevisionPalette::inserted: RevisionMark
-api	struct_field	pub	jubarte::render_options::RevisionPalette::moved_from: RevisionMark
-api	struct_field	pub	jubarte::render_options::RevisionPalette::moved_to: RevisionMark
 api	struct_field	pub	jubarte::result::Artifact::byte_size: u64
 api	struct_field	pub	jubarte::result::Artifact::committed: bool
 api	struct_field	pub	jubarte::result::Artifact::media_role: MediaRole
@@ -4561,6 +4497,7 @@ api	type_alias	pub	jubarte::comparer::preprocess::RelHashResolver = dyn Fn(&str)
 api	type_alias	pub	jubarte::markdown::ImageLoader = &'a dyn Fn(&str) -> Option<Vec<u8>>
 api	type_alias	pub	jubarte::update::zipsign::ReleaseKey = [u8; 32]
 api	use	pub	jubarte::WmlDocument = wml_document::WmlDocument
+api	use	pub	jubarte::admission = jubarte_opc::admission
 api	use	pub	jubarte::admission::AdmissionError = crate::limits::AdmissionError
 api	use	pub	jubarte::admission::AdmissionErrorKind = crate::limits::AdmissionErrorKind
 api	use	pub	jubarte::admission::InputLimitOverrides = crate::limits::InputLimitOverrides
@@ -4651,11 +4588,15 @@ api	use	pub	jubarte::markdown::patch_redline = unified::patch_redline
 api	use	pub	jubarte::markdown::plain_anchor = anchor::plain_anchor
 api	use	pub	jubarte::markdown::redline = redline::redline
 api	use	pub	jubarte::markdown::unescape_markdown = anchor::unescape_markdown
+api	use	pub	jubarte::markup_simplifier = jubarte_opc::markup_simplifier
 api	use	pub	jubarte::namespaces = jubarte_dom::namespaces
+api	use	pub	jubarte::opc = jubarte_opc::opc
 api	use	pub	jubarte::opc::OpcError = oxml_opc::OpcError
 api	use	pub	jubarte::opc::Relationship = oxml_opc::Relationship
 api	use	pub	jubarte::opc::Zip32Limit = zip32::Zip32Limit
 api	use	pub	jubarte::perf = jubarte_dom::perf
+api	use	pub	jubarte::settings = jubarte_opc::settings
+api	use	pub	jubarte::strict_translation = jubarte_opc::strict_translation
 api	use	pub	jubarte::unid = jubarte_dom::unid
 api	use	pub	jubarte::update::ReleaseKey = zipsign::ReleaseKey
 api	use	pub	jubarte::update::verify_signature = zipsign::verify_signature
@@ -5035,14 +4976,6 @@ api	variant		jubarte::perf::Stage::Produce
 api	variant		jubarte::perf::Stage::Serialize
 api	variant		jubarte::perf::Stage::Unitize
 api	variant		jubarte::perf::Stage::Zip
-api	variant		jubarte::render_options::CommentPlacement::End
-api	variant		jubarte::render_options::CommentPlacement::Margin
-api	variant		jubarte::render_options::MarkLines::Double
-api	variant		jubarte::render_options::MarkLines::None
-api	variant		jubarte::render_options::MarkLines::Single
-api	variant		jubarte::render_options::RevisionStyle::Conventional
-api	variant		jubarte::render_options::RevisionStyle::Custom
-api	variant		jubarte::render_options::RevisionStyle::Word
 api	variant		jubarte::result::CommitState::Committed
 api	variant		jubarte::result::CommitState::NotCommitted
 api	variant		jubarte::result::CommitState::Unknown
@@ -5107,9 +5040,6 @@ internal	assoc_const	pub(crate::convert)	jubarte::convert::Squeeze::NONE: Self
 internal	assoc_const	pub(crate::edit::sections)	jubarte::edit::sections::Geometry::WORD_DEFAULT: Self
 internal	assoc_type		jubarte::publication::Backend::Staged
 internal	assoc_type		jubarte::publication::FsBackend::(impl Backend)::Staged = StagedFile
-internal	constant	pub(crate)	jubarte::borders::CELL_SIDES: [&str; 8]
-internal	constant	pub(crate)	jubarte::borders::PARAGRAPH_SIDES: [&str; 6]
-internal	constant	pub(crate)	jubarte::borders::TABLE_SIDES: [&str; 6]
 internal	constant	pub(crate)	jubarte::capabilities::DIFF_EXTENSIONS: &[&str]
 internal	constant	pub(crate)	jubarte::capabilities::IDS_NOTE: &str
 internal	constant	pub(crate)	jubarte::changes::FORMATTING: &[&str]
@@ -5149,12 +5079,9 @@ internal	constant	pub(crate)	jubarte::markdown::xml::SHD_VALS: &[&str]
 internal	constant	pub(crate)	jubarte::markdown::xml::TAB_LEADERS: &[&str]
 internal	constant	pub(crate)	jubarte::markdown::xml::TAB_POS_LIMIT: i64
 internal	constant	pub(crate)	jubarte::markdown::xml::TAB_VALS: &[&str]
-internal	constant	pub(crate)	jubarte::numbering::ALPHA_LABEL_MAX: u32
-internal	constant	pub(crate)	jubarte::numbering::ROMAN_LABEL_MAX: u32
 internal	constant	pub(crate)	jubarte::result::ENVELOPE_SCHEMA_VERSION: u32
 internal	constant	pub(crate)	jubarte::revision_processor::FROZEN_NS: &str
 internal	constant	pub(crate)	jubarte::validate::RULE_SETS: &[&str]
-internal	constant	pub(crate)	jubarte::word_default_theme::WORD_DEFAULT_THEME: &str
 internal	constant	pub(crate)	jubarte::xmllinq::parse::MAX_ATTRIBUTE_NAME_BYTES: usize
 internal	constant	pub(crate)	jubarte::xmllinq::parse::MAX_ATTRIBUTE_VALUE_BYTES: usize
 internal	constant	pub(crate)	jubarte::xmllinq::parse::MAX_ELEMENT_ATTRIBUTES: usize
@@ -5179,7 +5106,6 @@ internal	constant	pub(crate::append)	jubarte::append::STYLE_REFERENCES: &[&str]
 internal	constant	pub(crate::append)	jubarte::append::XMLNS: &str
 internal	constant	pub(crate::audit)	jubarte::audit::LITERAL_MARKERS: &[char]
 internal	constant	pub(crate::audit)	jubarte::audit::RULE_SETS: &[&str]
-internal	constant	pub(crate::builtin_styles)	jubarte::builtin_styles::BUILT_IN: [&str; 376]
 internal	constant	pub(crate::cli)	jubarte::cli::COMPARE_ONLY: [&str; 9]
 internal	constant	pub(crate::cli)	jubarte::cli::READ_OPTION_IDS: [&str; 14]
 internal	constant	pub(crate::cli)	jubarte::cli::RENDER_ONLY: [&str; 7]
@@ -5295,7 +5221,6 @@ internal	constant	pub(crate::convert::word_subst)	jubarte::convert::word_subst::
 internal	constant	pub(crate::convert::word_subst)	jubarte::convert::word_subst::USB0_ARMENIAN: u32
 internal	constant	pub(crate::convert::word_subst)	jubarte::convert::word_subst::USB0_HEBREW: u32
 internal	constant	pub(crate::convert::word_subst)	jubarte::convert::word_subst::USB2_THAANA: u32
-internal	constant	pub(crate::data_stores)	jubarte::data_stores::BUILT_IN: [&str; 2]
 internal	constant	pub(crate::debug)	jubarte::debug::CHANGE_RECORDS: [&str; 8]
 internal	constant	pub(crate::debug)	jubarte::debug::RELATIONSHIPS_NS: &str
 internal	constant	pub(crate::debug)	jubarte::debug::REVISIONS: [&str; 4]
@@ -5508,27 +5433,6 @@ internal	constant	pub(crate::markdown::write)	jubarte::markdown::write::MOST_BOO
 internal	constant	pub(crate::markdown::write)	jubarte::markdown::write::SCHOLAR_STYLES: [(&str, &str); 4]
 internal	constant	pub(crate::markdown::xml)	jubarte::markdown::xml::MOST_TABLE_PERCENT: f64
 internal	constant	pub(crate::markdown::xml)	jubarte::markdown::xml::MOST_TABLE_TWIPS: f64
-internal	constant	pub(crate::numbering)	jubarte::numbering::AIUEO: [char; 46]
-internal	constant	pub(crate::numbering)	jubarte::numbering::ARABIC_ABJAD: [char; 28]
-internal	constant	pub(crate::numbering)	jubarte::numbering::ARABIC_ALPHA: [char; 28]
-internal	constant	pub(crate::numbering)	jubarte::numbering::CHINESE_DIGITS: [char; 10]
-internal	constant	pub(crate::numbering)	jubarte::numbering::CHOSUNG: [char; 14]
-internal	constant	pub(crate::numbering)	jubarte::numbering::DECIMAL_ENCLOSED_CIRCLE: [char; 20]
-internal	constant	pub(crate::numbering)	jubarte::numbering::DECIMAL_ENCLOSED_FULLSTOP: [char; 20]
-internal	constant	pub(crate::numbering)	jubarte::numbering::DECIMAL_ENCLOSED_PAREN: [char; 20]
-internal	constant	pub(crate::numbering)	jubarte::numbering::GANADA: [char; 14]
-internal	constant	pub(crate::numbering)	jubarte::numbering::HEBREW2: [char; 22]
-internal	constant	pub(crate::numbering)	jubarte::numbering::HINDI_CONSONANTS: [char; 11]
-internal	constant	pub(crate::numbering)	jubarte::numbering::HINDI_VOWELS: [char; 33]
-internal	constant	pub(crate::numbering)	jubarte::numbering::IDEOGRAPH_BRANCHES: [char; 12]
-internal	constant	pub(crate::numbering)	jubarte::numbering::IDEOGRAPH_STEMS: [char; 10]
-internal	constant	pub(crate::numbering)	jubarte::numbering::IROHA: [char; 47]
-internal	constant	pub(crate::numbering)	jubarte::numbering::MAX_CHICAGO_MARKS: usize
-internal	constant	pub(crate::numbering)	jubarte::numbering::RELS: &str
-internal	constant	pub(crate::numbering)	jubarte::numbering::RUSSIAN_LOWER: [char; 33]
-internal	constant	pub(crate::numbering)	jubarte::numbering::RUSSIAN_UPPER: [char; 33]
-internal	constant	pub(crate::numbering)	jubarte::numbering::THAI_LETTERS: [char; 42]
-internal	constant	pub(crate::numbering)	jubarte::numbering::W_NS: &str
 internal	constant	pub(crate::opc)	jubarte::opc::CUSTOM_XML_RELATIONSHIPS: [&str; 2]
 internal	constant	pub(crate::opc::archive)	jubarte::opc::archive::CENTRAL_HEADER: HeaderShape
 internal	constant	pub(crate::opc::archive)	jubarte::opc::archive::COMPARED_FLAGS: u16
@@ -5619,8 +5523,6 @@ internal	enum	pub(crate)	jubarte::markdown::view_notes::CellMark
 internal	enum	pub(crate)	jubarte::markdown::view_notes::Owner
 internal	enum	pub(crate)	jubarte::markdown::view_styles::TableBorders
 internal	enum	pub(crate)	jubarte::markdown::xml::ListFormat
-internal	enum	pub(crate)	jubarte::numbering::NumFmt
-internal	enum	pub(crate)	jubarte::opc::archive::ZipDefectKind
 internal	enum	pub(crate)	jubarte::revision_processor::sections::Resolution
 internal	enum	pub(crate::changes)	jubarte::changes::Group
 internal	enum	pub(crate::changes::logical)	jubarte::changes::logical::Event
@@ -5745,32 +5647,15 @@ internal	function	pub	jubarte::comparer::table_split::TableStyleNames::original 
 internal	function	pub	jubarte::comparer::table_split::TableStyleNames::revision (styles_xml: Option<&str>) -> Self
 internal	function	pub	jubarte::comparer::table_split::split_rows_by_table_identity (dom: &mut crate::xmllinq::Dom, root: crate::xmllinq::NodeId, old_names: &TableStyleNames, new_names: &TableStyleNames)
 internal	function	pub	jubarte::opc::zip32::zip32_plan (entries: &[(&str, u64)]) -> Result<(), Zip32Limit>
-internal	function	pub(crate)	jubarte::admission::admit_input (side: &str, bytes: &[u8], limits: InputLimits) -> Result<(), crate::opc::OpcError>
-internal	function	pub(crate)	jubarte::admission::admit_package (bytes: &[u8]) -> Result<(), crate::opc::OpcError>
-internal	function	pub(crate)	jubarte::admission::count_xml_elements (total: &mut u64, name: &str, data: &[u8], limits: &InputLimits) -> Result<(), AdmissionError>
 internal	function	pub(crate)	jubarte::admission::crc32 (bytes: &[u8]) -> u32
 internal	function	pub(crate)	jubarte::admission::input_over_compressed (size: u64, limits: &InputLimits) -> AdmissionError
 internal	function	pub(crate)	jubarte::admission::input_over_entries (declared: u64, limits: &InputLimits) -> AdmissionError
-internal	function	pub(crate)	jubarte::admission::part_declared_over (name: &str, declared: u64, limits: &InputLimits) -> AdmissionError
 internal	function	pub(crate)	jubarte::admission::part_inflated_over (name: &str, cap: u64, limits: &InputLimits) -> AdmissionError
 internal	function	pub(crate)	jubarte::admission::part_text (xml: &[u8]) -> std::borrow::Cow<'_, str>
-internal	function	pub(crate)	jubarte::admission::preindex_budget (bytes: &[u8], limits: InputLimits) -> Result<u64, AdmissionError>
-internal	function	pub(crate)	jubarte::admission::shown (name: &str) -> std::borrow::Cow<'_, str>
-internal	function	pub(crate)	jubarte::admission::tally_inflated (total: &mut u64, read: u64, name: &str, cap: u64, limits: &InputLimits) -> Result<(), AdmissionError>
 internal	function	pub(crate)	jubarte::admission::tally_xml_elements (total: &mut u64, name: &str, data: &[u8], limits: &InputLimits) -> Result<(), AdmissionError>
 internal	function	pub(crate)	jubarte::admission::unicode_path_fields (fields: impl Iterator<Item>) -> impl Iterator<Item>
 internal	function	pub(crate)	jubarte::admission::zip_entry_name (raw: &[u8], flags: u16, unicode_paths: impl Iterator<Item>) -> Result<String, zip::result::ZipError>
-internal	function	pub(crate)	jubarte::admission::zip_entry_name_raw (raw: &[u8], flags: u16, extra: &[u8]) -> Result<String, zip::result::ZipError>
 internal	function	pub(crate)	jubarte::audit::is_rule (rule: &str) -> bool
-internal	function	pub(crate)	jubarte::borders::Border::new (val: &str, size: Option<&str>, color: Option<&str>, space: Option<&str>) -> Self
-internal	function	pub(crate)	jubarte::borders::Border::with_effects (self: Self, shadow: Option<&str>, frame: Option<&str>) -> Self
-internal	function	pub(crate)	jubarte::borders::Border::with_theme (self: Self, theme: Option<&str>, tint: Option<&str>, shade: Option<&str>) -> Self
-internal	function	pub(crate)	jubarte::borders::describe (borders: &Vec<(&'static str, Border)>, all: &[&'static str]) -> String
-internal	function	pub(crate)	jubarte::borders::ordered (found: &[(&'static str, Border)], sides: &[&'static str]) -> Vec<(&'static str, Border)>
-internal	function	pub(crate)	jubarte::borders::parse (text: &str, all: &[&'static str]) -> Option<Vec<(&'static str, Border)>>
-internal	function	pub(crate)	jubarte::borders::side (name: &str, sides: &[&'static str]) -> Option<&'static str>
-internal	function	pub(crate)	jubarte::borders::xml (borders: &Vec<(&'static str, Border)>) -> String
-internal	function	pub(crate)	jubarte::builtin_styles::is_built_in (name: &str) -> bool
 internal	function	pub(crate)	jubarte::changes::atom (name: &crate::xmllinq::XName) -> Option<char>
 internal	function	pub(crate)	jubarte::changes::audit_stories (docx: &[u8]) -> Result<Vec<AuditStory>, ChangeError>
 internal	function	pub(crate)	jubarte::changes::changes_and_records (docx: &[u8], skip: &dyn Fn(&Change) -> bool) -> Result<(Vec<Change>, std::collections::HashMap<String, Vec<Recorded>>), ChangeError>
@@ -5936,8 +5821,6 @@ internal	function	pub(crate)	jubarte::convert::word_subst::rows () -> &'static [
 internal	function	pub(crate)	jubarte::convert::word_subst::script_face (entry: &super::font_table::FontEntry) -> Option<&'static str>
 internal	function	pub(crate)	jubarte::convert::word_subst::unknown_physical () -> String
 internal	function	pub(crate)	jubarte::convert::word_subst::word_name_substitute (name: &str) -> Option<&'static str>
-internal	function	pub(crate)	jubarte::data_stores::built_in (store: &str) -> bool
-internal	function	pub(crate)	jubarte::data_stores::stores (package: &crate::opc::PartFs, main: &str) -> Vec<String>
 internal	function	pub(crate)	jubarte::debug::cell_ends_in_paragraph (dom: &crate::xmllinq::Dom, tc: crate::xmllinq::NodeId) -> bool
 internal	function	pub(crate)	jubarte::debug::document_text (bytes: &[u8]) -> Result<String, String>
 internal	function	pub(crate)	jubarte::debug::document_text_view (bytes: &[u8], critic: bool, accept: bool) -> Result<String, String>
@@ -6231,65 +6114,8 @@ internal	function	pub(crate)	jubarte::markdown::xml::drawing_xml (picture: &Pict
 internal	function	pub(crate)	jubarte::markdown::xml::num (num_id: u32, abstract_id: u32, start: Option<(u32, u32)>) -> String
 internal	function	pub(crate)	jubarte::markdown::xml::shading_colour (value: &str) -> bool
 internal	function	pub(crate)	jubarte::markdown::xml::style_definition (id: &str) -> Option<String>
-internal	function	pub(crate)	jubarte::markup_simplifier::choice_requires_understood (dom: &crate::xmllinq::Dom, choice: crate::xmllinq::NodeId, understood: fn(&str) -> bool) -> bool
-internal	function	pub(crate)	jubarte::markup_simplifier::requires_list_understood (requires: Option<&str>, prefix_understood: impl Fn(&str) -> bool) -> bool
-internal	function	pub(crate)	jubarte::markup_simplifier::resolve_alternate_content_with (dom: &mut crate::xmllinq::Dom, root: crate::xmllinq::NodeId, understood: fn(&str) -> bool)
-internal	function	pub(crate)	jubarte::markup_simplifier::selected_alternate_branch (dom: &crate::xmllinq::Dom, alternate: crate::xmllinq::NodeId, understood: fn(&str) -> bool) -> Option<crate::xmllinq::NodeId>
-internal	function	pub(crate)	jubarte::markup_simplifier::word_understands_namespace (uri: &str) -> bool
-internal	function	pub(crate)	jubarte::numbering::alpha_label (n: u32, upper: bool) -> String
-internal	function	pub(crate)	jubarte::numbering::append_numbering (package: &mut crate::opc::PartFs, main: &str, build: impl FnOnce(u32, u32) -> (String, String)) -> Option<(u32, u32)>
-internal	function	pub(crate)	jubarte::numbering::attribute_values (xml: &str, element: &str, name: &str) -> Vec<i64>
-internal	function	pub(crate)	jubarte::numbering::cardinal_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::chicago_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::chinese_counting_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::chinese_counting_thousand (n: u32, zero: char, myriad: char) -> String
-internal	function	pub(crate)	jubarte::numbering::cjk_counting (n: u32, legal: bool) -> String
-internal	function	pub(crate)	jubarte::numbering::cycle_cjk (chars: &[char], n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::decimal_fullwidth_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::enclosed_decimal_label (n: u32, glyphs: &[char; 20]) -> String
-internal	function	pub(crate)	jubarte::numbering::format_num (fmt: NumFmt, n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::hebrew1_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::hindi_counting_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::hindi_numbers_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::ideograph_digital_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::ideograph_enclosed_circle_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::ideograph_legal_traditional_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::ideograph_zodiac_traditional_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::japanese_counting_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::korean_counting_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::korean_digital2_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::korean_digital_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::korean_legal_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::list_number (num_fmt: &str, n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::max_attribute (xml: &str, element: &str, name: &str) -> Option<i64>
-internal	function	pub(crate)	jubarte::numbering::names_deeper_level (text: &str, ilvl: u32) -> bool
-internal	function	pub(crate)	jubarte::numbering::numbering_part (package: &mut crate::opc::PartFs, main: &str) -> String
-internal	function	pub(crate)	jubarte::numbering::ordinal_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::ordinal_suffix (n: u32) -> &'static str
-internal	function	pub(crate)	jubarte::numbering::ordinal_text_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::ordinal_text_ones (one: &str) -> String
-internal	function	pub(crate)	jubarte::numbering::parse_num_fmt (val: &str) -> NumFmt
-internal	function	pub(crate)	jubarte::numbering::related (package: &crate::opc::PartFs, main: &str, kind: &str) -> Option<String>
-internal	function	pub(crate)	jubarte::numbering::roman_label (n: u32, upper: bool) -> String
-internal	function	pub(crate)	jubarte::numbering::sibling (main: &str, name: &str) -> String
-internal	function	pub(crate)	jubarte::numbering::thai_counting_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::numbering::thai_numbers_label (n: u32) -> String
-internal	function	pub(crate)	jubarte::opc::PartFs::open_within (bytes: &[u8], limits: crate::admission::InputLimits) -> Result<Self, OpcError>
-internal	function	pub(crate)	jubarte::opc::PartFs::relationship_parts (self: &Self) -> Vec<(&str, &Relationships)>
-internal	function	pub(crate)	jubarte::opc::archive::ZipDefect::finding_kind (self: &Self) -> &'static str
-internal	function	pub(crate)	jubarte::opc::archive::ZipDefect::refusal (self: &Self) -> crate::admission::AdmissionError
-internal	function	pub(crate)	jubarte::opc::archive::duplicate_parts <R: Read + Seek>(reader: &mut R, at: u64) -> Vec<(String, ZipDefect)>
-internal	function	pub(crate)	jubarte::opc::archive::open_archive <R: Read + Seek + Clone>(reader: R) -> zip::result::ZipResult<zip::ZipArchive<R>>
-internal	function	pub(crate)	jubarte::opc::archive::open_archive_unchecked <R: Read + Seek + Clone>(reader: R) -> zip::result::ZipResult<zip::ZipArchive<R>>
-internal	function	pub(crate)	jubarte::opc::archive::open_archive_within <R: Read + Seek + Clone>(reader: R, refuse_duplicates: bool) -> zip::result::ZipResult<zip::ZipArchive<R>>
-internal	function	pub(crate)	jubarte::opc::archive::zip_defects <R: Read + Seek>(archive: &zip::ZipArchive<R>, reader: &mut R) -> Vec<ZipDefect>
-internal	function	pub(crate)	jubarte::opc::custom_xml_data <'a>(rels: impl IntoIterator<Item>) -> Vec<String>
-internal	function	pub(crate)	jubarte::opc::ends_with_ignore_case (name: &str, suffix: &str) -> bool
-internal	function	pub(crate)	jubarte::opc::is_xml_content_type (content_type: &str) -> bool
 internal	function	pub(crate)	jubarte::opc::metadata_document (xml: &[u8], root: &str, namespace: &str) -> Result<(), String>
-internal	function	pub(crate)	jubarte::opc::refused <E>(err: E) -> OpcError where E: std::error::Error + Send + Sync + 'static
 internal	function	pub(crate)	jubarte::opc::rels_path_to_part_name (name: &str) -> Option<String>
-internal	function	pub(crate)	jubarte::opc::resolve_rel_target (source_part: &str, rel_target: &str) -> String
 internal	function	pub(crate)	jubarte::opc::typed_as_xml (content_types: Option<&[u8]>) -> impl Fn(&str) -> bool + []
 internal	function	pub(crate)	jubarte::revision_processor::RevisionIds::allocate (self: &mut Self) -> u64
 internal	function	pub(crate)	jubarte::revision_processor::RevisionIds::from_used (used: HashSet<u64>) -> Self
@@ -6307,11 +6133,6 @@ internal	function	pub(crate)	jubarte::revision_processor::style_records::complet
 internal	function	pub(crate)	jubarte::revision_processor::word_save::drop_unreferenced_headers_footers (pkg: &mut crate::opc::PartFs)
 internal	function	pub(crate)	jubarte::revision_processor::xml_has_tracked_revisions (xml: &str) -> bool
 internal	function	pub(crate)	jubarte::scrub::leaks_within (docx: &[u8], needle: &str, limits: crate::admission::InputLimits) -> Vec<String>
-internal	function	pub(crate)	jubarte::settings::no_stretched_line_breaks (docx: &[u8]) -> Result<Vec<u8>, String>
-internal	function	pub(crate)	jubarte::strict_translation::transitional_part <'a>(name: &str, text: &'a str) -> std::borrow::Cow<'a, str>
-internal	function	pub(crate)	jubarte::table_dom::cell_is_deleted (dom: &crate::xmllinq::Dom, cell: crate::xmllinq::NodeId) -> bool
-internal	function	pub(crate)	jubarte::table_dom::table_look (dom: &crate::xmllinq::Dom, table: crate::xmllinq::NodeId) -> TblLook
-internal	function	pub(crate)	jubarte::table_dom::wrapped_children (dom: &crate::xmllinq::Dom, parent: crate::xmllinq::NodeId, local: &str) -> Vec<crate::xmllinq::NodeId>
 internal	function	pub(crate)	jubarte::text_diff::critic_literal (text: &str) -> String
 internal	function	pub(crate)	jubarte::util::sha1::hex_string_from_bytes (bytes: &[u8]) -> String
 internal	function	pub(crate)	jubarte::validate::Finding::unnumbered (self: &Self) -> String
@@ -6319,17 +6140,6 @@ internal	function	pub(crate)	jubarte::validate::element_path (dom: &crate::xmlli
 internal	function	pub(crate)	jubarte::validate::namespace_in_scope <'a>(dom: &'a crate::xmllinq::Dom, element: crate::xmllinq::NodeId, prefix: &str) -> Option<&'a str>
 internal	function	pub(crate)	jubarte::validate::renumber_duplicate_revision_ids (dom: &mut crate::xmllinq::Dom, root: crate::xmllinq::NodeId) -> Vec<(String, String)>
 internal	function	pub(crate)	jubarte::validate::revision_id_occurrences (docx: &[u8]) -> Result<std::collections::HashMap<(String, String), usize>, ValidateError>
-internal	function	pub(crate)	jubarte::validate_dom::closing_paragraph (dom: &crate::xmllinq::Dom, story: crate::xmllinq::NodeId) -> Option<crate::xmllinq::NodeId>
-internal	function	pub(crate)	jubarte::validate_dom::container_blocks (dom: &crate::xmllinq::Dom, container: crate::xmllinq::NodeId) -> Vec<crate::xmllinq::NodeId>
-internal	function	pub(crate)	jubarte::validate_dom::has_unique_revision_id (name: &crate::xmllinq::XName) -> bool
-internal	function	pub(crate)	jubarte::validate_dom::holds_page_field (dom: &crate::xmllinq::Dom, p: crate::xmllinq::NodeId) -> bool
-internal	function	pub(crate)	jubarte::validate_dom::inserted_text_before_deleted_tables (dom: &crate::xmllinq::Dom, body: crate::xmllinq::NodeId) -> Vec<(crate::xmllinq::NodeId, crate::xmllinq::NodeId)>
-internal	function	pub(crate)	jubarte::validate_dom::keeps_words (dom: &crate::xmllinq::Dom, node: crate::xmllinq::NodeId, kind: &str) -> bool
-internal	function	pub(crate)	jubarte::validate_dom::last_block_paragraph (dom: &crate::xmllinq::Dom, container: crate::xmllinq::NodeId) -> Option<crate::xmllinq::NodeId>
-internal	function	pub(crate)	jubarte::validate_dom::revision_name (kind: &str) -> crate::xmllinq::XName
-internal	function	pub(crate)	jubarte::validate_dom::row_revised (dom: &crate::xmllinq::Dom, row: crate::xmllinq::NodeId, cell: crate::xmllinq::NodeId, kind: &str) -> bool
-internal	function	pub(crate)	jubarte::validate_dom::table_revised (dom: &crate::xmllinq::Dom, table: crate::xmllinq::NodeId, kind: &str) -> bool
-internal	function	pub(crate)	jubarte::validate_dom::uncovered_final_marks (dom: &crate::xmllinq::Dom, cell: crate::xmllinq::NodeId) -> Vec<(crate::xmllinq::NodeId, &'static str)>
 internal	function	pub(crate::admission)	jubarte::admission::ancestor_part (names: &[String]) -> Option<&str>
 internal	function	pub(crate::admission)	jubarte::admission::check_part_name (name: &str) -> Result<(), AdmissionError>
 internal	function	pub(crate::admission)	jubarte::admission::check_xml_depth (name: &str, xml: &[u8], limits: InputLimits) -> Result<(), AdmissionError>
@@ -6413,13 +6223,6 @@ internal	function	pub(crate::audit)	jubarte::audit::run_font_and_size (dom: &cra
 internal	function	pub(crate::audit)	jubarte::audit::select (requested: &[&str], can_lay_out: bool) -> Result<Vec<(&'static str, &'static str, &'static str)>, AuditError>
 internal	function	pub(crate::audit)	jubarte::audit::stale_fields (fields: &[Field], pages: Option<usize>, findings: &mut Vec<AuditFinding>)
 internal	function	pub(crate::audit)	jubarte::audit::under_fallback (dom: &crate::xmllinq::Dom, node: crate::xmllinq::NodeId) -> bool
-internal	function	pub(crate::borders)	jubarte::borders::Border::parse (words: &[&str]) -> Option<Self>
-internal	function	pub(crate::borders)	jubarte::borders::Border::text (self: &Self) -> String
-internal	function	pub(crate::borders)	jubarte::borders::Border::xml (self: &Self, side: &str) -> String
-internal	function	pub(crate::borders)	jubarte::borders::eighths (pt: f64) -> Option<u32>
-internal	function	pub(crate::borders)	jubarte::borders::is_hex_byte (value: &str) -> bool
-internal	function	pub(crate::borders)	jubarte::borders::is_theme_name (name: &str) -> bool
-internal	function	pub(crate::borders)	jubarte::borders::points (eighths: u32) -> String
 internal	function	pub(crate::capabilities)	jubarte::capabilities::dispatched_plan_versions (runtime: &str) -> Vec<u32>
 internal	function	pub(crate::capabilities)	jubarte::capabilities::dispatches_v2 (runtime: &str) -> bool
 internal	function	pub(crate::capabilities)	jubarte::capabilities::skips_failed (runtime: &str) -> bool
@@ -9561,7 +9364,7 @@ internal	function	pub(crate::markdown::from_docx)	jubarte::markdown::from_docx::
 internal	function	pub(crate::markdown::from_docx)	jubarte::markdown::from_docx::Writer::take_notes (self: &mut Self) -> String
 internal	function	pub(crate::markdown::from_docx)	jubarte::markdown::from_docx::Writer::threads_of (self: &Self, ids: &[String]) -> Vec<String>
 internal	function	pub(crate::markdown::from_docx)	jubarte::markdown::from_docx::Writer::turn_pages (self: &mut Self, turned: usize)
-internal	function	pub(crate::markdown::from_docx)	jubarte::markdown::from_docx::agent::own_borders (props: Option<&super::ooxml::Element>, all: &[&'static str]) -> Vec<(&'static str, Border)>
+internal	function	pub(crate::markdown::from_docx)	jubarte::markdown::from_docx::agent::own_borders (props: Option<&super::ooxml::Element>, all: &[&'static str]) -> crate::markdown::borders::Sides
 internal	function	pub(crate::markdown::from_docx)	jubarte::markdown::from_docx::agent::shown_branch (alternate: &super::ooxml::Element) -> Option<&super::ooxml::Element>
 internal	function	pub(crate::markdown::from_docx)	jubarte::markdown::from_docx::agent::shown_children (e: &super::ooxml::Element) -> Vec<&super::ooxml::Element>
 internal	function	pub(crate::markdown::from_docx)	jubarte::markdown::from_docx::attribute_text (value: &str) -> String
@@ -10246,7 +10049,7 @@ internal	function	pub(crate::markdown::xml)	jubarte::markdown::xml::Context::ope
 internal	function	pub(crate::markdown::xml)	jubarte::markdown::xml::Context::revision (self: &mut Self, kind: Kind, by: Option<u32>) -> String
 internal	function	pub(crate::markdown::xml)	jubarte::markdown::xml::Context::revision_id (self: &mut Self, by: Option<u32>) -> u32
 internal	function	pub(crate::markdown::xml)	jubarte::markdown::xml::box_xml (context: &mut Context<'_>, items: &[Item], relate: &mut dyn Relate, out: &mut String)
-internal	function	pub(crate::markdown::xml)	jubarte::markdown::xml::cell_borders_at (groups: &[(super::view_notes::CellsAt, Vec<(&'static str, Border)>)], at: (usize, usize)) -> Option<String>
+internal	function	pub(crate::markdown::xml)	jubarte::markdown::xml::cell_borders_at (groups: &[(super::view_notes::CellsAt, super::borders::Sides)], at: (usize, usize)) -> Option<String>
 internal	function	pub(crate::markdown::xml)	jubarte::markdown::xml::close_comment_mark (out: &mut String, open: &mut Vec<Kind>)
 internal	function	pub(crate::markdown::xml)	jubarte::markdown::xml::close_mark (context: &mut Context<'_>, natural: &std::collections::HashMap<u32, usize>, out: &mut String, open: &mut Option<(Kind, u32)>)
 internal	function	pub(crate::markdown::xml)	jubarte::markdown::xml::close_marks (context: &mut Context<'_>, natural: &std::collections::HashMap<u32, usize>, out: &mut String, open: &mut Option<(Kind, u32)>, marks: &mut Vec<(Kind, u32)>)
@@ -10525,13 +10328,6 @@ internal	function	pub(crate::strict_translation)	jubarte::strict_translation::ro
 internal	function	pub(crate::strict_translation)	jubarte::strict_translation::split_opaque_markup (s: &str) -> Option<(&str, &str)>
 internal	function	pub(crate::strict_translation)	jubarte::strict_translation::split_tag (s: &str) -> Option<(&str, &str)>
 internal	function	pub(crate::strict_translation)	jubarte::strict_translation::translate (text: &str, table: &[(&str, &str)], site: UriSite) -> String
-internal	function	pub(crate::table_dom)	jubarte::table_dom::attr_any <'a>(dom: &'a crate::xmllinq::Dom, node: crate::xmllinq::NodeId, local: &str) -> Option<&'a str>
-internal	function	pub(crate::table_dom)	jubarte::table_dom::cell_pr (dom: &crate::xmllinq::Dom, cell: crate::xmllinq::NodeId) -> Option<crate::xmllinq::NodeId>
-internal	function	pub(crate::table_dom)	jubarte::table_dom::direct_named (dom: &crate::xmllinq::Dom, node: crate::xmllinq::NodeId, local: &str) -> Option<crate::xmllinq::NodeId>
-internal	function	pub(crate::table_dom)	jubarte::table_dom::first_named (dom: &crate::xmllinq::Dom, node: crate::xmllinq::NodeId, local: &str) -> Option<crate::xmllinq::NodeId>
-internal	function	pub(crate::table_dom)	jubarte::table_dom::local_name_is (dom: &crate::xmllinq::Dom, node: crate::xmllinq::NodeId, local: &str) -> bool
-internal	function	pub(crate::table_dom)	jubarte::table_dom::table_pr (dom: &crate::xmllinq::Dom, table: crate::xmllinq::NodeId) -> Option<crate::xmllinq::NodeId>
-internal	function	pub(crate::table_dom)	jubarte::table_dom::under_prior_change (dom: &crate::xmllinq::Dom, root: crate::xmllinq::NodeId, n: crate::xmllinq::NodeId) -> bool
 internal	function	pub(crate::text_diff)	jubarte::text_diff::Piece::len (self: &Self) -> usize
 internal	function	pub(crate::text_diff)	jubarte::text_diff::Piece::texts (self: &Self) -> [&str; 2]
 internal	function	pub(crate::text_diff)	jubarte::text_diff::accepted_text (text: &str, accept: bool) -> std::borrow::Cow<'_, str>
@@ -10717,10 +10513,6 @@ internal	function	pub(crate::validate)	jubarte::validate::whole_changes (finding
 internal	function	pub(crate::validate)	jubarte::validate::without_numbers (text: &str) -> String
 internal	function	pub(crate::validate)	jubarte::validate::wordml_parts (pkg: &crate::opc::PartFs) -> Vec<String>
 internal	function	pub(crate::validate)	jubarte::validate::xml_parts (pkg: &crate::opc::PartFs) -> Vec<String>
-internal	function	pub(crate::validate_dom)	jubarte::validate_dom::keeps_only_inserted_words (dom: &crate::xmllinq::Dom, paragraph: crate::xmllinq::NodeId) -> bool
-internal	function	pub(crate::validate_dom)	jubarte::validate_dom::mark_carries (dom: &crate::xmllinq::Dom, paragraph: crate::xmllinq::NodeId, records: &[crate::xmllinq::XName]) -> bool
-internal	function	pub(crate::validate_dom)	jubarte::validate_dom::only_mark_deleted (dom: &crate::xmllinq::Dom, paragraph: crate::xmllinq::NodeId) -> bool
-internal	function	pub(crate::validate_dom)	jubarte::validate_dom::shown_alternate_branch (dom: &crate::xmllinq::Dom, node: crate::xmllinq::NodeId) -> Option<crate::xmllinq::NodeId>
 internal	function	pub(crate::xmllinq)	jubarte::xmllinq::Dom::alloc (self: &mut Self, kind: NodeKind) -> NodeId
 internal	function	pub(crate::xmllinq)	jubarte::xmllinq::Dom::collect_text (self: &Self, id: NodeId, s: &mut String)
 internal	function	pub(crate::xmllinq)	jubarte::xmllinq::Dom::data (self: &Self, id: NodeId) -> &NodeData
@@ -10781,10 +10573,6 @@ internal	impl		(impl From<ExitStatus> for u8)
 internal	impl		(impl From<ProgressEvent> for serde_json::Value)
 internal	impl		(impl XmlBuf for String)
 internal	impl		jubarte::audit::StyleFacts::(impl Default)
-internal	impl		jubarte::borders::Border::(impl Clone)
-internal	impl		jubarte::borders::Border::(impl Debug)
-internal	impl		jubarte::borders::Border::(impl Eq)
-internal	impl		jubarte::borders::Border::(impl PartialEq)
 internal	impl		jubarte::changes::CommentBodies::(impl Debug)
 internal	impl		jubarte::changes::CommentBodies::(impl Default)
 internal	impl		jubarte::changes::Group::(impl Clone)
@@ -11721,16 +11509,6 @@ internal	impl		jubarte::markdown::xml::TextBox::(impl Clone)
 internal	impl		jubarte::markdown::xml::TextBox::(impl Debug)
 internal	impl		jubarte::markdown::xml::TextBox::(impl Eq)
 internal	impl		jubarte::markdown::xml::TextBox::(impl PartialEq)
-internal	impl		jubarte::numbering::NumFmt::(impl Clone)
-internal	impl		jubarte::numbering::NumFmt::(impl Copy)
-internal	impl		jubarte::numbering::NumFmt::(impl Eq)
-internal	impl		jubarte::numbering::NumFmt::(impl PartialEq)
-internal	impl		jubarte::opc::archive::ZipDefect::(impl Debug)
-internal	impl		jubarte::opc::archive::ZipDefectKind::(impl Clone)
-internal	impl		jubarte::opc::archive::ZipDefectKind::(impl Copy)
-internal	impl		jubarte::opc::archive::ZipDefectKind::(impl Debug)
-internal	impl		jubarte::opc::archive::ZipDefectKind::(impl Eq)
-internal	impl		jubarte::opc::archive::ZipDefectKind::(impl PartialEq)
 internal	impl		jubarte::publication::FsBackend::(impl Backend)
 internal	impl		jubarte::publication::Phase::(impl Clone)
 internal	impl		jubarte::publication::Phase::(impl Copy)
@@ -11759,8 +11537,6 @@ internal	impl		jubarte::revision_processor::style_records::Slot::(impl PartialEq
 internal	impl		jubarte::revision_processor::style_records::Slot::(impl PartialOrd)
 internal	impl		jubarte::strict_translation::UriSite::(impl Clone)
 internal	impl		jubarte::strict_translation::UriSite::(impl Copy)
-internal	impl		jubarte::table_dom::TblLook::(impl Clone)
-internal	impl		jubarte::table_dom::TblLook::(impl Copy)
 internal	impl		jubarte::text_diff::Row::(impl Debug)
 internal	impl		jubarte::text_diff::Row::(impl Eq)
 internal	impl		jubarte::text_diff::Row::(impl PartialEq)
@@ -11781,30 +11557,23 @@ internal	impl		jubarte::xmllinq::parse::NsScope::(impl Default)
 internal	impl		jubarte::xmllinq::serialize::HashXmlBuf::(impl XmlBuf)
 internal	macro	pub(crate)	jubarte::namespaces::cached_xname
 internal	macro	pub(crate)	jubarte::namespaces::ns_struct
-internal	module	pub(crate)	jubarte::borders
-internal	module	pub(crate)	jubarte::builtin_styles
 internal	module	pub(crate)	jubarte::comment_settlement
 internal	module	pub(crate)	jubarte::comparer::deleted_tables
 internal	module	pub(crate)	jubarte::comparer::final_marks
 internal	module	pub(crate)	jubarte::comparer::replaced_tables
 internal	module	pub(crate)	jubarte::comparer::table_split
 internal	module	pub(crate)	jubarte::convert::altchunk
-internal	module	pub(crate)	jubarte::data_stores
 internal	module	pub(crate)	jubarte::edit::native_keys
 internal	module	pub(crate)	jubarte::edit::sections
 internal	module	pub(crate)	jubarte::markdown::data_stores
+internal	module	pub(crate)	jubarte::markdown::diff
 internal	module	pub(crate)	jubarte::markdown::frames
 internal	module	pub(crate)	jubarte::markdown::from_docx::drawing
 internal	module	pub(crate)	jubarte::markdown::from_docx::ooxml
 internal	module	pub(crate)	jubarte::markdown::package
 internal	module	pub(crate)	jubarte::markdown::xml
-internal	module	pub(crate)	jubarte::numbering
-internal	module	pub(crate)	jubarte::render_options
 internal	module	pub(crate)	jubarte::revision_processor::comments
 internal	module	pub(crate)	jubarte::revision_processor::style_records
-internal	module	pub(crate)	jubarte::table_dom
-internal	module	pub(crate)	jubarte::validate_dom
-internal	module	pub(crate)	jubarte::word_default_theme
 internal	module	pub(crate::capabilities)	jubarte::capabilities::discovery
 internal	module	pub(crate::changes)	jubarte::changes::logical
 internal	module	pub(crate::convert)	jubarte::convert::diff_render
@@ -11842,7 +11611,6 @@ internal	module	pub(crate::ids)	jubarte::ids::short
 internal	module	pub(crate::inspect)	jubarte::inspect::tables
 internal	module	pub(crate::markdown)	jubarte::markdown::anchor
 internal	module	pub(crate::markdown)	jubarte::markdown::critic
-internal	module	pub(crate::markdown)	jubarte::markdown::diff
 internal	module	pub(crate::markdown)	jubarte::markdown::from_docx
 internal	module	pub(crate::markdown)	jubarte::markdown::from_docx::critic
 internal	module	pub(crate::markdown)	jubarte::markdown::math
@@ -11903,7 +11671,6 @@ internal	static	pub(crate::strict_translation)	jubarte::strict_translation::NAME
 internal	static	pub(crate::strict_translation)	jubarte::strict_translation::RELATIONSHIP_SORTED: std::sync::LazyLock<Vec<(&'static str, &'static str)>>
 internal	static	pub(crate::unid)	jubarte::unid::UNID_COUNTER: std::sync::atomic::AtomicU64
 internal	struct	pub	jubarte::comparer::table_split::TableStyleNames
-internal	struct	pub(crate)	jubarte::borders::Border
 internal	struct	pub(crate)	jubarte::changes::AuditChange
 internal	struct	pub(crate)	jubarte::changes::AuditMarker
 internal	struct	pub(crate)	jubarte::changes::AuditStory
@@ -11979,9 +11746,7 @@ internal	struct	pub(crate)	jubarte::markdown::from_docx::ooxml::Span
 internal	struct	pub(crate)	jubarte::markdown::repair::InlineRun
 internal	struct	pub(crate)	jubarte::markdown::view_styles::BorderSide
 internal	struct	pub(crate)	jubarte::markdown::xml::Picture
-internal	struct	pub(crate)	jubarte::opc::archive::ZipDefect
 internal	struct	pub(crate)	jubarte::revision_processor::RevisionIds
-internal	struct	pub(crate)	jubarte::table_dom::TblLook
 internal	struct	pub(crate::append)	jubarte::append::CarriedNotes
 internal	struct	pub(crate::append)	jubarte::append::ListCopy
 internal	struct	pub(crate::append)	jubarte::append::NoteKind
@@ -12815,15 +12580,6 @@ internal	struct_field		jubarte::xmllinq::NodeKind::Document::declaration: Option
 internal	struct_field		jubarte::xmllinq::NodeKind::Element::name: XName
 internal	struct_field		jubarte::xmllinq::NodeKind::Pi::0: Box<PiData>
 internal	struct_field		jubarte::xmllinq::NodeKind::Text::0: String
-internal	struct_field	pub	jubarte::borders::Border::color: Option<String>
-internal	struct_field	pub	jubarte::borders::Border::frame: bool
-internal	struct_field	pub	jubarte::borders::Border::shade: Option<String>
-internal	struct_field	pub	jubarte::borders::Border::shadow: bool
-internal	struct_field	pub	jubarte::borders::Border::size: Option<u32>
-internal	struct_field	pub	jubarte::borders::Border::space: Option<u32>
-internal	struct_field	pub	jubarte::borders::Border::theme: Option<String>
-internal	struct_field	pub	jubarte::borders::Border::tint: Option<String>
-internal	struct_field	pub	jubarte::borders::Border::val: String
 internal	struct_field	pub	jubarte::changes::AuditChange::change: Change
 internal	struct_field	pub	jubarte::changes::AuditChange::characters: Option<(usize, usize)>
 internal	struct_field	pub	jubarte::changes::AuditChange::end: usize
@@ -13134,8 +12890,8 @@ internal	struct_field	pub	jubarte::markdown::view_notes::PlainRevision::date: St
 internal	struct_field	pub	jubarte::markdown::view_notes::PlainRevision::ids: Vec<u32>
 internal	struct_field	pub	jubarte::markdown::view_notes::TableLine::align: Option<&'static str>
 internal	struct_field	pub	jubarte::markdown::view_notes::TableLine::aligns: std::collections::HashMap<usize, &'static str>
-internal	struct_field	pub	jubarte::markdown::view_notes::TableLine::borders: Option<Vec<(&'static str, Border)>>
-internal	struct_field	pub	jubarte::markdown::view_notes::TableLine::cell_borders: Vec<(CellsAt, Vec<(&'static str, Border)>)>
+internal	struct_field	pub	jubarte::markdown::view_notes::TableLine::borders: Option<super::borders::Sides>
+internal	struct_field	pub	jubarte::markdown::view_notes::TableLine::cell_borders: Vec<(CellsAt, super::borders::Sides)>
 internal	struct_field	pub	jubarte::markdown::view_notes::TableLine::cell_fmt: std::collections::BTreeMap<(usize, usize), Tag>
 internal	struct_field	pub	jubarte::markdown::view_notes::TableLine::cell_marks: std::collections::BTreeMap<(usize, usize), (CellMark, Tag)>
 internal	struct_field	pub	jubarte::markdown::view_notes::TableLine::columns: Option<usize>
@@ -13150,7 +12906,7 @@ internal	struct_field	pub	jubarte::markdown::view_notes::TableLine::marks: std::
 internal	struct_field	pub	jubarte::markdown::view_notes::TableLine::merges: std::collections::HashMap<(usize, usize), (usize, usize)>
 internal	struct_field	pub	jubarte::markdown::view_notes::TableLine::one_per_cell: Option<usize>
 internal	struct_field	pub	jubarte::markdown::view_notes::TableLine::para_fmt: std::collections::HashMap<usize, Vec<Tag>>
-internal	struct_field	pub	jubarte::markdown::view_notes::TableLine::row_borders: Vec<(usize, Vec<(&'static str, Border)>)>
+internal	struct_field	pub	jubarte::markdown::view_notes::TableLine::row_borders: Vec<(usize, super::borders::Sides)>
 internal	struct_field	pub	jubarte::markdown::view_notes::TableLine::row_fmt: std::collections::BTreeMap<usize, Tag>
 internal	struct_field	pub	jubarte::markdown::view_notes::TableLine::row_marks: std::collections::BTreeMap<usize, (bool, Tag)>
 internal	struct_field	pub	jubarte::markdown::view_notes::TableLine::row_paragraphs: Option<Vec<(usize, usize)>>
@@ -13162,7 +12918,7 @@ internal	struct_field	pub	jubarte::markdown::view_notes::Tag::date: Option<Strin
 internal	struct_field	pub	jubarte::markdown::view_notes::Tag::handle: String
 internal	struct_field	pub	jubarte::markdown::view_notes::Tag::ids: Vec<u32>
 internal	struct_field	pub	jubarte::markdown::view_stories::ParaFormat::align: Option<&'static str>
-internal	struct_field	pub	jubarte::markdown::view_stories::ParaFormat::border: Option<Vec<(&'static str, Border)>>
+internal	struct_field	pub	jubarte::markdown::view_stories::ParaFormat::border: Option<super::borders::Sides>
 internal	struct_field	pub	jubarte::markdown::view_stories::ParaFormat::color: Option<String>
 internal	struct_field	pub	jubarte::markdown::view_stories::ParaFormat::first_line: Option<i64>
 internal	struct_field	pub	jubarte::markdown::view_stories::ParaFormat::first_line_chars: Option<i64>
@@ -13371,12 +13127,12 @@ internal	struct_field	pub	jubarte::markdown::xml::Spacing::before: Option<u32>
 internal	struct_field	pub	jubarte::markdown::xml::Spacing::before_auto: bool
 internal	struct_field	pub	jubarte::markdown::xml::Spacing::before_lines: Option<u32>
 internal	struct_field	pub	jubarte::markdown::xml::Spacing::line: Option<(u32, &'static str)>
-internal	struct_field	pub	jubarte::markdown::xml::TableFormats::borders: Option<Vec<(&'static str, Border)>>
-internal	struct_field	pub	jubarte::markdown::xml::TableFormats::cell_borders: Vec<(super::view_notes::CellsAt, Vec<(&'static str, Border)>)>
+internal	struct_field	pub	jubarte::markdown::xml::TableFormats::borders: Option<super::borders::Sides>
+internal	struct_field	pub	jubarte::markdown::xml::TableFormats::cell_borders: Vec<(super::view_notes::CellsAt, super::borders::Sides)>
 internal	struct_field	pub	jubarte::markdown::xml::TableFormats::cell_marks: std::collections::HashMap<(usize, usize), (super::view_notes::CellMark, FormatMark)>
 internal	struct_field	pub	jubarte::markdown::xml::TableFormats::cells: std::collections::HashMap<(usize, usize), FormatMark>
 internal	struct_field	pub	jubarte::markdown::xml::TableFormats::grid: Option<u32>
-internal	struct_field	pub	jubarte::markdown::xml::TableFormats::row_borders: std::collections::HashMap<usize, Vec<(&'static str, Border)>>
+internal	struct_field	pub	jubarte::markdown::xml::TableFormats::row_borders: std::collections::HashMap<usize, super::borders::Sides>
 internal	struct_field	pub	jubarte::markdown::xml::TableFormats::row_marks: std::collections::HashMap<usize, (Kind, FormatMark)>
 internal	struct_field	pub	jubarte::markdown::xml::TableFormats::rows: std::collections::HashMap<usize, FormatMark>
 internal	struct_field	pub	jubarte::markdown::xml::TableFormats::table: Option<FormatMark>
@@ -13387,8 +13143,6 @@ internal	struct_field	pub	jubarte::markdown::xml::TableGeometry::widths: Option<
 internal	struct_field	pub	jubarte::markdown::xml::TextBox::inserted: bool
 internal	struct_field	pub	jubarte::markdown::xml::TextBox::items: Vec<Item>
 internal	struct_field	pub	jubarte::markdown::xml::TextBox::mark: FormatMark
-internal	struct_field	pub	jubarte::opc::archive::ZipDefect::detail: String
-internal	struct_field	pub	jubarte::opc::archive::ZipDefect::kind: ZipDefectKind
 internal	struct_field	pub(crate)	jubarte::comment_settlement::SettlementError::code: String
 internal	struct_field	pub(crate)	jubarte::comment_settlement::SettlementError::message: String
 internal	struct_field	pub(crate)	jubarte::comments::NewComment::author: &'a str
@@ -13459,9 +13213,6 @@ internal	struct_field	pub(crate)	jubarte::markdown::from_docx::ooxml::Package::i
 internal	struct_field	pub(crate)	jubarte::markdown::repair::InlineRun::format: super::xml::RunFormat
 internal	struct_field	pub(crate)	jubarte::markdown::repair::InlineRun::kind: RunKind
 internal	struct_field	pub(crate)	jubarte::markdown::repair::InlineRun::link: Option<(String, Option<String>)>
-internal	struct_field	pub(crate)	jubarte::table_dom::TblLook::first_col: bool
-internal	struct_field	pub(crate)	jubarte::table_dom::TblLook::first_row: bool
-internal	struct_field	pub(crate)	jubarte::table_dom::TblLook::no_h_band: bool
 internal	struct_field	pub(crate::append)	jubarte::append::CarriedNotes::dest_doc: crate::xmllinq::NodeId
 internal	struct_field	pub(crate::append)	jubarte::append::CarriedNotes::dest_part: String
 internal	struct_field	pub(crate::append)	jubarte::append::CarriedNotes::dest_root: crate::xmllinq::NodeId
@@ -14570,7 +14321,7 @@ internal	struct_field	pub(crate::debug)	jubarte::debug::OpenField::code: String
 internal	struct_field	pub(crate::debug)	jubarte::debug::OpenField::instr: Vec<(bool, char)>
 internal	struct_field	pub(crate::debug)	jubarte::debug::OpenField::node: crate::xmllinq::NodeId
 internal	struct_field	pub(crate::debug)	jubarte::debug::OpenField::separate: Option<char>
-internal	struct_field	pub(crate::debug)	jubarte::debug::Package::defects: Vec<archive::ZipDefect>
+internal	struct_field	pub(crate::debug)	jubarte::debug::Package::defects: Vec<crate::opc::ZipDefect>
 internal	struct_field	pub(crate::debug)	jubarte::debug::Package::entries: Vec<Entry>
 internal	struct_field	pub(crate::debug)	jubarte::debug::Package::raw: Vec<u8>
 internal	struct_field	pub(crate::debug::diff)	jubarte::debug::diff::Build::dom: &'a crate::xmllinq::Dom
@@ -15316,8 +15067,8 @@ internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::Span
 internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::SpanStart::serial: u32
 internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::TablePlan::align: Option<&'static str>
 internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::TablePlan::aligns: std::collections::HashMap<usize, &'static str>
-internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::TablePlan::borders: Option<Vec<(&'static str, Border)>>
-internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::TablePlan::cell_borders: Vec<(view_notes::CellsAt, Vec<(&'static str, Border)>)>
+internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::TablePlan::borders: Option<crate::markdown::borders::Sides>
+internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::TablePlan::cell_borders: Vec<(view_notes::CellsAt, crate::markdown::borders::Sides)>
 internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::TablePlan::cell_fmt: std::collections::BTreeMap<(usize, usize), view_notes::Tag>
 internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::TablePlan::cell_marks: std::collections::BTreeMap<(usize, usize), (view_notes::CellMark, view_notes::Tag)>
 internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::TablePlan::columns: Option<usize>
@@ -15329,7 +15080,7 @@ internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::Tabl
 internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::TablePlan::mark_inherits: std::collections::HashSet<usize>
 internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::TablePlan::marks: std::collections::HashMap<usize, Vec<(bool, view_notes::Tag)>>
 internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::TablePlan::para_fmt: std::collections::HashMap<usize, Vec<view_notes::Tag>>
-internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::TablePlan::row_borders: Vec<(usize, Vec<(&'static str, Border)>)>
+internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::TablePlan::row_borders: Vec<(usize, crate::markdown::borders::Sides)>
 internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::TablePlan::row_fmt: std::collections::BTreeMap<usize, view_notes::Tag>
 internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::TablePlan::row_marks: std::collections::BTreeMap<usize, (bool, view_notes::Tag)>
 internal	struct_field	pub(crate::markdown::write)	jubarte::markdown::write::TablePlan::rows: Vec<RowPlan>
@@ -15570,7 +15321,6 @@ internal	struct_field	pub(crate::xmllinq::serialize)	jubarte::xmllinq::serialize
 internal	trait	pub(crate::markdown)	jubarte::markdown::xml::Relate
 internal	trait	pub(crate::publication)	jubarte::publication::Backend
 internal	trait	pub(crate::xmllinq::serialize)	jubarte::xmllinq::serialize::XmlBuf
-internal	type_alias	pub(crate)	jubarte::borders::Sides = Vec<(&'static str, Border)>
 internal	type_alias	pub(crate)	jubarte::changes::Records = std::collections::HashMap<String, Vec<Recorded>>
 internal	type_alias	pub(crate)	jubarte::comparer::lcs::U64BuildHasher = std::hash::BuildHasherDefault<U64IdentityHasher>
 internal	type_alias	pub(crate)	jubarte::convert::font::EmbeddedFonts = std::collections::HashMap<(String, bool, bool), std::sync::Arc<[u8]>>
@@ -16317,62 +16067,8 @@ internal	variant		jubarte::markdown::xml::StyleChangeKind::Run
 internal	variant		jubarte::markdown::xml::TableWidth::Auto
 internal	variant		jubarte::markdown::xml::TableWidth::Fiftieths
 internal	variant		jubarte::markdown::xml::TableWidth::Twips
-internal	variant		jubarte::numbering::NumFmt::Aiueo
-internal	variant		jubarte::numbering::NumFmt::ArabicAbjad
-internal	variant		jubarte::numbering::NumFmt::ArabicAlpha
-internal	variant		jubarte::numbering::NumFmt::Bullet
-internal	variant		jubarte::numbering::NumFmt::CardinalText
-internal	variant		jubarte::numbering::NumFmt::Chicago
-internal	variant		jubarte::numbering::NumFmt::ChineseCounting
-internal	variant		jubarte::numbering::NumFmt::ChineseCountingThousand
-internal	variant		jubarte::numbering::NumFmt::Chosung
-internal	variant		jubarte::numbering::NumFmt::Decimal
-internal	variant		jubarte::numbering::NumFmt::DecimalEnclosedCircle
-internal	variant		jubarte::numbering::NumFmt::DecimalEnclosedFullstop
-internal	variant		jubarte::numbering::NumFmt::DecimalEnclosedParen
-internal	variant		jubarte::numbering::NumFmt::DecimalFullWidth
-internal	variant		jubarte::numbering::NumFmt::DecimalZero
-internal	variant		jubarte::numbering::NumFmt::Ganada
-internal	variant		jubarte::numbering::NumFmt::Hebrew1
-internal	variant		jubarte::numbering::NumFmt::Hebrew2
-internal	variant		jubarte::numbering::NumFmt::Hex
-internal	variant		jubarte::numbering::NumFmt::HindiConsonants
-internal	variant		jubarte::numbering::NumFmt::HindiCounting
-internal	variant		jubarte::numbering::NumFmt::HindiNumbers
-internal	variant		jubarte::numbering::NumFmt::HindiVowels
-internal	variant		jubarte::numbering::NumFmt::IdeographDigital
-internal	variant		jubarte::numbering::NumFmt::IdeographEnclosedCircle
-internal	variant		jubarte::numbering::NumFmt::IdeographLegalTraditional
-internal	variant		jubarte::numbering::NumFmt::IdeographTraditional
-internal	variant		jubarte::numbering::NumFmt::IdeographZodiac
-internal	variant		jubarte::numbering::NumFmt::IdeographZodiacTraditional
-internal	variant		jubarte::numbering::NumFmt::Iroha
-internal	variant		jubarte::numbering::NumFmt::JapaneseCounting
-internal	variant		jubarte::numbering::NumFmt::KoreanCounting
-internal	variant		jubarte::numbering::NumFmt::KoreanDigital
-internal	variant		jubarte::numbering::NumFmt::KoreanDigital2
-internal	variant		jubarte::numbering::NumFmt::KoreanLegal
-internal	variant		jubarte::numbering::NumFmt::LowerLetter
-internal	variant		jubarte::numbering::NumFmt::LowerRoman
-internal	variant		jubarte::numbering::NumFmt::Ordinal
-internal	variant		jubarte::numbering::NumFmt::OrdinalText
-internal	variant		jubarte::numbering::NumFmt::RussianLower
-internal	variant		jubarte::numbering::NumFmt::RussianUpper
-internal	variant		jubarte::numbering::NumFmt::TaiwaneseCountingThousand
-internal	variant		jubarte::numbering::NumFmt::ThaiCounting
-internal	variant		jubarte::numbering::NumFmt::ThaiLetters
-internal	variant		jubarte::numbering::NumFmt::ThaiNumbers
-internal	variant		jubarte::numbering::NumFmt::UpperLetter
-internal	variant		jubarte::numbering::NumFmt::UpperRoman
 internal	variant		jubarte::opc::ZipEntry::Part
 internal	variant		jubarte::opc::ZipEntry::Rels
-internal	variant		jubarte::opc::archive::ZipDefectKind::Descriptor
-internal	variant		jubarte::opc::archive::ZipDefectKind::DirectoryPayload
-internal	variant		jubarte::opc::archive::ZipDefectKind::DuplicatePart
-internal	variant		jubarte::opc::archive::ZipDefectKind::EntryRead
-internal	variant		jubarte::opc::archive::ZipDefectKind::Extent
-internal	variant		jubarte::opc::archive::ZipDefectKind::HeaderMismatch
-internal	variant		jubarte::opc::archive::ZipDefectKind::SpecialEntry
 internal	variant		jubarte::publication::Phase::Commit
 internal	variant		jubarte::publication::Phase::Flush
 internal	variant		jubarte::publication::Phase::Sync

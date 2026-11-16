@@ -391,7 +391,8 @@ const BUILT_IN: [&str; 376] = [
 /// `Normal`, `Footnote Reference` with `footnote reference`: 54 of 54 pairs
 /// in its redlines) and custom styles only by their exact name (`Subsection`
 /// beside `subsection`, `Definition` beside `definition`: 6 of 6 kept apart).
-pub(crate) fn is_built_in(name: &str) -> bool {
+#[doc(hidden)]
+pub fn is_built_in(name: &str) -> bool {
     BUILT_IN
         .binary_search_by(|probe| {
             probe

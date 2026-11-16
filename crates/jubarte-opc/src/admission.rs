@@ -6,14 +6,14 @@
 // is an abort in the Python and WASM consumers, so both are refused here
 // (test fixtures are exempt).
 #![cfg_attr(
-    not(test),
+    not(any(test, feature = "test-support")),
     deny(clippy::indexing_slicing, clippy::arithmetic_side_effects)
 )]
 
 //! Resource admission for untrusted DOCX input: bound the ZIP container
 //! before anything inflates it without limits.
 //!
-//! [`admit`] reads the central directory, refuses names that are not safe
+//! [`admit`](crate::admission::admit) reads the central directory, refuses names that are not safe
 //! part names, duplicates, encryption and compression other than stored or
 //! deflate, then inflates every entry through a counting reader capped at the
 //! remaining budget (central-directory sizes are untrusted), checks each XML
@@ -22,9 +22,9 @@
 //! disk, no macro runs and no external reference is resolved.
 //!
 //! The agent-facing entry points (`inspect`, `edit` and the
-//! bindings over them) admit with [`InputLimits::default`]. The redline
+//! bindings over them) admit with [`InputLimits::default`](crate::admission::InputLimits::default). The redline
 //! comparer (`document_comparer`) and `WmlDocument` admit
-//! with the roomier [`InputLimits::compare`], which
+//! with the roomier [`InputLimits::compare`](crate::admission::InputLimits::compare), which
 //! `WmlComparerSettings::input_limits` overrides.
 
 use std::borrow::Cow;
@@ -131,7 +131,8 @@ pub(crate) fn input_over_entries(declared: u64, limits: &InputLimits) -> Admissi
 /// its escape (`\u{1b}`), everything else as the archive spells it, so a
 /// crafted entry name cannot write terminal sequences while an ordinary
 /// one (quotes, non-ASCII) reads unchanged.
-pub(crate) fn shown(name: &str) -> Cow<'_, str> {
+#[doc(hidden)]
+pub fn shown(name: &str) -> Cow<'_, str> {
     if name.chars().any(char::is_control) {
         name.chars()
             .map(|c| {
@@ -150,11 +151,8 @@ pub(crate) fn shown(name: &str) -> Cow<'_, str> {
 
 /// `INPUT_LIMIT` for an entry whose declared inflated size already passes
 /// the per-part budget: refused before anything inflates.
-pub(crate) fn part_declared_over(
-    name: &str,
-    declared: u64,
-    limits: &InputLimits,
-) -> AdmissionError {
+#[doc(hidden)]
+pub fn part_declared_over(name: &str, declared: u64, limits: &InputLimits) -> AdmissionError {
     AdmissionError::new(
         AdmissionErrorKind::InputLimit,
         format!(
@@ -181,7 +179,8 @@ pub(crate) fn part_inflated_over(name: &str, cap: u64, limits: &InputLimits) -> 
 
 /// Check the input size and EOCD/ZIP64 entry count without building an index.
 /// Returns the declared count so admission can also detect lost duplicates.
-pub(crate) fn preindex_budget(bytes: &[u8], limits: InputLimits) -> Result<u64, AdmissionError> {
+#[doc(hidden)]
+pub fn preindex_budget(bytes: &[u8], limits: InputLimits) -> Result<u64, AdmissionError> {
     if bytes.len() as u64 > limits.max_compressed_bytes {
         return Err(input_over_compressed(bytes.len() as u64, &limits));
     }
@@ -193,7 +192,8 @@ pub(crate) fn preindex_budget(bytes: &[u8], limits: InputLimits) -> Result<u64, 
 }
 
 /// Tally actual inflation, with the same refusal wherever a reader stops.
-pub(crate) fn tally_inflated(
+#[doc(hidden)]
+pub fn tally_inflated(
     total: &mut u64,
     read: u64,
     name: &str,
@@ -284,7 +284,8 @@ pub(crate) fn tally_xml_elements(
 /// [`tally_xml_elements`] without the DTD refusal, for `jubarte debug`,
 /// which reports a refusable package instead of refusing it: a declaration
 /// is skipped and the elements after it are still counted.
-pub(crate) fn count_xml_elements(
+#[doc(hidden)]
+pub fn count_xml_elements(
     total: &mut u64,
     name: &str,
     data: &[u8],
@@ -696,7 +697,8 @@ pub(crate) fn crc32(bytes: &[u8]) -> u32 {
 /// 291-300); [`zip_entry_name`] then refuses a field whose CRC matches the
 /// adopted name but whose content differs — the shape a non-UTF-8 adopted
 /// name produces — and the same refusal is applied here.
-pub(crate) fn zip_entry_name_raw(
+#[doc(hidden)]
+pub fn zip_entry_name_raw(
     raw: &[u8],
     flags: u16,
     extra: &[u8],
@@ -1132,7 +1134,8 @@ fn elements(xml: &[u8], local: &str) -> Vec<BTreeMap<String, String>> {
 /// Admit one input under `limits`. A refusal keeps the typed
 /// [`AdmissionError`] as the error source (its `code()` is the stable
 /// `INPUT_LIMIT`/`UNSUPPORTED_PACKAGE`/… string) and names which document was refused.
-pub(crate) fn admit_input(
+#[doc(hidden)]
+pub fn admit_input(
     side: &str,
     bytes: &[u8],
     limits: InputLimits,
@@ -1149,7 +1152,8 @@ pub(crate) fn admit_input(
 /// point opens it: the package constructor is bounded on its own (#645),
 /// and admission gives the typed refusal with the rules a budget alone
 /// does not check (part-name safety, encryption, XML depth, WML shape).
-pub(crate) fn admit_package(bytes: &[u8]) -> Result<(), crate::opc::OpcError> {
+#[doc(hidden)]
+pub fn admit_package(bytes: &[u8]) -> Result<(), crate::opc::OpcError> {
     admit_input("input", bytes, InputLimits::compare())
 }
 
@@ -1159,8 +1163,9 @@ pub(crate) fn admit_package(bytes: &[u8]) -> Result<(), crate::opc::OpcError> {
 /// ones), plus Info-ZIP Unicode Path extra field (0x7075) payloads. Shared by
 /// the admission and [`crate::opc`] tests so both readers are probed with the
 /// same archives.
-#[cfg(test)]
-pub(crate) mod zip_names {
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub mod zip_names {
     use std::io::{Cursor, Write};
 
     use zip::write::FullFileOptions;
@@ -1168,7 +1173,7 @@ pub(crate) mod zip_names {
 
     /// One ZIP entry with a legacy-encoded name.
     #[derive(Clone)]
-    pub(crate) struct RawEntry<'a> {
+    pub struct RawEntry<'a> {
         /// The exact header name bytes.
         pub name: &'a [u8],
         pub data: &'a [u8],
@@ -2950,9 +2955,10 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
-pub(crate) mod limit_test_support {
+#[doc(hidden)]
+pub mod limit_test_support {
     use super::InputLimits;
     use std::io::{Cursor, Write};
     use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};

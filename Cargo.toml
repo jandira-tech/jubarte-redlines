@@ -177,6 +177,7 @@ self-update = ["cli", "dep:self_update", "dep:ed25519-dalek"]
 # The workspace's own crates: exact pins, because the layers expose
 # #[doc(hidden)] internals to each other (plan A3/D4).
 jubarte-dom = { path = "crates/jubarte-dom", version = "=0.18.0" }
+jubarte-opc = { path = "crates/jubarte-opc", version = "=0.18.0", default-features = false }
 
 # Upstream OPC types on zip 9 and patched quick-xml 0.41. The adapter keeps
 # its duplicate-repair and canonical-writing policy; optional crypto stays off.
@@ -246,6 +247,7 @@ tempfile = "3"
 
 [dependencies]
 jubarte-dom = { workspace = true }
+jubarte-opc = { workspace = true }
 oxml-opc = { workspace = true }
 zip = { workspace = true }
 sha1.workspace = true
@@ -305,6 +307,7 @@ required-features = ["cli"]
 
 [dev-dependencies]
 jubarte-dom = { workspace = true, features = ["test-support"] }
+jubarte-opc = { workspace = true, features = ["test-support"] }
 jsonschema = { workspace = true }
 criterion = { workspace = true }
 ooxmlsdk = { workspace = true }

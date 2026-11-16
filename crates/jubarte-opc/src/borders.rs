@@ -18,19 +18,23 @@
 //! read as `left` and `right`.
 
 /// A table's sides (`w:tblBorders`), in schema order.
-pub(crate) const TABLE_SIDES: [&str; 6] = ["top", "left", "bottom", "right", "insideH", "insideV"];
+#[doc(hidden)]
+pub const TABLE_SIDES: [&str; 6] = ["top", "left", "bottom", "right", "insideH", "insideV"];
 
 /// A cell's sides (`w:tcBorders`), in schema order.
-pub(crate) const CELL_SIDES: [&str; 8] = [
+#[doc(hidden)]
+pub const CELL_SIDES: [&str; 8] = [
     "top", "left", "bottom", "right", "insideH", "insideV", "tl2br", "tr2bl",
 ];
 
 /// A paragraph's sides (`w:pBdr`), in schema order.
-pub(crate) const PARAGRAPH_SIDES: [&str; 6] = ["top", "left", "bottom", "right", "between", "bar"];
+#[doc(hidden)]
+pub const PARAGRAPH_SIDES: [&str; 6] = ["top", "left", "bottom", "right", "between", "bar"];
 
 /// One side's border.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Border {
+#[doc(hidden)]
+pub struct Border {
     /// Word's `w:val` (`single`, `double`, `dashed`, …); `none` for a side
     /// turned off.
     pub val: String,
@@ -52,12 +56,8 @@ pub(crate) struct Border {
 
 impl Border {
     /// A border from its element's attributes.
-    pub(crate) fn new(
-        val: &str,
-        size: Option<&str>,
-        color: Option<&str>,
-        space: Option<&str>,
-    ) -> Self {
+    #[doc(hidden)]
+    pub fn new(val: &str, size: Option<&str>, color: Option<&str>, space: Option<&str>) -> Self {
         let off = matches!(val, "nil" | "none");
         Self {
             val: if off { "none".into() } else { val.into() },
@@ -77,7 +77,8 @@ impl Border {
     }
 
     /// The border with its element's theme colour attributes.
-    pub(crate) fn with_theme(
+    #[doc(hidden)]
+    pub fn with_theme(
         mut self,
         theme: Option<&str>,
         tint: Option<&str>,
@@ -93,7 +94,8 @@ impl Border {
     }
 
     /// The border with its element's `w:shadow` and `w:frame`.
-    pub(crate) fn with_effects(mut self, shadow: Option<&str>, frame: Option<&str>) -> Self {
+    #[doc(hidden)]
+    pub fn with_effects(mut self, shadow: Option<&str>, frame: Option<&str>) -> Self {
         if self.val == "none" {
             return self;
         }
@@ -135,7 +137,8 @@ impl Border {
         text
     }
 
-    fn parse(words: &[&str]) -> Option<Self> {
+    #[doc(hidden)]
+    pub fn parse(words: &[&str]) -> Option<Self> {
         let (val, rest) = words.split_first()?;
         if !val.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
             return None;
@@ -184,7 +187,8 @@ impl Border {
     }
 
     /// The side's element as the writer writes it.
-    fn xml(&self, side: &str) -> String {
+    #[doc(hidden)]
+    pub fn xml(&self, side: &str) -> String {
         if self.val == "none" {
             return format!("<w:{side} w:val=\"nil\"/>");
         }
@@ -216,11 +220,13 @@ impl Border {
 }
 
 /// A table's or a cell's borders, side by side, in schema order.
-pub(crate) type Sides = Vec<(&'static str, Border)>;
+#[doc(hidden)]
+pub type Sides = Vec<(&'static str, Border)>;
 
 /// The side Word names `name`, as the view names it (`start` is `left`,
 /// `end` is `right`), when `sides` has it.
-pub(crate) fn side(name: &str, sides: &[&'static str]) -> Option<&'static str> {
+#[doc(hidden)]
+pub fn side(name: &str, sides: &[&'static str]) -> Option<&'static str> {
     let name = match name {
         "start" => "left",
         "end" => "right",
@@ -231,7 +237,8 @@ pub(crate) fn side(name: &str, sides: &[&'static str]) -> Option<&'static str> {
 
 /// `found` (side, border) in schema order, a side named twice (`left` and
 /// `start`) kept once, the first time.
-pub(crate) fn ordered(found: &[(&'static str, Border)], sides: &[&'static str]) -> Sides {
+#[doc(hidden)]
+pub fn ordered(found: &[(&'static str, Border)], sides: &[&'static str]) -> Sides {
     sides
         .iter()
         .filter_map(|&s| found.iter().find(|(f, _)| *f == s).cloned())
@@ -240,7 +247,8 @@ pub(crate) fn ordered(found: &[(&'static str, Border)], sides: &[&'static str]) 
 
 /// The text a line prints for `borders`: groups of sides that share a
 /// border, in the order their first side comes.
-pub(crate) fn describe(borders: &Sides, all: &[&'static str]) -> String {
+#[doc(hidden)]
+pub fn describe(borders: &Sides, all: &[&'static str]) -> String {
     let mut groups: Vec<(Vec<&'static str>, &Border)> = Vec::new();
     for (side, border) in borders {
         match groups.iter_mut().find(|(_, b)| *b == border) {
@@ -263,7 +271,8 @@ pub(crate) fn describe(borders: &Sides, all: &[&'static str]) -> String {
 
 /// `text` (as [`describe`] prints it) read back; a group without sides
 /// covers `all`. `None` when a group does not read.
-pub(super) fn parse(text: &str, all: &[&'static str]) -> Option<Sides> {
+#[doc(hidden)]
+pub fn parse(text: &str, all: &[&'static str]) -> Option<Sides> {
     let mut found = Vec::new();
     for group in text.split(" + ") {
         let words: Vec<&str> = group.split_whitespace().collect();
@@ -285,7 +294,8 @@ pub(super) fn parse(text: &str, all: &[&'static str]) -> Option<Sides> {
 
 /// The sides' elements, in schema order, for `w:tblBorders` or
 /// `w:tcBorders`.
-pub(super) fn xml(borders: &Sides) -> String {
+#[doc(hidden)]
+pub fn xml(borders: &Sides) -> String {
     borders
         .iter()
         .map(|(side, border)| border.xml(side))

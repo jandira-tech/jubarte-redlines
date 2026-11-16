@@ -17,7 +17,8 @@ const BUILT_IN: [&str; 2] = [
 /// The stores the main part reaches, by item ID (upper case): each
 /// `customXml` relationship's item, through its `customXmlProps`
 /// relationship to the properties naming it. Word loads those.
-pub(crate) fn stores(package: &PartFs, main: &str) -> Vec<String> {
+#[doc(hidden)]
+pub fn stores(package: &PartFs, main: &str) -> Vec<String> {
     let related = |source: &str, kind: &str| -> Vec<String> {
         package
             .read_rels_for(source)
@@ -61,7 +62,8 @@ pub(crate) fn stores(package: &PartFs, main: &str) -> Vec<String> {
 
 /// Whether a binding names one of Word's own stores, which `docProps`
 /// holds.
-pub(crate) fn built_in(store: &str) -> bool {
+#[doc(hidden)]
+pub fn built_in(store: &str) -> bool {
     BUILT_IN.iter().any(|id| id.eq_ignore_ascii_case(store))
 }
 
