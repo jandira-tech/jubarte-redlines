@@ -1734,7 +1734,7 @@ fn w18b_faithful_remarks_preexisting_insertions_deleted() {
 /// emits the INSERTED paragraph before the deleted table (forensics pairs
 /// table-vmerge-colspan_text-box and nested-table-rowspan_numbered-list).
 /// PIN, not RED: M-PI (positional anchor gaps + the H9 block-level flip in
-/// lcs.rs) already orders every probed forensic shape correctly — 1 table vs
+/// comparer/lcs/step_h.rs) already orders every probed forensic shape correctly — 1 table vs
 /// 1/5 paras, 2 tables ± interleaved paras, nested table, text-box insert,
 /// disjoint ≥4-group docs all emit ins-before-del. The 20:46 forensic XML
 /// showing old ordering must come from a pre-M-PI binary. Word-mode gated.
@@ -2089,8 +2089,8 @@ fn w23_repeated_identical_deleted_paragraphs_all_survive() {
 /// LCS finds the trivial [" ", "sample"] run; its ratio (2/70 ≈ 0.029) sneaks
 /// past detail_threshold=0.02, an Equal island bridges A copy #1 with B's
 /// inserted paragraph, and CoalesceRecurse merges them into one w:p —
-/// shredding that copy into run fragments (lcs.rs Step G :287-297 / Step H4
-/// :584-593). GT keeps every copy as an intact deleted paragraph.
+/// shredding that copy into run fragments (comparer/lcs: Step G in
+/// lcs_algorithm.rs, Step H4 in step_h.rs). GT keeps every copy as an intact deleted paragraph.
 #[test]
 fn w23b_repeated_identical_deleted_paragraphs_survive_word_overlap() {
     let mut dom = Dom::new();
