@@ -952,7 +952,12 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
                     let (fence_open, fence_close) = code_fence(line);
                     return format!("{open}{fence_open}{line}{fence_close}{close}");
                 }
-                let (l, c, t) = split_ws(line);
+                let spaced = marks.underline || marks.highlight.is_some() || marks.strike;
+                let (l, c, t) = if spaced {
+                    split_ws(line)
+                } else {
+                    split_all_ws(line)
+                };
                 if c.is_empty() {
                     line.to_string()
                 } else {
@@ -974,8 +979,12 @@ fn edges(marks: Marks, text: &str) -> (&str, std::borrow::Cow<'_, str>, &str) {
     if marks.code {
         return ("", std::borrow::Cow::Borrowed(text), "");
     }
-    let (lead, core, trail) = split_ws(text);
     let spaced = marks.underline || marks.highlight.is_some() || marks.strike;
+    let (lead, core, trail) = if spaced {
+        split_ws(text)
+    } else {
+        split_all_ws(text)
+    };
     let plain = |c: char| c == ' ';
     if spaced && !marks.code && lead.chars().all(plain) && trail.chars().all(plain) {
         let space = |s: &str| "&#32;".repeat(s.len());
@@ -1047,8 +1056,19 @@ fn is_trimmed_ws(c: char) -> bool {
 }
 
 fn split_ws(s: &str) -> (&str, &str, &str) {
-    let start = s.len() - s.trim_start_matches(is_trimmed_ws).len();
-    let end = s.trim_end_matches(is_trimmed_ws).len().max(start);
+    split_by(s, is_trimmed_ws)
+}
+
+/// `s` split around every edge whitespace, a no-break space included:
+/// `**` and `_` must touch text to read, so a no-break space at a bold or
+/// italic edge stays outside the delimiters.
+fn split_all_ws(s: &str) -> (&str, &str, &str) {
+    split_by(s, char::is_whitespace)
+}
+
+fn split_by(s: &str, edge: fn(char) -> bool) -> (&str, &str, &str) {
+    let start = s.len() - s.trim_start_matches(edge).len();
+    let end = s.trim_end_matches(edge).len().max(start);
     (&s[..start], &s[start..end], &s[end..])
 }
 
@@ -1813,6 +1833,33 @@ mod ooxml_package_boundary_tests {
             None,
         );
         assert_eq!(underlined.render(true), format!("<u>{nbsp}C{nbsp}</u>"));
+        // `**` and `_` must touch text to read, so a no-break space at a
+        // bold or italic edge stays outside the delimiters.
+        for (marks, wrapped) in [
+            (
+                Marks {
+                    bold: true,
+                    ..Marks::default()
+                },
+                "**C**",
+            ),
+            (
+                Marks {
+                    italic: true,
+                    ..Marks::default()
+                },
+                "_C_",
+            ),
+        ] {
+            let mut agent = Inline::default();
+            agent.keep_spaces();
+            agent.push_styled(&format!("{nbsp}C{nbsp}"), marks, None);
+            assert_eq!(agent.render(true), format!("{nbsp}{wrapped}{nbsp}"));
+            let mut plain = Inline::default();
+            plain.push(&format!("A{nbsp}"), false, false, None);
+            plain.push_styled("C", marks, None);
+            assert_eq!(plain.render(true), format!("A {wrapped}"));
+        }
         let mut only = Inline::default();
         only.keep_spaces();
         only.push(nbsp, false, false, None);
