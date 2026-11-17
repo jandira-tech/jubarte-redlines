@@ -18,7 +18,7 @@ or PNG — from Rust, Python, Node/browser, or the CLI.
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15267/badge)](https://www.bestpractices.dev/projects/15267)
 [![CI](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/jandira-tech/jubarte-redlines/branch/main/graph/badge.svg)](https://codecov.io/gh/jandira-tech/jubarte-redlines)
-[![crates.io](https://img.shields.io/crates/v/jubarte-redlines.svg)](https://crates.io/crates/jubarte)
+[![crates.io](https://img.shields.io/crates/v/jubarte.svg)](https://crates.io/crates/jubarte)
 [![docs.rs](https://docs.rs/jubarte/badge.svg)](https://docs.rs/jubarte)
 [![PyPI](https://img.shields.io/pypi/v/jubarte-redlines.svg)](https://pypi.org/project/jubarte-redlines/)
 [![npm](https://img.shields.io/npm/v/jubarte-wasm.svg)](https://www.npmjs.com/package/jubarte-wasm)
@@ -247,6 +247,10 @@ The crate is `jubarte`, the import path `jubarte`. It re-exports the
 workspace crates (`jubarte-dom`, `jubarte-opc`, `jubarte-redlines` for
 comparison, `jubarte-render`, `jubarte-doc`, `jubarte-markdown`,
 `jubarte-edit`), which can also be depended on alone.
+Since 0.19.0, `jubarte-redlines` on crates.io is the compare-only crate
+(library name `jubarte_redlines`); a 0.18 dependency on `jubarte-redlines`
+moves to `jubarte = "0.19"` and keeps its `use jubarte::…` paths (see the
+[changelog](CHANGELOG.md)).
 
 ```rust
 use jubarte::{convert, document_comparer};
@@ -1077,7 +1081,7 @@ an edit plan, generated report and rendered redline page.
 CI currently includes:
 
 - `cargo fmt --check`
-- Clippy with `-D warnings` on the crate and on the Python, WASM
+- Clippy with `-D warnings` on the workspace crates and on the Python, WASM
   (`wasm32-unknown-unknown`) and in-process bench bindings
 - all-feature Rust tests on Linux, macOS and Windows
 - source-based code coverage with a line-coverage floor
@@ -1198,17 +1202,18 @@ Roadmap items are goals, not compatibility guarantees.
 
 ```text
 src/
-  lib.rs                 public Rust crate
-  document_comparer.rs   compare / revisions
-  comparer/              comparison engine
-  changes.rs             tracked-change listing / resolution
-  inspect.rs             document inspection, edit-plan anchors
-  edit.rs + edit/        validated JSON edit plans
-  markdown/              Markdown in and out: convert, diff, patch
-  convert/               DOCX → PDF/PNG layout engine
-  opc/                   DOCX package layer
-  xmllinq/               shared XML model
-  bin/jubarte.rs         CLI (compare, edit, convert, diff, debug, …)
+  lib.rs                 the `jubarte` facade: re-exports every crate below
+  bin/jubarte.rs         the `jubarte` CLI binary
+
+crates/
+  jubarte-dom/           shared XML model (xmllinq), namespaces, ids
+  jubarte-opc/           DOCX package layer, admission, styles, numbering
+  jubarte-redlines/      compare / revisions / accept and reject
+  jubarte-render/        DOCX → PDF/PNG layout engine and embedded fonts
+  jubarte-doc/           changes, comments, validate, audit, scrub, inspect, debug
+  jubarte-markdown/      Markdown in and out, .doc reading
+  jubarte-edit/          validated JSON edit plans, text diffs
+  jubarte-cli/           CLI commands (compare, edit, convert, diff, debug, …)
 
 jubarte-python/           PyO3 / maturin Python package
 jubarte-wasm/             wasm-bindgen / npm package
