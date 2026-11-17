@@ -43,7 +43,7 @@ jubarte-redlines = { workspace = true }
 # fields updates (plan.update_fields) lay the document out, so the
 # doc layer comes with its render feature always on; this crate's own
 # `render` only adds jubarte-render for its layout-dependent items.
-jubarte-doc = { workspace = true, features = ["render", "schema"] }
+jubarte-doc = { workspace = true, features = ["schema"] }
 jubarte-markdown = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }

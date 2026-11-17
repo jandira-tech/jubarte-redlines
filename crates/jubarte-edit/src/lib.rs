@@ -19,7 +19,9 @@
 #![warn(missing_docs)]
 
 // A5 shims: every layer below under the names the moved code uses.
-pub(crate) use jubarte_doc::{audit, fields, scrub};
+#[cfg(feature = "render")]
+pub(crate) use jubarte_doc::fields;
+pub(crate) use jubarte_doc::{audit, scrub};
 pub use jubarte_doc::{changes, comment_settlement, comments, debug, inspect, validate};
 pub(crate) use jubarte_dom::ooxml;
 pub use jubarte_dom::{ids, namespaces, util, xmllinq};

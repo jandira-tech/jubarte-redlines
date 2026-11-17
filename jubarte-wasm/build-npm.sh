@@ -49,12 +49,14 @@ case "$HOME$repo_logical$repo_physical" in
 esac
 export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="--remap-path-prefix=$HOME=~ --remap-path-prefix=$repo_logical=jubarte-redlines --remap-path-prefix=$repo_physical=jubarte-redlines"
 
-# Full builds (default features: compare + PDF), then slim builds (no `pdf`
-# feature — everything except the PDF renderer, ~4x smaller wasm).
+# Full builds (default features: the full layer stack + PDF), then slim
+# builds (plan T5.1: --no-default-features --features slim,console-panic —
+# every layer except the renderer, fonts included). The old bare
+# `--features console-panic` would now build only compare + panic hook.
 wasm-pack build --target nodejs --release
 wasm-pack build --target web --release --out-dir pkg-web
-wasm-pack build --target nodejs --release --out-dir pkg-slim -- --no-default-features --features console-panic
-wasm-pack build --target web --release --out-dir pkg-web-slim -- --no-default-features --features console-panic
+wasm-pack build --target nodejs --release --out-dir pkg-slim -- --no-default-features --features slim,console-panic
+wasm-pack build --target web --release --out-dir pkg-web-slim -- --no-default-features --features slim,console-panic
 
 mkdir -p npm/node npm/web npm/node-slim npm/web-slim
 for f in jubarte_wasm.js jubarte_wasm.d.ts jubarte_wasm_bg.wasm jubarte_wasm_bg.wasm.d.ts; do

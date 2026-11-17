@@ -137,7 +137,7 @@ pub struct EditPlan {
     /// Operations in report order.
     pub operations: Vec<Operation>,
     /// Refresh `PAGEREF`, `REF`, `NUMPAGES`, `SEQ` and `TOC` results in the
-    /// edited copy from jubarte's layout ([`crate::fields::update_fields`])
+    /// edited copy from jubarte's layout (`crate::fields::update_fields`)
     /// before the redline is compared.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub update_fields: bool,
@@ -1282,6 +1282,7 @@ pub struct EditReport {
     pub revisions: RevisionCounts,
     /// Fields whose results `update_fields` wrote into the clean copy.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg(feature = "render")]
     pub fields: Vec<crate::fields::FieldUpdate>,
     /// Operations `--skip-failed` left out (status `skipped`); `ok` is
     /// false whenever one was.
@@ -2822,7 +2823,10 @@ pub fn preview_plan_with(
     // keeps its v1 dry-run meaning: a preview never publishes the clean
     // copy the refreshes land in, so it reports none.
     let mut report = prepared::prepare(source, plan, options)?.result.report;
-    report.fields = Vec::new();
+    #[cfg(feature = "render")]
+    {
+        report.fields = Vec::new();
+    }
     Ok(report)
 }
 
@@ -3776,6 +3780,7 @@ impl<'p> Transaction<'p> {
             operations: self.outcomes.clone(),
             comments_added: self.comments_added,
             revisions: RevisionCounts::default(),
+            #[cfg(feature = "render")]
             fields: Vec::new(),
             skipped: 0,
             notes: self.rewrite_notes(),

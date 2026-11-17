@@ -665,7 +665,17 @@ fn primary_effect(tx: &Transaction<'_>, result: &EditResult) -> Result<Effect, E
     if !report.resolved_revisions.is_empty()
         || report.revisions.total > 0
         || report.paragraphs.from != report.paragraphs.to
-        || !report.fields.is_empty()
+        || (cfg!(feature = "render")
+            && !{
+                #[cfg(feature = "render")]
+                {
+                    !report.fields.is_empty()
+                }
+                #[cfg(not(feature = "render"))]
+                {
+                    false
+                }
+            })
         || report.comments_added > 0
         || tx.watermark.is_some()
         || tx.settings.is_some()
@@ -1772,7 +1782,9 @@ fn produce(
         }
         return Ok(result);
     }
+    #[cfg(feature = "render")]
     let mut fields = Vec::new();
+    #[cfg(feature = "render")]
     if plan.update_fields {
         let refresh = |bytes: &[u8]| {
             crate::fields::update_fields(bytes)
@@ -1873,7 +1885,10 @@ fn produce(
         .map(|p| p.len())
         .unwrap_or(report.paragraphs.from);
     report.revisions = revision_counts(&redline);
-    report.fields = fields;
+    #[cfg(feature = "render")]
+    {
+        report.fields = fields;
+    }
     report.clean_removed_comments = crate::comment_settlement::threads_the_clean_copy_drops(
         &clean,
         &redline,
@@ -2103,6 +2118,7 @@ pub(crate) mod tests {
                 operations: Vec::new(),
                 comments_added: 0,
                 revisions: Default::default(),
+                #[cfg(feature = "render")]
                 fields: Vec::new(),
                 skipped: 0,
                 notes: Vec::new(),
