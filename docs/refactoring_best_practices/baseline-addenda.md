@@ -7,6 +7,34 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T7.1 (finalize.rs becomes a directory module) - 2026-11-17
+
+- comparer/finalize.rs (35,492 lines) is now finalize/mod.rs (1,279)
+  plus 13 production siblings (largest merge_replaced.rs, 3,718) and
+  35 test files under finalize/tests/ (largest 3,671). Moved code only.
+- AC2: git diff -M90% against pre-release: 35,681 insertions, 35,492
+  deletions; 35,030 inserted lines match a deleted line. Unmatched: 83
+  mod, 28 use, 151 visibility, 68 blank, 321 other. Read literally (every
+  insertion outside mod, use and visibility lines, blanks included), AC2
+  is 389 / 35,030 = 1.11%: over the 1% ceiling. 144 of those lines are
+  the SPDX headers REUSE requires on each of the 48 new files; without
+  them, 245 / 35,030 = 0.70%. The rest: module docs of the new files,
+  rustfmt reflows, five include_bytes! paths two directories deeper.
+  An independent recount (MiniMax-M3, #2452 review) classifies 15 use /
+  168 visibility / 317 other: the same 651, 1.10%. The move is otherwise
+  proven by identity: all 600 bench redlines are byte-identical to the
+  pre-split binary (scripts/identity.py).
+- AC1: goldens identical; the listing diff shows 5 internal lines that
+  pre-release already carries (convert::font, edit::prepared,
+  markdown::from_docx::ooxml), none under comparer; facade_surface
+  passes. jubarte-redlines 941 passed + 1 skipped (942, unchanged),
+  it_redlines 1330 passed + 1 skipped; clippy, fmt, doc exit 0.
+- AC4 (no-LTO consumer gate): pre-split baseline re-saved from
+  pre-release 8173feefa (CRITERION_HOME under .scratch); the branch
+  compares at -4.9% / -3.9% / -3.3% / -10.0% (canonical_dense_edits,
+  short_into_long, tables_bookmark_vmerge, comment_heavy), no
+  regression.
+
 ## T5.1 (wasm features + slim build) - 2026-11-17
 
 - The binding's features are the plan A4 stack (compare -> doc ->
