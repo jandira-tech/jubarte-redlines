@@ -185,6 +185,8 @@ for (const target of ["web", "web-slim"]) {
       const redline = mod.compareDocuments(original, modified, "smoke");
       assert.equal(redline[0], 0x50, `${label}: compareDocuments writes a zip`);
       assert.ok(JSON.parse(mod.getRevisions(redline)).length > 0, `${label}: revisions listed`);
+      assert.equal(JSON.parse(mod.getRevisions(mod.acceptRevisions(redline))).length, 0, `${label}: accept drains revisions`);
+      assert.equal(JSON.parse(mod.getRevisions(mod.rejectRevisions(redline))).length, 0, `${label}: reject drains revisions`);
       assert.equal(typeof mod.docxToPdf, "undefined", `${label}: the redlines build has no renderer`);
       assert.equal(typeof mod.inspectDocument, "undefined", `${label}: the redlines build has no doc layer`);
     };
@@ -192,6 +194,13 @@ for (const target of ["web", "web-slim"]) {
       const pdf = mod.docxToPdf(original);
       assert.equal(Buffer.from(pdf.slice(0, 5)).toString(), "%PDF-", `${label}: docxToPdf emits a PDF`);
       assert.ok(mod.pdfPageCount(pdf) > 0, `${label}: pdfPageCount sees pages`);
+      const out = mod.renderPdf(original);
+      try {
+        assert.equal(Buffer.from(out.pdf.slice(0, 5)).toString(), "%PDF-", `${label}: renderPdf emits a PDF`);
+        assert.ok(JSON.parse(out.json).page_count > 0, `${label}: renderPdf reports its pages`);
+      } finally {
+        out.free();
+      }
       assert.equal(typeof mod.compareDocuments, "undefined", `${label}: the pdf build has no compare`);
       // FieldsOutput is what updateFields returns; without it the class
       // can only be built empty, its pointer unset.

@@ -94,9 +94,9 @@ import init, { compareDocuments } from "jubarte-wasm/web-slim"; // browser
 | `jubarte-wasm/web` | full, browser ESM | all functions |
 | `jubarte-wasm/slim` / `jubarte-wasm/node-slim` | slim, Node CJS | everything except `docxToPdf`, `pdfPageCount`, `updateFields`, `renderPdf` and `convertMarkdown` (so also `inspectDocument`, `readView`, `changedView`, `flagPlan`, `recordPlan`, `documentMarkdown`, `sourceSha256`, `applyEditPlan`, `previewEditPlan`, `editReportJsonl`, `capabilities`, `capabilitiesText`, `capabilityQuery`, `capabilityQueryText`, `changesText`, `commentsText`, `tablesText`, `tablesView`, `readJson`, `wantsJson`, `runtimeJsonError`, `inputNotice`, `inputValidityLine`, `wroteLine`, `changeFilter`, `refusedInput`, `planError`) |
 | `jubarte-wasm/web-slim` | slim, browser ESM | everything except `docxToPdf`, `pdfPageCount`, `updateFields`, `renderPdf` and `convertMarkdown` (same export set as `node-slim`) |
-| `jubarte-wasm/redlines` / `jubarte-wasm/node-redlines` | redlines, Node CJS | `compareDocuments`, `acceptRevisions`, `rejectRevisions`, `getRevisions`, `diffDocumentsUnified`, `initPanicHook` |
+| `jubarte-wasm/redlines` / `jubarte-wasm/node-redlines` | redlines, Node CJS | `compareDocuments`, `acceptRevisions`, `rejectRevisions`, `getRevisions`, `initPanicHook` |
 | `jubarte-wasm/web-redlines` | redlines, browser ESM | the same as `node-redlines` |
-| `jubarte-wasm/pdf` / `jubarte-wasm/convert` / `jubarte-wasm/node-pdf` | pdf, Node CJS | `docxToPdf`, `pdfPageCount`, `renderPdf`, `diffDocumentsUnified`, `initPanicHook` |
+| `jubarte-wasm/pdf` / `jubarte-wasm/convert` / `jubarte-wasm/node-pdf` | pdf, Node CJS | `docxToPdf`, `pdfPageCount`, `renderPdf` (returning a `RenderOutput`), `initPanicHook` |
 | `jubarte-wasm/web-pdf` | pdf, browser ESM | the same as `node-pdf` |
 
 `jubarte-wasm/redlines`, `jubarte-wasm/pdf`, `jubarte-wasm/convert` and
