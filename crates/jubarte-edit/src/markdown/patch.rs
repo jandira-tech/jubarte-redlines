@@ -110,7 +110,7 @@ struct Paragraph {
 /// in [`Patched::warnings`], not an error.
 ///
 /// ```
-/// use jubarte::markdown::{DocxOptions, apply_markdown, markdown_to_docx};
+/// use jubarte_edit::markdown::{DocxOptions, apply_markdown, markdown_to_docx};
 ///
 /// let original = markdown_to_docx("Pay in 30 days.\n\nSigned.\n", &DocxOptions::default())
 ///     .unwrap()

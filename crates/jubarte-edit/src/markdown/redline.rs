@@ -96,7 +96,7 @@ impl std::fmt::Debug for RedlineOptions<'_> {
 /// both sides are Markdown.
 ///
 /// ```
-/// use jubarte::markdown::{RedlineOptions, Source, redline};
+/// use jubarte_edit::markdown::{RedlineOptions, Source, redline};
 ///
 /// let docx = redline(
 ///     Source::Markdown("Payment in 30 days.\n"),
