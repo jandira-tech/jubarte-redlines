@@ -2,87 +2,35 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! The module layering the workspace crate split depends on.
+//! The workspace dependency DAG the split produced (plan A1, T4.9).
 //!
-//! `src/` is being split into the `crates/jubarte-*` crates (dom, opc,
-//! redlines, render, doc, markdown, edit, cli). A crate cannot name a crate
-//! above it, so every `crate::…` path that points from a lower layer into a
-//! higher one (or between the compare and render products) blocks the split.
+//! Nine packages: the facade at the root and eight library crates under
+//! `crates/`. Each `[dependencies]` and `[dev-dependencies]` edge between
+//! workspace crates must point downward in the DAG, and the compare and
+//! render products must never name each other. The test reads every
+//! `crates/*/Cargo.toml` and the root manifest (section by section, not
+//! regex) and asserts each edge is allowed.
 //!
-//! The test maps each source file to its target crate, collects every
-//! `crate::` path (code, `use` groups and intra-doc links alike), and
-//! compares the upward ones with [`KNOWN_UPWARD`]. A new upward path fails;
-//! so does a listed one that is gone, so the list only ever shrinks.
+//! The crate-path scanner below stays: its unit tests protect the
+//! `crate::` path-collection machinery `jubarte debug` and the historical
+//! evidence rely on, and any future module move reuses it.
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-/// Target crates, lowest first. A file may name its own layer or a lower one.
+/// The DAG, lowest first; an edge may point from any crate to one at a
+/// smaller index. The compare and render products are peers: neither
+/// names the other.
 const LAYERS: [&str; 8] = [
-    "dom", "opc", "redlines", "render", "doc", "markdown", "edit", "cli",
+    "jubarte-dom",
+    "jubarte-opc",
+    "jubarte-redlines",
+    "jubarte-render",
+    "jubarte-doc",
+    "jubarte-markdown",
+    "jubarte-edit",
+    "jubarte-cli",
 ];
-
-/// Top-level `crate::` modules (and a few submodules) and their target crate.
-/// Submodule keys (`a::b`) override the top-level module's layer.
-const MODULES: &[(&str, &str)] = &[
-    ("xmllinq", "dom"),
-    ("namespaces", "dom"),
-    ("ids", "dom"),
-    ("unid", "dom"),
-    ("perf", "dom"),
-    ("util", "dom"),
-    ("ooxml", "dom"),
-    ("limits", "dom"),
-    ("opc", "opc"),
-    ("admission", "opc"),
-    ("markup_simplifier", "opc"),
-    ("strict_translation", "opc"),
-    ("settings", "opc"),
-    ("word_default_theme", "opc"),
-    ("builtin_styles", "opc"),
-    ("borders", "opc"),
-    ("numbering", "opc"),
-    ("table_dom", "opc"),
-    ("data_stores", "opc"),
-    ("validate_dom", "opc"),
-    ("render_options", "opc"),
-    ("comparer", "redlines"),
-    ("document_comparer", "redlines"),
-    ("revision_processor", "redlines"),
-    ("wml_document", "redlines"),
-    ("WmlDocument", "redlines"),
-    ("comparison_log", "redlines"),
-    ("convert", "render"),
-    ("changes", "doc"),
-    ("comments", "doc"),
-    ("comment_settlement", "doc"),
-    ("validate", "doc"),
-    ("audit", "doc"),
-    ("scrub", "doc"),
-    ("append", "doc"),
-    ("fields", "doc"),
-    ("debug", "doc"),
-    ("inspect", "doc"),
-    ("markdown", "markdown"),
-    ("markdown::data_stores", "markdown"),
-    ("legacy_doc", "markdown"),
-    ("markdown::patch", "edit"),
-    ("markdown::redline", "edit"),
-    ("markdown::unified", "edit"),
-    ("edit", "edit"),
-    ("edit::inline", "cli"),
-    ("text_diff", "edit"),
-    ("expect", "edit"),
-    ("capabilities", "edit"),
-    ("publication", "edit"),
-    ("result", "edit"),
-    ("cli", "cli"),
-    ("update", "cli"),
-];
-
-/// Upward paths still to remove, as `file -> crate::path` (first two path
-/// segments when the first names a module with submodule overrides).
-const KNOWN_UPWARD: &[&str] = &[];
 
 fn rank(layer: &str) -> usize {
     LAYERS
@@ -91,79 +39,26 @@ fn rank(layer: &str) -> usize {
         .unwrap_or_else(|| panic!("unknown layer {layer}"))
 }
 
-/// The layer of a `crate::` path given as its first one or two segments.
-fn layer_of(segments: &[&str]) -> Option<&'static str> {
-    let first = *segments.first()?;
-    if let Some(second) = segments.get(1) {
-        let key = format!("{first}::{second}");
-        if let Some((_, layer)) = MODULES.iter().find(|(module, _)| *module == key) {
-            return Some(layer);
-        }
+/// Whether `from` may depend on `to`.
+fn allowed(from: &str, to: &str) -> bool {
+    if from == "jubarte" {
+        return true; // the facade names everything
     }
-    MODULES
-        .iter()
-        .find(|(module, _)| *module == first)
-        .map(|(_, layer)| *layer)
-}
-
-/// The layer a source file belongs to; `None` for the facade and binary.
-fn file_layer(relative: &Path) -> Option<&'static str> {
-    let mut segments: Vec<String> = relative
-        .with_extension("")
-        .components()
-        .skip(1)
-        .map(|part| part.as_os_str().to_string_lossy().into_owned())
-        .collect();
-    if matches!(segments.first().map(String::as_str), Some("lib" | "bin")) {
-        return None;
+    if from == to {
+        return true;
     }
-    if segments.last().map(String::as_str) == Some("mod") {
-        segments.pop();
+    // The compare and render products are peers: neither names the other.
+    if matches!(
+        (from, to),
+        ("jubarte-redlines", "jubarte-render") | ("jubarte-render", "jubarte-redlines")
+    ) {
+        return false;
     }
-    let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
-    Some(layer_of(&segments).unwrap_or_else(|| panic!("no layer for {}", relative.display())))
+    rank(to) < rank(from)
 }
 
 fn is_ident(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
-}
-
-/// Byte length of the comment `s` opens with (`//` through its newline, `/*`
-/// through the matching `*/`, nested), or `None` when `s` opens no comment.
-fn comment_len(s: &str) -> Option<usize> {
-    let bytes = s.as_bytes();
-    if bytes.starts_with(b"//") {
-        return Some(s.find('\n').map_or(s.len(), |newline| newline + 1));
-    }
-    if !bytes.starts_with(b"/*") {
-        return None;
-    }
-    let mut depth = 1usize;
-    let mut i = 2;
-    while i + 1 < bytes.len() && depth > 0 {
-        if bytes[i] == b'/' && bytes[i + 1] == b'*' {
-            depth += 1;
-            i += 2;
-        } else if bytes[i] == b'*' && bytes[i + 1] == b'/' {
-            depth -= 1;
-            i += 2;
-        } else {
-            i += 1;
-        }
-    }
-    Some(if depth == 0 { i } else { s.len() })
-}
-
-/// `s` past any leading whitespace and comments, which Rust allows anywhere
-/// whitespace is.
-fn skip_trivia(mut s: &str) -> &str {
-    loop {
-        s = s.trim_start();
-        match comment_len(s) {
-            Some(len) => s = &s[len..],
-            None => return s,
-        }
-    }
 }
 
 /// Every leading `ident(::ident)*` segment of `text`, and what follows them.
@@ -185,18 +80,70 @@ fn path_segments(text: &str) -> (Vec<&str>, &str) {
     }
 }
 
-/// The `crate::` path(s) in `rest`, expanding `{…}` groups (which nest) into
-/// their leaf paths. Each result keeps only its first two segments.
+/// Every path named after `crate` and its `::`, expanding `crate::{a, b::c}`
+/// groups. Rust allows whitespace and comments around the first `::` too.
+fn crate_paths(text: &str) -> Vec<Vec<&str>> {
+    let mut paths = Vec::new();
+    let mut from = 0;
+    while let Some(found) = text[from..].find("crate") {
+        let start = from + found;
+        from = start + "crate".len();
+        if start > 0 && is_ident(text.as_bytes()[start - 1]) {
+            continue;
+        }
+        let Some(rest) = skip_trivia(&text[from..]).strip_prefix("::") else {
+            continue;
+        };
+        collect_path(rest, &[], &mut paths);
+    }
+    paths
+}
+
+fn skip_trivia(mut s: &str) -> &str {
+    loop {
+        s = s.trim_start();
+        match comment_len(s) {
+            Some(len) => s = &s[len..],
+            None => return s,
+        }
+    }
+}
+
+/// The comment `s` opens with, or `None`.
+fn comment_len(s: &str) -> Option<usize> {
+    if s.starts_with("//") {
+        return Some(s.find('\n').map_or(s.len(), |newline| newline + 1));
+    }
+    if !s.starts_with("/*") {
+        return None;
+    }
+    let mut depth = 1usize;
+    let mut i = 2;
+    let bytes = s.as_bytes();
+    while i + 1 < bytes.len() && depth > 0 {
+        if bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            depth += 1;
+            i += 2;
+        } else if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+            depth -= 1;
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    Some(if depth == 0 { i } else { s.len() })
+}
+
 fn collect_path<'a>(rest: &'a str, prefix: &[&'a str], paths: &mut Vec<Vec<&'a str>>) {
-    if let Some(group) = skip_trivia(rest).strip_prefix('{') {
-        collect_group(group, prefix, paths);
+    let stripped = skip_trivia(rest);
+    if stripped.starts_with('{') {
+        collect_group(&stripped[1..], prefix, paths);
         return;
     }
     let (segments, remainder) = path_segments(rest);
-    if let Some(group) = skip_trivia(remainder).strip_prefix('{') {
-        let mut prefix: Vec<&str> = prefix.to_vec();
-        prefix.extend(segments);
-        collect_group(group, &prefix, paths);
+    let stripped = skip_trivia(remainder);
+    if stripped.starts_with('{') {
+        collect_group(&stripped[1..], &([&segments[..], prefix].concat()), paths);
         return;
     }
     let leaf: Vec<&str> = prefix.iter().copied().chain(segments).take(2).collect();
@@ -205,7 +152,6 @@ fn collect_path<'a>(rest: &'a str, prefix: &[&'a str], paths: &mut Vec<Vec<&'a s
     }
 }
 
-/// The top-level items of a `{…}` group body (the opening brace is consumed).
 fn collect_group<'a>(group: &'a str, prefix: &[&'a str], paths: &mut Vec<Vec<&'a str>>) {
     let mut depth = 1usize;
     let mut item_start = 0;
@@ -236,83 +182,83 @@ fn collect_group<'a>(group: &'a str, prefix: &[&'a str], paths: &mut Vec<Vec<&'a
     }
 }
 
-/// Every path named after `crate` and its `::`, expanding `crate::{a, b::c}`
-/// groups. Rust allows whitespace and comments around the first `::` too.
-fn crate_paths(text: &str) -> Vec<Vec<&str>> {
-    let mut paths = Vec::new();
-    let mut from = 0;
-    while let Some(found) = text[from..].find("crate") {
-        let start = from + found;
-        from = start + "crate".len();
-        if start > 0 && is_ident(text.as_bytes()[start - 1]) {
+/// One `[dependencies]`-style table body: the crate names it lists.
+fn dependency_names(table: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for line in table.lines() {
+        let line = line.trim();
+        if !line.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_') {
             continue;
         }
-        let Some(rest) = skip_trivia(&text[from..]).strip_prefix("::") else {
+        let Some(name) = line.split('=').next().map(str::trim) else {
             continue;
         };
-        collect_path(rest, &[], &mut paths);
+        if !name.is_empty() {
+            names.push(name.to_owned());
+        }
     }
-    paths
+    names
 }
 
-fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let mut entries: Vec<_> = std::fs::read_dir(dir)
-        .unwrap_or_else(|error| panic!("read {}: {error}", dir.display()))
-        .map(|entry| entry.expect("dir entry").path())
-        .collect();
-    entries.sort();
-    for path in entries {
+/// Every workspace crate each manifest names as a dependency or
+/// dev-dependency, as `(from, to)` edges.
+fn manifest_edges(root: &Path) -> BTreeSet<(String, String)> {
+    let mut manifests = vec![root.join("Cargo.toml")];
+    let mut crates = vec![];
+    for entry in
+        std::fs::read_dir(root.join("crates")).unwrap_or_else(|e| panic!("read crates/: {e}"))
+    {
+        let path = entry.expect("dir entry").path();
         if path.is_dir() {
-            rust_files(&path, out);
-        } else if path.extension().is_some_and(|ext| ext == "rs") {
-            out.push(path);
+            crates.push(path.join("Cargo.toml"));
         }
     }
-}
-
-/// Whether a file in `from` may name a path in `to`.
-fn allowed(from: &str, to: &str) -> bool {
-    if from == to {
-        return true;
-    }
-    // The compare and render products are peers: neither names the other.
-    if matches!((from, to), ("redlines", "render") | ("render", "redlines")) {
-        return false;
-    }
-    rank(to) < rank(from)
-}
-
-fn upward_edges(root: &Path) -> BTreeSet<String> {
-    let mut files = Vec::new();
-    rust_files(&root.join("src"), &mut files);
+    crates.sort();
+    manifests.extend(crates);
     let mut edges = BTreeSet::new();
-    for path in files {
-        let relative = path.strip_prefix(root).expect("under root");
-        let Some(from) = file_layer(relative) else {
-            continue;
-        };
-        let text = std::fs::read_to_string(&path).expect("read source");
-        for segments in crate_paths(&text) {
-            let Some(to) = layer_of(&segments) else {
+    for manifest in manifests {
+        let text = std::fs::read_to_string(&manifest)
+            .unwrap_or_else(|e| panic!("read {}: {e}", manifest.display()));
+        let from = text
+            .split("name = \"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .unwrap_or_else(|| panic!("{} names no package", manifest.display()))
+            .to_owned();
+        for section in ["[dependencies]", "[dev-dependencies]"] {
+            let Some(start) = text.find(section) else {
                 continue;
             };
-            if allowed(from, to) {
-                continue;
+            let body = &text[start + section.len()..];
+            let end = body.find("\n[").map(|at| &body[..at]).unwrap_or(body);
+            for to in dependency_names(end) {
+                if LAYERS.contains(&to.as_str()) {
+                    edges.insert((from.clone(), to));
+                }
             }
-            let shown = if segments.len() > 1
-                && MODULES
-                    .iter()
-                    .any(|(module, _)| module.starts_with(&format!("{}::", segments[0])))
-            {
-                segments.join("::")
-            } else {
-                segments[0].to_owned()
-            };
-            let unix = relative.to_string_lossy().replace('\\', "/");
-            edges.insert(format!("{unix} -> {shown}"));
         }
     }
     edges
+}
+
+#[test]
+fn every_workspace_dependency_edge_points_down() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let found = manifest_edges(root);
+    assert!(
+        !found.is_empty(),
+        "no workspace dependency edges found; the manifest scan broke"
+    );
+    let violations: Vec<String> = found
+        .iter()
+        .filter(|(from, to)| !allowed(from, to))
+        .map(|(from, to)| format!("{from} -> {to}"))
+        .collect();
+    assert!(
+        violations.is_empty(),
+        "upward or peer-product workspace dependencies:\n{violations:#?}\n\
+         the DAG is {LAYERS:?} (lowest first)"
+    );
 }
 
 #[test]
@@ -343,10 +289,6 @@ fn nested_groups_reach_submodule_overrides() {
             paths.contains(&vec!["markdown", "redline"]),
             "{text}: {paths:?}"
         );
-        let to = layer_of(&paths[paths.iter().position(|p| p[0] == "markdown").unwrap()])
-            .expect("markdown path");
-        assert_eq!(to, "edit");
-        assert!(!allowed("markdown", to), "{text}");
     }
 }
 
@@ -359,7 +301,6 @@ fn nested_group_regressions_match_direct_imports() {
     ] {
         let paths = crate_paths(text);
         assert_eq!(paths, vec![vec!["markdown", "redline"]], "{text}");
-        assert_eq!(layer_of(&paths[0]), Some("edit"), "{text}");
     }
 }
 
@@ -368,8 +309,6 @@ fn raw_identifier_segments_match_plain_segments() {
     let plain = crate_paths("crate::markdown::patch");
     let raw = crate_paths("crate::markdown::r#patch");
     assert_eq!(raw, plain);
-    assert_eq!(layer_of(&raw[0]), Some("edit"));
-    assert!(!allowed("markdown", "edit"));
 }
 
 #[test]
@@ -386,8 +325,6 @@ fn whitespace_around_separators_keeps_full_path() {
     ] {
         let paths = crate_paths(text);
         assert_eq!(paths, vec![vec!["markdown", "redline"]], "{text}");
-        assert_eq!(layer_of(&paths[0]), Some("edit"), "{text}");
-        assert!(!allowed("markdown", "edit"), "{text}");
     }
 }
 
@@ -408,21 +345,5 @@ fn comments_are_whitespace_inside_paths_and_groups() {
             paths.contains(&vec!["markdown", "redline"]),
             "{text}: {paths:?}"
         );
-        assert_eq!(layer_of(&paths[0]), Some("edit"), "{text}");
-        assert!(!allowed("markdown", "edit"), "{text}");
     }
-}
-
-#[test]
-fn layers_only_point_down() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let found = upward_edges(root);
-    let known: BTreeSet<String> = KNOWN_UPWARD.iter().map(|edge| (*edge).to_owned()).collect();
-    let new: Vec<_> = found.difference(&known).collect();
-    let gone: Vec<_> = known.difference(&found).collect();
-    assert!(
-        new.is_empty() && gone.is_empty(),
-        "upward crate paths changed.\nnew (move the item down instead): {new:#?}\n\
-         gone (drop them from KNOWN_UPWARD): {gone:#?}"
-    );
 }
