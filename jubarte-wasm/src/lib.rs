@@ -416,6 +416,7 @@ pub fn document_markdown_with_changes(docx: &[u8], track_changes: &str) -> Resul
 /// `readView` options: the `read` command's flags.
 #[derive(Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+#[cfg(feature = "markdown")]
 struct ReadViewOptions {
     track_changes: Option<String>,
     comments: Option<String>,
@@ -482,6 +483,7 @@ pub fn read_view(docx: &[u8], options_json: Option<String>) -> Result<String, Js
 /// `tablesText` options: `read --tables`'s `--track-changes`.
 #[derive(Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+#[cfg(feature = "markdown")]
 struct TablesTextOptions {
     track_changes: Option<String>,
 }
@@ -528,6 +530,7 @@ pub fn tables_text(docx: &[u8], options_json: Option<String>) -> Result<String, 
 /// `tablesView` options: `read --tables` with the view's options.
 #[derive(Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+#[cfg(feature = "markdown")]
 struct TablesViewOptions {
     track_changes: Option<String>,
     comments: Option<String>,
@@ -616,6 +619,7 @@ pub fn runtime_json_error(message: &str, exit: u8) -> String {
 /// `--track-changes` settles.
 #[derive(Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+#[cfg(feature = "markdown")]
 struct ReadJsonOptions {
     track_changes: Option<String>,
     paragraphs: Option<String>,
@@ -677,6 +681,7 @@ pub fn read_json(docx: &[u8], options_json: Option<String>) -> Result<String, Js
 /// `forEdit` options: `read --for-edit`'s flags.
 #[derive(Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+#[cfg(feature = "edit")]
 struct ForEditOptions {
     paragraphs: Option<String>,
     head: Option<usize>,
@@ -772,6 +777,7 @@ pub fn for_edit(docx: &[u8], options_json: Option<String>) -> Result<String, JsV
 /// Options of [`flagPlan`](flag_plan).
 #[derive(serde::Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
+#[cfg(feature = "edit")]
 struct FlagPlanOptions {
     author: Option<String>,
     date: Option<String>,
@@ -959,6 +965,7 @@ impl EditOutput {
     }
 }
 
+#[cfg(feature = "edit")]
 fn to_json(value: &impl serde::Serialize) -> Result<String, JsValue> {
     serde_json::to_string(value).map_err(js_err)
 }
@@ -1145,10 +1152,12 @@ impl From<ViewFormat> for jubarte::text_diff::TextFormat {
     }
 }
 
+#[cfg(feature = "edit")]
 fn default_context() -> u32 {
     3
 }
 
+#[cfg(feature = "edit")]
 fn deserialize_context<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
     <u32 as serde::Deserialize>::deserialize(deserializer).map_err(|e| {
         serde::de::Error::custom(format!(

@@ -95,6 +95,17 @@ jobs:
         env:
           RUSTFLAGS: -D warnings
         run: cargo clippy --all-features --target wasm32-unknown-unknown -- -D warnings
+      # The narrow npm builds (plan T5.2), with the features build-npm.sh
+      # gives them: a helper only a wider layer uses is dead code there.
+      # The slim build is not linted yet: the engine crates warn without
+      # `render` (#2450).
+      - name: clippy jubarte-wasm narrow builds (wasm32-unknown-unknown)
+        working-directory: jubarte-wasm
+        env:
+          RUSTFLAGS: -D warnings
+        run: |
+          cargo clippy --no-default-features --features redlines,console-panic --target wasm32-unknown-unknown -- -D warnings
+          cargo clippy --no-default-features --features pdf,console-panic --target wasm32-unknown-unknown -- -D warnings
       # The desktop app is its own repository (arthrod/jubarte-app): its CI
       # lints, tests and builds it against this engine.
 
