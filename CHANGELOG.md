@@ -17,8 +17,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
-- **The agent view keeps a no-break space.** U+00A0 was written as an ordinary space, and a line of only no-break spaces came back empty. The plain view still collapses it. A leading ASCII space is still `&#32;`.
-- **A row the table line names keeps that mark when the cell text names the same id** (#586, #2343). The cells keep their own insertions, and the row clause comes back.
+- **The agent view keeps a no-break space.** U+00A0 was written as an ordinary space, and a line of only no-break spaces came back empty. The plain view still collapses it. A leading ASCII space is still `&#32;`. At a bold or italic edge the no-break space stays outside `**` and `_`, which must touch text to read.
+- **A row the table line names keeps its clause when the cell text names the same id** (#586). The row's insertion carries the cells, the clause comes back on the table line, and the view stays a fixed point. Giving the cells insertions of their own (#2343) is not in this release: the view numbered them anew, which broke the round trip.
 
 ### Security
 
