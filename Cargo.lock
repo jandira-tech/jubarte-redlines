@@ -2069,9 +2069,9 @@ checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
 name = "oxml-opc"
-version = "0.14.4"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "465e6f513996c4ccb57aae977eba6dbe3d307d3463451021501e49ab0606eb8d"
+checksum = "74e434c521bd393b1f3d0b8f8b8b8e7a4ba276e403918b74704d27c629af7bd2"
 dependencies = [
  "quick-xml 0.41.0",
  "thiserror",
