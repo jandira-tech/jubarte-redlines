@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -326,3 +327,32 @@ def test_release_sh_runs_these_tests_and_names_the_tools():
     # import fitz, and uv's default interpreter may have no PyMuPDF wheel (#1799)
     assert "uv run --python 3.12 --script tools/parity/parity_check.py" in items
     assert "python3 tools/parity/parity_check.py" not in items
+
+
+def test_the_engine_clock_sees_a_commit_under_crates(tmp_path):
+    # After the workspace split the engine lives in crates/*/src; a commit
+    # there must move the STALE rule's clock, or parity artifacts built
+    # before it pass as fresh.
+    root = tmp_path / "engine"
+    git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+    (root / "src").mkdir(parents=True)
+    (root / "src/lib.rs").write_text("// x\n")
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run([*git, "add", "-A"], check=True)
+    env = {**os.environ, "GIT_COMMITTER_DATE": "2026-01-01T00:00:00Z", "GIT_AUTHOR_DATE": "2026-01-01T00:00:00Z"}
+    subprocess.run([*git, "commit", "-qm", "facade"], check=True, env=env)
+    before = pc.engine_src_commit_ts(root)["ts"]
+    (root / "crates/jubarte-redlines/src").mkdir(parents=True)
+    (root / "crates/jubarte-redlines/src/lib.rs").write_text("// compare\n")
+    subprocess.run([*git, "add", "-A"], check=True)
+    env = {**env, "GIT_COMMITTER_DATE": "2026-02-01T00:00:00Z", "GIT_AUTHOR_DATE": "2026-02-01T00:00:00Z"}
+    subprocess.run([*git, "commit", "-qm", "compare crate"], check=True, env=env)
+    assert pc.engine_src_commit_ts(root)["ts"] > before
+
+
+def test_the_engine_dir_help_names_every_input_of_the_clock():
+    r = subprocess.run([sys.executable, str(HERE / "parity_check.py"), "--help"],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    text = " ".join(r.stdout.split())
+    assert "src/, crates/, jubarte-python/src or jubarte-wasm/src" in text
