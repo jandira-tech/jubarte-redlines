@@ -52,7 +52,8 @@ export function escapeRegExp(text) {
  * @returns {string} the manifest with every workspace version moved */
 export function bumpCargoVersions(cargo, next) {
   const standalone = cargo.replace(
-    /^version = "\d+\.\d+\.\d+"$/m,
+    // A trailing comment may follow (Cargo.toml has one); it is kept.
+    /^version = "\d+\.\d+\.\d+"(?=[ \t]*(?:#.*)?$)/m,
     `version = "${next}"`,
   );
   return standalone.replace(
