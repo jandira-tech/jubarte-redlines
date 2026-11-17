@@ -1,27 +1,6 @@
 /* tslint:disable */
 /* eslint-disable */
 
-export function diffDocumentsUnified(old: Uint8Array, next: Uint8Array, oldName?: string, newName?: string, context?: number): string;
-
-
-
-/**
- * What [`updateFields`](update_fields) returns.
- */
-export class FieldsOutput {
-    private constructor();
-    free(): void;
-    [Symbol.dispose](): void;
-    /**
-     * The document with refreshed field results.
-     */
-    readonly docx: Uint8Array;
-    /**
-     * `{"page_count", "fields": [{"kind", "code", "paragraph", "old", "new"}]}`.
-     */
-    readonly json: string;
-}
-
 /**
  * What [`renderPdf`](render_pdf) returns.
  */

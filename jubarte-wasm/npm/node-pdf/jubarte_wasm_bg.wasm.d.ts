@@ -1,11 +1,8 @@
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
-export const __wbg_fieldsoutput_free: (a: number, b: number) => void;
 export const __wbg_renderoutput_free: (a: number, b: number) => void;
 export const docxToPdf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
-export const fieldsoutput_docx: (a: number, b: number) => void;
-export const fieldsoutput_json: (a: number, b: number) => void;
 export const initPanicHook: () => void;
 export const pdfPageCount: (a: number, b: number) => number;
 export const renderPdf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;

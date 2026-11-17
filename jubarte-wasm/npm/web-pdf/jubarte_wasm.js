@@ -1,60 +1,6 @@
 /* @ts-self-types="./jubarte_wasm.d.ts" */
 
 /**
- * What [`updateFields`](update_fields) returns.
- */
-export class FieldsOutput {
-    __destroy_into_raw() {
-        const ptr = this.__wbg_ptr;
-        this.__wbg_ptr = 0;
-        FieldsOutputFinalization.unregister(this);
-        return ptr;
-    }
-    free() {
-        const ptr = this.__destroy_into_raw();
-        wasm.__wbg_fieldsoutput_free(ptr, 0);
-    }
-    /**
-     * The document with refreshed field results.
-     * @returns {Uint8Array}
-     */
-    get docx() {
-        try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
-            wasm.fieldsoutput_docx(retptr, this.__wbg_ptr);
-            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
-            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-            var v1 = getArrayU8FromWasm0(r0, r1).slice();
-            wasm.__wbindgen_export(r0, r1 * 1, 1);
-            return v1;
-        } finally {
-            wasm.__wbindgen_add_to_stack_pointer(16);
-        }
-    }
-    /**
-     * `{"page_count", "fields": [{"kind", "code", "paragraph", "old", "new"}]}`.
-     * @returns {string}
-     */
-    get json() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
-            wasm.fieldsoutput_json(retptr, this.__wbg_ptr);
-            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
-            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-            deferred1_0 = r0;
-            deferred1_1 = r1;
-            return getStringFromWasm0(r0, r1);
-        } finally {
-            wasm.__wbindgen_add_to_stack_pointer(16);
-            wasm.__wbindgen_export(deferred1_0, deferred1_1, 1);
-        }
-    }
-}
-if (Symbol.dispose) FieldsOutput.prototype[Symbol.dispose] = FieldsOutput.prototype.free;
-
-/**
  * What [`renderPdf`](render_pdf) returns.
  */
 export class RenderOutput {
@@ -316,9 +262,6 @@ function __wbg_get_imports() {
     };
 }
 
-const FieldsOutputFinalization = (typeof FinalizationRegistry === 'undefined')
-    ? { register: () => {}, unregister: () => {} }
-    : new FinalizationRegistry(ptr => wasm.__wbg_fieldsoutput_free(ptr, 1));
 const RenderOutputFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_renderoutput_free(ptr, 1));

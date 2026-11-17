@@ -1,27 +1,6 @@
 /* tslint:disable */
 /* eslint-disable */
 
-export function diffDocumentsUnified(old: Uint8Array, next: Uint8Array, oldName?: string, newName?: string, context?: number): string;
-
-
-
-/**
- * What [`updateFields`](update_fields) returns.
- */
-export class FieldsOutput {
-    private constructor();
-    free(): void;
-    [Symbol.dispose](): void;
-    /**
-     * The document with refreshed field results.
-     */
-    readonly docx: Uint8Array;
-    /**
-     * `{"page_count", "fields": [{"kind", "code", "paragraph", "old", "new"}]}`.
-     */
-    readonly json: string;
-}
-
 /**
  * What [`renderPdf`](render_pdf) returns.
  */
@@ -88,11 +67,8 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
-    readonly __wbg_fieldsoutput_free: (a: number, b: number) => void;
     readonly __wbg_renderoutput_free: (a: number, b: number) => void;
     readonly docxToPdf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
-    readonly fieldsoutput_docx: (a: number, b: number) => void;
-    readonly fieldsoutput_json: (a: number, b: number) => void;
     readonly initPanicHook: () => void;
     readonly pdfPageCount: (a: number, b: number) => number;
     readonly renderPdf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;

@@ -1,10 +1,6 @@
 /* tslint:disable */
 /* eslint-disable */
 
-export function diffDocumentsUnified(old: Uint8Array, next: Uint8Array, oldName?: string, newName?: string, context?: number): string;
-
-
-
 /**
  * Accept every tracked revision (package-wide) → clean DOCX bytes.
  *

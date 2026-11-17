@@ -226,11 +226,11 @@ for (const target of ["web", "web-slim"]) {
 // Every function and class a build's typings declare is exported by its
 // JavaScript: a declaration without a wrapper type-checks, then throws.
 for (const target of ["node", "node-slim", "node-redlines", "node-pdf", "web", "web-slim", "web-redlines", "web-pdf"]) {
+  const url = new URL(`./npm/${target}/jubarte_wasm.js`, import.meta.url);
   const dts = readFileSync(new URL(`./npm/${target}/jubarte_wasm.d.ts`, import.meta.url), "utf8");
-  const js = readFileSync(new URL(`./npm/${target}/jubarte_wasm.js`, import.meta.url), "utf8");
+  const mod = target.startsWith("web") ? await import(url.href) : require(url.pathname);
   for (const [, kind, name] of dts.matchAll(/^export (function|class) (\w+)/gm)) {
-    const exported = new RegExp(`(export (function|class) ${name}\\b|exports\\.${name}\\b|\\b${name} as ${name}\\b)`).test(js);
-    assert.ok(exported, `npm/${target}: the typings declare ${kind} ${name}, the JavaScript does not export it`);
+    assert.equal(typeof mod[name], "function", `npm/${target}: the typings declare ${kind} ${name}, the JavaScript does not export it`);
   }
 }
 console.log("npm-smoke: all checks passed (Node full/slim/redlines/pdf + browser ESM full/slim/redlines/pdf + subpaths under CJS and ESM)");
