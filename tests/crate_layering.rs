@@ -153,25 +153,59 @@ fn is_ident(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
-/// Up to two leading `ident` segments of `text` (`a::b::c` gives `a`, `b`).
-fn leading_segments(text: &str) -> Vec<&str> {
-    let mut segments = Vec::new();
-    let mut rest = text;
-    while segments.len() < 2 {
+/// The top-level items of a `{…}` group whose opening brace is already
+/// consumed, up to its closing brace.
+fn group_items(group: &str) -> Vec<&str> {
+    let mut items = Vec::new();
+    let mut depth = 1usize;
+    let mut item_start = 0;
+    for (index, byte) in group.bytes().enumerate() {
+        match byte {
+            b'{' => depth += 1,
+            b'}' | b',' if depth == 1 => {
+                items.push(&group[item_start..index]);
+                item_start = index + 1;
+                if byte == b'}' {
+                    break;
+                }
+            }
+            b'}' => depth -= 1,
+            _ => {}
+        }
+    }
+    items
+}
+
+/// Up to two leading segments of every path in the use tree `tree`, after
+/// `prefix`: `a::b::c` gives `a`, `b`; `a::{b, c::d}` gives `a`, `b` and
+/// `a`, `c`, however deep the group sits. `self` names the prefix itself.
+fn expand_tree<'a>(tree: &'a str, mut prefix: Vec<&'a str>, out: &mut Vec<Vec<&'a str>>) {
+    let mut rest = tree.trim_start();
+    while prefix.len() < 2 {
+        if let Some(group) = rest.strip_prefix('{') {
+            for item in group_items(group) {
+                expand_tree(item, prefix.clone(), out);
+            }
+            return;
+        }
         let end = rest.bytes().take_while(|byte| is_ident(*byte)).count();
         if end == 0 {
             break;
         }
-        segments.push(&rest[..end]);
+        if &rest[..end] != "self" {
+            prefix.push(&rest[..end]);
+        }
         match rest[end..].strip_prefix("::") {
-            Some(next) => rest = next,
+            Some(next) => rest = next.trim_start(),
             None => break,
         }
     }
-    segments
+    if !prefix.is_empty() {
+        out.push(prefix);
+    }
 }
 
-/// Every path named after `crate::`, expanding `crate::{a, b::c}` groups.
+/// Every path named after `crate::`, expanding `{…}` groups at any depth.
 fn crate_paths(text: &str) -> Vec<Vec<&str>> {
     let mut paths = Vec::new();
     let mut from = 0;
@@ -181,34 +215,7 @@ fn crate_paths(text: &str) -> Vec<Vec<&str>> {
         if start > 0 && is_ident(text.as_bytes()[start - 1]) {
             continue;
         }
-        let rest = &text[from..];
-        if let Some(group) = rest.strip_prefix('{') {
-            let mut depth = 1usize;
-            let mut item_start = 0;
-            for (index, byte) in group.bytes().enumerate() {
-                match byte {
-                    b'{' => depth += 1,
-                    b'}' | b',' if depth == 1 => {
-                        let item = group[item_start..index].trim();
-                        let segments = leading_segments(item);
-                        if !segments.is_empty() {
-                            paths.push(segments);
-                        }
-                        item_start = index + 1;
-                        if byte == b'}' {
-                            break;
-                        }
-                    }
-                    b'}' => depth -= 1,
-                    _ => {}
-                }
-            }
-        } else {
-            let segments = leading_segments(rest);
-            if !segments.is_empty() {
-                paths.push(segments);
-            }
-        }
+        expand_tree(&text[from..], Vec::new(), &mut paths);
     }
     paths
 }
@@ -279,7 +286,41 @@ fn crate_paths_expand_groups_and_skip_longer_idents() {
     let paths = crate_paths(text);
     assert_eq!(
         paths,
-        vec![vec!["a", "b"], vec!["d"], vec!["e"], vec!["h", "i"],]
+        vec![
+            vec!["a", "b"],
+            vec!["d"],
+            vec!["e", "f"],
+            vec!["e", "g"],
+            vec!["h", "i"],
+        ]
+    );
+}
+
+#[test]
+fn crate_paths_expand_nested_groups_past_the_first_segment() {
+    // An override such as markdown::redline must be seen in grouped form,
+    // or an upward path written as a group slips past the guard.
+    let text = "use crate::markdown::{redline, patch};\n\
+                use crate::{edit::{inline as i, self}, ids};";
+    assert_eq!(
+        crate_paths(text),
+        vec![
+            vec!["markdown", "redline"],
+            vec!["markdown", "patch"],
+            vec!["edit", "inline"],
+            vec!["edit"],
+            vec!["ids"],
+        ]
+    );
+}
+
+#[test]
+fn a_grouped_override_resolves_like_the_plain_path() {
+    let grouped = crate_paths("use crate::{markdown::{redline as edits}};");
+    let plain = crate_paths("use crate::markdown::redline;");
+    assert_eq!(
+        grouped.iter().map(|s| layer_of(s)).collect::<Vec<_>>(),
+        plain.iter().map(|s| layer_of(s)).collect::<Vec<_>>(),
     );
 }
 
