@@ -24,7 +24,9 @@ class OracleDependency(unittest.TestCase):
             manifest["patch"]["crates-io"]["ooxmlsdk"],
             {"git": FORK, "rev": REV},
         )
-        self.assertEqual(manifest["dev-dependencies"]["ooxmlsdk"]["version"], "0.13.2")
+        # The root dev-dependency inherits the workspace's requirement.
+        self.assertEqual(manifest["dev-dependencies"]["ooxmlsdk"], {"workspace": True})
+        self.assertEqual(manifest["workspace"]["dependencies"]["ooxmlsdk"]["version"], "0.13.2")
 
     def test_oracle_and_derive_resolve_from_same_revision(self) -> None:
         lock = tomllib.loads((ROOT / "Cargo.lock").read_text())

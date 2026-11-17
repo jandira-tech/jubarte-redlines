@@ -107,7 +107,8 @@ class ResumeDryRuns(unittest.TestCase):
 
     def test_cargo_dry_run_skips_a_published_version(self) -> None:
         self.assertRegex(
-            self.step7(), r"if crates_has; then[^\n]*\n(?:[^\n]*\n)*?else\n[^\n]*cargo publish --dry-run"
+            self.step7(),
+            r"if crates_has; then[^\n]*\n(?:[^\n]*\n)*?else\n(?:\s*#[^\n]*\n)*[^\n]*scripts/publish_crates\.sh \"\$VER\" --dry-run",
         )
 
 
@@ -162,15 +163,45 @@ class RegistryProbes(unittest.TestCase):
     curl probe calls every published version missing."""
 
     def test_crates_probe_sends_a_user_agent(self) -> None:
-        line = next(
-            l for l in RELEASE_SH.read_text().splitlines() if l.startswith("crates_has()")
-        )
-        self.assertRegex(line, r"curl [^|]*(-A|--user-agent) ")
+        # crates_has asks publish_crates.sh, whose probe names itself.
+        script = (RELEASE_SH.parent / "publish_crates.sh").read_text()
+        self.assertRegex(script, r"curl (?:[^|\n]|\\\n)*(-A|--user-agent) ")
+
+    def test_crates_has_needs_every_crate_of_the_release(self) -> None:
+        # The facade live while a crate it pins is missing is not a release:
+        # a skip on jubarte alone left the rest unpublished.
+        text = RELEASE_SH.read_text()
+        line = next(l for l in text.splitlines() if l.startswith("crates_has()"))
+        self.assertIn('scripts/publish_crates.sh "$VER" --pending', line)
+        self.assertIn("pending=0", line)
+        self.assertNotIn("crates.io/api/v1/crates/jubarte/", text)
 
     def test_publish_purges_finder_litter_first(self) -> None:
         text = RELEASE_SH.read_text()
         step9 = text[text.index('say "9. crates.io"'):text.index('say "10.')]
-        self.assertIn(".DS_Store", step9.split("cargo publish")[0])
+        self.assertIn(".DS_Store", step9.split("publish_crates.sh")[0])
+
+    def test_a_local_publish_ships_all_nine_crates_through_the_resuming_script(self) -> None:
+        # Plan T6.2: release.sh --local-publish and release.yml share one
+        # per-crate publisher, which skips each crate crates.io holds.
+        text = RELEASE_SH.read_text()
+        step9 = text[text.index('say "9. crates.io"'):text.index('say "10.')]
+        self.assertIn('scripts/publish_crates.sh "$VER"', step9)
+        self.assertNotIn("cargo publish --locked", step9)
+        # The summary is checked in the facade's package, which carries it.
+        self.assertIn("target/package/jubarte-$VER.crate", step9)
+        self.assertNotIn("jubarte-redlines-$VER.crate", step9)
+        self.assertLess(step9.index("CRATES_SUMMARY"), step9.index("publish_crates.sh"))
+
+    def test_the_checklist_names_every_new_crate_for_its_first_release(self) -> None:
+        # crates.io takes a trusted publisher only for a crate that exists:
+        # the eight new crates' first release is published with a token.
+        lines = [l for l in RELEASE_SH.read_text().splitlines() if "Trusted" in l]
+        item = next((l for l in lines if "first release" in l), "")
+        for name in ("jubarte-dom", "jubarte-opc", "jubarte-render", "jubarte-doc",
+                     "jubarte-markdown", "jubarte-edit", "jubarte-cli", "crates.io jubarte,"):
+            self.assertIn(name, item)
+        self.assertIn("--local-publish", item)
 
 
 def step(n: int) -> str:
@@ -978,7 +1009,7 @@ class LeftOutTargets(unittest.TestCase):
         self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""))
 
     def test_the_dry_run_goes_through_it(self) -> None:
-        self.assertIn("packaged cargo publish --dry-run --locked --allow-dirty", step(7))
+        self.assertIn('packaged scripts/publish_crates.sh "$VER" --dry-run', step(7))
 
 
 def shell_functions(*names: str) -> str:
@@ -1580,7 +1611,7 @@ class CiPublishing(unittest.TestCase):
                 self.assertIn(f"name: {job}\n", workflow, job)
 
     def test_the_token_publishes_run_only_with_local_publish(self) -> None:
-        for n, cmd in ((9, "cargo publish --locked"), (10, "npm publish"),
+        for n, cmd in ((9, 'scripts/publish_crates.sh "$VER"'), (10, "npm publish"),
                        (11, "uv publish --token")):
             s = step(n)
             self.assertLess(s.index('"$LOCAL_PUBLISH" = 1'), s.index(cmd), n)
@@ -1716,12 +1747,13 @@ class BumpGate(unittest.TestCase):
         (self.tmp / "scripts").mkdir(exist_ok=True)
         shutil.copy(HERE / "api_snapshot.py", self.tmp / "scripts" / "api_snapshot.py")
         functions = shell_functions(
-            "bump_kind", "changelog_section", "bump_gate", "patch_public_additions",
+            "bump_kind", "changelog_section", "bump_gate", "patch_public_additions", "package_name",
         )
         script = (
             f"set -euo pipefail\n{prelude}VER={ver}; TAG=v{ver}\n"
             'step() { echo "  - $*"; }\ndie() { echo "ERROR: $*" >&2; exit 1; }\n'
             'semver_lints_ok() { return "${LINTS:-0}"; }\n'
+            'semver_crates() { printf "%s\\n" ${SEMVER_CRATES:-jubarte}; }\n'
             f"{functions}\nbump_gate v{prev}\n"
         )
         full = dict(os.environ, PATH=f"{self.tmp / 'bin'}:{os.environ['PATH']}",
@@ -1767,6 +1799,40 @@ class BumpGate(unittest.TestCase):
         self.assertIn("--baseline-rev v0.13.0", calls)
         self.assertIn("--release-type patch", calls)
         self.assertIn("--default-features", calls)
+
+    def test_a_patch_checks_every_crate_the_previous_release_has(self) -> None:
+        # Each crate is published on its own, so a break in one a user
+        # depends on directly is a break the facade's check cannot see.
+        r = self.gate("0.13.1", "0.13.0", "### Fixed\n\n- a fix\n",
+                      SEMVER_CRATES="jubarte jubarte-dom jubarte-opc")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        calls = self.cargo_calls()
+        for crate in ("jubarte", "jubarte-dom", "jubarte-opc"):
+            self.assertIn(f"check-release -p {crate} --baseline-rev v0.13.0", calls)
+
+    def test_semver_crates_names_only_crates_the_tag_holds(self) -> None:
+        repo = self.tmp / "repo"
+        git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+               "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"]
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        (repo / "Cargo.toml").write_text('[package]\nname = "jubarte-redlines"\n\n[lib]\nname = "jubarte"\n')
+        (repo / "crates/jubarte-dom").mkdir(parents=True)
+        (repo / "crates/jubarte-dom/Cargo.toml").write_text('[package]\nname = "jubarte-dom"\n')
+        subprocess.run([*git, "add", "-A"], check=True)
+        subprocess.run([*git, "commit", "-qm", "old"], check=True)
+        subprocess.run([*git, "tag", "v0.1.0"], check=True)
+        # Since the tag: the root package took the facade's name, and a
+        # new crate arrived. Neither has a baseline.
+        (repo / "Cargo.toml").write_text('[package]\nname = "jubarte"\n')
+        (repo / "crates/jubarte-opc").mkdir()
+        (repo / "crates/jubarte-opc/Cargo.toml").write_text('[package]\nname = "jubarte-opc"\n')
+        subprocess.run([*git, "add", "-A"], check=True)
+        subprocess.run([*git, "commit", "-qm", "new"], check=True)
+        functions = shell_functions("package_name", "semver_crates")
+        self.assertIn("semver_crates()", functions)
+        r = subprocess.run(["bash", "-c", f"set -euo pipefail\n{functions}\nsemver_crates v0.1.0"],
+                           cwd=repo, capture_output=True, text=True, timeout=30)
+        self.assertEqual((r.returncode, r.stdout.split()), (0, ["jubarte-dom"]), r.stderr)
 
     def test_a_lint_table_that_skips_a_lint_stops_the_patch_first(self) -> None:
         r = self.gate("0.13.1", "0.13.0", "### Fixed\n\n- a fix\n", LINTS="1")

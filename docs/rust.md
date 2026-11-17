@@ -32,15 +32,17 @@ For example, `nested in t0.row2.cell0`; a further level uses
 
 ## Install
 
-The published crate is [`jubarte-redlines`](https://crates.io/crates/jubarte-redlines);
-the library import path is `jubarte`:
+The published crate is [`jubarte`](https://crates.io/crates/jubarte), and
+the library import path is `jubarte`. Since 0.19.0 it re-exports the
+workspace's crates, which can also be used alone; `jubarte-redlines` is now
+the comparison crate only:
 
 ```sh
-cargo add jubarte-redlines --no-default-features   # library only
-cargo install jubarte-redlines                      # CLI (binary: jubarte)
+cargo add jubarte --no-default-features            # library only
+cargo install jubarte                               # CLI (binary: jubarte)
 ```
 
-API reference: [docs.rs/jubarte-redlines](https://docs.rs/jubarte-redlines)
+API reference: [docs.rs/jubarte](https://docs.rs/jubarte)
 (built with `--all-features`). Per-release flattened API snapshots live in
 [docs/api/](api/).
 

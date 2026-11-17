@@ -288,7 +288,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
       # Blacksmith runners cannot reach the self-hosted mbx cache server.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo publish --dry-run
+      # Every crate packaged and verified from its tarball (plan T6.1), in a
+      # fresh target directory so no earlier unpacked crate is reused.
+      - name: publish dry run (all nine crates)
+        run: |
+          ver=$(cargo metadata --no-deps --format-version 1 \
+            | python3 -c 'import json, sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "jubarte"))')
+          scripts/publish_crates.sh "$ver" --dry-run
 
   python:
     name: python bindings
@@ -328,6 +334,7 @@ jobs:
         run: python3 -c 'import sys; assert sys.version_info[:2] == (3, 12), sys.version; print(sys.version)'
       - run: python3 scripts/test_convert_sweep.py
       - run: python3 scripts/test_release_sh.py
+      - run: python3 scripts/test_publish_crates.py
       - run: python3 scripts/test_glibc_floor.py
       - run: python3 scripts/test_gen_docs.py
       - run: uv run --with pyyaml python3 scripts/test_release_workflow.py
