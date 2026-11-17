@@ -64,7 +64,7 @@ and outstanding maintainer attestations.
 Install the CLI:
 
 ```sh
-cargo install jubarte-redlines
+cargo install jubarte
 jubarte --version
 ```
 
@@ -174,7 +174,7 @@ Topical documents: [Markdown pipeline](docs/MARKDOWN.md) ·
 ### CLI
 
 ```sh
-cargo install jubarte-redlines
+cargo install jubarte
 ```
 
 The installed binary is named `jubarte`.
@@ -240,11 +240,13 @@ On Windows, see `scripts/install.ps1`.
 ### Rust library
 
 ```sh
-cargo add jubarte-redlines --no-default-features
+cargo add jubarte --no-default-features
 ```
 
-The package is called `jubarte-redlines`; the Rust library import path is
-`jubarte`.
+The crate is `jubarte`, the import path `jubarte`. It re-exports the
+workspace crates (`jubarte-dom`, `jubarte-opc`, `jubarte-redlines` for
+comparison, `jubarte-render`, `jubarte-doc`, `jubarte-markdown`,
+`jubarte-edit`), which can also be depended on alone.
 
 ```rust
 use jubarte::{convert, document_comparer};

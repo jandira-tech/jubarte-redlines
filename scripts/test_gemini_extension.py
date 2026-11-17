@@ -13,7 +13,7 @@ The manifest keys follow the Gemini CLI extension reference
 from __future__ import annotations
 
 import json
-import re
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -22,9 +22,9 @@ MANIFEST = ROOT / "gemini-extension.json"
 
 
 def cargo_version() -> str:
-    m = re.search(r'^version = "(\d+\.\d+\.\d+)"$', (ROOT / "Cargo.toml").read_text(), re.M)
-    assert m, "Cargo.toml has no [package] version"
-    return m.group(1)
+    # The workspace's version since the split (the root package inherits it).
+    manifest = tomllib.loads((ROOT / "Cargo.toml").read_text())
+    return manifest["workspace"]["package"]["version"]
 
 
 class GeminiExtension(unittest.TestCase):

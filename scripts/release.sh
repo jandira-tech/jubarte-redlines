@@ -177,7 +177,7 @@ before|you|API snapshot: docs/api holds the previous release's rustdoc snapshot,
 before|you|hand-run Python proofs pin the interpreter to --python 3.12: uv's default on the release machine may be a free-threaded build (0.14.0: 3.15t) that no abi3 wheel serves, and an unpinned pip proof then builds the sdist and passes on nothing PyPI serves (0.13.0's PyPI PASS)|uv python find; uv run -q --isolated --no-project --python 3.12 --no-build-package jubarte-redlines --with jubarte-redlines==@V@ python -c 'import jubarte_redlines as j; print(j.capabilities()["engine_version"])'
 before|you|the app's scripts are bash (release-engine.sh, build-release-app.sh, notarize-direct.sh, publish-mac-app-store.sh): run each by its path or with bash, never sh or zsh — the release machine's shell is zsh, which does not word-split a variable and indexes arrays from 1|for f in release-engine.sh build-release-app.sh notarize-direct.sh publish-mac-app-store.sh; do bash -n jubarte-app/scripts/$f; done
 7|auto|keywords: the crate's keywords and categories are inside crates.io's limits (at most 5 each, keywords ASCII, a letter first, at most 20 characters) — one more fails the publish after the point of no return|scripts/release.sh step 7 (crate_keywords_ok)
-0|auto|The bump kind docs/VERSIONING.md asks for, proven before step 1 writes anything: pre-1.0 a patch carries no new feature (a ### Added heading), no public API change cargo-semver-checks finds against the previous release's tag (0.10.1 shipped four breaking fields as a patch), and no public item path the previous release's listing does not have (cargo-semver-checks 0.51.0 has no lint for a new free function, trait, module, macro or type alias; the baseline is always a listing built from the previous tag in a throwaway worktree of the tag with this checkout's script, and a committed docs/api file is not that baseline); a minor or major may|cargo semver-checks check-release -p jubarte --baseline-rev <previous tag> --release-type patch --default-features; scripts/api_snapshot.py --added <listing from the worktree of the tag> <HEAD listing>
+0|auto|The bump kind docs/VERSIONING.md asks for, proven before step 1 writes anything: pre-1.0 a patch carries no new feature (a ### Added heading), no public API change cargo-semver-checks finds against the previous release's tag (0.10.1 shipped four breaking fields as a patch), and no public item path the previous release's listing does not have (cargo-semver-checks 0.51.0 has no lint for a new free function, trait, module, macro or type alias; the baseline is always a listing built from the previous tag in a throwaway worktree of the tag with this checkout's script, and a committed docs/api file is not that baseline); a minor or major may|cargo semver-checks check-release -p <each crate the previous tag holds> --baseline-rev <previous tag> --release-type patch --default-features; scripts/api_snapshot.py --added <listing from the worktree of the tag> <HEAD listing>
 2|auto|The engine CHANGELOG section is complete: release.yml cuts it verbatim into the GitHub release notes, so it cites every fix/feat/perf/security PR merged since the previous release (by its number, an issue it closes, or a <!-- changelog-skip: #N --> line) and holds no TODO, TBD, FIXME or XXX|scripts/release.sh step 2 (unlisted_prs, changelog_placeholders)
 before|you|The six one-line notes are drafted before the run — the changelog, crates, npm, pypi and github summaries and the docs statement are mandatory flags; the github note leads the release notes from the tag body, the other four are grepped back out of their registries at verify|scripts/release.sh --help (the five --*-summary flags and --how-readme-and-other-docs-were-updated)
 before|you|CHANGELOG: engine section dated with the ASCII heading, link footer present; the app repository's own CHANGELOG carries its ## [@V@] section naming jubarte-redlines @V@ on its main (step 0 checks it)|grep -n '^## \[@V@\]' CHANGELOG.md jubarte-app/CHANGELOG.md (both sections are written by hand; step 3 holds their measured sentence to the results)
@@ -188,6 +188,7 @@ before|you|app lock: jubarte-app/src-tauri/Cargo.lock records jubarte-redlines @
 before|you|the app's checkout is in place: a clone of arthrod/jubarte-app at jubarte-app/ (this repository does not track it) or named by JUBARTE_APP_DIR, on main, in sync with its origin, clean, able to build the site (node_modules, public/fixtures) — step 13 deploys jubarte.pro from it|jubarte-app/scripts/release-engine.sh @V@ --engine-dir "$PWD" --preflight
 before|you|the App Store path is ready for the after-builds: the asc credentials exist (~/.appstoreconnect), the app's provisioning profiles are present and out of every commit (gitignored; if one ever reached a repository's history, accept it knowingly or rotate it), and App Store Connect holds no @V@ version record already used — Apple refuses a re-used number|ls jubarte-app/src-tauri/*.provisionprofile; (cd jubarte-app && ./scripts/asc-build-status.sh)
 before|you|Trusted publishers (#1642): crates.io jubarte-redlines, PyPI jubarte-redlines, npm jubarte-wasm and npm jubarte-redlines each trust owner jandira-tech, repository jubarte-redlines, workflow release.yml, environment release — release.yml publishes with no token. npm: each configuration must allow npm publish (one made after 2026-09-03 allows only npm stage publish unless that box is ticked, and a plain publish then fails E404), and a new configuration expires unless its first publish lands within two days — 0.13.0 never reached npm for this|npm trust list jubarte-wasm; npm trust list jubarte-redlines (both after npm login); npm trust github <package> --file release.yml --repo jandira-tech/jubarte-redlines --env release --allow-publish -y
+before|you|Trusted publishers for the split's first release: crates.io registers a trusted publisher only on a crate that exists, so the first release of each new crate — crates.io jubarte, jubarte-dom, jubarte-opc, jubarte-render, jubarte-doc, jubarte-markdown, jubarte-edit and jubarte-cli — is published from here with a token (--local-publish; scripts/publish_crates.sh resumes past what is live). Then register owner jandira-tech, repository jubarte-redlines, workflow release.yml, environment release on each of the eight before the next release|scripts/release.sh @V@ <summaries> --local-publish; https://crates.io/crates/<crate>/settings (Trusted Publishing) for each of the eight
 before|you|Only with --local-publish: UV_PUBLISH_TOKEN is exported before the run (name only, never print it), crates.io and npm are logged in, and the owner is at the keyboard for npm's browser approval (2FA) — step 0 checks them only then|set -a; source <owner .env>; set +a; test -n "$UV_PUBLISH_TOKEN"; npm whoami
 before|you|Ring-2 validity ratchet: no NEW OpenXML validator keys vs tools/validity_baseline.tsv and no baselined stems not run; stage the legacy sources from corpus/word/pools/word_based_pairs.csv and verify renamed aliases via corpus/word/notices/RENAMED.csv (NEUROTIC_DOCX_BENCH, default ../neurotic_docx_bench); missing originals require recovery or maintainer-authorized re-blessing; an output the validator cannot even open needs a Word probe before it ships|python3 scripts/stage_ring2_sources.py .scratch/ring2_sources && scripts/redline-sweep.sh tests/corpus/neurotic_docx_bench/corpus/word_based/centralized_mapping.csv .scratch/ring2_sources .scratch/ring2_sweep --validate (the 207-pair mapping the baseline is keyed on; restore dangling bench links with uv run bench fixtures download from the bench root, then rerun staging; then the --probe sweep for refusals)
 before|you|Ring-3 Word open probe, the macOS release gate before any crates.io publish: every redline the release ships opens in real Word — probe_fail=0; paths never under /tmp, stage them under .scratch/. A failure that Word's own redline of the pair shares (probe.log says which) is still a failure: only the owner waives it, and the summaries disclose it|NEUROTIC_DOCX_BENCH=../neurotic_docx_bench JUBARTE_BIN=<release binary> scripts/redline-sweep.sh release_info/sample_redline_@V@_*.csv ../neurotic_docx_bench .scratch/sweep_<date> --probe (Word only through the bench's word_pdf.py under its word_watchdog.sh, one Word job machine-wide; each failure is opened again alone, then Word's own redline of that pair; sweep.log names the binary; no pair generated is a failure)
@@ -378,8 +379,9 @@ crate_ver() { grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2; }
 
 # --- registry liveness probes (idempotent resume) -----------------------------
 # crates.io answers 403 to a request without a User-Agent.
-crates_has()  { curl -sf -A "jubarte-release (github.com/jandira-tech/jubarte-redlines)" \
-                  "https://crates.io/api/v1/crates/jubarte/$VER" >/dev/null; }
+# All nine crates of the split (plan T6.2): the facade live while a crate
+# it pins is missing is not a published release.
+crates_has()  { scripts/publish_crates.sh "$VER" --pending 2>/dev/null | tail -1 | grep -qx 'pending=0'; }
 # The project listing, not /pypi/<name>/<version>/json: PyPI's CDN keeps a
 # 404 for that URL once anything asked before the upload (the v0.11.0 verify
 # failed on a live release), while the listing is purged on upload.
@@ -578,11 +580,32 @@ bump_gate() {
   fi
   semver_lints_ok \
     || die "the cargo-semver-checks lint audit failed (above): a lint left below deny, or set below it by Cargo.toml's [package.metadata.cargo-semver-checks.lints], lets a patch pass it — deny each; no lint definitions found means the installed tool's sources are missing (scripts/semver_lints.py)"
-  cargo semver-checks check-release -p jubarte --baseline-rev "v$prev" \
-      --release-type patch --default-features \
-    || die "cargo-semver-checks finds public API changes a patch cannot carry (above; docs/VERSIONING.md) — release $minor instead, or take the changes out"
+  # Every crate is published on its own, so each is checked: a break in
+  # one a user depends on directly may not reach the facade's API.
+  local crates crate
+  crates=$(semver_crates "v$prev") || die "cannot read the crates of v$prev"
+  [ -n "$crates" ] || die "no crate of $VER is in v$prev to compare with: a patch needs that baseline (docs/VERSIONING.md)"
+  for crate in $crates; do
+    cargo semver-checks check-release -p "$crate" --baseline-rev "v$prev" \
+        --release-type patch --default-features \
+      || die "cargo-semver-checks finds public API changes in $crate a patch cannot carry (above; docs/VERSIONING.md) — release $minor instead, or take the changes out"
+  done
   patch_public_additions "$prev" "$minor"
-  step "$prev -> $VER is a patch: no ### Added, cargo-semver-checks finds no API change, and no public item path was added"
+  step "$prev -> $VER is a patch: no ### Added, cargo-semver-checks finds no API change in $(echo "$crates" | wc -w | tr -d ' ') crates, and no public item path was added"
+}
+# The workspace's packages that tag $1 also holds, by name at the same
+# manifest path: a crate new since the tag, or one renamed (the root was
+# jubarte-redlines before the split), has no baseline to compare with.
+package_name() { sed -n '/^\[package\]/,/^\[/s/^name = "\([^"]*\)".*/\1/p' | head -1; }
+semver_crates() {
+  local manifest name
+  for manifest in Cargo.toml crates/*/Cargo.toml; do
+    [ -f "$manifest" ] || continue
+    name=$(package_name < "$manifest")
+    [ -n "$name" ] || continue
+    [ "$(git show "$1:$manifest" 2>/dev/null | package_name)" = "$name" ] && echo "$name"
+  done
+  return 0
 }
 # The placeholder words left in the CHANGELOG section, with their line
 # numbers (whole words: TODOS is no placeholder).
@@ -1348,9 +1371,10 @@ crate_keywords_ok || die "Cargo.toml's keywords or categories break crates.io's 
 # A resumed run skips the dry run of a registry that already holds $VER:
 # npm refuses even a dry run over a published version.
 if crates_has; then
-  step "jubarte-redlines $VER already on crates.io — dry run skipped"
+  step "all nine crates $VER already on crates.io — dry run skipped"
 else
-  packaged cargo publish --dry-run --locked --allow-dirty
+  # All nine crates, each verified from its tarball (plan T6.2).
+  packaged scripts/publish_crates.sh "$VER" --dry-run
 fi
 if npm_has; then
   step "jubarte-wasm $VER already on npm — dry run skipped"
@@ -1509,7 +1533,7 @@ check_now 8
 say "POINT OF NO RETURN"
 cat <<EOF
   About to push main + $TAG and publish:
-    crates.io  jubarte-redlines $VER
+    crates.io  jubarte $VER and its eight crates
     npm        jubarte-wasm $VER
     PyPI       jubarte-redlines $VER
     GitHub     release $TAG (release.yml builds binaries + wheels)
@@ -1539,19 +1563,21 @@ say "9. crates.io"
 # =============================================================================
 
 if crates_has; then
-  step "jubarte-redlines $VER already on crates.io — skipped"
+  step "all nine crates $VER already on crates.io — skipped"
 elif [ "$LOCAL_PUBLISH" = 1 ]; then
   # Finder litter under an include glob is "uncommitted" to cargo and stops
   # the publish (gitignored, so the clean-tree preflight never sees it).
   find . -name .DS_Store -not -path './target/*' -not -path './.worktrees/*' -delete
   # Prove the summary survived cargo's manifest normalization before shipping.
-  cargo package --locked --no-verify >/dev/null
-  tar -xzOf "target/package/jubarte-redlines-$VER.crate" \
-    "jubarte-redlines-$VER/Cargo.toml" \
+  cargo package --workspace --locked --no-verify >/dev/null
+  tar -xzOf "target/package/jubarte-$VER.crate" \
+    "jubarte-$VER/Cargo.toml" \
     | grep -F "\"$VER\" = \"$CRATES_SUMMARY\"" >/dev/null \
     || die "crates summary missing from the packaged manifest — not publishing"
-  cargo publish --locked
-  step "cargo publish done (index lags ~1 min)"
+  # Nine crates in dependency order; each one crates.io already holds is
+  # skipped, so a rerun resumes a publish that stopped part way (T6.2).
+  scripts/publish_crates.sh "$VER"
+  step "cargo publish done for every crate (index lags ~1 min)"
 else
   ci_published "crates.io" "publish crates.io" crates_has
 fi
@@ -1826,13 +1852,13 @@ npm_requires() {
 }
 # docs.rs builds after crates.io and lags, so step 12 only warns on it.
 docsrs_built() {
-  curl -fsS "https://docs.rs/crate/jubarte-redlines/$VER/status.json" 2>/dev/null \
+  curl -fsS "https://docs.rs/crate/jubarte/$VER/status.json" 2>/dev/null \
     | grep '"doc_status":true' >/dev/null
 }
 
 ok=1
 check() { if eval "$2"; then step "ok — $1"; else echo "  ✗ $1" >&2; ok=0; fi; }
-check "crates.io  jubarte-redlines $VER" "eventually crates_has"
+check "crates.io  all nine crates $VER" "eventually crates_has"
 check "npm        jubarte-wasm $VER" "eventually npm_has"
 check "npm        jubarte-redlines $VER" "eventually npm_cli_has"
 check "npm        releaseNotes.$VER shipped" npm_note
@@ -1844,9 +1870,9 @@ check "PyPI       pip install jubarte-redlines==$VER in a fresh environment: eng
 check "npm        npx jubarte-redlines@$VER --version answers $VER" "eventually npx_runs"
 check "npm        npm i jubarte-wasm@$VER, then require()" "eventually npm_requires"
 if docsrs_built; then
-  step "ok — docs.rs   built jubarte-redlines $VER"
+  step "ok — docs.rs   built jubarte $VER"
 else
-  echo "  ! docs.rs   has not built jubarte-redlines $VER yet (it lags crates.io): https://docs.rs/crate/jubarte-redlines/$VER" >&2
+  echo "  ! docs.rs   has not built jubarte $VER yet (it lags crates.io): https://docs.rs/crate/jubarte/$VER" >&2
 fi
 # A warning, not a failure: a release made here from run artifacts (step
 # 11, when release.yml's release job did not run) has no attestation.

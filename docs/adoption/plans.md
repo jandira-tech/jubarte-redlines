@@ -72,7 +72,7 @@ minimum works; the plan lists what is still missing), **plan** (not started),
      `tests/m_validity_ring1.rs`: every probe gives the same verdict as
      `tools/validate-docx` (Office 2019 file format).
   4. Ship it in the release binary and the wheel only if the size cost is
-     under 2 MB; otherwise as `cargo install jubarte-redlines --features
+     under 2 MB; otherwise as `cargo install jubarte --features
      schema`.
 
 ## 3. Building complex documents from code: minimum

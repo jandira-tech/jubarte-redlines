@@ -79,6 +79,18 @@ test("the workspace version and every = pin bump together", () => {
   assert.ok(bumped.includes('serde = "1"'));
 });
 
+test("the real manifest's workspace version bumps, its comment kept", () => {
+  // Cargo.toml's version line carries a trailing comment; a pattern anchored
+  // at the line's end moved the pins and left the workspace version behind.
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const cargo = fs.readFileSync(path.join(here, "..", "Cargo.toml"), "utf8");
+  const [, prev] = cargo.match(/^version = "(\d+\.\d+\.\d+)"/m);
+  const bumped = bumpCargoVersions(cargo, "9.9.9");
+  const line = bumped.split("\n").find((l) => l.startsWith("version = "));
+  assert.equal(line, cargo.split("\n").find((l) => l.startsWith("version = ")).replace(prev, "9.9.9"));
+  assert.ok(!new RegExp(`version = "=?${escapeRegExp(prev)}"`).test(bumped));
+});
+
 for (const flags of [[], ["--preserve-symlinks-main"]]) {
   test(`the codemod bumps through a symlinked directory ${flags.join(" ")}`, (t) => {
     const { scratch, root } = stageCodemod(t);

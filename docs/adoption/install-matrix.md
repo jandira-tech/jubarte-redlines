@@ -31,7 +31,7 @@ measured on 2026-10-04 by
 | Channel | Artifact | Platforms |
 |---|---|---|
 | PyPI `jubarte-redlines` | abi3 wheels, Python >= 3.10 | Linux x86_64 and aarch64, glibc 2.28 or newer (`manylinux_2_28`) and musl 1.2 (`musllinux_1_2`); macOS x86_64 (10.12+) and arm64 (11.0+); Windows x86_64; sdist |
-| crates.io `jubarte-redlines` (library `jubarte`) | `cargo install jubarte-redlines` | anywhere Rust 1.88+ builds (1.94+ from 0.11.3), Windows included |
+| crates.io `jubarte` (library `jubarte`) | `cargo install jubarte` | anywhere Rust 1.88+ builds (1.94+ from 0.11.3), Windows included |
 | npm `jubarte-wasm` | WebAssembly library | any Node 18+ or browser |
 | npm `jubarte-redlines` | the command line, `npx jubarte-redlines` | any Node 18.3+ |
 | GitHub release `v0.11.2` | `jubarte` binary archives + `SHA256SUMS.txt` | Linux x86_64 and aarch64, macOS x86_64 and aarch64, Windows x86_64 |
@@ -52,7 +52,7 @@ Gaps a provider's sandbox may still hit:
   build. `jubarte self-update` fetches the archive of the libc it was built
   for. The musl build has not been timed against the bench, so it is
   not the recommended install.
-- **No Windows arm64 wheel or binary.** Use `cargo install jubarte-redlines`
+- **No Windows arm64 wheel or binary.** Use `cargo install jubarte`
   or the sdist there. Plan: [plans.md](plans.md) §7.
 
 ## Check it yourself

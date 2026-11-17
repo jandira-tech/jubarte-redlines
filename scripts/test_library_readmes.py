@@ -224,5 +224,21 @@ class Repository(unittest.TestCase):
         self.assertIn("compareDocuments", lr.surface_gaps(lib, "nothing here"))
 
 
+class InstallNames(unittest.TestCase):
+    """Since the split, crates.io's jubarte-redlines is the compare-only
+    library: it has no CLI binary, and its import path is not `jubarte`.
+    Installs name the facade crate `jubarte`."""
+
+    def test_no_install_line_names_the_compare_only_crate(self) -> None:
+        import re
+        repo = HERE.parent
+        pages = [repo / "README.md", repo / "README.crates.md", repo / "docs/rust.md",
+                 *sorted((repo / "docs/adoption").glob("*.md"))]
+        bad = re.compile(r"cargo (?:install|add) jubarte-redlines\b")
+        found = [f"{p.relative_to(repo)}:{n}" for p in pages
+                 for n, line in enumerate(p.read_text().splitlines(), 1) if bad.search(line)]
+        self.assertEqual(found, [])
+
+
 if __name__ == "__main__":
     unittest.main()

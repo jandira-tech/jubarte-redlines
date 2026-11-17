@@ -44,6 +44,10 @@ def load() -> dict:
     return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
 
 
+def load_ci() -> dict:
+    return yaml.safe_load((WORKFLOW.parent / "ci.yml").read_text(encoding="utf-8"))
+
+
 def runs(job: dict) -> str:
     """Every `run:` script of a job, in order, joined."""
     return "\n".join(s.get("run", "") for s in job["steps"])
@@ -265,7 +269,13 @@ class TrustedPublishing(unittest.TestCase):
         # A rerun of the workflow (or a release.sh --local-publish that got
         # there first) must not fail on "version already exists".
         for name in PUBLISH_JOBS:
-            ids = [s.get("id") for s in self.jobs[name]["steps"]]
+            steps = self.jobs[name]["steps"]
+            if name == "publish-crates":
+                # Nine crates: publish_crates.sh asks crates.io for each
+                # <crate>/<version> and skips it (scripts/test_publish_crates.py).
+                self.assertTrue(any("scripts/publish_crates.sh" in s.get("run", "") for s in steps))
+                continue
+            ids = [s.get("id") for s in steps]
             self.assertIn("live", ids, name)
 
     def test_no_build_cache_feeds_a_shipped_artifact(self) -> None:
@@ -397,17 +407,49 @@ class Crates(unittest.TestCase):
         i = step_index(self.job, lambda s: "rust-lang/crates-io-auth-action@" in s.get("uses", ""))
         auth = self.job["steps"][i]
         pub = self.job["steps"][
-            step_index(self.job, lambda s: "cargo publish --locked" in s.get("run", ""))
+            step_index(self.job, lambda s: 'scripts/publish_crates.sh "$VER"' in s.get("run", "")
+                       and "--pending" not in s.get("run", ""))
         ]
         self.assertEqual(
             pub["env"]["CARGO_REGISTRY_TOKEN"], f"${{{{ steps.{auth['id']}.outputs.token }}}}"
         )
         self.assertLess(i, self.job["steps"].index(pub))
 
-    def test_the_crate_carries_its_release_note_before_it_ships(self) -> None:
+    def test_all_nine_crates_publish_through_the_resuming_script(self) -> None:
+        # Plan T6.2: one crate at a time, in dependency order, skipping what
+        # crates.io already holds; the script owns the release-note gate.
         script = runs(self.job)
-        self.assertLess(script.index("package.metadata.release-notes"),
-                        script.index("cargo publish --locked"))
+        self.assertIn('scripts/publish_crates.sh "$VER"', script)
+        self.assertNotIn("cargo publish --locked", script)
+        self.assertNotIn("jubarte-redlines-$VER.crate", script)
+
+    def test_a_first_release_is_left_to_the_token_holder_with_a_warning(self) -> None:
+        # crates.io takes a trusted publisher only for a crate that exists.
+        steps = self.job["steps"]
+        warn = [s for s in steps if "outputs.new != '0'" in s.get("if", "")]
+        self.assertTrue(warn, "no step reports a crate crates.io has never seen")
+        self.assertIn("::warning", warn[0]["run"])
+        self.assertIn("--local-publish", warn[0]["run"])
+
+    def test_ci_dry_runs_every_crate(self) -> None:
+        job = load_ci()["jobs"]["package"]
+        self.assertIn("scripts/publish_crates.sh", runs(job))
+        self.assertIn("--dry-run", runs(job))
+        self.assertNotIn("--as-prerelease", runs(job))
+
+    def test_a_rerun_with_every_crate_live_asks_for_no_token(self) -> None:
+        # The token exchange fails once a crate's trusted publisher is gone;
+        # a release already on crates.io must not need one.
+        steps = self.job["steps"]
+        probe = step_index(self.job, lambda s: "--pending" in s.get("run", ""))
+        pid = steps[probe]["id"]
+        gate = f"steps.{pid}.outputs.pending != '0' && steps.{pid}.outputs.new == '0'"
+        auth = step_index(self.job, lambda s: "crates-io-auth-action@" in s.get("uses", ""))
+        pub = step_index(self.job, lambda s: 'scripts/publish_crates.sh "$VER"' in s.get("run", "")
+                         and "--pending" not in s.get("run", ""))
+        self.assertLess(probe, auth)
+        for i in (auth, pub):
+            self.assertIn(gate, steps[i].get("if", ""), steps[i])
 
 
 class PyPI(unittest.TestCase):
