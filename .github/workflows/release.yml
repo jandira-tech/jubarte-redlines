@@ -34,11 +34,11 @@ env:
 jobs:
   version:
     name: tag matches Cargo.toml
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.check.outputs.version }}
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - id: check
@@ -61,25 +61,25 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: blacksmith-4vcpu-ubuntu-2404
+          - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact: linux-x86_64
-          - os: blacksmith-4vcpu-ubuntu-2404-arm
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             artifact: linux-aarch64
-          - os: blacksmith-4vcpu-ubuntu-2404
+          - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             artifact: linux-musl-x86_64
-          - os: blacksmith-4vcpu-ubuntu-2404-arm
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
             artifact: linux-musl-aarch64
-          - os: blacksmith-6vcpu-macos-15
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             artifact: macos-x86_64
-          - os: blacksmith-6vcpu-macos-15
+          - os: macos-latest
             target: aarch64-apple-darwin
             artifact: macos-aarch64
-          - os: blacksmith-4vcpu-windows-2025
+          - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: windows-x86_64
     runs-on: ${{ matrix.os }}
@@ -214,29 +214,29 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: blacksmith-4vcpu-ubuntu-2404
+          - os: ubuntu-latest
             target: x86_64
             manylinux: "2_28"
             artifact: manylinux-x86_64
-          - os: blacksmith-4vcpu-ubuntu-2404-arm
+          - os: ubuntu-24.04-arm
             target: aarch64
             manylinux: "2_28"
             artifact: manylinux-aarch64
-          - os: blacksmith-4vcpu-ubuntu-2404
+          - os: ubuntu-latest
             target: x86_64
             manylinux: musllinux_1_2
             artifact: musllinux-x86_64
-          - os: blacksmith-4vcpu-ubuntu-2404-arm
+          - os: ubuntu-24.04-arm
             target: aarch64
             manylinux: musllinux_1_2
             artifact: musllinux-aarch64
-          - os: blacksmith-6vcpu-macos-15
+          - os: macos-15-intel
             target: x86_64
             artifact: macos-x86_64
-          - os: blacksmith-6vcpu-macos-15
+          - os: macos-latest
             target: aarch64
             artifact: macos-aarch64
-          - os: blacksmith-4vcpu-windows-2025
+          - os: windows-latest
             target: x64
             artifact: windows-x86_64
     runs-on: ${{ matrix.os }}
@@ -288,11 +288,11 @@ jobs:
   sdist:
     name: PyPI sdist
     needs: version
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - run: pipx run maturin sdist --manifest-path jubarte-python/Cargo.toml --out dist
@@ -305,7 +305,7 @@ jobs:
   release:
     name: GitHub release
     needs: [version, binaries, wheels, sdist]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     # id-token, attestations and artifact-metadata serve the provenance
     # attestation alone. This job runs outside the release environment, so
     # its ID token carries no environment claim a registry's trusted
@@ -316,7 +316,7 @@ jobs:
       attestations: write
       artifact-metadata: write
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0 # previous tag → "Full Changelog" compare link
@@ -472,7 +472,7 @@ jobs:
   publish-crates:
     name: publish crates.io
     needs: version
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: self-hosted
     environment: release
     permissions:
       contents: read
@@ -480,7 +480,7 @@ jobs:
     env:
       VER: ${{ needs.version.outputs.version }}
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - id: live
@@ -519,7 +519,7 @@ jobs:
   publish-pypi:
     name: publish PyPI
     needs: [version, wheels, sdist]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: self-hosted
     environment: release
     permissions:
       contents: read
@@ -527,7 +527,7 @@ jobs:
     env:
       VER: ${{ needs.version.outputs.version }}
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       # Python 3.12, the scripts' floor (see ci.yml's convert-sweep-unit).
@@ -573,7 +573,7 @@ jobs:
   publish-npm:
     name: publish npm
     needs: version
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     environment: release
     permissions:
       contents: read
@@ -581,7 +581,7 @@ jobs:
     env:
       VER: ${{ needs.version.outputs.version }}
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

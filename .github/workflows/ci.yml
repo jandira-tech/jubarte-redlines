@@ -29,6 +29,11 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Line tables keep file:line in backtraces at a fraction of full debug
+  # info's size. The mbx action sets the same on the self-hosted runners;
+  # here it also bounds the jobs that build without mbx (the Windows test
+  # leg ran out of disk linking the test binaries with full debug info).
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   lint:
@@ -223,7 +228,7 @@ jobs:
     # started cold again. 90 minutes lets a cold run finish and save it.
     timeout-minutes: 90
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: useblacksmith/checkout@75c49b6ed30ce59336e9252425796cfcfac155f8 # v1.8.3
         with:
           persist-credentials: false
       # master branch: the toolchain comes from the input below, not the ref.
@@ -277,22 +282,26 @@ jobs:
     name: publish dry run
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: useblacksmith/checkout@75c49b6ed30ce59336e9252425796cfcfac155f8 # v1.8.3
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
-      - uses: ./.github/actions/mbx
+      # Blacksmith runners cannot reach the self-hosted mbx cache server.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo publish --dry-run
 
   python:
     name: python bindings
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: useblacksmith/checkout@75c49b6ed30ce59336e9252425796cfcfac155f8 # v1.8.3
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
-      - uses: ./.github/actions/mbx
+      # Blacksmith runners cannot reach the self-hosted mbx cache server.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: jubarte-python
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - name: build the extension and run pytest
         working-directory: jubarte-python
@@ -304,7 +313,7 @@ jobs:
     name: convert-sweep unit
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: useblacksmith/checkout@75c49b6ed30ce59336e9252425796cfcfac155f8 # v1.8.3
         with:
           persist-credentials: false
       # Python 3.12 is the scripts' floor, so they are tested on it. The
@@ -366,9 +375,10 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: useblacksmith/checkout@75c49b6ed30ce59336e9252425796cfcfac155f8 # v1.8.3
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
-      - uses: ./.github/actions/mbx
+      # Blacksmith runners cannot reach the self-hosted mbx cache server.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo test --all-features --test md_fixed_point

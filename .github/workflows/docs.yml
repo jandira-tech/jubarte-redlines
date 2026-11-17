@@ -67,17 +67,21 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # What the mbx action sets on the self-hosted runners: line tables keep
+  # file:line in backtraces at a fraction of full debug info's size.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   drift:
     name: generated docs drift
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: useblacksmith/checkout@75c49b6ed30ce59336e9252425796cfcfac155f8 # v1.8.3
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
-      - uses: ./.github/actions/mbx
+      # Blacksmith runners cannot reach the self-hosted mbx cache server.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       # The generator runs jubarte-wasm/cli/bin/jubarte-redlines.mjs against
       # the checked-in jubarte-wasm build. That CLI is ESM and engines-declares
@@ -94,11 +98,12 @@ jobs:
     name: adoption claims (tests/adoption.rs)
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: useblacksmith/checkout@75c49b6ed30ce59336e9252425796cfcfac155f8 # v1.8.3
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
-      - uses: ./.github/actions/mbx
+      # Blacksmith runners cannot reach the self-hosted mbx cache server.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: one test per adoption-page row, and the .doc reader
         run: cargo test --release --test adoption --test legacy_doc_convert --test legacy_doc
 
@@ -107,11 +112,12 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: claims
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: useblacksmith/checkout@75c49b6ed30ce59336e9252425796cfcfac155f8 # v1.8.3
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
-      - uses: ./.github/actions/mbx
+      # Blacksmith runners cannot reach the self-hosted mbx cache server.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - run: cargo build --release --bin jubarte
       # The examples' input generators (make_input.py and the like) import
