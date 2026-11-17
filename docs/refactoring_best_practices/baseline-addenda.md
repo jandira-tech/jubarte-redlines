@@ -14,9 +14,16 @@ re-recording never loses these entries; add new ones below, newest first.
   35 test files under finalize/tests/ (largest 3,671). Moved code only.
 - AC2: git diff -M90% against pre-release: 35,681 insertions, 35,492
   deletions; 35,030 inserted lines match a deleted line. Unmatched: 83
-  mod, 28 use, 151 visibility, 68 blank, 321 other (0.916% of moved:
-  SPDX headers and module docs of the new files, rustfmt reflows, five
-  include_bytes! paths two directories deeper).
+  mod, 28 use, 151 visibility, 68 blank, 321 other. Read literally (every
+  insertion outside mod, use and visibility lines, blanks included), AC2
+  is 389 / 35,030 = 1.11%: over the 1% ceiling. 144 of those lines are
+  the SPDX headers REUSE requires on each of the 48 new files; without
+  them, 245 / 35,030 = 0.70%. The rest: module docs of the new files,
+  rustfmt reflows, five include_bytes! paths two directories deeper.
+  An independent recount (MiniMax-M3, #2452 review) classifies 15 use /
+  168 visibility / 317 other: the same 651, 1.10%. The move is otherwise
+  proven by identity: all 600 bench redlines are byte-identical to the
+  pre-split binary (scripts/identity.py).
 - AC1: goldens identical; the listing diff shows 5 internal lines that
   pre-release already carries (convert::font, edit::prepared,
   markdown::from_docx::ooxml), none under comparer; facade_surface

@@ -21,5 +21,5 @@ schema for Ring 1½ schema-consistency tests (plan D2 / `SCHEMA_ORACLE_PLAN.md` 
 - **Do not hand-edit** the JSON; re-copy from the upstream distribution
   when refreshing.
 
-The hand order tables in `src/comparer/finalize.rs` remain PowerTools-verbatim at
+The hand order tables in `crates/jubarte-redlines/src/comparer/finalize/schema_order.rs` remain PowerTools-verbatim at
 runtime; this file is a **cross-check oracle only**.
