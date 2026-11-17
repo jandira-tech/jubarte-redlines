@@ -135,15 +135,13 @@ fn comment_len(s: &str) -> Option<usize> {
 }
 
 fn collect_path<'a>(rest: &'a str, prefix: &[&'a str], paths: &mut Vec<Vec<&'a str>>) {
-    let stripped = skip_trivia(rest);
-    if stripped.starts_with('{') {
-        collect_group(&stripped[1..], prefix, paths);
+    if let Some(group) = skip_trivia(rest).strip_prefix('{') {
+        collect_group(group, prefix, paths);
         return;
     }
     let (segments, remainder) = path_segments(rest);
-    let stripped = skip_trivia(remainder);
-    if stripped.starts_with('{') {
-        collect_group(&stripped[1..], &([prefix, &segments[..]].concat()), paths);
+    if let Some(group) = skip_trivia(remainder).strip_prefix('{') {
+        collect_group(group, &([prefix, &segments[..]].concat()), paths);
         return;
     }
     // `self` in a group names the prefix itself.
