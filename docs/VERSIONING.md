@@ -38,7 +38,7 @@ change to them.
 
 | repo | artifact | version files | bump tool |
 |---|---|---|---|
-| **jubarte-redlines** (this repo) | crates.io crate + CLI `jubarte` | `Cargo.toml` `[package].version`, `CHANGELOG.md` | `scripts/release.sh x.y.z …` (calls `bump-version.mjs`) |
+| **jubarte-redlines** (this repo) | nine crates.io crates (`jubarte` and `jubarte-dom`, `-opc`, `-redlines`, `-render`, `-doc`, `-markdown`, `-edit`, `-cli`, one version) + CLI `jubarte` | `Cargo.toml` `[workspace.package].version` and its `"="` pins, `CHANGELOG.md` | `scripts/release.sh x.y.z …` (calls `bump-version.mjs`) |
 | **jubarte-redlines** npm CLI (`jubarte-wasm/cli/`) | npm package `jubarte-redlines` (the `npx jubarte-redlines` runner) | `jubarte-wasm/cli/package.json` | `scripts/release.sh` (publishes it with the engine version) |
 | **jubarte-app** ([arthrod/jubarte-app](https://github.com/arthrod/jubarte-app), its own repository, cloned untracked at `jubarte-app/` or named by `JUBARTE_APP_DIR`) | Mac App Store / Tauri shell | `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/index.html`, `CHANGELOG.md` | `scripts/release.sh` step 13 runs the app's `scripts/release-engine.sh x.y.z`, which commits them on `release/vx.y.z` in the app's repository; its `--app` uploads the App Store build |
 | **jubarte-site** (`jubarte-app/jubarte-site/`) | jubarte.pro (Cloudflare Worker) | `site/data/release.ts`, `package.json` (`jubarte-wasm`), `pnpm-workspace.yaml` | `scripts/release.sh` step 13, through the app's `scripts/release-engine.sh`: `jubarte-site/scripts/release.sh release x.y.z` (download page, demo engine, figures, deploy); benchmark figures follow with `release.sh bench x.y.z` after neurotic_docx_bench's release flow writes the engine's `release_info/` files |
@@ -306,13 +306,20 @@ and `jubarte self-update` skips that release until a signed one follows.
 
 ```bash
 V=x.y.z
-curl -sfA jubarte-release https://crates.io/api/v1/crates/jubarte-redlines/$V | jq -r .version.num
+curl -sfA jubarte-release https://crates.io/api/v1/crates/jubarte/$V | jq -r .version.num
 npm view jubarte-wasm@$V version releaseNotes
 curl -sf https://pypi.org/pypi/jubarte-redlines/$V/json | jq -r '.urls[].filename'
 gh release view v$V --json assets -q '.assets[].name'
 ```
 
 crates.io answers 403 to a request with no User-Agent, so always pass `-A`.
+
+The nine crates publish one at a time, dependencies first
+(`scripts/publish_crates.sh`, used by release.yml and by
+`release.sh --local-publish`); each `<crate>/<version>` crates.io already
+holds is skipped, so a publish that stopped part way resumes on a rerun.
+`scripts/publish_crates.sh <version> --dry-run` packages and verifies all
+nine from their tarballs.
 
 ## Step-by-step: cut an app release (jubarte-app)
 

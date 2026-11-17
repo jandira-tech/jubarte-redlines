@@ -44,6 +44,10 @@ def load() -> dict:
     return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
 
 
+def load_ci() -> dict:
+    return yaml.safe_load((WORKFLOW.parent / "ci.yml").read_text(encoding="utf-8"))
+
+
 def runs(job: dict) -> str:
     """Every `run:` script of a job, in order, joined."""
     return "\n".join(s.get("run", "") for s in job["steps"])
@@ -265,7 +269,13 @@ class TrustedPublishing(unittest.TestCase):
         # A rerun of the workflow (or a release.sh --local-publish that got
         # there first) must not fail on "version already exists".
         for name in PUBLISH_JOBS:
-            ids = [s.get("id") for s in self.jobs[name]["steps"]]
+            steps = self.jobs[name]["steps"]
+            if name == "publish-crates":
+                # Nine crates: publish_crates.sh asks crates.io for each
+                # <crate>/<version> and skips it (scripts/test_publish_crates.py).
+                self.assertTrue(any("scripts/publish_crates.sh" in s.get("run", "") for s in steps))
+                continue
+            ids = [s.get("id") for s in steps]
             self.assertIn("live", ids, name)
 
     def test_no_build_cache_feeds_a_shipped_artifact(self) -> None:
@@ -397,17 +407,27 @@ class Crates(unittest.TestCase):
         i = step_index(self.job, lambda s: "rust-lang/crates-io-auth-action@" in s.get("uses", ""))
         auth = self.job["steps"][i]
         pub = self.job["steps"][
-            step_index(self.job, lambda s: "cargo publish --locked" in s.get("run", ""))
+            step_index(self.job, lambda s: "scripts/publish_crates.sh" in s.get("run", ""))
         ]
         self.assertEqual(
             pub["env"]["CARGO_REGISTRY_TOKEN"], f"${{{{ steps.{auth['id']}.outputs.token }}}}"
         )
         self.assertLess(i, self.job["steps"].index(pub))
 
-    def test_the_crate_carries_its_release_note_before_it_ships(self) -> None:
+    def test_all_nine_crates_publish_through_the_resuming_script(self) -> None:
+        # Plan T6.2: one crate at a time, in dependency order, skipping what
+        # crates.io already holds; the script owns the release-note gate.
         script = runs(self.job)
-        self.assertLess(script.index("package.metadata.release-notes"),
-                        script.index("cargo publish --locked"))
+        self.assertIn('scripts/publish_crates.sh "$VER"', script)
+        self.assertNotIn("cargo publish --locked", script)
+        self.assertNotIn("jubarte-redlines-$VER.crate", script)
+
+    def test_ci_dry_runs_every_crate_as_a_prerelease(self) -> None:
+        # Before the bump the workspace is at the last released version, and
+        # jubarte-redlines at that version is the old crate on crates.io.
+        job = load_ci()["jobs"]["package"]
+        script = runs(job)
+        self.assertIn('scripts/publish_crates.sh "$ver" --dry-run --as-prerelease', script)
 
 
 class PyPI(unittest.TestCase):

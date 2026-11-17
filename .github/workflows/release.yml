@@ -483,36 +483,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - id: live
-        run: |
-          set -euo pipefail
-          # crates.io answers 403 to a request without a User-Agent.
-          if curl -sf -A "jubarte-release (github.com/jandira-tech/jubarte-redlines)" \
-              "https://crates.io/api/v1/crates/jubarte-redlines/$VER" >/dev/null; then
-            echo "jubarte-redlines $VER is already on crates.io: skipped"
-            echo "live=true" >> "$GITHUB_OUTPUT"
-          fi
-      - if: steps.live.outputs.live != 'true'
-        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
-      - if: steps.live.outputs.live != 'true'
-        uses: ./.github/actions/mbx
-      # scripts/release.sh step 4 wrote the crates summary into
-      # [package.metadata.release-notes]; prove it survived cargo's manifest
-      # normalization before the crate ships.
-      - if: steps.live.outputs.live != 'true'
-        name: the packaged crate carries its release note
-        run: |
-          set -euo pipefail
-          cargo package --locked --no-verify >/dev/null
-          tar -xzOf "target/package/jubarte-redlines-$VER.crate" "jubarte-redlines-$VER/Cargo.toml" \
-            | sed -n '/^\[package.metadata.release-notes\]/,/^\[/p' \
-            | grep -F "\"$VER\" = " >/dev/null \
-            || { echo "::error::no [package.metadata.release-notes] entry for $VER in the packaged Cargo.toml"; exit 1; }
-      - if: steps.live.outputs.live != 'true'
-        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      - uses: ./.github/actions/mbx
+      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
         id: auth
-      - if: steps.live.outputs.live != 'true'
-        run: cargo publish --locked
+      # Nine crates, one at a time in dependency order (plan T6.2): the
+      # script skips each <crate>/$VER crates.io already holds, so a rerun
+      # resumes a publish that stopped part way, and it refuses to upload
+      # anything when the packaged jubarte manifest lost the release note
+      # scripts/release.sh step 4 wrote. Each crate's trusted publisher must
+      # name this workflow and environment; a crate's first release is
+      # published with a token (release.sh --local-publish).
+      - name: publish the workspace crates
+        run: scripts/publish_crates.sh "$VER"
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 

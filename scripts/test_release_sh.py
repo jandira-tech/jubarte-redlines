@@ -107,7 +107,8 @@ class ResumeDryRuns(unittest.TestCase):
 
     def test_cargo_dry_run_skips_a_published_version(self) -> None:
         self.assertRegex(
-            self.step7(), r"if crates_has; then[^\n]*\n(?:[^\n]*\n)*?else\n[^\n]*cargo publish --dry-run"
+            self.step7(),
+            r"if crates_has; then[^\n]*\n(?:[^\n]*\n)*?else\n(?:\s*#[^\n]*\n)*[^\n]*scripts/publish_crates\.sh \"\$VER\" --dry-run",
         )
 
 
@@ -170,7 +171,29 @@ class RegistryProbes(unittest.TestCase):
     def test_publish_purges_finder_litter_first(self) -> None:
         text = RELEASE_SH.read_text()
         step9 = text[text.index('say "9. crates.io"'):text.index('say "10.')]
-        self.assertIn(".DS_Store", step9.split("cargo publish")[0])
+        self.assertIn(".DS_Store", step9.split("publish_crates.sh")[0])
+
+    def test_a_local_publish_ships_all_nine_crates_through_the_resuming_script(self) -> None:
+        # Plan T6.2: release.sh --local-publish and release.yml share one
+        # per-crate publisher, which skips each crate crates.io holds.
+        text = RELEASE_SH.read_text()
+        step9 = text[text.index('say "9. crates.io"'):text.index('say "10.')]
+        self.assertIn('scripts/publish_crates.sh "$VER"', step9)
+        self.assertNotIn("cargo publish --locked", step9)
+        # The summary is checked in the facade's package, which carries it.
+        self.assertIn("target/package/jubarte-$VER.crate", step9)
+        self.assertNotIn("jubarte-redlines-$VER.crate", step9)
+        self.assertLess(step9.index("CRATES_SUMMARY"), step9.index("publish_crates.sh"))
+
+    def test_the_checklist_names_every_new_crate_for_its_first_release(self) -> None:
+        # crates.io takes a trusted publisher only for a crate that exists:
+        # the eight new crates' first release is published with a token.
+        lines = [l for l in RELEASE_SH.read_text().splitlines() if "Trusted" in l]
+        item = next((l for l in lines if "first release" in l), "")
+        for name in ("jubarte-dom", "jubarte-opc", "jubarte-render", "jubarte-doc",
+                     "jubarte-markdown", "jubarte-edit", "jubarte-cli", "crates.io jubarte,"):
+            self.assertIn(name, item)
+        self.assertIn("--local-publish", item)
 
 
 def step(n: int) -> str:
@@ -978,7 +1001,7 @@ class LeftOutTargets(unittest.TestCase):
         self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""))
 
     def test_the_dry_run_goes_through_it(self) -> None:
-        self.assertIn("packaged cargo publish --dry-run --locked --allow-dirty", step(7))
+        self.assertIn('packaged scripts/publish_crates.sh "$VER" --dry-run', step(7))
 
 
 def shell_functions(*names: str) -> str:
@@ -1580,7 +1603,7 @@ class CiPublishing(unittest.TestCase):
                 self.assertIn(f"name: {job}\n", workflow, job)
 
     def test_the_token_publishes_run_only_with_local_publish(self) -> None:
-        for n, cmd in ((9, "cargo publish --locked"), (10, "npm publish"),
+        for n, cmd in ((9, 'scripts/publish_crates.sh "$VER"'), (10, "npm publish"),
                        (11, "uv publish --token")):
             s = step(n)
             self.assertLess(s.index('"$LOCAL_PUBLISH" = 1'), s.index(cmd), n)

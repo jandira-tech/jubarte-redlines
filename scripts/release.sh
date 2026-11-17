@@ -188,6 +188,7 @@ before|you|app lock: jubarte-app/src-tauri/Cargo.lock records jubarte-redlines @
 before|you|the app's checkout is in place: a clone of arthrod/jubarte-app at jubarte-app/ (this repository does not track it) or named by JUBARTE_APP_DIR, on main, in sync with its origin, clean, able to build the site (node_modules, public/fixtures) — step 13 deploys jubarte.pro from it|jubarte-app/scripts/release-engine.sh @V@ --engine-dir "$PWD" --preflight
 before|you|the App Store path is ready for the after-builds: the asc credentials exist (~/.appstoreconnect), the app's provisioning profiles are present and out of every commit (gitignored; if one ever reached a repository's history, accept it knowingly or rotate it), and App Store Connect holds no @V@ version record already used — Apple refuses a re-used number|ls jubarte-app/src-tauri/*.provisionprofile; (cd jubarte-app && ./scripts/asc-build-status.sh)
 before|you|Trusted publishers (#1642): crates.io jubarte-redlines, PyPI jubarte-redlines, npm jubarte-wasm and npm jubarte-redlines each trust owner jandira-tech, repository jubarte-redlines, workflow release.yml, environment release — release.yml publishes with no token. npm: each configuration must allow npm publish (one made after 2026-09-03 allows only npm stage publish unless that box is ticked, and a plain publish then fails E404), and a new configuration expires unless its first publish lands within two days — 0.13.0 never reached npm for this|npm trust list jubarte-wasm; npm trust list jubarte-redlines (both after npm login); npm trust github <package> --file release.yml --repo jandira-tech/jubarte-redlines --env release --allow-publish -y
+before|you|Trusted publishers for the split's first release: crates.io registers a trusted publisher only on a crate that exists, so the first release of each new crate — crates.io jubarte, jubarte-dom, jubarte-opc, jubarte-render, jubarte-doc, jubarte-markdown, jubarte-edit and jubarte-cli — is published from here with a token (--local-publish; scripts/publish_crates.sh resumes past what is live). Then register owner jandira-tech, repository jubarte-redlines, workflow release.yml, environment release on each of the eight before the next release|scripts/release.sh @V@ <summaries> --local-publish; https://crates.io/crates/<crate>/settings (Trusted Publishing) for each of the eight
 before|you|Only with --local-publish: UV_PUBLISH_TOKEN is exported before the run (name only, never print it), crates.io and npm are logged in, and the owner is at the keyboard for npm's browser approval (2FA) — step 0 checks them only then|set -a; source <owner .env>; set +a; test -n "$UV_PUBLISH_TOKEN"; npm whoami
 before|you|Ring-2 validity ratchet: no NEW OpenXML validator keys vs tools/validity_baseline.tsv and no baselined stems not run; stage the legacy sources from corpus/word/pools/word_based_pairs.csv and verify renamed aliases via corpus/word/notices/RENAMED.csv (NEUROTIC_DOCX_BENCH, default ../neurotic_docx_bench); missing originals require recovery or maintainer-authorized re-blessing; an output the validator cannot even open needs a Word probe before it ships|python3 scripts/stage_ring2_sources.py .scratch/ring2_sources && scripts/redline-sweep.sh tests/corpus/neurotic_docx_bench/corpus/word_based/centralized_mapping.csv .scratch/ring2_sources .scratch/ring2_sweep --validate (the 207-pair mapping the baseline is keyed on; restore dangling bench links with uv run bench fixtures download from the bench root, then rerun staging; then the --probe sweep for refusals)
 before|you|Ring-3 Word open probe, the macOS release gate before any crates.io publish: every redline the release ships opens in real Word — probe_fail=0; paths never under /tmp, stage them under .scratch/. A failure that Word's own redline of the pair shares (probe.log says which) is still a failure: only the owner waives it, and the summaries disclose it|NEUROTIC_DOCX_BENCH=../neurotic_docx_bench JUBARTE_BIN=<release binary> scripts/redline-sweep.sh release_info/sample_redline_@V@_*.csv ../neurotic_docx_bench .scratch/sweep_<date> --probe (Word only through the bench's word_pdf.py under its word_watchdog.sh, one Word job machine-wide; each failure is opened again alone, then Word's own redline of that pair; sweep.log names the binary; no pair generated is a failure)
@@ -1348,9 +1349,10 @@ crate_keywords_ok || die "Cargo.toml's keywords or categories break crates.io's 
 # A resumed run skips the dry run of a registry that already holds $VER:
 # npm refuses even a dry run over a published version.
 if crates_has; then
-  step "jubarte-redlines $VER already on crates.io — dry run skipped"
+  step "jubarte $VER already on crates.io — dry run skipped"
 else
-  packaged cargo publish --dry-run --locked --allow-dirty
+  # All nine crates, each verified from its tarball (plan T6.2).
+  packaged scripts/publish_crates.sh "$VER" --dry-run
 fi
 if npm_has; then
   step "jubarte-wasm $VER already on npm — dry run skipped"
@@ -1509,7 +1511,7 @@ check_now 8
 say "POINT OF NO RETURN"
 cat <<EOF
   About to push main + $TAG and publish:
-    crates.io  jubarte-redlines $VER
+    crates.io  jubarte $VER and its eight crates
     npm        jubarte-wasm $VER
     PyPI       jubarte-redlines $VER
     GitHub     release $TAG (release.yml builds binaries + wheels)
@@ -1539,19 +1541,21 @@ say "9. crates.io"
 # =============================================================================
 
 if crates_has; then
-  step "jubarte-redlines $VER already on crates.io — skipped"
+  step "jubarte $VER already on crates.io — skipped"
 elif [ "$LOCAL_PUBLISH" = 1 ]; then
   # Finder litter under an include glob is "uncommitted" to cargo and stops
   # the publish (gitignored, so the clean-tree preflight never sees it).
   find . -name .DS_Store -not -path './target/*' -not -path './.worktrees/*' -delete
   # Prove the summary survived cargo's manifest normalization before shipping.
-  cargo package --locked --no-verify >/dev/null
-  tar -xzOf "target/package/jubarte-redlines-$VER.crate" \
-    "jubarte-redlines-$VER/Cargo.toml" \
+  cargo package -p jubarte --locked --no-verify >/dev/null
+  tar -xzOf "target/package/jubarte-$VER.crate" \
+    "jubarte-$VER/Cargo.toml" \
     | grep -F "\"$VER\" = \"$CRATES_SUMMARY\"" >/dev/null \
     || die "crates summary missing from the packaged manifest — not publishing"
-  cargo publish --locked
-  step "cargo publish done (index lags ~1 min)"
+  # Nine crates in dependency order; each one crates.io already holds is
+  # skipped, so a rerun resumes a publish that stopped part way (T6.2).
+  scripts/publish_crates.sh "$VER"
+  step "cargo publish done for every crate (index lags ~1 min)"
 else
   ci_published "crates.io" "publish crates.io" crates_has
 fi
@@ -1826,13 +1830,13 @@ npm_requires() {
 }
 # docs.rs builds after crates.io and lags, so step 12 only warns on it.
 docsrs_built() {
-  curl -fsS "https://docs.rs/crate/jubarte-redlines/$VER/status.json" 2>/dev/null \
+  curl -fsS "https://docs.rs/crate/jubarte/$VER/status.json" 2>/dev/null \
     | grep '"doc_status":true' >/dev/null
 }
 
 ok=1
 check() { if eval "$2"; then step "ok — $1"; else echo "  ✗ $1" >&2; ok=0; fi; }
-check "crates.io  jubarte-redlines $VER" "eventually crates_has"
+check "crates.io  jubarte $VER" "eventually crates_has"
 check "npm        jubarte-wasm $VER" "eventually npm_has"
 check "npm        jubarte-redlines $VER" "eventually npm_cli_has"
 check "npm        releaseNotes.$VER shipped" npm_note
@@ -1844,9 +1848,9 @@ check "PyPI       pip install jubarte-redlines==$VER in a fresh environment: eng
 check "npm        npx jubarte-redlines@$VER --version answers $VER" "eventually npx_runs"
 check "npm        npm i jubarte-wasm@$VER, then require()" "eventually npm_requires"
 if docsrs_built; then
-  step "ok — docs.rs   built jubarte-redlines $VER"
+  step "ok — docs.rs   built jubarte $VER"
 else
-  echo "  ! docs.rs   has not built jubarte-redlines $VER yet (it lags crates.io): https://docs.rs/crate/jubarte-redlines/$VER" >&2
+  echo "  ! docs.rs   has not built jubarte $VER yet (it lags crates.io): https://docs.rs/crate/jubarte/$VER" >&2
 fi
 # A warning, not a failure: a release made here from run artifacts (step
 # 11, when release.yml's release job did not run) has no attestation.
