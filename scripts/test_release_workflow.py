@@ -494,6 +494,15 @@ class PythonCi(unittest.TestCase):
         self.assertIn('cargo check --locked --no-default-features --features "$f"', self.script)
 
 
+class WasmNarrowBuildsLint(unittest.TestCase):
+    """CI lints the narrow npm builds as build-npm.sh compiles them (#2447)."""
+
+    def test_the_redlines_and_pdf_builds_are_linted(self) -> None:
+        script = "\n".join(runs(job) for job in load_ci()["jobs"].values())
+        for features in ("redlines,console-panic", "pdf,console-panic"):
+            self.assertIn(f"--no-default-features --features {features} --target wasm32-unknown-unknown -- -D warnings", script)
+
+
 class Npm(unittest.TestCase):
     def setUp(self) -> None:
         self.job = load()["jobs"]["publish-npm"]

@@ -60,6 +60,10 @@ also pass the source yourself: `await init({ module_or_path: url })`.
 | `jubarte-wasm/web` | full, browser ESM | all functions |
 | `jubarte-wasm/slim` / `jubarte-wasm/node-slim` | slim, Node CJS | everything except `docxToPdf`, `pdfPageCount` and `updateFields` |
 | `jubarte-wasm/web-slim` | slim, browser ESM | same export set as `node-slim` |
+| `jubarte-wasm/redlines` / `jubarte-wasm/node-redlines` | redlines, Node CJS | `compareDocuments`, `acceptRevisions`, `rejectRevisions`, `getRevisions`, `initPanicHook` |
+| `jubarte-wasm/web-redlines` | redlines, browser ESM | the same as `node-redlines` |
+| `jubarte-wasm/pdf` / `jubarte-wasm/convert` / `jubarte-wasm/node-pdf` | pdf, Node CJS | `docxToPdf`, `pdfPageCount`, `renderPdf` (returning a `RenderOutput`), `initPanicHook` |
+| `jubarte-wasm/web-pdf` | pdf, browser ESM | the same as `node-pdf` |
 
 The slim builds drop the PDF engine and its embedded Carlito/Liberation
 fonts; redline output is identical. The size saving is now small: in
@@ -2543,11 +2547,12 @@ Options:
 
 Every entry point ships its `.d.ts` (wasm-bindgen output carrying the Rust
 doc comments). Per-release copies are snapshotted in
-[docs/api/](api/) (`jubarte-wasm-{node,web,node-slim,web-slim}-v*.d.ts`).
+[docs/api/](api/) (`jubarte-wasm-<build>-v*.d.ts`, one per build; 0.19.0 adds
+node-redlines, web-redlines, node-pdf and web-pdf).
 
 ## Building from source
 
-`jubarte-wasm/build-npm.sh` rebuilds all four flavors with wasm-pack, copies
+`jubarte-wasm/build-npm.sh` rebuilds all eight builds with wasm-pack, copies
 them into `npm/` and stamps `ENGINE_COMMIT.txt`; `node jubarte-wasm/npm-smoke.mjs`
 smoke-tests the assembly. Publishing happens through `scripts/release.sh`
 (`jubarte-wasm` first, then `jubarte-redlines`); the package version tracks

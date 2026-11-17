@@ -44,40 +44,42 @@ use wasm_bindgen::prelude::*;
 /// binding already uses (plan A6/T5.1). Each line sits under the feature
 /// that provides it, so a slim build links only the layers it exports.
 mod jubarte {
+    #[cfg(feature = "cli")]
+    #[allow(unused_imports)]
+    pub use jubarte_cli::cli;
+    #[cfg(feature = "doc")]
+    #[cfg(all(feature = "doc", feature = "pdf"))]
+    #[allow(unused_imports)]
+    pub use jubarte_doc::fields;
+    #[cfg(feature = "doc")]
+    #[allow(unused_imports)]
+    pub use jubarte_doc::{append, audit, changes, comments, debug, inspect, scrub, validate};
     #[cfg(feature = "compare")]
     #[allow(unused_imports)]
     pub use jubarte_dom::{namespaces, util, xmllinq};
+    #[cfg(all(feature = "edit", feature = "markdown"))]
+    #[allow(unused_imports)]
+    pub use jubarte_edit::markdown;
+    #[cfg(all(feature = "edit", not(target_arch = "wasm32")))]
+    #[allow(unused_imports)]
+    pub use jubarte_edit::publication;
+    #[cfg(feature = "edit")]
+    #[allow(unused_imports)]
+    pub use jubarte_edit::{capabilities, edit, expect, result, text_diff};
+    #[cfg(feature = "markdown")]
+    #[allow(unused_imports)]
+    pub use jubarte_markdown::legacy_doc;
+    #[cfg(all(not(feature = "edit"), feature = "markdown"))]
+    #[allow(unused_imports)]
+    pub use jubarte_markdown::markdown;
     #[cfg(feature = "compare")]
     #[allow(unused_imports)]
     pub use jubarte_opc::{admission, opc, strict_translation};
     #[cfg(feature = "compare")]
     #[allow(unused_imports)]
-    pub use jubarte_redlines::{comparer, comparison_log, document_comparer, revision_processor, wml_document, WmlDocument};
-    #[cfg(feature = "doc")]
-    #[allow(unused_imports)]
-    pub use jubarte_doc::{append, audit, changes, comments, debug, inspect, scrub, validate};
-    #[cfg(feature = "doc")]
-    #[cfg(all(feature = "doc", feature = "pdf"))]
-    #[allow(unused_imports)]
-    pub use jubarte_doc::fields;
-    #[cfg(all(feature = "edit", feature = "markdown"))]
-    #[allow(unused_imports)]
-    pub use jubarte_edit::markdown;
-    #[cfg(all(not(feature = "edit"), feature = "markdown"))]
-    #[allow(unused_imports)]
-    pub use jubarte_markdown::markdown;
-    #[cfg(feature = "markdown")]
-    #[allow(unused_imports)]
-    pub use jubarte_markdown::legacy_doc;
-    #[cfg(feature = "edit")]
-    #[allow(unused_imports)]
-    pub use jubarte_edit::{capabilities, edit, expect, result, text_diff};
-    #[cfg(all(feature = "edit", not(target_arch = "wasm32")))]
-    #[allow(unused_imports)]
-    pub use jubarte_edit::publication;
-    #[cfg(feature = "cli")]
-    #[allow(unused_imports)]
-    pub use jubarte_cli::cli;
+    pub use jubarte_redlines::{
+        WmlDocument, comparer, comparison_log, document_comparer, revision_processor, wml_document,
+    };
     #[cfg(feature = "pdf")]
     #[allow(unused_imports)]
     pub use jubarte_render::convert;
@@ -414,6 +416,7 @@ pub fn document_markdown_with_changes(docx: &[u8], track_changes: &str) -> Resul
 /// `readView` options: the `read` command's flags.
 #[derive(Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+#[cfg(feature = "markdown")]
 struct ReadViewOptions {
     track_changes: Option<String>,
     comments: Option<String>,
@@ -480,6 +483,7 @@ pub fn read_view(docx: &[u8], options_json: Option<String>) -> Result<String, Js
 /// `tablesText` options: `read --tables`'s `--track-changes`.
 #[derive(Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+#[cfg(feature = "markdown")]
 struct TablesTextOptions {
     track_changes: Option<String>,
 }
@@ -526,6 +530,7 @@ pub fn tables_text(docx: &[u8], options_json: Option<String>) -> Result<String, 
 /// `tablesView` options: `read --tables` with the view's options.
 #[derive(Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+#[cfg(feature = "markdown")]
 struct TablesViewOptions {
     track_changes: Option<String>,
     comments: Option<String>,
@@ -614,6 +619,7 @@ pub fn runtime_json_error(message: &str, exit: u8) -> String {
 /// `--track-changes` settles.
 #[derive(Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+#[cfg(feature = "markdown")]
 struct ReadJsonOptions {
     track_changes: Option<String>,
     paragraphs: Option<String>,
@@ -675,6 +681,7 @@ pub fn read_json(docx: &[u8], options_json: Option<String>) -> Result<String, Js
 /// `forEdit` options: `read --for-edit`'s flags.
 #[derive(Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+#[cfg(feature = "edit")]
 struct ForEditOptions {
     paragraphs: Option<String>,
     head: Option<usize>,
@@ -770,6 +777,7 @@ pub fn for_edit(docx: &[u8], options_json: Option<String>) -> Result<String, JsV
 /// Options of [`flagPlan`](flag_plan).
 #[derive(serde::Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
+#[cfg(feature = "edit")]
 struct FlagPlanOptions {
     author: Option<String>,
     date: Option<String>,
@@ -957,6 +965,7 @@ impl EditOutput {
     }
 }
 
+#[cfg(feature = "edit")]
 fn to_json(value: &impl serde::Serialize) -> Result<String, JsValue> {
     serde_json::to_string(value).map_err(js_err)
 }
@@ -1143,10 +1152,12 @@ impl From<ViewFormat> for jubarte::text_diff::TextFormat {
     }
 }
 
+#[cfg(feature = "edit")]
 fn default_context() -> u32 {
     3
 }
 
+#[cfg(feature = "edit")]
 fn deserialize_context<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
     <u32 as serde::Deserialize>::deserialize(deserializer).map_err(|e| {
         serde::de::Error::custom(format!(
@@ -1259,6 +1270,9 @@ pub fn diff_documents_unified(
     jubarte::text_diff::diff_documents(old, next, &options).map_err(js_err)
 }
 
+// The typings for diffDocumentsUnified, which exists only with `edit`: an
+// ungated section declared it in the redlines and pdf builds too.
+#[cfg(feature = "edit")]
 #[wasm_bindgen(typescript_custom_section)]
 const UNIFIED_TYPES: &str = r#"
 export function diffDocumentsUnified(old: Uint8Array, next: Uint8Array, oldName?: string, newName?: string, context?: number): string;
@@ -1551,16 +1565,16 @@ pub fn repair_document(docx: &[u8]) -> Result<RepairOutput, JsValue> {
 }
 
 /// What [`updateFields`](update_fields) returns.
-#[cfg(feature = "pdf")]
+#[cfg(all(feature = "pdf", feature = "doc"))]
 #[wasm_bindgen]
 pub struct FieldsOutput {
     docx: Vec<u8>,
     json: String,
 }
 
-#[cfg(feature = "pdf")]
+#[cfg(all(feature = "pdf", feature = "doc"))]
 #[wasm_bindgen]
-#[cfg(feature = "pdf")]
+#[cfg(all(feature = "pdf", feature = "doc"))]
 impl FieldsOutput {
     /// The document with refreshed field results.
     #[wasm_bindgen(getter)]

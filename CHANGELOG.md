@@ -78,6 +78,21 @@ embedding - slim features - read picture headers with it (format and
 dimensions for the admission limit). jubarte-render, rustybuzz,
 ttf-parser, tiny-skia and the fonts are absent.
 
+### Redlines-only and PDF-only npm builds
+
+`jubarte-wasm` gains two narrower builds, each for Node and the browser
+(plan T5.2). Every existing import path keeps working.
+
+- `jubarte-wasm/redlines` (`node-redlines`, `web-redlines`): compare,
+  accept or reject every revision, and list revisions. Its wasm is
+  3,792,306 bytes against the full build's 23,110,762.
+- `jubarte-wasm/pdf` and its alias `jubarte-wasm/convert` (`node-pdf`,
+  `web-pdf`): `docxToPdf`, `pdfPageCount` and `renderPdf`, with no
+  compare or edit layer; 11,207,079 bytes.
+- The npm package unpacks to 103,696,964 bytes (0.18.0: 93,280,656).
+- The `jubarte-redlines` npm CLI also installs a `jubarte` command, the
+  native binary's name, on the same entry point.
+
 ### Python build features
 
 `jubarte-python` builds against the sub-crates instead of the `jubarte`

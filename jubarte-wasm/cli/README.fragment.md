@@ -22,6 +22,11 @@ npx jubarte-redlines edit contract.docx --plan plan.json --out-dir review
 npx jubarte-redlines --help
 ```
 
+Installed (`npm install -g jubarte-redlines`), the package puts two commands
+on the `PATH` that run the same program: `jubarte-redlines` and `jubarte`,
+the native binary's name. `npx` resolves a package name, so through `npx`
+the command stays `npx jubarte-redlines`.
+
 `redline` is an alias of `compare`, which prints the redline as the agent
 view without `-o`. `read --json` (paragraph ids and package facts, changes
 and comments with their short ids) and `capabilities` (what this build can
