@@ -7,6 +7,46 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T7.2 (lcs.rs becomes a directory module) - 2026-11-17
+
+- comparer/lcs.rs (21,062 lines) is now lcs/mod.rs (437: the atom-level
+  core, the identity hasher and the driver) plus 10 production siblings
+  (largest unrelated_sources.rs, 2,872) and 11 test files under
+  lcs/tests/ (largest 2,830). Moved code only.
+- AC2: git diff -M90% against pre-release: 21,201 insertions, 21,062
+  deletions; 20,729 inserted lines match a deleted line. Unmatched: 32
+  mod, 21 use, 135 visibility, 36 blank, 248 other. Read literally
+  (every insertion outside mod, use and visibility lines, blanks
+  included), AC2 is 284 / 20,729 = 1.37%: over the 1% ceiling. 63 of
+  those lines are the SPDX headers REUSE requires on each of the 21 new
+  files; without them, 221 / 20,729 = 1.07%, still over. The rest: 36
+  blank, 10 module docs, 4 include_bytes! paths two directories deeper,
+  171 rustfmt reflows. Most reflows are signatures that `pub(super)`
+  pushed past 100 columns: with the 162 visibility prefixes stripped and
+  rustfmt re-run, the residue is 57 blank + 140 other = 197 / 20,883 =
+  0.94% (0.64% without the SPDX headers). The move is otherwise proven
+  by identity: all 600 bench redlines are byte-identical to the
+  pre-split binary (scripts/identity.py, 600 jobs: 600 identical).
+- AC1: goldens identical. The listing diff shows the 5 internal lines
+  pre-release already carries (convert::font, edit::prepared,
+  markdown::from_docx::ooxml), plus lines under comparer::lcs that this
+  move adds: api_snapshot.py keys items by their defining module, so the
+  9 pub functions now defined in private siblings get a second row at
+  their definer path (lcs::para_marks::split_at_paragraph_mark, ...),
+  with 7 module rows and 7 glob `pub use` rows for those siblings; the
+  internal rows of moved private items change path the same way. No row
+  at an old public path disappears; the siblings are private, so no new
+  path is reachable outside lcs. api-baseline.txt is not re-recorded.
+  facade_surface passes. jubarte-redlines 941 passed + 1 skipped
+  (unchanged; 251 lcs tests before and after), it_redlines 1330 passed
+  + 1 skipped (unchanged); clippy, fmt, doc exit 0; reuse lint
+  compliant.
+- AC4 (no-LTO consumer gate): pre-split baseline saved before any edit
+  at a1e6703df (CRITERION_HOME under .scratch); the branch compares at
+  -0.25% / +0.12% / -0.48% / -0.34% (canonical_dense_edits,
+  short_into_long, tables_bookmark_vmerge, comment_heavy), no
+  regression.
+
 ## T7.1 (finalize.rs becomes a directory module) - 2026-11-17
 
 - comparer/finalize.rs (35,492 lines) is now finalize/mod.rs (1,279)
