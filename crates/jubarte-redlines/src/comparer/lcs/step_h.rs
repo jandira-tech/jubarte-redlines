@@ -113,10 +113,7 @@ pub(super) fn containing_paragraph_is_duplicated(
 
 /// A word unit or paragraph group with no visible text: a bare paragraph
 /// mark, an empty paragraph.
-pub(in crate::comparer) fn unit_is_textless_paragraph_matter(
-    dom: &Dom,
-    u: &ComparisonUnit,
-) -> bool {
+pub(super) fn unit_is_textless_paragraph_matter(dom: &Dom, u: &ComparisonUnit) -> bool {
     unit_is_paragraph_matter(dom, u) && unit_is_textless(dom, u)
 }
 

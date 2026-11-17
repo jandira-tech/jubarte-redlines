@@ -14,15 +14,17 @@ re-recording never loses these entries; add new ones below, newest first.
   (largest unrelated_sources.rs, 2,872) and 11 test files under
   lcs/tests/ (largest 2,830). Moved code only.
 - AC2: git diff -M90% against pre-release: 21,201 insertions, 21,062
-  deletions; 20,729 inserted lines match a deleted line. Unmatched: 32
-  mod, 21 use, 135 visibility, 36 blank, 248 other. Read literally
+  deletions; 20,729 inserted lines match a deleted line. Unmatched: 472;
+  classified by trimmed line (the MiniMax-M3 recount, #2453 review): 21
+  mod, 13 use, 163 visibility, 36 blank, 239 other. Read literally
   (every insertion outside mod, use and visibility lines, blanks
-  included), AC2 is 284 / 20,729 = 1.37%: over the 1% ceiling. 63 of
+  included), AC2 is 275 / 20,729 = 1.33%: over the 1% ceiling. (The
+  first classification, 32 mod / 21 use / 135 visibility, gave 1.37%.) 63 of
   those lines are the SPDX headers REUSE requires on each of the 21 new
   files; without them, 221 / 20,729 = 1.07%, still over. The rest: 36
   blank, 10 module docs, 4 include_bytes! paths two directories deeper,
   171 rustfmt reflows. Most reflows are signatures that `pub(super)`
-  pushed past 100 columns: with the 162 visibility prefixes stripped and
+  pushed past 100 columns: with the 163 visibility prefixes stripped and
   rustfmt re-run, the residue is 57 blank + 140 other = 197 / 20,883 =
   0.94% (0.64% without the SPDX headers). The move is otherwise proven
   by identity: all 600 bench redlines are byte-identical to the
