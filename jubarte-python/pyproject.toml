@@ -66,8 +66,11 @@ python-source = "python"
 # Leave native extension symbols intact: macOS symbol stripping can
 # produce an invalid Mach-O LINKEDIT string pool and prevent import.
 strip = false
-# The sdist vendors the engine checkout (path dep on ".."); keep sibling
-# adapters, local build output, and app junk out of it.
+# The sdist vendors the engine checkout: the sub-crates this binding
+# depends on, the workspace root manifest they inherit from, and the root
+# `jubarte` package that manifest declares (see the never-built
+# `cfg(any())` dependency in Cargo.toml). Keep sibling adapters, local
+# build output, and app junk out of it.
 exclude = [
   { path = "wheels/**", format = "sdist" },
   { path = "dist/**", format = "sdist" },

@@ -32,8 +32,10 @@ The native `jubarte` binary offers `--keep-nested-comment` on `accept`,
 yet dispatch that option or return its kept-thread receipts; use the native
 binary when retention is needed.
 
-The wheel installs a `jubarte-redlines` command; `uvx` runs it without
-installing anything:
+The wheel installs a `jubarte-redlines` command, but no `jubarte` command
+and no `jubarte` import package: on PyPI both names belong to an unrelated
+project, so the import is always `jubarte_redlines`. `uvx` runs the
+command without installing anything:
 
 ```sh
 uvx jubarte-redlines redline original.docx modified.docx -o redline.docx --author Legal
