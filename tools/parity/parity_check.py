@@ -32,7 +32,7 @@ equal SHA — a bare wasm-pack pkg/ has no identity and no longer passes (the
 side with tools/parity/build.sh (stamps ENGINE_COMMIT.txt) or jubarte-wasm's
 own build-npm.sh (jubarte-wasm/npm carries it). With --engine-dir DIR a
 binding whose artifact is older than the newest commit time of the engine
-sources (git -C DIR log -1 --format=%ct -- src jubarte-python/src
+sources (git -C DIR log -1 --format=%ct -- src crates jubarte-python/src
 jubarte-wasm/src) fails as STALE — a rebuilt-nothing rerun can no longer
 compare yesterday's artifacts against today's engine.
 
@@ -537,11 +537,12 @@ def file_identity(path: Path) -> dict:
 
 def engine_src_commit_ts(engine_dir: Path) -> dict:
     """The newest commit time of the engine sources — the STALE rule's clock
-    (exactly the audit's command: git log -1 --format=%ct -- src
-    jubarte-python/src jubarte-wasm/src)."""
+    (exactly the audit's command: git log -1 --format=%ct -- src crates
+    jubarte-python/src jubarte-wasm/src). crates/ holds the engine since the
+    workspace split; build.sh's dirty check names it too."""
     proc = subprocess.run(
         ["git", "-C", str(engine_dir), "log", "-1", "--format=%ct", "--",
-         "src", "jubarte-python/src", "jubarte-wasm/src"],
+         "src", "crates", "jubarte-python/src", "jubarte-wasm/src"],
         capture_output=True, text=True, timeout=60)
     if proc.returncode != 0 or not proc.stdout.strip().isdigit():
         raise RuntimeError(f"git log failed in {engine_dir}: "
