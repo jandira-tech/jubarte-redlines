@@ -57,8 +57,8 @@ highlight = "all"
 # Deny path/git deps in published graph (keep builds reproducible).
 allow-wildcard-paths = true
 skip = [
-    # 0.2 via ring/rustls, 0.3 and 0.4 via tempfile and uuid in the root
-    # graph; the binding workspaces hold one version and warn
+    # 0.2 via ring/rustls, 0.3 and 0.4 via tempfile in the root graph;
+    # the binding workspaces hold one version and warn
     # "unnecessary-skip" for the same shared-policy reason.
     { name = "getrandom" },
     # rustix 0.38 still needs 2.x; newer rustix needs 3.x.
@@ -117,7 +117,7 @@ allow-build-scripts = [
     "io-extras",
     "io-lifetimes",
     "jsonschema-value",
-    "jubarte-redlines",
+    "jubarte",
     "libc",
     "libfuzzer-sys",
     "libm",
@@ -153,10 +153,9 @@ allow-build-scripts = [
     "zmij",
 ]
 
-# This package root is the repository, so the file walk would treat
-# unrelated tools and local environments as crate files. The build
-# script only records the version. The checksum skips that walk until
-# the script itself changes.
+# The version-stamping build script lives in the CLI crate (plan T4.8);
+# the root no longer builds one. The checksum skips the file walk while
+# the script is unchanged.
 [[bans.build.bypass]]
-name = "jubarte-redlines"
-build-script = "e0180992bf7eeb204ceac3cf8882d78a0acbca893149f5079c1458fcb45d1050"
+name = "jubarte-cli"
+build-script = "883966eba2239037f0b672615cccaf9961617d7d7236825fb8a40b3ec0808a50"

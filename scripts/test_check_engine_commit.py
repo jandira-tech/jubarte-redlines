@@ -44,7 +44,9 @@ class CheckEngineCommit(unittest.TestCase):
     def git(self, *args: str) -> str:
         return subprocess.run(
             ["git", "-C", str(self.tmp), *args],
-            check=True, capture_output=True, text=True,
+            check=True,
+            capture_output=True,
+            text=True,
         ).stdout.strip()
 
     def write(self, rel: str, text: str) -> None:
@@ -65,7 +67,10 @@ class CheckEngineCommit(unittest.TestCase):
     def check(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["bash", str(self.tmp / "scripts" / CHECKER.name), *args],
-            cwd=self.tmp, capture_output=True, text=True, timeout=60,
+            cwd=self.tmp,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
 
     def test_a_build_stamped_with_its_own_engine_passes(self) -> None:
@@ -94,10 +99,15 @@ class CheckEngineCommit(unittest.TestCase):
         # it embeds (include_bytes!/include_str!), and the binding crate with
         # the RUSTFLAGS in its .cargo/config.toml.
         for rel in [
-            "Cargo.toml", "assets/fonts/a.ttf", "schemas/edit-plan-v2.schema.json",
+            "Cargo.toml",
+            "assets/fonts/a.ttf",
+            "schemas/edit-plan-v2.schema.json",
             "src/convert/word_substitutions.toml",
-            "jubarte-wasm/src/lib.rs", "jubarte-wasm/Cargo.toml",
-            "jubarte-wasm/Cargo.lock", "jubarte-wasm/.cargo/config.toml",
+            "crates/jubarte-render/src/lib.rs",
+            "jubarte-wasm/src/lib.rs",
+            "jubarte-wasm/Cargo.toml",
+            "jubarte-wasm/Cargo.lock",
+            "jubarte-wasm/.cargo/config.toml",
         ]:
             with self.subTest(rel=rel):
                 base = self.git("rev-parse", "HEAD")

@@ -93,70 +93,122 @@
 //! (MIT). The repository itself is AGPL-3.0-only; `LICENSES/` preserves those
 //! upstream attribution texts without changing the repository license.
 
-pub mod admission;
-pub mod append;
-pub mod audit;
-/// Word's built-in style names.
-mod builtin_styles;
-/// Machine-readable manifest of what this build can do.
-pub mod capabilities;
-/// Tracked changes one at a time: list, accept or reject a selection.
-pub mod changes;
 #[cfg(feature = "cli")]
-pub mod cli;
-pub mod comments;
-/// Core WmlComparer engine (atomize → LCS → produce → finalize).
-pub mod comparer;
-/// Structured comparison log (info / warning / error entries).
-pub mod comparison_log;
-/// Independent DOCX → PDF conversion (not LibreOffice).
-pub mod convert;
+#[doc(inline)]
+pub use jubarte_cli::cli;
+#[doc(inline)]
+pub use jubarte_doc::append;
+#[doc(inline)]
+pub use jubarte_doc::audit;
+/// Tracked changes one at a time: list, accept or reject a selection.
+#[doc(inline)]
+pub use jubarte_doc::changes;
+#[doc(inline)]
+pub use jubarte_doc::comments;
 /// `jubarte debug`: short Word-validity triage of a package, or two compared.
-pub mod debug;
+#[doc(inline)]
+pub use jubarte_doc::debug;
+/// Table, cell and paragraph border views shared by render, markdown and debug.
+/// Word's built-in style names.
+/// Machine-readable manifest of what this build can do.
+#[doc(inline)]
+pub use jubarte_edit::capabilities;
+#[doc(inline)]
+pub use jubarte_opc::admission;
+/// Custom XML and built-in data stores shared by the OPC layer.
+/// Core WmlComparer engine (atomize → LCS → produce → finalize).
+#[doc(inline)]
+pub use jubarte_redlines::comparer;
+/// Structured comparison log (info / warning / error entries).
+#[doc(inline)]
+pub use jubarte_redlines::comparison_log;
+/// Independent DOCX → PDF conversion (not LibreOffice).
+#[doc(inline)]
+pub use jubarte_render::convert;
 /// Byte-level package API: compare, list, accept, and reject revisions.
-pub mod document_comparer;
-pub mod edit;
-/// V2-13 (issue #845): the checker core for `--expect` evaluations.
-pub mod expect;
-pub mod fields;
-pub mod ids;
-/// Read-only paragraph/package views and the Markdown projection for agents.
-pub mod inspect;
-pub mod legacy_doc;
-pub mod markdown;
-/// Markup simplification (PowerTools `MarkupSimplifier` port).
-pub mod markup_simplifier;
-/// WordprocessingML and related namespace / `XName` constants.
-pub mod namespaces;
-/// Open Packaging Conventions adapter (`PartFs`).
-pub mod opc;
-/// P0-LAB-01 stage counters/timers — no-ops unless `perf-profile` is enabled.
-pub mod perf;
-pub mod result;
-/// Accept / reject tracked revisions across a package.
-pub mod revision_processor;
-pub mod scrub;
-pub mod settings;
-/// ISO Strict → Transitional package normalization.
-pub mod strict_translation;
-pub mod text_diff;
-pub mod unid;
-/// `jubarte self-update`: install a GitHub release, only when asked.
+/// One-call document comparison and revision accept/reject. Composed
+/// per A6: the compare crate's module, plus the comment-keeping
+/// accept/reject the doc layer owns.
+pub mod document_comparer {
+    #[doc(inline)]
+    pub use crate::changes::{
+        accept_revisions_keeping_comments, reject_revisions_keeping_comments,
+    };
+    #[doc(inline)]
+    pub use jubarte_redlines::document_comparer::*;
+}
+/// Tracked-change editing: the jubarte-edit crate's module plus the
+/// inline CLI actions (behind `cli`).
+pub mod edit {
+    #[cfg(feature = "cli")]
+    #[doc(inline)]
+    pub use jubarte_cli::inline;
+    #[doc(inline)]
+    pub use jubarte_edit::edit::*;
+}
 #[cfg(feature = "self-update")]
-pub mod update;
+#[doc(inline)]
+pub use jubarte_cli::update;
+#[doc(inline)]
+pub use jubarte_doc::fields;
+/// Read-only paragraph/package views and the Markdown projection for agents.
+#[doc(inline)]
+pub use jubarte_doc::inspect;
+#[doc(inline)]
+pub use jubarte_doc::scrub;
+#[doc(inline)]
+pub use jubarte_doc::validate;
+#[doc(inline)]
+pub use jubarte_dom::ids;
+/// WordprocessingML and related namespace / `XName` constants.
+#[doc(inline)]
+pub use jubarte_dom::namespaces;
+/// P0-LAB-01 stage counters/timers — no-ops unless `perf-profile` is enabled.
+#[doc(inline)]
+pub use jubarte_dom::perf;
+#[doc(inline)]
+pub use jubarte_dom::unid;
 /// Shared small utilities.
-pub mod util;
-pub mod validate;
-/// `WmlDocument` — document bytes + lazily parsed main part.
-pub mod wml_document;
-/// Word's default theme part, for originals without one.
-mod word_default_theme;
+#[doc(inline)]
+pub use jubarte_dom::util;
 /// Arena DOM (`xmllinq`) used by the comparer.
-pub mod xmllinq;
+#[doc(inline)]
+pub use jubarte_dom::xmllinq;
+/// V2-13 (issue #845): the checker core for `--expect` evaluations.
+#[doc(inline)]
+pub use jubarte_edit::expect;
+/// The composed markdown module (A6): the markdown crate's module plus
+/// the edit crate's patch, redline and unified modules.
+pub use jubarte_edit::markdown;
+#[doc(inline)]
+pub use jubarte_edit::result;
+#[doc(inline)]
+pub use jubarte_edit::text_diff;
+#[doc(inline)]
+pub use jubarte_markdown::legacy_doc;
+/// Markup simplification (PowerTools `MarkupSimplifier` port).
+#[doc(inline)]
+pub use jubarte_opc::markup_simplifier;
+/// Open Packaging Conventions adapter (`PartFs`).
+#[doc(inline)]
+pub use jubarte_opc::opc;
+#[doc(inline)]
+pub use jubarte_opc::settings;
+/// ISO Strict → Transitional package normalization.
+#[doc(inline)]
+pub use jubarte_opc::strict_translation;
+/// Accept / reject tracked revisions across a package.
+#[doc(inline)]
+pub use jubarte_redlines::revision_processor;
+/// Pure DOM structural predicates shared by validate and the comparers.
+/// Word's default theme part, for originals without one.
+/// `WmlDocument` — document bytes + lazily parsed main part.
+#[doc(inline)]
+pub use jubarte_redlines::wml_document;
 
 /// [`WmlDocument`] re-export for the common library entry point.
-pub use wml_document::WmlDocument;
+pub use jubarte_redlines::WmlDocument;
 
 /// Capability-confined, staged filesystem publication for host applications.
 #[cfg(not(target_arch = "wasm32"))]
-pub mod publication;
+pub use jubarte_edit::publication;

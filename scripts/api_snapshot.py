@@ -75,13 +75,57 @@ def crate_version() -> str:
     raise SystemExit("no version in Cargo.toml")
 
 
+def build_workspace_docs() -> dict[str, dict]:
+    """Rustdoc JSON of every workspace library, by crate name.
+
+    The facade is the root package's library; the others answer the facade
+    walk's cross-crate re-export resolution (plan A7). Today the workspace
+    holds one library, so this returns the facade alone; the machinery is
+    what T4.1+ rely on.
+    """
+    have_nightly = False
+    try:
+        out = subprocess.run(["rustup", "toolchain", "list"], capture_output=True, text=True)
+        have_nightly = "nightly" in out.stdout
+    except FileNotFoundError:
+        pass
+    meta = subprocess.run(
+        ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=ROOT,
+    )
+    packages = json.loads(meta.stdout)["packages"]
+    docs: dict[str, dict] = {}
+    for package in sorted(packages, key=lambda p: p["name"]):
+        has_lib = any(target.get("kind") == ["lib"] for target in package.get("targets", []))
+        if not has_lib:
+            continue
+        env = dict(
+            os.environ,
+            RUSTDOCFLAGS="-Z unstable-options --output-format json --document-private-items",
+        )
+        if not have_nightly:
+            env["RUSTC_BOOTSTRAP"] = "1"
+        # -p per package: a bare workspace `cargo doc` only emits the
+        # JSON of the primary crate, dependencies get no output-format.
+        command = ["cargo", "doc", "-p", package["name"], "--no-deps", "--all-features"]
+        if have_nightly:
+            command.insert(1, "+nightly")
+        subprocess.run(command, cwd=ROOT, check=True, env=env)
+        lib = package["name"].replace("-", "_")
+        path = ROOT / "target" / "doc" / f"{lib}.json"
+        if path.exists():
+            docs[lib] = json.loads(path.read_text())
+    return docs
+
+
 def build_doc_json() -> None:
     """Run rustdoc so target/doc/jubarte.json exists (private items included)."""
     have_nightly = False
     try:
-        out = subprocess.run(
-            ["rustup", "toolchain", "list"], capture_output=True, text=True
-        )
+        out = subprocess.run(["rustup", "toolchain", "list"], capture_output=True, text=True)
         have_nightly = "nightly" in out.stdout
     except FileNotFoundError:
         pass
@@ -90,13 +134,14 @@ def build_doc_json() -> None:
     # cargo runs ("metadata probing failed", #1769).
     env = dict(
         os.environ,
-        RUSTDOCFLAGS="-Z unstable-options --output-format json "
-                     "--document-private-items",
+        RUSTDOCFLAGS="-Z unstable-options --output-format json --document-private-items",
     )
     if have_nightly:
         subprocess.run(
             ["cargo", "+nightly", "doc", "--no-deps", "--all-features"],
-            cwd=ROOT, check=True, env=env,
+            cwd=ROOT,
+            check=True,
+            env=env,
         )
     else:
         # No nightly toolchain installed: RUSTC_BOOTSTRAP unlocks the same
@@ -104,7 +149,9 @@ def build_doc_json() -> None:
         env["RUSTC_BOOTSTRAP"] = "1"
         subprocess.run(
             ["cargo", "doc", "--no-deps", "--all-features"],
-            cwd=ROOT, check=True, env=env,
+            cwd=ROOT,
+            check=True,
+            env=env,
         )
 
 
@@ -177,7 +224,7 @@ def ty(t, names: dict[str, str] | None = None) -> str:
     if kind == "primitive":
         return val
     if kind == "borrowed_ref":
-        lt = (val.get("lifetime") or "")
+        lt = val.get("lifetime") or ""
         if names is not None and lt in names:
             lt = names[lt]
         mut = "mut " if val.get("is_mutable", val.get("mutable")) else ""
@@ -194,10 +241,7 @@ def ty(t, names: dict[str, str] | None = None) -> str:
     if kind == "impl_trait":
         return "impl " + " + ".join(bound(b, names) for b in val)
     if kind == "dyn_trait":
-        parts = [
-            _path_of(tb["trait"]) + _args(tb["trait"].get("args"), names)
-            for tb in val.get("traits", [])
-        ]
+        parts = [_path_of(tb["trait"]) + _args(tb["trait"].get("args"), names) for tb in val.get("traits", [])]
         if val.get("lifetime"):
             life = val["lifetime"]
             parts.append(names.get(life, life) if names is not None and isinstance(life, str) else life)
@@ -457,6 +501,81 @@ def _local_target(inner: dict, index: dict) -> str | None:
     return None
 
 
+def _doc_hidden(item: dict) -> bool:
+    """The item carries `#[doc(hidden)]`: never part of the api listing."""
+    return any("doc(hidden)" in attr for attr in (item.get("attrs") or []))
+
+
+class ForeignIndex:
+    """The items of the workspace's other library crates, by full path.
+
+    A facade re-export names a foreign item whose id rustdoc leaves out of
+    the facade's own index; `paths` still carries the id's crate and path
+    (plan A7), and this index answers with the defining item so the facade
+    walk can list it under its facade path.
+    """
+
+    def __init__(self, facade_doc: dict, others: dict[str, dict]) -> None:
+        self._by_crate: dict[str, dict[str, tuple[str, dict, str]]] = {}
+        for crate_name, doc in others.items():
+            index: dict[str, tuple[str, dict, str]] = {}
+            parent: dict[str, str] = {}
+            ids = sorted(doc["index"], key=lambda iid: (len(iid), iid))
+            for iid in ids:
+                for kid in _children(doc["index"][iid]):
+                    parent.setdefault(kid, iid)
+            for iid in ids:
+                item = doc["index"][iid]
+                kind, inner = _kind(item)
+                if kind in ("extern_crate", "import", "keyword", "primitive", "impl"):
+                    continue
+                parts = [item.get("name") or "_"]
+                pid = parent.get(iid)
+                root = str(doc["root"])
+                while pid and pid != root:
+                    parts.append(doc["index"][pid].get("name") or "_")
+                    pid = parent.get(pid)
+                path = "::".join([crate_name, *reversed(parts)])
+                index[path] = (kind, inner, _vis(item.get("visibility")), _doc_hidden(item))
+            self._by_crate[crate_name] = index
+
+    def resolve(self, facade_doc: dict, target_id: str) -> tuple[str, dict, str, bool] | None:
+        """The foreign item a facade `use` names, or None when unknown."""
+        info = facade_doc.get("paths", {}).get(target_id)
+        if not info:
+            return None
+        # The path's first segment names the defining crate; this rustdoc
+        # emits no `crates` table to ask instead.
+        crate = (info.get("path") or [""])[0]
+        if crate not in self._by_crate:
+            return None
+        index = self._by_crate.get(crate)
+        if index is None:
+            return None
+        path = "::".join(info.get("path", []))
+        return index.get(path)
+
+    def glob_entries(self, facade_doc: dict, target_id: str, prefix: str) -> list:
+        """Entry lines for `pub use other::<module>::*`: the module's public
+        children, each under its facade path."""
+        info = facade_doc.get("paths", {}).get(target_id)
+        if not info:
+            return []
+        crate = (info.get("path") or [""])[0]
+        index = self._by_crate.get(crate)
+        if index is None:
+            return []
+        module_path = "::".join(info.get("path", []))
+        out = []
+        for path, (kind, inner, vis, hidden) in sorted(index.items()):
+            rest = path.removeprefix(module_path + "::")
+            if not rest or "::" in rest or vis != "pub" or hidden:
+                continue  # not a direct public child, or doc(hidden)
+            facade = f"{prefix}::{rest}" if prefix else rest
+            out.append(Entry("api", kind, vis, facade, _detail(kind, inner)))
+        return out
+
+
 def _public_surface(index: dict, root: str, impls: list[str]) -> set[str]:
     """Ids a user of the crate can name."""
     api: set[str] = set()
@@ -466,6 +585,8 @@ def _public_surface(index: dict, root: str, impls: list[str]) -> set[str]:
             return
         api.add(iid)
         item = index[iid]
+        if _doc_hidden(item):
+            return  # re-exported internals: never part of the api surface
         kind, _ = _kind(item)
         for kid in _children(item):
             if kid not in index:
@@ -504,16 +625,14 @@ def _public_surface(index: dict, root: str, impls: list[str]) -> set[str]:
     return api
 
 
-def entries(doc: dict) -> list[Entry]:
+def entries(doc: dict, others: dict[str, dict] | None = None) -> list[Entry]:
     index: dict = doc["index"]
     paths: dict = doc.get("paths", {})
+    foreign = ForeignIndex(doc, others) if others else None
     # Every walk goes in id order, so the listing never depends on the order
     # rustdoc happened to write the index in.
     ids = sorted(index, key=lambda iid: (len(iid), iid))
-    impls = [
-        iid for iid in ids
-        if "impl" in index[iid]["inner"] and not _is_noise_impl(index[iid]["inner"]["impl"])
-    ]
+    impls = [iid for iid in ids if "impl" in index[iid]["inner"] and not _is_noise_impl(index[iid]["inner"]["impl"])]
     api = _public_surface(index, str(doc["root"]), impls)
 
     # Parent map: rustdoc JSON records children inside container items, so a
@@ -565,9 +684,7 @@ def entries(doc: dict) -> list[Entry]:
         if kind == "use" and iid not in api:
             continue  # a private import is no part of any surface
         pid = parent.get(iid)
-        in_trait_impl = bool(
-            pid and "impl" in index[pid]["inner"] and index[pid]["inner"]["impl"].get("trait")
-        )
+        in_trait_impl = bool(pid and "impl" in index[pid]["inner"] and index[pid]["inner"]["impl"].get("trait"))
         if kind == "impl":
             # An inherent impl block is its items; a trait impl is one line.
             if _is_noise_impl(inner) or not inner.get("trait"):
@@ -576,21 +693,49 @@ def entries(doc: dict) -> list[Entry]:
             continue  # reachable only through a left-out impl
         elif kind == "function" and in_trait_impl:
             continue  # the trait fixes its signature
-        out.append(Entry(
-            "api" if iid in api else "internal",
-            kind, _vis(item.get("visibility")), full_path(iid), _detail(kind, inner),
-        ))
+        out.append(
+            Entry(
+                "api" if iid in api else "internal",
+                kind,
+                _vis(item.get("visibility")),
+                full_path(iid),
+                _detail(kind, inner),
+            )
+        )
         # A public glob is the names it imports, not the `*` line. `pub use
         # b::*` makes `b`'s public items nameable beside the glob.
         if kind == "use" and iid in api and isinstance(inner, dict) and inner.get("is_glob"):
             parent_id = parent.get(iid)
             prefix = full_path(parent_id) if parent_id else ""
-            out.extend(_glob_entries(index, str(inner.get("id")), prefix))
+            target_id = str(inner.get("id"))
+            if target_id in index:
+                out.extend(_glob_entries(index, target_id, prefix))
+            elif foreign is not None:
+                out.extend(foreign.glob_entries(doc, target_id, prefix))
+        elif kind == "use" and iid in api and foreign is not None:
+            # A plain re-export of a foreign item: the item itself is part
+            # of this surface under its facade path (plan A7); rustdoc JSON
+            # never inlines foreign items, so resolve by path.
+            target_id = str(inner.get("id"))
+            if target_id not in index:
+                resolved = foreign.resolve(doc, target_id)
+                if resolved is not None:
+                    f_kind, f_inner, _f_vis, f_hidden = resolved
+                    if not f_hidden:
+                        out.append(
+                            Entry(
+                                "api",
+                                f_kind,
+                                _vis(item.get("visibility")),
+                                full_path(iid),
+                                _detail(f_kind, f_inner),
+                            )
+                        )
     return sorted(set(out))
 
 
-def flatten(doc: dict) -> list[str]:
-    return sorted({e.line() for e in entries(doc)})
+def flatten(doc: dict, others: dict[str, dict] | None = None) -> list[str]:
+    return sorted({e.line() for e in entries(doc, others)})
 
 
 # --- drift between two snapshots ---------------------------------------------
@@ -658,9 +803,7 @@ def _counts(pairs: list) -> str:
     return f"{added} added, {removed} removed, {len(pairs) - added - removed} changed"
 
 
-def render_drift(
-    prev: str, label: str, old: list[Entry], new: list[Entry], private: bool = False
-) -> str:
+def render_drift(prev: str, label: str, old: list[Entry], new: list[Entry], private: bool = False) -> str:
     """The step-6 report: public drift in full, then the crate-private rest."""
     public, rest = [], []
     for pair in drift(old, new):
@@ -725,10 +868,19 @@ def _refuse_listing(msg: str) -> None:
 # macro, or a struct and a function, can share a path; the added-path gate
 # must not treat them as one item. Impls and fields are not in those
 # namespaces and keep their own groups, so a field is not a method.
-_TYPE_NS = frozenset({
-    "module", "struct", "enum", "union", "trait", "trait_alias",
-    "type_alias", "assoc_type", "variant",
-})
+_TYPE_NS = frozenset(
+    {
+        "module",
+        "struct",
+        "enum",
+        "union",
+        "trait",
+        "trait_alias",
+        "type_alias",
+        "assoc_type",
+        "variant",
+    }
+)
 _VALUE_NS = frozenset({"function", "constant", "static", "assoc_const"})
 _MACRO_NS = frozenset({"macro", "proc_macro", "proc_derive", "proc_attribute"})
 
@@ -762,9 +914,7 @@ def public_paths_of_listing(text: str, name: str) -> set[str]:
             continue
         parts = line.split("\t")
         if len(parts) != 4 or parts[0] not in ("api", "internal"):
-            _refuse_listing(
-                f"{name}:{lineno}: not a listing line (surface, kind, vis, path)"
-            )
+            _refuse_listing(f"{name}:{lineno}: not a listing line (surface, kind, vis, path)")
         surface, kind, _vis, rest = parts
         if surface == "api":
             ident = _path_identity(kind, listing_path(kind, rest))
@@ -823,26 +973,27 @@ def main(argv: list[str] | None = None) -> None:
         description="Write the API snapshot of a release, show drift, or list added public paths."
     )
     parser.add_argument("label", nargs="?", help="defaults to the Cargo version")
-    parser.add_argument("--drift", nargs=2, metavar=("PREV", "NEW"),
-                        help="report the drift between two snapshots under docs/api/")
-    parser.add_argument("--private", action="store_true",
-                        help="with --drift: list the crate-private drift line by line")
-    parser.add_argument("--added", nargs=2, metavar=("OLD", "NEW"),
-                        help="print public item paths in NEW missing from OLD "
-                             "(a listing or rustdoc JSON); exit 1 if any")
-    parser.add_argument("--emit", metavar="OUT",
-                        help="write this tree's flattened listing to OUT, not docs/api")
+    parser.add_argument(
+        "--drift", nargs=2, metavar=("PREV", "NEW"), help="report the drift between two snapshots under docs/api/"
+    )
+    parser.add_argument(
+        "--private", action="store_true", help="with --drift: list the crate-private drift line by line"
+    )
+    parser.add_argument(
+        "--added",
+        nargs=2,
+        metavar=("OLD", "NEW"),
+        help="print public item paths in NEW missing from OLD (a listing or rustdoc JSON); exit 1 if any",
+    )
+    parser.add_argument("--emit", metavar="OUT", help="write this tree's flattened listing to OUT, not docs/api")
     args = parser.parse_args(argv)
-    modes = [name for name, on in (("--drift", args.drift), ("--added", args.added),
-                                    ("--emit", args.emit)) if on]
+    modes = [name for name, on in (("--drift", args.drift), ("--added", args.added), ("--emit", args.emit)) if on]
     if len(modes) > 1:
         parser.error(f"choose one of {', '.join(modes)}")
 
     if args.drift:
         prev, new = args.drift
-        sys.stdout.write(
-            render_drift(prev, new, load_snapshot(prev), load_snapshot(new), args.private)
-        )
+        sys.stdout.write(render_drift(prev, new, load_snapshot(prev), load_snapshot(new), args.private))
         return
 
     if args.added:
@@ -855,7 +1006,36 @@ def main(argv: list[str] | None = None) -> None:
 
     build_doc_json()
     doc = json.loads(DOC_JSON.read_text())
-    text = "\n".join(flatten(doc)) + "\n"
+    others = {name: d for name, d in build_workspace_docs().items() if name != "jubarte"}
+    lines = set(flatten(doc, others or None))
+    for lib, other in others.items():
+        # Every library's own listing joins the facade listing with its
+        # paths rebased under the facade: `jubarte_dom::xmllinq::Dom`
+        # reads (and is nameable as) `jubarte::xmllinq::Dom` there. The
+        # per-item cross-crate resolution above covers the re-export
+        # lines; this covers everything beneath them, signatures
+        # included. The CLI crate is composed, not re-exported
+        # wholesale (plan A6/T4.8): its modules map to their facade
+        # homes, and its crate-root items (which the facade does not
+        # carry) are skipped.
+        if lib == "jubarte_cli":
+            rebased = set()
+            prefixes = {
+                "jubarte_cli::cli::": "jubarte::cli::",
+                "jubarte_cli::update::": "jubarte::update::",
+                "jubarte_cli::inline::": "jubarte::edit::inline::",
+            }
+            for line in flatten(other):
+                for prefix, home in prefixes.items():
+                    if f"\t{prefix.split('::')[1]}\t" in line or f"\t{prefix}" in line:
+                        rebased.add(line.replace(prefix, home))
+                # nothing else from the crate root
+            lines.update(rebased)
+            continue
+        lines.update(
+            line.replace(f"{lib}::", "jubarte::") for line in flatten(other) if not line.endswith(f"\t{lib}")
+        )  # the crate's own root-module line is not nameable in the facade
+    text = "\n".join(sorted(lines)) + "\n"
     if args.emit:
         Path(args.emit).write_text(text)
         print(f"{args.emit} written")

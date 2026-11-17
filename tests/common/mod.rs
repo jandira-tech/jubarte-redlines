@@ -24,6 +24,8 @@
 #![allow(dead_code)]
 
 pub mod comment_ids;
+pub mod comment_revisions;
+pub mod dead_comments;
 pub mod docx;
 pub mod markdown_pairs;
 pub mod revision_summary;

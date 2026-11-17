@@ -43,7 +43,7 @@ Legend: `(test)` after a file name means every reference to it from that file si
 | `src/comparer/mod.rs` | 18 | 223 |
 | `src/admission.rs` | 14 | 8 |
 | `src/markdown/xml.rs` | 14 | 0 |
-| `src/convert/mod.rs` | 13 | 20 |
+| `crates/jubarte-render/src/convert/mod.rs` | 13 | 20 |
 | `src/changes.rs` | 12 | 35 |
 | `src/comparer/atoms.rs` | 12 | 18 |
 | `src/markdown/write.rs` | 12 | 29 |
@@ -54,10 +54,10 @@ Legend: `(test)` after a file name means every reference to it from that file si
 
 - 29 files: `src/audit.rs`, `src/debug.rs`, `src/edit.rs`, `src/edit/anchor.rs`, `src/edit/controls.rs`, `src/edit/sections.rs`, `src/markdown/critic.rs`, `src/markdown/diff.rs`, `src/markdown/from_docx/agent.rs`, `src/markdown/from_docx/critic.rs`, `src/markdown/from_docx/drawing.rs`, `src/markdown/from_docx/mermaid.rs`, `src/markdown/from_docx/mod.rs`, `src/markdown/from_docx/ooxml.rs`, `src/markdown/math.rs`, `src/markdown/mod.rs`, `src/markdown/package.rs`, `src/markdown/pages.rs`, `src/markdown/patch.rs`, `src/markdown/redline.rs`, `src/markdown/unified.rs`, `src/markdown/view_notes.rs`, `src/markdown/view_stories.rs`, `src/markdown/view_styles.rs`, `src/markdown/write.rs`, `src/markdown/xml.rs`, `src/scrub.rs`, `src/text_diff.rs`, `src/validate.rs`
 - 19 files: `src/changes.rs`, `src/comments.rs`, `src/comparer/atomize.rs`, `src/comparer/atoms.rs`, `src/comparer/finalize.rs`, `src/comparer/footnotes.rs`, `src/comparer/formatchg.rs`, `src/comparer/lcs.rs`, `src/comparer/lcs_table.rs`, `src/comparer/mod.rs`, `src/comparer/moves.rs`, `src/comparer/parts.rs`, `src/comparer/preprocess.rs`, `src/comparer/produce.rs`, `src/comparer/revisions.rs`, `src/comparer/units.rs`, `src/document_comparer.rs`, `src/inspect.rs`, `src/inspect/tables.rs`
-- 6 files: `src/convert/diff_render.rs`, `src/convert/font.rs`, `src/convert/font_table.rs`, `src/convert/mod.rs`, `src/convert/pdf.rs`, `src/convert/word_subst.rs`
+- 6 files: `crates/jubarte-render/src/convert/diff_render.rs`, `crates/jubarte-render/src/convert/font.rs`, `crates/jubarte-render/src/convert/font_table.rs`, `crates/jubarte-render/src/convert/mod.rs`, `crates/jubarte-render/src/convert/pdf.rs`, `crates/jubarte-render/src/convert/word_subst.rs`
 - 3 files: `src/xmllinq/mod.rs`, `src/xmllinq/parse.rs`, `src/xmllinq/serialize.rs`
 - 3 files: `src/revision_processor.rs`, `src/revision_processor/sections.rs`, `src/revision_processor/word_save.rs`
-- 3 files: `src/convert/preset_geom.rs`, `src/convert/preset_geom_data.rs`, `src/convert/preset_text_rect_data.rs`
+- 3 files: `crates/jubarte-render/src/convert/preset_geom.rs`, `crates/jubarte-render/src/convert/preset_geom_data.rs`, `crates/jubarte-render/src/convert/preset_text_rect_data.rs`
 - 2 files: `src/ids.rs`, `src/ids/short.rs`
 
 Rust allows module cycles inside one crate, so none of these break the build. Several are parent/child pairs (for example `src/edit.rs` and `src/edit/anchor.rs`); others are sibling pairs (for example `src/text_diff.rs` and `src/debug.rs`). Both directions are listed under each file below.
@@ -98,7 +98,7 @@ module `jubarte::audit` · 1,055 lines
 > `jubarte validate --rules a11y,style,structure`:
 
 - **Declares submodules:** none
-- **Depends on:** `src/convert/mod.rs`, `src/ids.rs`, `src/inspect.rs`, `src/namespaces.rs`, `src/opc/mod.rs` (test), `src/validate.rs`, `src/xmllinq/mod.rs`
+- **Depends on:** `crates/jubarte-render/src/convert/mod.rs`, `src/ids.rs`, `src/inspect.rs`, `src/namespaces.rs`, `src/opc/mod.rs` (test), `src/validate.rs`, `src/xmllinq/mod.rs`
 - **Depended on by (src):** `src/bin/jubarte.rs`, `src/capabilities.rs`, `src/cli.rs`, `src/validate.rs`
 - **Depended on by (outside src):** `jubarte-python/src/lib.rs`; `jubarte-wasm/src/lib.rs`; `tests/audit_rules.rs`
 - **External crates:** `serde`
@@ -111,7 +111,7 @@ module `bin:jubarte` · 4,522 lines
 > `jubarte` — generate a tracked-changes (redline) `.docx` from two documents.
 
 - **Declares submodules:** none
-- **Depends on:** `src/admission.rs`, `src/append.rs`, `src/audit.rs`, `src/capabilities.rs`, `src/capabilities/discovery.rs`, `src/changes.rs`, `src/cli.rs`, `src/comments.rs`, `src/comparer/mod.rs`, `src/convert/diff_render.rs`, `src/convert/font.rs`, `src/convert/mod.rs`, `src/debug.rs`, `src/debug/diff.rs`, `src/document_comparer.rs`, `src/edit.rs`, `src/edit/flags.rs`, `src/edit/record.rs`, `src/edit/resolution.rs`, `src/fields.rs`, `src/inspect.rs`, `src/inspect/tables.rs`, `src/legacy_doc.rs`, `src/lib.rs` (test), `src/markdown/anchor.rs`, `src/markdown/diff.rs`, `src/markdown/mod.rs`, `src/markdown/redline.rs`, `src/markdown/unified.rs`, `src/markdown/write.rs`, `src/opc/mod.rs`, `src/scrub.rs`, `src/text_diff.rs`, `src/update.rs`, `src/validate.rs`
+- **Depends on:** `src/admission.rs`, `src/append.rs`, `src/audit.rs`, `src/capabilities.rs`, `src/capabilities/discovery.rs`, `src/changes.rs`, `src/cli.rs`, `src/comments.rs`, `src/comparer/mod.rs`, `crates/jubarte-render/src/convert/diff_render.rs`, `crates/jubarte-render/src/convert/font.rs`, `crates/jubarte-render/src/convert/mod.rs`, `src/debug.rs`, `src/debug/diff.rs`, `src/document_comparer.rs`, `src/edit.rs`, `src/edit/flags.rs`, `src/edit/record.rs`, `src/edit/resolution.rs`, `src/fields.rs`, `src/inspect.rs`, `src/inspect/tables.rs`, `src/legacy_doc.rs`, `src/lib.rs` (test), `src/markdown/anchor.rs`, `src/markdown/diff.rs`, `src/markdown/mod.rs`, `src/markdown/redline.rs`, `src/markdown/unified.rs`, `src/markdown/write.rs`, `src/opc/mod.rs`, `src/scrub.rs`, `src/text_diff.rs`, `src/update.rs`, `src/validate.rs`
 - **Depended on by (src):** none
 - **Depended on by (outside src):** none
 - **External crates:** `clap`, `mimalloc`, `same-file`, `serde`, `serde_json`, `zip` (test)
@@ -170,7 +170,7 @@ module `jubarte::cli` · 3,300 lines · cfg(feature="cli")
 > Shared, platform-neutral command declarations and parsing.
 
 - **Declares submodules:** none
-- **Depends on:** `src/admission.rs`, `src/append.rs`, `src/audit.rs`, `src/capabilities.rs`, `src/convert/mod.rs`, `src/debug.rs`, `src/edit.rs`, `src/edit/flags.rs`, `src/edit/record.rs`, `src/markdown/mod.rs`, `src/markdown/unified.rs`, `src/util/datetime.rs`, `src/validate.rs`
+- **Depends on:** `src/admission.rs`, `src/append.rs`, `src/audit.rs`, `src/capabilities.rs`, `crates/jubarte-render/src/convert/mod.rs`, `src/debug.rs`, `src/edit.rs`, `src/edit/flags.rs`, `src/edit/record.rs`, `src/markdown/mod.rs`, `src/markdown/unified.rs`, `src/util/datetime.rs`, `src/validate.rs`
 - **Depended on by (src):** `src/bin/jubarte.rs`
 - **Depended on by (outside src):** `examples/cli_flags.rs`; `jubarte-python/src/lib.rs`; `jubarte-wasm/src/lib.rs`; `tests/cli_parser.rs`
 - **External crates:** `clap`, `serde`, `serde_json`
@@ -436,57 +436,57 @@ module `jubarte::comparison_log` · 78 lines
 - **Depended on by (src):** `src/comparer/mod.rs`
 - **Depended on by (outside src):** `tests/m6_coverage.rs`, `tests/parity_surface_lossless_linq.rs`
 
-### `src/convert/altchunk.rs`
+### `crates/jubarte-render/src/convert/altchunk.rs`
 
 module `jubarte::convert::altchunk` · 1,403 lines
 
 > `w:altChunk` import. Word merges an HTML (or MHT) chunk into the body when it opens the file; the converter rewrites each chunk into WordprocessingML paragraphs and tables before the body is parsed, so the chunk lays out like any other content.
 
 - **Declares submodules:** none
-- **Depends on:** `src/convert/mod.rs` (test), `src/opc/mod.rs` (test)
+- **Depends on:** `crates/jubarte-render/src/convert/mod.rs` (test), `src/opc/mod.rs` (test)
 - **Depended on by (src):** `src/markdown/write.rs`
 - **Depended on by (outside src):** none
 - **External crates:** `zip` (test)
 
-### `src/convert/diff_render.rs`
+### `crates/jubarte-render/src/convert/diff_render.rs`
 
 module `jubarte::convert::diff_render` · 316 lines
 
 > Visual page diff: render two documents at one resolution and compare the pages pixel for pixel.
 
 - **Declares submodules:** none
-- **Depends on:** `src/convert/mod.rs`
-- **Depended on by (src):** `src/bin/jubarte.rs`, `src/convert/mod.rs`
+- **Depends on:** `crates/jubarte-render/src/convert/mod.rs`
+- **Depended on by (src):** `src/bin/jubarte.rs`, `crates/jubarte-render/src/convert/mod.rs`
 - **Depended on by (outside src):** `jubarte-python/src/lib.rs`; `tests/convert_diff_render.rs`
 - **External crates:** `image`, `serde`
 
-### `src/convert/font.rs`
+### `crates/jubarte-render/src/convert/font.rs`
 
 module `jubarte::convert::font` · 7,409 lines
 
 > Bundled metric-compatible faces (Carlito = Calibri, Liberation Sans = Arial, Liberation Serif = Times New Roman, Liberation Mono = Courier New) plus glyph advances for wrap and PDF embedding.
 
 - **Declares submodules:** none
-- **Depends on:** `src/convert/font_table.rs`, `src/convert/mod.rs`, `src/convert/word_subst.rs`
-- **Depended on by (src):** `src/bin/jubarte.rs`, `src/convert/font_table.rs`, `src/convert/mod.rs`, `src/convert/pdf.rs`, `src/convert/raster.rs`
+- **Depends on:** `crates/jubarte-render/src/convert/font_table.rs`, `crates/jubarte-render/src/convert/mod.rs`, `crates/jubarte-render/src/convert/word_subst.rs`
+- **Depended on by (src):** `src/bin/jubarte.rs`, `crates/jubarte-render/src/convert/font_table.rs`, `crates/jubarte-render/src/convert/mod.rs`, `crates/jubarte-render/src/convert/pdf.rs`, `crates/jubarte-render/src/convert/raster.rs`
 - **Depended on by (outside src):** `tests/convert_font_report.rs`
 - **External crates:** `rustybuzz`, `ttf-parser`, `zip` (test)
-- **Embeds / includes:** `assets/fonts/Carlito-Regular.ttf`, `assets/fonts/Carlito-Bold.ttf`, `assets/fonts/Carlito-Italic.ttf`, `assets/fonts/Carlito-BoldItalic.ttf`, `assets/fonts/LiberationSans-Regular.ttf`, `assets/fonts/LiberationSans-Bold.ttf`, `assets/fonts/LiberationSans-Italic.ttf`, `assets/fonts/LiberationSans-BoldItalic.ttf`, `assets/fonts/LiberationSerif-Regular.ttf`, `assets/fonts/LiberationSerif-Bold.ttf`, `assets/fonts/LiberationSerif-Italic.ttf`, `assets/fonts/LiberationSerif-BoldItalic.ttf`, `assets/fonts/LiberationMono-Regular.ttf`, `assets/fonts/LiberationMono-Bold.ttf`, `assets/fonts/LiberationMono-Italic.ttf`, `assets/fonts/LiberationMono-BoldItalic.ttf`, `assets/fonts/Carlito-Regular.ttf`, `assets/fonts/Carlito-Bold.ttf`, `assets/fonts/Carlito-Italic.ttf`, `assets/fonts/Carlito-BoldItalic.ttf`, `assets/fonts/Carlito-Regular.ttf`, `assets/fonts/Carlito-Bold.ttf`, `assets/fonts/Carlito-Italic.ttf`, `assets/fonts/Carlito-BoldItalic.ttf`, `assets/fonts/Carlito-Regular.ttf`, `assets/fonts/Carlito-Italic.ttf`, `assets/fonts/LiberationSans-Regular.ttf`, `assets/fonts/LiberationSans-Bold.ttf`, `assets/fonts/LiberationSans-Italic.ttf`, `assets/fonts/LiberationSans-BoldItalic.ttf`, `assets/fonts/LiberationSerif-Regular.ttf`, `assets/fonts/LiberationSerif-Bold.ttf`, `assets/fonts/LiberationSerif-Italic.ttf`, `assets/fonts/LiberationSerif-BoldItalic.ttf`, `assets/fonts/LiberationMono-Regular.ttf`, `assets/fonts/LiberationMono-Bold.ttf`, `assets/fonts/LiberationMono-Italic.ttf`, `assets/fonts/LiberationMono-BoldItalic.ttf`, `assets/fonts/LiberationSerif-Regular.ttf`, `assets/fonts/LiberationSerif-Bold.ttf`, `assets/fonts/LiberationSerif-Italic.ttf`, `assets/fonts/LiberationSerif-BoldItalic.ttf`, `assets/fonts/LiberationSerif-Regular.ttf`, `assets/fonts/LiberationSerif-Bold.ttf`, `assets/fonts/LiberationSerif-Italic.ttf`, `assets/fonts/LiberationSerif-BoldItalic.ttf`, `assets/fonts/LiberationSans-Regular.ttf`, `assets/fonts/Carlito-Regular.ttf` (test), `assets/fonts/Carlito-Bold.ttf` (test), `assets/fonts/LiberationSans-Regular.ttf` (test), `assets/fonts/LiberationSerif-Regular.ttf` (test), `assets/fonts/LiberationSerif-Bold.ttf` (test), `assets/fonts/LiberationMono-Regular.ttf` (test), `assets/fonts/LiberationSerif-Regular.ttf` (test), `assets/fonts/LiberationSerif-Italic.ttf` (test), `assets/fonts/Carlito-Regular.ttf` (test), `assets/fonts/LiberationMono-Regular.ttf` (test)
+- **Embeds / includes:** `crates/jubarte-render/assets/fonts/Carlito-Regular.ttf`, `crates/jubarte-render/assets/fonts/Carlito-Bold.ttf`, `crates/jubarte-render/assets/fonts/Carlito-Italic.ttf`, `crates/jubarte-render/assets/fonts/Carlito-BoldItalic.ttf`, `crates/jubarte-render/assets/fonts/LiberationSans-Regular.ttf`, `crates/jubarte-render/assets/fonts/LiberationSans-Bold.ttf`, `crates/jubarte-render/assets/fonts/LiberationSans-Italic.ttf`, `crates/jubarte-render/assets/fonts/LiberationSans-BoldItalic.ttf`, `crates/jubarte-render/assets/fonts/LiberationSerif-Regular.ttf`, `crates/jubarte-render/assets/fonts/LiberationSerif-Bold.ttf`, `crates/jubarte-render/assets/fonts/LiberationSerif-Italic.ttf`, `crates/jubarte-render/assets/fonts/LiberationSerif-BoldItalic.ttf`, `crates/jubarte-render/assets/fonts/LiberationMono-Regular.ttf`, `crates/jubarte-render/assets/fonts/LiberationMono-Bold.ttf`, `crates/jubarte-render/assets/fonts/LiberationMono-Italic.ttf`, `crates/jubarte-render/assets/fonts/LiberationMono-BoldItalic.ttf`, `crates/jubarte-render/assets/fonts/Carlito-Regular.ttf`, `crates/jubarte-render/assets/fonts/Carlito-Bold.ttf`, `crates/jubarte-render/assets/fonts/Carlito-Italic.ttf`, `crates/jubarte-render/assets/fonts/Carlito-BoldItalic.ttf`, `crates/jubarte-render/assets/fonts/Carlito-Regular.ttf`, `crates/jubarte-render/assets/fonts/Carlito-Bold.ttf`, `crates/jubarte-render/assets/fonts/Carlito-Italic.ttf`, `crates/jubarte-render/assets/fonts/Carlito-BoldItalic.ttf`, `crates/jubarte-render/assets/fonts/Carlito-Regular.ttf`, `crates/jubarte-render/assets/fonts/Carlito-Italic.ttf`, `crates/jubarte-render/assets/fonts/LiberationSans-Regular.ttf`, `crates/jubarte-render/assets/fonts/LiberationSans-Bold.ttf`, `crates/jubarte-render/assets/fonts/LiberationSans-Italic.ttf`, `crates/jubarte-render/assets/fonts/LiberationSans-BoldItalic.ttf`, `crates/jubarte-render/assets/fonts/LiberationSerif-Regular.ttf`, `crates/jubarte-render/assets/fonts/LiberationSerif-Bold.ttf`, `crates/jubarte-render/assets/fonts/LiberationSerif-Italic.ttf`, `crates/jubarte-render/assets/fonts/LiberationSerif-BoldItalic.ttf`, `crates/jubarte-render/assets/fonts/LiberationMono-Regular.ttf`, `crates/jubarte-render/assets/fonts/LiberationMono-Bold.ttf`, `crates/jubarte-render/assets/fonts/LiberationMono-Italic.ttf`, `crates/jubarte-render/assets/fonts/LiberationMono-BoldItalic.ttf`, `crates/jubarte-render/assets/fonts/LiberationSerif-Regular.ttf`, `crates/jubarte-render/assets/fonts/LiberationSerif-Bold.ttf`, `crates/jubarte-render/assets/fonts/LiberationSerif-Italic.ttf`, `crates/jubarte-render/assets/fonts/LiberationSerif-BoldItalic.ttf`, `crates/jubarte-render/assets/fonts/LiberationSerif-Regular.ttf`, `crates/jubarte-render/assets/fonts/LiberationSerif-Bold.ttf`, `crates/jubarte-render/assets/fonts/LiberationSerif-Italic.ttf`, `crates/jubarte-render/assets/fonts/LiberationSerif-BoldItalic.ttf`, `crates/jubarte-render/assets/fonts/LiberationSans-Regular.ttf`, `crates/jubarte-render/assets/fonts/Carlito-Regular.ttf` (test), `crates/jubarte-render/assets/fonts/Carlito-Bold.ttf` (test), `crates/jubarte-render/assets/fonts/LiberationSans-Regular.ttf` (test), `crates/jubarte-render/assets/fonts/LiberationSerif-Regular.ttf` (test), `crates/jubarte-render/assets/fonts/LiberationSerif-Bold.ttf` (test), `crates/jubarte-render/assets/fonts/LiberationMono-Regular.ttf` (test), `crates/jubarte-render/assets/fonts/LiberationSerif-Regular.ttf` (test), `crates/jubarte-render/assets/fonts/LiberationSerif-Italic.ttf` (test), `crates/jubarte-render/assets/fonts/Carlito-Regular.ttf` (test), `crates/jubarte-render/assets/fonts/LiberationMono-Regular.ttf` (test)
 
-### `src/convert/font_table.rs`
+### `crates/jubarte-render/src/convert/font_table.rs`
 
 module `jubarte::convert::font_table` · 544 lines
 
 > `word/fontTable.xml`:
 
 - **Declares submodules:** none
-- **Depends on:** `src/convert/font.rs`, `src/convert/mod.rs`, `src/namespaces.rs`, `src/opc/mod.rs`, `src/xmllinq/mod.rs`
-- **Depended on by (src):** `src/convert/font.rs`, `src/convert/word_subst.rs`
+- **Depends on:** `crates/jubarte-render/src/convert/font.rs`, `crates/jubarte-render/src/convert/mod.rs`, `src/namespaces.rs`, `src/opc/mod.rs`, `src/xmllinq/mod.rs`
+- **Depended on by (src):** `crates/jubarte-render/src/convert/font.rs`, `crates/jubarte-render/src/convert/word_subst.rs`
 - **Depended on by (outside src):** none
 - **External crates:** `ttf-parser`, `zip` (test)
-- **Embeds / includes:** `assets/fonts/LiberationMono-Regular.ttf` (test)
+- **Embeds / includes:** `crates/jubarte-render/assets/fonts/LiberationMono-Regular.ttf` (test)
 
-### `src/convert/math_font.rs`
+### `crates/jubarte-render/src/convert/math_font.rs`
 
 module `jubarte::convert::math_font` · 432 lines
 
@@ -494,24 +494,24 @@ module `jubarte::convert::math_font` · 432 lines
 
 - **Declares submodules:** none
 - **Depends on:** none
-- **Depended on by (src):** `src/convert/math_layout.rs`
+- **Depended on by (src):** `crates/jubarte-render/src/convert/math_layout.rs`
 - **Depended on by (outside src):** none
 - **External crates:** `ttf-parser`
 - **Embeds / includes:** `tests/fixtures/fonts/STIXTwoMath.otf` (test)
 
-### `src/convert/math_layout.rs`
+### `crates/jubarte-render/src/convert/math_layout.rs`
 
 module `jubarte::convert::math_layout` · 1,095 lines
 
 > OMML bar fractions, radicals, and stretchy delimiters as a box.
 
 - **Declares submodules:** none
-- **Depends on:** `src/convert/math_font.rs`, `src/convert/mod.rs`, `src/namespaces.rs`, `src/xmllinq/mod.rs`
+- **Depends on:** `crates/jubarte-render/src/convert/math_font.rs`, `crates/jubarte-render/src/convert/mod.rs`, `src/namespaces.rs`, `src/xmllinq/mod.rs`
 - **Depended on by (src):** none
 - **Depended on by (outside src):** none
 - **Embeds / includes:** `tests/fixtures/fonts/STIXTwoMath.otf` (test)
 
-### `src/convert/metafile.rs`
+### `crates/jubarte-render/src/convert/metafile.rs`
 
 module `jubarte::convert::metafile` · 2,293 lines
 
@@ -522,86 +522,86 @@ module `jubarte::convert::metafile` · 2,293 lines
 - **Depended on by (src):** none
 - **Depended on by (outside src):** none
 
-### `src/convert/mod.rs`
+### `crates/jubarte-render/src/convert/mod.rs`
 
 module `jubarte::convert` · 65,947 lines
 
 > Independent DOCX → PDF, PNG and page-text conversion (no LibreOffice or Word process is involved).
 
-- **Declares submodules:** `src/convert/altchunk.rs`, `src/convert/diff_render.rs`, `src/convert/font.rs`, `src/convert/font_table.rs`, `src/convert/math_font.rs`, `src/convert/math_layout.rs`, `src/convert/metafile.rs`, `src/convert/pdf.rs`, `src/convert/preset_geom.rs`, `src/convert/preset_geom_data.rs`, `src/convert/preset_text_rect_data.rs`, `src/convert/raster.rs`, `src/convert/word_subst.rs`
-- **Depends on:** `src/convert/diff_render.rs`, `src/convert/font.rs`, `src/convert/pdf.rs`, `src/convert/preset_geom.rs`, `src/document_comparer.rs`, `src/namespaces.rs`, `src/opc/mod.rs`, `src/strict_translation.rs`, `src/xmllinq/mod.rs`
-- **Depended on by (src):** `src/audit.rs`, `src/bin/jubarte.rs`, `src/cli.rs`, `src/convert/altchunk.rs` (test), `src/convert/diff_render.rs`, `src/convert/font.rs`, `src/convert/font_table.rs`, `src/convert/math_layout.rs`, `src/convert/pdf.rs`, `src/debug/render.rs`, `src/edit.rs`, `src/fields.rs`, `src/markdown/from_docx/mod.rs`, `src/markdown/mod.rs`
+- **Declares submodules:** `crates/jubarte-render/src/convert/altchunk.rs`, `crates/jubarte-render/src/convert/diff_render.rs`, `crates/jubarte-render/src/convert/font.rs`, `crates/jubarte-render/src/convert/font_table.rs`, `crates/jubarte-render/src/convert/math_font.rs`, `crates/jubarte-render/src/convert/math_layout.rs`, `crates/jubarte-render/src/convert/metafile.rs`, `crates/jubarte-render/src/convert/pdf.rs`, `crates/jubarte-render/src/convert/preset_geom.rs`, `crates/jubarte-render/src/convert/preset_geom_data.rs`, `crates/jubarte-render/src/convert/preset_text_rect_data.rs`, `crates/jubarte-render/src/convert/raster.rs`, `crates/jubarte-render/src/convert/word_subst.rs`
+- **Depends on:** `crates/jubarte-render/src/convert/diff_render.rs`, `crates/jubarte-render/src/convert/font.rs`, `crates/jubarte-render/src/convert/pdf.rs`, `crates/jubarte-render/src/convert/preset_geom.rs`, `src/document_comparer.rs`, `src/namespaces.rs`, `src/opc/mod.rs`, `src/strict_translation.rs`, `src/xmllinq/mod.rs`
+- **Depended on by (src):** `src/audit.rs`, `src/bin/jubarte.rs`, `src/cli.rs`, `crates/jubarte-render/src/convert/altchunk.rs` (test), `crates/jubarte-render/src/convert/diff_render.rs`, `crates/jubarte-render/src/convert/font.rs`, `crates/jubarte-render/src/convert/font_table.rs`, `crates/jubarte-render/src/convert/math_layout.rs`, `crates/jubarte-render/src/convert/pdf.rs`, `src/debug/render.rs`, `src/edit.rs`, `src/fields.rs`, `src/markdown/from_docx/mod.rs`, `src/markdown/mod.rs`
 - **Depended on by (outside src):** `jubarte-python/src/lib.rs`; `jubarte-wasm/src/lib.rs`; 18 files under `tests/` (full list in the JSON)
 - **External crates:** `image`, `js-sys`, `serde_json`, `ttf-parser` (test), `zip` (test)
 
-### `src/convert/pdf.rs`
+### `crates/jubarte-render/src/convert/pdf.rs`
 
 module `jubarte::convert::pdf` · 3,278 lines
 
 > PDF 1.4 writer: embedded TTF (Identity-H), stroked rules, JPEG/RGB images.
 
 - **Declares submodules:** none
-- **Depends on:** `src/convert/font.rs`, `src/convert/mod.rs`
-- **Depended on by (src):** `src/convert/mod.rs`, `src/convert/raster.rs`
+- **Depends on:** `crates/jubarte-render/src/convert/font.rs`, `crates/jubarte-render/src/convert/mod.rs`
+- **Depended on by (src):** `crates/jubarte-render/src/convert/mod.rs`, `crates/jubarte-render/src/convert/raster.rs`
 - **Depended on by (outside src):** none
 - **External crates:** `flate2`, `image` (test), `ttf-parser`
 
-### `src/convert/preset_geom.rs`
+### `crates/jubarte-render/src/convert/preset_geom.rs`
 
 module `jubarte::convert::preset_geom` · 899 lines
 
 > DrawingML preset geometry evaluator (ECMA-376 Part 1 §20.1.9):
 
 - **Declares submodules:** none
-- **Depends on:** `src/convert/preset_geom_data.rs`, `src/convert/preset_text_rect_data.rs`
-- **Depended on by (src):** `src/convert/mod.rs`, `src/convert/preset_geom_data.rs`, `src/convert/preset_text_rect_data.rs`
+- **Depends on:** `crates/jubarte-render/src/convert/preset_geom_data.rs`, `crates/jubarte-render/src/convert/preset_text_rect_data.rs`
+- **Depended on by (src):** `crates/jubarte-render/src/convert/mod.rs`, `crates/jubarte-render/src/convert/preset_geom_data.rs`, `crates/jubarte-render/src/convert/preset_text_rect_data.rs`
 - **Depended on by (outside src):** none
 
-### `src/convert/preset_geom_data.rs`
+### `crates/jubarte-render/src/convert/preset_geom_data.rs`
 
 module `jubarte::convert::preset_geom_data` · 179 lines
 
 > Guide formulas and paths for the DrawingML presets that need Word's exact geometry (compound fills, shaded faces, open outlines), as listed in ECMA-376 Part 1 presetShapeDefinitions.xml.
 
 - **Declares submodules:** none
-- **Depends on:** `src/convert/preset_geom.rs`
-- **Depended on by (src):** `src/convert/preset_geom.rs`
+- **Depends on:** `crates/jubarte-render/src/convert/preset_geom.rs`
+- **Depended on by (src):** `crates/jubarte-render/src/convert/preset_geom.rs`
 - **Depended on by (outside src):** none
 
-### `src/convert/preset_text_rect_data.rs`
+### `crates/jubarte-render/src/convert/preset_text_rect_data.rs`
 
 module `jubarte::convert::preset_text_rect_data` · 157 lines
 
 > Text rectangles (`a:rect`) of the DrawingML presets, with the adjust values and guides each one needs, as listed in ECMA-376 Part 1 presetShapeDefinitions.xml.
 
 - **Declares submodules:** none
-- **Depends on:** `src/convert/preset_geom.rs`
-- **Depended on by (src):** `src/convert/preset_geom.rs`
+- **Depends on:** `crates/jubarte-render/src/convert/preset_geom.rs`
+- **Depended on by (src):** `crates/jubarte-render/src/convert/preset_geom.rs`
 - **Depended on by (outside src):** none
 
-### `src/convert/raster.rs`
+### `crates/jubarte-render/src/convert/raster.rs`
 
 module `jubarte::convert::raster` · 1,413 lines
 
 > Page raster over the layout display list:
 
 - **Declares submodules:** none
-- **Depends on:** `src/convert/font.rs`, `src/convert/pdf.rs`
+- **Depends on:** `crates/jubarte-render/src/convert/font.rs`, `crates/jubarte-render/src/convert/pdf.rs`
 - **Depended on by (src):** none
 - **Depended on by (outside src):** none
 - **External crates:** `image`, `tiny-skia`, `ttf-parser`
 
-### `src/convert/word_subst.rs`
+### `crates/jubarte-render/src/convert/word_subst.rs`
 
 module `jubarte::convert::word_subst` · 343 lines
 
 > Word-substitution evidence table (plan Step 2d).
 
 - **Declares submodules:** none
-- **Depends on:** `src/convert/font_table.rs`
-- **Depended on by (src):** `src/convert/font.rs`
+- **Depends on:** `crates/jubarte-render/src/convert/font_table.rs`
+- **Depended on by (src):** `crates/jubarte-render/src/convert/font.rs`
 - **Depended on by (outside src):** none
-- **Embeds / includes:** `src/convert/word_substitutions.toml`
+- **Embeds / includes:** `crates/jubarte-render/src/convert/word_substitutions.toml`
 
 ### `src/debug.rs`
 
@@ -634,7 +634,7 @@ module `jubarte::debug::render` · 1,843 lines
 > `jubarte debug FILE --check render`:
 
 - **Declares submodules:** none
-- **Depends on:** `src/comparer/finalize.rs`, `src/convert/mod.rs`, `src/debug.rs`, `src/markdown/borders.rs`, `src/xmllinq/mod.rs`
+- **Depends on:** `src/comparer/finalize.rs`, `crates/jubarte-render/src/convert/mod.rs`, `src/debug.rs`, `src/markdown/borders.rs`, `src/xmllinq/mod.rs`
 - **Depended on by (src):** none
 - **Depended on by (outside src):** none
 - **External crates:** `zip` (test)
@@ -647,7 +647,7 @@ module `jubarte::document_comparer` · 13,045 lines
 
 - **Declares submodules:** `src/document_comparer/based_style_record_tests.rs`
 - **Depends on:** `src/admission.rs`, `src/builtin_styles.rs`, `src/comparer/atoms.rs`, `src/comparer/bookmarks.rs`, `src/comparer/comments.rs`, `src/comparer/finalize.rs`, `src/comparer/fixups.rs`, `src/comparer/footnotes.rs`, `src/comparer/lcs_table.rs`, `src/comparer/mod.rs`, `src/comparer/order_tables.rs`, `src/comparer/parts.rs`, `src/comparer/preprocess.rs`, `src/comparer/produce.rs`, `src/comparer/revisions.rs`, `src/comparer/tables.rs`, `src/namespaces.rs`, `src/opc/mod.rs`, `src/revision_processor.rs`, `src/revision_processor/style_records.rs`, `src/revision_processor/word_save.rs`, `src/strict_translation.rs`, `src/unid.rs`, `src/word_default_theme.rs`, `src/xmllinq/mod.rs`
-- **Depended on by (src):** `src/bin/jubarte.rs`, `src/changes.rs`, `src/comparer/cross_para.rs` (test), `src/comparer/finalize.rs`, `src/comparer/lcs.rs` (test), `src/comparer/lcs_table.rs` (test), `src/comparer/mod.rs`, `src/convert/mod.rs`, `src/document_comparer/based_style_record_tests.rs` (test), `src/edit.rs`, `src/markdown/mod.rs`, `src/markdown/patch.rs`, `src/markdown/redline.rs`, `src/markdown/unified.rs`, `src/markdown/write.rs`, `src/revision_processor.rs` (test)
+- **Depended on by (src):** `src/bin/jubarte.rs`, `src/changes.rs`, `src/comparer/cross_para.rs` (test), `src/comparer/finalize.rs`, `src/comparer/lcs.rs` (test), `src/comparer/lcs_table.rs` (test), `src/comparer/mod.rs`, `crates/jubarte-render/src/convert/mod.rs`, `src/document_comparer/based_style_record_tests.rs` (test), `src/edit.rs`, `src/markdown/mod.rs`, `src/markdown/patch.rs`, `src/markdown/redline.rs`, `src/markdown/unified.rs`, `src/markdown/write.rs`, `src/revision_processor.rs` (test)
 - **Depended on by (outside src):** `benches/redline.rs`; `examples/alloc_attribute.rs`, `examples/mem_attribute.rs`, `examples/mem_profile.rs`; `fuzz/fuzz_targets/compare.rs`; `jubarte-python/src/lib.rs`; `jubarte-rust-inproc/src/main.rs`; `jubarte-wasm/src/lib.rs`; 314 files under `tests/` (full list in the JSON)
 - **Embeds / includes:** `tests/fixtures/word_probes/tokens/cell_a.docx` (test), `tests/fixtures/word_probes/tokens/cell_a.docx` (test), `tests/fixtures/word_probes/tokens/cell_a.docx` (test), `tests/fixtures/redline/original.docx` (test), `tests/fixtures/word_probes/tokens/cell_a.docx` (test), `tests/fixtures/relids/image_doc.docx` (test), `tests/fixtures/word_probes/keep_next_picture_kn_1001.docx` (test), `tests/fixtures/relids/image_doc.docx` (test), `tests/fixtures/relids/image_doc.docx` (test), `tests/fixtures/relids/image_doc.docx` (test)
 
@@ -669,7 +669,7 @@ module `jubarte::edit` · 8,040 lines
 > Guarded document editing for agents and tools.
 
 - **Declares submodules:** `src/edit/anchor.rs`, `src/edit/controls.rs`, `src/edit/flags.rs`, `src/edit/images.rs`, `src/edit/notes.rs`, `src/edit/origin.rs`, `src/edit/record.rs`, `src/edit/resolution.rs`, `src/edit/rewrite.rs`, `src/edit/runs.rs`, `src/edit/sections.rs`, `src/edit/structural.rs`, `src/edit/tracked.rs`, `src/edit/v2.rs`, `src/edit/watermark.rs`, `src/edit/whole.rs`
-- **Depends on:** `src/changes.rs`, `src/comments.rs`, `src/comparer/mod.rs`, `src/convert/mod.rs`, `src/document_comparer.rs`, `src/edit/anchor.rs`, `src/edit/controls.rs`, `src/edit/sections.rs`, `src/fields.rs`, `src/ids.rs`, `src/inspect.rs`, `src/markdown/anchor.rs`, `src/markdown/package.rs`, `src/markdown/xml.rs`, `src/namespaces.rs`, `src/opc/mod.rs` (test), `src/revision_processor.rs`, `src/revision_processor/comments.rs`, `src/scrub.rs`, `src/settings.rs`, `src/xmllinq/mod.rs`, `src/xmllinq/parse.rs`
+- **Depends on:** `src/changes.rs`, `src/comments.rs`, `src/comparer/mod.rs`, `crates/jubarte-render/src/convert/mod.rs`, `src/document_comparer.rs`, `src/edit/anchor.rs`, `src/edit/controls.rs`, `src/edit/sections.rs`, `src/fields.rs`, `src/ids.rs`, `src/inspect.rs`, `src/markdown/anchor.rs`, `src/markdown/package.rs`, `src/markdown/xml.rs`, `src/namespaces.rs`, `src/opc/mod.rs` (test), `src/revision_processor.rs`, `src/revision_processor/comments.rs`, `src/scrub.rs`, `src/settings.rs`, `src/xmllinq/mod.rs`, `src/xmllinq/parse.rs`
 - **Depended on by (src):** `src/bin/jubarte.rs`, `src/capabilities.rs`, `src/capabilities/discovery.rs`, `src/cli.rs`, `src/edit/anchor.rs`, `src/edit/controls.rs`, `src/edit/flags.rs`, `src/edit/images.rs`, `src/edit/notes.rs`, `src/edit/origin.rs`, `src/edit/record.rs`, `src/edit/resolution.rs`, `src/edit/runs.rs`, `src/edit/sections.rs`, `src/edit/structural.rs`, `src/edit/tracked.rs`, `src/edit/v2.rs`, `src/edit/watermark.rs`, `src/edit/whole.rs`, `src/markdown/from_docx/mod.rs`, `src/markdown/patch.rs`, `src/markdown/write.rs`
 - **Depended on by (outside src):** `jubarte-python/src/lib.rs`; `jubarte-wasm/src/lib.rs`; 36 files under `tests/` (full list in the JSON)
 - **External crates:** `schemars`, `serde`, `serde_json`
@@ -868,7 +868,7 @@ module `jubarte::fields` · 2,426 lines
 > Refresh the cached results of fields from jubarte's own layout.
 
 - **Declares submodules:** none
-- **Depends on:** `src/convert/mod.rs`, `src/ids.rs`, `src/inspect.rs`, `src/namespaces.rs`, `src/opc/mod.rs`, `src/xmllinq/mod.rs`
+- **Depends on:** `crates/jubarte-render/src/convert/mod.rs`, `src/ids.rs`, `src/inspect.rs`, `src/namespaces.rs`, `src/opc/mod.rs`, `src/xmllinq/mod.rs`
 - **Depended on by (src):** `src/bin/jubarte.rs`, `src/edit.rs`
 - **Depended on by (outside src):** `jubarte-python/src/lib.rs`; `jubarte-wasm/src/lib.rs`; `tests/fields_update.rs`
 - **External crates:** `serde`, `zip` (test)
@@ -938,7 +938,7 @@ module `jubarte` · 159 lines
 
 > # jubarte
 
-- **Declares submodules:** `src/admission.rs`, `src/append.rs`, `src/audit.rs`, `src/builtin_styles.rs`, `src/capabilities.rs`, `src/changes.rs`, `src/cli.rs`, `src/comments.rs`, `src/comparer/mod.rs`, `src/comparison_log.rs`, `src/convert/mod.rs`, `src/debug.rs`, `src/document_comparer.rs`, `src/edit.rs`, `src/fields.rs`, `src/ids.rs`, `src/inspect.rs`, `src/legacy_doc.rs`, `src/markdown/mod.rs`, `src/markup_simplifier.rs`, `src/namespaces.rs`, `src/opc/mod.rs`, `src/perf.rs`, `src/result.rs`, `src/revision_processor.rs`, `src/scrub.rs`, `src/settings.rs`, `src/strict_translation.rs`, `src/text_diff.rs`, `src/unid.rs`, `src/update.rs`, `src/util/mod.rs`, `src/validate.rs`, `src/wml_document.rs`, `src/word_default_theme.rs`, `src/xmllinq/mod.rs`
+- **Declares submodules:** `src/admission.rs`, `src/append.rs`, `src/audit.rs`, `src/builtin_styles.rs`, `src/capabilities.rs`, `src/changes.rs`, `src/cli.rs`, `src/comments.rs`, `src/comparer/mod.rs`, `src/comparison_log.rs`, `crates/jubarte-render/src/convert/mod.rs`, `src/debug.rs`, `src/document_comparer.rs`, `src/edit.rs`, `src/fields.rs`, `src/ids.rs`, `src/inspect.rs`, `src/legacy_doc.rs`, `src/markdown/mod.rs`, `src/markup_simplifier.rs`, `src/namespaces.rs`, `src/opc/mod.rs`, `src/perf.rs`, `src/result.rs`, `src/revision_processor.rs`, `src/scrub.rs`, `src/settings.rs`, `src/strict_translation.rs`, `src/text_diff.rs`, `src/unid.rs`, `src/update.rs`, `src/util/mod.rs`, `src/validate.rs`, `src/wml_document.rs`, `src/word_default_theme.rs`, `src/xmllinq/mod.rs`
 - **Depends on:** `src/wml_document.rs`
 - **Depended on by (src):** `src/bin/jubarte.rs` (test)
 - **Depended on by (outside src):** none
@@ -1067,7 +1067,7 @@ module `jubarte::markdown::from_docx` · 6,553 lines
 > Word to Markdown: headings, emphasis, links, lists, tables, footnotes, equations, and tracked changes and comments as CriticMarkup.
 
 - **Declares submodules:** `src/markdown/from_docx/agent.rs`, `src/markdown/from_docx/critic.rs`, `src/markdown/from_docx/drawing.rs`, `src/markdown/from_docx/header.rs`, `src/markdown/from_docx/media.rs`, `src/markdown/from_docx/mermaid.rs`, `src/markdown/from_docx/ooxml.rs`, `src/markdown/from_docx/revise.rs`
-- **Depends on:** `src/changes.rs`, `src/convert/mod.rs`, `src/edit.rs`, `src/ids.rs`, `src/inspect.rs`, `src/markdown/borders.rs`, `src/markdown/critic.rs`, `src/markdown/from_docx/critic.rs`, `src/markdown/from_docx/ooxml.rs`, `src/markdown/math.rs`, `src/markdown/mod.rs`, `src/markdown/pages.rs`, `src/markdown/view_notes.rs`, `src/markdown/write.rs`, `src/markdown/xml.rs`, `src/util/datetime.rs`
+- **Depends on:** `src/changes.rs`, `crates/jubarte-render/src/convert/mod.rs`, `src/edit.rs`, `src/ids.rs`, `src/inspect.rs`, `src/markdown/borders.rs`, `src/markdown/critic.rs`, `src/markdown/from_docx/critic.rs`, `src/markdown/from_docx/ooxml.rs`, `src/markdown/math.rs`, `src/markdown/mod.rs`, `src/markdown/pages.rs`, `src/markdown/view_notes.rs`, `src/markdown/write.rs`, `src/markdown/xml.rs`, `src/util/datetime.rs`
 - **Depended on by (src):** `src/markdown/from_docx/agent.rs`, `src/markdown/from_docx/critic.rs`, `src/markdown/from_docx/header.rs`, `src/markdown/from_docx/ooxml.rs`
 - **Depended on by (outside src):** none
 - **External crates:** `zip` (test)
@@ -1113,7 +1113,7 @@ module `jubarte::markdown` · 1,090 lines
 > Markdown to Word.
 
 - **Declares submodules:** `src/markdown/anchor.rs`, `src/markdown/borders.rs`, `src/markdown/critic.rs`, `src/markdown/diff.rs`, `src/markdown/from_docx/mod.rs`, `src/markdown/math.rs`, `src/markdown/package.rs`, `src/markdown/pages.rs`, `src/markdown/patch.rs`, `src/markdown/redline.rs`, `src/markdown/unified.rs`, `src/markdown/view_notes.rs`, `src/markdown/view_stories.rs`, `src/markdown/view_styles.rs`, `src/markdown/write.rs`, `src/markdown/xml.rs`
-- **Depends on:** `src/admission.rs`, `src/convert/mod.rs`, `src/document_comparer.rs`, `src/ids.rs`, `src/ids/short.rs`, `src/inspect.rs`, `src/markdown/anchor.rs`, `src/markdown/diff.rs`, `src/markdown/package.rs`, `src/markdown/pages.rs`, `src/markdown/patch.rs`, `src/markdown/redline.rs`, `src/markdown/unified.rs`, `src/markdown/write.rs`, `src/markdown/xml.rs`
+- **Depends on:** `src/admission.rs`, `crates/jubarte-render/src/convert/mod.rs`, `src/document_comparer.rs`, `src/ids.rs`, `src/ids/short.rs`, `src/inspect.rs`, `src/markdown/anchor.rs`, `src/markdown/diff.rs`, `src/markdown/package.rs`, `src/markdown/pages.rs`, `src/markdown/patch.rs`, `src/markdown/redline.rs`, `src/markdown/unified.rs`, `src/markdown/write.rs`, `src/markdown/xml.rs`
 - **Depended on by (src):** `src/bin/jubarte.rs`, `src/cli.rs`, `src/legacy_doc.rs`, `src/markdown/diff.rs` (test), `src/markdown/from_docx/agent.rs`, `src/markdown/from_docx/mod.rs`, `src/markdown/package.rs`, `src/markdown/patch.rs`, `src/markdown/redline.rs`, `src/markdown/unified.rs`, `src/markdown/write.rs`, `src/text_diff.rs`
 - **Depended on by (outside src):** `jubarte-python/src/lib.rs`; `jubarte-wasm/src/lib.rs`; 38 files under `tests/` (full list in the JSON)
 - **External crates:** `serde`, `serde_json`
@@ -1220,7 +1220,7 @@ module `jubarte::markdown::write` · 6,161 lines
 > Markdown events to Word items, CriticMarkup to tracked changes.
 
 - **Declares submodules:** none
-- **Depends on:** `src/convert/altchunk.rs`, `src/document_comparer.rs`, `src/edit.rs`, `src/markdown/borders.rs`, `src/markdown/critic.rs`, `src/markdown/diff.rs`, `src/markdown/from_docx/drawing.rs`, `src/markdown/math.rs`, `src/markdown/mod.rs`, `src/markdown/package.rs`, `src/markdown/view_notes.rs`, `src/markdown/view_stories.rs`, `src/markdown/view_styles.rs`, `src/markdown/xml.rs`, `src/settings.rs`, `src/util/datetime.rs`
+- **Depends on:** `crates/jubarte-render/src/convert/altchunk.rs`, `src/document_comparer.rs`, `src/edit.rs`, `src/markdown/borders.rs`, `src/markdown/critic.rs`, `src/markdown/diff.rs`, `src/markdown/from_docx/drawing.rs`, `src/markdown/math.rs`, `src/markdown/mod.rs`, `src/markdown/package.rs`, `src/markdown/view_notes.rs`, `src/markdown/view_stories.rs`, `src/markdown/view_styles.rs`, `src/markdown/xml.rs`, `src/settings.rs`, `src/util/datetime.rs`
 - **Depended on by (src):** `src/append.rs` (test), `src/bin/jubarte.rs`, `src/edit/images.rs`, `src/legacy_doc.rs`, `src/markdown/critic.rs`, `src/markdown/from_docx/critic.rs`, `src/markdown/from_docx/drawing.rs`, `src/markdown/from_docx/mod.rs`, `src/markdown/mod.rs`, `src/markdown/pages.rs`, `src/markdown/redline.rs`, `src/markdown/unified.rs`, `src/markdown/view_notes.rs`, `src/settings.rs` (test), `src/text_diff.rs` (test)
 - **Depended on by (outside src):** `jubarte-python/src/lib.rs`; `jubarte-wasm/src/lib.rs`; 27 files under `tests/` (full list in the JSON)
 - **External crates:** `base64`, `image`, `pulldown-cmark`, `unicode-properties`
@@ -1255,7 +1255,7 @@ module `jubarte::namespaces` · 276 lines
 
 - **Declares submodules:** none
 - **Depends on:** `src/xmllinq/mod.rs`
-- **Depended on by (src):** `src/append.rs`, `src/audit.rs`, `src/changes.rs`, `src/comments.rs`, `src/comparer/atomize.rs`, `src/comparer/bookmarks.rs`, `src/comparer/comments.rs`, `src/comparer/cross_para.rs`, `src/comparer/finalize.rs`, `src/comparer/fixups.rs`, `src/comparer/footnotes.rs`, `src/comparer/formatchg.rs`, `src/comparer/lcs.rs`, `src/comparer/lcs_table.rs`, `src/comparer/mod.rs`, `src/comparer/moves.rs`, `src/comparer/parts.rs`, `src/comparer/preprocess.rs`, `src/comparer/produce.rs`, `src/comparer/revisions.rs`, `src/comparer/tables.rs`, `src/comparer/textbox.rs`, `src/comparer/units.rs`, `src/convert/font_table.rs`, `src/convert/math_layout.rs`, `src/convert/mod.rs`, `src/document_comparer.rs`, `src/document_comparer/based_style_record_tests.rs` (test), `src/edit.rs`, `src/edit/controls.rs`, `src/edit/images.rs`, `src/edit/notes.rs`, `src/edit/origin.rs`, `src/edit/resolution.rs`, `src/edit/sections.rs`, `src/edit/structural.rs`, `src/edit/tracked.rs`, `src/edit/v2.rs`, `src/edit/watermark.rs`, `src/edit/whole.rs`, `src/fields.rs`, `src/inspect.rs`, `src/inspect/tables.rs`, `src/markdown/package.rs`, `src/markdown/patch.rs`, `src/markup_simplifier.rs`, `src/revision_processor.rs`, `src/revision_processor/annotation_ids.rs`, `src/revision_processor/bookmarks.rs`, `src/revision_processor/comments.rs`, `src/revision_processor/notes.rs`, `src/revision_processor/sections.rs`, `src/revision_processor/style_records.rs`, `src/revision_processor/word_save.rs`, `src/scrub.rs`, `src/settings.rs`, `src/unid.rs`, `src/validate.rs`, `src/xmllinq/serialize.rs` (test)
+- **Depended on by (src):** `src/append.rs`, `src/audit.rs`, `src/changes.rs`, `src/comments.rs`, `src/comparer/atomize.rs`, `src/comparer/bookmarks.rs`, `src/comparer/comments.rs`, `src/comparer/cross_para.rs`, `src/comparer/finalize.rs`, `src/comparer/fixups.rs`, `src/comparer/footnotes.rs`, `src/comparer/formatchg.rs`, `src/comparer/lcs.rs`, `src/comparer/lcs_table.rs`, `src/comparer/mod.rs`, `src/comparer/moves.rs`, `src/comparer/parts.rs`, `src/comparer/preprocess.rs`, `src/comparer/produce.rs`, `src/comparer/revisions.rs`, `src/comparer/tables.rs`, `src/comparer/textbox.rs`, `src/comparer/units.rs`, `crates/jubarte-render/src/convert/font_table.rs`, `crates/jubarte-render/src/convert/math_layout.rs`, `crates/jubarte-render/src/convert/mod.rs`, `src/document_comparer.rs`, `src/document_comparer/based_style_record_tests.rs` (test), `src/edit.rs`, `src/edit/controls.rs`, `src/edit/images.rs`, `src/edit/notes.rs`, `src/edit/origin.rs`, `src/edit/resolution.rs`, `src/edit/sections.rs`, `src/edit/structural.rs`, `src/edit/tracked.rs`, `src/edit/v2.rs`, `src/edit/watermark.rs`, `src/edit/whole.rs`, `src/fields.rs`, `src/inspect.rs`, `src/inspect/tables.rs`, `src/markdown/package.rs`, `src/markdown/patch.rs`, `src/markup_simplifier.rs`, `src/revision_processor.rs`, `src/revision_processor/annotation_ids.rs`, `src/revision_processor/bookmarks.rs`, `src/revision_processor/comments.rs`, `src/revision_processor/notes.rs`, `src/revision_processor/sections.rs`, `src/revision_processor/style_records.rs`, `src/revision_processor/word_save.rs`, `src/scrub.rs`, `src/settings.rs`, `src/unid.rs`, `src/validate.rs`, `src/xmllinq/serialize.rs` (test)
 - **Depended on by (outside src):** 118 files under `tests/` (full list in the JSON)
 
 ### `src/opc/mod.rs`
@@ -1266,7 +1266,7 @@ module `jubarte::opc` · 1,545 lines
 
 - **Declares submodules:** none
 - **Depends on:** `src/admission.rs`, `src/xmllinq/parse.rs`
-- **Depended on by (src):** `src/admission.rs` (test), `src/append.rs`, `src/audit.rs` (test), `src/bin/jubarte.rs`, `src/changes.rs`, `src/comments.rs`, `src/comparer/bookmarks.rs`, `src/comparer/comments.rs`, `src/comparer/cross_para.rs` (test), `src/comparer/finalize.rs` (test), `src/comparer/fixups.rs`, `src/comparer/lcs.rs` (test), `src/comparer/lcs_table.rs` (test), `src/comparer/parts.rs`, `src/convert/altchunk.rs` (test), `src/convert/font_table.rs`, `src/convert/mod.rs`, `src/debug.rs`, `src/document_comparer.rs`, `src/edit.rs` (test), `src/edit/controls.rs` (test), `src/edit/images.rs`, `src/edit/resolution.rs`, `src/edit/sections.rs` (test), `src/edit/structural.rs`, `src/edit/tracked.rs` (test), `src/edit/whole.rs`, `src/fields.rs`, `src/inspect.rs`, `src/legacy_doc.rs`, `src/markdown/from_docx/drawing.rs`, `src/markdown/package.rs`, `src/markdown/patch.rs`, `src/markdown/unified.rs`, `src/markdown/view_stories.rs`, `src/revision_processor.rs`, `src/revision_processor/annotation_ids.rs`, `src/revision_processor/comments.rs`, `src/revision_processor/notes.rs`, `src/revision_processor/word_save.rs`, `src/scrub.rs`, `src/settings.rs`, `src/validate.rs`, `src/wml_document.rs`
+- **Depended on by (src):** `src/admission.rs` (test), `src/append.rs`, `src/audit.rs` (test), `src/bin/jubarte.rs`, `src/changes.rs`, `src/comments.rs`, `src/comparer/bookmarks.rs`, `src/comparer/comments.rs`, `src/comparer/cross_para.rs` (test), `src/comparer/finalize.rs` (test), `src/comparer/fixups.rs`, `src/comparer/lcs.rs` (test), `src/comparer/lcs_table.rs` (test), `src/comparer/parts.rs`, `crates/jubarte-render/src/convert/altchunk.rs` (test), `crates/jubarte-render/src/convert/font_table.rs`, `crates/jubarte-render/src/convert/mod.rs`, `src/debug.rs`, `src/document_comparer.rs`, `src/edit.rs` (test), `src/edit/controls.rs` (test), `src/edit/images.rs`, `src/edit/resolution.rs`, `src/edit/sections.rs` (test), `src/edit/structural.rs`, `src/edit/tracked.rs` (test), `src/edit/whole.rs`, `src/fields.rs`, `src/inspect.rs`, `src/legacy_doc.rs`, `src/markdown/from_docx/drawing.rs`, `src/markdown/package.rs`, `src/markdown/patch.rs`, `src/markdown/unified.rs`, `src/markdown/view_stories.rs`, `src/revision_processor.rs`, `src/revision_processor/annotation_ids.rs`, `src/revision_processor/comments.rs`, `src/revision_processor/notes.rs`, `src/revision_processor/word_save.rs`, `src/scrub.rs`, `src/settings.rs`, `src/validate.rs`, `src/wml_document.rs`
 - **Depended on by (outside src):** `fuzz/fuzz_targets/relationships.rs`; `jubarte-wasm/src/lib.rs`; 39 files under `tests/` (full list in the JSON)
 - **External crates:** `oxml-opc`, `quick-xml`, `zip`
 
@@ -1415,7 +1415,7 @@ module `jubarte::strict_translation` · 1,217 lines
 
 - **Declares submodules:** none
 - **Depends on:** `src/admission.rs`
-- **Depended on by (src):** `src/append.rs`, `src/changes.rs`, `src/convert/mod.rs`, `src/debug.rs`, `src/document_comparer.rs`, `src/edit/resolution.rs`, `src/inspect.rs`
+- **Depended on by (src):** `src/append.rs`, `src/changes.rs`, `crates/jubarte-render/src/convert/mod.rs`, `src/debug.rs`, `src/document_comparer.rs`, `src/edit/resolution.rs`, `src/inspect.rs`
 - **Depended on by (outside src):** `fuzz/fuzz_targets/strict_to_transitional.rs`; `tests/m8_strict.rs`, `tests/parity_surface_lossless_linq.rs`
 - **External crates:** `zip`
 
@@ -1556,7 +1556,7 @@ module `jubarte::xmllinq` · 1,400 lines
 
 - **Declares submodules:** `src/xmllinq/parse.rs`, `src/xmllinq/serialize.rs`
 - **Depends on:** `src/xmllinq/parse.rs`, `src/xmllinq/serialize.rs`
-- **Depended on by (src):** `src/append.rs`, `src/audit.rs`, `src/changes.rs`, `src/comments.rs`, `src/comparer/atomize.rs`, `src/comparer/atoms.rs`, `src/comparer/bookmarks.rs`, `src/comparer/comments.rs`, `src/comparer/cross_para.rs`, `src/comparer/finalize.rs`, `src/comparer/fixups.rs`, `src/comparer/footnotes.rs`, `src/comparer/formatchg.rs`, `src/comparer/lcs.rs`, `src/comparer/lcs_table.rs`, `src/comparer/mod.rs`, `src/comparer/moves.rs`, `src/comparer/parts.rs`, `src/comparer/preprocess.rs`, `src/comparer/produce.rs`, `src/comparer/revisions.rs`, `src/comparer/tables.rs`, `src/comparer/textbox.rs`, `src/comparer/units.rs`, `src/convert/font_table.rs`, `src/convert/math_layout.rs`, `src/convert/mod.rs`, `src/debug.rs`, `src/debug/diff.rs`, `src/debug/render.rs`, `src/document_comparer.rs`, `src/document_comparer/based_style_record_tests.rs` (test), `src/edit.rs`, `src/edit/controls.rs`, `src/edit/images.rs`, `src/edit/notes.rs`, `src/edit/origin.rs`, `src/edit/resolution.rs`, `src/edit/sections.rs`, `src/edit/structural.rs`, `src/edit/tracked.rs`, `src/edit/v2.rs`, `src/edit/watermark.rs`, `src/edit/whole.rs`, `src/fields.rs`, `src/inspect.rs`, `src/inspect/tables.rs`, `src/markdown/from_docx/header.rs` (test), `src/markdown/package.rs`, `src/markdown/patch.rs`, `src/markup_simplifier.rs`, `src/namespaces.rs`, `src/revision_processor.rs`, `src/revision_processor/bookmarks.rs`, `src/revision_processor/comments.rs`, `src/revision_processor/sections.rs`, `src/revision_processor/style_records.rs`, `src/revision_processor/word_save.rs`, `src/scrub.rs`, `src/settings.rs`, `src/unid.rs`, `src/validate.rs`, `src/wml_document.rs`, `src/xmllinq/parse.rs`, `src/xmllinq/serialize.rs`
+- **Depended on by (src):** `src/append.rs`, `src/audit.rs`, `src/changes.rs`, `src/comments.rs`, `src/comparer/atomize.rs`, `src/comparer/atoms.rs`, `src/comparer/bookmarks.rs`, `src/comparer/comments.rs`, `src/comparer/cross_para.rs`, `src/comparer/finalize.rs`, `src/comparer/fixups.rs`, `src/comparer/footnotes.rs`, `src/comparer/formatchg.rs`, `src/comparer/lcs.rs`, `src/comparer/lcs_table.rs`, `src/comparer/mod.rs`, `src/comparer/moves.rs`, `src/comparer/parts.rs`, `src/comparer/preprocess.rs`, `src/comparer/produce.rs`, `src/comparer/revisions.rs`, `src/comparer/tables.rs`, `src/comparer/textbox.rs`, `src/comparer/units.rs`, `crates/jubarte-render/src/convert/font_table.rs`, `crates/jubarte-render/src/convert/math_layout.rs`, `crates/jubarte-render/src/convert/mod.rs`, `src/debug.rs`, `src/debug/diff.rs`, `src/debug/render.rs`, `src/document_comparer.rs`, `src/document_comparer/based_style_record_tests.rs` (test), `src/edit.rs`, `src/edit/controls.rs`, `src/edit/images.rs`, `src/edit/notes.rs`, `src/edit/origin.rs`, `src/edit/resolution.rs`, `src/edit/sections.rs`, `src/edit/structural.rs`, `src/edit/tracked.rs`, `src/edit/v2.rs`, `src/edit/watermark.rs`, `src/edit/whole.rs`, `src/fields.rs`, `src/inspect.rs`, `src/inspect/tables.rs`, `src/markdown/from_docx/header.rs` (test), `src/markdown/package.rs`, `src/markdown/patch.rs`, `src/markup_simplifier.rs`, `src/namespaces.rs`, `src/revision_processor.rs`, `src/revision_processor/bookmarks.rs`, `src/revision_processor/comments.rs`, `src/revision_processor/sections.rs`, `src/revision_processor/style_records.rs`, `src/revision_processor/word_save.rs`, `src/scrub.rs`, `src/settings.rs`, `src/unid.rs`, `src/validate.rs`, `src/wml_document.rs`, `src/xmllinq/parse.rs`, `src/xmllinq/serialize.rs`
 - **Depended on by (outside src):** 126 files under `tests/` (full list in the JSON)
 - **External crates:** `foldhash`
 
@@ -1588,33 +1588,33 @@ module `jubarte::xmllinq::serialize` · 1,077 lines
 
 | File | Used by |
 |---|---|
-| `src/convert/word_substitutions.toml` | `src/convert/word_subst.rs` |
+| `crates/jubarte-render/src/convert/word_substitutions.toml` | `crates/jubarte-render/src/convert/word_subst.rs` |
 | `src/markdown/word_table_styles.tsv` | `src/markdown/package.rs` |
 
 ## Files outside `src/` that `src/` embeds
 
 | File | Embedded by | Test-only |
 |---|---|---|
-| `assets/fonts/Carlito-Bold.ttf` | `src/convert/font.rs`, `src/convert/font.rs` | no |
-| `assets/fonts/Carlito-BoldItalic.ttf` | `src/convert/font.rs` | no |
-| `assets/fonts/Carlito-Italic.ttf` | `src/convert/font.rs` | no |
-| `assets/fonts/Carlito-Regular.ttf` | `src/convert/font.rs`, `src/convert/font.rs` | no |
-| `assets/fonts/LiberationMono-Bold.ttf` | `src/convert/font.rs` | no |
-| `assets/fonts/LiberationMono-BoldItalic.ttf` | `src/convert/font.rs` | no |
-| `assets/fonts/LiberationMono-Italic.ttf` | `src/convert/font.rs` | no |
-| `assets/fonts/LiberationMono-Regular.ttf` | `src/convert/font.rs`, `src/convert/font.rs`, `src/convert/font_table.rs` | no |
-| `assets/fonts/LiberationSans-Bold.ttf` | `src/convert/font.rs` | no |
-| `assets/fonts/LiberationSans-BoldItalic.ttf` | `src/convert/font.rs` | no |
-| `assets/fonts/LiberationSans-Italic.ttf` | `src/convert/font.rs` | no |
-| `assets/fonts/LiberationSans-Regular.ttf` | `src/convert/font.rs`, `src/convert/font.rs` | no |
-| `assets/fonts/LiberationSerif-Bold.ttf` | `src/convert/font.rs`, `src/convert/font.rs` | no |
-| `assets/fonts/LiberationSerif-BoldItalic.ttf` | `src/convert/font.rs` | no |
-| `assets/fonts/LiberationSerif-Italic.ttf` | `src/convert/font.rs`, `src/convert/font.rs` | no |
-| `assets/fonts/LiberationSerif-Regular.ttf` | `src/convert/font.rs`, `src/convert/font.rs` | no |
+| `crates/jubarte-render/assets/fonts/Carlito-Bold.ttf` | `crates/jubarte-render/src/convert/font.rs`, `crates/jubarte-render/src/convert/font.rs` | no |
+| `crates/jubarte-render/assets/fonts/Carlito-BoldItalic.ttf` | `crates/jubarte-render/src/convert/font.rs` | no |
+| `crates/jubarte-render/assets/fonts/Carlito-Italic.ttf` | `crates/jubarte-render/src/convert/font.rs` | no |
+| `crates/jubarte-render/assets/fonts/Carlito-Regular.ttf` | `crates/jubarte-render/src/convert/font.rs`, `crates/jubarte-render/src/convert/font.rs` | no |
+| `crates/jubarte-render/assets/fonts/LiberationMono-Bold.ttf` | `crates/jubarte-render/src/convert/font.rs` | no |
+| `crates/jubarte-render/assets/fonts/LiberationMono-BoldItalic.ttf` | `crates/jubarte-render/src/convert/font.rs` | no |
+| `crates/jubarte-render/assets/fonts/LiberationMono-Italic.ttf` | `crates/jubarte-render/src/convert/font.rs` | no |
+| `crates/jubarte-render/assets/fonts/LiberationMono-Regular.ttf` | `crates/jubarte-render/src/convert/font.rs`, `crates/jubarte-render/src/convert/font.rs`, `crates/jubarte-render/src/convert/font_table.rs` | no |
+| `crates/jubarte-render/assets/fonts/LiberationSans-Bold.ttf` | `crates/jubarte-render/src/convert/font.rs` | no |
+| `crates/jubarte-render/assets/fonts/LiberationSans-BoldItalic.ttf` | `crates/jubarte-render/src/convert/font.rs` | no |
+| `crates/jubarte-render/assets/fonts/LiberationSans-Italic.ttf` | `crates/jubarte-render/src/convert/font.rs` | no |
+| `crates/jubarte-render/assets/fonts/LiberationSans-Regular.ttf` | `crates/jubarte-render/src/convert/font.rs`, `crates/jubarte-render/src/convert/font.rs` | no |
+| `crates/jubarte-render/assets/fonts/LiberationSerif-Bold.ttf` | `crates/jubarte-render/src/convert/font.rs`, `crates/jubarte-render/src/convert/font.rs` | no |
+| `crates/jubarte-render/assets/fonts/LiberationSerif-BoldItalic.ttf` | `crates/jubarte-render/src/convert/font.rs` | no |
+| `crates/jubarte-render/assets/fonts/LiberationSerif-Italic.ttf` | `crates/jubarte-render/src/convert/font.rs`, `crates/jubarte-render/src/convert/font.rs` | no |
+| `crates/jubarte-render/assets/fonts/LiberationSerif-Regular.ttf` | `crates/jubarte-render/src/convert/font.rs`, `crates/jubarte-render/src/convert/font.rs` | no |
 | `keys/release-signing.pub` | `src/update.rs` | no |
 | `schemas/edit-plan-v2.schema.json` | `src/edit/v2.rs` | no |
 | `tests/common/docx.rs` | `src/edit.rs` | yes |
-| `tests/fixtures/fonts/STIXTwoMath.otf` | `src/convert/math_font.rs`, `src/convert/math_layout.rs` | yes |
+| `tests/fixtures/fonts/STIXTwoMath.otf` | `crates/jubarte-render/src/convert/math_font.rs`, `crates/jubarte-render/src/convert/math_layout.rs` | yes |
 | `tests/fixtures/legacy/services.doc` | `src/legacy_doc.rs` | yes |
 | `tests/fixtures/redline/original.docx` | `src/append.rs`, `src/audit.rs`, `src/comments.rs`, `src/document_comparer.rs`, `src/markdown/package.rs`, `src/scrub.rs`, `src/validate.rs` | yes |
 | `tests/fixtures/relids/image_doc.docx` | `src/comparer/comments.rs`, `src/comparer/cross_para.rs`, `src/comparer/finalize.rs`, `src/comparer/lcs.rs`, `src/comparer/lcs_table.rs`, `src/comparer/parts.rs`, `src/document_comparer.rs` | yes |

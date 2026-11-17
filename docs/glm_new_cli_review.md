@@ -520,7 +520,7 @@ versions and need no change.)
 ## Test evidence at the reassessment
 
 Lib 2486 passed / 0 failed and bin unittests 41/0 on the evening tree
-(through 2c6cd986); `--test m7_cli` has the two failures above. The remaining
+(through 2c6cd986); `--test it_cli m7_cli` has the two failures above. The remaining
 integration targets could not be completed: the follow-ups session began
 editing the tree while the suite ran (`src/edit.rs` mid-edit breaks
 compilation — `mod origin;` without its file), and AGENTS.md forbids racing a

@@ -1,4 +1,4 @@
-{"author":"Claude","base_sha256":"ce7b498030d8574a9a7650b2eb4e6d8d5083456480d16c2bc8c399583bb37e5a","date":"2026-09-25T12:00:00Z","ev":"load","existing_revisions":"refuse","guarded":true,"paras":14,"sha256":"ce7b498030d8574a9a7650b2eb4e6d8d5083456480d16c2bc8c399583bb37e5a"}
+{"author":"Claude","base_sha256":"8bb1c7c675251f580363087ec9b28208bfb713e51d0d4fccb72d17fe9ca8f93e","date":"2026-09-25T12:00:00Z","ev":"load","existing_revisions":"refuse","guarded":true,"paras":14,"sha256":"8bb1c7c675251f580363087ec9b28208bfb713e51d0d4fccb72d17fe9ca8f93e"}
 {"at":"p4","ctx":"{-¶ (d) Onward Disclosure. You will not disclose the Information…}","ev":"op","i":1,"id":"E1-delete-4d","matches":1,"op":"delete_paragraph","status":"ok"}
 {"at":"p6","comment_id":0,"ctx":", retained experts, {+court reporters, litigation-support vendors, }and process servers ","ev":"op","i":2,"id":"E1-recipients","matches":1,"op":"insert","status":"ok"}
 {"at":"p6","ctx":"he Permitted Purpose{+ (each, an “Authorized Recipient”)}, and only after you","ev":"op","i":3,"id":"E1-defined-term","matches":1,"op":"insert","status":"ok"}

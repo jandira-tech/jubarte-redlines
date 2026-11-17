@@ -222,7 +222,6 @@ SYMBOL_CLASSES: dict[str, str] = {
     "tick-cross": _TOK_TICK_CROSS,
     "pua": _TOK_PUA,
 }
-_CLASS_OF_TOKEN = {v: k for k, v in SYMBOL_CLASSES.items()}
 _CLASS_SHORT = {"bullet-geo": "geo", "arrow": "arrow", "tick-cross": "tick",
                 "pua": "pua"}
 
@@ -494,10 +493,10 @@ def run_python_jobs(jobs: dict, jobs_path: Path, results_path: Path,
         old_argv = sys.argv
         try:
             sys.argv = ["py-driver", str(jobs_path), "", str(results_path)]
-            exec(PY_DRIVER, {"__name__": "__main__"})  # our own source
+            exec(PY_DRIVER, {"__name__": "__main__"})  # noqa: S102 — PY_DRIVER is this file's own source
         except SystemExit:
             raise
-        except BaseException as e:  # import failure included
+        except Exception as e:  # import failure included; KeyboardInterrupt propagates
             return {"error": f"{type(e).__name__}: {e}".splitlines()[0]}
         finally:
             sys.argv = old_argv

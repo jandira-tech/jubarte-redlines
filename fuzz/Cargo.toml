@@ -13,13 +13,13 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-jubarte-redlines = { path = "..", default-features = false }
+jubarte = { path = "..", default-features = false }
 mimalloc = { version = "0.1", default-features = false, optional = true }
 
 [features]
 # Install the same global allocator as the shipped CLI. Invoke through
 # scripts/fuzz-native.sh so the C allocator is instrumented as well as Rust.
-native-allocator = ["dep:mimalloc", "jubarte-redlines/fast-alloc"]
+native-allocator = ["dep:mimalloc", "jubarte/fast-alloc"]
 
 # A standalone package, like the bindings: the root `[workspace]` is empty.
 [workspace]

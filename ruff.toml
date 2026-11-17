@@ -17,6 +17,9 @@ per-file-target-version = { "jubarte-python/**" = "py310" }
 
 [lint]
 preview = true
+# The Jules security stage adds flake8-bandit (S) on top of this selection,
+# so an `S` noqa is in use there even though this config never flags it.
+external = ["S"]
 select = [
   "F",
   "G",    # flake8-logging-format

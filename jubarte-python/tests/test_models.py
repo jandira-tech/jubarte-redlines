@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import json
+import subprocess
+import sys
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timedelta, timezone
 
@@ -50,6 +52,25 @@ def test_naive_timestamp_is_rejected(value):
 def test_non_timestamp_is_type_error():
     with pytest.raises(TypeError, match="date"):
         CompareOptions(date=123)
+
+
+def test_native_date_rejects_a_non_string_when_asserts_are_stripped():
+    # __post_init__ already normalizes a datetime. The leftover check in
+    # native_date used to be an assert, which `python -O` deletes.
+    script = (
+        "from jubarte_redlines import CompareOptions\n"
+        "options = CompareOptions()\n"
+        "object.__setattr__(options, 'date', 123)\n"
+        "try:\n"
+        "    got = options.native_date()\n"
+        "except TypeError as exc:\n"
+        "    if 'str' not in str(exc):\n"
+        "        raise SystemExit(f'wrong message: {exc}')\n"
+        "else:\n"
+        "    raise SystemExit(f'accepted {got!r}')\n"
+    )
+    proc = subprocess.run([sys.executable, "-O", "-c", script], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
 def test_options_are_frozen():

@@ -76,11 +76,14 @@ def tree_command(features: str) -> list[str]:
         command += ["--features", features]
     return [*command, "--prefix", "none"]
 
+
 # A crate line in `cargo tree --prefix none` (or the default prefix):
 # `name v1.2.3 ...`.
 CRATE = re.compile(r"^[\s│├└─|`\\-]*(?P<name>[A-Za-z0-9_-]+) v\d")
 
-_CRATES = r"(?:ureq|reqwest|hyper|self_update|curl|attohttpc|isahc|socket2|minreq|tokio|smol|async_std|tungstenite|openssl)"
+_CRATES = (
+    r"(?:ureq|reqwest|hyper|self_update|curl|attohttpc|isahc|socket2|minreq|tokio|smol|async_std|tungstenite|openssl)"
+)
 
 # A network API in Rust source, or a command that fetches over the network.
 # Comments are stripped first, string literals kept. A Unix-domain socket
@@ -129,9 +132,13 @@ def network_crates(tree: str) -> list[str]:
 
 
 def allowed(path: Path, src: Path) -> bool:
-    """The self-update code may reach the network."""
+    """The self-update code may reach the network. It lives in the
+    jubarte-cli crate (plan T4.8): `crates/jubarte-cli/src/update.rs`
+    and `crates/jubarte-cli/src/update/`."""
     rel = path.relative_to(src).as_posix()
-    return rel == "update.rs" or rel.startswith("update/")
+    if src.name == "src" and src.parent.name == "jubarte-cli":
+        return rel == "update.rs" or rel.startswith("update/")
+    return rel == "jubarte-cli/src/update.rs" or rel.startswith("jubarte-cli/src/update/")
 
 
 def network_uses(src: Path) -> list[str]:
@@ -151,7 +158,7 @@ def network_uses(src: Path) -> list[str]:
 
 def main(argv: list[str]) -> int:
     tree_file: Path | None = None
-    src = ROOT / "src"
+    src = ROOT / "crates"
     args = list(argv)
     while args:
         flag = args.pop(0)

@@ -18,13 +18,13 @@ or PNG — from Rust, Python, Node/browser, or the CLI.
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15267/badge)](https://www.bestpractices.dev/projects/15267)
 [![CI](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/jandira-tech/jubarte-redlines/branch/main/graph/badge.svg)](https://codecov.io/gh/jandira-tech/jubarte-redlines)
-[![crates.io](https://img.shields.io/crates/v/jubarte-redlines.svg)](https://crates.io/crates/jubarte-redlines)
-[![docs.rs](https://docs.rs/jubarte-redlines/badge.svg)](https://docs.rs/jubarte-redlines)
+[![crates.io](https://img.shields.io/crates/v/jubarte-redlines.svg)](https://crates.io/crates/jubarte)
+[![docs.rs](https://docs.rs/jubarte/badge.svg)](https://docs.rs/jubarte)
 [![PyPI](https://img.shields.io/pypi/v/jubarte-redlines.svg)](https://pypi.org/project/jubarte-redlines/)
 [![npm](https://img.shields.io/npm/v/jubarte-wasm.svg)](https://www.npmjs.com/package/jubarte-wasm)
 [![MSRV](https://img.shields.io/badge/MSRV-1.94-blue)](./Cargo.toml)
 [![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](./LICENSE)
-[![Socket Badge](https://badge.socket.dev/cargo/package/jubarte-redlines/0.18.0)](https://badge.socket.dev/cargo/package/jubarte-redlines/0.18.0)
+[![Socket Badge](https://badge.socket.dev/cargo/package/jubarte/0.18.0)](https://badge.socket.dev/cargo/package/jubarte/0.18.0)
 
 Jubarte is an in-process DOCX engine for applications that need Microsoft
 Word-style review workflows without automating Microsoft Word or LibreOffice.
@@ -1234,8 +1234,8 @@ a product or network service.
 [Cicero](https://www.cicero.im) · [LinkedIn](https://linkedin.com/in/arthrod) ·
 `contact@arthur.law`
 - [GitHub](https://github.com/jandira-tech/jubarte-redlines)
-- [crates.io](https://crates.io/crates/jubarte-redlines)
-- [docs.rs](https://docs.rs/jubarte-redlines)
+- [crates.io](https://crates.io/crates/jubarte)
+- [docs.rs](https://docs.rs/jubarte)
 - [PyPI](https://pypi.org/project/jubarte-redlines/)
 - [npm](https://www.npmjs.com/package/jubarte-wasm)
 - [Releases](https://github.com/jandira-tech/jubarte-redlines/releases)

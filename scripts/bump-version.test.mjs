@@ -12,7 +12,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { bumpReadmePins, escapeRegExp } from "./bump-version.mjs";
+import { bumpCargoVersions, bumpReadmePins, escapeRegExp } from "./bump-version.mjs";
 
 test("escapeRegExp makes any string match itself, backslash included", () => {
   for (const text of ['1.\\0.$"', "0.12.0", "[a-z]+\\d{2}"]) {
@@ -61,6 +61,23 @@ function stageCodemod(t) {
   fs.writeFileSync(path.join(root, "gemini-extension.json"), '{"version":"0.12.0"}\n');
   return { scratch, root };
 }
+
+test("the workspace version and every = pin bump together", () => {
+  const cargo = [
+    "[workspace.package]",
+    'version = "0.18.0"',
+    "",
+    "[workspace.dependencies]",
+    'jubarte-dom = { path = "crates/jubarte-dom", version = "=0.18.0" }',
+    'jubarte-opc = { path = "crates/jubarte-opc", version = "=0.18.0" }',
+    'serde = "1"',
+  ].join("\n");
+  const bumped = bumpCargoVersions(cargo, "0.19.0");
+  assert.match(bumped, /^version = "0\.19\.0"$/m);
+  assert.equal((bumped.match(/version = "=0\.19\.0"/g) ?? []).length, 2);
+  assert.ok(!bumped.includes("0.18.0"));
+  assert.ok(bumped.includes('serde = "1"'));
+});
 
 for (const flags of [[], ["--preserve-symlinks-main"]]) {
   test(`the codemod bumps through a symlinked directory ${flags.join(" ")}`, (t) => {

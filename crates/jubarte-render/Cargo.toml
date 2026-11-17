@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[package]
+name = "jubarte-render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The render product of the jubarte engine: DOCX and Markdown to PDF and PNG, with Word-faithful layout"
+readme = "README.md"
+keywords = ["docx", "pdf", "render", "word", "png"]
+categories = ["text-processing", "rendering"]
+include = ["/src/**", "/assets/**", "/README.md", "/LICENSE"]
+[lib]
+name = "jubarte_render"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true
+
+[features]
+# P0-LAB-01: compiled-out stage counters / coarse timers; forwarded down.
+perf-profile = ["jubarte-opc/perf-profile"]
+# Cross-crate test helpers (A4): the font-resolution helpers the layers
+# above and their tests reach, forwarded down.
+test-support = ["jubarte-opc/test-support"]
+
+[dependencies]
+jubarte-dom = { workspace = true }
+jubarte-opc = { workspace = true }
+flate2 = { workspace = true }
+zip = { workspace = true }
+image = { workspace = true }
+rustybuzz = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tiny-skia = { workspace = true }
+ttf-parser = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

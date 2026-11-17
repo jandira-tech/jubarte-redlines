@@ -10,7 +10,6 @@ export const appendDocuments: (a: number, b: number, c: number, d: number, e: nu
 export const appendoutput_docx: (a: number, b: number) => void;
 export const appendoutput_warnings: (a: number, b: number) => void;
 export const applyEditPlan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
-export const auditDocument: (a: number, b: number, c: number, d: number, e: number) => void;
 export const auditTracked: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const capabilities: (a: number) => void;
 export const capabilitiesText: (a: number, b: number, c: number) => void;

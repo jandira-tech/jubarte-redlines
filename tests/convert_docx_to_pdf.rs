@@ -51945,7 +51945,7 @@ fn an_installed_family_wins_over_the_documents_embedded_copy() {
             .join("Times New Roman.ttf")
             .is_file()
     });
-    let carlito = include_bytes!("../assets/fonts/Carlito-Regular.ttf");
+    let carlito = include_bytes!("../crates/jubarte-render/assets/fonts/Carlito-Regular.ttf");
     let para = |text: &str| {
         format!(
             "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
