@@ -82,7 +82,17 @@ STD_METHODS = {
 # A refusal that names the id grammar: the mark of a parser outside ids.rs.
 ID_MESSAGE = re.compile(r'"[^"]*expected (?:pN|a (?:change|comment|paragraph|location) id|an id)[^"]*"')
 ID_WORD = re.compile(r"\b(?:p|r|c|t)\d+\b|\bWHERE\b|\bID\b|\bIDS\b")
-CLI_LAYER = ("src/cli.rs", "src/bin/")
+# The workspace split (T4) moved the engine into crates/<name>/src; the
+# facade keeps src/ (and src/bin/). Paths below are repository-relative.
+IDS_RS = "crates/jubarte-dom/src/ids.rs"
+CLI_RS = "crates/jubarte-cli/src/cli.rs"
+CLI_LAYER = (CLI_RS, "src/bin/")
+
+
+def source_files(root: Path) -> list[Path]:
+    """Every .rs file of the facade and of each workspace crate."""
+    trees = [root / "src", *sorted((root / "crates").glob("*/src"))]
+    return [path for tree in trees for path in sorted(tree.rglob("*.rs"))]
 
 
 @dataclass
@@ -99,7 +109,9 @@ class Fn:
 
 
 def module_of(rel: str) -> str:
-    parts = Path(rel).with_suffix("").parts[1:]  # drop `src`
+    parts = Path(rel).with_suffix("").parts
+    # drop `src`, or `crates/<name>/src`: a module is named within its crate
+    parts = parts[3:] if parts[0] == "crates" else parts[1:]
     if parts and parts[-1] == "mod":
         parts = parts[:-1]
     return "::".join(parts)
@@ -129,7 +141,7 @@ def doc_above(lines: list[str], at: int) -> str:
 def functions(root: Path) -> dict[str, Fn]:
     """Every top-level function and impl method of the non-test source."""
     found: dict[str, Fn] = {}
-    for path in sorted((root / "src").rglob("*.rs")):
+    for path in source_files(root):
         rel = path.relative_to(root).as_posix()
         lines = non_test_lines(path.read_text(encoding="utf-8"))
         impl: str | None = None
@@ -222,7 +234,7 @@ def attribute_uses(root: Path, name: str) -> list[str]:
     """Types whose fields name `name` in an attribute (`deserialize_with`,
     `value_parser`): a parser serde or clap calls."""
     found = set()
-    for path in sorted((root / "src").rglob("*.rs")):
+    for path in source_files(root):
         owner = "?"
         for line in non_test_lines(path.read_text(encoding="utf-8")):
             if m := re.match(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum)\s+(\w+)", line):
@@ -239,7 +251,7 @@ def parsers(fns: dict[str, Fn]) -> list[Fn]:
     for fn in fns.values():
         if not fn.signature.startswith("pub"):
             continue
-        if fn.file == "src/ids.rs":
+        if fn.file == IDS_RS:
             first = re.search(r"\(\s*(?:&self,\s*)?\w+:\s*&str", fn.signature)
             returns = re.search(r"->\s*(?:Result|Option|bool)", fn.signature)
             if (first and returns) or fn.name.endswith("_de"):
@@ -256,7 +268,7 @@ _CONSTS_CACHE: dict[Path, tuple[int, dict[str, str]]] = {}
 def messages(fn: Fn, root: Path) -> list[str]:
     """The refusals a parser can give: its id-message literals and the ids.rs
     constants it names, spelled out."""
-    ids = root / "src" / "ids.rs"
+    ids = root / IDS_RS
     stamp = ids.stat().st_mtime_ns
     cached = _CONSTS_CACHE.get(ids)
     if cached is None or cached[0] != stamp:
@@ -280,8 +292,8 @@ class Flag:
 
 
 def id_flags(root: Path) -> list[Flag]:
-    """The clap fields of src/cli.rs whose doc or value name speaks of an id."""
-    lines = non_test_lines((root / "src" / "cli.rs").read_text(encoding="utf-8"))
+    """The clap fields of the CLI crate's cli.rs whose doc or value name speaks of an id."""
+    lines = non_test_lines((root / CLI_RS).read_text(encoding="utf-8"))
     flags, owner, i = [], "?", 0
     while i < len(lines):
         line = lines[i]
