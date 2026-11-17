@@ -483,9 +483,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
-      - uses: ./.github/actions/mbx
-      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+      # Which of the nine crates crates.io still lacks. A rerun, or a
+      # release.sh --local-publish that got there first, finds none and
+      # skips the rest: no toolchain, and no token exchange, which crates.io
+      # refuses once a crate's trusted publisher is gone.
+      - id: pending
+        run: scripts/publish_crates.sh "$VER" --pending | tee /dev/stderr | tail -1 >> "$GITHUB_OUTPUT"
+      - if: steps.pending.outputs.pending != '0'
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      - if: steps.pending.outputs.pending != '0'
+        uses: ./.github/actions/mbx
+      - if: steps.pending.outputs.pending != '0'
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
         id: auth
       # Nine crates, one at a time in dependency order (plan T6.2): the
       # script skips each <crate>/$VER crates.io already holds, so a rerun
@@ -494,7 +503,8 @@ jobs:
       # scripts/release.sh step 4 wrote. Each crate's trusted publisher must
       # name this workflow and environment; a crate's first release is
       # published with a token (release.sh --local-publish).
-      - name: publish the workspace crates
+      - if: steps.pending.outputs.pending != '0'
+        name: publish the workspace crates
         run: scripts/publish_crates.sh "$VER"
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

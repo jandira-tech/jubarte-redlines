@@ -2,19 +2,23 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 """Tests for scripts/publish_crates.sh (plan T6.2): the per-crate order, the
-resume over crates already live, the release-note gate, and the dry runs.
+resume over crates already live, the release-note gate, the pending probe
+and the dry run.
 
 A fake `cargo` logs its arguments and writes the packaged jubarte crate; a
-file:// root stands in for crates.io, a crate being live when
-<root>/crates/<name>/<version> exists. Plain Python 3, stdlib only.
+local HTTP server stands in for crates.io's API: 200 for a crate version
+that is live, 404 for one that is not, 503 for one set as unreachable.
+Plain Python 3, stdlib only.
 """
 
+import http.server
 import io
 import os
 import re
 import subprocess
 import tarfile
 import tempfile
+import threading
 import tomllib
 import unittest
 from pathlib import Path
@@ -30,16 +34,15 @@ if [ "$1" = package ]; then
   mkdir -p target/package
   cp "$FAKE_CRATE" "target/package/jubarte-$FAKE_VER.crate"
 fi
-if [ -n "$FAKE_FAIL_ON" ] && [ "$*" = "$FAKE_FAIL_ON" ]; then exit 1; fi
+if [ -n "$FAKE_EXISTS" ] && [ "$*" = "publish -p $FAKE_EXISTS --locked" ]; then
+  echo "error: crate $FAKE_EXISTS@$FAKE_VER already exists on crates.io index" >&2
+  exit 101
+fi
+if [ -n "$FAKE_FAIL_ON" ] && [ "$*" = "$FAKE_FAIL_ON" ]; then
+  echo "error: something else broke" >&2
+  exit 101
+fi
 exit 0
-"""
-
-MANIFEST = """[workspace.package]
-version = "0.19.0" # the release script bumps this and the "=" pins together
-
-[workspace.dependencies]
-jubarte-dom = { path = "crates/jubarte-dom", version = "=0.19.0" }
-jubarte-cli = { path = "crates/jubarte-cli", version = "=0.19.0", default-features = false }
 """
 
 
@@ -56,18 +59,34 @@ def crate_with(ver: str, note: bool) -> bytes:
     return buf.getvalue()
 
 
+class FakeCratesIo(http.server.BaseHTTPRequestHandler):
+    live: set[str] = set()
+    down: set[str] = set()
+    agents: list[str] = []
+
+    def do_GET(self):
+        FakeCratesIo.agents.append(self.headers.get("User-Agent", ""))
+        m = re.fullmatch(r"/api/v1/crates/([\w-]+)/([\w.+-]+)", self.path)
+        name = m.group(1) if m else ""
+        code = 503 if name in self.down else 200 if name in self.live else 404
+        self.send_response(code)
+        self.end_headers()
+        self.wfile.write(b"{}")
+
+    def log_message(self, *args):
+        pass
+
+
 class Run:
-    def __init__(self, ver="0.19.0", live=(), note=True, fail_on=""):
+    def __init__(self, ver="0.19.0", live=(), down=(), note=True, fail_on="", exists=""):
         self.tmp = tempfile.TemporaryDirectory()
         t = Path(self.tmp.name)
         self.repo = t / "repo"
         self.repo.mkdir()
         subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
-        (self.repo / "Cargo.toml").write_text(MANIFEST)
-        self.api = t / "api"
-        for name in live:
-            (self.api / "crates" / name).mkdir(parents=True)
-            (self.api / "crates" / name / ver).write_text("{}")
+        FakeCratesIo.live, FakeCratesIo.down, FakeCratesIo.agents = set(live), set(down), []
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), FakeCratesIo)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.log = t / "cargo.log"
         self.log.write_text("")
         crate = t / "crate.tar.gz"
@@ -75,18 +94,25 @@ class Run:
         cargo = t / "cargo"
         cargo.write_text(FAKE_CARGO)
         cargo.chmod(0o755)
-        self.env = {**os.environ, "CARGO": str(cargo), "CRATES_IO_API": f"file://{self.api}",
+        self.env = {**os.environ, "CARGO": str(cargo),
+                    "CRATES_IO_API": f"http://127.0.0.1:{self.server.server_port}/api/v1",
                     "CARGO_LOG": str(self.log), "FAKE_CRATE": str(crate), "FAKE_VER": ver,
-                    "FAKE_FAIL_ON": fail_on}
+                    "FAKE_FAIL_ON": fail_on, "FAKE_EXISTS": exists}
         self.ver = ver
 
     def __call__(self, *args):
         r = subprocess.run(["bash", str(SCRIPT), self.ver, *args], cwd=self.repo, env=self.env,
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, timeout=60)
         return r, self.log.read_text().splitlines()
 
     def close(self):
+        self.server.shutdown()
+        self.server.server_close()
         self.tmp.cleanup()
+
+
+def published(calls):
+    return [c.split()[2] for c in calls if c.startswith("publish -p ")]
 
 
 class PublishCrates(unittest.TestCase):
@@ -98,17 +124,37 @@ class PublishCrates(unittest.TestCase):
     def test_every_crate_is_published_in_dependency_order(self):
         _, r, calls = self.run_script()
         self.assertEqual(r.returncode, 0, r.stderr)
-        published = [c.split()[2] for c in calls if c.startswith("publish -p ")]
-        self.assertEqual(published, ORDER)
+        self.assertEqual(published(calls), ORDER)
         self.assertIn("9 published, 0 already live", r.stdout)
+
+    def test_every_probe_names_itself_to_crates_io(self):
+        # crates.io answers 403 to a request without a User-Agent.
+        self.run_script()
+        self.assertTrue(FakeCratesIo.agents)
+        self.assertTrue(all(a.startswith("jubarte-release") for a in FakeCratesIo.agents))
 
     def test_a_rerun_resumes_past_the_crates_already_live(self):
         _, r, calls = self.run_script(live=ORDER[:3])
         self.assertEqual(r.returncode, 0, r.stderr)
-        published = [c.split()[2] for c in calls if c.startswith("publish -p ")]
-        self.assertEqual(published, ORDER[3:])
+        self.assertEqual(published(calls), ORDER[3:])
         for name in ORDER[:3]:
             self.assertIn(f"{name} 0.19.0 is already on crates.io: skipped", r.stdout)
+
+    def test_a_crate_the_api_has_not_caught_up_on_is_skipped_not_fatal(self):
+        # The API lags the index right after a publish: the probe says 404,
+        # cargo says the version exists. The run goes on to the next crate.
+        _, r, calls = self.run_script(exists="jubarte-dom")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(published(calls), ORDER)
+        self.assertIn("jubarte-dom 0.19.0 is already on the crates.io index: skipped", r.stdout)
+        self.assertIn("8 published, 1 already live", r.stdout)
+
+    def test_an_unreachable_crates_io_stops_the_run_instead_of_republishing(self):
+        _, r, calls = self.run_script(down=["jubarte-opc"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("jubarte-opc", r.stderr)
+        self.assertIn("503", r.stderr)
+        self.assertEqual(published(calls), ORDER[:1])
 
     def test_a_release_fully_live_publishes_nothing(self):
         _, r, calls = self.run_script(live=ORDER)
@@ -119,8 +165,7 @@ class PublishCrates(unittest.TestCase):
     def test_a_crate_that_fails_stops_the_run_before_its_dependents(self):
         _, r, calls = self.run_script(fail_on="publish -p jubarte-render --locked")
         self.assertNotEqual(r.returncode, 0)
-        published = [c.split()[2] for c in calls if c.startswith("publish -p ")]
-        self.assertEqual(published, ORDER[:4])
+        self.assertEqual(published(calls), ORDER[:4])
 
     def test_a_package_without_its_release_note_uploads_nothing(self):
         _, r, calls = self.run_script(note=False)
@@ -128,36 +173,49 @@ class PublishCrates(unittest.TestCase):
         self.assertIn("release-notes", r.stderr)
         self.assertFalse([c for c in calls if c.startswith("publish")])
 
-    def test_the_dry_run_verifies_the_whole_workspace(self):
-        _, r, calls = self.run_script("--dry-run")
+    def test_pending_counts_the_crates_crates_io_lacks_and_publishes_nothing(self):
+        _, r, calls = self.run_script("--pending", live=ORDER[:5])
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(calls, ["publish --workspace --dry-run --locked --allow-dirty"])
-
-    def test_the_prerelease_dry_run_moves_the_version_and_every_pin(self):
-        run, r, calls = self.run_script("--dry-run", "--as-prerelease")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        text = (run.repo / "Cargo.toml").read_text()
-        self.assertIn('version = "0.19.0-dryrun" # the release script bumps', text)
-        self.assertEqual(text.count('"=0.19.0-dryrun"'), 2)
-        self.assertNotIn('"=0.19.0"', text)
-        self.assertEqual(calls, ["update --workspace --quiet", "publish --workspace --dry-run --allow-dirty"])
-
-    def test_the_prerelease_refuses_a_version_the_manifest_is_not_at(self):
-        run = Run(ver="0.20.0")
-        self.addCleanup(run.close)
-        r, calls = run("--dry-run", "--as-prerelease")
-        self.assertNotEqual(r.returncode, 0)
-        self.assertIn("is at 0.19.0, not 0.20.0", r.stderr)
+        self.assertEqual(r.stdout.strip().splitlines()[-1], "pending=4")
         self.assertEqual(calls, [])
 
-    def test_as_prerelease_needs_dry_run(self):
+    def test_pending_is_zero_when_every_crate_is_live(self):
+        _, r, _ = self.run_script("--pending", live=ORDER)
+        self.assertEqual(r.stdout.strip().splitlines()[-1], "pending=0")
+
+    def test_the_dry_run_verifies_the_whole_workspace_in_a_fresh_target(self):
+        # cargo reuses an unpacked crate of its publish-local registry when
+        # the registry path is unchanged; a fresh target dir is a fresh path.
+        _, r, calls = self.run_script("--dry-run")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(calls), 1)
+        m = re.fullmatch(r"publish --workspace --dry-run --locked --allow-dirty --target-dir (\S+)", calls[0])
+        self.assertTrue(m, calls[0])
+        self.assertNotIn("/target", m.group(1).removeprefix(str(REPO)))
+
+    def test_the_dry_run_leaves_no_target_behind(self):
+        _, r, calls = self.run_script("--dry-run")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(Path(calls[0].split("--target-dir ")[1]).exists())
+
+    def test_two_dry_runs_never_share_a_target(self):
+        run = Run()
+        self.addCleanup(run.close)
+        run("--dry-run")
+        _, calls = run("--dry-run")
+        dirs = [c.split("--target-dir ")[1] for c in calls]
+        self.assertEqual(len(set(dirs)), 2)
+
+    def test_unknown_arguments_are_refused(self):
         _, r, calls = self.run_script("--as-prerelease")
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(calls, [])
 
 
 class OrderMatchesTheWorkspace(unittest.TestCase):
-    def test_each_crate_comes_after_every_workspace_crate_it_depends_on(self):
+    def test_each_crate_comes_after_every_workspace_crate_it_or_its_tests_need(self):
+        # cargo resolves dev-dependencies when it verifies a package, so a
+        # dev-dependency must be on crates.io first too.
         script = SCRIPT.read_text()
         listed = re.search(r"CRATES=\(([^)]*)\)", script).group(1).split()
         self.assertEqual(listed, ORDER)
@@ -166,7 +224,11 @@ class OrderMatchesTheWorkspace(unittest.TestCase):
         self.assertEqual(sorted(manifests), sorted(ORDER), "a workspace crate is missing from CRATES")
         for name, path in manifests.items():
             doc = tomllib.loads(path.read_text())
-            deps = set(doc.get("dependencies", {}))  # dev-dependencies are not published edges
+            tables = [doc.get("dependencies", {}), doc.get("dev-dependencies", {}),
+                      doc.get("build-dependencies", {})]
+            for target in doc.get("target", {}).values():
+                tables += [target.get(k, {}) for k in ("dependencies", "dev-dependencies", "build-dependencies")]
+            deps = set().union(*tables)
             for dep in deps & set(ORDER):
                 if dep != name:
                     self.assertLess(listed.index(dep), listed.index(name), f"{name} needs {dep} first")

@@ -407,7 +407,8 @@ class Crates(unittest.TestCase):
         i = step_index(self.job, lambda s: "rust-lang/crates-io-auth-action@" in s.get("uses", ""))
         auth = self.job["steps"][i]
         pub = self.job["steps"][
-            step_index(self.job, lambda s: "scripts/publish_crates.sh" in s.get("run", ""))
+            step_index(self.job, lambda s: 'scripts/publish_crates.sh "$VER"' in s.get("run", "")
+                       and "--pending" not in s.get("run", ""))
         ]
         self.assertEqual(
             pub["env"]["CARGO_REGISTRY_TOKEN"], f"${{{{ steps.{auth['id']}.outputs.token }}}}"
@@ -422,12 +423,25 @@ class Crates(unittest.TestCase):
         self.assertNotIn("cargo publish --locked", script)
         self.assertNotIn("jubarte-redlines-$VER.crate", script)
 
-    def test_ci_dry_runs_every_crate_as_a_prerelease(self) -> None:
-        # Before the bump the workspace is at the last released version, and
-        # jubarte-redlines at that version is the old crate on crates.io.
+    def test_ci_dry_runs_every_crate(self) -> None:
         job = load_ci()["jobs"]["package"]
-        script = runs(job)
-        self.assertIn('scripts/publish_crates.sh "$ver" --dry-run --as-prerelease', script)
+        self.assertIn("scripts/publish_crates.sh", runs(job))
+        self.assertIn("--dry-run", runs(job))
+        self.assertNotIn("--as-prerelease", runs(job))
+
+    def test_a_rerun_with_every_crate_live_asks_for_no_token(self) -> None:
+        # The token exchange fails once a crate's trusted publisher is gone;
+        # a release already on crates.io must not need one.
+        steps = self.job["steps"]
+        probe = step_index(self.job, lambda s: "--pending" in s.get("run", ""))
+        pid = steps[probe]["id"]
+        gate = f"steps.{pid}.outputs.pending != '0'"
+        auth = step_index(self.job, lambda s: "crates-io-auth-action@" in s.get("uses", ""))
+        pub = step_index(self.job, lambda s: 'scripts/publish_crates.sh "$VER"' in s.get("run", "")
+                         and "--pending" not in s.get("run", ""))
+        self.assertLess(probe, auth)
+        for i in (auth, pub):
+            self.assertIn(gate, steps[i].get("if", ""), steps[i])
 
 
 class PyPI(unittest.TestCase):
