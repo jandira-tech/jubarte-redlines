@@ -720,7 +720,7 @@ def main() -> int:
                          "ENGINE_COMMIT.txt must exist and equal SHA, else the run fails (exit 2)")
     ap.add_argument("--engine-dir", type=Path, default=None, metavar="DIR",
                     help="engine checkout for the STALE rule (F10): a binding artifact older than "
-                         "the newest commit touching src/, jubarte-python/src or jubarte-wasm/src "
+                         "the newest commit touching src/, crates/, jubarte-python/src or jubarte-wasm/src "
                          "fails (exit 2)")
     ap.add_argument("--max-wasm-missing-emoji", type=int, default=None, metavar="N",
                     help="fail (exit 1) when the TOTAL wasm-unpainted emoji count across pairs "

@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -347,3 +348,11 @@ def test_the_engine_clock_sees_a_commit_under_crates(tmp_path):
     env = {**env, "GIT_COMMITTER_DATE": "2026-02-01T00:00:00Z", "GIT_AUTHOR_DATE": "2026-02-01T00:00:00Z"}
     subprocess.run([*git, "commit", "-qm", "compare crate"], check=True, env=env)
     assert pc.engine_src_commit_ts(root)["ts"] > before
+
+
+def test_the_engine_dir_help_names_every_input_of_the_clock():
+    r = subprocess.run([sys.executable, str(HERE / "parity_check.py"), "--help"],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    text = " ".join(r.stdout.split())
+    assert "src/, crates/, jubarte-python/src or jubarte-wasm/src" in text
