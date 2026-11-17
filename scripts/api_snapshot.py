@@ -1010,7 +1010,24 @@ def main(argv: list[str] | None = None) -> None:
         # reads (and is nameable as) `jubarte::xmllinq::Dom` there. The
         # per-item cross-crate resolution above covers the re-export
         # lines; this covers everything beneath them, signatures
-        # included.
+        # included. The CLI crate is composed, not re-exported
+        # wholesale (plan A6/T4.8): its modules map to their facade
+        # homes, and its crate-root items (which the facade does not
+        # carry) are skipped.
+        if lib == "jubarte_cli":
+            rebased = set()
+            prefixes = {
+                "jubarte_cli::cli::": "jubarte::cli::",
+                "jubarte_cli::update::": "jubarte::update::",
+                "jubarte_cli::inline::": "jubarte::edit::inline::",
+            }
+            for line in flatten(other):
+                for prefix, home in prefixes.items():
+                    if f"\t{prefix.split('::')[1]}\t" in line or f"\t{prefix}" in line:
+                        rebased.add(line.replace(prefix, home))
+                # nothing else from the crate root
+            lines.update(rebased)
+            continue
         lines.update(
             line.replace(f"{lib}::", "jubarte::")
             for line in flatten(other)

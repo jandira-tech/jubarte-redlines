@@ -4,25 +4,25 @@
 
 //! Compile one typed action into PlanV2; mutation stays in the shared engine.
 
-use super::{
+use crate::cli::edit_actions::EditAction;
+use crate::edit::{
     ExistingRevisions,
     for_edit::{ForEditRequest, for_edit_quoting},
     v2::{self, PlanV2, Target},
 };
-use crate::cli::edit_actions::EditAction;
 use crate::inspect::source_sha256;
 use crate::result::Error;
 
 fn refusal(code: &str, message: impl Into<String>) -> Box<Error> {
     Box::new(Error::new(code).with_message(message))
 }
-fn edit_error(e: super::EditError) -> Box<Error> {
+fn edit_error(e: crate::edit::EditError) -> Box<Error> {
     let mut error = Error::new(e.code).with_message(e.message);
     error.operation = e.operation;
     error.near = e.near.map(|near| *near);
     Box::new(error)
 }
-fn pair(p: &super::for_edit::TargetPair) -> Target {
+fn pair(p: &crate::edit::for_edit::TargetPair) -> Target {
     Target {
         short_id: p.short_id.clone(),
         long_id: p.long_id.clone(),
@@ -37,26 +37,27 @@ fn pair(p: &super::for_edit::TargetPair) -> Target {
 fn deleted_text_hint(
     source: &[u8],
     author: &str,
-    existing: super::ExistingRevisions,
+    existing: crate::edit::ExistingRevisions,
     target: &str,
     find: &str,
     decided: &[&str],
 ) -> Option<String> {
-    let plan = super::EditPlan {
-        schema_version: super::SCHEMA_VERSION,
+    let plan = crate::edit::EditPlan {
+        schema_version: crate::edit::SCHEMA_VERSION,
         source_sha256: None,
         author: author.to_string(),
         date: None,
         initials: None,
         resolve_revisions: None,
-        removed_anchor_comments: super::RemovedAnchorComments::Remove,
+        removed_anchor_comments: crate::edit::RemovedAnchorComments::Remove,
         existing_revisions: existing,
         operations: Vec::new(),
         update_fields: false,
         rewrite_others_comments: false,
-        others: super::Others::Allow,
+        others: crate::edit::Others::Allow,
     };
-    let tx = super::Transaction::start_quoting(source, &plan, super::PlanSyntax::Typed).ok()?;
+    let tx = crate::edit::Transaction::start_quoting(source, &plan, crate::edit::PlanSyntax::Typed)
+        .ok()?;
     let para = (0..tx.paragraph_nodes.len()).find(|&para| tx.paragraph_id(para) == target)?;
     let holder = tx.removed_anchor_holder(para, find)?;
     if decided.contains(&holder.as_str()) {
@@ -93,7 +94,7 @@ pub fn compile(
         _ => ExistingRevisions::Refuse,
     };
     let (accept, reject) =
-        super::source_refs::decisions(source, &inline.accept_change, &inline.reject_change)
+        crate::edit::source_refs::decisions(source, &inline.accept_change, &inline.reject_change)
             .map_err(edit_error)?;
     // Select all original identities, then match anchors in their working text.
     let view = for_edit_quoting(
@@ -112,7 +113,7 @@ pub fn compile(
             track: inline.track == "on",
             ..Default::default()
         },
-        super::PlanSyntax::Typed,
+        crate::edit::PlanSyntax::Typed,
     )
     .map_err(edit_error)?;
     let at = match action {
@@ -157,7 +158,7 @@ pub fn compile(
             }
             if at.is_none() {
                 let story = story.as_deref().unwrap_or("body");
-                super::anchor_error::require_story(source, story)?;
+                crate::edit::anchor_error::require_story(source, story)?;
                 candidates.retain(|r| r.story == story);
             }
             let mut hits = Vec::new();
@@ -167,21 +168,21 @@ pub fn compile(
                         working.value.text.as_deref().ok_or_else(|| {
                             refusal("UNSUPPORTED_TEXT", "working text is incomplete")
                         })?;
-                    for (local, _) in super::v2_candidates(working, find).iter().enumerate() {
+                    for (local, _) in crate::edit::v2_candidates(working, find).iter().enumerate() {
                         hits.push((*row, local + 1));
                     }
                 }
             }
             let with_near = |mut error: Box<Error>| {
                 if hits.is_empty() && error.code == "ANCHOR_NOT_FOUND" {
-                    let mut report = super::NearMatches {
+                    let mut report = crate::edit::NearMatches {
                         total: 0,
                         occurrences: Vec::new(),
                     };
                     for row in &candidates {
                         if let Some(text) =
                             row.working.as_ref().and_then(|w| w.value.text.as_deref())
-                            && let Some(near) = super::anchor::near_matches(text, find)
+                            && let Some(near) = crate::edit::anchor::near_matches(text, find)
                         {
                             report.total += near.total;
                             let remaining = 5 - report.occurrences.len();
@@ -217,9 +218,9 @@ pub fn compile(
                 for row in &candidates {
                     if let Some(working) = &row.working {
                         let working = working.value.text.as_deref().unwrap_or_default();
-                        let count = super::v2_candidates(working, find).len();
+                        let count = crate::edit::v2_candidates(working, find).len();
                         if count > 0 {
-                            super::v2_select_all(working, find, count).map_err(edit_error)?;
+                            crate::edit::v2_select_all(working, find, count).map_err(edit_error)?;
                         }
                     }
                 }
@@ -235,10 +236,10 @@ pub fn compile(
                                 "target has no one-to-one working paragraph",
                             )
                         })?;
-                    if let Err(missed) = super::v2_resolve(
+                    if let Err(missed) = crate::edit::v2_resolve(
                         source,
-                        super::Working::Settled(working),
-                        &super::AnchorRefusal::new(&row.target.short_id, find)
+                        crate::edit::Working::Settled(working),
+                        &crate::edit::AnchorRefusal::new(&row.target.short_id, find)
                             .with_operation("/operations/0"),
                         *occurrence,
                     ) {
@@ -378,9 +379,9 @@ pub fn compile(
                         v2::Operation::InsertParagraph {
                             target,
                             position: if position.as_deref() == Some("before") {
-                                super::Side::Before
+                                crate::edit::Side::Before
                             } else {
-                                super::Side::After
+                                crate::edit::Side::After
                             },
                             text: payload,
                             attached_comment: comment,
@@ -392,9 +393,9 @@ pub fn compile(
                             after_text: after_text.clone(),
                             edge: edge.as_ref().map(|s| {
                                 if s == "start" {
-                                    super::Edge::Start
+                                    crate::edit::Edge::Start
                                 } else {
-                                    super::Edge::End
+                                    crate::edit::Edge::End
                                 }
                             }),
                             occurrence: occurrence.map(|n| n as u64),

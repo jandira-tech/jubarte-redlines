@@ -93,6 +93,9 @@
 //! (MIT). The repository itself is AGPL-3.0-only; `LICENSES/` preserves those
 //! upstream attribution texts without changing the repository license.
 
+#[cfg(feature = "cli")]
+#[doc(inline)]
+pub use jubarte_cli::cli;
 #[doc(inline)]
 pub use jubarte_doc::append;
 #[doc(inline)]
@@ -100,6 +103,11 @@ pub use jubarte_doc::audit;
 /// Tracked changes one at a time: list, accept or reject a selection.
 #[doc(inline)]
 pub use jubarte_doc::changes;
+#[doc(inline)]
+pub use jubarte_doc::comments;
+/// `jubarte debug`: short Word-validity triage of a package, or two compared.
+#[doc(inline)]
+pub use jubarte_doc::debug;
 /// Table, cell and paragraph border views shared by render, markdown and debug.
 /// Word's built-in style names.
 /// Machine-readable manifest of what this build can do.
@@ -107,13 +115,6 @@ pub use jubarte_doc::changes;
 pub use jubarte_edit::capabilities;
 #[doc(inline)]
 pub use jubarte_opc::admission;
-#[cfg(feature = "cli")]
-pub mod cli;
-#[doc(inline)]
-pub use jubarte_doc::comments;
-/// `jubarte debug`: short Word-validity triage of a package, or two compared.
-#[doc(inline)]
-pub use jubarte_doc::debug;
 /// Custom XML and built-in data stores shared by the OPC layer.
 /// Core WmlComparer engine (atomize → LCS → produce → finalize).
 #[doc(inline)]
@@ -136,7 +137,18 @@ pub mod document_comparer {
     #[doc(inline)]
     pub use jubarte_redlines::document_comparer::*;
 }
-pub mod edit;
+/// Tracked-change editing: the jubarte-edit crate's module plus the
+/// inline CLI actions (behind `cli`).
+pub mod edit {
+    #[cfg(feature = "cli")]
+    #[doc(inline)]
+    pub use jubarte_cli::inline;
+    #[doc(inline)]
+    pub use jubarte_edit::edit::*;
+}
+#[cfg(feature = "self-update")]
+#[doc(inline)]
+pub use jubarte_cli::update;
 #[doc(inline)]
 pub use jubarte_doc::fields;
 /// Read-only paragraph/package views and the Markdown projection for agents.
@@ -144,6 +156,8 @@ pub use jubarte_doc::fields;
 pub use jubarte_doc::inspect;
 #[doc(inline)]
 pub use jubarte_doc::scrub;
+#[doc(inline)]
+pub use jubarte_doc::validate;
 #[doc(inline)]
 pub use jubarte_dom::ids;
 /// WordprocessingML and related namespace / `XName` constants.
@@ -154,6 +168,12 @@ pub use jubarte_dom::namespaces;
 pub use jubarte_dom::perf;
 #[doc(inline)]
 pub use jubarte_dom::unid;
+/// Shared small utilities.
+#[doc(inline)]
+pub use jubarte_dom::util;
+/// Arena DOM (`xmllinq`) used by the comparer.
+#[doc(inline)]
+pub use jubarte_dom::xmllinq;
 /// V2-13 (issue #845): the checker core for `--expect` evaluations.
 #[doc(inline)]
 pub use jubarte_edit::expect;
@@ -180,17 +200,6 @@ pub use jubarte_opc::strict_translation;
 /// Accept / reject tracked revisions across a package.
 #[doc(inline)]
 pub use jubarte_redlines::revision_processor;
-/// `jubarte self-update`: install a GitHub release, only when asked.
-#[cfg(feature = "self-update")]
-pub mod update;
-#[doc(inline)]
-pub use jubarte_doc::validate;
-/// Shared small utilities.
-#[doc(inline)]
-pub use jubarte_dom::util;
-/// Arena DOM (`xmllinq`) used by the comparer.
-#[doc(inline)]
-pub use jubarte_dom::xmllinq;
 /// Pure DOM structural predicates shared by validate and the comparers.
 /// Word's default theme part, for originals without one.
 /// `WmlDocument` — document bytes + lazily parsed main part.

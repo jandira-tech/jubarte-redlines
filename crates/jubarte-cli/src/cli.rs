@@ -1484,7 +1484,16 @@ pub enum Command {
         #[arg(long, value_enum, default_value_t = Revisions::Conventional, requires_if("custom", "revision_palette"), help_heading = "Revision marks")]
         revisions: Revisions,
         /// Marks for --revisions custom (see `convert --help`).
-        #[arg(long, value_name = "SPEC", value_parser = parse_palette, requires = "revisions", help_heading = "Revision marks")]
+        #[cfg_attr(feature = "render", arg(long, value_name = "SPEC", value_parser = parse_palette, requires = "revisions", help_heading = "Revision marks"))]
+        #[cfg_attr(
+            not(feature = "render"),
+            arg(
+                long,
+                value_name = "SPEC",
+                requires = "revisions",
+                help_heading = "Revision marks"
+            )
+        )]
         revision_palette: Option<String>,
         /// The operations the flags describe, grouped by -p (filled after
         /// parsing).
@@ -2847,7 +2856,11 @@ pub struct RenderArgs {
     /// kinds deleted, inserted, moved-from, moved-to and lines strike,
     /// double-strike, underline, double-underline, plain. Kinds left out
     /// keep their conventional mark.
-    #[arg(long, value_name = "SPEC", value_parser = parse_palette, requires = "revisions")]
+    #[cfg_attr(feature = "render", arg(long, value_name = "SPEC", value_parser = parse_palette, requires = "revisions"))]
+    #[cfg_attr(
+        not(feature = "render"),
+        arg(long, value_name = "SPEC", requires = "revisions")
+    )]
     pub revision_palette: Option<String>,
     /// PNG resolution in dots per inch (1-1200).
     #[arg(long, default_value_t = 96.0, value_name = "DPI", value_parser = parse_dpi)]
@@ -2891,12 +2904,16 @@ impl Default for RenderArgs {
 
 impl RenderArgs {
     /// Apply comment placement and page filtering to the renderer options.
-    pub fn apply(&self, options: crate::convert::PdfOptions) -> crate::convert::PdfOptions {
-        crate::convert::PdfOptions {
+    #[cfg(feature = "render")]
+    pub fn apply(
+        &self,
+        options: crate::jubarte_render::convert::PdfOptions,
+    ) -> crate::jubarte_render::convert::PdfOptions {
+        crate::jubarte_render::convert::PdfOptions {
             comments: if self.move_comments {
-                crate::convert::CommentPlacement::End
+                crate::jubarte_render::convert::CommentPlacement::End
             } else {
-                crate::convert::CommentPlacement::Margin
+                crate::jubarte_render::convert::CommentPlacement::Margin
             },
             comment_notes: self.comment_notes,
             changed_only: self.changed_pages,
@@ -3155,8 +3172,9 @@ fn parse_threshold(value: &str) -> Result<f64, String> {
     }
 }
 
+#[cfg(feature = "render")]
 fn parse_palette(value: &str) -> Result<String, String> {
-    crate::convert::RevisionPalette::parse(value)?;
+    crate::jubarte_render::convert::RevisionPalette::parse(value)?;
     Ok(value.to_string())
 }
 

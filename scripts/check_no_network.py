@@ -129,9 +129,13 @@ def network_crates(tree: str) -> list[str]:
 
 
 def allowed(path: Path, src: Path) -> bool:
-    """The self-update code may reach the network."""
+    """The self-update code may reach the network. It lives in the
+    jubarte-cli crate (plan T4.8): `crates/jubarte-cli/src/update.rs`
+    and `crates/jubarte-cli/src/update/`."""
     rel = path.relative_to(src).as_posix()
-    return rel == "update.rs" or rel.startswith("update/")
+    if src.name == "src" and src.parent.name == "jubarte-cli":
+        return rel == "update.rs" or rel.startswith("update/")
+    return rel == "jubarte-cli/src/update.rs" or rel.startswith("jubarte-cli/src/update/")
 
 
 def network_uses(src: Path) -> list[str]:
@@ -151,7 +155,7 @@ def network_uses(src: Path) -> list[str]:
 
 def main(argv: list[str]) -> int:
     tree_file: Path | None = None
-    src = ROOT / "src"
+    src = ROOT / "crates"
     args = list(argv)
     while args:
         flag = args.pop(0)

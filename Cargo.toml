@@ -164,7 +164,7 @@ workspace = true
 default = ["cli", "fast-alloc", "self-update"]
 # The `jubarte` binary's CLI (clap). Library consumers can opt out with
 # `default-features = false` to keep the dependency tree minimal.
-cli = ["dep:clap", "dep:same-file"]
+cli = ["dep:jubarte-cli", "dep:clap", "dep:same-file", "jubarte-cli/render"]
 # CLI global allocator (mimalloc). Default-on; disable with
 # `--no-default-features --features cli` to fall back to the system allocator
 # (used for allocator A/B measurement). Only the binary installs it, but a
@@ -177,7 +177,7 @@ perf-profile = []
 # `jubarte self-update`: installs a GitHub release on request (docs/SELF_UPDATE.md).
 # Default-on for the binary; library consumers use `default-features = false`
 # and get no network code.
-self-update = ["cli", "dep:self_update", "dep:ed25519-dalek"]
+self-update = ["cli", "jubarte-cli/self-update"]
 
 [workspace.dependencies]
 # The workspace's own crates: exact pins, because the layers expose
@@ -189,6 +189,7 @@ jubarte-render = { path = "crates/jubarte-render", version = "=0.18.0", default-
 jubarte-doc = { path = "crates/jubarte-doc", version = "=0.18.0", default-features = false }
 jubarte-markdown = { path = "crates/jubarte-markdown", version = "=0.18.0", default-features = false }
 jubarte-edit = { path = "crates/jubarte-edit", version = "=0.18.0", default-features = false }
+jubarte-cli = { path = "crates/jubarte-cli", version = "=0.18.0", default-features = false }
 
 # Upstream OPC types on zip 9 and patched quick-xml 0.41. The adapter keeps
 # its duplicate-repair and canonical-writing policy; optional crypto stays off.
@@ -263,6 +264,7 @@ jubarte-redlines = { workspace = true }
 jubarte-doc = { workspace = true, features = ["render", "schema"] }
 jubarte-markdown = { workspace = true, features = ["render"] }
 jubarte-edit = { workspace = true, features = ["render"] }
+jubarte-cli = { workspace = true, optional = true }
 jubarte-render = { workspace = true }
 oxml-opc = { workspace = true }
 zip = { workspace = true }
@@ -285,11 +287,9 @@ tiny-skia = { workspace = true }
 pulldown-cmark = { workspace = true }
 similar = { workspace = true }
 foldhash = { workspace = true }
+mimalloc = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 same-file = { workspace = true, optional = true }
-mimalloc = { workspace = true, optional = true }
-self_update = { workspace = true, optional = true }
-ed25519-dalek = { workspace = true, optional = true }
 
 # Windows releases are .zip. Zip support stays off elsewhere: it turns on the
 # zip crate's `time` feature, which stamps wall-clock times into our own
@@ -322,6 +322,9 @@ name = "cli_flags"
 required-features = ["cli"]
 
 [dev-dependencies]
+self_update = { workspace = true }
+ed25519-dalek = { workspace = true }
+
 jubarte-dom = { workspace = true, features = ["test-support"] }
 jubarte-opc = { workspace = true, features = ["schema", "test-support"] }
 jubarte-redlines = { workspace = true, features = ["test-support"] }

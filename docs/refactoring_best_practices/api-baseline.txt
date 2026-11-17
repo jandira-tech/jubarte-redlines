@@ -219,7 +219,7 @@ api	function	pub	jubarte::cli::Format::of_path (path: &Path) -> Option<Self>
 api	function	pub	jubarte::cli::PatchFormat::is_text_view (self: Self) -> bool
 api	function	pub	jubarte::cli::ReadArgs::for_edit_request (self: &Self) -> crate::edit::for_edit::ForEditRequest
 api	function	pub	jubarte::cli::ReadArgs::paragraph_spec (self: &Self) -> Option<String>
-api	function	pub	jubarte::cli::RenderArgs::apply (self: &Self, options: crate::convert::PdfOptions) -> crate::convert::PdfOptions
+api	function	pub	jubarte::cli::RenderArgs::apply (self: &Self, options: crate::jubarte_render::convert::PdfOptions) -> crate::jubarte_render::convert::PdfOptions
 api	function	pub	jubarte::cli::Task::name (self: Self) -> &'static str
 api	function	pub	jubarte::cli::Task::of_name (name: &str) -> Option<Self>
 api	function	pub	jubarte::cli::TrackArg::from_choice (choice: &str) -> Option<Self>
@@ -249,7 +249,6 @@ api	function	pub	jubarte::cli::removed_spellings <'a>(argv: impl IntoIterator<It
 api	function	pub	jubarte::cli::retired_note (old: &str, now: &str) -> String
 api	function	pub	jubarte::cli::retired_spellings <'a>(argv: impl IntoIterator<Item>) -> Vec<(&'static str, &'static str)>
 api	function	pub	jubarte::cli::runtime_json_error (message: &str, exit: u8) -> String
-api	function	pub	jubarte::cli::shell_word (arg: &str) -> String
 api	function	pub	jubarte::cli::slash_path (path: &std::path::Path) -> String
 api	function	pub	jubarte::cli::success_block (before_name: &str, before: &str, after_name: &str, after: &str) -> String
 api	function	pub	jubarte::cli::top_level_command () -> clap::Command
@@ -453,7 +452,7 @@ api	function	pub	jubarte::edit::flags::plan_from_flags_json (verb: &str, operati
 api	function	pub	jubarte::edit::for_edit::for_edit (source: &[u8], request: &ForEditRequest) -> Result<ForEdit, super::EditError>
 api	function	pub	jubarte::edit::for_edit::for_edit_json (source: &[u8], request: &ForEditRequest, validity: Option<crate::validate::InputValidity>) -> Result<String, super::EditError>
 api	function	pub	jubarte::edit::for_edit::matching_body_paragraphs (source: &[u8], find: Option<&str>, regex: Option<&str>, ignore_case: bool) -> Result<Vec<usize>, super::EditError>
-api	function	pub	jubarte::edit::inline::compile (source: &[u8], action: &crate::cli::edit_actions::EditAction, text: Option<&str>) -> Result<super::PlanV2, Box<crate::result::Error>>
+api	function	pub	jubarte::edit::inline::compile (source: &[u8], action: &crate::cli::edit_actions::EditAction, text: Option<&str>) -> Result<crate::edit::PlanV2, Box<crate::result::Error>>
 api	function	pub	jubarte::edit::paragraph_ids (docx: &[u8], ids: &[&str]) -> Result<Vec<Result<String, String>>, EditError>
 api	function	pub	jubarte::edit::prepared::CandidateChecks::verification (self: &Self) -> crate::result::Verification
 api	function	pub	jubarte::edit::prepared::introduced_findings (baseline: &[crate::validate::Finding], candidate: &[crate::validate::Finding]) -> Vec<crate::validate::Finding>
@@ -2724,7 +2723,6 @@ api	struct	pub	jubarte::changes::ResolvedChanges
 api	struct	pub	jubarte::cli::Cli
 api	struct	pub	jubarte::cli::CompareArgs
 api	struct	pub	jubarte::cli::EditOptions
-api	struct	pub	jubarte::cli::FlagOp
 api	struct	pub	jubarte::cli::MarkdownArgs
 api	struct	pub	jubarte::cli::ReadArgs
 api	struct	pub	jubarte::cli::RenderArgs
@@ -4412,6 +4410,7 @@ api	use	pub	jubarte::capabilities = jubarte_edit::capabilities
 api	use	pub	jubarte::capabilities::discovery = discovery::discovery
 api	use	pub	jubarte::capabilities::discovery_text = discovery::discovery_text
 api	use	pub	jubarte::changes = jubarte_doc::changes
+api	use	pub	jubarte::cli = jubarte_cli::cli
 api	use	pub	jubarte::cli::FlagOp = crate::edit::flags::FlagOp
 api	use	pub	jubarte::cli::shell_word = crate::util::shell_word
 api	use	pub	jubarte::comments = jubarte_doc::comments
@@ -4464,6 +4463,7 @@ api	use	pub	jubarte::edit::SkippedOperation = skip::SkippedOperation
 api	use	pub	jubarte::edit::Working = anchor_error::Working
 api	use	pub	jubarte::edit::_ = skip::keep_notes
 api	use	pub	jubarte::edit::failed_plan_json = skip::failed_plan_json
+api	use	pub	jubarte::edit::inline = jubarte_cli::inline
 api	use	pub	jubarte::edit::introduced_findings = prepared::introduced_findings
 api	use	pub	jubarte::edit::keep_notes = skip::keep_notes
 api	use	pub	jubarte::edit::prepare = prepared::prepare
@@ -4528,6 +4528,7 @@ api	use	pub	jubarte::settings = jubarte_opc::settings
 api	use	pub	jubarte::strict_translation = jubarte_opc::strict_translation
 api	use	pub	jubarte::text_diff = jubarte_edit::text_diff
 api	use	pub	jubarte::unid = jubarte_dom::unid
+api	use	pub	jubarte::update = jubarte_cli::update
 api	use	pub	jubarte::update::ReleaseKey = zipsign::ReleaseKey
 api	use	pub	jubarte::update::verify_signature = zipsign::verify_signature
 api	use	pub	jubarte::util = jubarte_dom::util
@@ -8224,10 +8225,6 @@ internal	function	pub(crate::edit::hint)	jubarte::edit::hint::settle (syntax: Pl
 internal	function	pub(crate::edit::hint)	jubarte::edit::hint::settle_revision (syntax: PlanSyntax, verb: &str, id: &str, long_id: &str) -> String
 internal	function	pub(crate::edit::hint)	jubarte::edit::hint::shell_word (id: &str) -> std::borrow::Cow<'_, str>
 internal	function	pub(crate::edit::hint)	jubarte::edit::hint::strike (syntax: PlanSyntax, holder: &Holder<'_>) -> Option<String>
-internal	function	pub(crate::edit::inline)	jubarte::edit::inline::deleted_text_hint (source: &[u8], author: &str, existing: super::ExistingRevisions, target: &str, find: &str, decided: &[&str]) -> Option<String>
-internal	function	pub(crate::edit::inline)	jubarte::edit::inline::edit_error (e: super::EditError) -> Box<crate::result::Error>
-internal	function	pub(crate::edit::inline)	jubarte::edit::inline::pair (p: &super::for_edit::TargetPair) -> super::Target
-internal	function	pub(crate::edit::inline)	jubarte::edit::inline::refusal (code: &str, message: impl Into<String>) -> Box<crate::result::Error>
 internal	function	pub(crate::edit::notes)	jubarte::edit::notes::reference_rpr (dom: &mut crate::xmllinq::Dom, style: Option<&str>) -> crate::xmllinq::NodeId
 internal	function	pub(crate::edit::origin)	jubarte::edit::origin::Ids::table_paragraph (self: &Self, head: &str, n: usize, row: usize, cell: usize, index: usize) -> Result<String, String>
 internal	function	pub(crate::edit::origin)	jubarte::edit::origin::exact_correspondence (tags: &[Option<usize>], content_free: &[bool], settled_story: &[(usize, usize)], paragraph_story: &[(usize, usize)], sources: usize) -> Vec<Option<usize>>
@@ -8539,6 +8536,10 @@ internal	function	pub(crate::ids::short)	jubarte::ids::short::Step::renumbered (
 internal	function	pub(crate::ids::short)	jubarte::ids::short::part_stem (head: &str) -> bool
 internal	function	pub(crate::ids::short)	jubarte::ids::short::settled_spelling (token: &str) -> Option<String>
 internal	function	pub(crate::ids::short)	jubarte::ids::short::valid_path (story: &Story, path: &[Step]) -> bool
+internal	function	pub(crate::inline)	jubarte::edit::inline::deleted_text_hint (source: &[u8], author: &str, existing: crate::edit::ExistingRevisions, target: &str, find: &str, decided: &[&str]) -> Option<String>
+internal	function	pub(crate::inline)	jubarte::edit::inline::edit_error (e: crate::edit::EditError) -> Box<crate::result::Error>
+internal	function	pub(crate::inline)	jubarte::edit::inline::pair (p: &crate::edit::for_edit::TargetPair) -> crate::edit::Target
+internal	function	pub(crate::inline)	jubarte::edit::inline::refusal (code: &str, message: impl Into<String>) -> Box<crate::result::Error>
 internal	function	pub(crate::inspect)	jubarte::inspect::body_index (id: Option<&String>) -> Option<usize>
 internal	function	pub(crate::inspect)	jubarte::inspect::body_paragraphs (dom: &crate::xmllinq::Dom, body: crate::xmllinq::NodeId) -> Vec<Paragraph>
 internal	function	pub(crate::inspect)	jubarte::inspect::control_kind (dom: &crate::xmllinq::Dom, pr: crate::xmllinq::NodeId) -> &'static str
@@ -9666,13 +9667,9 @@ internal	function	pub(crate::xmllinq::serialize)	jubarte::xmllinq::serialize::wr
 internal	function	pub(crate::xmllinq::serialize)	jubarte::xmllinq::serialize::write_escape_attr (out: &mut impl XmlBuf, s: &str)
 internal	function	pub(crate::xmllinq::serialize)	jubarte::xmllinq::serialize::write_escape_text (out: &mut impl XmlBuf, s: &str)
 internal	function	pub(crate::xmllinq::serialize)	jubarte::xmllinq::serialize::write_qname (out: &mut impl XmlBuf, prefix: &str, local: &str)
-internal	impl		(impl From<DebugCheck> for crate::debug::Check)
 internal	impl		(impl From<EditError> for Box<Failure>)
 internal	impl		(impl From<ExitStatus> for u8)
-internal	impl		(impl From<Page> for crate::markdown::PageSize)
 internal	impl		(impl From<ProgressEvent> for serde_json::Value)
-internal	impl		(impl From<SectionBreakArg> for crate::append::SectionBreak)
-internal	impl		(impl From<TrackChanges> for crate::markdown::TrackChanges)
 internal	impl		(impl XmlBuf for String)
 internal	impl		jubarte::audit::StyleFacts::(impl Default)
 internal	impl		jubarte::changes::Group::(impl Clone)

@@ -153,10 +153,9 @@ allow-build-scripts = [
     "zmij",
 ]
 
-# This package root is the repository, so the file walk would treat
-# unrelated tools and local environments as crate files. The build
-# script only records the version. The checksum skips that walk until
-# the script itself changes.
+# The version-stamping build script lives in the CLI crate (plan T4.8);
+# the root no longer builds one. The checksum skips the file walk while
+# the script is unchanged.
 [[bans.build.bypass]]
-name = "jubarte"
-build-script= "e0180992bf7eeb204ceac3cf8882d78a0acbca893149f5079c1458fcb45d1050"
+name = "jubarte-cli"
+build-script = "883966eba2239037f0b672615cccaf9961617d7d7236825fb8a40b3ec0808a50"

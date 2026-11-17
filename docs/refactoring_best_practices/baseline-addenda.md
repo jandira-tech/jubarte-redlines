@@ -7,6 +7,41 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T4.8 (jubarte-cli extracted) - 2026-11-17
+
+- Ninth workspace package: the CLI layer (cli/, cli.rs, update/,
+  update.rs, edit/inline.rs as inline.rs) with build.rs moved beside it;
+  the facade composes edit (A6: the edit crate's module plus inline
+  behind cli), and cli/update are feature-gated re-exports. src/ now
+  holds only lib.rs and bin/ - T4.9's target shape, reached one task
+  early.
+- build.rs per the plan: the repository root is two up, trusted only
+  when the repository's own path for the script canonicalizes back to
+  the copy being built; git runs there. AC1: --version prints
+  <version>+<short sha>[.dirty] matching HEAD. AC2: the .scratch/probe
+  package (edition 2024 - the script uses let-chains) prints 9.9.9
+  with no +sha. deny.toml's bypass names jubarte-cli with the script's
+  real checksum (the plan's hash had a stray character; measured).
+- The no-network tripwire scans crates/ now, with the self-update
+  allowance keyed to the jubarte-cli crate's update paths (script and
+  tests updated together; AC3 green, as are both clippy configs).
+- Listing composition lesson for T4.9: a COMPOSED crate's own root
+  items must not be rebased wholesale (jubarte::Cli, jubarte::inline
+  and a jubarte_render alias appeared as phantom facade paths and broke
+  facade_surface). api_snapshot now maps the CLI crate by prefix
+  (cli->jubarte::cli, update->jubarte::update,
+  inline->jubarte::edit::inline) and skips its crate-root items; the
+  decorative root re-exports in its lib.rs were dropped. The old public
+  paths jubarte::edit::inline::compile and jubarte::cli::shell_word
+  still resolve (a .scratch pathcheck compiles them); the listing keys
+  their definitions at the new sites, the def-site class recorded
+  since T4.3b.
+- Battery: S1 both ways (render+render,self-update), clippy both, fmt,
+  cargo deny, RUSTDOCFLAGS doc, gates 33/33 + cli_version 6/6 (its
+  build-script tests reshaped to the new two-up repo shape), goldens
+  identical, facade_surface 889 probes, full workspace suite
+  10,692/10,692.
+
 ## T4.7 (jubarte-edit extracted) - 2026-11-16
 
 - Eighth workspace package: the edit product (edit/, edit.rs, the three

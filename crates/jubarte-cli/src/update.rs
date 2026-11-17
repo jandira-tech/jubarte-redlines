@@ -41,7 +41,7 @@ const SUMS_ASSET: &str = "SHA256SUMS.txt";
 ///
 /// ```text
 /// const RELEASE_KEYS: &[ReleaseKey] =
-///     &[*include_bytes!("../keys/release-signing.pub")];
+///     &[*include_bytes!("../../../keys/release-signing.pub")];
 /// ```
 ///
 /// A file that is not exactly 32 bytes fails the build. Set
@@ -1820,7 +1820,7 @@ mod tests {
         let fixture = dir.path().join("unsigned.tar.gz");
         std::fs::write(
             &fixture,
-            include_bytes!("../tests/data/self_update/unsigned.tar.gz"),
+            include_bytes!("../../../tests/data/self_update/unsigned.tar.gz"),
         )
         .unwrap();
         confine_update_zip(&fixture, TAR_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
