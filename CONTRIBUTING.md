@@ -36,8 +36,9 @@ the CLI binary (`src/bin/`); the engine lives in `crates/`:
 | `jubarte-edit` | edit plans, text diffs, capabilities, publication |
 | `jubarte-cli` | the clap command line and `self-update` |
 
-Integration tests stay in the root `tests/` (one binary per crate:
-`it_core`, `it_redlines`, `it_render`, `it_doc`, `it_markdown`, `it_edit`,
+Integration tests stay in the root `tests/`, in seven suite binaries, one
+per layer of the split (`it_core` covers jubarte-dom and jubarte-opc;
+then `it_redlines`, `it_render`, `it_doc`, `it_markdown`, `it_edit`,
 `it_cli`); unit tests sit beside the code in `crates/<crate>/src/`. Cargo
 commands at the root select only the `jubarte` package unless given
 `--workspace` or `-p <crate>`.
@@ -56,7 +57,8 @@ cargo run --locked --bin jubarte -- --help
 ```
 
 `cargo nextest run --workspace --all-features` is the standard test invocation
-(`-p <crate>` or `--test NAME` for one part). Prefer the coverage
+(`-p <crate>` or `--test NAME` for one part). nextest runs no doctests:
+`cargo test --workspace --all-features --doc` runs them, as CI does. Prefer the coverage
 invocation above when recording validation. Run Cargo commands sequentially;
 do not override `CARGO_TARGET_DIR`. Tests and the production build need no
 Microsoft Word installation. Word oracle comparisons are separate integration

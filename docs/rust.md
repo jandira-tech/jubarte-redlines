@@ -48,7 +48,9 @@ API reference: [docs.rs/jubarte](https://docs.rs/jubarte)
 
 ### Crates
 
-`jubarte` is the facade: every module below is reachable as `jubarte::<module>`.
+`jubarte` is the facade: every module below is reachable as `jubarte::<module>`,
+except `limits`, which is jubarte-dom's own (its input budget types reach the
+facade as `jubarte::admission::InputLimits`).
 Depend on a single crate only when you want its part alone.
 
 | Crate (library) | Holds |

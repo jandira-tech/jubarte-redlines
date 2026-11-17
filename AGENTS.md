@@ -107,9 +107,11 @@ new semantics.
   Day to day, run only the tests the change touches: `cargo nextest run
   --test NAME` or `cargo nextest run -E 'test(PATTERN)'`.
   - Integration tests stay in the root `tests/` and belong to the
-    `jubarte` package; a plain `cargo nextest run` at the root runs only
-    them. Each crate has a binary there (`it_core`, `it_redlines`,
-    `it_render`, `it_doc`, `it_markdown`, `it_edit`, `it_cli`).
+    `jubarte` package; a plain `cargo nextest run` at the root runs them
+    and the unit tests of the `jubarte` binary (`src/bin/`). They form
+    seven suite binaries, one per layer of the split, not one per crate:
+    `it_core` (jubarte-dom and jubarte-opc), `it_redlines`, `it_render`,
+    `it_doc`, `it_markdown`, `it_edit`, `it_cli`.
   - A crate's unit tests (`#[cfg(test)]` under `crates/<crate>/src/`)
     run with `cargo nextest run -p <crate>` (for example `-p
     jubarte-redlines`); `--workspace` runs every crate.

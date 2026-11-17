@@ -171,9 +171,18 @@ cli = ["dep:jubarte-cli", "dep:clap", "dep:same-file", "jubarte-cli/render"]
 # library dependency on the default features still compiles mimalloc; use
 # `default-features = false` (as the in-repo python/wasm/app crates do).
 fast-alloc = ["cli", "dep:mimalloc"]
-# P0-LAB-01: compiled-out stage counters / coarse timers (src/perf.rs).
-# Diagnostic only — never use a profiled build for final wall-time claims.
-perf-profile = []
+# P0-LAB-01: compiled-out stage counters / coarse timers
+# (crates/jubarte-dom/src/perf.rs). Forwarded to every crate that declares
+# it, since the counters live in jubarte-dom and are bumped across the
+# layers. Diagnostic only — never use a profiled build for final wall-time
+# claims.
+perf-profile = [
+    "jubarte-dom/perf-profile",
+    "jubarte-opc/perf-profile",
+    "jubarte-redlines/perf-profile",
+    "jubarte-render/perf-profile",
+    "jubarte-edit/perf-profile",
+]
 # `jubarte self-update`: installs a GitHub release on request (docs/SELF_UPDATE.md).
 # Default-on for the binary; library consumers use `default-features = false`
 # and get no network code.
