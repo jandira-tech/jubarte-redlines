@@ -657,6 +657,18 @@ fn prepare_once(
     })
 }
 
+/// Whether the edit updated a field. Field updates need the renderer, so a
+/// build without it updates none.
+#[cfg(feature = "render")]
+fn fields_updated(report: &super::EditReport) -> bool {
+    !report.fields.is_empty()
+}
+
+#[cfg(not(feature = "render"))]
+fn fields_updated(_report: &super::EditReport) -> bool {
+    false
+}
+
 /// The primary transaction's document effect. Aggregated text equality
 /// alone never proves `unchanged`: revision resolution, comments, thread
 /// state, formatting, media, fields and structure are effects too.
@@ -665,17 +677,7 @@ fn primary_effect(tx: &Transaction<'_>, result: &EditResult) -> Result<Effect, E
     if !report.resolved_revisions.is_empty()
         || report.revisions.total > 0
         || report.paragraphs.from != report.paragraphs.to
-        || (cfg!(feature = "render")
-            && !{
-                #[cfg(feature = "render")]
-                {
-                    !report.fields.is_empty()
-                }
-                #[cfg(not(feature = "render"))]
-                {
-                    false
-                }
-            })
+        || fields_updated(report)
         || report.comments_added > 0
         || tx.watermark.is_some()
         || tx.settings.is_some()
