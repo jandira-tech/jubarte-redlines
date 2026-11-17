@@ -26,7 +26,8 @@
 #
 # --pending lets release.yml skip its token exchange when every crate is
 # already live (a rerun, or a release.sh --local-publish that got there
-# first).
+# first), and leave a crate's first release to a token: crates.io registers
+# a trusted publisher only on a crate that exists.
 #
 # --dry-run packages and verifies every crate from its tarball with
 # `cargo publish --workspace --dry-run`, in a fresh target directory:
@@ -35,7 +36,7 @@
 # and version, so a reused target verifies stale sources.
 #
 # Environment (tests): CARGO (default cargo), CRATES_IO_API (default
-# https://crates.io/api/v1).
+# https://crates.io/api/v1), CRATES_IO_MAX_TIME (seconds per probe, 30).
 set -euo pipefail
 
 # Dependencies first; tests/crate_layering.rs's LAYERS, then the facade.
@@ -63,18 +64,22 @@ done
 root=$(git rev-parse --show-toplevel)
 cd "$root"
 
-# 0 when crates.io holds <crate>/$VER, 1 when it does not; any other
-# answer stops the run. crates.io answers 403 to a request without a
-# User-Agent.
-live() {
+# Ask crates.io for $1 (a path under /crates/); 0 for 200, 1 for 404, and
+# any other answer stops the run. crates.io answers 403 to a request
+# without a User-Agent. Bounded: a stalled answer must not hold the release
+# job until the runner is killed; a timeout reads as 000.
+ask() {
   local code
-  code=$(curl -s -o /dev/null -w '%{http_code}' -A "$AGENT" "$API/crates/$1/$VER") || code=000
+  code=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 10 \
+    --max-time "${CRATES_IO_MAX_TIME:-30}" -A "$AGENT" "$API/crates/$1") || code=000
   case "$code" in
     200) return 0 ;;
     404) return 1 ;;
-    *) die "crates.io answered $code for $1 $VER: cannot tell whether it is live" ;;
+    *) die "crates.io answered $code for $1: cannot tell whether it is live" ;;
   esac
 }
+live() { ask "$1/$VER"; }   # crates.io holds <crate>/$VER
+known() { ask "$1"; }       # crates.io holds any version of <crate>
 
 if [ "$MODE" = dry-run ]; then
   scratch=$(mktemp -d "${TMPDIR:-/tmp}/publish-crates.XXXXXX")
@@ -85,21 +90,31 @@ if [ "$MODE" = dry-run ]; then
 fi
 
 if [ "$MODE" = pending ]; then
-  pending=0
+  # Prints new=<n> (crates crates.io has never seen, which only a token
+  # can publish) and, last, pending=<n> (crates missing $VER).
+  pending=0; new=0
   for name in "${CRATES[@]}"; do
-    # live dies on an unclear answer; `if` would swallow that, so test $?.
+    # ask dies on an unclear answer; `if` would swallow that, so test $?.
     status=0; live "$name" || status=$?
-    if [ "$status" = 1 ]; then
+    [ "$status" = 0 ] && continue
+    pending=$((pending + 1))
+    status=0; known "$name" || status=$?
+    if [ "$status" = 0 ]; then
       echo "$name $VER is not on crates.io"
-      pending=$((pending + 1))
+    else
+      echo "$name has never been published to crates.io"
+      new=$((new + 1))
     fi
   done
+  echo "new=$new"
   echo "pending=$pending"
   exit 0
 fi
 
-# The release note must survive packaging before any crate uploads.
-"$CARGO" package -p jubarte --locked --no-verify >/dev/null
+# The release note must survive packaging before any crate uploads. The
+# whole workspace is packaged: alone, jubarte resolves its exact-pinned
+# workspace crates on crates.io, where a first release has none yet.
+"$CARGO" package --workspace --locked --no-verify >/dev/null
 crate="target/package/jubarte-$VER.crate"
 [ -f "$crate" ] || die "$crate was not written"
 tar -xzOf "$crate" "jubarte-$VER/Cargo.toml" \

@@ -488,12 +488,18 @@ jobs:
       # skips the rest: no toolchain, and no token exchange, which crates.io
       # refuses once a crate's trusted publisher is gone.
       - id: pending
-        run: scripts/publish_crates.sh "$VER" --pending | tee /dev/stderr | tail -1 >> "$GITHUB_OUTPUT"
-      - if: steps.pending.outputs.pending != '0'
+        run: scripts/publish_crates.sh "$VER" --pending | tee /dev/stderr | grep -E '^(new|pending)=' >> "$GITHUB_OUTPUT"
+      # A crate crates.io has never seen takes no trusted publisher, so its
+      # first release is published with a token, from a checkout:
+      # scripts/release.sh --local-publish (which also publishes the rest).
+      - if: steps.pending.outputs.new != '0'
+        run: |
+          echo "::warning::${{ steps.pending.outputs.new }} crate(s) have never been published to crates.io; trusted publishing cannot create a crate. Publish $VER with scripts/release.sh $VER … --local-publish, then register this workflow as each new crate's trusted publisher."
+      - if: steps.pending.outputs.pending != '0' && steps.pending.outputs.new == '0'
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
-      - if: steps.pending.outputs.pending != '0'
+      - if: steps.pending.outputs.pending != '0' && steps.pending.outputs.new == '0'
         uses: ./.github/actions/mbx
-      - if: steps.pending.outputs.pending != '0'
+      - if: steps.pending.outputs.pending != '0' && steps.pending.outputs.new == '0'
         uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
         id: auth
       # Nine crates, one at a time in dependency order (plan T6.2): the
@@ -503,7 +509,7 @@ jobs:
       # scripts/release.sh step 4 wrote. Each crate's trusted publisher must
       # name this workflow and environment; a crate's first release is
       # published with a token (release.sh --local-publish).
-      - if: steps.pending.outputs.pending != '0'
+      - if: steps.pending.outputs.pending != '0' && steps.pending.outputs.new == '0'
         name: publish the workspace crates
         run: scripts/publish_crates.sh "$VER"
         env:

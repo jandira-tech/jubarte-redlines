@@ -177,7 +177,7 @@ before|you|API snapshot: docs/api holds the previous release's rustdoc snapshot,
 before|you|hand-run Python proofs pin the interpreter to --python 3.12: uv's default on the release machine may be a free-threaded build (0.14.0: 3.15t) that no abi3 wheel serves, and an unpinned pip proof then builds the sdist and passes on nothing PyPI serves (0.13.0's PyPI PASS)|uv python find; uv run -q --isolated --no-project --python 3.12 --no-build-package jubarte-redlines --with jubarte-redlines==@V@ python -c 'import jubarte_redlines as j; print(j.capabilities()["engine_version"])'
 before|you|the app's scripts are bash (release-engine.sh, build-release-app.sh, notarize-direct.sh, publish-mac-app-store.sh): run each by its path or with bash, never sh or zsh — the release machine's shell is zsh, which does not word-split a variable and indexes arrays from 1|for f in release-engine.sh build-release-app.sh notarize-direct.sh publish-mac-app-store.sh; do bash -n jubarte-app/scripts/$f; done
 7|auto|keywords: the crate's keywords and categories are inside crates.io's limits (at most 5 each, keywords ASCII, a letter first, at most 20 characters) — one more fails the publish after the point of no return|scripts/release.sh step 7 (crate_keywords_ok)
-0|auto|The bump kind docs/VERSIONING.md asks for, proven before step 1 writes anything: pre-1.0 a patch carries no new feature (a ### Added heading), no public API change cargo-semver-checks finds against the previous release's tag (0.10.1 shipped four breaking fields as a patch), and no public item path the previous release's listing does not have (cargo-semver-checks 0.51.0 has no lint for a new free function, trait, module, macro or type alias; the baseline is always a listing built from the previous tag in a throwaway worktree of the tag with this checkout's script, and a committed docs/api file is not that baseline); a minor or major may|cargo semver-checks check-release -p jubarte --baseline-rev <previous tag> --release-type patch --default-features; scripts/api_snapshot.py --added <listing from the worktree of the tag> <HEAD listing>
+0|auto|The bump kind docs/VERSIONING.md asks for, proven before step 1 writes anything: pre-1.0 a patch carries no new feature (a ### Added heading), no public API change cargo-semver-checks finds against the previous release's tag (0.10.1 shipped four breaking fields as a patch), and no public item path the previous release's listing does not have (cargo-semver-checks 0.51.0 has no lint for a new free function, trait, module, macro or type alias; the baseline is always a listing built from the previous tag in a throwaway worktree of the tag with this checkout's script, and a committed docs/api file is not that baseline); a minor or major may|cargo semver-checks check-release -p <each crate the previous tag holds> --baseline-rev <previous tag> --release-type patch --default-features; scripts/api_snapshot.py --added <listing from the worktree of the tag> <HEAD listing>
 2|auto|The engine CHANGELOG section is complete: release.yml cuts it verbatim into the GitHub release notes, so it cites every fix/feat/perf/security PR merged since the previous release (by its number, an issue it closes, or a <!-- changelog-skip: #N --> line) and holds no TODO, TBD, FIXME or XXX|scripts/release.sh step 2 (unlisted_prs, changelog_placeholders)
 before|you|The six one-line notes are drafted before the run — the changelog, crates, npm, pypi and github summaries and the docs statement are mandatory flags; the github note leads the release notes from the tag body, the other four are grepped back out of their registries at verify|scripts/release.sh --help (the five --*-summary flags and --how-readme-and-other-docs-were-updated)
 before|you|CHANGELOG: engine section dated with the ASCII heading, link footer present; the app repository's own CHANGELOG carries its ## [@V@] section naming jubarte-redlines @V@ on its main (step 0 checks it)|grep -n '^## \[@V@\]' CHANGELOG.md jubarte-app/CHANGELOG.md (both sections are written by hand; step 3 holds their measured sentence to the results)
@@ -379,8 +379,9 @@ crate_ver() { grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2; }
 
 # --- registry liveness probes (idempotent resume) -----------------------------
 # crates.io answers 403 to a request without a User-Agent.
-crates_has()  { curl -sf -A "jubarte-release (github.com/jandira-tech/jubarte-redlines)" \
-                  "https://crates.io/api/v1/crates/jubarte/$VER" >/dev/null; }
+# All nine crates of the split (plan T6.2): the facade live while a crate
+# it pins is missing is not a published release.
+crates_has()  { scripts/publish_crates.sh "$VER" --pending 2>/dev/null | tail -1 | grep -qx 'pending=0'; }
 # The project listing, not /pypi/<name>/<version>/json: PyPI's CDN keeps a
 # 404 for that URL once anything asked before the upload (the v0.11.0 verify
 # failed on a live release), while the listing is purged on upload.
@@ -579,11 +580,32 @@ bump_gate() {
   fi
   semver_lints_ok \
     || die "the cargo-semver-checks lint audit failed (above): a lint left below deny, or set below it by Cargo.toml's [package.metadata.cargo-semver-checks.lints], lets a patch pass it — deny each; no lint definitions found means the installed tool's sources are missing (scripts/semver_lints.py)"
-  cargo semver-checks check-release -p jubarte --baseline-rev "v$prev" \
-      --release-type patch --default-features \
-    || die "cargo-semver-checks finds public API changes a patch cannot carry (above; docs/VERSIONING.md) — release $minor instead, or take the changes out"
+  # Every crate is published on its own, so each is checked: a break in
+  # one a user depends on directly may not reach the facade's API.
+  local crates crate
+  crates=$(semver_crates "v$prev") || die "cannot read the crates of v$prev"
+  [ -n "$crates" ] || die "no crate of $VER is in v$prev to compare with: a patch needs that baseline (docs/VERSIONING.md)"
+  for crate in $crates; do
+    cargo semver-checks check-release -p "$crate" --baseline-rev "v$prev" \
+        --release-type patch --default-features \
+      || die "cargo-semver-checks finds public API changes in $crate a patch cannot carry (above; docs/VERSIONING.md) — release $minor instead, or take the changes out"
+  done
   patch_public_additions "$prev" "$minor"
-  step "$prev -> $VER is a patch: no ### Added, cargo-semver-checks finds no API change, and no public item path was added"
+  step "$prev -> $VER is a patch: no ### Added, cargo-semver-checks finds no API change in $(echo "$crates" | wc -w | tr -d ' ') crates, and no public item path was added"
+}
+# The workspace's packages that tag $1 also holds, by name at the same
+# manifest path: a crate new since the tag, or one renamed (the root was
+# jubarte-redlines before the split), has no baseline to compare with.
+package_name() { sed -n '/^\[package\]/,/^\[/s/^name = "\([^"]*\)".*/\1/p' | head -1; }
+semver_crates() {
+  local manifest name
+  for manifest in Cargo.toml crates/*/Cargo.toml; do
+    [ -f "$manifest" ] || continue
+    name=$(package_name < "$manifest")
+    [ -n "$name" ] || continue
+    [ "$(git show "$1:$manifest" 2>/dev/null | package_name)" = "$name" ] && echo "$name"
+  done
+  return 0
 }
 # The placeholder words left in the CHANGELOG section, with their line
 # numbers (whole words: TODOS is no placeholder).
@@ -1349,7 +1371,7 @@ crate_keywords_ok || die "Cargo.toml's keywords or categories break crates.io's 
 # A resumed run skips the dry run of a registry that already holds $VER:
 # npm refuses even a dry run over a published version.
 if crates_has; then
-  step "jubarte $VER already on crates.io — dry run skipped"
+  step "all nine crates $VER already on crates.io — dry run skipped"
 else
   # All nine crates, each verified from its tarball (plan T6.2).
   packaged scripts/publish_crates.sh "$VER" --dry-run
@@ -1541,13 +1563,13 @@ say "9. crates.io"
 # =============================================================================
 
 if crates_has; then
-  step "jubarte $VER already on crates.io — skipped"
+  step "all nine crates $VER already on crates.io — skipped"
 elif [ "$LOCAL_PUBLISH" = 1 ]; then
   # Finder litter under an include glob is "uncommitted" to cargo and stops
   # the publish (gitignored, so the clean-tree preflight never sees it).
   find . -name .DS_Store -not -path './target/*' -not -path './.worktrees/*' -delete
   # Prove the summary survived cargo's manifest normalization before shipping.
-  cargo package -p jubarte --locked --no-verify >/dev/null
+  cargo package --workspace --locked --no-verify >/dev/null
   tar -xzOf "target/package/jubarte-$VER.crate" \
     "jubarte-$VER/Cargo.toml" \
     | grep -F "\"$VER\" = \"$CRATES_SUMMARY\"" >/dev/null \
@@ -1836,7 +1858,7 @@ docsrs_built() {
 
 ok=1
 check() { if eval "$2"; then step "ok — $1"; else echo "  ✗ $1" >&2; ok=0; fi; }
-check "crates.io  jubarte $VER" "eventually crates_has"
+check "crates.io  all nine crates $VER" "eventually crates_has"
 check "npm        jubarte-wasm $VER" "eventually npm_has"
 check "npm        jubarte-redlines $VER" "eventually npm_cli_has"
 check "npm        releaseNotes.$VER shipped" npm_note

@@ -19,6 +19,7 @@ import subprocess
 import tarfile
 import tempfile
 import threading
+import time
 import tomllib
 import unittest
 from pathlib import Path
@@ -62,12 +63,23 @@ def crate_with(ver: str, note: bool) -> bytes:
 class FakeCratesIo(http.server.BaseHTTPRequestHandler):
     live: set[str] = set()
     down: set[str] = set()
+    stall: set[str] = set()
+    known: set[str] = set()
     agents: list[str] = []
 
     def do_GET(self):
         FakeCratesIo.agents.append(self.headers.get("User-Agent", ""))
+        crate = re.fullmatch(r"/api/v1/crates/([\w-]+)", self.path)
+        if crate:  # the crate itself, any version
+            name = crate.group(1)
+            self.send_response(200 if name in self.live | self.known else 404)
+            self.end_headers()
+            self.wfile.write(b"{}")
+            return
         m = re.fullmatch(r"/api/v1/crates/([\w-]+)/([\w.+-]+)", self.path)
         name = m.group(1) if m else ""
+        if name in self.stall:
+            time.sleep(5)
         code = 503 if name in self.down else 200 if name in self.live else 404
         self.send_response(code)
         self.end_headers()
@@ -78,14 +90,16 @@ class FakeCratesIo(http.server.BaseHTTPRequestHandler):
 
 
 class Run:
-    def __init__(self, ver="0.19.0", live=(), down=(), note=True, fail_on="", exists=""):
+    def __init__(self, ver="0.19.0", live=(), down=(), note=True, fail_on="", exists="", stall=(),
+                 known=ORDER):
         self.tmp = tempfile.TemporaryDirectory()
         t = Path(self.tmp.name)
         self.repo = t / "repo"
         self.repo.mkdir()
         subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
         FakeCratesIo.live, FakeCratesIo.down, FakeCratesIo.agents = set(live), set(down), []
-        self.server = http.server.HTTPServer(("127.0.0.1", 0), FakeCratesIo)
+        FakeCratesIo.stall, FakeCratesIo.known = set(stall), set(known)
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeCratesIo)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.log = t / "cargo.log"
         self.log.write_text("")
@@ -97,7 +111,8 @@ class Run:
         self.env = {**os.environ, "CARGO": str(cargo),
                     "CRATES_IO_API": f"http://127.0.0.1:{self.server.server_port}/api/v1",
                     "CARGO_LOG": str(self.log), "FAKE_CRATE": str(crate), "FAKE_VER": ver,
-                    "FAKE_FAIL_ON": fail_on, "FAKE_EXISTS": exists}
+                    "FAKE_FAIL_ON": fail_on, "FAKE_EXISTS": exists,
+                    "CRATES_IO_MAX_TIME": "1"}
         self.ver = ver
 
     def __call__(self, *args):
@@ -126,6 +141,13 @@ class PublishCrates(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(published(calls), ORDER)
         self.assertIn("9 published, 0 already live", r.stdout)
+
+    def test_the_preflight_packages_the_whole_workspace(self):
+        # A single-crate package resolves its exact-pinned workspace deps
+        # on crates.io, which do not exist before their first release.
+        _, r, calls = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(calls[0], "package --workspace --locked --no-verify")
 
     def test_every_probe_names_itself_to_crates_io(self):
         # crates.io answers 403 to a request without a User-Agent.
@@ -156,6 +178,14 @@ class PublishCrates(unittest.TestCase):
         self.assertIn("503", r.stderr)
         self.assertEqual(published(calls), ORDER[:1])
 
+    def test_a_stalled_probe_times_out_and_stops_the_run(self):
+        started = time.monotonic()
+        _, r, calls = self.run_script(stall=["jubarte-opc"])
+        self.assertLess(time.monotonic() - started, 4)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("jubarte-opc", r.stderr)
+        self.assertEqual(published(calls), ORDER[:1])
+
     def test_a_release_fully_live_publishes_nothing(self):
         _, r, calls = self.run_script(live=ORDER)
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -178,6 +208,21 @@ class PublishCrates(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.strip().splitlines()[-1], "pending=4")
         self.assertEqual(calls, [])
+
+    def test_pending_counts_the_crates_crates_io_has_never_seen(self):
+        # Trusted publishing works only for a crate that exists: release.yml
+        # leaves a first release to the token holder.
+        _, r, calls = self.run_script("--pending", known=ORDER[:2])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.strip().splitlines()
+        self.assertIn("new=7", lines)
+        self.assertEqual(lines[-1], "pending=9")
+        self.assertIn("jubarte-render has never been published", r.stdout)
+        self.assertEqual(calls, [])
+
+    def test_pending_reports_no_new_crate_when_all_exist(self):
+        _, r, _ = self.run_script("--pending", live=ORDER[:4])
+        self.assertIn("new=0", r.stdout.splitlines())
 
     def test_pending_is_zero_when_every_crate_is_live(self):
         _, r, _ = self.run_script("--pending", live=ORDER)

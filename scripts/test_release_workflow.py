@@ -423,6 +423,14 @@ class Crates(unittest.TestCase):
         self.assertNotIn("cargo publish --locked", script)
         self.assertNotIn("jubarte-redlines-$VER.crate", script)
 
+    def test_a_first_release_is_left_to_the_token_holder_with_a_warning(self) -> None:
+        # crates.io takes a trusted publisher only for a crate that exists.
+        steps = self.job["steps"]
+        warn = [s for s in steps if "outputs.new != '0'" in s.get("if", "")]
+        self.assertTrue(warn, "no step reports a crate crates.io has never seen")
+        self.assertIn("::warning", warn[0]["run"])
+        self.assertIn("--local-publish", warn[0]["run"])
+
     def test_ci_dry_runs_every_crate(self) -> None:
         job = load_ci()["jobs"]["package"]
         self.assertIn("scripts/publish_crates.sh", runs(job))
@@ -435,7 +443,7 @@ class Crates(unittest.TestCase):
         steps = self.job["steps"]
         probe = step_index(self.job, lambda s: "--pending" in s.get("run", ""))
         pid = steps[probe]["id"]
-        gate = f"steps.{pid}.outputs.pending != '0'"
+        gate = f"steps.{pid}.outputs.pending != '0' && steps.{pid}.outputs.new == '0'"
         auth = step_index(self.job, lambda s: "crates-io-auth-action@" in s.get("uses", ""))
         pub = step_index(self.job, lambda s: 'scripts/publish_crates.sh "$VER"' in s.get("run", "")
                          and "--pending" not in s.get("run", ""))
