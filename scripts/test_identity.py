@@ -235,6 +235,10 @@ class Identity(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("identity_under_test", SCRIPT)
         identity = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
+        # Registered as an import would: Python 3.12's dataclasses resolve
+        # the class's module through sys.modules (None there broke CI).
+        sys.modules[spec.name] = identity
+        self.addCleanup(sys.modules.pop, spec.name, None)
         spec.loader.exec_module(identity)
 
         class Log:
