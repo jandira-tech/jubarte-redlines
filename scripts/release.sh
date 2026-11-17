@@ -1466,7 +1466,7 @@ else
     node jubarte-wasm/npm-smoke.mjs
     # Snapshot the shipped wasm typings beside the rust API dump, after the
     # rebuild so docs/api/ records what npm actually publishes.
-    for t in node node-slim web web-slim; do
+    for t in node node-slim node-redlines node-pdf web web-slim web-redlines web-pdf; do
       cp "jubarte-wasm/npm/$t/jubarte_wasm.d.ts" "docs/api/jubarte-wasm-$t-v$VER.d.ts"
     done
     # docs/javascript.md quotes these typings; step 6 read the previous

@@ -2147,3 +2147,20 @@ test("JUBARTE_TIMEOUT bounds a task as the binary does (#2016)", () => {
   const far = runEnv({ JUBARTE_TIMEOUT: "9999999" }, "read", untracked);
   assert.equal(far.code, 0, far.err);
 });
+
+test("the jubarte alias names itself in usage, jubarte-redlines keeps its name", () => {
+  // npm links each bin name to the same script; usage text follows the
+  // name the user typed.
+  const links = fs.mkdtempSync(path.join(os.tmpdir(), "jubarte-bin-"));
+  try {
+    for (const name of ["jubarte", "jubarte-redlines"]) {
+      const link = path.join(links, name);
+      fs.symlinkSync(bin, link);
+      const r = spawnSync(process.execPath, [link, "--help"], { encoding: "utf8", cwd: tmp });
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stdout, new RegExp(`Usage: ${name} `), `${name} --help`);
+    }
+  } finally {
+    fs.rmSync(links, { recursive: true, force: true });
+  }
+});

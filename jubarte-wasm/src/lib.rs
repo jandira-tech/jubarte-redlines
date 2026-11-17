@@ -1259,6 +1259,9 @@ pub fn diff_documents_unified(
     jubarte::text_diff::diff_documents(old, next, &options).map_err(js_err)
 }
 
+// The typings for diffDocumentsUnified, which exists only with `edit`: an
+// ungated section declared it in the redlines and pdf builds too.
+#[cfg(feature = "edit")]
 #[wasm_bindgen(typescript_custom_section)]
 const UNIFIED_TYPES: &str = r#"
 export function diffDocumentsUnified(old: Uint8Array, next: Uint8Array, oldName?: string, newName?: string, context?: number): string;
@@ -1551,16 +1554,16 @@ pub fn repair_document(docx: &[u8]) -> Result<RepairOutput, JsValue> {
 }
 
 /// What [`updateFields`](update_fields) returns.
-#[cfg(feature = "pdf")]
+#[cfg(all(feature = "pdf", feature = "doc"))]
 #[wasm_bindgen]
 pub struct FieldsOutput {
     docx: Vec<u8>,
     json: String,
 }
 
-#[cfg(feature = "pdf")]
+#[cfg(all(feature = "pdf", feature = "doc"))]
 #[wasm_bindgen]
-#[cfg(feature = "pdf")]
+#[cfg(all(feature = "pdf", feature = "doc"))]
 impl FieldsOutput {
     /// The document with refreshed field results.
     #[wasm_bindgen(getter)]

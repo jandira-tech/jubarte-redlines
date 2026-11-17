@@ -24,7 +24,10 @@ import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
 const wasm = require("jubarte-wasm");
 
-const PROG = "jubarte-redlines";
+// npm links both bin names (jubarte, jubarte-redlines) to this script;
+// usage text names the one the user typed. A Windows .cmd shim passes the
+// script's own path, which keeps jubarte-redlines.
+const PROG = path.basename(process.argv[1] ?? "") === "jubarte" ? "jubarte" : "jubarte-redlines";
 const EXIT_OK = 0;
 const EXIT_ERROR = 1;
 const EXIT_USAGE = 2;

@@ -193,6 +193,9 @@ for (const target of ["web", "web-slim"]) {
       assert.equal(Buffer.from(pdf.slice(0, 5)).toString(), "%PDF-", `${label}: docxToPdf emits a PDF`);
       assert.ok(mod.pdfPageCount(pdf) > 0, `${label}: pdfPageCount sees pages`);
       assert.equal(typeof mod.compareDocuments, "undefined", `${label}: the pdf build has no compare`);
+      // FieldsOutput is what updateFields returns; without it the class
+      // can only be built empty, its pointer unset.
+      assert.equal(typeof mod.FieldsOutput, "undefined", `${label}: no FieldsOutput without updateFields`);
     };
     const subpaths = [
       ["jubarte-wasm/redlines", "node-redlines", redlinesCheck],
@@ -203,16 +206,31 @@ for (const target of ["web", "web-slim"]) {
       ["jubarte-wasm/node-pdf", "node-pdf", pdfCheck],
       ["jubarte-wasm/web-pdf", "web-pdf", pdfCheck],
     ];
+    // require() of an ES module needs Node >= 22.12 (or 20.19): older
+    // Nodes load the web-* builds through import() only.
+    const requireEsm = Boolean(process.features.require_module);
     for (const [spec, target, check] of subpaths) {
       const resolved = requireFromConsumer.resolve(spec);
       assert.ok(resolved.includes(`/${target}/jubarte_wasm.js`), `${spec} resolves into npm/${target}: ${resolved}`);
-      for (const [system, mod] of [["cjs", requireFromConsumer(spec)], ["esm", await load(spec)]]) {
+      const systems = [["esm", await load(spec)]];
+      if (!target.startsWith("web-") || requireEsm) systems.unshift(["cjs", requireFromConsumer(spec)]);
+      for (const [system, mod] of systems) {
         if (target.startsWith("web-")) mod.initSync({ module: wasmOf(target) });
         check(mod, `${spec} (${system})`);
       }
     }
   } finally {
     rmSync(consumer, { recursive: true, force: true });
+  }
+}
+// Every function and class a build's typings declare is exported by its
+// JavaScript: a declaration without a wrapper type-checks, then throws.
+for (const target of ["node", "node-slim", "node-redlines", "node-pdf", "web", "web-slim", "web-redlines", "web-pdf"]) {
+  const dts = readFileSync(new URL(`./npm/${target}/jubarte_wasm.d.ts`, import.meta.url), "utf8");
+  const js = readFileSync(new URL(`./npm/${target}/jubarte_wasm.js`, import.meta.url), "utf8");
+  for (const [, kind, name] of dts.matchAll(/^export (function|class) (\w+)/gm)) {
+    const exported = new RegExp(`(export (function|class) ${name}\\b|exports\\.${name}\\b|\\b${name} as ${name}\\b)`).test(js);
+    assert.ok(exported, `npm/${target}: the typings declare ${kind} ${name}, the JavaScript does not export it`);
   }
 }
 console.log("npm-smoke: all checks passed (Node full/slim/redlines/pdf + browser ESM full/slim/redlines/pdf + subpaths under CJS and ESM)");

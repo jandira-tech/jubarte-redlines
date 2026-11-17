@@ -158,6 +158,18 @@ class ApiDocDrift(unittest.TestCase):
         self.assertIn("docs/api", step8.split("git commit")[0])
 
 
+class WasmTypingsSnapshot(unittest.TestCase):
+    def test_every_npm_build_s_typings_are_snapshotted(self) -> None:
+        # docs/api/ records each shipped build's API; a build missing from
+        # the loop changes its exports with no record.
+        text = RELEASE_SH.read_text()
+        m = re.search(r'for t in ([^;]+); do\n\s+cp "jubarte-wasm/npm/\$t/jubarte_wasm\.d\.ts"', text)
+        self.assertIsNotNone(m)
+        listed = set(m.group(1).split())
+        builds = {p.parent.name for p in (RELEASE_SH.parent.parent / "jubarte-wasm/npm").glob("*/jubarte_wasm.d.ts")}
+        self.assertEqual(listed, builds)
+
+
 class RegistryProbes(unittest.TestCase):
     """crates.io answers 403 to a request without a User-Agent, so a bare
     curl probe calls every published version missing."""
