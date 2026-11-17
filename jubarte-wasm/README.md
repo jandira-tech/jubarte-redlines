@@ -51,16 +51,23 @@ tree — it refuses a dirty working tree, untracked files included, because the
 engine commit is stamped into the package; `ALLOW_DIRTY=1` overrides
 deliberately):
 
-- `wasm-pack build` four targets: `node` (default features), `web`
-  (`--out-dir pkg-web`), `node-slim` and `web-slim`
-  (`--no-default-features --features console-panic`, no PDF renderer),
+- `wasm-pack build` eight targets, each for Node (`--target nodejs`) and
+  the browser (`--target web`): `node`/`web` (default features, the full
+  build), `node-slim`/`web-slim` (`--no-default-features --features
+  slim,console-panic`: every layer except the PDF renderer),
+  `node-redlines`/`web-redlines` (`--no-default-features --features
+  redlines,console-panic`: compare, accept/reject and list revisions only)
+  and `node-pdf`/`web-pdf` (`--no-default-features --features
+  pdf,console-panic`: the renderer alone, no compare or edit), all
   with `--remap-path-prefix` for the home directory and the checkout in
   `CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS`: the target's own variable
   merges with the `.cargo/config.toml` recipe instead of replacing it, and
   the panic locations no longer name the builder's home (it refuses to run
   with `RUSTFLAGS` set);
-- copy the four artifact sets into `npm/node`, `npm/web`, `npm/node-slim`,
-  `npm/web-slim`;
+- copy the eight artifact sets into `npm/<target>` (`node`, `web`,
+  `node-slim`, `web-slim`, `node-redlines`, `web-redlines`, `node-pdf`,
+  `web-pdf`); each directory's own `package.json` (`"type": "commonjs"`
+  for Node, `"type": "module"` for the browser) is hand-maintained;
 - refuse the package if any artifact still names a home directory
   (`scripts/check_npm_paths.py`, which CI also runs on the committed
   package);

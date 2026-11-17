@@ -30,9 +30,10 @@ per-operation report.
 
 Everything runs in-process — no Word, no LibreOffice, no server round-trip.
 Ships prebuilt binaries for **Node** (CommonJS, auto-initializing) and the
-**browser / bundlers** (ES module with explicit init), each in two flavors:
-the **full** build (compare + PDF) and a **slim** build
-(everything except PDF rendering).
+**browser / bundlers** (ES module with explicit init), each in four flavors:
+the **full** build (compare + PDF), a **slim** build
+(everything except PDF rendering), a **redlines** build (compare, accept,
+reject and list revisions only) and a **pdf** build (DOCX to PDF only).
 
 ## Install
 
@@ -93,6 +94,30 @@ import init, { compareDocuments } from "jubarte-wasm/web-slim"; // browser
 | `jubarte-wasm/web` | full, browser ESM | all functions |
 | `jubarte-wasm/slim` / `jubarte-wasm/node-slim` | slim, Node CJS | everything except `docxToPdf`, `pdfPageCount`, `updateFields`, `renderPdf` and `convertMarkdown` (so also `inspectDocument`, `readView`, `changedView`, `flagPlan`, `recordPlan`, `documentMarkdown`, `sourceSha256`, `applyEditPlan`, `previewEditPlan`, `editReportJsonl`, `capabilities`, `capabilitiesText`, `capabilityQuery`, `capabilityQueryText`, `changesText`, `commentsText`, `tablesText`, `tablesView`, `readJson`, `wantsJson`, `runtimeJsonError`, `inputNotice`, `inputValidityLine`, `wroteLine`, `changeFilter`, `refusedInput`, `planError`) |
 | `jubarte-wasm/web-slim` | slim, browser ESM | everything except `docxToPdf`, `pdfPageCount`, `updateFields`, `renderPdf` and `convertMarkdown` (same export set as `node-slim`) |
+| `jubarte-wasm/redlines` / `jubarte-wasm/node-redlines` | redlines, Node CJS | `compareDocuments`, `acceptRevisions`, `rejectRevisions`, `getRevisions`, `diffDocumentsUnified`, `initPanicHook` |
+| `jubarte-wasm/web-redlines` | redlines, browser ESM | the same as `node-redlines` |
+| `jubarte-wasm/pdf` / `jubarte-wasm/convert` / `jubarte-wasm/node-pdf` | pdf, Node CJS | `docxToPdf`, `pdfPageCount`, `renderPdf`, `diffDocumentsUnified`, `initPanicHook` |
+| `jubarte-wasm/web-pdf` | pdf, browser ESM | the same as `node-pdf` |
+
+`jubarte-wasm/redlines`, `jubarte-wasm/pdf`, `jubarte-wasm/convert` and
+`jubarte-wasm/slim` pick the Node build under Node and the browser build
+elsewhere, as `jubarte-wasm` does; each browser build ships its
+`jubarte_wasm_bg.wasm` at `jubarte-wasm/web-<build>/jubarte_wasm_bg.wasm`.
+
+## Redlines-only and PDF-only builds
+
+Two narrower builds ship beside full and slim. `redlines` holds the
+compare engine alone: compare two documents, accept or reject every
+revision, and list them (no edit plans, no agent view, no PDF; its wasm is
+about a sixth of the full build's). `pdf`, also exported as `convert`, holds
+the renderer alone: DOCX to PDF with the embedded fonts, and nothing that
+compares or edits.
+
+```js
+const { compareDocuments, getRevisions } = require("jubarte-wasm/redlines"); // Node
+const { docxToPdf } = require("jubarte-wasm/pdf");                          // Node
+import init, { docxToPdf } from "jubarte-wasm/web-pdf";                     // browser
+```
 
 ## API
 
