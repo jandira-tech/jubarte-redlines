@@ -41,6 +41,26 @@ export function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** The Cargo manifest's version lines moved to `next`: the standalone
+ * `version = "x.y.z"` of `[workspace.package]`, and every exact
+ * `version = "=x.y.z"` pin with which the workspace crates hold each other
+ * (plan A3; the pins never exist outside [workspace.dependencies], so a
+ * blanket replace cannot touch a third-party requirement). Exported for
+ * scripts/bump-version.test.mjs.
+ * @param {string} cargo the manifest text
+ * @param {string} next the new x.y.z
+ * @returns {string} the manifest with every workspace version moved */
+export function bumpCargoVersions(cargo, next) {
+  const standalone = cargo.replace(
+    /^version = "\d+\.\d+\.\d+"$/m,
+    `version = "${next}"`,
+  );
+  return standalone.replace(
+    /version = "=\d+\.\d+\.\d+"/g,
+    `version = "=${next}"`,
+  );
+}
+
 /** The README's version pins moved from `prev` to `next`. Exported for
  * scripts/bump-version.test.mjs, which feeds it pins a hostile version
  * must not be able to bend. */
@@ -57,13 +77,13 @@ export function bumpReadmePins(readme, prev, next) {
     // Socket badge: image and link both pin the version; a stale pin
     // (a skipped bump) is corrected too, not only the previous version.
     .replace(
-      /(badge\.socket\.dev\/cargo\/package\/jubarte-redlines\/)\d+\.\d+\.\d+/g,
+      /(badge\.socket\.dev\/cargo\/package\/jubarte(?:-redlines)?\/)\d+\.\d+\.\d+/g,
       `$1${next}`,
     )
     // Library install pin: `version = "x.y"` (a caret requirement), so a
     // patch leaves it and a minor moves it. It stayed "0.9" through 0.10.1.
     .replace(
-      /(jubarte-redlines\s*=\s*\{\s*version\s*=\s*")\d+\.\d+(")/g,
+      /(jubarte(?:-redlines)?\s*=\s*\{\s*version\s*=\s*")\d+\.\d+(")/g,
       `$1${next.split(".").slice(0, 2).join(".")}$2`,
     );
 }
@@ -108,10 +128,7 @@ function main() {
     process.exit(1);
   }
 
-  const cargoNext = cargo.replace(
-    /^version = "\d+\.\d+\.\d+"$/m,
-    `version = "${next}"`,
-  );
+  const cargoNext = bumpCargoVersions(cargo, next);
   writeFileSync(cargoPath, cargoNext);
 
   // Optional: README badge / install line if present

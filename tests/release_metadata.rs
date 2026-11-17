@@ -30,7 +30,7 @@ fn read_bytes(rel: &str) -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------
-// Bundled font assets (assets/fonts/*.ttf)
+// Bundled font assets (crates/jubarte-render/assets/fonts/*.ttf)
 // ---------------------------------------------------------------------------
 
 const CARLITO_FONTS: &[&str] = &[
@@ -72,7 +72,7 @@ fn all_bundled_fonts() -> Vec<&'static str> {
 }
 
 fn font_path(name: &str) -> String {
-    format!("assets/fonts/{name}")
+    format!("crates/jubarte-render/assets/fonts/{name}")
 }
 
 #[test]
@@ -172,7 +172,7 @@ fn rustybuzz_can_load_every_bundled_font() {
 
 #[test]
 fn carlito_license_file_is_ofl_and_credits_typoland() {
-    let text = read("assets/fonts/LICENSE-Carlito");
+    let text = read("crates/jubarte-render/assets/fonts/LICENSE-Carlito");
     assert!(
         text.contains("SIL OPEN FONT LICENSE"),
         "LICENSE-Carlito missing OFL header"
@@ -193,7 +193,7 @@ fn carlito_license_file_is_ofl_and_credits_typoland() {
 
 #[test]
 fn liberation_license_file_is_ofl_and_credits_red_hat() {
-    let text = read("assets/fonts/LICENSE-Liberation");
+    let text = read("crates/jubarte-render/assets/fonts/LICENSE-Liberation");
     assert!(
         text.contains("SIL OPEN FONT LICENSE"),
         "LICENSE-Liberation missing OFL header"
@@ -220,12 +220,12 @@ fn liberation_license_file_is_ofl_and_credits_red_hat() {
 fn reuse_toml_covers_carlito_fonts_with_ofl() {
     let text = read("REUSE.toml");
     assert!(
-        text.contains("assets/fonts/Carlito-*.ttf"),
+        text.contains("crates/jubarte-render/assets/fonts/Carlito-*.ttf"),
         "REUSE.toml missing a glob annotation for Carlito-*.ttf"
     );
     // The Carlito glob annotation and its license text should both declare OFL-1.1.
     let carlito_block_idx = text
-        .find("assets/fonts/Carlito-*.ttf")
+        .find("crates/jubarte-render/assets/fonts/Carlito-*.ttf")
         .expect("Carlito annotation present");
     let tail = &text[carlito_block_idx..];
     assert!(
@@ -238,11 +238,11 @@ fn reuse_toml_covers_carlito_fonts_with_ofl() {
 fn reuse_toml_covers_liberation_fonts_with_ofl() {
     let text = read("REUSE.toml");
     assert!(
-        text.contains("assets/fonts/Liberation*.ttf"),
+        text.contains("crates/jubarte-render/assets/fonts/Liberation*.ttf"),
         "REUSE.toml missing a glob annotation for Liberation*.ttf"
     );
     let idx = text
-        .find("assets/fonts/Liberation*.ttf")
+        .find("crates/jubarte-render/assets/fonts/Liberation*.ttf")
         .expect("Liberation annotation present");
     let tail = &text[idx..];
     assert!(
@@ -304,16 +304,22 @@ fn cargo_toml_include_entries_are_all_anchored() {
 
 #[test]
 fn cargo_toml_include_ships_the_bundled_fonts() {
-    let entries = cargo_toml_include_entries();
+    // The fonts moved to the render crate (plan D6): its manifest ships
+    // them, not the root's.
+    let entries = read("crates/jubarte-render/Cargo.toml")
+        .split("[dependencies]")
+        .next()
+        .unwrap_or_default()
+        .to_string();
     assert!(
-        entries.iter().any(|e| e == "/assets/fonts/**"),
-        "Cargo.toml `include` must ship assets/fonts/** so published crates embed the fonts"
+        entries.contains("/assets/**"),
+        "crates/jubarte-render/Cargo.toml `include` must ship assets/** so the published crate embeds the fonts"
     );
 }
 
 #[test]
 fn cargo_toml_declares_the_font_and_image_dependencies() {
-    let text = read("Cargo.toml");
+    let text = read("crates/jubarte-render/Cargo.toml");
     for dep in ["ttf-parser", "rustybuzz", "image"] {
         assert!(
             text.contains(dep),
@@ -338,8 +344,8 @@ fn cargo_lock_is_consistent_with_the_new_dependencies() {
     // The workspace member's own lock entry must track the manifest version.
     let v = env!("CARGO_PKG_VERSION");
     assert!(
-        lock.contains(&format!("name = \"jubarte-redlines\"\nversion = \"{v}\"")),
-        "Cargo.lock's jubarte-redlines entry is not pinned to {v}"
+        lock.contains(&format!("name = \"jubarte\"\nversion = \"{v}\"")),
+        "Cargo.lock's jubarte entry is not pinned to {v}"
     );
 }
 

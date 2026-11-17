@@ -13,7 +13,7 @@
 #   tools/parity/build.sh OUT_DIR
 #
 # Refuses uncommitted changes to what the bindings compile (the engine's
-# src/, assets/, schemas/, keys/ and manifests, both bindings' src/ and
+# src/, assets/, schemas/, keys/, crates/ and manifests, both bindings' src/ and
 # manifests): the stamp would name a commit the build does not embody. The
 # two builds run one after the other (AGENTS.md: one cargo per checkout).
 # Replaces the 0.11.2 parity_build_v2.sh, which lived in a release work
@@ -26,7 +26,7 @@ if [ $# -ne 1 ]; then
   exit 2
 fi
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-dirty=$(git -C "$ROOT" status --porcelain -- src assets schemas keys Cargo.toml Cargo.lock \
+dirty=$(git -C "$ROOT" status --porcelain -- src assets schemas keys crates Cargo.toml Cargo.lock \
   jubarte-python/src jubarte-python/Cargo.toml jubarte-python/Cargo.lock \
   jubarte-wasm/src jubarte-wasm/Cargo.toml jubarte-wasm/Cargo.lock)
 if [ -n "$dirty" ]; then

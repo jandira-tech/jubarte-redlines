@@ -116,15 +116,6 @@ export function appendDocuments(a: Uint8Array | number[], b: Uint8Array | number
 export function applyEditPlan(docx: Uint8Array | number[], plan_json: string, name?: string | null, syntax?: string | null): EditOutput;
 
 /**
- * Audit findings as JSON `{findings, rules, layout}` (see `jubarte validate --rules`).
- * `rules` is a comma-separated list of rule sets (`a11y`, `style`,
- * `structure`) or codes; omitted or empty runs every rule. The slim build
- * has no layout pass: it leaves `FONT_SUBSTITUTED` out (naming it is an
- * error) and does not compare `NUMPAGES` caches with a page count.
- */
-export function auditDocument(docx: Uint8Array | number[], rules?: string | null): string;
-
-/**
  * Check that every text change from `original` to `edited` is a revision
  * by `author`. Returns the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`,
  * `FOREIGN_COMMENT` for another author's comment gone, reworded, resolved
@@ -619,7 +610,6 @@ export interface InitOutput {
     readonly appendoutput_docx: (a: number, b: number) => void;
     readonly appendoutput_warnings: (a: number, b: number) => void;
     readonly applyEditPlan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
-    readonly auditDocument: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly auditTracked: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly capabilities: (a: number) => void;
     readonly capabilitiesText: (a: number, b: number, c: number) => void;

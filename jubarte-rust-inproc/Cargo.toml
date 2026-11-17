@@ -25,7 +25,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Match CLI default allocator so warm-inproc timing is not system-allocator-biased.
-jubarte-redlines = { path = "..", default-features = false }
+jubarte = { path = "..", default-features = false }
 mimalloc = { version = "0.1", default-features = false }
 
 [profile.release]

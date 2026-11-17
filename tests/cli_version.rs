@@ -8,7 +8,7 @@
 use std::process::Command;
 
 mod build_script {
-    include!("../build.rs");
+    include!("../crates/jubarte-cli/build.rs");
 
     #[test]
     fn checkout_build_script_runs() {
@@ -20,7 +20,16 @@ mod build_script {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         std::fs::create_dir_all(root.join(".probe")).unwrap();
         let export = tempfile::tempdir_in(root.join(".probe")).unwrap();
-        assert_eq!(build_version(export.path(), "0.15.0"), "0.15.0");
+        let crate_dir = export.path().join("crates/jubarte-cli");
+        std::fs::create_dir_all(&crate_dir).unwrap();
+        std::fs::copy(
+            root.join("crates/jubarte-cli/build.rs"),
+            crate_dir.join("build.rs"),
+        )
+        .unwrap();
+        // The enclosing checkout is not this repository, so its build script
+        // copy must not identify it: the canonicalization check fails.
+        assert_eq!(build_version(&crate_dir, export.path(), "0.15.0"), "0.15.0");
     }
 
     #[test]
@@ -28,6 +37,14 @@ mod build_script {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         std::fs::create_dir_all(root.join(".probe")).unwrap();
         let repo = tempfile::tempdir_in(root.join(".probe")).unwrap();
+        let crate_dir = repo.path().join("crates/jubarte-cli");
+        std::fs::create_dir_all(&crate_dir).unwrap();
+        std::fs::copy(
+            root.join("crates/jubarte-cli/build.rs"),
+            crate_dir.join("build.rs"),
+        )
+        .unwrap();
+        let version_of = || build_version(&crate_dir, repo.path(), "0.15.0");
         let run = |args: &[&str]| {
             let result = Command::new("git")
                 .current_dir(repo.path())
@@ -49,30 +66,21 @@ mod build_script {
         };
         run(&["init", "--quiet"]);
         // An unborn HEAD has no commit to embed.
-        assert_eq!(build_version(repo.path(), "0.15.0"), "0.15.0");
+        assert_eq!(version_of(), "0.15.0");
         std::fs::write(repo.path().join("tracked"), "original").unwrap();
-        run(&["add", "tracked"]);
+        run(&["add", "-A"]);
         run(&["commit", "--quiet", "-m", "initial"]);
         let clean = format!("0.15.0+{}", run(&["rev-parse", "--short", "HEAD"]));
-        assert_eq!(build_version(repo.path(), "0.15.0"), clean);
+        assert_eq!(version_of(), clean);
         std::fs::write(repo.path().join("tracked"), "modified").unwrap();
-        assert_eq!(
-            build_version(repo.path(), "0.15.0"),
-            format!("{clean}.dirty")
-        );
+        assert_eq!(version_of(), format!("{clean}.dirty"));
         run(&["add", "tracked"]);
-        assert_eq!(
-            build_version(repo.path(), "0.15.0"),
-            format!("{clean}.dirty")
-        );
+        assert_eq!(version_of(), format!("{clean}.dirty"));
         run(&["commit", "--quiet", "-m", "modified"]);
         let clean = format!("0.15.0+{}", run(&["rev-parse", "--short", "HEAD"]));
-        assert_eq!(build_version(repo.path(), "0.15.0"), clean);
+        assert_eq!(version_of(), clean);
         std::fs::write(repo.path().join("untracked"), "new").unwrap();
-        assert_eq!(
-            build_version(repo.path(), "0.15.0"),
-            format!("{clean}.dirty")
-        );
+        assert_eq!(version_of(), format!("{clean}.dirty"));
     }
 }
 

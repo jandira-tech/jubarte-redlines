@@ -1,0 +1,484 @@
+<!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+
+# Baseline addenda
+
+Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
+record` reproduces this file verbatim at the end of `baseline.md`, so a
+re-recording never loses these entries; add new ones below, newest first.
+
+## T5.1 (wasm features + slim build) - 2026-11-17
+
+- The binding's features are the plan A4 stack (compare -> doc ->
+  markdown -> edit -> cli -> pdf; slim = the stack, full = slim + pdf;
+  redlines = compare alias; default = full + console-panic), every
+  sub-crate an optional path dep, and the jubarte:: paths survive
+  through a private mod jubarte mirroring the A6 facade (markdown
+  resolves to jubarte-edit's composed module when edit is on; each line
+  under the feature that provides it, #[allow(unused_imports)] so the
+  whole mirror can stay legible). Every export, helper, options struct
+  and impl block carries its minimum feature; updateFields is
+  all(pdf, doc), convertMarkdown and auditDocument all(pdf, +doc/
+  markdown).
+- Two engine edges fixed to make slim real: jubarte-edit no longer
+  forces jubarte-doc/render (EditReport.fields and the update_fields
+  path are behind the edit crate's own render feature; schema stays
+  unconditional), and jubarte-cli gates its fields re-export and
+  Check::Render arm the same way (a non-render build maps
+  DebugCheck::Render to Check::Orphans).
+- Deviation on AC1: the slim tree still names `image` - markdown and
+  edit picture embedding (slim features) genuinely sniff picture
+  headers with it (read_picture, raster_extension; header fields
+  only). Replacing it means hand-written PNG/JPEG/GIF/BMP/TIFF/WebP
+  dimension parsers behind the MAX_PIXELS admission limit - a parity
+  risk not worth taking silently. jubarte-render, rustybuzz,
+  ttf-parser, tiny-skia and the fonts are absent.
+- AC2: the 64-byte Carlito slice appears once in the full
+  (23,107,948 bytes) and zero times in the slim (13,332,638 bytes).
+  AC3: npm-smoke passes (node+browser, full+slim), clippy
+  --all-features -D warnings clean, per-feature checks (redlines,
+  slim, pdf, full, default) all exit 0. AC4: the slim .d.ts drops 8
+  exports (docxToPdf, pdfPageCount, renderPdf+RenderOutput,
+  updateFields+FieldsOutput, convertMarkdown, auditDocument) - recorded
+  under CHANGELOG.md's "Slim build" heading. build-npm.sh slim builds
+  pass --no-default-features --features slim,console-panic.
+
+## T4.9 (facade finalized) - 2026-11-17
+
+- Phase 4 ends. tests/crate_layering.rs's source scan is retired with
+  the split it guarded: the guard now reads every crates/*/Cargo.toml
+  and the root manifest section by section and asserts each
+  [dependencies]/[dev-dependencies] edge between workspace crates
+  points down the A1 DAG (redlines and render never name each other;
+  the facade names everything). The negative probe - adding
+  jubarte-redlines to jubarte-render - fails naming exactly that edge,
+  and the restore is green. The crate-path scanner's unit tests stay
+  (they protect the machinery jubarte debug and the historical
+  evidence reuse); one skip_trivia lesson: trim BEFORE checking for a
+  comment, or a leading space hides the comment.
+- AC1: src/ holds lib.rs and bin/ only. AC3: cargo publish
+  --workspace --dry-run --allow-dirty packaged and verified all nine
+  crates from their tarballs. AC5: the no-default/all-features loop is
+  ok for all nine packages. Goldens identical; gates 30/30 +
+  crate_layering 7/7.
+- AC4 (bench gate, D8 standing): the pre-split baseline was re-saved
+  from the T4.3a worktree (a /tmp criterion home - the old one was
+  collected) and the no-LTO consumer gate re-run at HEAD
+  (CRITERION_HOME outside the mbx cache). The no-LTO consumer gap
+  deepened with the ninth crate: +38%/+52%/+64% on the three slow
+  benchmarks (T4.3b measured +32%/+36%/+56% at three packages), the
+  fast one statistically unchanged. The workspace's own builds keep
+  thin LTO (the 5-11% improvement recorded at T4.3b); this standing
+  consumer gap is the D8 record T4.3b opened, now at its final
+  nine-package shape. Release CLI with thin LTO: 41,857,296 bytes;
+  compare-only release build (cargo build --release -p
+  jubarte-redlines, cache-hot) 0.19 s.
+
+## T4.8 (jubarte-cli extracted) - 2026-11-17
+
+- Ninth workspace package: the CLI layer (cli/, cli.rs, update/,
+  update.rs, edit/inline.rs as inline.rs) with build.rs moved beside it;
+  the facade composes edit (A6: the edit crate's module plus inline
+  behind cli), and cli/update are feature-gated re-exports. src/ now
+  holds only lib.rs and bin/ - T4.9's target shape, reached one task
+  early.
+- build.rs per the plan: the repository root is two up, trusted only
+  when the repository's own path for the script canonicalizes back to
+  the copy being built; git runs there. AC1: --version prints
+  <version>+<short sha>[.dirty] matching HEAD. AC2: the .scratch/probe
+  package (edition 2024 - the script uses let-chains) prints 9.9.9
+  with no +sha. deny.toml's bypass names jubarte-cli with the script's
+  real checksum (the plan's hash had a stray character; measured).
+- The no-network tripwire scans crates/ now, with the self-update
+  allowance keyed to the jubarte-cli crate's update paths (script and
+  tests updated together; AC3 green, as are both clippy configs).
+- Listing composition lesson for T4.9: a COMPOSED crate's own root
+  items must not be rebased wholesale (jubarte::Cli, jubarte::inline
+  and a jubarte_render alias appeared as phantom facade paths and broke
+  facade_surface). api_snapshot now maps the CLI crate by prefix
+  (cli->jubarte::cli, update->jubarte::update,
+  inline->jubarte::edit::inline) and skips its crate-root items; the
+  decorative root re-exports in its lib.rs were dropped. The old public
+  paths jubarte::edit::inline::compile and jubarte::cli::shell_word
+  still resolve (a .scratch pathcheck compiles them); the listing keys
+  their definitions at the new sites, the def-site class recorded
+  since T4.3b.
+- Battery: S1 both ways (render+render,self-update), clippy both, fmt,
+  cargo deny, RUSTDOCFLAGS doc, gates 33/33 + cli_version 6/6 (its
+  build-script tests reshaped to the new two-up repo shape), goldens
+  identical, facade_surface 889 probes, full workspace suite
+  10,692/10,692.
+
+## T4.7 (jubarte-edit extracted) - 2026-11-16
+
+- Eighth workspace package: the edit product (edit/, edit.rs, the three
+  composed markdown files patch/redline/unified now in
+  jubarte_edit::markdown per A6, capabilities/, text_diff, expect,
+  publication, result) with schemas/edit-plan-v2.schema.json moved beside
+  it (D6). The facade's edit module composes jubarte_edit::edit::* plus
+  the still-local inline module (T4.8 moves it), and markdown is now
+  `pub use jubarte_edit::markdown;` - the composition lives in one
+  place, exactly as A6 drew it.
+- Plan correction, recorded here: A4's `schema` feature is NOT what the
+  edit crate wants. The plan types derive JsonSchema at their heart
+  (the legacy dispatcher builds schemas at runtime), so schemars is a
+  plain dependency; the `schema` features on jubarte-doc and below
+  stay (they gate the floors' own derives), and jubarte-edit pulls
+  jubarte-doc with render+schema always on - a plan's update_fields
+  lays out, so the doc layer's render feature is not optional here.
+  AC4's wasm32 no-default-features check passes (publication and the
+  wasm-absent fields paths gated exactly as at HEAD).
+- V2 promotions: Transaction and its fields, anchor/anchor_error/
+  source_refs modules, near_matches, removed_anchor_holder and
+  require_story (the cli cfg that hid them from a library build is
+  gone; T4.8 re-gates them inside jubarte-cli), SCHEMA_VERSION
+  re-export, plus a keyword-safe private-in-public pass (the earlier
+  script shape dropped struct/enum keywords; the recorded lesson is:
+  promote by matching the kind token, never by string surgery on the
+  visibility prefix).
+- Battery: S1 both ways, wasm32 no-default-features, clippy both
+  feature sets, fmt, RUSTDOCFLAGS doc (the header/item link scope rule
+  from T4.5 held; facade-only references became backticks), gates
+  33/33, goldens identical, AC3 the package lists the schema once,
+  listing re-baselined (481 reviewed lines), facade_surface 889
+  probes, full workspace suite 10,692/10,692 (one include rebased:
+  edit_permission_ranges reads the edit crate's source for its base-hash
+  contract test).
+
+## T4.6 (jubarte-markdown extracted) - 2026-11-16
+
+- Seventh workspace package: the markdown layer (anchor, critic,
+  data_stores, diff, frames, from_docx, math, package, pages, repair,
+  view_notes, view_stories, view_styles, write, xml) plus legacy_doc,
+  on the doc layer and everything below through the A5 shims. The
+  patch, redline and unified modules stay beside the facade for T4.7:
+  src/markdown/mod.rs is now the A6 composition (the crate's markdown
+  glob plus the three local mods and their re-exports), so every
+  jubarte::markdown path holds without rewriting a call site.
+- The render feature gates page_texts, with_page_markers and the
+  read/from_docx layout probes (A4; AC1 zero/one jubarte-render,
+  AC2 492/492 tests pass both ways). The writer's data-stores half
+  re-exports jubarte-opc's lookup half.
+- V2 promotions were broader than any crate yet (the edit layer and the
+  three staying files reach deep): diff's diff helpers, view_notes'
+  revision/author machinery, xml's element model (Document, Item, Kind
+  and their field types), view_stories/view_styles formats, write's
+  front matter, package's part helpers - one visibility promotion loop
+  including pub(super), plus a private-in-public loop for the xml model.
+- KNOWN_UPWARD stays empty; the guard's src/ tree now holds only the
+  facade, the three composed markdown files and the edit/cli layers.
+- Battery: S1 both ways, clippy both, fmt, RUSTDOCFLAGS doc (module
+  headers qualify; Patch and RevisionPalette mentions became
+  backticks - facade items the crate cannot link), gates 37/37,
+  goldens identical, listing re-baselined (1553 reviewed lines: the
+  V2 promotions' omission plus def-site renames, 9 additions), full
+  workspace suite 10,692/10,692 (one new: the RedlineOptions Debug-shape
+  test moved beside its type).
+
+## T4.5 (jubarte-doc extracted) - 2026-11-16
+
+- Sixth workspace package: the doc operations (changes, comments,
+  comment_settlement, validate, audit, scrub, append, fields, debug,
+  inspect) on the compare product and the floors through the A5 shims.
+  The facade re-exports every public module; comment_settlement stays
+  pub(crate).
+- The render feature (A4): off by default; audit's layout tier
+  (audit/audit_report/word_layout/audit_report_with), validate's
+  baselined tier, fields (whole module) and debug's Check::Render
+  variant + render submodule exist only with it. AC1: no jubarte-render
+  in the tree without the feature, exactly one with it; AC2: the
+  crate's tests pass both ways (175 without, 249 with).
+- KNOWN_UPWARD is EMPTY - the debug.rs -> text_diff edge (T2.3's
+  documented deviation) resolved here through a seam: debug's
+  CriticEscape is a passed-in fn (text_diff supplies critic_literal
+  from above), so doc never names the edit layer.
+- inspect's reopened-packages counter moved behind
+  cfg(any(test, feature = "test-support")) (A4's named helper), with
+  bump kept cfg(test). NewComment's fields and a broad set of
+  inspect/changes internals took V2 promotions for the edit and
+  markdown layers above.
+- Rustdoc lesson refined for T4.6+: SHORT links resolve in item docs
+  within a module but not in module //! headers (and vice versa in a
+  few spots) - an automated toggle (short <-> crate-qualified, run to
+  fixpoint) settles every site in a few passes.
+- Battery: S1 both ways, clippy both, fmt, RUSTDOCFLAGS doc, gates
+  37/37, goldens identical, listing re-baselined (251 reviewed lines),
+  facade_surface 889 probes, full workspace suite 10,691/10,691
+  (first run, no failures).
+
+## T4.4 (jubarte-render extracted) - 2026-11-16
+
+- Fourth workspace crate: the render product (src/convert, now
+  crates/jubarte-render/src/convert) with the 16 embedded TTFs and both
+  font license files moved beside it (D6; assets/fonts/extra stays at
+  the root for release.yml and install.sh, both untouched - AC2). The
+  facade re-exports jubarte_render::convert; the option types still
+  live in jubarte-opc's render_options and convert re-exports them, so
+  every jubarte::convert:: path holds. The render crate's deps: the two
+  floors plus ttf-parser, rustybuzz, tiny-skia, image, flate2, zip, and
+  tempfile for its tests.
+- AC1: the render tree names none of jubarte-redlines, similar,
+  pulldown-cmark, schemars or clap. AC3: cargo package -p
+  jubarte-render lists exactly 16 .ttf. LayoutFacts and its fields
+  gained the V2 promotion (the fields layer reads them).
+- Font-path follow-ups: release_metadata's font paths, the include
+  guard and the font-dependency guard now read the render crate's
+  manifest; convert_docx_to_pdf's Carlito include rebased; REUSE.toml,
+  LICENSES.md and SRC_MANIFEST.md paths follow; the evidence-engine and
+  engine-commit scripts hash crates/ now, with the watched-input test
+  extended to a crates fixture. The root include drops /assets/fonts/**
+  (extra stays in the repository; the render crate ships its own).
+- A listing lesson for T4.5+: a library's own decorative root
+  re-exports rebase into phantom facade paths - jubarte-render's
+  `pub use convert::{...}` made jubarte::PdfOptions look nameable at
+  the root. The re-exports were dropped (convert already provides every
+  path) and the listing re-recorded clean (21 reviewed lines).
+- Battery: S1 both feature sets, clippy both, fmt, RUSTDOCFLAGS doc,
+  guards 33/33, goldens identical (the renderer moved byte-faithfully:
+  every PDF golden reproduced). tuning_audit and docs/TUNING_AUDIT.md
+  follow the moved tree (the parser accepts crates/ rows; 136 doc paths
+  rebased), and the evidence scripts hash crates/ now. Three
+  path-depth lessons found by the full suite, all fixed: the finalize
+  snapshot and Strict01 census anchor to CARGO_MANIFEST_DIR/../.., and
+  the supplemental-font folder helper is TWO up from the crate (a
+  first three-up fix pointed at the repository's parent - the
+  instrumented probe caught it). Full workspace suite: 10,691/10,691.
+
+## T4.3b (jubarte-redlines extracted) - 2026-11-16
+
+- Third workspace crate: the compare product (comparer,
+  document_comparer, revision_processor, wml_document, comparison_log)
+  on jubarte-opc and jubarte-dom through the A5 shims. accept/+
+  reject_revisions_keeping_comments moved into the doc layer's
+  changes.rs first, and the facade composes jubarte::document_comparer
+  per A6 (the crate's module plus those two), so every public path
+  holds. The crate re-exports admission/opc/strict_translation/
+  xmllinq/namespaces (A2): one dependency is enough for a consumer.
+- schemars left both floors by feature: jubarte-dom's ids and
+  jubarte-opc's settings derive JsonSchema only under `schema`
+  (forwarded opc -> dom), which the root enables for the edit plan's
+  schema. The compare tree is clean of renderer, markdown and CLI deps
+  (AC1: zero matches).
+- KNOWN_UPWARD loses document_comparer.rs -> changes (the file moved);
+  one entry remains, the documented debug.rs -> text_diff deviation.
+- The include rebasing across the moved tree needed an existence-tested
+  rewrite (a first regex pass corrupted three files; restored from git
+  and redone per-file - lesson recorded for T4.4+).
+- gen_facade_surface skips glob and anonymous re-export lines (a
+  composed module's `pub use ...::*` lines cannot take `as _`).
+- Battery: S1 both feature sets; AC1 tree clean; AC2 guards green;
+  AC3 a scratch crate comparing the fixture pair on the crate alone;
+  S3 listing re-baselined (62 reviewed lines) + facade_surface 888
+  probes; S4 goldens identical; S6 clippy both, fmt, RUSTDOCFLAGS doc;
+  AC4 bench gate: the required no-LTO consumer configuration regressed
+  +32% to +56% on all four benchmarks (comparer's Dom calls now cross
+  crate boundaries without cross-crate inlining); #[inline] on the nine
+  hottest accessors moved nothing and was reverted. D8 applied: thin
+  LTO at the root [profile.release] and [profile.bench] - the
+  workspace's own builds IMPROVED 5-11% against pre-split on all four
+  benchmarks. The no-LTO consumer gap stands, recorded here per the
+  plan, for T4.9 to re-measure. (Release CLI with thin LTO:
+  41,343,248 bytes.)
+
+## T4.3a (root package renamed to jubarte) - 2026-11-15
+
+- The root package is `jubarte` (D1); the [lib] section is gone (name
+  and path are the defaults), documentation points at docs.rs/jubarte,
+  and the four bindings depend on it under the new key with refreshed
+  lockfiles. deny.toml's build-script entries, release.sh's mechanical
+  names (semver-checks -p, the packaged crate tarball, the crates.io
+  resume probe), the README crates.io/docs.rs badges and AGENTS.md's
+  naming section follow. bump-version's badge and install-pin regexes
+  accept both names now.
+- Found along the way: a T4.0a typo in the semver lint table
+  (repr_c_plain_enum_struct_variant_fields_reordered for
+  repr_c_plain_struct_fields_reordered), library_readmes now resolves
+  the workspace-inherited version, release_metadata's lock guard checks
+  the jubarte entry, and jubarte-dom's wasm-only utc_now gained the V2
+  promotion the native dead-code analysis could not see (the wasm
+  binding compiles that cfg block).
+- AC review of the remaining jubarte-redlines hits: GitHub repo URLs,
+  PyPI/npm package names (python and wasm bindings, README installs,
+  npx/pip instructions), the app lock check (T4.3b's world), benchmark
+  data under tools/, committed fixtures, and codemod tests over
+  historic trees.
+- Battery: cargo metadata (jubarte, jubarte-dom, jubarte-opc); all
+  four bindings check green from their own directories (wasm for
+  wasm32); test_release_sh 282/282, test_release_workflow OK, bump
+  tests 8/8 and the Python ones, semver_lints PASS, library_readmes
+  regenerated and green; guards 15/15; clippy both feature sets, fmt,
+  RUSTDOCFLAGS doc; goldens identical; full workspace suite
+  10,691/10,691.
+
+## T4.2 (jubarte-opc extracted) - 2026-11-15
+
+- Second workspace crate: crates/jubarte-opc (opc, admission,
+  markup_simplifier, strict_translation, settings, word_default_theme,
+  builtin_styles, borders, data_stores, validate_dom, render_options,
+  numbering, table_dom), on jubarte-dom through the A5 shims (the dom
+  modules under their old crate:: names) so no moved line changed paths.
+  The facade re-exports the five public modules (#[doc(inline)] pub use)
+  and keeps the eight private ones as pub(crate) use.
+- Plan correction: markdown/data_stores.rs (the writer's store builder)
+  could NOT merge into data_stores - its builder walks the writer's
+  Element model (super::from_docx). It stays a markdown module
+  (MODULES maps markdown::data_stores -> markdown now); only the
+  opc-clean lookup half is in jubarte-opc.
+- V2 promotions: 81 by the dead-code list plus the workspace loop's
+  (validate_dom's keeps_words/table_revised family, admission's
+  preindex_budget/tally_inflated/shown/part_declared_over,
+  opc's refused/open_within/resolve_rel_target and the ZIP archive
+  probes, borders' parse/xml/with_effects, table_dom's TblLook fields,
+  zip32_plan). admission's test-support helpers (zip_names,
+  limit_test_support) moved to cfg(any(test, feature = "test-support"))
+  per A4, and admission's checked-math deny now exempts that feature
+  too (test scaffolding, not untrusted input). settings' test fixture
+  path rebased three directories up (a cfg(test) include, allowed by E5).
+- rustdoc: short-form intra-doc links in module headers stopped
+  resolving inside the crate (explicit crate:: paths work; recorded
+  here for T4.3+ to reuse the pattern), and one public doc's link to a
+  private helper became backticked text (A5).
+- api-baseline re-recorded with a 342-line reviewed drift: same classes
+  as T4.1 (doc(hidden) items leave; signatures re-render through the
+  new crate paths) plus the five facade re-export use lines.
+- Battery: check -p no-default-features and all-features, clippy both
+  feature sets, fmt, RUSTDOCFLAGS doc, tree (dom + opc only), guards,
+  facade_surface, goldens identical, full workspace suite (below).
+
+## T4.1 (jubarte-dom extracted) - 2026-11-15
+
+- First workspace crate: crates/jubarte-dom (xmllinq, namespaces, ids,
+  unid, perf, util, ooxml, limits) with its own Cargo.toml (workspace
+  tables, =0.18.0 pin, perf-profile and test-support features),
+  README and LICENSE copy. The facade re-exports every public module at
+  its jubarte:: path (doc(inline) pub use) and the two private ones as
+  pub(crate) use, so no call site changed (D9).
+- Cross-layer internals became #[doc(hidden)] pub (V2, 43 promotions by
+  the dead-code list plus nine by the workspace check: hint_where,
+  well_known_prefix, is_namespace_prefix_list, TagPolicy with
+  new/open/empty/close, Dom::set_attributes, CivilDateTime's fields),
+  xmllinq::shrink_arena_to_fit moved behind
+  cfg(any(test, feature = "test-support")) (A4), and util::datetime
+  opened as a doc(hidden) module.
+- coverage_gates accepts crates/*/src roots now (the plan's file list
+  said so).
+- api-baseline re-recorded with a 168-line reviewed drift: rustdoc JSON
+  omits doc(hidden) items entirely, so the V2 promotions and the
+  limits/ooxml subtrees leave the listing (their types stay nameable
+  through the public re-exports that always carried them, and the
+  compile is the stronger gate); the facade listing adds the six
+  re-export use lines. The T4.0 cross-crate machinery carries
+  everything else: each library's own listing joins the facade listing
+  rebased under jubarte:: paths, and cargo doc now builds per package
+  (-p), because a bare workspace doc run writes only the primary
+  crate's JSON.
+
+## T4.0 (workspace scaffolding, API tooling) - 2026-11-15
+
+- Root manifest is the workspace manifest (A3): members ["."], the four
+  binding workspaces excluded, workspace.package and workspace.lints
+  tables, every dependency line moved verbatim to workspace.dependencies.
+  cargo metadata: 1 package.
+- api_snapshot.py: the doc(hidden) filter is in (no current item leaves
+  the listing - the five hidden sites in comparer/mod.rs never reached
+  the api surface) and the cross-crate re-export resolution is in
+  (ForeignIndex over the workspace's other libraries; plain uses list
+  the foreign item under its facade path, glob uses expand the foreign
+  module's public children). 38 script tests pass, including the two
+  new synthetic cross-crate cases.
+- tests/facade_surface.rs: 886 existence-probe uses generated from the
+  api listing by scripts/gen_facade_surface.py (module-chain-public
+  filter, associated items excluded, rustfmt-ordered). Negative probe:
+  hiding pub mod namespaces breaks its build with 126 errors.
+- bump-version: the workspace version and the = pins bump together
+  (node --test 8/8).
+- api-baseline re-recorded: +18 internal lines (T3.1 font statics, T3.2
+  staging_suffix), the only additions since T2.5.
+
+## T3.1 (font statics) - 2026-11-15
+
+- FontId::bytes() now returns 16 module-level statics (one per distinct
+  font program) instead of 47 inline include_bytes! arms. Release CLI
+  40,358,448 bytes vs 40,409,312 baseline (smaller); after the post-commit
+  build-npm.sh rebuild the full and slim wasm are 23,163,493 and
+  23,112,788 bytes - byte-identical sizes to the baseline (wasm-opt
+  already merged the duplicate programs). Goldens reproduced.
+
+## T2.5 (render_options) - 2026-11-15
+
+- MarkLines, RevisionMark, RevisionPalette (+ both impls), RevisionStyle
+  (+ impl), PdfOptions, CommentPlacement and RenderRequest moved to the
+  pub(crate) module crate::render_options (opc layer); convert re-exports
+  them, so every jubarte::convert::… path still resolves (doctests
+  14/14). Plan correction: there is no RevisionColor type; the palette's
+  colours are [u8; 3] fields on RevisionMark.
+- api-baseline re-recorded: the listing keys items by their DEFINING
+  module, so 151 public lines renamed convert::… -> render_options::…
+  even though the convert paths remain valid through pub use. Same shape
+  as the end state (jubarte-opc::render_options owning the types).
+
+### Render inventory (T2.5 deliverable)
+
+Public items above the renderer whose bodies (not just their option
+types) call into convert, to be gated with `#[cfg(feature = "render")]`
+by T4.5-T4.8:
+
+- doc layer
+  - jubarte::audit::word_layout (audit.rs:147) calls
+    docx_render_report and returns convert's RenderReport; LayoutPass
+    (audit.rs:161) and the audit helpers at 276-277 carry it too.
+  - jubarte::fields: FieldError::Layout (fields.rs:79) holds a
+    ConvertError; update_fields (115) calls layout_facts (170);
+    LayoutFacts appears in the public update machinery (257) and tests
+    (1499, 2299).
+  - jubarte::debug's render check (debug/render.rs:1162 calls
+    docx_render_report).
+- markdown layer
+  - jubarte::markdown::page_texts (markdown/mod.rs:1098) calls
+    convert::render (1113); markdown/pages.rs:47 links
+    RenderReport::pages in docs only.
+- edit layer
+  - capabilities.rs links convert::docx_to_pdf / docx_to_png /
+    diff_render in doc comments only (125, 127, 155); no body calls.
+
+## T2.4 (numbering, table_dom) - 2026-11-15
+
+- api-baseline.txt re-recorded again: the w:numFmt label family
+  (NumFmt, format_num and 23 label functions), append_numbering with
+  numbering_part/max_attribute/attribute_values, and the four table DOM
+  helpers (table_look/TblLook/cell_is_deleted/wrapped_children) moved to
+  the pub(crate) modules crate::numbering and crate::table_dom, so the
+  listing's internal lines renamed with them. All 259 diff lines are
+  internal; no publicly nameable path changed.
+
+## T2.3 (comment_settlement) - 2026-11-15
+
+- api-baseline.txt re-recorded after a reviewed, intentional drift: the
+  module moved from the private `jubarte::edit::comment_settlement` path to
+  the private `jubarte::comment_settlement` path, so the listing's internal
+  lines renamed with it, `changes::ResolvedChanges::kept_comments` renders
+  its element type through the new path, and `EditError` gained a
+  `From<SettlementError>` impl. No publicly nameable path changed:
+  `jubarte::edit::{KeptComment, RemovedComment}` still resolve (re-export)
+  and no public item was added or lost (diff reviewed line by line).
+- Plan deviation recorded on #2428: the plan's critic_literal move to
+  debug.rs is infeasible (it calls markdown's CriticMarkup reader through
+  diff_markdown; defining it in the doc layer would trade the
+  debug.rs->text_diff edge for a worse debug.rs->markdown edge). The edge
+  stays in KNOWN_UPWARD until Phase 4 composes the critic view.
+
+## T1.1 (test suites) - 2026-11-15
+
+- Test cases: 10,692 before and after the move (nothing lost, nothing added
+  beyond `suite_membership`'s 2 tests, which the baseline count already
+  included because the file existed when T0.1 was re-recorded).
+- Test binaries: 599 before (597 top-level test files + lib + bin) -> 30
+  after (21 standalone + 7 suites + lib + bin).
+- Suite membership: it_cli 78, it_core 17, it_doc 25, it_edit 46,
+  it_markdown 55, it_redlines 351, it_render 4 (576 moved). The plan's A8
+  expectation of it_edit 45 / it_markdown 56 differs by one file,
+  `markdown_redline.rs`, whose `jubarte::markdown::redline` references map
+  to the edit layer through A8's own submodule override.
+- `cargo nextest run --all-features --no-run` after the move, cache-hot:
+  3 s wall (T0.1 recorded 122 s cache-hot with 599 binaries; the binary
+  count, not the suite split, is what changed).

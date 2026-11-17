@@ -34,139 +34,139 @@ the rows stay parked. Re-disposition needs that fresh sweep.
 
 | file | line | symbol | class | disposition |
 |---|---|---|---|---|
-| src/convert/font.rs | 203 | word_device_track | a | retire with Step 4: Word Quartz 300dpi Tc (−0.0015 at 11.04pt, −0.0018 at 16.08pt); linear hmtx elsewhere |
-| src/convert/font.rs | 216 | word_device_paint | a | retire with Step 4: Word Quartz paints 11.04/16.08 as 46/67 ppem inside 0.24 cm; not a per-document gate |
-| src/convert/font.rs | 3361 | mini 727 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // liga (mini 727) was ITT-neg: file_170 −0.0036 / potpourri |
-| src/convert/font.rs | 3366 | mini 727 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. assert_eq!(g.len(), 2, "mini 727 Aptos 12 liga ITT-neg; glyphs={g:?}"); |
-| src/convert/font.rs | 3502 | mini 505 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. "mini 505 ITT-neg WideLatin overlay; keep Calibri" |
-| src/convert/metafile.rs | 1024 | mini 365 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // 5×7 bitmap digits (mini 365) were Word-shaped but ITT-neg: |
-| src/convert/metafile.rs | 1035 | mini 365 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. "mini 365 EXTTEXTOUTW bitmap ITT-neg; dark={}", |
-| src/convert/mod.rs | 689 | word_device_pt | a | retire with Step 4: snap 10/11/16/32pt to integer 300dpi ppem; other sizes stay raw because ungated snaps ITT-dropped fixtures |
-| src/convert/mod.rs | 691 | mini snap, mini snap8 | a | class-a size snap / 300dpi device substitute; gated because ungated snaps ITT-drop. // Do not snap 8pt (sd_2517 cover 7.92 is Word-faithful but mini snap8 |
-| src/convert/mod.rs | 692 | mini 99 | b | Document-specific mini site; remeasure 398+76. // dropped file_34 −0.011 with sd_2517/file_22 ~0), 9.5 (mini 99), |
-| src/convert/mod.rs | 693 | mini 110 | b | Document-specific mini site; remeasure 398+76. // 10.5 (mini 110: I_am_sharing −1.14, comments-lots −1.23, |
-| src/convert/mod.rs | 694 | mini 105 | b | Document-specific mini site; remeasure 398+76. // image_out_of_folder −3.23), 20/28 (mini 105), 14/15 |
-| src/convert/mod.rs | 695 | mini 522 | b | Document-specific mini site; remeasure 398+76. // (heading_3 / file_61), Calibri 14 (mini 522: comments-lots family |
-| src/convert/mod.rs | 696 | mini 429 | b | Document-specific mini site; remeasure 398+76. // −0.03 to −0.06 / file_8 −0.33), or 13/26 (mini 429: table_bookmark |
-| src/convert/mod.rs | 697 | mini 704 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // −0.070 / file_134 −0.059; mini 704 Calibri-Light also ITT-neg). |
-| src/convert/mod.rs | 735 | mini 522 | a | class-a size snap / 300dpi device substitute; gated because ungated snaps ITT-drop. // (58 ppem). Calibri 14 (mini 522) and Arial 14 (heading_3) |
-| src/convert/mod.rs | 741 | mini 105 | a | class-a size snap / 300dpi device substitute; gated because ungated snaps ITT-drop. // 28.08). Ungated 28 snap (mini 105) dropped file_34 Arial |
-| src/convert/mod.rs | 838 | mini 504 | b | Document-specific mini site; remeasure 398+76. /// Empty `TOC` field (no cached `w:t`). Mini 504 collapse-to-zero |
-| src/convert/mod.rs | 1173 | mini 112 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. /// Not the table-level rPr color — that was mini 112 ITT-wrong. |
-| src/convert/mod.rs | 1542 | mini 569 | b | Document-specific mini site; remeasure 398+76. /// Ungated 3-col pad (mini 569) also compacted Strict01 |
-| src/convert/mod.rs | 1929 | mini 511 | b | KEEP: measured gate. /// Other boxes keep the 0.6 black hairline (mini 511). |
-| src/convert/mod.rs | 1933 | mini 511 | b | Document-specific mini site; remeasure 398+76. /// (mini 511) / 1.0 (KEEP 591 lnRef idx=2). KEEP 512 a:ln |
-| src/convert/mod.rs | 1953 | mini 414 | b | KEEP: Word-shaped change lost named fixtures. /// Do not add ECMA bodyPr lIns=7.2: stacked (mini 414) dropped mcdoc |
-| src/convert/mod.rs | 1954 | mini 417 | b | Document-specific mini site; remeasure 398+76. /// −1.83; unindented-only (mini 417) dropped RL Strict01/file_100. |
-| src/convert/mod.rs | 1959 | mini 414, mini 510 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. /// (mini 414/417 ITT-neg) or tIns/bIns (mini 510 ITT-neg: XML 3.6pt |
-| src/convert/mod.rs | 1960 | mini 647–650 | b | Document-specific mini site; remeasure 398+76. /// vs pad=4 dropped Strict01 family −0.049). Mini 647–650 |
-| src/convert/mod.rs | code removed | mini 639–642 | b | Document-specific mini site; remeasure 398+76. /// Mini 639–642: relativeFrom=margin (Text Box 2 40% of content |
-| src/convert/mod.rs | 3523 | mini 90 | b | Document-specific mini site; remeasure 398+76; gate removed. // file_134, but applying it (mini 90) also retargeted file_2 / — the old Aptos-only gate is gone now that line boxes come from face metrics; the comment at 3522–3524 records the removal |
-| src/convert/mod.rs | code removed | mini 396 | b | Document-specific mini site; remeasure 398+76. // Cambria para gap is ~24.7 (line ~14.9 + after). Mini 396 on the — comment gone; the id survives only inside the 3523 note ("mini 90 / 396") |
-| src/convert/mod.rs | 3602 | // Aptos-only gate was a mini-set trade  | b | KEEP retired: Aptos-only minor-slot gate was a mini-set trade; do not restore. |
-| src/convert/mod.rs | 3980 | mini 350 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Not w14:shadow extra copy (mini 350 ITT-neg). |
-| src/convert/mod.rs | 3984 | mini 350 | b | Document-specific mini site; remeasure 398+76. // (filled bars in the oracle). Shadow-only (mini 350) still |
-| src/convert/mod.rs | 3985 | mini 371 | b | Document-specific mini site; remeasure 398+76. // paints. textOutline+w:color with explicit sz (mini 371 Keyword |
-| src/convert/mod.rs | 4902 | mini 108 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Keep the PUA (mini 108 U+00B7 was ITT-wrong); append |
-| src/convert/mod.rs | code removed | mini sechang | b | Document-specific mini site; remeasure 398+76. // hanging packed sd_2517 107→106 (mini sechang). — comment gone; folded into the surviving sechang note at 27427 |
-| src/convert/mod.rs | 5708 | mini 108 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // U+00B7 (mini 108) put the real bullet at x=72, but ITT dropped the |
-| src/convert/mod.rs | 20207 | mini 619-622 | c | RETIRED (plan Step 7): `paint_page_footnotes` draws the Word separator rule from `FOOTNOTE_SEP_PT`/`FOOTNOTE_SEP_W`; the content-driven 144×0.72 `w:separator` rule stays retired. // at `sep_y`, above the reserved note block (mini 619-622's content- |
-| src/convert/mod.rs | 8141 | mini 342 | b | KEEP: measured gate. // first-row tcW (mini 342) dropped comments-lots. Keep the cache. |
-| src/convert/mod.rs | 9028 | apply_latent_ppr | c | Word latent Heading3/4 spacing (before=10 after=0) when styles.xml omits the definition; Heading1 stays defaults (red_bold_heading). Cite Word latent built-ins, not a mini N |
-| src/convert/mod.rs | 9291 | mini 423 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // does not strike/underline the bullet (mini 423 ITT −0.003 |
-| src/convert/mod.rs | 10381 | mini 338–341 | b | Document-specific mini site; remeasure 398+76. // Gating last_row_fill to tblLook lastRow=0 (mini 338–341) was |
-| src/convert/mod.rs | code removed | mini 454 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // but mini 454 ITT-neg: file_100/115/185/196 13→14pp (−23 ITT). |
-| src/convert/mod.rs | code removed | mini 78, mini empty | b | Document-specific mini site; remeasure 398+76. // sample −2.5 (mini 78 and mini empty). Skip empty |
-| src/convert/mod.rs | 10824 | mini 59 | b | KEEP: ITT drop on named fixtures. // rewrite trPr/del rows — that was mini 59 (−5 ITT). |
-| src/convert/mod.rs | 11200 | mini 221–224 | b | KEEP: ITT drop on named fixtures. // (mini 221–224) dropped Cicero −0.027 ITT (2.6pt pad, >5px align). |
-| src/convert/mod.rs | code removed | mini 430 | b | RETIRED by #120: fixed tables honour tblCellMar L/R and the Mode<15 edge pull uses the same mar_l (Test 8 R1C1 stays at x=90). Measured on the stack tip: file_134 +2.04, table_bookmark_end +2.92, 0 regressions over 474 (mini 430 had zeroed the pad instead). |
-| src/convert/mod.rs | 11518 | mini 59 | b | Document-specific mini site; remeasure 398+76. // lines — extra ink vs the oracle, not mini 59 (whole-row rewrite). |
-| src/convert/mod.rs | 11519 | mini 739 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Mini 739 repeated once per cellDel (Word 3 lines) but ITT-neg |
-| src/convert/mod.rs | 11842 | mini 401 | b | KEEP: measured gate. /// Body without pBdr stays collapsed (mini 401). Courier New body |
-| src/convert/mod.rs | 11843 | mini 520 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. /// pads (file_69 code) stay collapsed too (mini 520 ITT-neg). |
-| src/convert/mod.rs | 12040 | mini 336–337 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // RedBoldCharacter 12pt) was mini 336–337 ITT-neg: redline |
-| src/convert/mod.rs | 12072 | old mini 336 lock | c | KEEP: a character style's own size/face applies, as Word paints 004b3b3d's PageNumber at 8pt Arial; the comment records that the mini 336 lock was dropped. |
-| src/convert/mod.rs | 21104 | mini 705 | b | KEEP pending 398+76 remeasure: a right-aligned marker's suffix tab is measured as a space for the tuck (b2e10d2). |
-| src/convert/mod.rs | code removed | mini 732 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // index. Mini 732 put Word #005B70 in slot 1 and ITT-neg'd NR |
-| src/convert/mod.rs | code removed | mini 737 | b | Document-specific mini site; remeasure 398+76. // file_146 (first-seen index 1 vs 2). Mini 737 name-keyed |
-| src/convert/mod.rs | code removed | mini 732 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // (mini 732 slot-1 retune ITT-neg). Color is name-keyed. |
-| src/convert/mod.rs | code removed | mini 239 | b | Document-specific mini site; remeasure 398+76. // there. Second/third-author del as ins palette (mini 239) |
-| src/convert/mod.rs | 12621 | mini 359 | b | Document-specific mini site; remeasure 398+76. // Strict01 binomial is m:f type=noBar. Linear n/k (mini 359) |
-| src/convert/mod.rs | 12722 | mini 88 | b | Document-specific mini site; remeasure 398+76. // (mini 88). Paragraph-level keep of ≥3 generator pads (file_146 |
-| src/convert/mod.rs | 12723 | mini 401 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Suggestion mode → Word page-2 Serialises) was mini 401 ITT-neg: |
-| src/convert/mod.rs | 13203 | mini 511 | b | Document-specific mini site; remeasure 398+76. // Distinct from mini 511 a:ln/@w width (still 0.6 when stroking). |
-| src/convert/mod.rs | 13204 | mini 568 | b | Document-specific mini site; remeasure 398+76. // Chart-bearing boxes still stroke 0.6 black (mini 568): |
-| src/convert/mod.rs | 16072 | mini 511 | b | Document-specific mini site; remeasure 398+76. // a:ln/@w when present. Box emit still ignores this (mini 511). |
-| src/convert/mod.rs | 16195 | mini 715 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Mini 715 two-stop Type 2 axial was Word-faithful but ITT-neg |
-| src/convert/mod.rs | 20940 | mini 504 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Mini 504 collapse-to-zero ITT-neg. Do not use ascent |
-| src/convert/mod.rs | 21162 | mini 217–220 | b | KEEP: measured gate. // Do not skip empty/del-only pBdr (mini 217–220): no-redline |
-| src/convert/mod.rs | code removed | mini 440 | b | Document-specific mini site; remeasure 398+76. // Honoring T/B w:space (mini 440) was Word-shaped (file_146 |
-| src/convert/mod.rs | code removed | mini 480–483 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // space=4 (mini 480–483) was also ITT-neg: NR 16 comments-lots |
-| src/convert/mod.rs | code removed | mini 225–228 | b | KEEP: measured gate. // Do not outset 1.44pt / 6px@300dpi (mini 225–228): Word |
-| src/convert/mod.rs | code removed | // Word's extra 1.44pt Quartz outset is  | c | Word/ECMA behaviour; replace mini N citation with the oracle/spec. // Word's extra 1.44pt Quartz outset is gated to 4-edge — mini |
-| src/convert/mod.rs | code removed | mini 440 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // lock) and ITT-neg file_134 −0.003. Not mini 440 T/B space. |
-| src/convert/mod.rs | 21355 | mini 225–228 | b | Document-specific mini site; remeasure 398+76. // rules (mini 225–228 file_134 −0.003) unless L/R exist. |
-| src/convert/mod.rs | code removed | mini revx | b | Document-specific mini site; remeasure 398+76. // CiceroDo Word is margin_l-36=54, but shipping that (mini revx) |
-| src/convert/mod.rs | 21405 | mini revx | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Do not move x to margin_l-36 (mini revx ITT-neg). Merge |
-| src/convert/mod.rs | 21440 | mini 279 | b | Document-specific mini site; remeasure 398+76. // Empty-spacer slack 40 (mini 279) lifted file_146 +0.039 |
-| src/convert/mod.rs | 22506 | mini 523 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Word 0.24pt (file_34) was mini 523 ITT-neg. |
-| src/convert/mod.rs | 22514 | mini 197 | b | Document-specific mini site; remeasure 398+76. // size×0.075 on all u: mini 197 median −0.007 |
-| src/convert/mod.rs | 22515 | mini 199 | b | Document-specific mini site; remeasure 398+76. // (green_underline 90.4→89.2). size≥20: mini 199 mean |
-| src/convert/mod.rs | 22516 | mini 238 | b | Document-specific mini site; remeasure 398+76. // −0.007. 28pt+ / 32pt title-only (mini 238) no-redline |
-| src/convert/mod.rs | 22517 | mini 470 | b | Document-specific mini site; remeasure 398+76. // 59.1612→59.1552. 9.5pt→0.48 (file_146 github, mini 470) |
-| src/convert/mod.rs | 24273 | mini 623 | b | Document-specific mini site; remeasure 398+76. // 631 title y+dh-19 compensated that 3pt. Mini 623 |
-| src/convert/mod.rs | 24108 | mini 635–638 | b | Document-specific mini site; remeasure 398+76. // Mini 635–638: Word wrapNone Rectangle 1 closed |
-| src/convert/mod.rs | 24114 | mini 511 | b | Document-specific mini site; remeasure 398+76. // lnRef idx (Rectangle 1 idx=2 → 1pt). Mini 511 |
-| src/convert/mod.rs | 24116 | mini 568 | b | KEEP: measured gate. // ChartSpace 0.6 black stays 4-edge (mini 568). |
-| src/convert/mod.rs | 24136 | mini 568 | b | KEEP: measured gate. // corners. Mini 568 keeps 0.6 black (do not skip; |
-| src/convert/mod.rs | 24137 | mini 384, mini 635 | b | KEEP: mini lock on chart/layout constant; remeasure 398+76. // do not add 0.75 gray mini 384). Mini 635 locked |
-| src/convert/mod.rs | 24522 | mini 635 | b | KEEP: mini lock on chart/layout constant; remeasure 398+76. // 4-edge Lines grow square-cap corners. Mini 635 locked |
-| src/convert/mod.rs | 24585 | mini 511 | b | KEEP: measured gate. // without @w is 1pt. Box strokes stay 0.6 (mini 511). |
-| src/convert/mod.rs | 24612 | mini 522 | b | KEEP: measured gate. // Body Calibri 14 stays 14.00 (mini 522). SmartArt 14pt labels |
-| src/convert/mod.rs | 24613 | mini 453 | b | KEEP: measured gate. // do not go through emit_label (mini 453 lock). |
-| src/convert/mod.rs | 24629 | mini 385–388 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Not grid 0.85 (mini 385–388 ITT-neg vs Quartz 0.88). |
-| src/convert/mod.rs | 24886 | mini 384 | b | KEEP: mini lock on chart/layout constant; remeasure 398+76. // plot. Mini 384 locked the 0.75 gray *frame*; fill-only. |
-| src/convert/mod.rs | 24930 | mini 381 | b | KEEP: measured gate. // at plot_x (mini 381 + KEEP 694). valAx labels stay x+6.5. |
-| src/convert/mod.rs | 24935 | mini 381, mini 428 | b | KEEP: mini lock on chart/layout constant; remeasure 398+76. // dy 31. Mini 381 locked bar width; mini 428 locked legend x. |
-| src/convert/mod.rs | 24938 | mini 691 | b | Document-specific mini site; remeasure 398+76. // Mini 691 sat FillRect on axis_y; NR +0.0059 8/0 but RL mean |
-| src/convert/mod.rs | 24949 | mini 381 | b | KEEP: mini lock on chart/layout constant; remeasure 398+76. // Mini 381 locked gapWidth/overlap (packed ~27.6 width stays). |
-| src/convert/mod.rs | 24953 | mini 385–388 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // tx1 lumMod=15%/lumOff=85% → 0.85 (mini 385–388) ITT-neg vs Quartz 0.88. |
-| src/convert/mod.rs | 24960 | mini 385, mini 690 | b | KEEP: measured gate. // line at plot_y. Mini 385 color stays. Mini 690 0.75pt |
-| src/convert/mod.rs | 24998 | mini 428 | b | KEEP: mini lock on chart/layout constant; remeasure 398+76. // Td 323). y+34 leftover was 325.9. Mini 428 locked x. |
-| src/convert/mod.rs | 25007 | mini 384, mini 385 | b | KEEP: measured gate. // (mini 384 greps 0.850). valAx grid stays 0.4pt 0.88 (mini 385 |
-| src/convert/mod.rs | 25008 | mini 690 | b | Document-specific mini site; remeasure 398+76. // color / mini 690 width). |
-| src/convert/mod.rs | 25030 | mini 428 | b | KEEP: mini lock on chart/layout constant; remeasure 398+76. // ink. Mini 428 locked centering the row, not the size. |
-| src/convert/mod.rs | 26051 | mini 536 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // mini 536 ITT-neg: file_34 −0.82 / uipriority −1.05, 0 gains. |
-| src/convert/mod.rs | code removed | mini 244 | b | Document-specific mini site; remeasure 398+76. // Quartz 1.44pt outset (mini 244) was no-redline mean |
-| src/convert/mod.rs | code removed | mini 225–228 | b | Document-specific mini site; remeasure 398+76. // content box like body pBdr (mini 225–228). |
-| src/convert/mod.rs | 26666 | mini 244 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // mini 244 chrome outset ITT-neg; keep content box. |
-| src/convert/mod.rs | 27232 | mini 57 | b | Document-specific mini site; remeasure 398+76. /// Keep `://` intact. Not generic character-break (Test 7 / mini 57). |
-| src/convert/mod.rs | 27427 | mini sechang | b | Document-specific mini site; remeasure 398+76. // but treating it as a marker packed 107→106pp (mini sechang −0.10). |
-| src/convert/mod.rs | code removed | // file_146 ListBullet lvlText is U+2013 | b | Document-specific mini site; remeasure 398+76. // file_146 ListBullet lvlText is U+2013 (–). Hanging it (mini |
-| src/convert/mod.rs | 28185 | // Do not max body→Heading1 (potpourri b | b | KEEP: measured gate. // Do not max body→Heading1 (potpourri before=18): mini |
-| src/convert/mod.rs | 28272 | mini 627–630 | b | Document-specific mini site; remeasure 398+76. // Mini 627–630: default w:widowControl (orphan 2-line |
-| src/convert/mod.rs | 28665 | mini 623–626 | b | Document-specific mini site; remeasure 398+76. // Mini 623–626: skipping Normal after=8 under a |
-| src/convert/mod.rs | 32051 | mini 360 | b | Document-specific mini site; remeasure 398+76. // Strict01 m:r rFonts Cambria Math + TTC face 1 (mini 360) was |
-| src/convert/mod.rs | 32078 | mini 360 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. "mini 360 Cambria Math ITT-neg; family={:?}", |
-| src/convert/mod.rs | 32132 | mini 370 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Applying RGB×0.5 (mini 370) was Word-shaped but ITT-neg: |
-| src/convert/mod.rs | 32171 | mini 370 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. "mini 370 lumMod ITT-neg; keep unmodulated {want:?}, got {:?}", |
-| src/convert/mod.rs | 32179 | mini 371 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Tr=2 (mini 371) was Word-shaped but ITT-neg: Strict01 family |
-| src/convert/mod.rs | 32214 | mini 371 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. "mini 371 outline ITT-neg; fill stays F7CAAC, got {:?}", |
-| src/convert/mod.rs | 32268 | mini 359 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // (mini 359) was Word-shaped but ITT-neg: Strict01 family |
-| src/convert/mod.rs | 32292 | mini 359 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. assert_eq!(joined, "x+a", "mini 359 parens ITT-neg; joined={joined:?}"); |
-| src/convert/mod.rs | 32301 | mini 359 | b | Document-specific mini site; remeasure 398+76. // Strict01 binomial is m:f type=noBar. Linear n/k (mini 359) |
-| src/convert/mod.rs | 32329 | mini 359 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. "mini 359 linear slash ITT-neg; joined={joined:?}" |
-| src/convert/mod.rs | 32345 | mini 359 | b | Document-specific mini site; remeasure 398+76. // Strict01 binomial is m:f type=noBar. Linear n/k (mini 359) |
-| src/convert/mod.rs | 32370 | mini 359 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. assert_eq!(joined, "nk", "mini 359 n/k ITT-neg; joined={joined:?}"); |
-| src/convert/mod.rs | code removed | mini 401 | b | Document-specific mini site; remeasure 398+76. // put file_146 Serialises on page 2 but mini 401 dropped the |
-| src/convert/mod.rs | 32484 (reworked: pads kept) | mini 401 | b | KEEP: measured gate. "mini 401: body generator pad stays collapsed, got {joined:?}" — the assert is gone; painting the pads (fixtures_500: +62 of 245) replaced the collapse, and the comment now records mini 401 as the old score lock |
-| src/convert/mod.rs | 32538 | mini 401 | b | Document-specific mini site; remeasure 398+76. // carry bottom pBdr E2E8F0 plus generator xml:space pads. Mini 401 |
-| src/convert/mod.rs | 32568 | mini 521 | c | Word/ECMA behaviour; replace mini N citation with the oracle/spec. // Stripping potpourri/file_19 U+FEFF (Word-faithful) was mini 521 |
-| src/convert/mod.rs | 32588 | mini 521 | b | KEEP test lock. "mini 521: keep U+FEFF in the run, got {joined:?}" |
-| src/convert/mod.rs | code removed | mini 520 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // onto page 2 (Word) but mini 520 ITT-neg: NR 59.4772→59.0833 / |
-| src/convert/mod.rs | code removed | mini 401 | b | KEEP: measured gate. // −7. Same packing class as mini 401. Stay collapsed. |
-| src/convert/mod.rs | code removed | mini 520 | b | KEEP: measured gate. "mini 520: Courier body xml:space stays collapsed, got {joined:?}" — assert message gone; the test lives on as `courier_body_xml_space_is_kept` (~32592), which keeps the pads |
-| src/convert/mod.rs | 32873 | mini 429 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Word Quartz 26pt/13pt is 25.92/12.96 but mini 429 ITT-neg |
-| src/convert/mod.rs | 33123 | mini 417 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. "mini 417 ITT-neg unindented lIns=7.2; keep pad=4 path text_dx=0; text_dx={}", |
-| src/convert/mod.rs | 38006 | mini 57 | b | KEEP: ITT drop on named fixtures. // (mini 57 / table-gated −24 ITT). |
-| src/convert/mod.rs | 38473 | mini 385–388 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // (mini 385–388 ITT-neg). This XML must still parse series. |
+| crates/jubarte-render/src/convert/font.rs | 203 | word_device_track | a | retire with Step 4: Word Quartz 300dpi Tc (−0.0015 at 11.04pt, −0.0018 at 16.08pt); linear hmtx elsewhere |
+| crates/jubarte-render/src/convert/font.rs | 216 | word_device_paint | a | retire with Step 4: Word Quartz paints 11.04/16.08 as 46/67 ppem inside 0.24 cm; not a per-document gate |
+| crates/jubarte-render/src/convert/font.rs | 3361 | mini 727 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // liga (mini 727) was ITT-neg: file_170 −0.0036 / potpourri |
+| crates/jubarte-render/src/convert/font.rs | 3366 | mini 727 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. assert_eq!(g.len(), 2, "mini 727 Aptos 12 liga ITT-neg; glyphs={g:?}"); |
+| crates/jubarte-render/src/convert/font.rs | 3502 | mini 505 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. "mini 505 ITT-neg WideLatin overlay; keep Calibri" |
+| crates/jubarte-render/src/convert/metafile.rs | 1024 | mini 365 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // 5×7 bitmap digits (mini 365) were Word-shaped but ITT-neg: |
+| crates/jubarte-render/src/convert/metafile.rs | 1035 | mini 365 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. "mini 365 EXTTEXTOUTW bitmap ITT-neg; dark={}", |
+| crates/jubarte-render/src/convert/mod.rs | 689 | word_device_pt | a | retire with Step 4: snap 10/11/16/32pt to integer 300dpi ppem; other sizes stay raw because ungated snaps ITT-dropped fixtures |
+| crates/jubarte-render/src/convert/mod.rs | 691 | mini snap, mini snap8 | a | class-a size snap / 300dpi device substitute; gated because ungated snaps ITT-drop. // Do not snap 8pt (sd_2517 cover 7.92 is Word-faithful but mini snap8 |
+| crates/jubarte-render/src/convert/mod.rs | 692 | mini 99 | b | Document-specific mini site; remeasure 398+76. // dropped file_34 −0.011 with sd_2517/file_22 ~0), 9.5 (mini 99), |
+| crates/jubarte-render/src/convert/mod.rs | 693 | mini 110 | b | Document-specific mini site; remeasure 398+76. // 10.5 (mini 110: I_am_sharing −1.14, comments-lots −1.23, |
+| crates/jubarte-render/src/convert/mod.rs | 694 | mini 105 | b | Document-specific mini site; remeasure 398+76. // image_out_of_folder −3.23), 20/28 (mini 105), 14/15 |
+| crates/jubarte-render/src/convert/mod.rs | 695 | mini 522 | b | Document-specific mini site; remeasure 398+76. // (heading_3 / file_61), Calibri 14 (mini 522: comments-lots family |
+| crates/jubarte-render/src/convert/mod.rs | 696 | mini 429 | b | Document-specific mini site; remeasure 398+76. // −0.03 to −0.06 / file_8 −0.33), or 13/26 (mini 429: table_bookmark |
+| crates/jubarte-render/src/convert/mod.rs | 697 | mini 704 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // −0.070 / file_134 −0.059; mini 704 Calibri-Light also ITT-neg). |
+| crates/jubarte-render/src/convert/mod.rs | 735 | mini 522 | a | class-a size snap / 300dpi device substitute; gated because ungated snaps ITT-drop. // (58 ppem). Calibri 14 (mini 522) and Arial 14 (heading_3) |
+| crates/jubarte-render/src/convert/mod.rs | 741 | mini 105 | a | class-a size snap / 300dpi device substitute; gated because ungated snaps ITT-drop. // 28.08). Ungated 28 snap (mini 105) dropped file_34 Arial |
+| crates/jubarte-render/src/convert/mod.rs | 838 | mini 504 | b | Document-specific mini site; remeasure 398+76. /// Empty `TOC` field (no cached `w:t`). Mini 504 collapse-to-zero |
+| crates/jubarte-render/src/convert/mod.rs | 1173 | mini 112 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. /// Not the table-level rPr color — that was mini 112 ITT-wrong. |
+| crates/jubarte-render/src/convert/mod.rs | 1542 | mini 569 | b | Document-specific mini site; remeasure 398+76. /// Ungated 3-col pad (mini 569) also compacted Strict01 |
+| crates/jubarte-render/src/convert/mod.rs | 1929 | mini 511 | b | KEEP: measured gate. /// Other boxes keep the 0.6 black hairline (mini 511). |
+| crates/jubarte-render/src/convert/mod.rs | 1933 | mini 511 | b | Document-specific mini site; remeasure 398+76. /// (mini 511) / 1.0 (KEEP 591 lnRef idx=2). KEEP 512 a:ln |
+| crates/jubarte-render/src/convert/mod.rs | 1953 | mini 414 | b | KEEP: Word-shaped change lost named fixtures. /// Do not add ECMA bodyPr lIns=7.2: stacked (mini 414) dropped mcdoc |
+| crates/jubarte-render/src/convert/mod.rs | 1954 | mini 417 | b | Document-specific mini site; remeasure 398+76. /// −1.83; unindented-only (mini 417) dropped RL Strict01/file_100. |
+| crates/jubarte-render/src/convert/mod.rs | 1959 | mini 414, mini 510 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. /// (mini 414/417 ITT-neg) or tIns/bIns (mini 510 ITT-neg: XML 3.6pt |
+| crates/jubarte-render/src/convert/mod.rs | 1960 | mini 647–650 | b | Document-specific mini site; remeasure 398+76. /// vs pad=4 dropped Strict01 family −0.049). Mini 647–650 |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini 639–642 | b | Document-specific mini site; remeasure 398+76. /// Mini 639–642: relativeFrom=margin (Text Box 2 40% of content |
+| crates/jubarte-render/src/convert/mod.rs | 3523 | mini 90 | b | Document-specific mini site; remeasure 398+76; gate removed. // file_134, but applying it (mini 90) also retargeted file_2 / — the old Aptos-only gate is gone now that line boxes come from face metrics; the comment at 3522–3524 records the removal |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini 396 | b | Document-specific mini site; remeasure 398+76. // Cambria para gap is ~24.7 (line ~14.9 + after). Mini 396 on the — comment gone; the id survives only inside the 3523 note ("mini 90 / 396") |
+| crates/jubarte-render/src/convert/mod.rs | 3602 | // Aptos-only gate was a mini-set trade  | b | KEEP retired: Aptos-only minor-slot gate was a mini-set trade; do not restore. |
+| crates/jubarte-render/src/convert/mod.rs | 3980 | mini 350 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Not w14:shadow extra copy (mini 350 ITT-neg). |
+| crates/jubarte-render/src/convert/mod.rs | 3984 | mini 350 | b | Document-specific mini site; remeasure 398+76. // (filled bars in the oracle). Shadow-only (mini 350) still |
+| crates/jubarte-render/src/convert/mod.rs | 3985 | mini 371 | b | Document-specific mini site; remeasure 398+76. // paints. textOutline+w:color with explicit sz (mini 371 Keyword |
+| crates/jubarte-render/src/convert/mod.rs | 4902 | mini 108 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Keep the PUA (mini 108 U+00B7 was ITT-wrong); append |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini sechang | b | Document-specific mini site; remeasure 398+76. // hanging packed sd_2517 107→106 (mini sechang). — comment gone; folded into the surviving sechang note at 27427 |
+| crates/jubarte-render/src/convert/mod.rs | 5708 | mini 108 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // U+00B7 (mini 108) put the real bullet at x=72, but ITT dropped the |
+| crates/jubarte-render/src/convert/mod.rs | 20207 | mini 619-622 | c | RETIRED (plan Step 7): `paint_page_footnotes` draws the Word separator rule from `FOOTNOTE_SEP_PT`/`FOOTNOTE_SEP_W`; the content-driven 144×0.72 `w:separator` rule stays retired. // at `sep_y`, above the reserved note block (mini 619-622's content- |
+| crates/jubarte-render/src/convert/mod.rs | 8141 | mini 342 | b | KEEP: measured gate. // first-row tcW (mini 342) dropped comments-lots. Keep the cache. |
+| crates/jubarte-render/src/convert/mod.rs | 9028 | apply_latent_ppr | c | Word latent Heading3/4 spacing (before=10 after=0) when styles.xml omits the definition; Heading1 stays defaults (red_bold_heading). Cite Word latent built-ins, not a mini N |
+| crates/jubarte-render/src/convert/mod.rs | 9291 | mini 423 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // does not strike/underline the bullet (mini 423 ITT −0.003 |
+| crates/jubarte-render/src/convert/mod.rs | 10381 | mini 338–341 | b | Document-specific mini site; remeasure 398+76. // Gating last_row_fill to tblLook lastRow=0 (mini 338–341) was |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini 454 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // but mini 454 ITT-neg: file_100/115/185/196 13→14pp (−23 ITT). |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini 78, mini empty | b | Document-specific mini site; remeasure 398+76. // sample −2.5 (mini 78 and mini empty). Skip empty |
+| crates/jubarte-render/src/convert/mod.rs | 10824 | mini 59 | b | KEEP: ITT drop on named fixtures. // rewrite trPr/del rows — that was mini 59 (−5 ITT). |
+| crates/jubarte-render/src/convert/mod.rs | 11200 | mini 221–224 | b | KEEP: ITT drop on named fixtures. // (mini 221–224) dropped Cicero −0.027 ITT (2.6pt pad, >5px align). |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini 430 | b | RETIRED by #120: fixed tables honour tblCellMar L/R and the Mode<15 edge pull uses the same mar_l (Test 8 R1C1 stays at x=90). Measured on the stack tip: file_134 +2.04, table_bookmark_end +2.92, 0 regressions over 474 (mini 430 had zeroed the pad instead). |
+| crates/jubarte-render/src/convert/mod.rs | 11518 | mini 59 | b | Document-specific mini site; remeasure 398+76. // lines — extra ink vs the oracle, not mini 59 (whole-row rewrite). |
+| crates/jubarte-render/src/convert/mod.rs | 11519 | mini 739 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Mini 739 repeated once per cellDel (Word 3 lines) but ITT-neg |
+| crates/jubarte-render/src/convert/mod.rs | 11842 | mini 401 | b | KEEP: measured gate. /// Body without pBdr stays collapsed (mini 401). Courier New body |
+| crates/jubarte-render/src/convert/mod.rs | 11843 | mini 520 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. /// pads (file_69 code) stay collapsed too (mini 520 ITT-neg). |
+| crates/jubarte-render/src/convert/mod.rs | 12040 | mini 336–337 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // RedBoldCharacter 12pt) was mini 336–337 ITT-neg: redline |
+| crates/jubarte-render/src/convert/mod.rs | 12072 | old mini 336 lock | c | KEEP: a character style's own size/face applies, as Word paints 004b3b3d's PageNumber at 8pt Arial; the comment records that the mini 336 lock was dropped. |
+| crates/jubarte-render/src/convert/mod.rs | 21104 | mini 705 | b | KEEP pending 398+76 remeasure: a right-aligned marker's suffix tab is measured as a space for the tuck (b2e10d2). |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini 732 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // index. Mini 732 put Word #005B70 in slot 1 and ITT-neg'd NR |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini 737 | b | Document-specific mini site; remeasure 398+76. // file_146 (first-seen index 1 vs 2). Mini 737 name-keyed |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini 732 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // (mini 732 slot-1 retune ITT-neg). Color is name-keyed. |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini 239 | b | Document-specific mini site; remeasure 398+76. // there. Second/third-author del as ins palette (mini 239) |
+| crates/jubarte-render/src/convert/mod.rs | 12621 | mini 359 | b | Document-specific mini site; remeasure 398+76. // Strict01 binomial is m:f type=noBar. Linear n/k (mini 359) |
+| crates/jubarte-render/src/convert/mod.rs | 12722 | mini 88 | b | Document-specific mini site; remeasure 398+76. // (mini 88). Paragraph-level keep of ≥3 generator pads (file_146 |
+| crates/jubarte-render/src/convert/mod.rs | 12723 | mini 401 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Suggestion mode → Word page-2 Serialises) was mini 401 ITT-neg: |
+| crates/jubarte-render/src/convert/mod.rs | 13203 | mini 511 | b | Document-specific mini site; remeasure 398+76. // Distinct from mini 511 a:ln/@w width (still 0.6 when stroking). |
+| crates/jubarte-render/src/convert/mod.rs | 13204 | mini 568 | b | Document-specific mini site; remeasure 398+76. // Chart-bearing boxes still stroke 0.6 black (mini 568): |
+| crates/jubarte-render/src/convert/mod.rs | 16072 | mini 511 | b | Document-specific mini site; remeasure 398+76. // a:ln/@w when present. Box emit still ignores this (mini 511). |
+| crates/jubarte-render/src/convert/mod.rs | 16195 | mini 715 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Mini 715 two-stop Type 2 axial was Word-faithful but ITT-neg |
+| crates/jubarte-render/src/convert/mod.rs | 20940 | mini 504 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Mini 504 collapse-to-zero ITT-neg. Do not use ascent |
+| crates/jubarte-render/src/convert/mod.rs | 21162 | mini 217–220 | b | KEEP: measured gate. // Do not skip empty/del-only pBdr (mini 217–220): no-redline |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini 440 | b | Document-specific mini site; remeasure 398+76. // Honoring T/B w:space (mini 440) was Word-shaped (file_146 |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini 480–483 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // space=4 (mini 480–483) was also ITT-neg: NR 16 comments-lots |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini 225–228 | b | KEEP: measured gate. // Do not outset 1.44pt / 6px@300dpi (mini 225–228): Word |
+| crates/jubarte-render/src/convert/mod.rs | code removed | // Word's extra 1.44pt Quartz outset is  | c | Word/ECMA behaviour; replace mini N citation with the oracle/spec. // Word's extra 1.44pt Quartz outset is gated to 4-edge — mini |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini 440 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // lock) and ITT-neg file_134 −0.003. Not mini 440 T/B space. |
+| crates/jubarte-render/src/convert/mod.rs | 21355 | mini 225–228 | b | Document-specific mini site; remeasure 398+76. // rules (mini 225–228 file_134 −0.003) unless L/R exist. |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini revx | b | Document-specific mini site; remeasure 398+76. // CiceroDo Word is margin_l-36=54, but shipping that (mini revx) |
+| crates/jubarte-render/src/convert/mod.rs | 21405 | mini revx | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Do not move x to margin_l-36 (mini revx ITT-neg). Merge |
+| crates/jubarte-render/src/convert/mod.rs | 21440 | mini 279 | b | Document-specific mini site; remeasure 398+76. // Empty-spacer slack 40 (mini 279) lifted file_146 +0.039 |
+| crates/jubarte-render/src/convert/mod.rs | 22506 | mini 523 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Word 0.24pt (file_34) was mini 523 ITT-neg. |
+| crates/jubarte-render/src/convert/mod.rs | 22514 | mini 197 | b | Document-specific mini site; remeasure 398+76. // size×0.075 on all u: mini 197 median −0.007 |
+| crates/jubarte-render/src/convert/mod.rs | 22515 | mini 199 | b | Document-specific mini site; remeasure 398+76. // (green_underline 90.4→89.2). size≥20: mini 199 mean |
+| crates/jubarte-render/src/convert/mod.rs | 22516 | mini 238 | b | Document-specific mini site; remeasure 398+76. // −0.007. 28pt+ / 32pt title-only (mini 238) no-redline |
+| crates/jubarte-render/src/convert/mod.rs | 22517 | mini 470 | b | Document-specific mini site; remeasure 398+76. // 59.1612→59.1552. 9.5pt→0.48 (file_146 github, mini 470) |
+| crates/jubarte-render/src/convert/mod.rs | 24273 | mini 623 | b | Document-specific mini site; remeasure 398+76. // 631 title y+dh-19 compensated that 3pt. Mini 623 |
+| crates/jubarte-render/src/convert/mod.rs | 24108 | mini 635–638 | b | Document-specific mini site; remeasure 398+76. // Mini 635–638: Word wrapNone Rectangle 1 closed |
+| crates/jubarte-render/src/convert/mod.rs | 24114 | mini 511 | b | Document-specific mini site; remeasure 398+76. // lnRef idx (Rectangle 1 idx=2 → 1pt). Mini 511 |
+| crates/jubarte-render/src/convert/mod.rs | 24116 | mini 568 | b | KEEP: measured gate. // ChartSpace 0.6 black stays 4-edge (mini 568). |
+| crates/jubarte-render/src/convert/mod.rs | 24136 | mini 568 | b | KEEP: measured gate. // corners. Mini 568 keeps 0.6 black (do not skip; |
+| crates/jubarte-render/src/convert/mod.rs | 24137 | mini 384, mini 635 | b | KEEP: mini lock on chart/layout constant; remeasure 398+76. // do not add 0.75 gray mini 384). Mini 635 locked |
+| crates/jubarte-render/src/convert/mod.rs | 24522 | mini 635 | b | KEEP: mini lock on chart/layout constant; remeasure 398+76. // 4-edge Lines grow square-cap corners. Mini 635 locked |
+| crates/jubarte-render/src/convert/mod.rs | 24585 | mini 511 | b | KEEP: measured gate. // without @w is 1pt. Box strokes stay 0.6 (mini 511). |
+| crates/jubarte-render/src/convert/mod.rs | 24612 | mini 522 | b | KEEP: measured gate. // Body Calibri 14 stays 14.00 (mini 522). SmartArt 14pt labels |
+| crates/jubarte-render/src/convert/mod.rs | 24613 | mini 453 | b | KEEP: measured gate. // do not go through emit_label (mini 453 lock). |
+| crates/jubarte-render/src/convert/mod.rs | 24629 | mini 385–388 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Not grid 0.85 (mini 385–388 ITT-neg vs Quartz 0.88). |
+| crates/jubarte-render/src/convert/mod.rs | 24886 | mini 384 | b | KEEP: mini lock on chart/layout constant; remeasure 398+76. // plot. Mini 384 locked the 0.75 gray *frame*; fill-only. |
+| crates/jubarte-render/src/convert/mod.rs | 24930 | mini 381 | b | KEEP: measured gate. // at plot_x (mini 381 + KEEP 694). valAx labels stay x+6.5. |
+| crates/jubarte-render/src/convert/mod.rs | 24935 | mini 381, mini 428 | b | KEEP: mini lock on chart/layout constant; remeasure 398+76. // dy 31. Mini 381 locked bar width; mini 428 locked legend x. |
+| crates/jubarte-render/src/convert/mod.rs | 24938 | mini 691 | b | Document-specific mini site; remeasure 398+76. // Mini 691 sat FillRect on axis_y; NR +0.0059 8/0 but RL mean |
+| crates/jubarte-render/src/convert/mod.rs | 24949 | mini 381 | b | KEEP: mini lock on chart/layout constant; remeasure 398+76. // Mini 381 locked gapWidth/overlap (packed ~27.6 width stays). |
+| crates/jubarte-render/src/convert/mod.rs | 24953 | mini 385–388 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // tx1 lumMod=15%/lumOff=85% → 0.85 (mini 385–388) ITT-neg vs Quartz 0.88. |
+| crates/jubarte-render/src/convert/mod.rs | 24960 | mini 385, mini 690 | b | KEEP: measured gate. // line at plot_y. Mini 385 color stays. Mini 690 0.75pt |
+| crates/jubarte-render/src/convert/mod.rs | 24998 | mini 428 | b | KEEP: mini lock on chart/layout constant; remeasure 398+76. // Td 323). y+34 leftover was 325.9. Mini 428 locked x. |
+| crates/jubarte-render/src/convert/mod.rs | 25007 | mini 384, mini 385 | b | KEEP: measured gate. // (mini 384 greps 0.850). valAx grid stays 0.4pt 0.88 (mini 385 |
+| crates/jubarte-render/src/convert/mod.rs | 25008 | mini 690 | b | Document-specific mini site; remeasure 398+76. // color / mini 690 width). |
+| crates/jubarte-render/src/convert/mod.rs | 25030 | mini 428 | b | KEEP: mini lock on chart/layout constant; remeasure 398+76. // ink. Mini 428 locked centering the row, not the size. |
+| crates/jubarte-render/src/convert/mod.rs | 26051 | mini 536 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // mini 536 ITT-neg: file_34 −0.82 / uipriority −1.05, 0 gains. |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini 244 | b | Document-specific mini site; remeasure 398+76. // Quartz 1.44pt outset (mini 244) was no-redline mean |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini 225–228 | b | Document-specific mini site; remeasure 398+76. // content box like body pBdr (mini 225–228). |
+| crates/jubarte-render/src/convert/mod.rs | 26666 | mini 244 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // mini 244 chrome outset ITT-neg; keep content box. |
+| crates/jubarte-render/src/convert/mod.rs | 27232 | mini 57 | b | Document-specific mini site; remeasure 398+76. /// Keep `://` intact. Not generic character-break (Test 7 / mini 57). |
+| crates/jubarte-render/src/convert/mod.rs | 27427 | mini sechang | b | Document-specific mini site; remeasure 398+76. // but treating it as a marker packed 107→106pp (mini sechang −0.10). |
+| crates/jubarte-render/src/convert/mod.rs | code removed | // file_146 ListBullet lvlText is U+2013 | b | Document-specific mini site; remeasure 398+76. // file_146 ListBullet lvlText is U+2013 (–). Hanging it (mini |
+| crates/jubarte-render/src/convert/mod.rs | 28185 | // Do not max body→Heading1 (potpourri b | b | KEEP: measured gate. // Do not max body→Heading1 (potpourri before=18): mini |
+| crates/jubarte-render/src/convert/mod.rs | 28272 | mini 627–630 | b | Document-specific mini site; remeasure 398+76. // Mini 627–630: default w:widowControl (orphan 2-line |
+| crates/jubarte-render/src/convert/mod.rs | 28665 | mini 623–626 | b | Document-specific mini site; remeasure 398+76. // Mini 623–626: skipping Normal after=8 under a |
+| crates/jubarte-render/src/convert/mod.rs | 32051 | mini 360 | b | Document-specific mini site; remeasure 398+76. // Strict01 m:r rFonts Cambria Math + TTC face 1 (mini 360) was |
+| crates/jubarte-render/src/convert/mod.rs | 32078 | mini 360 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. "mini 360 Cambria Math ITT-neg; family={:?}", |
+| crates/jubarte-render/src/convert/mod.rs | 32132 | mini 370 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Applying RGB×0.5 (mini 370) was Word-shaped but ITT-neg: |
+| crates/jubarte-render/src/convert/mod.rs | 32171 | mini 370 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. "mini 370 lumMod ITT-neg; keep unmodulated {want:?}, got {:?}", |
+| crates/jubarte-render/src/convert/mod.rs | 32179 | mini 371 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Tr=2 (mini 371) was Word-shaped but ITT-neg: Strict01 family |
+| crates/jubarte-render/src/convert/mod.rs | 32214 | mini 371 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. "mini 371 outline ITT-neg; fill stays F7CAAC, got {:?}", |
+| crates/jubarte-render/src/convert/mod.rs | 32268 | mini 359 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // (mini 359) was Word-shaped but ITT-neg: Strict01 family |
+| crates/jubarte-render/src/convert/mod.rs | 32292 | mini 359 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. assert_eq!(joined, "x+a", "mini 359 parens ITT-neg; joined={joined:?}"); |
+| crates/jubarte-render/src/convert/mod.rs | 32301 | mini 359 | b | Document-specific mini site; remeasure 398+76. // Strict01 binomial is m:f type=noBar. Linear n/k (mini 359) |
+| crates/jubarte-render/src/convert/mod.rs | 32329 | mini 359 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. "mini 359 linear slash ITT-neg; joined={joined:?}" |
+| crates/jubarte-render/src/convert/mod.rs | 32345 | mini 359 | b | Document-specific mini site; remeasure 398+76. // Strict01 binomial is m:f type=noBar. Linear n/k (mini 359) |
+| crates/jubarte-render/src/convert/mod.rs | 32370 | mini 359 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. assert_eq!(joined, "nk", "mini 359 n/k ITT-neg; joined={joined:?}"); |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini 401 | b | Document-specific mini site; remeasure 398+76. // put file_146 Serialises on page 2 but mini 401 dropped the |
+| crates/jubarte-render/src/convert/mod.rs | 32484 (reworked: pads kept) | mini 401 | b | KEEP: measured gate. "mini 401: body generator pad stays collapsed, got {joined:?}" — the assert is gone; painting the pads (fixtures_500: +62 of 245) replaced the collapse, and the comment now records mini 401 as the old score lock |
+| crates/jubarte-render/src/convert/mod.rs | 32538 | mini 401 | b | Document-specific mini site; remeasure 398+76. // carry bottom pBdr E2E8F0 plus generator xml:space pads. Mini 401 |
+| crates/jubarte-render/src/convert/mod.rs | 32568 | mini 521 | c | Word/ECMA behaviour; replace mini N citation with the oracle/spec. // Stripping potpourri/file_19 U+FEFF (Word-faithful) was mini 521 |
+| crates/jubarte-render/src/convert/mod.rs | 32588 | mini 521 | b | KEEP test lock. "mini 521: keep U+FEFF in the run, got {joined:?}" |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini 520 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // onto page 2 (Word) but mini 520 ITT-neg: NR 59.4772→59.0833 / |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini 401 | b | KEEP: measured gate. // −7. Same packing class as mini 401. Stay collapsed. |
+| crates/jubarte-render/src/convert/mod.rs | code removed | mini 520 | b | KEEP: measured gate. "mini 520: Courier body xml:space stays collapsed, got {joined:?}" — assert message gone; the test lives on as `courier_body_xml_space_is_kept` (~32592), which keeps the pads |
+| crates/jubarte-render/src/convert/mod.rs | 32873 | mini 429 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Word Quartz 26pt/13pt is 25.92/12.96 but mini 429 ITT-neg |
+| crates/jubarte-render/src/convert/mod.rs | 33123 | mini 417 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. "mini 417 ITT-neg unindented lIns=7.2; keep pad=4 path text_dx=0; text_dx={}", |
+| crates/jubarte-render/src/convert/mod.rs | 38006 | mini 57 | b | KEEP: ITT drop on named fixtures. // (mini 57 / table-gated −24 ITT). |
+| crates/jubarte-render/src/convert/mod.rs | 38473 | mini 385–388 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // (mini 385–388 ITT-neg). This XML must still parse series. |

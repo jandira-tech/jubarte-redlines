@@ -146,12 +146,26 @@ fn canonical(predicate: &str) -> String {
 
 /// The crate roots' feature gate, the number of `coverage(off)` sites in the
 /// whole repository, and each site that is not gated like the feature, as
-/// `FILE:LINE: PREDICATE`. Only `src/` enables the feature, so a site
+/// `FILE:LINE: PREDICATE`. Only `src/` and `crates/*/src/` enable the
+/// feature (the workspace's library crates carry the same gate), so a site
 /// anywhere else (tests, benches, examples, the binding crates) is loose.
 fn audit(root: &Path) -> (String, usize, Vec<String>) {
-    let gates: Vec<String> = ["src/lib.rs", "src/bin/jubarte.rs"]
+    let mut crate_roots: Vec<PathBuf> = ["src/lib.rs", "src/bin/jubarte.rs"]
         .iter()
+        .map(PathBuf::from)
         .filter(|crate_root| root.join(crate_root).exists())
+        .collect();
+    if let Ok(entries) = fs::read_dir(root.join("crates")) {
+        let mut crates: Vec<PathBuf> = entries
+            .filter_map(|e| e.ok())
+            .map(|e| e.path().join("src/lib.rs"))
+            .filter(|p| p.exists())
+            .collect();
+        crates.sort();
+        crate_roots.extend(crates);
+    }
+    let gates: Vec<String> = crate_roots
+        .iter()
         .flat_map(|crate_root| {
             let text = fs::read_to_string(root.join(crate_root)).unwrap();
             predicates(&text, "feature(coverage_attribute)")
@@ -183,7 +197,11 @@ fn audit(root: &Path) -> (String, usize, Vec<String>) {
         if relative == Path::new("tests/coverage_gates.rs") {
             continue;
         }
-        let in_src = relative.starts_with("src");
+        let components: Vec<_> = relative.components().collect();
+        let in_src = relative.starts_with("src")
+            || (components.len() >= 3
+                && components[0].as_os_str() == "crates"
+                && components[2].as_os_str() == "src");
         let text = fs::read_to_string(path).unwrap();
         for (line, predicate) in predicates(&text, "coverage(off)") {
             sites += 1;

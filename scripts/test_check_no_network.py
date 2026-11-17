@@ -51,11 +51,12 @@ class Sources(unittest.TestCase):
         return root
 
     def test_the_self_update_code_may_use_the_network(self) -> None:
+        # The self-update code lives in the jubarte-cli crate (plan T4.8).
         src = self.tree(
             {
-                "update.rs": "use self_update::backends::github;\n",
-                "update/zipsign.rs": "let s = std::net::TcpStream::connect(a);\n",
-                "lib.rs": "fn hyperlink() {} // std::net is named in a comment only\n",
+                "jubarte-cli/src/update.rs": "use self_update::backends::github;\n",
+                "jubarte-cli/src/update/zipsign.rs": "let s = std::net::TcpStream::connect(a);\n",
+                "jubarte-cli/src/lib.rs": "fn hyperlink() {} // std::net is named in a comment only\n",
             }
         )
         self.assertEqual(check_no_network.network_uses(src), [])

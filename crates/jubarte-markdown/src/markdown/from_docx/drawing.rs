@@ -1,0 +1,2410 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! Drawings, in the three readable forms the view gives them. Every one
+//! keeps a `drawing:` payload — URL-safe base64 of a JSON envelope holding
+//! the element's XML, its relationships, and every package part they
+//! reach, recursively — as a reference definition or a backing comment
+//! at the view's end, so the body text stays readable past it.
+//!
+//! - A drawing the readable forms cannot say — a shape, text box,
+//!   connector, chart, VML picture, AlternateContent — is `![label][dN]`
+//!   where an image would go, `dN` its number in reading order; a
+//!   reference definition holds the payload: `[dN]: drawing:PAYLOAD`.
+//! - A raster (PNG, JPEG, GIF, BMP, TIFF) is `![alt][imageK]` in the
+//!   Google Docs form: the `data:` definition `[imageK]: <data:mime;
+//!   base64,…>` holds the bytes, `imageK` numbered by first use and one
+//!   definition shared by every use of the same payload. A backing
+//!   comment `<!-- imageK drawing:PAYLOAD -->` rides with it only when
+//!   the payload is not the `wp:inline` the picture writer regenerates
+//!   from bytes, alt text and size alone; then the definition is all the
+//!   round trip needs. A use of a shared payload whose own drawing
+//!   differs from the first keeps its `dN` definition instead.
+//! - An `asvg:svgBlip` a paragraph holds alone is a ` ```svg ` fence with
+//!   its source; `<!-- dN drawing:PAYLOAD -->` backs it, PNG fallback
+//!   inside. Anywhere else an SVG is a `data:` raster like the others.
+//!
+//! `label` is the `wp:docPr` description, title or name (empty is fine);
+//! a raster's `alt` stops at `title` — the `name` Word gives a picture
+//! is the selection pane's, not the alt text. The writer splices the
+//! payload's XML back and gives each stored part and relationship the id
+//! the new package assigns it, so the whole drawing is lossless even
+//! where the Markdown shows only its readable form.
+//!
+//! A plain inline raster collected under `--media-dir` still extracts to
+//! a file; everything else the payload needs travels inside the view, so
+//! `jubarte read` — which extracts no media — keeps the drawing whole.
+//!
+//! Reading is two-phase: the walk queues a [`Pending`] per element and
+//! prints the `![label][dN]` reference; once the package can be borrowed
+//! again, [`fill`] captures each element, picks its form and appends the
+//! definitions.
+
+use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
+
+use serde::{Deserialize, Serialize};
+
+use super::ooxml::{Element, Node, Package, Rels, local, parse_xml};
+use crate::opc::{PartFs, relative_rel_target};
+
+/// The relationship namespaces (`r`), transitional and Strict: an attribute
+/// prefixed by a prefix bound to one holds a relationship id of the part the
+/// element sits in.
+const REL_NS: [&str; 2] = [
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+    "http://purl.oclc.org/ooxml/officeDocument/relationships",
+];
+
+/// The most dependent parts a `drawing:` payload holds.
+const MAX_DEPS: usize = 64;
+/// The most relationships one part of a payload holds.
+const MAX_DEP_RELS: usize = 64;
+/// The most bytes one dependent part holds.
+const MAX_DEP_BYTES: u64 = 16 * 1024 * 1024;
+/// The most `drawing:` payloads one document queues.
+const MAX_PENDING: usize = 4096;
+
+/// What `![label](drawing:PAYLOAD)` decodes to: the element's XML with its
+/// relationship ids symbolized (`r1`, `d3.2` — part 3's second relationship),
+/// and every part they resolve to.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[doc(hidden)]
+pub struct Drawing {
+    /// The captured element, verbatim but for symbolized relationship ids,
+    /// `wp:docPr` ids normalized to `0`, and the `xmlns:*` declarations
+    /// injected on its root.
+    xml: String,
+    /// Splice point: the element is run content (`w:drawing`, `w:pict`,
+    /// `w:object`, run-level AlternateContent) and goes inside a `w:r`
+    /// (`true`), or it sits where `w:r` may (`false`).
+    #[serde(default)]
+    wrap: bool,
+    /// Relationships of the part the element was read from.
+    #[serde(default)]
+    rels: Vec<PayRel>,
+    /// Package parts the relationships reach, in capture order.
+    #[serde(default)]
+    deps: Vec<Dep>,
+    /// The `deps` index whose bytes the readable layer carries: a raster's
+    /// `data:` definition or an `svg` fence's source. Its `b64` is empty in
+    /// a backing payload; the writer fills it from the readable form.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    slot: Option<usize>,
+    /// SHA-256 of the ` ```mermaid ` fence's text the view printed for a
+    /// chart, hex. An unchanged fence's hash matches and the drawing
+    /// writes back byte for byte; an edited one rebuilds its chart part.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mhash: Option<String>,
+    /// The Mermaid text `mhash` hashes, for the fence `fill` prints.
+    /// Never in the payload: the fence is the text's home.
+    #[serde(skip)]
+    mermaid: Option<String>,
+    /// Text-free box templates and the hashes of their visible paragraphs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    boxes: Vec<BoxFrame>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct BoxFrame {
+    hash: String,
+    text_hash: String,
+    lengths: Vec<usize>,
+    /// Non-corresponding drawings stay wholly opaque, including their words.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    opaque: bool,
+}
+
+/// One relationship of the element's part or of a dependent part.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct PayRel {
+    /// The symbol `xml` names it by (`r1`, `d0.2`).
+    sym: String,
+    /// The relationship type, verbatim.
+    #[serde(rename = "t")]
+    kind: String,
+    /// External target (`TargetMode="External"`), e.g. an `r:link` URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    u: Option<String>,
+    /// Internal target: an index into [`Drawing::deps`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    part: Option<usize>,
+    /// Internal target's resolved part name kept raw: the part does not
+    /// exist, so it travels as a relationship target string only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    raw: Option<String>,
+}
+
+/// One package part a drawing's relationships reach.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct Dep {
+    /// The part name it had, used again when it is free.
+    name: String,
+    /// Its content type (an override is written for it, always).
+    #[serde(rename = "t", default)]
+    kind: String,
+    /// Raw bytes, base64, when nothing in the part needs a relationship id.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    b64: String,
+    /// The part's XML when it names relationships of its own: serialized
+    /// with them symbolized (`d{this}.{n}`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    xml: String,
+    /// The part's own relationships, in the order `xml` names them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    rels: Vec<PayRel>,
+}
+
+/// `xmlns` bindings in scope at an element: `(prefix, uri)` where `""` is
+/// the default namespace.
+type Scope = Vec<(String, String)>;
+
+/// `xmlns` scopes for the drawings of one part's element tree, by element
+/// address. Elements not in the map — clones, like a comment's `w:comment` —
+/// take the part's root scope, where the common prefixes are declared.
+#[derive(Clone)]
+pub(crate) struct ScopeMap {
+    root: Scope,
+    by_ptr: HashMap<*const Element, Scope>,
+}
+
+impl ScopeMap {
+    /// The scope map of a part's tree. `drawing`, `pict`, `object` and
+    /// `AlternateContent` elements may be captured, so each gets an entry.
+    pub(crate) fn of(root: &Element) -> Self {
+        let root_scope = scope_of(root);
+        let mut by_ptr = HashMap::new();
+        fn walk(element: &Element, scope: &Scope, map: &mut HashMap<*const Element, Scope>) {
+            if matches!(
+                element.local(),
+                "drawing" | "pict" | "object" | "AlternateContent"
+            ) {
+                map.insert(element as *const Element, scope.clone());
+            }
+            let own = merged(scope, &scope_of(element));
+            for child in element.elements() {
+                walk(child, &own, map);
+            }
+        }
+        for child in root.elements() {
+            walk(child, &root_scope, &mut by_ptr);
+        }
+        Self {
+            root: root_scope,
+            by_ptr,
+        }
+    }
+
+    /// The scope frozen at `element`: its ancestors' declarations, then its
+    /// own.
+    pub(crate) fn scope(&self, element: &Element) -> Scope {
+        merged(
+            self.by_ptr
+                .get(&(element as *const Element))
+                .unwrap_or(&self.root),
+            &scope_of(element),
+        )
+    }
+}
+
+/// A drawing queued while a story was read: its element cloned, where it
+/// sits, and the scope frozen where it was found.
+pub(crate) struct Pending {
+    element: Element,
+    /// The part whose relationships it names.
+    part: String,
+    scope: Scope,
+    /// Inside a `w:r` (see [`Drawing::wrap`]).
+    wrap: bool,
+    /// The visible Markdown of each box in the shown branch.
+    stories: Vec<String>,
+    source: *const Element,
+}
+
+impl Pending {
+    /// Header/footer captures remain opaque and share the same queue.
+    pub(crate) fn push(
+        list: &mut Vec<Pending>,
+        element: &Element,
+        part: &str,
+        scope: Scope,
+        wrap: bool,
+        stories: Vec<String>,
+    ) -> String {
+        let Some((index, token)) = Self::reserve(list, element, part, scope, wrap) else {
+            return image(&label(element), "");
+        };
+        list[index].stories = stories;
+        token
+    }
+
+    /// Reserve the enclosing number before visiting its nested drawings.
+    pub(crate) fn reserve(
+        list: &mut Vec<Pending>,
+        element: &Element,
+        part: &str,
+        scope: Scope,
+        wrap: bool,
+    ) -> Option<(usize, String)> {
+        if list.len() >= MAX_PENDING {
+            return None;
+        }
+        let index = list.len();
+        list.push(Pending {
+            element: element.clone(),
+            part: part.to_string(),
+            scope,
+            wrap,
+            stories: Vec::new(),
+            source: element as *const Element,
+        });
+        Some((index, image(&label(element), &format!("d{}", index + 1))))
+    }
+
+    /// Transfer accepted nested copies to their tokens after recursion.
+    pub(crate) fn attach(
+        list: &mut [Pending],
+        index: usize,
+        element: &Element,
+        stories: Vec<String>,
+    ) {
+        let mut replacements = HashMap::new();
+        if let Some(pairs) = nested_pairs(element) {
+            for (shown, copy, fallback) in pairs {
+                let Some(at) = list.iter().rposition(|p| std::ptr::eq(p.source, shown)) else {
+                    replacements.clear();
+                    break;
+                };
+                replacements.insert(copy as *const Element, (format!("d{}", at + 1), fallback));
+            }
+        }
+        fn transfer(
+            element: &Element,
+            replacements: &HashMap<*const Element, (String, bool)>,
+        ) -> Element {
+            if let Some((name, fallback)) = replacements.get(&(element as *const Element)) {
+                let mut slot = parse_xml(b"<jubarteNested/>").expect("static XML");
+                slot.attrs = vec![
+                    ("token".into(), name.clone()),
+                    ("fallback".into(), fallback.to_string()),
+                ];
+                return slot;
+            }
+            let mut copy = element.clone();
+            copy.children = element
+                .children
+                .iter()
+                .map(|node| match node {
+                    Node::Element(child) => Node::Element(transfer(child, replacements)),
+                    Node::Text(text) => Node::Text(text.clone()),
+                })
+                .collect();
+            copy
+        }
+        list[index].element = transfer(element, &replacements);
+        list[index].stories = stories;
+    }
+}
+
+/// Drawing roots directly owned by this story. A plain inline picture
+/// ([`is_plain_inline`]) stays where it sits, in the story's payload;
+/// every other drawing (a nested box, a chart, an object, an anchored
+/// picture) is owned. Stop at drawings and at a different text-box owner,
+/// rather than collecting descendants of descendants.
+pub(crate) fn owned_drawings(story: &Element) -> Vec<&Element> {
+    fn walk<'a>(node: &'a Element, out: &mut Vec<&'a Element>) {
+        for child in node.elements() {
+            if child.is("txbxContent") {
+                continue;
+            }
+            let drawing = matches!(child.local(), "drawing" | "pict" | "object")
+                || (child.is("AlternateContent") && capturable_alternate(child));
+            if drawing && !is_plain_inline(child) {
+                out.push(child);
+            } else if !drawing {
+                walk(child, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(story, &mut out);
+    out
+}
+
+fn shape_shell(element: &Element) -> String {
+    let mut element = element.clone();
+    let scope = element
+        .namespaces
+        .iter()
+        .map(|(p, u)| (p.clone(), u.clone()))
+        .collect();
+    declare(&mut element, &scope);
+    let mut dom = crate::xmllinq::Dom::new();
+    let document = dom.parse_xdocument(&serialize(&element));
+    let root = dom.elements(document, None)[0];
+    crate::comparer::textbox::shell(&mut dom, root)
+}
+
+/// Markup inside every text box. A shell comparison empties that markup, so
+/// two frames that differ only there still need this to stay unpaired.
+/// Per-copy identity is left out: Word numbers a Fallback copy's revisions
+/// and shapes on from the Choice's and writes paragraph ids only in the
+/// Choice. Relationship ids (`r:id`, `r:embed`) stay, since they pick content.
+fn box_payload(element: &Element) -> String {
+    fn anonymous(element: &mut Element) {
+        let namespaces = std::sync::Arc::clone(&element.namespaces);
+        let relationship = |name: &str| {
+            name.split_once(':')
+                .and_then(|(prefix, _)| namespaces.get(prefix))
+                .is_some_and(|uri| REL_NS.contains(&uri.as_str()))
+        };
+        element.attrs.retain(|(name, _)| {
+            let per_copy = matches!(
+                local(name),
+                "paraId" | "textId" | "anchorId" | "editId" | "spid"
+            ) || (local(name) == "id" && !relationship(name));
+            !per_copy
+        });
+        for child in &mut element.children {
+            if let Node::Element(child) = child {
+                anonymous(child);
+            }
+        }
+    }
+    fn walk(element: &Element, out: &mut String) {
+        if element.is("txbxContent") {
+            for child in element.elements() {
+                let mut child = child.clone();
+                anonymous(&mut child);
+                out.push_str(&serialize(&child));
+            }
+            return;
+        }
+        for child in element.elements() {
+            walk(child, out);
+        }
+    }
+    let mut out = String::new();
+    walk(element, &mut out);
+    out
+}
+
+/// Pair nearest-owned copies by box ordinal and drawing order. A Fallback
+/// must match the nested element's Fallback shell; Requires is never evaluated.
+fn nested_pairs(element: &Element) -> Option<Vec<(&Element, &Element, bool)>> {
+    let mut boxes = Vec::new();
+    element.find_all("txbxContent", &mut boxes);
+    let mut first = HashMap::<usize, Vec<&Element>>::new();
+    let mut pairs = Vec::new();
+    for (content, ordinal) in boxes.into_iter().zip(box_ordinals(element)) {
+        let copies = owned_drawings(content);
+        if let Some(shown) = first.get(&ordinal) {
+            if shown.len() != copies.len() {
+                return None;
+            }
+            for (&shown, copy) in shown.iter().zip(copies) {
+                let expected = if shown.is("AlternateContent") {
+                    let branch = shown.child("Fallback")?;
+                    let mut children = branch.elements();
+                    let expected = children.next()?;
+                    if children.next().is_some() {
+                        return None;
+                    }
+                    expected
+                } else {
+                    shown
+                };
+                if shape_shell(expected) != shape_shell(copy)
+                    || box_payload(expected) != box_payload(copy)
+                {
+                    return None;
+                }
+                pairs.push((shown, copy, true));
+            }
+        } else {
+            pairs.extend(copies.iter().map(|&copy| (copy, copy, false)));
+            first.insert(ordinal, copies);
+        }
+    }
+    Some(pairs)
+}
+
+pub(crate) fn nested_editable(element: &Element) -> bool {
+    nested_pairs(element).is_some()
+}
+
+/// `![label][name]` with the label made a Markdown alt text: one line,
+/// brackets escaped. An empty `name` is `![label]()` — an empty image the
+/// writer reads as alt text.
+fn image(label: &str, name: &str) -> String {
+    if name.is_empty() {
+        format!("![{label}]()")
+    } else {
+        format!("![{label}][{name}]")
+    }
+}
+
+/// The `wp:docPr` description, title or name as the token's label.
+fn label(element: &Element) -> String {
+    let alt = alt(element);
+    if !alt.is_empty() {
+        return alt;
+    }
+    element
+        .find("docPr")
+        .and_then(|doc_pr| doc_pr.attr("name"))
+        .map(alt_text)
+        .unwrap_or_default()
+}
+
+/// A raster's alt text: the `wp:docPr` description or title. The `name`
+/// Word gives a picture (`Picture 1`) is the selection pane's, not alt
+/// text — printing it would invent one.
+fn alt(element: &Element) -> String {
+    let Some(doc_pr) = element.find("docPr") else {
+        return String::new();
+    };
+    alt_text(
+        doc_pr
+            .attr("descr")
+            .filter(|d| !d.trim().is_empty())
+            .or_else(|| doc_pr.attr("title"))
+            .unwrap_or(""),
+    )
+}
+
+/// `text` as a Markdown alt text: one line, brackets escaped.
+fn alt_text(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
+}
+
+/// The `xmlns`/`xmlns:p` attributes `element` declares, `(prefix, uri)`.
+pub(crate) fn scope_of(element: &Element) -> Scope {
+    element
+        .attrs
+        .iter()
+        .filter_map(|(name, uri)| {
+            name.strip_prefix("xmlns").map(|prefix| {
+                (
+                    prefix.strip_prefix(':').unwrap_or(prefix).to_string(),
+                    uri.clone(),
+                )
+            })
+        })
+        .collect()
+}
+
+/// `later` wins over `scope` on the same prefix.
+fn merge(scope: &mut Scope, later: &Scope) {
+    for (prefix, uri) in later {
+        match scope.iter_mut().find(|(p, _)| p == prefix) {
+            Some((_, u)) => *u = uri.clone(),
+            None => scope.push((prefix.clone(), uri.clone())),
+        }
+    }
+}
+
+fn merged(scope: &Scope, later: &Scope) -> Scope {
+    let mut out = scope.clone();
+    merge(&mut out, later);
+    out
+}
+
+/// The union of every `xmlns` scope in the tree: a dependent part is read
+/// whole, so its own declarations are enough.
+fn tree_scope(root: &Element) -> Scope {
+    let mut scope = Vec::new();
+    fn collect(element: &Element, scope: &mut Scope) {
+        merge(scope, &scope_of(element));
+        for child in element.elements() {
+            collect(child, scope);
+        }
+    }
+    collect(root, &mut scope);
+    scope
+}
+
+/// `name` is `prefix:local` whose prefix binds to `REL_NS`.
+fn is_rel_name(name: &str, scope: &Scope) -> bool {
+    let Some((prefix, _)) = name.split_once(':') else {
+        return false;
+    };
+    scope
+        .iter()
+        .any(|(p, uri)| p == prefix && REL_NS.contains(&uri.as_str()))
+}
+
+/// Declare on `root` every prefix the tree uses that no element inside it
+/// declares (and every prefix `mc:Requires` names), so the spliced element
+/// is self-contained.
+fn declare(root: &mut Element, scope: &Scope) {
+    let mut declared: HashSet<String> = HashSet::new();
+    let mut used: HashSet<String> = HashSet::new();
+    fn visit(element: &Element, declared: &mut HashSet<String>, used: &mut HashSet<String>) {
+        if let Some((prefix, _)) = element.name.split_once(':') {
+            used.insert(prefix.to_string());
+        }
+        for (name, value) in &element.attrs {
+            if name == "xmlns" {
+                declared.insert(String::new());
+            } else if let Some(prefix) = name.strip_prefix("xmlns:") {
+                declared.insert(prefix.to_string());
+            } else if let Some((prefix, _)) = name.split_once(':') {
+                used.insert(prefix.to_string());
+            }
+            if name
+                .split_once(':')
+                .is_some_and(|(p, l)| p == "mc" && l == "Requires")
+            {
+                used.extend(value.split_whitespace().map(str::to_string));
+            }
+        }
+        for child in element.elements() {
+            visit(child, declared, used);
+        }
+    }
+    visit(root, &mut declared, &mut used);
+    // Sorted, so the payload reads the same every time.
+    let mut used: Vec<String> = used.into_iter().collect();
+    used.sort();
+    for prefix in used {
+        if declared.contains(&prefix) {
+            continue;
+        }
+        if let Some((_, uri)) = scope.iter().find(|(p, _)| *p == prefix) {
+            root.attrs.push((format!("xmlns:{prefix}"), uri.clone()));
+        }
+    }
+}
+
+/// `element` as XML: self-closing when childless, attributes and text
+/// escaped. `Element` keeps its names' prefixes, so this is verbatim where
+/// the source was.
+pub(crate) fn serialize(element: &Element) -> String {
+    let mut out = String::new();
+    fn put(element: &Element, out: &mut String) {
+        let _ = write!(out, "<{}", element.name);
+        for (name, value) in &element.attrs {
+            let _ = write!(out, " {name}=\"{}\"", crate::markdown::xml::escape(value));
+        }
+        if element.children.is_empty() {
+            out.push_str("/>");
+            return;
+        }
+        out.push('>');
+        for child in &element.children {
+            match child {
+                Node::Element(inner) => put(inner, out),
+                Node::Text(text) => out.push_str(&crate::markdown::xml::escape(text)),
+            }
+        }
+        let _ = write!(out, "</{}>", element.name);
+    }
+    put(element, &mut out);
+    out
+}
+
+/// `wp:docPr` drawing ids are the writer's to assign: capture normalizes
+/// them to `0` so the payload does not change when the written file gives
+/// them fresh numbers.
+fn normalize_ids(element: &mut Element) {
+    if local(&element.name) == "docPr" {
+        for (name, value) in &mut element.attrs {
+            if name == "id" {
+                *value = "0".to_string();
+            }
+        }
+    }
+    for child in &mut element.children {
+        if let Node::Element(inner) = child {
+            normalize_ids(inner);
+        }
+    }
+}
+
+/// Scratch for the capture in flight: the parts collected and why it
+/// stopped.
+struct Deps<'a> {
+    types: &'a HashMap<String, String>,
+    parts: Vec<Dep>,
+    index: HashMap<String, usize>,
+    failed: Option<String>,
+}
+
+impl Deps<'_> {
+    /// The index of `target`'s part in `parts`, reading and capturing it on
+    /// first use; `None` when the part is absent.
+    fn dep_for(&mut self, package: &mut Package<'_>, target: &str) -> Option<usize> {
+        if let Some(&index) = self.index.get(target) {
+            return Some(index);
+        }
+        if self.parts.len() >= MAX_DEPS {
+            self.failed = Some(format!("more than {MAX_DEPS} dependent parts"));
+            return None;
+        }
+        let bytes = match package.read(target) {
+            Ok(Some(bytes)) if bytes.len() as u64 <= MAX_DEP_BYTES => bytes,
+            Ok(Some(_)) => {
+                self.failed = Some(format!("{target} exceeds {MAX_DEP_BYTES} bytes"));
+                return None;
+            }
+            _ => return None,
+        };
+        let index = self.parts.len();
+        self.parts.push(Dep::default());
+        self.index.insert(target.to_string(), index);
+        let rels = package.rels(target).unwrap_or_default();
+        let mut pay_rels = Vec::new();
+        let mut xml = String::new();
+        if !rels.is_empty() {
+            if rels.len() > MAX_DEP_RELS {
+                self.failed = Some(format!(
+                    "{target} has more than {MAX_DEP_RELS} relationships"
+                ));
+            } else if let Ok(mut root) =
+                super::ooxml::parse_xml_with_limits(&bytes, package.input_limits)
+            {
+                let scope = tree_scope(&root);
+                let sym = format!("d{index}.");
+                symbolize(package, self, &mut root, &scope, &rels, &sym, &mut pay_rels);
+                normalize_ids(&mut root);
+                declare(&mut root, &scope);
+                xml = serialize(&root);
+            } else {
+                self.failed = Some(format!("{target} is not readable XML"));
+            }
+        }
+        let kind = self
+            .types
+            .get(&format!("/{target}"))
+            .cloned()
+            .or_else(|| {
+                target
+                    .rsplit('.')
+                    .next()
+                    .filter(|ext| *ext != target)
+                    .and_then(|ext| self.types.get(&format!(".{ext}")).cloned())
+            })
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+        let dep = &mut self.parts[index];
+        dep.name = target.to_string();
+        dep.kind = kind;
+        if xml.is_empty() {
+            dep.b64 = base64_encode(&bytes);
+        } else {
+            dep.xml = xml;
+        }
+        dep.rels = pay_rels;
+        Some(index)
+    }
+}
+
+/// Symbolize every relationship id `element` and its descendants name:
+/// attributes whose prefix binds to `REL_NS` in `scope`. Their values
+/// become `sym{n}` on the element and `PayRel`s in `out`.
+fn symbolize(
+    package: &mut Package<'_>,
+    deps: &mut Deps<'_>,
+    element: &mut Element,
+    scope: &Scope,
+    rels: &Rels,
+    sym: &str,
+    out: &mut Vec<PayRel>,
+) {
+    for (name, value) in &mut element.attrs {
+        if !is_rel_name(name, scope) {
+            continue;
+        }
+        let Some(rel) = rels.get(value.as_str()) else {
+            deps.failed
+                .get_or_insert_with(|| format!("{name}=\"{value}\" names no relationship"));
+            continue;
+        };
+        let n = out.len() + 1;
+        let mut pay = PayRel {
+            sym: format!("{sym}{n}"),
+            kind: rel.kind.clone(),
+            ..PayRel::default()
+        };
+        if rel.external {
+            pay.u = Some(rel.target.clone());
+        } else if let Some(index) = deps.dep_for(package, &rel.target) {
+            pay.part = Some(index);
+        } else {
+            pay.raw = Some(rel.target.clone());
+        }
+        *value = pay.sym.clone();
+        out.push(pay);
+    }
+    let own = merged(scope, &scope_of(element));
+    for child in &mut element.children {
+        if let Node::Element(inner) = child {
+            symbolize(package, deps, inner, &own, rels, sym, out);
+        }
+    }
+}
+
+/// Capture `pending`: its element verbatim but for the relationship ids it
+/// symbolizes, with every part they reach. `None` when something failed.
+pub(crate) fn resolve(
+    package: &mut Package<'_>,
+    types: &HashMap<String, String>,
+    pending: &Pending,
+) -> Option<Drawing> {
+    let rels = package.rels(&pending.part).ok()?;
+    let mut deps = Deps {
+        types,
+        parts: Vec::new(),
+        index: HashMap::new(),
+        failed: None,
+    };
+    let mut root = pending.element.clone();
+    let mut out = Vec::new();
+    symbolize(
+        package,
+        &mut deps,
+        &mut root,
+        &pending.scope,
+        &rels,
+        "r",
+        &mut out,
+    );
+    if deps.failed.is_some() {
+        return None;
+    }
+    let slot = media_slot(&root, &out, &deps);
+    let mermaid = chart_mermaid(&deps);
+    let mhash = mermaid.as_deref().map(mermaid_hash);
+    normalize_ids(&mut root);
+    declare(&mut root, &pending.scope);
+    let boxes = strip_box_words(&mut root, &pending.stories);
+    Some(Drawing {
+        xml: serialize(&root),
+        wrap: pending.wrap,
+        rels: out,
+        deps: deps.parts,
+        slot,
+        mhash,
+        mermaid,
+        boxes,
+    })
+}
+
+/// The chart part's Mermaid text when the payload holds a `chartSpace`
+/// `pie`/`xychart-beta` can say: a standalone drawing prints it as a
+/// ` ```mermaid ` fence and `mhash` says whether the text came back
+/// unchanged. Charts that hold relationships keep their fences too —
+/// [`Drawing::rebuild_mermaid`] patches their `xml` in place.
+fn chart_mermaid(deps: &Deps<'_>) -> Option<String> {
+    let dep = deps
+        .parts
+        .iter()
+        .find(|dep| dep.kind.ends_with("chart+xml"))?;
+    let xml = if dep.xml.is_empty() {
+        String::from_utf8(base64_decode(&dep.b64)?).ok()?
+    } else {
+        dep.xml.clone()
+    };
+    super::mermaid::chart(&xml)
+}
+
+/// SHA-256 of `text`, hex: the hash `mhash` carries for a fence's text.
+fn mermaid_hash(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(text.trim().as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Ignore line-ending and per-line trailing whitespace in editable box stories.
+fn box_hash(text: &str) -> String {
+    let lines = text
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n");
+    mermaid_hash(&lines)
+}
+
+/// The image part the readable layer carries for `root`, as a `deps` index:
+/// an `asvg:svgBlip`'s SVG source, else the `a:blip`'s PNG, JPEG, GIF, BMP
+/// or TIFF raster. `None` when the element is a picture of nothing the
+/// readable forms name (EMF, WMF, an external or missing target) or holds
+/// content the payload must keep — a text box's story, a chart's frame.
+fn media_slot(root: &Element, rels: &[PayRel], deps: &Deps<'_>) -> Option<usize> {
+    if root.find("txbxContent").is_some() || root.find("graphicFrame").is_some() {
+        return None;
+    }
+    // The dependency a relationship symbol `rN` names.
+    let dep_of = |element: &Element| {
+        element.attrs.iter().find_map(|(name, sym)| {
+            if !name.contains(':') {
+                return None;
+            }
+            let rel = rels.iter().find(|rel| rel.sym == *sym)?;
+            let index = match rel.part {
+                Some(index) => index,
+                None => *deps.index.get(rel.raw.as_deref()?)?,
+            };
+            (index < deps.parts.len()).then_some(index)
+        })
+    };
+    // The SVG form names its source, not the PNG fallback `a:blip` beside it.
+    if let Some(blip) = root.find("svgBlip")
+        && let Some(index) = dep_of(blip)
+        && deps.parts[index].kind.starts_with("image/")
+    {
+        return Some(index);
+    }
+    const RASTER: [&str; 5] = [
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/bmp",
+        "image/tiff",
+    ];
+    if let Some(blip) = root.find("blip")
+        && let Some(index) = dep_of(blip)
+        && RASTER.contains(&deps.parts[index].kind.as_str())
+    {
+        return Some(index);
+    }
+    None
+}
+
+/// Keep the box's structure, with text slots instead of words. The
+/// visible paragraphs supply the words again on an unchanged write.
+fn strip_box_words(element: &mut Element, stories: &[String]) -> Vec<BoxFrame> {
+    fn strip(element: &mut Element, lengths: &mut Vec<usize>, text: &mut String) {
+        // Opaque drawings are separate stories; accepted nested drawings
+        // have already transferred to token placeholders.
+        if matches!(
+            element.local(),
+            "drawing" | "pict" | "object" | "AlternateContent"
+        ) {
+            return;
+        }
+        if matches!(element.local(), "t" | "delText") {
+            let value = element.text();
+            lengths.push(value.len());
+            text.push_str(&value);
+            element.children.clear();
+        } else {
+            for child in &mut element.children {
+                if let Node::Element(child) = child {
+                    strip(child, lengths, text);
+                }
+            }
+        }
+    }
+    fn walk(element: &mut Element, stories: &[String], boxes: &mut Vec<BoxFrame>) {
+        if element.is("txbxContent") {
+            let Some(markdown) = stories.get(boxes.len() % stories.len().max(1)) else {
+                return;
+            };
+            let mut frame = BoxFrame {
+                hash: box_hash(markdown),
+                ..BoxFrame::default()
+            };
+            // Blank stories have no visible words to refill whitespace slots
+            // from. Keep their controls and formatting intact until edited.
+            frame.opaque = !owned_drawings(element).is_empty() || element.text().trim().is_empty();
+            if frame.opaque {
+                boxes.push(frame);
+                return;
+            }
+            let mut text = String::new();
+            strip(element, &mut frame.lengths, &mut text);
+            frame.text_hash = mermaid_hash(&text);
+            boxes.push(frame);
+            return;
+        }
+        for child in &mut element.children {
+            if let Node::Element(child) = child {
+                walk(child, stories, boxes);
+            }
+        }
+    }
+    let mut boxes = Vec::new();
+    walk(element, stories, &mut boxes);
+    boxes
+}
+
+/// The `[Content_Types]` entries of `package`: `/part` for each override,
+/// `.ext` for each default.
+pub(crate) fn content_types(package: &mut Package<'_>) -> HashMap<String, String> {
+    let mut types = HashMap::new();
+    if let Ok(Some(root)) = package.xml("[Content_Types].xml") {
+        for child in root.elements() {
+            match child.local() {
+                "Override" => {
+                    if let (Some(name), Some(kind)) =
+                        (child.attr("PartName"), child.attr("ContentType"))
+                    {
+                        types.insert(name.to_string(), kind.to_string());
+                    }
+                }
+                "Default" => {
+                    if let (Some(ext), Some(kind)) =
+                        (child.attr("Extension"), child.attr("ContentType"))
+                    {
+                        types.insert(format!(".{ext}"), kind.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    types
+}
+
+/// `markdown` with its `![label][dN]` references given their readable
+/// form and their payloads appended at the view's end. A raster the
+/// layer reads as bytes is `![alt][imageK]` with a `data:` definition
+/// shared by every use of the payload (`alt` the description or title —
+/// Word's picture `name` is not alt text); a drawing that is not the
+/// `wp:inline` the picture writer rebuilds gets a `drawing:` backing
+/// comment, and a use of a shared payload whose drawing differs keeps
+/// its `dN` definition. An SVG the paragraph holds alone is a ` ```svg `
+/// fence backed by a comment; every other drawing keeps the `dN`
+/// reference to a `drawing:` definition. A pending that failed to
+/// capture loses its reference: `![label]()` stays readable and the
+/// writer writes it as alt text.
+pub(crate) fn fill(
+    markdown: &str,
+    package: &mut Package<'_>,
+    types: &HashMap<String, String>,
+    pendings: &[Pending],
+) -> String {
+    if pendings.is_empty() {
+        return markdown.to_string();
+    }
+    let mut out = markdown.to_string();
+    // A token's place is found in the whole text — a header's `dN` names
+    // its line in the YAML summary, printed before the body's pendings —
+    // except inside the spans a fence just took: `][dN]` there is source.
+    let mut fences: Vec<(usize, usize)> = Vec::new();
+    // `token`'s first occurrence outside every `fences` span.
+    let find_token = |out: &str, token: &str, fences: &[(usize, usize)]| -> Option<usize> {
+        let mut from = 0;
+        while let Some(pos) = out[from..].find(token) {
+            let pos = from + pos;
+            if fences.iter().all(|&(s, e)| pos < s || pos >= e) {
+                return Some(pos);
+            }
+            from = pos + 1;
+        }
+        None
+    };
+    let mut appendix = String::new();
+    let mut media = 0usize;
+    // Media payload (`mime`, base64) → (`imageK` name, first drawing's
+    // canonical form): later uses of the same bytes share the one
+    // definition while their drawing is the same.
+    let mut names: HashMap<(String, String), (String, String)> = HashMap::new();
+    for (index, pending) in pendings.iter().enumerate() {
+        let d = format!("d{}", index + 1);
+        let token = format!("][{d}]");
+        let Some(drawing) = resolve(package, types, pending) else {
+            // `![label][dN]` is the one shape push prints; only a capture
+            // failure turns it into `![label]()`.
+            if let Some(pos) = find_token(&out, &token, &fences) {
+                out.replace_range(pos..pos + token.len(), "]()");
+            }
+            continue;
+        };
+        let Some(pos) = find_token(&out, &token, &fences) else {
+            continue;
+        };
+        let end = pos + token.len();
+        // A chart its paragraph holds alone prints its Mermaid: a
+        // ` ```mermaid ` fence the payload comment backs. Anywhere else —
+        // run content — the fence could not sit, so it keeps `[dN]`.
+        if let Some(text) = drawing.mermaid.clone()
+            && let Some((start, text_end)) = standalone(&out, pos, end)
+        {
+            let label = label(&pending.element);
+            let info = if label.is_empty() {
+                format!("mermaid {d}")
+            } else {
+                format!("mermaid {d} {label}")
+            };
+            let fence = fenced(&info, &text);
+            out.replace_range(start..text_end, &fence);
+            fences.push((start, start + fence.len()));
+            let _ = writeln!(appendix, "<!-- {d} drawing:{} -->", encode(&drawing));
+            continue;
+        }
+        let Some(slot) = drawing.slot else {
+            let _ = writeln!(appendix, "[{d}]: drawing:{}", encode(&drawing));
+            continue;
+        };
+        let dep = &drawing.deps[slot];
+        let is_svg = dep.kind == "image/svg+xml" && !dep.b64.is_empty();
+        if is_svg
+            && let Some((start, text_end)) = standalone(&out, pos, end)
+            && let Some(svg) = base64_decode(&dep.b64)
+            && let Ok(svg) = str::from_utf8(&svg)
+        {
+            let label = label(&pending.element);
+            let info = if label.is_empty() {
+                format!("svg {d}")
+            } else {
+                format!("svg {d} {label}")
+            };
+            let fence = fenced(&info, svg.trim());
+            out.replace_range(start..text_end, &fence);
+            fences.push((start, start + fence.len()));
+            let _ = writeln!(
+                appendix,
+                "<!-- {d} drawing:{} -->",
+                encode(&drawing.without_slot_bytes())
+            );
+            continue;
+        }
+        // A raster, or an SVG run content cannot leave a fence: its
+        // `data:` definition — unless the media bytes never read, a
+        // `dN` definition like every other payload.
+        if dep.b64.is_empty() {
+            let _ = writeln!(appendix, "[{d}]: drawing:{}", encode(&drawing));
+            continue;
+        }
+        let key = (dep.kind.clone(), dep.b64.clone());
+        let shared = match names.get(&key) {
+            Some((name, seen)) if *seen == canonical(&drawing) => Some(name.clone()),
+            Some(_) => None,
+            None => {
+                media += 1;
+                let name = format!("image{media}");
+                names.insert(key, (name.clone(), canonical(&drawing)));
+                let _ = writeln!(appendix, "[{name}]: <data:{};base64,{}>", dep.kind, dep.b64);
+                if !regenerable(&drawing) {
+                    let _ = writeln!(
+                        appendix,
+                        "<!-- {name} drawing:{} -->",
+                        encode(&drawing.without_slot_bytes())
+                    );
+                }
+                Some(name)
+            }
+        };
+        match shared {
+            // A use of a shared payload whose own drawing differs
+            // keeps its `dN` definition: the `imageK` name's one
+            // backing cannot be both drawings.
+            None => {
+                let _ = writeln!(appendix, "[{d}]: drawing:{}", encode(&drawing));
+            }
+            Some(name) => {
+                let shift = relabel(&mut out, pos, &alt(&pending.element));
+                let pos = pos.wrapping_add_signed(shift);
+                out.replace_range(pos + 2..pos + token.len() - 1, &name);
+            }
+        }
+    }
+    if !appendix.is_empty() {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        let _ = write!(out, "\n{appendix}");
+    }
+    out
+}
+
+/// Rewrite the label of the `![label][dN]` token ending at `pos`: the
+/// printable alt text a `docPr` name would have invented. The byte
+/// shift the token's end moved by.
+fn relabel(out: &mut String, pos: usize, label: &str) -> isize {
+    let Some(start) = out[..pos].rfind("![") else {
+        return 0;
+    };
+    let Some((name, _)) = at(&out[start..]) else {
+        return 0;
+    };
+    if !(name.starts_with('d') || name.starts_with("image")) {
+        return 0;
+    }
+    let old = pos - (start + 2);
+    out.replace_range(start + 2..pos, label);
+    label.len() as isize - old as isize
+}
+
+/// The payload minus what use of it may differ in — `docPr` and
+/// `cNvPr` alt text and generated names, which the readable layer
+/// carries or the writer renumbers — so two drawings of one media
+/// payload share its `imageK` definition only while they splice the
+/// same XML.
+fn canonical(drawing: &Drawing) -> String {
+    let mut share = drawing.clone();
+    let Ok(mut root) = parse_xml(drawing.xml.as_bytes()) else {
+        return drawing.xml.clone();
+    };
+    fn names(element: &mut Element) {
+        if matches!(local(&element.name), "docPr" | "cNvPr") {
+            for (name, value) in &mut element.attrs {
+                let generated = name == "name" && generated_name(value);
+                if matches!(name.as_str(), "descr" | "title") || generated {
+                    value.clear();
+                }
+            }
+        }
+        for child in &mut element.children {
+            if let Node::Element(inner) = child {
+                names(inner);
+            }
+        }
+    }
+    names(&mut root);
+    share.xml = serialize(&root);
+    for (index, dep) in share.deps.iter_mut().enumerate() {
+        if drawing.slot == Some(index) {
+            dep.b64.clear();
+            dep.xml.clear();
+        } else {
+            *dep = Dep::default();
+        }
+    }
+    for rel in &mut share.rels {
+        if rel.part.is_some() && rel.part != drawing.slot {
+            rel.part = Some(usize::MAX);
+        }
+    }
+    encode(&share)
+}
+
+/// A `docPr`/`cNvPr` name the writer gives the picture it numbers
+/// (`Picture 3`): no content to keep.
+fn generated_name(name: &str) -> bool {
+    name.strip_prefix("Picture ")
+        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Whether the picture writer rebuilds `drawing` from its `data:`
+/// bytes, its alt text and the raster's size alone: a `wp:inline` of
+/// exactly the shape `drawing_xml` writes, at the size `read_picture`
+/// computes. Then the `data:` definition is all the round trip needs
+/// and the view carries no `drawing:` backing comment.
+fn regenerable(drawing: &Drawing) -> bool {
+    let Some(slot) = drawing.slot else {
+        return false;
+    };
+    if !drawing.wrap || drawing.rels.len() != 1 || drawing.rels[0].part != Some(slot) {
+        return false;
+    }
+    let Ok(root) = parse_xml(drawing.xml.as_bytes()) else {
+        return false;
+    };
+    if !root.is("drawing") {
+        return false;
+    }
+    let kids: Vec<&Element> = root.elements().collect();
+    let [inline] = kids.as_slice() else {
+        return false;
+    };
+    if !inline.is("inline")
+        || !attrs_ok(inline, |name, value| {
+            matches!(local(name), "distT" | "distB" | "distL" | "distR") && value == "0"
+        })
+    {
+        return false;
+    }
+    let kids: Vec<&Element> = inline.elements().collect();
+    let [extent, effect, doc_pr, frame, graphic] = kids.as_slice() else {
+        return false;
+    };
+    if !extent.is("extent")
+        || extent.attr("cx").is_none()
+        || extent.attr("cy").is_none()
+        || !attrs_ok(extent, |name, _| matches!(local(name), "cx" | "cy"))
+    {
+        return false;
+    }
+    if !effect.is("effectExtent")
+        || !attrs_ok(effect, |name, value| {
+            matches!(local(name), "l" | "t" | "r" | "b") && value == "0"
+        })
+    {
+        return false;
+    }
+    if !doc_pr.is("docPr")
+        || !attrs_ok(doc_pr, |name, value| {
+            (name == "id" && value == "0")
+                || (name == "name" && generated_name(value))
+                || matches!(name, "descr" | "title")
+        })
+        || doc_pr.elements().next().is_some()
+    {
+        return false;
+    }
+    if !frame.is("cNvGraphicFramePr") {
+        return false;
+    }
+    let Some(locks) = frame.child("graphicFrameLocks") else {
+        return false;
+    };
+    if !attrs_ok(locks, |name, value| {
+        name == "noChangeAspect" && value == "1"
+    }) || locks.elements().next().is_some()
+        || frame.elements().nth(1).is_some()
+    {
+        return false;
+    }
+    let Some(data) = graphic.child("graphicData") else {
+        return false;
+    };
+    if data.attr("uri") != Some("http://schemas.openxmlformats.org/drawingml/2006/picture")
+        || !attrs_ok(data, |name, _| local(name) == "uri")
+    {
+        return false;
+    }
+    let Some(pic) = data.child("pic") else {
+        return false;
+    };
+    let kids: Vec<&Element> = pic.elements().collect();
+    let [nv_pic_pr, blip_fill, sp_pr] = kids.as_slice() else {
+        return false;
+    };
+    if !nv_pic_pr.is("nvPicPr") || !blip_fill.is("blipFill") || !sp_pr.is("spPr") {
+        return false;
+    }
+    let Some(c_nv_pr) = nv_pic_pr.child("cNvPr") else {
+        return false;
+    };
+    if !attrs_ok(c_nv_pr, |name, value| {
+        (name == "id" && value == "0")
+            || (name == "name" && generated_name(value))
+            || matches!(name, "descr" | "title")
+    }) || c_nv_pr.elements().next().is_some()
+    {
+        return false;
+    }
+    if !nv_pic_pr
+        .elements()
+        .nth(1)
+        .is_some_and(|e| e.is("cNvPicPr") && e.elements().next().is_none() && e.attrs.is_empty())
+        || nv_pic_pr.elements().nth(2).is_some()
+    {
+        return false;
+    }
+    let kids: Vec<&Element> = blip_fill.elements().collect();
+    let [blip, stretch] = kids.as_slice() else {
+        return false;
+    };
+    if !blip.is("blip")
+        || blip.elements().next().is_some()
+        || blip.rel_attr("embed").is_none()
+        || !attrs_ok(blip, |name, _| name.contains(':') && local(name) == "embed")
+    {
+        return false;
+    }
+    let kids: Vec<&Element> = stretch.elements().collect();
+    let [fill_rect] = kids.as_slice() else {
+        return false;
+    };
+    if !fill_rect.is("fillRect") || !attrs_ok(stretch, |_, _| false) {
+        return false;
+    }
+    let kids: Vec<&Element> = sp_pr.elements().collect();
+    let [xfrm, prst] = kids.as_slice() else {
+        return false;
+    };
+    if !xfrm.is("xfrm") || !attrs_ok(sp_pr, |_, _| false) {
+        return false;
+    }
+    let kids: Vec<&Element> = xfrm.elements().collect();
+    let [off, ext] = kids.as_slice() else {
+        return false;
+    };
+    if !off.is("off")
+        || off.attr("x") != Some("0")
+        || off.attr("y") != Some("0")
+        || !attrs_ok(off, |name, _| matches!(local(name), "x" | "y"))
+        || !ext.is("ext")
+        || !attrs_ok(ext, |name, _| matches!(local(name), "cx" | "cy"))
+    {
+        return false;
+    }
+    if !prst.is("prstGeom")
+        || prst.attr("prst") != Some("rect")
+        || !attrs_ok(prst, |name, _| local(name) == "prst")
+    {
+        return false;
+    }
+    let Some(av_lst) = prst.child("avLst") else {
+        return false;
+    };
+    if !av_lst.attrs.is_empty()
+        || av_lst.elements().next().is_some()
+        || prst.elements().nth(1).is_some()
+    {
+        return false;
+    }
+    // The sizes the writer puts on a `wp:inline` of these bytes: the
+    // extent and the picture's `a:ext` are the picture's own.
+    let Some(bytes) = base64_decode(&drawing.deps[slot].b64) else {
+        return false;
+    };
+    let Some(picture) = crate::markdown::write::read_picture(bytes, "") else {
+        return false;
+    };
+    extent.attr("cx") == Some(picture.width.to_string().as_str())
+        && extent.attr("cy") == Some(picture.height.to_string().as_str())
+        && ext.attr("cx") == Some(picture.width.to_string().as_str())
+        && ext.attr("cy") == Some(picture.height.to_string().as_str())
+}
+
+/// `element`'s non-`xmlns` attributes all pass `ok`.
+fn attrs_ok(element: &Element, ok: impl Fn(&str, &str) -> bool) -> bool {
+    element
+        .attrs
+        .iter()
+        .all(|(name, value)| name.starts_with("xmlns") || ok(name, value))
+}
+
+/// The span of a `![label][dN]` token that is a whole line: its `![`
+/// opening and its line's end. `None` when anything else shares the line
+/// — a run of text, a change mark — where a fence could not sit.
+fn standalone(out: &str, pos: usize, end: usize) -> Option<(usize, usize)> {
+    let start = out[..pos].rfind("![")?;
+    let (name, len) = at(&out[start..])?;
+    if !(name.starts_with('d')
+        && name.len() > 1
+        && name.bytes().skip(1).all(|b| b.is_ascii_digit())
+        && start + len == end)
+    {
+        return None;
+    }
+    let line_start = out[..start].rfind('\n').map_or(0, |n| n + 1);
+    let line_end = out[end..].find('\n').map_or(out.len(), |n| end + n);
+    (out[line_start..start].trim().is_empty() && out[end..line_end].trim().is_empty())
+        .then_some((start, line_end))
+}
+
+/// `text` as a fenced code block carrying `info`, the fence one backtick
+/// wider than any run inside.
+fn fenced(info: &str, text: &str) -> String {
+    let mut widest = 0usize;
+    let mut run = 0usize;
+    for b in text.bytes() {
+        if b == b'`' {
+            run += 1;
+            widest = widest.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    let ticks = "`".repeat((widest + 1).max(3));
+    format!("{ticks} {info}\n{text}\n{ticks}")
+}
+
+/// The Markdown drawing token at `text`'s start, if any —
+/// `![label][dN]`, or a `![label](drawing:PAYLOAD)` of a view an older
+/// build wrote. What the token resolves by: the `dN` reference name or the
+/// `drawing:` destination, and the token's whole length.
+pub(crate) fn at(text: &str) -> Option<(&str, usize)> {
+    let rest = text.strip_prefix("![")?;
+    let label_end = rest.find(']')?;
+    let after = &rest[label_end + 1..];
+    if let Some(inner) = after.strip_prefix('(') {
+        let end = inner.find(')')?;
+        let dest = &inner[..end];
+        let payload = dest.strip_prefix("drawing:")?;
+        return (!payload.is_empty()
+            && payload
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'=')))
+        .then(|| (dest, 2 + label_end + 2 + dest.len() + 1));
+    }
+    let name = after
+        .strip_prefix('[')
+        .and_then(|inner| inner.split_once(']'))
+        .map(|(name, _)| name)?;
+    let digits = name
+        .strip_prefix('d')
+        .or_else(|| name.strip_prefix("image"))?;
+    (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())).then(|| {
+        let start = 2 + label_end + 2;
+        (&text[start..start + name.len()], start + name.len() + 1)
+    })
+}
+
+/// Whether cutting `text` at `cut` splits a `![…](drawing:…)` token.
+pub(crate) fn cuts_token(text: &str, cut: usize) -> bool {
+    let Some(open) = text[..cut].rfind("![") else {
+        return false;
+    };
+    at(&text[open..]).is_some_and(|(_, len)| len > cut - open)
+}
+
+/// Decode the payload of `![label](drawing:PAYLOAD)`; `dest` is what
+/// [`at`] returns (`drawing:…`).
+pub(crate) fn decode(dest: &str) -> Result<Drawing, String> {
+    let encoded = dest
+        .strip_prefix("drawing:")
+        .ok_or_else(|| "not a drawing: destination".to_string())?;
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded)
+        .or_else(|_| {
+            base64::engine::general_purpose::URL_SAFE.decode(encoded.trim_end_matches('='))
+        })
+        .map_err(|e| format!("drawing payload is not base64: {e}"))?;
+    serde_json::from_slice(&bytes).map_err(|e| format!("drawing payload is not its JSON: {e}"))
+}
+
+pub(crate) fn encode(drawing: &Drawing) -> String {
+    use base64::Engine;
+    let json = serde_json::to_vec(drawing).unwrap_or_default();
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json)
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+pub(crate) fn base64_decode(encoded: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .ok()
+}
+
+/// A `data:` destination's `(mime, base64)` parts: `data:mime;base64,…`.
+/// `data:` with no `;base64` marker reads as no media bytes.
+pub(crate) fn data_uri(dest: &str) -> Option<(&str, &str)> {
+    let rest = dest.strip_prefix("data:")?;
+    let (meta, data) = rest.split_once(',')?;
+    let mime = meta.strip_suffix(";base64")?;
+    (!mime.is_empty() && !data.is_empty()).then_some((mime, data))
+}
+
+/// The `<!-- NAME drawing:PAYLOAD -->` backing comments of a view's
+/// drawings appendix, `NAME` → the `drawing:` destination.
+pub(crate) fn backing_comments(source: &str) -> HashMap<String, String> {
+    source
+        .lines()
+        .filter_map(|line| {
+            let inner = line
+                .trim()
+                .strip_prefix("<!--")?
+                .strip_suffix("-->")?
+                .trim();
+            let (name, dest) = inner.split_once(' ')?;
+            (dest.starts_with("drawing:") && !name.is_empty())
+                .then(|| (name.to_string(), dest.to_string()))
+        })
+        .collect()
+}
+
+/// The `Drawing` a reference name or destination in the view resolves to:
+/// a `drawing:` destination or `dN` definition as it is; an `imageK` name
+/// through its backing comment, the `data:` definition's bytes filling
+/// the slot the readable layer carries. `None` when no form resolves.
+pub(crate) fn lookup(
+    key_or_dest: &str,
+    defs: &HashMap<String, String>,
+    backings: &HashMap<String, String>,
+) -> Option<Drawing> {
+    if let Some(dest) = key_or_dest
+        .starts_with("drawing:")
+        .then_some(key_or_dest)
+        .or_else(|| defs.get(key_or_dest).map(String::as_str))
+    {
+        if dest.starts_with("drawing:") {
+            return decode(dest).ok();
+        }
+        if let Some((mime, b64)) = data_uri(dest) {
+            let mut drawing = decode(backings.get(key_or_dest)?).ok()?;
+            return drawing.fill_slot_data(b64, mime).then_some(drawing);
+        }
+    }
+    None
+}
+
+/// Whether `element` or a descendant holds a drawing: `w:drawing`, `w:pict`
+/// or `w:object` anywhere below `AlternateContent`'s `Choice`/`Fallback`.
+pub(crate) fn holds_drawing(element: &Element) -> bool {
+    matches!(element.local(), "drawing" | "pict" | "object")
+        || element.elements().any(holds_drawing)
+}
+
+/// Whether `element` is a plain inline picture the `![alt](name)` syntax
+/// keeps when its raster is extracted: `wp:inline` holding an `a:blip`, no
+/// floating anchor, no text box the payload would carry with it.
+pub(crate) fn is_plain_inline(element: &Element) -> bool {
+    element.is("drawing")
+        && element.find("anchor").is_none()
+        && element.find("inline").is_some()
+        && element.find("blip").is_some()
+        && element.find("txbxContent").is_none()
+}
+
+/// `element` holds paragraph-level content (`w:p`, `w:tbl`, `w:sdt`)
+/// outside a drawing, picture or text box — where it is encapsulated and
+/// stays inside the run whatever it holds. Such an element under an
+/// AlternateContent branch makes the branch block-level, unspliceable
+/// where a run sits.
+fn holds_block_content(element: &Element) -> bool {
+    element.elements().any(|e| {
+        if matches!(e.local(), "drawing" | "pict" | "object" | "txbxContent") {
+            false
+        } else {
+            matches!(e.local(), "p" | "tbl" | "sdt" | "customXml") || holds_block_content(e)
+        }
+    })
+}
+
+/// Whether a paragraph-level `mc:AlternateContent` may be captured whole:
+/// one with a drawing and only run-level content below its `Choice`.
+pub(crate) fn capturable_alternate(element: &Element) -> bool {
+    if !holds_drawing(element) {
+        return false;
+    }
+    element.elements().all(|branch| {
+        !matches!(branch.local(), "Choice" | "Fallback") || !holds_block_content(branch)
+    })
+}
+
+/// Box ordinals follow the selected branch; its fallback repeats those ordinals.
+fn box_ordinals(root: &Element) -> Vec<usize> {
+    fn walk(element: &Element, next: &mut usize, out: &mut Vec<usize>) {
+        if element.is("txbxContent") {
+            out.push(*next);
+            *next += 1;
+        } else if element.is("AlternateContent") {
+            let start = *next;
+            for branch in element.elements() {
+                let mut branch_next = start;
+                walk(branch, &mut branch_next, out);
+                *next = (*next).max(branch_next);
+            }
+        } else {
+            for child in element.elements() {
+                walk(child, next, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, &mut 0, &mut out);
+    out
+}
+
+impl Drawing {
+    pub(crate) fn box_count(&self) -> usize {
+        parse_xml(self.xml.as_bytes())
+            .ok()
+            .and_then(|root| box_ordinals(&root).into_iter().max())
+            .map_or(0, |n| n + 1)
+    }
+
+    pub(crate) fn nested_tokens(&self) -> Vec<String> {
+        let Ok(root) = parse_xml(self.xml.as_bytes()) else {
+            return Vec::new();
+        };
+        let mut slots = Vec::new();
+        root.find_all("jubarteNested", &mut slots);
+        slots
+            .into_iter()
+            .filter_map(|slot| slot.attr("token").map(str::to_string))
+            .collect()
+    }
+
+    pub(crate) fn check_box_regions(
+        &self,
+        name: &str,
+        regions: &HashMap<String, String>,
+    ) -> Result<(), String> {
+        if self.boxes.is_empty() {
+            return Ok(());
+        }
+        let Ok(root) = parse_xml(self.xml.as_bytes()) else {
+            return Ok(());
+        };
+        fn templates<'a>(element: &'a Element, out: &mut Vec<&'a Element>) {
+            if element.is("txbxContent") {
+                out.push(element);
+            } else {
+                for child in element.elements() {
+                    templates(child, out);
+                }
+            }
+        }
+        let mut contents = Vec::new();
+        templates(&root, &mut contents);
+        for ((frame, ordinal), content) in self.boxes.iter().zip(box_ordinals(&root)).zip(contents)
+        {
+            let name = format!("{name}.{ordinal}");
+            if (frame.opaque
+                || frame.lengths.iter().any(|&length| length != 0)
+                || content.find("jubarteNested").is_some())
+                && !regions.contains_key(&name)
+            {
+                return Err(format!("text-box {name}: missing matching marker region"));
+            }
+            if ["drawing", "pict", "object", "AlternateContent"]
+                .iter()
+                .any(|kind| content.find(kind).is_some())
+                && regions
+                    .get(&name)
+                    .is_some_and(|region| frame.hash != box_hash(region))
+            {
+                return Err(format!(
+                    "text-box {name}: editing is unsupported because nested Choice/Fallback copies do not correspond"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Refill the text-free templates. The exact path restores their text
+/// slots only when both the Markdown and its words match their hashes.
+pub(crate) fn fill_boxes(
+    xml: &str,
+    drawing: &Drawing,
+    stories: &[(String, String)],
+    next_doc_pr: &mut u32,
+) -> String {
+    fn fallback(element: &Element, next: &mut u32) -> Vec<Node> {
+        let nodes = element
+            .child("Fallback")
+            .filter(|_| element.is("AlternateContent"))
+            .map_or_else(
+                || vec![Node::Element(element.clone())],
+                |branch| branch.children.clone(),
+            );
+        // A non-AlternateContent drawing is physically repeated in the outer
+        // fallback. Give that copy fresh ids, using the same story counter.
+        nodes
+            .into_iter()
+            .map(|node| match node {
+                Node::Element(element) => {
+                    let mut xml = serialize(&element);
+                    renumber_doc_pr(&mut xml, next);
+                    Node::Element(parse_xml(xml.as_bytes()).expect("serialized element"))
+                }
+                text => text,
+            })
+            .collect()
+    }
+    fn splice(element: &mut Element, nested: &HashMap<String, Element>, next: &mut u32) {
+        let mut children = Vec::new();
+        for node in std::mem::take(&mut element.children) {
+            if let Node::Element(mut child) = node {
+                if child.is("jubarteNested") {
+                    if let Some(drawing) = child.attr("token").and_then(|name| nested.get(name)) {
+                        if child.attr("fallback") == Some("true") {
+                            children.extend(fallback(drawing, next));
+                        } else {
+                            children.push(Node::Element(drawing.clone()));
+                        }
+                    }
+                } else {
+                    splice(&mut child, nested, next);
+                    children.push(Node::Element(child));
+                }
+            } else {
+                children.push(node);
+            }
+        }
+        element.children = children;
+    }
+    fn fallback_story(element: &mut Element, next: &mut u32) {
+        let mut children = Vec::new();
+        for node in std::mem::take(&mut element.children) {
+            if let Node::Element(mut child) = node {
+                if matches!(
+                    child.local(),
+                    "drawing" | "pict" | "object" | "AlternateContent"
+                ) {
+                    children.extend(fallback(&child, next));
+                } else {
+                    fallback_story(&mut child, next);
+                    children.push(Node::Element(child));
+                }
+            } else {
+                children.push(node);
+            }
+        }
+        element.children = children;
+    }
+    fn words(element: &Element, text: &mut String) {
+        if matches!(
+            element.local(),
+            "drawing" | "pict" | "object" | "AlternateContent"
+        ) {
+            return;
+        }
+        if matches!(element.local(), "t" | "delText") {
+            text.push_str(&element.text());
+        } else {
+            for child in element.elements() {
+                words(child, text);
+            }
+        }
+    }
+    fn refill(
+        element: &mut Element,
+        lengths: &mut impl Iterator<Item = usize>,
+        text: &mut &str,
+    ) -> Option<()> {
+        if matches!(
+            element.local(),
+            "drawing" | "pict" | "object" | "AlternateContent"
+        ) {
+            return Some(());
+        }
+        if matches!(element.local(), "t" | "delText") {
+            let end = lengths.next()?;
+            let value = text.get(..end)?;
+            element.children = vec![Node::Text(value.to_string())];
+            *text = &text[end..];
+        } else {
+            for child in &mut element.children {
+                if let Node::Element(child) = child {
+                    refill(child, lengths, text)?;
+                }
+            }
+        }
+        Some(())
+    }
+    fn walk(
+        element: &mut Element,
+        drawing: &Drawing,
+        stories: &[(String, String)],
+        at: &mut usize,
+        ordinals: &[usize],
+        in_fallback: bool,
+        next: &mut u32,
+    ) {
+        if element.is("txbxContent") {
+            let index = *at;
+            *at += 1;
+            let Some((markdown, xml)) = stories.get(ordinals[index]) else {
+                return;
+            };
+            let Ok(mut content) = parse_xml(format!("<story>{xml}</story>").as_bytes()) else {
+                return;
+            };
+            let mut text = String::new();
+            words(&content, &mut text);
+            if drawing
+                .boxes
+                .get(index)
+                .is_some_and(|frame| frame.opaque && frame.hash == box_hash(markdown))
+            {
+                return;
+            }
+            if let Some(frame) = drawing.boxes.get(index)
+                && frame.hash == box_hash(markdown)
+                && frame.text_hash == mermaid_hash(&text)
+            {
+                let mut exact = element.clone();
+                if refill(
+                    &mut exact,
+                    &mut frame.lengths.iter().copied(),
+                    &mut text.as_str(),
+                )
+                .is_some()
+                {
+                    let mut slots = Vec::new();
+                    exact.find_all("jubarteNested", &mut slots);
+                    let nested: HashMap<String, Element> = slots
+                        .into_iter()
+                        .filter_map(|slot| slot.attr("token"))
+                        .zip(owned_drawings(&content))
+                        .map(|(name, drawing)| (name.to_string(), drawing.clone()))
+                        .collect();
+                    splice(&mut exact, &nested, next);
+                    *element = exact;
+                    return;
+                }
+            }
+            if in_fallback {
+                fallback_story(&mut content, next);
+            }
+            element.children = content.children;
+            return;
+        }
+        let in_fallback = in_fallback || element.is("Fallback");
+        for child in &mut element.children {
+            if let Node::Element(child) = child {
+                walk(child, drawing, stories, at, ordinals, in_fallback, next);
+            }
+        }
+    }
+    let Ok(mut root) = parse_xml(xml.as_bytes()) else {
+        return xml.to_string();
+    };
+    let ordinals = box_ordinals(&root);
+    walk(
+        &mut root,
+        drawing,
+        stories,
+        &mut 0,
+        &ordinals,
+        false,
+        next_doc_pr,
+    );
+    serialize(&root)
+}
+
+/// Write `drawing` into `package` as content of `part`: the XML with fresh
+/// relationship ids, and every dependent part (its own relationships and
+/// parts too). `existing` and `used` keep names apart from parts already
+/// there; `next_doc_pr` gives each `wp:docPr` a fresh id. The `xml` to
+/// splice, `None` when a dependency failed to write.
+impl Drawing {
+    /// The element goes inside a `w:r` (`w:drawing`, `w:pict`, run-level
+    /// AlternateContent), not where a `w:r` may sit (paragraph-level
+    /// AlternateContent).
+    pub(crate) fn wraps_run(&self) -> bool {
+        self.wrap
+    }
+
+    /// `self` with the readable layer's bytes out of the payload: the
+    /// backing comment of a `data:` definition or an `svg` fence.
+    fn without_slot_bytes(&self) -> Drawing {
+        let mut backing = self.clone();
+        if let Some(slot) = backing.slot
+            && let Some(dep) = backing.deps.get_mut(slot)
+        {
+            dep.b64.clear();
+            dep.xml.clear();
+        }
+        backing
+    }
+
+    /// Fill the slot with `b64` bytes and, when `kind` differs, its
+    /// content type; `false` when the payload carries no slot.
+    pub(crate) fn fill_slot_data(&mut self, b64: &str, kind: &str) -> bool {
+        let Some(dep) = self.slot.and_then(|slot| self.deps.get_mut(slot)) else {
+            return false;
+        };
+        dep.b64 = b64.to_string();
+        dep.xml.clear();
+        if dep.kind != kind {
+            dep.kind = kind.to_string();
+        }
+        true
+    }
+
+    /// `text` is the ` ```mermaid ` fence this drawing printed: its hash
+    /// is `mhash`'s, so the drawing writes back byte for byte.
+    pub(crate) fn mermaid_unchanged(&self, text: &str) -> bool {
+        self.mhash.as_deref() == Some(mermaid_hash(text).as_str())
+    }
+
+    /// The fence's text edited: patch the chart part it names in place,
+    /// keeping everything the Mermaid cannot say. `false` when the
+    /// payload names no chart part the patch can reach.
+    pub(crate) fn rebuild_mermaid(&mut self, text: &str) -> bool {
+        let Some(dep) = self
+            .deps
+            .iter_mut()
+            .find(|dep| dep.kind.ends_with("chart+xml"))
+        else {
+            return false;
+        };
+        let xml = if dep.xml.is_empty() {
+            base64_decode(&dep.b64).and_then(|b| String::from_utf8(b).ok())
+        } else {
+            Some(dep.xml.clone())
+        };
+        let Some(patched) = xml.and_then(|xml| super::mermaid::patch(&xml, text)) else {
+            return false;
+        };
+        dep.xml = patched;
+        dep.b64.clear();
+        self.mhash = Some(mermaid_hash(text));
+        true
+    }
+}
+
+pub(crate) fn materialize(
+    drawing: &Drawing,
+    package: &mut PartFs,
+    part: &str,
+    existing: &HashSet<String>,
+    used: &mut HashSet<String>,
+    next_doc_pr: &mut u32,
+) -> Option<String> {
+    let mut xml = drawing.xml.clone();
+    for rel in &drawing.rels {
+        let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {
+            (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),
+            (_, Some(index), _) if index < drawing.deps.len() => {
+                let name = dep_part(drawing, index, package, existing, used, next_doc_pr)?;
+                (rel.kind.clone(), relative_rel_target(part, &name), false)
+            }
+            (_, _, Some(raw)) => (rel.kind.clone(), relative_rel_target(part, raw), false),
+            _ => return None,
+        };
+        let rid = relate(package, part, &kind, &target, external);
+        xml = xml.replace(&format!("\"{}\"", rel.sym), &format!("\"{rid}\""));
+    }
+    renumber_doc_pr(&mut xml, next_doc_pr);
+    Some(xml)
+}
+
+/// A relationship `part` → `target` of `kind`, reusing one already
+/// written when there is one: two drawings that share a media part
+/// share its relationship too.
+fn relate(package: &mut PartFs, part: &str, kind: &str, target: &str, external: bool) -> String {
+    if let Some(rels) = package.read_rels_for(part)
+        && let Some(rel) = rels
+            .items
+            .iter()
+            .find(|r| r.rel_type == kind && r.target == target)
+    {
+        return rel.id.clone();
+    }
+    if external {
+        package.add_document_relationship_external(part, kind, target)
+    } else {
+        package.add_document_relationship(part, kind, target)
+    }
+}
+
+/// Give every `docPr id` in `xml` a fresh number: the stored `0`s collide
+/// with each other and with pictures the writer numbers.
+fn renumber_doc_pr(xml: &mut String, next: &mut u32) {
+    let mut out = String::with_capacity(xml.len());
+    let mut rest = xml.as_str();
+    while let Some(at) = rest.find("docPr") {
+        out.push_str(&rest[..at + "docPr".len()]);
+        rest = &rest[at + "docPr".len()..];
+        let Some(id_at) = rest.find("id=\"") else {
+            continue;
+        };
+        let Some(gt) = rest.find('>') else { break };
+        if id_at > gt {
+            continue;
+        }
+        out.push_str(&rest[..id_at + 4]);
+        rest = &rest[id_at + 4..];
+        let digits = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
+        let _ = write!(out, "{next}");
+        *next += 1;
+        rest = &rest[digits..];
+    }
+    out.push_str(rest);
+    *xml = out;
+}
+
+/// Write dependent part `index` and its own dependency closure; its new
+/// part name.
+fn dep_part(
+    drawing: &Drawing,
+    index: usize,
+    package: &mut PartFs,
+    existing: &HashSet<String>,
+    used: &mut HashSet<String>,
+    next_doc_pr: &mut u32,
+) -> Option<String> {
+    let dep = drawing.deps.get(index)?;
+    let name = name_for(&dep.name, existing, used);
+    used.insert(name.clone());
+    // The part's own relationships name the parts the recursion is writing;
+    // their ids land in a rewrite of its `d{index}.{n}` symbols.
+    let mut xml = dep.xml.clone();
+    for (n, rel) in dep.rels.iter().enumerate() {
+        let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {
+            (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),
+            (_, Some(inner), _) if inner < drawing.deps.len() => {
+                let inner_name = dep_part(drawing, inner, package, existing, used, next_doc_pr)?;
+                (
+                    rel.kind.clone(),
+                    relative_rel_target(&name, &inner_name),
+                    false,
+                )
+            }
+            (_, _, Some(raw)) => (rel.kind.clone(), relative_rel_target(&name, raw), false),
+            _ => return None,
+        };
+        let rid = relate(package, &name, &kind, &target, external);
+        if !xml.is_empty() {
+            xml = xml.replace(&format!("\"d{index}.{}\"", n + 1), &format!("\"{rid}\""));
+        }
+    }
+    let bytes = if xml.is_empty() {
+        base64_decode(&dep.b64)?
+    } else {
+        renumber_doc_pr(&mut xml, next_doc_pr);
+        format!("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n{xml}").into_bytes()
+    };
+    // Two payloads may depend on the one part (two drawings share an
+    // image): a part already written byte for byte is the same one, not
+    // a collision to rename around.
+    if package
+        .part_bytes(&dep.name)
+        .is_some_and(|written| written == bytes.as_slice())
+    {
+        used.insert(dep.name.clone());
+        return Some(dep.name.clone());
+    }
+    package.set_part(&name, bytes);
+    package.add_content_type_override(&format!("/{name}"), &dep.kind);
+    Some(name)
+}
+
+/// `want` when nothing holds it, else `want` with `-j2`, `-j3`, … before
+/// its extension. `used` names the parts this write already took.
+fn name_for(want: &str, existing: &HashSet<String>, used: &HashSet<String>) -> String {
+    let free = |name: &str| !existing.contains(name) && !used.contains(name);
+    if free(want) {
+        return want.to_string();
+    }
+    let (stem, ext) = match want.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => (stem, format!(".{ext}")),
+        _ => (want, String::new()),
+    };
+    for n in 2..1000 {
+        let candidate = format!("{stem}-j{n}{ext}");
+        if free(&candidate) {
+            return candidate;
+        }
+    }
+    format!("{stem}-j{}{ext}", usize::MAX)
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod tests {
+    use super::*;
+
+    fn element(xml: &str) -> Element {
+        parse_xml(xml.as_bytes()).unwrap()
+    }
+
+    /// A text box story owns every nested drawing but a plain inline
+    /// picture, which stays in the box's payload: an anchored picture, a
+    /// chart, an object or a nested box is still a nested token.
+    #[test]
+    fn a_box_owns_its_nested_drawings_but_a_plain_inline_picture() {
+        let story = element(
+            r#"<w:txbxContent><w:p><w:r><w:drawing><wp:inline><a:blip/></wp:inline></w:drawing></w:r><w:r><w:drawing><wp:anchor><a:blip/></wp:anchor></w:drawing></w:r><w:r><w:drawing><wp:inline><c:chart/></wp:inline></w:drawing></w:r><w:r><w:object><v:shape/></w:object></w:r></w:p></w:txbxContent>"#,
+        );
+        let owned: Vec<String> = owned_drawings(&story).into_iter().map(serialize).collect();
+        assert_eq!(owned.len(), 3, "{owned:?}");
+        assert!(
+            owned.iter().all(|xml| !xml.contains("<wp:inline><a:blip")),
+            "{owned:?}"
+        );
+    }
+
+    #[test]
+    fn box_payloads_ignore_per_copy_ids_but_not_content() {
+        // Word numbers a Fallback copy's revisions on (w:ins 287 vs 289) and
+        // writes paragraph ids only in the Choice (tests/corpus file_70.docx).
+        let choice = element(
+            r#"<wps:txbx><w:txbxContent><w:p w14:paraId="1A2B" w14:textId="3C4D"><w:ins w:id="287" w:author="A"><w:r><w:t>x</w:t></w:r></w:ins><w:r><a:blip r:embed="rId5"/></w:r></w:p></w:txbxContent></wps:txbx>"#,
+        );
+        let fallback = element(
+            r#"<wps:txbx><w:txbxContent><w:p><w:ins w:id="289" w:author="A"><w:r><w:t>x</w:t></w:r></w:ins><w:r><a:blip r:embed="rId5"/></w:r></w:p></w:txbxContent></wps:txbx>"#,
+        );
+        assert_eq!(box_payload(&choice), box_payload(&fallback));
+        let other_picture = element(&serialize(&fallback).replace("rId5", "rId6"));
+        assert_ne!(box_payload(&choice), box_payload(&other_picture));
+        let other_text = element(&serialize(&fallback).replace(">x<", ">y<"));
+        assert_ne!(box_payload(&choice), box_payload(&other_text));
+        // A VML picture's `r:id` picks its image: it is content, not identity.
+        let vml = |id: &str| {
+            element(&format!(
+                r#"<wps:txbx xmlns:r="{}"><w:txbxContent><w:p><w:r><w:pict><v:shape id="s{id}"><v:imagedata r:id="{id}"/></v:shape></w:pict></w:r></w:p></w:txbxContent></wps:txbx>"#,
+                REL_NS[0]
+            ))
+        };
+        assert_ne!(box_payload(&vml("rId5")), box_payload(&vml("rId6")));
+    }
+
+    #[test]
+    fn xml_round_trips_verbatim() {
+        let xml = r#"<wp:anchor xmlns:wp="wp" wp14:anchorId="AB"><wp:docPr id="2" name="P"/><x:y a="1&quot;2"><t>x &amp; y</t></x:y></wp:anchor>"#;
+        let e = element(xml);
+        assert_eq!(serialize(&e), xml);
+    }
+
+    #[test]
+    fn declares_prefixes_the_tree_uses() {
+        let mut e = element(
+            r#"<w:drawing><wp:anchor wp14:anchorId="X"><wp:docPr/></wp:anchor></w:drawing>"#,
+        );
+        let scope: Scope = vec![
+            ("w".into(), "W".into()),
+            ("wp".into(), "WP".into()),
+            ("wp14".into(), "WP14".into()),
+        ];
+        declare(&mut e, &scope);
+        let xml = serialize(&e);
+        // Every prefix the tree uses is declared — the root element's own
+        // `w` too, so the payload stands alone — and nothing else is. The
+        // assertion spells the `=`: `xmlns:w` is a prefix of `xmlns:wp`.
+        assert!(xml.contains("xmlns:w=\"W\""), "{xml}");
+        assert!(xml.contains("xmlns:wp=\"WP\""), "{xml}");
+        assert!(xml.contains("xmlns:wp14=\"WP14\""), "{xml}");
+        assert_eq!(xml.matches("xmlns").count(), 3, "{xml}");
+    }
+
+    #[test]
+    fn rel_names_match_only_the_relationship_namespace() {
+        let scope: Scope = vec![
+            ("r".into(), REL_NS[0].into()),
+            ("v".into(), "urn:vml".into()),
+        ];
+        assert!(is_rel_name("r:embed", &scope));
+        // The Strict relationship namespace names one too.
+        let strict: Scope = vec![("rel".into(), REL_NS[1].into())];
+        assert!(is_rel_name("rel:embed", &strict));
+        assert!(!is_rel_name("v:id", &scope));
+        assert!(!is_rel_name("embed", &scope));
+    }
+
+    #[test]
+    fn token_parses_destination_and_length() {
+        let text = "![Text Box 2](drawing:eyJ4) next";
+        let (dest, len) = at(text).unwrap();
+        assert_eq!(dest, "drawing:eyJ4");
+        assert_eq!(&text[..len], "![Text Box 2](drawing:eyJ4)");
+        assert!(at("![a](media/x.png)").is_none());
+        assert!(at("x![a](drawing:Zg)").is_none());
+        assert!(at("![a](drawing:has space)").is_none());
+        let text = "![Text Box 2][d12] next";
+        let (dest, len) = at(text).unwrap();
+        assert_eq!(dest, "d12");
+        assert_eq!(&text[..len], "![Text Box 2][d12]");
+        assert!(at("![a][d]").is_none());
+        assert!(at("![a][dx]").is_none());
+        assert!(at("![a][other]").is_none());
+        assert!(at("![a][d1").is_none());
+    }
+
+    #[test]
+    fn unchanged_blank_box_keeps_controls_and_remains_editable() {
+        let mut root = element(
+            r#"<w:drawing><w:txbxContent><w:sdt><w:sdtPr><w:alias w:val="Title"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t xml:space="preserve">     </w:t></w:r></w:p></w:sdtContent></w:sdt></w:txbxContent></w:drawing>"#,
+        );
+        let original = serialize(&root);
+        let boxes = strip_box_words(&mut root, &[String::new()]);
+        let drawing = Drawing {
+            xml: serialize(&root),
+            boxes,
+            ..Drawing::default()
+        };
+        let mut next = 1;
+        let unchanged = fill_boxes(
+            &drawing.xml,
+            &drawing,
+            &[(String::new(), "<w:p/>".into())],
+            &mut next,
+        );
+        assert_eq!(unchanged, original);
+
+        let edited = fill_boxes(
+            &drawing.xml,
+            &drawing,
+            &[(
+                "Added".into(),
+                "<w:p><w:r><w:t>Added</w:t></w:r></w:p>".into(),
+            )],
+            &mut next,
+        );
+        assert!(edited.contains("<w:t>Added</w:t>"), "{edited}");
+        assert!(!edited.contains("<w:sdt>"), "{edited}");
+    }
+
+    /// A one-pixel-high, two-pixel-wide PNG, base64.
+    fn png_b64() -> String {
+        let mut bytes = Vec::new();
+        image::RgbImage::new(2, 1)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        base64_encode(&bytes)
+    }
+
+    /// The drawing the picture writer makes for that PNG, captured.
+    fn written_picture() -> Drawing {
+        let b64 = png_b64();
+        let picture =
+            crate::markdown::write::read_picture(base64_decode(&b64).unwrap(), "").unwrap();
+        let mut xml = String::new();
+        crate::markdown::drawing_xml(&picture, "r1", 0, &mut xml);
+        let xml = xml.replacen(
+            "<w:drawing>",
+            "<w:drawing xmlns:w=\"W\" xmlns:wp=\"WP\" xmlns:r=\"R\">",
+            1,
+        );
+        Drawing {
+            xml,
+            wrap: true,
+            rels: vec![PayRel {
+                sym: "r1".into(),
+                part: Some(0),
+                ..PayRel::default()
+            }],
+            deps: vec![Dep {
+                name: "word/media/image1.png".into(),
+                kind: "image/png".into(),
+                b64,
+                ..Dep::default()
+            }],
+            slot: Some(0),
+            ..Drawing::default()
+        }
+    }
+
+    #[test]
+    fn only_the_writers_own_picture_shape_is_regenerable() {
+        let base = written_picture();
+        assert!(regenerable(&base), "{}", base.xml);
+        let (cx, cy) = (2 * 9525, 9525);
+        let edits: &[(&str, String)] = &[
+            ("<w:drawing ", "<w:drawing".into()),
+            ("<w:drawing ", "<w:pict ".into()),
+            ("<wp:inline ", "<wp:anchor ".into()),
+            ("distT=\"0\"", "distT=\"5\"".into()),
+            (
+                "<wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>",
+                String::new(),
+            ),
+            ("<wp:extent ", "<wp:extent2 ".into()),
+            ("<wp:extent ", "<wp:extent flip=\"1\" ".into()),
+            (
+                &format!("<wp:extent cx=\"{cx}\" cy=\"{cy}\"/>"),
+                format!("<wp:extent cx=\"{cx}\"/>"),
+            ),
+            ("l=\"0\"", "l=\"7\"".into()),
+            ("<wp:effectExtent ", "<wp:effect ".into()),
+            ("<wp:docPr id=\"0\"", "<wp:docPr id=\"3\"".into()),
+            ("<wp:docPr ", "<wp:doc ".into()),
+            (
+                "descr=\"\"/><wp:cNvGraphicFramePr>",
+                "descr=\"\"><a:hlinkClick/></wp:docPr><wp:cNvGraphicFramePr>".into(),
+            ),
+            ("<wp:cNvGraphicFramePr>", "<wp:cNvFramePr>".into()),
+            ("noChangeAspect=\"1\"", "noChangeAspect=\"0\"".into()),
+            ("<a:graphicFrameLocks ", "<a:locks ".into()),
+            (
+                "</wp:cNvGraphicFramePr>",
+                "<a:extLst/></wp:cNvGraphicFramePr>".into(),
+            ),
+            (
+                "drawingml/2006/picture\">",
+                "drawingml/2006/chart\">".into(),
+            ),
+            ("<a:graphicData ", "<a:graphicData x=\"1\" ".into()),
+            ("<a:graphicData ", "<a:graphicData2 ".into()),
+            ("<pic:pic ", "<pic:pix ".into()),
+            ("<pic:nvPicPr>", "<pic:nvPr>".into()),
+            ("<pic:cNvPr id=\"0\"", "<pic:cNvPr id=\"9\"".into()),
+            ("<pic:cNvPr ", "<pic:cNv ".into()),
+            ("<pic:cNvPicPr/>", "<pic:cNvPicPr/><pic:nvPr/>".into()),
+            (
+                "<pic:cNvPicPr/>",
+                "<pic:cNvPicPr preferRelativeResize=\"0\"/>".into(),
+            ),
+            ("<pic:cNvPicPr/>", String::new()),
+            (
+                "<a:blip r:embed=\"r1\"/>",
+                "<a:blip r:embed=\"r1\"><a:lum/></a:blip>".into(),
+            ),
+            (
+                "<a:blip r:embed=\"r1\"/>",
+                "<a:blip r:embed=\"r1\" cstate=\"print\"/>".into(),
+            ),
+            ("<a:blip r:embed=\"r1\"/>", "<a:blip/>".into()),
+            ("<a:blip ", "<a:blob ".into()),
+            ("<a:stretch>", "<a:stretch x=\"1\">".into()),
+            ("<a:fillRect/>", "<a:srcRect/>".into()),
+            ("<a:fillRect/>", String::new()),
+            ("<pic:spPr>", "<pic:spPr bwMode=\"auto\">".into()),
+            ("<a:xfrm>", "<a:xfrm2>".into()),
+            ("<a:off x=\"0\"", "<a:off x=\"4\"".into()),
+            ("<a:off ", "<a:offset ".into()),
+            ("<a:ext ", "<a:ext flip=\"1\" ".into()),
+            ("prst=\"rect\"", "prst=\"ellipse\"".into()),
+            ("<a:prstGeom ", "<a:prstGeom x=\"1\" ".into()),
+            ("<a:avLst/>", "<a:avLst><a:gd/></a:avLst>".into()),
+            ("<a:avLst/>", "<a:avLst x=\"1\"/>".into()),
+            ("<a:avLst/>", "<a:avLst/><a:x/>".into()),
+            ("<a:avLst/>", String::new()),
+            (
+                &format!("<wp:extent cx=\"{cx}\""),
+                format!("<wp:extent cx=\"{}\"", cx + 1),
+            ),
+            (
+                &format!("<a:ext cx=\"{cx}\" cy=\"{cy}\""),
+                format!("<a:ext cx=\"{cx}\" cy=\"{}\"", cy + 1),
+            ),
+        ];
+        for (from, to) in edits {
+            assert!(base.xml.contains(from), "{from} not in {}", base.xml);
+            let drawing = Drawing {
+                xml: base.xml.replacen(from, to, 1),
+                ..base.clone()
+            };
+            assert!(!regenerable(&drawing), "{from} -> {to} stayed regenerable");
+        }
+        let variants = [
+            Drawing {
+                slot: None,
+                ..base.clone()
+            },
+            Drawing {
+                wrap: false,
+                ..base.clone()
+            },
+            Drawing {
+                rels: Vec::new(),
+                ..base.clone()
+            },
+            Drawing {
+                deps: vec![Dep {
+                    b64: "!".into(),
+                    ..base.deps[0].clone()
+                }],
+                ..base.clone()
+            },
+            Drawing {
+                deps: vec![Dep {
+                    b64: base64_encode(b"not a picture"),
+                    ..base.deps[0].clone()
+                }],
+                ..base.clone()
+            },
+        ];
+        for drawing in variants {
+            assert!(!regenerable(&drawing), "{drawing:?}");
+        }
+    }
+
+    #[test]
+    fn doc_pr_ids_normalize_and_renumber() {
+        let mut e = element(r#"<w:drawing><wp:inline><wp:docPr id="7"/></wp:inline></w:drawing>"#);
+        normalize_ids(&mut e);
+        assert_eq!(
+            serialize(&e),
+            r#"<w:drawing><wp:inline><wp:docPr id="0"/></wp:inline></w:drawing>"#
+        );
+        let mut xml = serialize(&e);
+        let mut next = 41;
+        renumber_doc_pr(&mut xml, &mut next);
+        assert_eq!(
+            xml,
+            r#"<w:drawing><wp:inline><wp:docPr id="41"/></wp:inline></w:drawing>"#
+        );
+        assert_eq!(next, 42);
+    }
+}

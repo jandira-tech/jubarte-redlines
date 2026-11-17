@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[package]
+name = "jubarte-opc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The OPC package floor of the jubarte redline engine: admission, packages, styles and shared document tables"
+readme = "README.md"
+keywords = ["docx", "ooxml", "opc", "zip"]
+categories = ["text-processing", "parser-implementations"]
+include = ["/src/**", "/README.md", "/LICENSE"]
+[lib]
+name = "jubarte_opc"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true
+
+[features]
+# P0-LAB-01: compiled-out stage counters / coarse timers; forwarded down.
+perf-profile = ["jubarte-dom/perf-profile"]
+# Cross-crate test helpers shared with the layers above (A4): the
+# `#[cfg(test)]` helpers another crate's tests need, without a stability
+# promise and out of the documented API.
+test-support = ["jubarte-dom/test-support"]
+# The settings types' JSON Schema derives, which the edit layer's plan
+# schema needs; jubarte-redlines does not enable it, keeping the compare
+# tree free of schemars (plan A2).
+schema = ["dep:schemars", "jubarte-dom/schema"]
+
+[dependencies]
+jubarte-dom = { workspace = true }
+oxml-opc = { workspace = true }
+zip = { workspace = true }
+quick-xml = { workspace = true }
+quick-xml-041 = { workspace = true }
+sha1 = { workspace = true }
+sha2 = { workspace = true }
+schemars = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -40,6 +40,49 @@
 
 use wasm_bindgen::prelude::*;
 
+/// The engine, mirrored under the historical `jubarte::` paths the
+/// binding already uses (plan A6/T5.1). Each line sits under the feature
+/// that provides it, so a slim build links only the layers it exports.
+mod jubarte {
+    #[cfg(feature = "compare")]
+    #[allow(unused_imports)]
+    pub use jubarte_dom::{namespaces, util, xmllinq};
+    #[cfg(feature = "compare")]
+    #[allow(unused_imports)]
+    pub use jubarte_opc::{admission, opc, strict_translation};
+    #[cfg(feature = "compare")]
+    #[allow(unused_imports)]
+    pub use jubarte_redlines::{comparer, comparison_log, document_comparer, revision_processor, wml_document, WmlDocument};
+    #[cfg(feature = "doc")]
+    #[allow(unused_imports)]
+    pub use jubarte_doc::{append, audit, changes, comments, debug, inspect, scrub, validate};
+    #[cfg(feature = "doc")]
+    #[cfg(all(feature = "doc", feature = "pdf"))]
+    #[allow(unused_imports)]
+    pub use jubarte_doc::fields;
+    #[cfg(all(feature = "edit", feature = "markdown"))]
+    #[allow(unused_imports)]
+    pub use jubarte_edit::markdown;
+    #[cfg(all(not(feature = "edit"), feature = "markdown"))]
+    #[allow(unused_imports)]
+    pub use jubarte_markdown::markdown;
+    #[cfg(feature = "markdown")]
+    #[allow(unused_imports)]
+    pub use jubarte_markdown::legacy_doc;
+    #[cfg(feature = "edit")]
+    #[allow(unused_imports)]
+    pub use jubarte_edit::{capabilities, edit, expect, result, text_diff};
+    #[cfg(all(feature = "edit", not(target_arch = "wasm32")))]
+    #[allow(unused_imports)]
+    pub use jubarte_edit::publication;
+    #[cfg(feature = "cli")]
+    #[allow(unused_imports)]
+    pub use jubarte_cli::cli;
+    #[cfg(feature = "pdf")]
+    #[allow(unused_imports)]
+    pub use jubarte_render::convert;
+}
+
 /// Current wasm linear-memory size in 64 KiB pages.
 ///
 /// Diagnostic builds only: the release package deliberately omits this export.
@@ -60,12 +103,14 @@ pub fn init_panic_hook() {
 /// after the prefix (`jubarte-wasm: LEGACY_DOC: …`), whatever wrapped it.
 fn js_err(e: impl std::fmt::Display) -> JsValue {
     let message = e.to_string();
+    #[cfg(feature = "compare")]
     let message = jubarte::admission::code_first(&message).unwrap_or(message);
     JsValue::from_str(&format!("jubarte-wasm: {message}"))
 }
 
 /// `WmlComparerSettings::default()` with `input_limits_json` (a JSON object
 /// such as `{"max_part_bytes": 67108864}`) laid over its compare budget.
+#[cfg(feature = "compare")]
 fn settings_with_limits(
     input_limits_json: Option<&str>,
 ) -> Result<jubarte::comparer::WmlComparerSettings, String> {
@@ -78,6 +123,7 @@ fn settings_with_limits(
     Ok(settings.with_input_limits(overrides.apply(base)))
 }
 
+#[cfg(feature = "compare")]
 /// Compare two DOCX packages (bytes) → redline DOCX bytes (`w:ins`/`w:del`).
 ///
 /// Mirrors `jubarte::document_comparer::compare_documents`.
@@ -102,6 +148,7 @@ pub fn compare_documents(
         .map_err(js_err)
 }
 
+#[cfg(feature = "compare")]
 /// Accept every tracked revision (package-wide) → clean DOCX bytes.
 ///
 /// Mirrors `jubarte::document_comparer::accept_revisions`.
@@ -110,6 +157,7 @@ pub fn accept_revisions(docx: &[u8]) -> Result<Vec<u8>, JsValue> {
     jubarte::document_comparer::accept_revisions(docx).map_err(js_err)
 }
 
+#[cfg(feature = "compare")]
 /// Reject every tracked revision (package-wide) → base DOCX bytes.
 ///
 /// Mirrors `jubarte::document_comparer::reject_revisions`.
@@ -118,6 +166,7 @@ pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, JsValue> {
     jubarte::document_comparer::reject_revisions(docx).map_err(js_err)
 }
 
+#[cfg(feature = "doc")]
 /// List the tracked changes as a JSON array string, one object per
 /// logical change: a change Word wrote as several marks is one object
 /// with a composite id (`r1+2`) and its `members`, and an author's
@@ -140,6 +189,7 @@ pub fn list_changes(docx: &[u8], authors: Option<Vec<String>>) -> Result<String,
     serde_json::to_string(&changes).map_err(js_err)
 }
 
+#[cfg(feature = "doc")]
 /// List every comment as a JSON array string (the objects `jubarte comments
 /// --json` prints: `id`, `author`, `initials`, `date`, `text`, `parent`,
 /// `done`, `paragraph`, `last_paragraph` when the range ends in a later
@@ -159,6 +209,7 @@ pub fn list_comments(
     serde_json::to_string(&comments).map_err(js_err)
 }
 
+#[cfg(feature = "doc")]
 /// The listing `jubarte changes` prints: a line per change with its short
 /// id (`r0`), kind, target, author, paragraph and text (then `(N elements)`
 /// for a change Word wrote as several marks), then `N change(s)`.
@@ -172,6 +223,7 @@ pub fn changes_text(docx: &[u8], authors: Option<Vec<String>>) -> Result<String,
     Ok(jubarte::changes::changes_text(&changes))
 }
 
+#[cfg(feature = "doc")]
 /// The listing `jubarte comments` prints: a line per comment with its short
 /// id (`c5`), paragraph, author, text and anchor, then `N comment(s)`.
 /// `author` and `latest` filter as in [`listComments`](list_comments).
@@ -189,6 +241,7 @@ pub fn comments_text(
     Ok(jubarte::comments::comments_text(&comments))
 }
 
+#[cfg(feature = "doc")]
 fn change_filter_of(filter_json: &str) -> Result<String, String> {
     let filter: jubarte::changes::ChangeFilter =
         serde_json::from_str(filter_json).map_err(|e| format!("invalid change filter: {e}"))?;
@@ -196,6 +249,7 @@ fn change_filter_of(filter_json: &str) -> Result<String, String> {
     serde_json::to_string(&filter).map_err(|e| e.to_string())
 }
 
+#[cfg(feature = "doc")]
 /// `filterJson` (as [`acceptChanges`](accept_changes) takes it) with each id
 /// in its settled spelling (`r1+2` → `r1`, `r2`). An id that is no change
 /// id, the expired `body:rev:1` among them, throws `jubarte-wasm: c5:
@@ -208,10 +262,12 @@ pub fn change_filter_json(filter_json: &str) -> Result<String, JsValue> {
     change_filter_of(filter_json).map_err(js_err)
 }
 
+#[cfg(feature = "doc")]
 fn change_filter(filter_json: &str) -> Result<jubarte::changes::ChangeFilter, JsValue> {
     serde_json::from_str(filter_json).map_err(|e| js_err(format!("invalid change filter: {e}")))
 }
 
+#[cfg(feature = "doc")]
 /// Accept the changes `filterJson` selects and keep the rest tracked, as
 /// Word's Accept This Change does. The filter is `{"ids": [...],
 /// "authors": [...], "kinds": [...]}`: a change is selected when it matches
@@ -223,6 +279,7 @@ pub fn accept_changes(docx: &[u8], filter_json: &str) -> Result<Vec<u8>, JsValue
     jubarte::changes::accept_changes(docx, &change_filter(filter_json)?).map_err(js_err)
 }
 
+#[cfg(feature = "doc")]
 /// Reject the changes `filterJson` selects and keep the rest tracked
 /// (filter as in `acceptChanges`).
 ///
@@ -232,6 +289,7 @@ pub fn reject_changes(docx: &[u8], filter_json: &str) -> Result<Vec<u8>, JsValue
     jubarte::changes::reject_changes(docx, &change_filter(filter_json)?).map_err(js_err)
 }
 
+#[cfg(feature = "compare")]
 /// List the tracked revisions in a DOCX as a JSON array string, grouped as
 /// Docxodus's `GetRevisions` groups them; each object has
 /// (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
@@ -301,6 +359,7 @@ pub fn pdf_page_count(pdf: &[u8]) -> usize {
     jubarte::convert::pdf_page_count(pdf)
 }
 
+#[cfg(feature = "doc")]
 /// SHA-256 (lowercase hex) of the bytes: the `source_sha256` guard an edit
 /// plan carries.
 ///
@@ -310,6 +369,7 @@ pub fn source_sha256(docx: &[u8]) -> String {
     jubarte::inspect::source_sha256(docx)
 }
 
+#[cfg(feature = "doc")]
 /// The inspection snapshot as JSON: `schema_version`, `source_sha256`,
 /// `summary`, `paragraphs` (ids, text, style, formatting spans,
 /// limitations) and top-level `tables` with recursive `nested` entries.
@@ -323,6 +383,7 @@ pub fn inspect_document(docx: &[u8]) -> Result<String, JsValue> {
     jubarte::inspect::inspect_json(docx).map_err(js_err)
 }
 
+#[cfg(feature = "markdown")]
 /// Body paragraphs as Markdown, each preceded by its `[pN]` id: the
 /// coordinates an edit plan uses.
 ///
@@ -332,6 +393,7 @@ pub fn document_markdown(docx: &[u8]) -> Result<String, JsValue> {
     jubarte::inspect::markdown(docx).map_err(js_err)
 }
 
+#[cfg(feature = "markdown")]
 /// Markdown without paragraph ids, with tracked changes kept or resolved.
 #[wasm_bindgen(js_name = documentMarkdownWithChanges)]
 pub fn document_markdown_with_changes(docx: &[u8], track_changes: &str) -> Result<String, JsValue> {
@@ -365,6 +427,7 @@ struct ReadViewOptions {
     source: Option<String>,
 }
 
+#[cfg(feature = "markdown")]
 fn read_view_json(docx: &[u8], options_json: Option<&str>) -> Result<String, String> {
     let options: ReadViewOptions = match options_json {
         Some(json) => serde_json::from_str(json).map_err(|e| format!("readView options: {e}"))?,
@@ -398,6 +461,7 @@ fn read_view_json(docx: &[u8], options_json: Option<&str>) -> Result<String, Str
     Ok(serde_json::json!({ "markdown": view.markdown, "warnings": view.warnings }).to_string())
 }
 
+#[cfg(feature = "markdown")]
 /// The agent view (`read`) as JSON `{markdown, warnings}`: a YAML header,
 /// then Markdown with `<!-- pN -->` id lines and every change and comment
 /// with its id. Options (JSON, all optional): `trackChanges` (all, accept,
@@ -420,6 +484,7 @@ struct TablesTextOptions {
     track_changes: Option<String>,
 }
 
+#[cfg(feature = "markdown")]
 fn tables_text_of(docx: &[u8], options_json: Option<&str>) -> Result<String, String> {
     let options: TablesTextOptions = match options_json {
         Some(json) => serde_json::from_str(json).map_err(|e| format!("tablesText options: {e}"))?,
@@ -436,6 +501,7 @@ fn tables_text_of(docx: &[u8], options_json: Option<&str>) -> Result<String, Str
 
 /// `trackChanges` as the view reads it: `all` (the default), `accept` or
 /// `reject`, with their `accepted` and `rejected` spellings.
+#[cfg(feature = "markdown")]
 fn track_changes_of(choice: Option<&str>) -> Result<jubarte::markdown::TrackChanges, String> {
     match choice {
         None => Ok(jubarte::markdown::TrackChanges::All),
@@ -444,6 +510,7 @@ fn track_changes_of(choice: Option<&str>) -> Result<jubarte::markdown::TrackChan
     }
 }
 
+#[cfg(feature = "markdown")]
 /// The grids `jubarte read --tables` prints: a `table N: RxC …` line per
 /// top-level body table, then a line per row of `ids=text` cells; nested
 /// tables follow their cell row, indented two spaces per level and labelled
@@ -468,6 +535,7 @@ struct TablesViewOptions {
     source: Option<String>,
 }
 
+#[cfg(feature = "markdown")]
 fn tables_view_of(docx: &[u8], options_json: Option<&str>) -> Result<String, String> {
     let options: TablesViewOptions = match options_json {
         Some(json) => serde_json::from_str(json).map_err(|e| format!("tablesView options: {e}"))?,
@@ -502,6 +570,7 @@ fn tables_view_of(docx: &[u8], options_json: Option<&str>) -> Result<String, Str
     Ok(serde_json::json!({ "markdown": view.markdown, "warnings": view.warnings }).to_string())
 }
 
+#[cfg(feature = "markdown")]
 /// What `jubarte read --tables` prints, as JSON `{markdown, warnings}`:
 /// the grids (`tablesText`), or with `paragraphs` (`"t0"`, `"p11"`,
 /// `"p3-p20"`) the grids of the tables the view's selection reaches (a
@@ -518,6 +587,7 @@ pub fn tables_view(docx: &[u8], options_json: Option<String>) -> Result<String, 
     tables_view_of(docx, options_json.as_deref()).map_err(js_err)
 }
 
+#[cfg(feature = "cli")]
 /// Whether a command line (without the program name) asks for JSON: a
 /// real `--json` flag before any `--`, read as the binary reads it (the
 /// `--json` in `--text --json` is a value). An error then prints its
@@ -529,6 +599,7 @@ pub fn wants_json(arguments: Vec<String>) -> bool {
     jubarte::cli::wants_json(&arguments)
 }
 
+#[cfg(feature = "cli")]
 /// The line an error prints on stdout under `--json`:
 /// `{"error":{"code":…,"message":…}}`, its code the message's leading
 /// `CODE:`, else `USAGE` for an exit 2 and `ERROR` for any other.
@@ -556,6 +627,7 @@ struct ReadJsonOptions {
     validity_file: Option<String>,
 }
 
+#[cfg(feature = "markdown")]
 fn read_json_of(docx: &[u8], options_json: Option<&str>) -> Result<String, String> {
     let options: ReadJsonOptions = match options_json {
         Some(json) => serde_json::from_str(json).map_err(|e| format!("readJson options: {e}"))?,
@@ -584,6 +656,7 @@ fn read_json_of(docx: &[u8], options_json: Option<&str>) -> Result<String, Strin
     serde_json::to_string(&snapshot).map_err(|e| e.to_string())
 }
 
+#[cfg(feature = "markdown")]
 /// The snapshot `jubarte read --json` prints, with its `changes` and
 /// `comments`. Options (JSON, all optional) select as in
 /// [`readView`](read_view): `paragraphs`, `head`, `tail`, `changed`, `by`;
@@ -625,6 +698,7 @@ struct ForEditOptions {
     validity_file: Option<String>,
 }
 
+#[cfg(feature = "edit")]
 fn for_edit_of(docx: &[u8], options_json: Option<&str>) -> Result<String, String> {
     let options: ForEditOptions = match options_json {
         Some(json) => serde_json::from_str(json).map_err(|e| format!("forEdit options: {e}"))?,
@@ -673,6 +747,7 @@ fn for_edit_of(docx: &[u8], options_json: Option<&str>) -> Result<String, String
         .map_err(|e| e.to_string())
 }
 
+#[cfg(feature = "edit")]
 /// The working-document JSON `jubarte read --for-edit` prints
 /// (`jubarte-read-for-edit-v1`): source hash, paired target ids, exact
 /// working text with `before_sha256`, and per-operation readiness. Options
@@ -701,6 +776,7 @@ struct FlagPlanOptions {
     existing_revisions: Option<String>,
 }
 
+#[cfg(feature = "edit")]
 fn flag_plan_json(
     verb: &str,
     operations_json: &str,
@@ -722,6 +798,7 @@ fn flag_plan_json(
     Ok(serde_json::json!({ "plan": plan, "notes": notes }).to_string())
 }
 
+#[cfg(feature = "edit")]
 /// The plan the `edit`/`add` operation flags describe, as JSON `{plan,
 /// notes}`: `plan` is the plan's JSON for [`applyEditPlan`](apply_edit_plan),
 /// `notes` the `op-N: …` lines to print. `verb` is `edit` or `add`;
@@ -741,6 +818,7 @@ pub fn flag_plan(
     flag_plan_json(verb, operations_json, docx, options_json.as_deref()).map_err(js_err)
 }
 
+#[cfg(feature = "edit")]
 /// Why `--editing-mode` cannot apply `plan` to `docx`: the tracked changes
 /// it keeps and does not itself accept or reject, or a reply to a comment
 /// on a paragraph it deletes; `undefined` when neither.
@@ -754,6 +832,7 @@ pub fn editing_mode_conflict(plan: &str, docx: &[u8]) -> Option<String> {
 /// `record_plan` as JSON: `{ok: true, recorded: {plan, json, notes,
 /// summary}}`, or `{ok: false, usage, message}` (`usage` false when `held`
 /// is not a plan).
+#[cfg(feature = "edit")]
 fn record_plan_json(
     verb: &str,
     operations_json: &str,
@@ -774,6 +853,7 @@ fn record_plan_json(
     }
 }
 
+#[cfg(feature = "edit")]
 /// `edit`/`add --plan PLAN.json` with operation flags: the operations
 /// recorded into `held` (PLAN.json's text, absent before the first
 /// recording), as JSON `{ok: true, recorded: {plan, json, notes,
@@ -795,6 +875,7 @@ pub fn record_plan(
     record_plan_json(verb, operations_json, docx, options_json, held.as_deref())
 }
 
+#[cfg(feature = "edit")]
 /// The blocks of `docx` (a redline) carrying `author`'s marks, as the agent
 /// view `edit` and `add` print (every changed block when none does);
 /// `accepted` reads its accepted text, `source` is the name printed as
@@ -811,6 +892,7 @@ pub fn changed_view(
     jubarte::markdown::changed_view(docx, author, accepted, source.as_deref()).map_err(js_err)
 }
 
+#[cfg(feature = "edit")]
 /// The lines `edit -p rN --accept/--reject` prints for a pure resolution:
 /// one per resolved change from `source` (the bytes before resolution) and
 /// `resolvedJson` (`{"accepted": [...], "rejected": [...]}` short ids).
@@ -823,6 +905,7 @@ pub fn resolution_text(docx: &[u8], resolved_json: &str) -> Result<String, JsVal
     jubarte::edit::resolution::resolution_text(docx, &resolved).map_err(js_err)
 }
 
+#[cfg(feature = "edit")]
 /// What [`applyEditPlan`](apply_edit_plan) and
 /// [`previewEditPlan`](preview_edit_plan) return. A refused plan is data, not
 /// an exception, so every operation's outcome stays readable.
@@ -836,6 +919,7 @@ pub struct EditOutput {
 }
 
 #[wasm_bindgen]
+#[cfg(feature = "edit")]
 impl EditOutput {
     /// `true` when the plan was applied (or resolved, for a preview).
     #[wasm_bindgen(getter)]
@@ -878,6 +962,7 @@ fn to_json(value: &impl serde::Serialize) -> Result<String, JsValue> {
 }
 
 /// `v1`, `flags`, `v2` or `typed`: the grammar a refusal quotes.
+#[cfg(feature = "edit")]
 fn quoting(syntax: Option<&str>) -> Result<jubarte::edit::PrepareOptions, String> {
     Ok(jubarte::edit::PrepareOptions {
         syntax: match syntax.unwrap_or("v1") {
@@ -891,6 +976,7 @@ fn quoting(syntax: Option<&str>) -> Result<jubarte::edit::PrepareOptions, String
     })
 }
 
+#[cfg(feature = "edit")]
 /// Apply an edit plan (JSON) to a DOCX: the clean copy, the Word redline,
 /// the patch of the plan's changes and the per-operation report. `name`
 /// (default `document.docx`) is the file the patch names; under
@@ -940,6 +1026,7 @@ pub fn apply_edit_plan(
     )
 }
 
+#[cfg(feature = "edit")]
 /// Resolve every operation of an edit plan without producing documents.
 ///
 /// Mirrors `jubarte::edit::preview_plan`.
@@ -969,6 +1056,7 @@ pub fn preview_edit_plan(
     })
 }
 
+#[cfg(feature = "markdown")]
 fn patch_options(
     old_name: &str,
     new_name: &str,
@@ -987,6 +1075,7 @@ fn patch_options(
 
 /// A side of [`diffDocuments`](diff_documents): a Word package (it starts
 /// with a ZIP signature), else UTF-8 Markdown.
+#[cfg(feature = "markdown")]
 fn side(bytes: &[u8]) -> Result<jubarte::markdown::Source<'_>, JsValue> {
     if bytes.starts_with(b"PK\x03\x04") {
         return Ok(jubarte::markdown::Source::Docx(bytes));
@@ -999,11 +1088,13 @@ fn side(bytes: &[u8]) -> Result<jubarte::markdown::Source<'_>, JsValue> {
 /// Explicit input kinds supplied by the shared CLI or API caller.
 #[derive(Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg(feature = "markdown")]
 enum SideFormat {
     Docx,
     Md,
 }
 
+#[cfg(feature = "markdown")]
 fn typed_side(
     bytes: &[u8],
     format: Option<SideFormat>,
@@ -1029,6 +1120,7 @@ fn typed_side(
 
 #[derive(Default, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg(feature = "edit")]
 enum ViewFormat {
     #[default]
     Github,
@@ -1038,6 +1130,7 @@ enum ViewFormat {
     SideBySide,
 }
 
+#[cfg(feature = "edit")]
 impl From<ViewFormat> for jubarte::text_diff::TextFormat {
     fn from(format: ViewFormat) -> Self {
         match format {
@@ -1062,6 +1155,7 @@ fn deserialize_context<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Res
     })
 }
 
+#[cfg(feature = "edit")]
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ViewOptions {
@@ -1079,6 +1173,7 @@ struct ViewOptions {
     new_format: Option<SideFormat>,
 }
 
+#[cfg(feature = "edit")]
 fn document_view(old: &[u8], next: &[u8], options_json: Option<&str>) -> Result<String, String> {
     let options: ViewOptions = serde_json::from_str(options_json.unwrap_or("{}"))
         .map_err(|e| format!("invalid diff view options: {e}"))?;
@@ -1110,6 +1205,7 @@ fn document_view(old: &[u8], next: &[u8], options_json: Option<&str>) -> Result<
     jubarte::text_diff::diff_documents_view(old, next, &options)
 }
 
+#[cfg(feature = "edit")]
 /// Document review view. `optionsJson` is a strict camelCase object with
 /// `format` (github, word, normal, context, side-by-side), `oldName`,
 /// `newName`, `context` (u32), `acceptChanges`, `fullLines`, `oldFormat`
@@ -1124,6 +1220,7 @@ pub fn diff_documents_view(
     document_view(old, next, options_json.as_deref()).map_err(js_err)
 }
 
+#[cfg(feature = "edit")]
 /// Complete, unwrapped document snapshots as a Git text patch. `context`
 /// is validated before wasm-bindgen can coerce booleans or wrap u32 values.
 #[wasm_bindgen(js_name = diffDocumentsUnified, skip_typescript)]
@@ -1167,6 +1264,7 @@ const UNIFIED_TYPES: &str = r#"
 export function diffDocumentsUnified(old: Uint8Array, next: Uint8Array, oldName?: string, newName?: string, context?: number): string;
 "#;
 
+#[cfg(feature = "cli")]
 /// Shared clap parsing, with no filesystem, clock or process access.
 #[wasm_bindgen(js_name = parseCli)]
 pub fn parse_cli(
@@ -1184,6 +1282,7 @@ pub fn parse_cli(
     ))
 }
 
+#[cfg(feature = "edit")]
 /// The complete document as CriticMarkup; existing paragraph patches stay separate.
 #[wasm_bindgen(js_name = diffDocumentsCritic)]
 pub fn diff_documents_critic(
@@ -1218,6 +1317,7 @@ pub fn diff_documents_critic(
     }
 }
 
+#[cfg(feature = "edit")]
 /// DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
 #[wasm_bindgen(js_name = redlineDocuments)]
 pub fn redline_documents(
@@ -1237,6 +1337,7 @@ pub fn redline_documents(
     jubarte::markdown::redline(side(old)?, side(next)?, &options).map_err(js_err)
 }
 
+#[cfg(feature = "edit")]
 /// The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
 /// [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
 /// with `[-old-]{+new+}` changes and CriticMarkup comments, at its
@@ -1292,6 +1393,7 @@ pub fn diff_documents(
     to_json(&serde_json::json!({"text": patch.render(columns), "hunks": hunks}))
 }
 
+#[cfg(feature = "edit")]
 /// The JSON-lines form of a report (`load`, one `op` per operation,
 /// `summary`), for agent logs.
 #[wasm_bindgen(js_name = editReportJsonl)]
@@ -1300,6 +1402,7 @@ pub fn edit_report_jsonl(report_json: &str) -> Result<String, JsValue> {
     Ok(report.to_jsonl())
 }
 
+#[cfg(feature = "doc")]
 /// What [`appendDocuments`](append_documents) returns.
 #[wasm_bindgen]
 pub struct AppendOutput {
@@ -1308,6 +1411,7 @@ pub struct AppendOutput {
 }
 
 #[wasm_bindgen]
+#[cfg(feature = "doc")]
 impl AppendOutput {
     /// The joined document.
     #[wasm_bindgen(getter)]
@@ -1323,6 +1427,7 @@ impl AppendOutput {
     }
 }
 
+#[cfg(feature = "doc")]
 /// Append B after A, carrying B's images, links, headers, styles, lists and
 /// notes. `optionsJson` is `{"section_break": "next_page" | "continuous" |
 /// "none", "keep_sections": bool, "comments": "drop" | "carry"}`, each
@@ -1347,6 +1452,7 @@ pub fn append_documents(
     })
 }
 
+#[cfg(feature = "doc")]
 /// Word-validity findings beyond the schema as a JSON array (`code`, `set`,
 /// `severity`, `part`, `location`, `ref`, `message`, `word_fatal`,
 /// `repairable`; `ref` is the short id the CLI prints for `location`);
@@ -1359,6 +1465,7 @@ pub fn validate_document(docx: &[u8]) -> Result<String, JsValue> {
     serde_json::to_string(&findings).map_err(js_err)
 }
 
+#[cfg(feature = "doc")]
 /// The one stderr line `read` and `changes` give an input with validity
 /// findings (`input has 2 validity warnings; jubarte validate FILE lists
 /// them`), or `undefined` when there is none or the package cannot be
@@ -1372,6 +1479,7 @@ pub fn input_notice(docx: &[u8], file: &str) -> Option<String> {
         .and_then(|findings| jubarte::validate::input_notice(&findings, file))
 }
 
+#[cfg(feature = "doc")]
 /// The JSON status `changes --json` and `comments --json` print on stderr
 /// unless quiet, with the input's validity findings counted (`{"input_validity":{"errors":0,"warnings":2,
 /// "next":"jubarte validate FILE"}}`); `file` is the path as the command
@@ -1384,6 +1492,7 @@ pub fn input_validity_line(docx: &[u8], file: &str) -> Result<String, JsValue> {
         .map_err(js_err)
 }
 
+#[cfg(feature = "doc")]
 /// Check that every text change from `original` to `edited` is a revision
 /// by `author`. Returns the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`,
 /// `FOREIGN_COMMENT` for another author's comment gone, reworded, resolved
@@ -1398,6 +1507,7 @@ pub fn audit_tracked(original: &[u8], edited: &[u8], author: &str) -> Result<Str
     serde_json::to_string(&findings).map_err(js_err)
 }
 
+#[cfg(feature = "doc")]
 /// Output of [`repairDocument`](repair_document).
 #[wasm_bindgen]
 pub struct RepairOutput {
@@ -1406,6 +1516,7 @@ pub struct RepairOutput {
 }
 
 #[wasm_bindgen]
+#[cfg(feature = "doc")]
 impl RepairOutput {
     /// The package with every repairable finding fixed.
     #[wasm_bindgen(getter)]
@@ -1421,6 +1532,7 @@ impl RepairOutput {
     }
 }
 
+#[cfg(feature = "doc")]
 /// The package with every repairable finding fixed, with the findings it
 /// fixed and could not fix in `json`.
 ///
@@ -1448,6 +1560,7 @@ pub struct FieldsOutput {
 
 #[cfg(feature = "pdf")]
 #[wasm_bindgen]
+#[cfg(feature = "pdf")]
 impl FieldsOutput {
     /// The document with refreshed field results.
     #[wasm_bindgen(getter)]
@@ -1467,7 +1580,7 @@ impl FieldsOutput {
 /// Word's). Full build only: it needs the layout the PDF export links.
 ///
 /// Mirrors `jubarte::fields::update_fields`.
-#[cfg(feature = "pdf")]
+#[cfg(all(feature = "pdf", feature = "doc"))]
 #[wasm_bindgen(js_name = updateFields)]
 pub fn update_fields(docx: &[u8]) -> Result<FieldsOutput, JsValue> {
     let updated = jubarte::fields::update_fields(docx).map_err(js_err)?;
@@ -1482,6 +1595,7 @@ pub fn update_fields(docx: &[u8]) -> Result<FieldsOutput, JsValue> {
     })
 }
 
+#[cfg(feature = "doc")]
 /// Remove who touched a document: author names (as one alias), rsids, the
 /// people and dates in the document properties, and comments.
 /// `optionsJson` is `{"author_alias": string, "rsids": bool, "docprops":
@@ -1503,6 +1617,7 @@ pub fn scrub_document(docx: &[u8], options_json: Option<String>) -> Result<Vec<u
 /// This build's manifest (`runtime: "wasm"`): PDF and field refresh only
 /// in the full build, PNG never; the `-o` formats lose what the build
 /// cannot write.
+#[cfg(feature = "edit")]
 fn manifest() -> jubarte::capabilities::Capabilities {
     let mut manifest = jubarte::capabilities::capabilities("wasm");
     manifest.operations.pdf = cfg!(feature = "pdf");
@@ -1519,6 +1634,7 @@ fn manifest() -> jubarte::capabilities::Capabilities {
     manifest
 }
 
+#[cfg(feature = "edit")]
 /// What this build can do, as JSON (`runtime: "wasm"`): PDF and field
 /// refresh only in the full build, PNG never.
 ///
@@ -1528,12 +1644,14 @@ pub fn capabilities() -> Result<String, JsValue> {
     serde_json::to_string_pretty(&manifest()).map_err(js_err)
 }
 
+#[cfg(feature = "edit")]
 /// Focused edit discovery; no filters returns this runtime's edit support matrix.
 #[wasm_bindgen(js_name = capabilityQuery)]
 pub fn capability_query(operation: Option<String>, field: Option<String>) -> String {
     jubarte::capabilities::discovery("wasm", operation.as_deref(), field.as_deref()).to_string()
 }
 
+#[cfg(feature = "edit")]
 /// Render a focused query in the same text form as the native CLI.
 #[wasm_bindgen(js_name = capabilityQueryText)]
 pub fn capability_query_text(operation: Option<String>, field: Option<String>) -> String {
@@ -1544,6 +1662,7 @@ pub fn capability_query_text(operation: Option<String>, field: Option<String>) -
     ))
 }
 
+#[cfg(feature = "edit")]
 /// [`capabilities`] as the text summary `jubarte capabilities` prints; of
 /// `manifestJson` when given (a manifest a host narrowed to what it does),
 /// else of this build's.
@@ -1558,6 +1677,7 @@ pub fn capabilities_text(manifest_json: Option<String>) -> Result<String, JsValu
     Ok(jubarte::capabilities::capabilities_text(&manifest))
 }
 
+#[cfg(feature = "cli")]
 /// The error line for an input no task reads, as the binary prints it:
 /// `LEGACY_DOC: a.docx is a Word 97-2003 …`, or (`word`) `INVALID_PACKAGE:
 /// a.docx is not a ZIP file: …`; `undefined` when the bytes may be read.
@@ -1568,6 +1688,7 @@ pub fn refused_input(path: &str, bytes: &[u8], word: bool) -> Option<String> {
     jubarte::cli::refused_input(std::path::Path::new(path), bytes, word)
 }
 
+#[cfg(feature = "edit")]
 /// Why `planJson` is no edit plan, as the binary prints it (`INVALID_PLAN:
 /// …`); `undefined` for a plan. A plan that parses can still be refused when
 /// applied; that refusal carries the per-operation report.
@@ -1590,6 +1711,7 @@ pub struct RenderOutput {
 
 #[cfg(feature = "pdf")]
 #[wasm_bindgen]
+#[cfg(feature = "pdf")]
 impl RenderOutput {
     /// The PDF.
     #[wasm_bindgen(getter)]
@@ -1657,7 +1779,7 @@ pub fn render_pdf(
 /// Full build only.
 ///
 /// Mirrors `jubarte::markdown::with_page_markers`.
-#[cfg(feature = "pdf")]
+#[cfg(all(feature = "pdf", feature = "markdown"))]
 #[wasm_bindgen(js_name = convertMarkdown)]
 pub fn convert_markdown(
     docx: &[u8],
@@ -1690,6 +1812,7 @@ pub fn convert_markdown(
     Ok(serde_json::json!({"markdown": markdown, "warning": warning}).to_string())
 }
 
+#[cfg(feature = "cli")]
 fn wrote_line_of(
     path: &str,
     format: &str,
@@ -1713,6 +1836,7 @@ fn wrote_line_of(
     ))
 }
 
+#[cfg(feature = "cli")]
 /// The line a writing task prints on stderr for the file it wrote:
 /// `wrote r.pdf (pdf, 48213 bytes, 3 pages)`. `format` is `docx`, `md`,
 /// `pdf`, `png` or `json`; `pages` is a PDF's.
@@ -1731,6 +1855,7 @@ pub fn wrote_line(
 /// Markdown with CriticMarkup → DOCX bytes; errors as text so native tests
 /// can reach them (a `JsValue` exists only on wasm). The options are
 /// [`jubarte::markdown::docx_options_from_json`]'s.
+#[cfg(feature = "markdown")]
 fn markdown_docx(
     text: &str,
     options_json: Option<String>,
@@ -1745,6 +1870,7 @@ fn markdown_docx(
         .map_err(|e| e.to_string())
 }
 
+#[cfg(feature = "markdown")]
 /// The author and timestamp a Markdown document gives the changes and
 /// comments that name none, as JSON `[author, date]` (`null` for each it
 /// does not tell): its front matter, else the reference `.docx`'s creator
@@ -1758,6 +1884,7 @@ pub fn markdown_stamp(text: &str, reference: Option<Vec<u8>>) -> String {
     .expect("two optional strings")
 }
 
+#[cfg(feature = "markdown")]
 /// Markdown with CriticMarkup → DOCX bytes, as `jubarte convert draft.md`.
 ///
 /// `optionsJson` (every field optional): `page` (`"letter"` default, or
@@ -1784,12 +1911,14 @@ pub fn markdown_to_docx(
     markdown_docx(text, options_json, reference).map_err(js_err)
 }
 
+#[cfg(feature = "doc")]
 /// Audit findings as JSON `{findings, rules, layout}` (see `jubarte validate --rules`).
 /// `rules` is a comma-separated list of rule sets (`a11y`, `style`,
 /// `structure`) or codes; omitted or empty runs every rule. The slim build
 /// has no layout pass: it leaves `FONT_SUBSTITUTED` out (naming it is an
 /// error) and does not compare `NUMPAGES` caches with a page count.
 #[wasm_bindgen(js_name = auditDocument)]
+#[cfg(all(feature = "doc", feature = "pdf"))]
 pub fn audit_document(docx: &[u8], rules: Option<String>) -> Result<String, JsValue> {
     let rules = rules.unwrap_or_default();
     let rules: Vec<&str> = rules
