@@ -493,37 +493,41 @@ dependencies = [
 ]
 
 [[package]]
-name = "jubarte"
+name = "jubarte-cli"
 version = "0.18.0"
 dependencies = [
  "base64",
- "cap-std",
  "clap",
  "flate2",
- "foldhash",
- "image",
- "js-sys",
+ "jubarte-doc",
+ "jubarte-dom",
+ "jubarte-edit",
+ "jubarte-markdown",
+ "jubarte-opc",
+ "jubarte-redlines",
+ "jubarte-render",
+ "quick-xml 0.42.0",
+ "same-file",
+ "serde",
+ "serde_json",
+ "sha2",
+ "similar",
+ "zip",
+]
+
+[[package]]
+name = "jubarte-doc"
+version = "0.18.0"
+dependencies = [
  "jubarte-dom",
  "jubarte-opc",
- "oxml-opc",
- "pulldown-cmark",
- "quick-xml 0.41.0",
+ "jubarte-redlines",
+ "jubarte-render",
  "quick-xml 0.42.0",
- "regex",
- "rustybuzz",
- "same-file",
  "schemars",
  "serde",
  "serde_json",
- "sha1",
  "sha2",
- "similar",
- "tiny-skia",
- "ttf-parser",
- "unicode-properties",
- "unicode-segmentation",
- "xattr",
- "zip",
 ]
 
 [[package]]
@@ -543,6 +547,55 @@ dependencies = [
 ]
 
 [[package]]
+name = "jubarte-edit"
+version = "0.18.0"
+dependencies = [
+ "base64",
+ "cap-std",
+ "jubarte-doc",
+ "jubarte-dom",
+ "jubarte-markdown",
+ "jubarte-opc",
+ "jubarte-redlines",
+ "jubarte-render",
+ "pulldown-cmark",
+ "quick-xml 0.42.0",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "similar",
+ "unicode-properties",
+ "unicode-segmentation",
+ "xattr",
+ "zip",
+]
+
+[[package]]
+name = "jubarte-markdown"
+version = "0.18.0"
+dependencies = [
+ "base64",
+ "image",
+ "jubarte-doc",
+ "jubarte-dom",
+ "jubarte-opc",
+ "jubarte-redlines",
+ "jubarte-render",
+ "pulldown-cmark",
+ "quick-xml 0.42.0",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "similar",
+ "unicode-properties",
+ "unicode-segmentation",
+ "zip",
+]
+
+[[package]]
 name = "jubarte-opc"
 version = "0.18.0"
 dependencies = [
@@ -559,11 +612,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "jubarte-redlines"
+version = "0.18.0"
+dependencies = [
+ "jubarte-dom",
+ "jubarte-opc",
+]
+
+[[package]]
+name = "jubarte-render"
+version = "0.18.0"
+dependencies = [
+ "flate2",
+ "image",
+ "jubarte-dom",
+ "jubarte-opc",
+ "rustybuzz",
+ "serde",
+ "serde_json",
+ "tiny-skia",
+ "ttf-parser",
+ "zip",
+]
+
+[[package]]
 name = "jubarte-wasm"
 version = "0.18.0"
 dependencies = [
  "console_error_panic_hook",
- "jubarte",
+ "jubarte-cli",
+ "jubarte-doc",
+ "jubarte-dom",
+ "jubarte-edit",
+ "jubarte-markdown",
+ "jubarte-opc",
+ "jubarte-redlines",
+ "jubarte-render",
  "serde",
  "serde_json",
  "wasm-bindgen",

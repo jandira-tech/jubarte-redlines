@@ -19,7 +19,11 @@
 pub use jubarte_doc::comment_settlement;
 pub use jubarte_doc::{append, audit, changes, comments, debug, fields, inspect, scrub, validate};
 pub use jubarte_dom::{ids, namespaces, perf, unid, util, xmllinq};
-pub use jubarte_edit::{capabilities, edit, markdown, publication, result, text_diff};
+pub use jubarte_edit::{capabilities, edit, markdown, result, text_diff};
+// Host filesystem publication is unavailable to browser/WASM byte APIs
+// (it is cfg'd out of jubarte-edit there).
+#[cfg(not(target_arch = "wasm32"))]
+pub use jubarte_edit::publication;
 pub use jubarte_markdown::legacy_doc;
 pub use jubarte_opc::{admission, opc, settings, strict_translation};
 pub use jubarte_redlines::{document_comparer, revision_processor, wml_document};

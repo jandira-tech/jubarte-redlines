@@ -20,20 +20,43 @@ name = "jubarte_wasm"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-jubarte = { path = "..", default-features = false, features = ["cli"] }
+jubarte-dom = { path = "../crates/jubarte-dom", optional = true, default-features = false }
+jubarte-opc = { path = "../crates/jubarte-opc", optional = true, default-features = false }
+jubarte-redlines = { path = "../crates/jubarte-redlines", optional = true, default-features = false }
+jubarte-render = { path = "../crates/jubarte-render", optional = true, default-features = false }
+jubarte-doc = { path = "../crates/jubarte-doc", optional = true, default-features = false }
+jubarte-markdown = { path = "../crates/jubarte-markdown", optional = true, default-features = false }
+jubarte-edit = { path = "../crates/jubarte-edit", optional = true, default-features = false }
+jubarte-cli = { path = "../crates/jubarte-cli", optional = true, default-features = false }
 wasm-bindgen = "0.2"
 serde = "1"
 serde_json = "1"
 console_error_panic_hook = { version = "0.1", optional = true }
 
 [features]
-default = ["console-panic", "pdf"]
+default = ["full", "console-panic"]
+# Layered, each building on the one below (plan A4/T5.1):
+compare = ["dep:jubarte-dom", "dep:jubarte-opc", "dep:jubarte-redlines"]
+doc = ["compare", "dep:jubarte-doc"]
+markdown = ["doc", "dep:jubarte-markdown"]
+edit = ["markdown", "dep:jubarte-edit"]
+cli = ["edit", "dep:jubarte-cli"]
+# The renderer (docxToPdf / pdfPageCount / renderPdf / updateFields):
+# references rustybuzz shaping, the image decoders, and the embedded
+# Carlito/Liberation fonts (~7.5 MB of wasm). The npm *-slim builds
+# turn this off for consumers that do not need PDF rendering.
+pdf = [
+    "dep:jubarte-render",
+    "jubarte-doc?/render",
+    "jubarte-markdown?/render",
+    "jubarte-edit?/render",
+    "jubarte-cli?/render",
+]
+slim = ["compare", "doc", "markdown", "edit", "cli"]
+full = ["slim", "pdf"]
+# Compatibility alias for the pre-split feature name.
+redlines = ["compare"]
 console-panic = ["dep:console_error_panic_hook"]
-# DOCX→PDF exports (docxToPdf / pdfPageCount). Referencing the PDF writer
-# links in rustybuzz shaping, the image decoders, and the embedded
-# Carlito/Liberation fonts (~7.5 MB of wasm). The npm package's *-slim
-# builds turn this off for consumers that do not need PDF rendering.
-pdf = []
 # Diagnostic-only linear-memory page counter used by the W3 bench harness.
 # It is absent from the shipped default build.
 memory-metrics = []

@@ -40,6 +40,36 @@
 
 use wasm_bindgen::prelude::*;
 
+/// The engine, mirrored under the historical `jubarte::` paths the
+/// binding already uses (plan A6/T5.1). Each line sits under the feature
+/// that provides it, so a slim build links only the layers it exports.
+mod jubarte {
+    #[cfg(feature = "compare")]
+    pub use jubarte_dom::{namespaces, util, xmllinq};
+    #[cfg(feature = "compare")]
+    pub use jubarte_opc::{admission, opc, strict_translation};
+    #[cfg(feature = "compare")]
+    pub use jubarte_redlines::{comparer, comparison_log, document_comparer, revision_processor, wml_document, WmlDocument};
+    #[cfg(feature = "doc")]
+    pub use jubarte_doc::{append, audit, changes, comments, debug, inspect, scrub, validate};
+    #[cfg(feature = "doc")]
+    pub use jubarte_doc::fields;
+    #[cfg(all(feature = "edit", feature = "markdown"))]
+    pub use jubarte_edit::markdown;
+    #[cfg(all(not(feature = "edit"), feature = "markdown"))]
+    pub use jubarte_markdown::markdown;
+    #[cfg(feature = "markdown")]
+    pub use jubarte_markdown::legacy_doc;
+    #[cfg(feature = "edit")]
+    pub use jubarte_edit::{capabilities, edit, expect, result, text_diff};
+    #[cfg(all(feature = "edit", not(target_arch = "wasm32")))]
+    pub use jubarte_edit::publication;
+    #[cfg(feature = "cli")]
+    pub use jubarte_cli::cli;
+    #[cfg(feature = "pdf")]
+    pub use jubarte_render::convert;
+}
+
 /// Current wasm linear-memory size in 64 KiB pages.
 ///
 /// Diagnostic builds only: the release package deliberately omits this export.
