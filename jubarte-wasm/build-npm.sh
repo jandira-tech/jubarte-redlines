@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Rebuild both wasm-pack targets and assemble the publishable npm package
+# Rebuild every wasm-pack target and assemble the publishable npm package
 # under npm/. Build from a CLEAN tree (the engine commit is stamped into the
 # package); publish with `cd npm && npm publish`.
 #
@@ -57,13 +57,28 @@ wasm-pack build --target nodejs --release
 wasm-pack build --target web --release --out-dir pkg-web
 wasm-pack build --target nodejs --release --out-dir pkg-slim -- --no-default-features --features slim,console-panic
 wasm-pack build --target web --release --out-dir pkg-web-slim -- --no-default-features --features slim,console-panic
+# Narrow builds (plan T5.2). `redlines`: compare, accept, reject and list
+# revisions, with no doc, edit or render layer. `pdf`: the bare `pdf`
+# feature, which Cargo.toml defines as the renderer plus the render side of
+# whichever layers are on; with no other layer on, that is the renderer and
+# its fonts alone (docxToPdf, pdfPageCount, renderPdf), with no compare or
+# edit. npm serves it as both `jubarte-wasm/pdf` and `jubarte-wasm/convert`.
+wasm-pack build --target nodejs --release --out-dir pkg-redlines -- --no-default-features --features redlines,console-panic
+wasm-pack build --target web --release --out-dir pkg-web-redlines -- --no-default-features --features redlines,console-panic
+wasm-pack build --target nodejs --release --out-dir pkg-pdf -- --no-default-features --features pdf,console-panic
+wasm-pack build --target web --release --out-dir pkg-web-pdf -- --no-default-features --features pdf,console-panic
 
-mkdir -p npm/node npm/web npm/node-slim npm/web-slim
-for f in jubarte_wasm.js jubarte_wasm.d.ts jubarte_wasm_bg.wasm jubarte_wasm_bg.wasm.d.ts; do
-  cp "pkg/$f" npm/node/
-  cp "pkg-web/$f" npm/web/
-  cp "pkg-slim/$f" npm/node-slim/
-  cp "pkg-web-slim/$f" npm/web-slim/
+# wasm-pack output directory -> npm/ directory. Each npm/ directory's own
+# package.json ({"type": ...}) is hand-maintained and committed.
+for pair in pkg:node pkg-web:web pkg-slim:node-slim pkg-web-slim:web-slim \
+  pkg-redlines:node-redlines pkg-web-redlines:web-redlines \
+  pkg-pdf:node-pdf pkg-web-pdf:web-pdf; do
+  src=${pair%%:*}
+  dst=npm/${pair#*:}
+  mkdir -p "$dst"
+  for f in jubarte_wasm.js jubarte_wasm.d.ts jubarte_wasm_bg.wasm jubarte_wasm_bg.wasm.d.ts; do
+    cp "$src/$f" "$dst/"
+  done
 done
 cp ../LICENSE npm/LICENSE
 python3 ../scripts/check_npm_paths.py npm

@@ -160,4 +160,59 @@ for (const target of ["web", "web-slim"]) {
     '{"format":"word"}'), "Due {~~30~>45~~} days.\n", `${target}: word review`);
   assert.equal(JSON.parse(mod.parseCli('["diff","a.docx","b.docx","--format","github"]')).exit_code, 0);
 }
-console.log("npm-smoke: all checks passed (Node full/slim + browser ESM full/slim)");
+// Subpath exports (plan T5.2), resolved by package name the way a consumer
+// resolves them: a throwaway project whose node_modules/jubarte-wasm links
+// to npm/. Each subpath is loaded under CommonJS (require) and ESM (import)
+// and one function from it is called. `redlines` is the compare-only build;
+// `pdf` and its alias `convert` are the renderer alone.
+{
+  const { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { fileURLToPath, pathToFileURL } = await import("node:url");
+  const consumer = mkdtempSync(join(tmpdir(), "jubarte-npm-smoke-"));
+  try {
+    mkdirSync(join(consumer, "node_modules"));
+    symlinkSync(fileURLToPath(new URL("./npm/", import.meta.url)), join(consumer, "node_modules", "jubarte-wasm"), "dir");
+    writeFileSync(join(consumer, "load.mjs"), "export const load = (spec) => import(spec);\n");
+    const { load } = await import(pathToFileURL(join(consumer, "load.mjs")).href);
+    const requireFromConsumer = createRequire(join(consumer, "consumer.cjs"));
+    const wasmOf = (target) => readFileSync(new URL(`./npm/${target}/jubarte_wasm_bg.wasm`, import.meta.url));
+
+    // Each subpath: the npm/ directory it must resolve to (Node), whether it
+    // is the browser build (explicit initSync), and the check that calls it.
+    const redlinesCheck = (mod, label) => {
+      const redline = mod.compareDocuments(original, modified, "smoke");
+      assert.equal(redline[0], 0x50, `${label}: compareDocuments writes a zip`);
+      assert.ok(JSON.parse(mod.getRevisions(redline)).length > 0, `${label}: revisions listed`);
+      assert.equal(typeof mod.docxToPdf, "undefined", `${label}: the redlines build has no renderer`);
+      assert.equal(typeof mod.inspectDocument, "undefined", `${label}: the redlines build has no doc layer`);
+    };
+    const pdfCheck = (mod, label) => {
+      const pdf = mod.docxToPdf(original);
+      assert.equal(Buffer.from(pdf.slice(0, 5)).toString(), "%PDF-", `${label}: docxToPdf emits a PDF`);
+      assert.ok(mod.pdfPageCount(pdf) > 0, `${label}: pdfPageCount sees pages`);
+      assert.equal(typeof mod.compareDocuments, "undefined", `${label}: the pdf build has no compare`);
+    };
+    const subpaths = [
+      ["jubarte-wasm/redlines", "node-redlines", redlinesCheck],
+      ["jubarte-wasm/node-redlines", "node-redlines", redlinesCheck],
+      ["jubarte-wasm/web-redlines", "web-redlines", redlinesCheck],
+      ["jubarte-wasm/pdf", "node-pdf", pdfCheck],
+      ["jubarte-wasm/convert", "node-pdf", pdfCheck],
+      ["jubarte-wasm/node-pdf", "node-pdf", pdfCheck],
+      ["jubarte-wasm/web-pdf", "web-pdf", pdfCheck],
+    ];
+    for (const [spec, target, check] of subpaths) {
+      const resolved = requireFromConsumer.resolve(spec);
+      assert.ok(resolved.includes(`/${target}/jubarte_wasm.js`), `${spec} resolves into npm/${target}: ${resolved}`);
+      for (const [system, mod] of [["cjs", requireFromConsumer(spec)], ["esm", await load(spec)]]) {
+        if (target.startsWith("web-")) mod.initSync({ module: wasmOf(target) });
+        check(mod, `${spec} (${system})`);
+      }
+    }
+  } finally {
+    rmSync(consumer, { recursive: true, force: true });
+  }
+}
+console.log("npm-smoke: all checks passed (Node full/slim/redlines/pdf + browser ESM full/slim/redlines/pdf + subpaths under CJS and ESM)");
