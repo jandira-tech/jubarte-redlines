@@ -3183,3 +3183,45 @@ fn an_id_line_names_a_joined_change_once() {
         assert!(deletions.iter().any(|mark| mark.contains(&id)), "{xml}");
     }
 }
+
+/// An explicit row clause whose id the cell text names too (#586): the
+/// row's mark carries the cells, and the clause comes back on the table
+/// line. The view is a fixed point, so the cells are not given marks of
+/// their own, which would come back under new ids (#1370).
+#[test]
+fn an_explicit_row_rev_keeps_its_clause_when_the_cells_name_its_id() {
+    let markdown = "\
+---
+view: tracked
+authors:
+  AL: Ana Lima
+---
+
+<!-- t0 1x2, rev r10 @AL in t0.row0 -->
+| {++x1++}{r10 @AL} | {++x2++}{r10 @AL} |
+|-|-|
+";
+    let docx = written(markdown);
+    let xml = part_string(&docx, "word/document.xml").expect("the body part");
+    assert!(
+        xml.contains("<w:trPr><w:ins w:id=\"10\""),
+        "the row keeps its own insertion\n{xml}"
+    );
+    let view = agent(&docx);
+    assert!(
+        view.contains("rev r10 @AL in t0.row0"),
+        "the row clause comes back\n{view}"
+    );
+    let unhashed = |view: &str| -> String {
+        view.lines()
+            .filter(|line| !line.starts_with("sha256:"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let again = agent(&written(&view));
+    assert_eq!(
+        unhashed(&again),
+        unhashed(&view),
+        "the view is a fixed point"
+    );
+}

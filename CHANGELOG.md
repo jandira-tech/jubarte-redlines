@@ -15,6 +15,21 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+### Fixed
+
+- **The agent view keeps a no-break space.** U+00A0 was written as an ordinary space, and a line of only no-break spaces came back empty. The plain view still collapses it. A leading ASCII space is still `&#32;`. At a bold or italic edge the no-break space stays outside `**` and `_`, which must touch text to read.
+- **A row the table line names keeps its clause when the cell text names the same id** (#586). The row's insertion carries the cells, the clause comes back on the table line, and the view stays a fixed point. Giving the cells insertions of their own (#2343) is not in this release: the view numbered them anew, which broke the round trip.
+
+### Security
+
+- **MCP errors no longer name the server root, an output path, or an OS error** (#2355). A path outside the root, an output that already exists, and a publish failure say what was refused. A missing file still names the path that was asked for.
+- **An edit plan over 1 MiB is refused before the engine sees it, and accept or reject is the only resolve action** (#2395).
+
+### Documentation
+
+- **Field comments are recorded as issued, and the views do not emit them yet** (#2407, #2235, #2236).
+- **Issue #1914 round 3 records that no renderer rule is established** (#2385). No renderer change lands from that evidence.
+
 ### Slim build
 
 The npm package's `*-slim` builds now exclude the PDF renderer and the
