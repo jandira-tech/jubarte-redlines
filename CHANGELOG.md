@@ -89,7 +89,7 @@ ttf-parser, tiny-skia and the fonts are absent.
 - `jubarte-wasm/pdf` and its alias `jubarte-wasm/convert` (`node-pdf`,
   `web-pdf`): `docxToPdf`, `pdfPageCount` and `renderPdf`, with no
   compare or edit layer; 11,207,079 bytes.
-- The npm package unpacks to 103,697,002 bytes (0.18.0: 93,280,656).
+- The npm package unpacks to 103,696,964 bytes (0.18.0: 93,280,656).
 - The `jubarte-redlines` npm CLI also installs a `jubarte` command, the
   native binary's name, on the same entry point.
 
