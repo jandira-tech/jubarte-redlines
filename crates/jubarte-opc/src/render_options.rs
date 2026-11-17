@@ -86,7 +86,7 @@ impl RevisionPalette {
     /// (none). A kind's colour alone keeps its conventional lines.
     ///
     /// ```
-    /// use jubarte::convert::{MarkLines, RevisionPalette};
+    /// use jubarte_opc::render_options::{MarkLines, RevisionPalette};
     /// let p = RevisionPalette::parse("inserted=#00AA00:underline").unwrap();
     /// assert_eq!(p.inserted.color, [0x00, 0xAA, 0x00]);
     /// assert_eq!(p.inserted.underline, MarkLines::Single);
@@ -160,7 +160,7 @@ impl RevisionStyle {
     /// `"custom"`, or when `palette` fails [`RevisionPalette::parse`].
     ///
     /// ```
-    /// use jubarte::convert::RevisionStyle;
+    /// use jubarte_opc::render_options::RevisionStyle;
     /// assert_eq!(RevisionStyle::from_choice("word", None), Ok(RevisionStyle::Word));
     /// assert!(RevisionStyle::from_choice("custom", None).is_err());
     /// ```

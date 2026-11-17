@@ -471,6 +471,29 @@ class PyPI(unittest.TestCase):
                         script.index("uv publish"))
 
 
+class PythonCi(unittest.TestCase):
+    """CI builds what a source install builds (#2448 review)."""
+
+    def setUp(self) -> None:
+        self.script = runs(load_ci()["jobs"]["python"])
+
+    def test_the_sdist_is_unpacked_and_compiled(self) -> None:
+        # cargo metadata passes on an sdist missing a declared target file;
+        # cargo check fails on it, as pip install does.
+        self.assertIn("maturin sdist", self.script)
+        self.assertRegex(self.script, r"tar -xzf[^\n]*\.tar\.gz")
+        self.assertRegex(self.script, r"cargo check --locked[^\n]*jubarte-python/Cargo\.toml")
+
+    def test_every_feature_layer_is_checked_alone(self) -> None:
+        manifest = (WORKFLOW.parents[2] / "jubarte-python/Cargo.toml").read_text(encoding="utf-8")
+        import tomllib
+        features = set(tomllib.loads(manifest)["features"]) - {"default"}
+        for feature in sorted(features):
+            self.assertRegex(self.script, rf"for f in [^;\n]*\b{feature}\b",
+                             f"feature {feature} is not checked alone")
+        self.assertIn('cargo check --locked --no-default-features --features "$f"', self.script)
+
+
 class Npm(unittest.TestCase):
     def setUp(self) -> None:
         self.job = load()["jobs"]["publish-npm"]

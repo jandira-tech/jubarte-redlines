@@ -15,6 +15,36 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+### Crate split
+
+The engine is now a Cargo workspace of nine crates, published together at
+one version and pinned to each other exactly. The `jubarte` crate is the
+facade: it re-exports every module at the path it had in 0.18
+(`jubarte::document_comparer`, `jubarte::convert`, `jubarte::edit`, …) and
+ships the `jubarte` CLI binary.
+
+| Crate (library) | Holds |
+|---|---|
+| `jubarte` (`jubarte`) | the facade over the crates below, and the `jubarte` CLI binary |
+| `jubarte-dom` (`jubarte_dom`) | the arena XML DOM (`xmllinq`), WordprocessingML namespaces, ids, shared utilities and input limits |
+| `jubarte-opc` (`jubarte_opc`) | the OPC package floor: admission and its budgets, packages, markup simplification, strict-to-transitional translation, settings, and the shared Word tables (theme, built-in styles, borders, numbering, table DOM, validity predicates, render option types) |
+| `jubarte-redlines` (`jubarte_redlines`) | the compare product: two Word documents in, a tracked-changes redline out (`document_comparer`, `comparer`, `revision_processor`, `comparison_log`) |
+| `jubarte-render` (`jubarte_render`) | the render product: DOCX and Markdown to PDF and PNG with Word-faithful layout (`convert`), with the embedded fonts |
+| `jubarte-doc` (`jubarte_doc`) | the document operations above compare: changes, comments, validate, audit, scrub, append, fields, inspect and debug |
+| `jubarte-markdown` (`jubarte_markdown`) | Markdown in and out of Word documents (CriticMarkup as tracked changes, the agent view) and `.doc` reading |
+| `jubarte-edit` (`jubarte_edit`) | edit plans as tracked changes, text diff views, capabilities and staged publication |
+| `jubarte-cli` (`jubarte_cli`) | the command line: every library operation behind one clap surface, plus `self-update` |
+
+### Migrating from 0.18
+
+- Rust users replace `jubarte-redlines = "0.18"` with `jubarte = "0.19"`
+  for the full suite and keep their `use jubarte::…` paths.
+- `jubarte-redlines` 0.19 is the compare-only crate, with library name
+  `jubarte_redlines`. Depend on it alone only when compare is all you need.
+- The CLI installs with `cargo install jubarte`; the binary is still
+  `jubarte`.
+- The Python (`jubarte-redlines` on PyPI) and npm packages keep their names.
+
 ### Fixed
 
 - **The agent view keeps a no-break space.** U+00A0 was written as an ordinary space, and a line of only no-break spaces came back empty. The plain view still collapses it. A leading ASCII space is still `&#32;`. At a bold or italic edge the no-break space stays outside `**` and `_`, which must touch text to read.
@@ -62,6 +92,19 @@ ttf-parser, tiny-skia and the fonts are absent.
 - The npm package unpacks to 103,697,002 bytes (0.18.0: 93,280,656).
 - The `jubarte-redlines` npm CLI also installs a `jubarte` command, the
   native binary's name, on the same entry point.
+
+### Python build features
+
+`jubarte-python` builds against the sub-crates instead of the `jubarte`
+facade (plan T5.3). Its Cargo features are `redlines`, `doc`, `markdown`,
+`edit`, `cli` (each building on the one before) and `render`, all on by
+default, so the published wheel is unchanged: the same `jubarte_redlines`
+package, one `_native` extension, the `jubarte-redlines` and `jubarte-mcp`
+commands. The native module can be compiled in layers
+(`cargo check --no-default-features --features redlines` builds compare,
+accept, reject and the revision listing alone), but the Python package still imports the full
+native surface, so a wheel needs the default features. The wheel adds no `jubarte` import package and no `jubarte`
+command: both names belong to another project on PyPI.
 
 ## [0.18.0] - 2026-11-10
 

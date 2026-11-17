@@ -497,12 +497,10 @@ version = "0.18.0"
 dependencies = [
  "base64",
  "cap-std",
- "clap",
  "flate2",
  "foldhash",
  "image",
  "js-sys",
- "jubarte-cli",
  "jubarte-doc",
  "jubarte-dom",
  "jubarte-edit",
@@ -516,7 +514,6 @@ dependencies = [
  "quick-xml 0.42.0",
  "regex",
  "rustybuzz",
- "same-file",
  "schemars",
  "serde",
  "serde_json",
@@ -655,6 +652,13 @@ name = "jubarte-python"
 version = "0.18.0"
 dependencies = [
  "jubarte",
+ "jubarte-cli",
+ "jubarte-doc",
+ "jubarte-edit",
+ "jubarte-markdown",
+ "jubarte-opc",
+ "jubarte-redlines",
+ "jubarte-render",
  "pyo3",
  "serde_json",
 ]

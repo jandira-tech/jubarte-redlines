@@ -38,12 +38,57 @@ repository = "https://github.com/jandira-tech/jubarte-redlines"
 name = "jubarte_python"
 crate-type = ["cdylib"]
 
+[features]
+default = ["redlines", "render", "doc", "markdown", "edit", "cli"]
+# Layered, each building on the one below (plan A4/T5.3), as in jubarte-wasm:
+# compare, accept/reject and list revisions.
+redlines = ["dep:jubarte-redlines"]
+# Inspect, changes, comments, validate, scrub, append (audit needs render too).
+doc = ["redlines", "dep:jubarte-doc"]
+# Markdown views, diffs and Markdown → DOCX.
+markdown = ["doc", "dep:jubarte-markdown"]
+# Edit plans, text diffs, capabilities and the MCP output root.
+edit = ["markdown", "dep:jubarte-edit"]
+# The CLI grammar `python -m jubarte_redlines` shares with the binary.
+cli = ["edit", "dep:jubarte-cli"]
+# The renderer (docx_to_pdf, docx_to_png, render, diff_render_json),
+# forwarded down every layer that declares it. With `doc` it adds
+# update_fields, validate_run and audit_json.
+render = [
+    "dep:jubarte-render",
+    "jubarte-doc?/render",
+    "jubarte-markdown?/render",
+    "jubarte-edit?/render",
+    "jubarte-cli?/render",
+]
+
 [dependencies]
-# Shared CLI grammar, without the engine's default allocator features.
-jubarte = { path = "..", default-features = false, features = ["cli"] }
+# Admission (input budgets, code-first errors) is used by every entry point.
+jubarte-opc = { path = "../crates/jubarte-opc", default-features = false }
+jubarte-redlines = { path = "../crates/jubarte-redlines", optional = true, default-features = false }
+jubarte-render = { path = "../crates/jubarte-render", optional = true, default-features = false }
+jubarte-doc = { path = "../crates/jubarte-doc", optional = true, default-features = false }
+jubarte-markdown = { path = "../crates/jubarte-markdown", optional = true, default-features = false }
+jubarte-edit = { path = "../crates/jubarte-edit", optional = true, default-features = false }
+jubarte-cli = { path = "../crates/jubarte-cli", optional = true, default-features = false }
 # abi3-py310: one wheel per platform covers every CPython >= 3.10.
 pyo3 = { version = "0.30", features = ["extension-module", "abi3-py310"] }
 serde_json = "1" # structured results cross the boundary as engine-produced JSON
+
+# Never compiled (`cfg(any())` matches no target), only resolved. The
+# vendored crates/* inherit `version.workspace`, `edition.workspace` and
+# `[lints] workspace` from the root manifest, and maturin puts that
+# manifest in the sdist only for a package in the resolve graph. Without
+# this entry the unpacked sdist has no workspace root, and both
+# `cargo metadata` and `cargo check` fail parsing the sub-crates ("error
+# inheriting `edition` from workspace root manifest's
+# `workspace.package.edition`"). The root manifest is also the `jubarte`
+# package, so cargo check then needs every target it declares: the root
+# `include` list carries them (a missing one fails as "can't find
+# `cli_flags` example at `examples/cli_flags.rs`"). CI compiles the
+# unpacked sdist to keep both true.
+[target.'cfg(any())'.dependencies]
+jubarte = { path = "..", default-features = false }
 
 [profile.release]
 opt-level = 3

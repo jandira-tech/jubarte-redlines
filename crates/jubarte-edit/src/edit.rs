@@ -2374,7 +2374,7 @@ fn exactly_one(fields: &[&str]) -> serde_json::Value {
     )
 }
 
-/// The top-level fields of a plan, as [`EditPlan`](crate::edit::EditPlan) reads them.
+/// The top-level fields of a plan, as [`EditPlan`] reads them.
 const PLAN_FIELDS: &[&str] = &[
     "author",
     "date",

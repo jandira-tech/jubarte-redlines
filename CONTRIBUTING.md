@@ -21,12 +21,34 @@ reuse existing fixtures and upstream Docxodus/PowerTools behavior. Follow
 Contributions are distributed under the project's AGPL-3.0-only license;
 preserve upstream notices and add accurate SPDX headers.
 
+The repository is a Cargo workspace. The root package `jubarte` holds only
+the facade (`src/lib.rs`, which re-exports the suite under `jubarte::`) and
+the CLI binary (`src/bin/`); the engine lives in `crates/`:
+
+| Crate | Holds |
+|---|---|
+| `jubarte-dom` | arena XML DOM, namespaces, ids, shared utilities |
+| `jubarte-opc` | OPC package floor: admission, packages, styles, numbering, settings |
+| `jubarte-redlines` | compare: `document_comparer`, `comparer`, `revision_processor` |
+| `jubarte-render` | DOCX and Markdown to PDF and PNG (`convert`), embedded fonts |
+| `jubarte-doc` | changes, comments, validate, audit, scrub, append, fields, inspect, debug |
+| `jubarte-markdown` | Markdown in and out, `.doc` reading |
+| `jubarte-edit` | edit plans, text diffs, capabilities, publication |
+| `jubarte-cli` | the clap command line and `self-update` |
+
+Integration tests stay in the root `tests/`, in seven suite binaries, one
+per layer of the split (`it_core` covers jubarte-dom and jubarte-opc;
+then `it_redlines`, `it_render`, `it_doc`, `it_markdown`, `it_edit`,
+`it_cli`); unit tests sit beside the code in `crates/<crate>/src/`. Cargo
+commands at the root select only the `jubarte` package unless given
+`--workspace` or `-p <crate>`.
+
 Build with Rust (MSRV in Cargo.toml) and Cargo, using only FLOSS tools:
 
 ```sh
-cargo build --locked --all-features
-cargo fmt --check
-cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo build --locked --workspace --all-features
+cargo fmt --all --check
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo install cargo-llvm-cov --locked
 rustup toolchain install nightly --component llvm-tools-preview
 cargo +nightly llvm-cov --all-features --workspace --branch --doctests --lcov --output-path lcov.info
@@ -34,7 +56,9 @@ cargo +nightly llvm-cov report --branch --summary-only --fail-under-lines 95
 cargo run --locked --bin jubarte -- --help
 ```
 
-`cargo test --all-features` is the standard test invocation. Prefer the coverage
+`cargo nextest run --workspace --all-features` is the standard test invocation
+(`-p <crate>` or `--test NAME` for one part). nextest runs no doctests:
+`cargo test --workspace --all-features --doc` runs them, as CI does. Prefer the coverage
 invocation above when recording validation. Run Cargo commands sequentially;
 do not override `CARGO_TARGET_DIR`. Tests and the production build need no
 Microsoft Word installation. Word oracle comparisons are separate integration

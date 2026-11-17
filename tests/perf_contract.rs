@@ -203,3 +203,20 @@ fn run_abba_matrix_script_exists_and_is_executable_contract() {
     let trials = tool("run_trials.sh");
     assert!(trials.is_file(), "run_trials.sh missing");
 }
+
+/// The facade's `perf-profile` feature must switch the counters on in
+/// jubarte-dom, where they live; `perf-profile = []` at the root left
+/// `jubarte::perf` counting nothing (#2446 review).
+#[cfg(feature = "perf-profile")]
+#[test]
+fn the_facade_feature_turns_the_counters_on() {
+    let _guard = lock_perf_state();
+    perf::reset();
+    perf::inc_lcs_calls();
+    assert_eq!(
+        perf::snapshot().lcs_calls,
+        1,
+        "--features perf-profile did not reach jubarte-dom"
+    );
+    perf::reset();
+}

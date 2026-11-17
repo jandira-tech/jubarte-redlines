@@ -206,7 +206,7 @@ fn path_name(name: &str) -> &str {
 /// patch `--format`/`patch` when both inputs are Markdown).
 ///
 /// ```
-/// use jubarte::markdown::{Attribution, PatchOptions, patch_markdown};
+/// use jubarte_edit::markdown::{Attribution, PatchOptions, patch_markdown};
 ///
 /// let options = PatchOptions {
 ///     old_name: "a.md".into(),
