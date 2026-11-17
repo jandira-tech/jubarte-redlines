@@ -3434,6 +3434,18 @@ fn indexed_faces(
     key: &str,
     scan: impl FnOnce() -> (SourcedFaces, Vec<PathBuf>),
 ) -> Vec<((bool, bool), Vec<u8>)> {
+    indexed_faces_with(index, key, scan, dir_listing_denied)
+}
+
+/// [`indexed_faces`] with the denial check passed in, so the rule that a
+/// denied listing is never recorded is testable where the process can list
+/// any folder (root).
+fn indexed_faces_with(
+    index: &Mutex<FontIndex>,
+    key: &str,
+    scan: impl FnOnce() -> (SourcedFaces, Vec<PathBuf>),
+    denied: impl Fn(&Path) -> bool,
+) -> Vec<((bool, bool), Vec<u8>)> {
     let entry = index.lock().ok().and_then(|i| i.entries.get(key).cloned());
     if let Some(faces) = entry.and_then(|e| e.load()) {
         return faces;
@@ -3442,7 +3454,7 @@ fn indexed_faces(
     // A denial is not an answer. The directory mtime does not change when
     // the folder becomes readable, so recording the miss would serve it
     // from then on (#2051).
-    if !dirs.iter().any(|dir| dir_listing_denied(dir))
+    if !dirs.iter().any(|dir| denied(dir))
         && let Ok(mut index) = index.lock()
     {
         index.record(key, &dirs, &faces);
@@ -4117,6 +4129,13 @@ mod tests {
         let mut denied = readable.clone();
         denied.set_mode(0o0);
         fs::set_permissions(&fonts, denied).expect("deny");
+        // Root (the self-hosted CI runners) lists a mode-000 folder anyway,
+        // so the denial this test needs cannot happen there.
+        if fs::read_dir(&fonts).is_ok() {
+            fs::set_permissions(&fonts, readable).expect("restore");
+            eprintln!("skipped: this user can list a mode-000 folder");
+            return;
+        }
         let index = Mutex::new(FontIndex::load(Some(index_path.clone())));
         assert!(
             indexed_faces(&index, "cloud", scan).is_empty(),
@@ -4132,6 +4151,30 @@ mod tests {
         assert!(
             !indexed_faces(&reloaded, "cloud", scan).is_empty(),
             "reloading the index must not keep the unreadable-folder miss"
+        );
+    }
+
+    /// The #2051 rule without the file system: a scan whose folder listing
+    /// was denied is served but never recorded, so it holds under root too,
+    /// where the mode-000 test above cannot produce the denial.
+    #[test]
+    fn a_miss_from_a_denied_listing_is_served_but_never_recorded() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("cloud");
+        let index = Mutex::new(FontIndex::load(None));
+        let miss = || (Vec::new(), vec![dir.clone()]);
+        let denied = std::cell::Cell::new(true);
+        let faces = indexed_faces_with(&index, "cloud", miss, |_| denied.get());
+        assert!(faces.is_empty(), "a denied folder lists no faces");
+        assert!(
+            !index.lock().expect("index").entries.contains_key("cloud"),
+            "a miss recorded while the listing was denied would be served from then on"
+        );
+        denied.set(false);
+        indexed_faces_with(&index, "cloud", miss, |_| denied.get());
+        assert!(
+            index.lock().expect("index").entries.contains_key("cloud"),
+            "a readable folder's miss is a real answer and is recorded"
         );
     }
 

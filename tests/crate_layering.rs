@@ -143,10 +143,17 @@ fn collect_path<'a>(rest: &'a str, prefix: &[&'a str], paths: &mut Vec<Vec<&'a s
     let (segments, remainder) = path_segments(rest);
     let stripped = skip_trivia(remainder);
     if stripped.starts_with('{') {
-        collect_group(&stripped[1..], &([&segments[..], prefix].concat()), paths);
+        collect_group(&stripped[1..], &([prefix, &segments[..]].concat()), paths);
         return;
     }
-    let leaf: Vec<&str> = prefix.iter().copied().chain(segments).take(2).collect();
+    // `self` in a group names the prefix itself.
+    let leaf: Vec<&str> = prefix
+        .iter()
+        .copied()
+        .chain(segments)
+        .filter(|segment| *segment != "self")
+        .take(2)
+        .collect();
     if !leaf.is_empty() {
         paths.push(leaf);
     }
@@ -343,6 +350,40 @@ fn comments_are_whitespace_inside_paths_and_groups() {
         let paths = crate_paths(text);
         assert!(
             paths.contains(&vec!["markdown", "redline"]),
+            "{text}: {paths:?}"
+        );
+    }
+}
+
+#[test]
+fn crate_paths_expand_nested_groups_past_the_first_segment() {
+    // An override such as markdown::redline must be seen in grouped form,
+    // or an upward path written as a group slips past the guard.
+    let text = "use crate::markdown::{redline, patch};\n\
+                use crate::{edit::{inline as i, self}, ids};";
+    assert_eq!(
+        crate_paths(text),
+        vec![
+            vec!["markdown", "redline"],
+            vec!["markdown", "patch"],
+            vec!["edit", "inline"],
+            vec!["edit"],
+            vec!["ids"],
+        ]
+    );
+}
+
+#[test]
+fn a_group_inside_a_group_keeps_its_outer_prefix_first() {
+    for text in [
+        "use crate::markdown::{redline::{run}};",
+        "use crate::{markdown::{redline::{run, Opts}}};",
+    ] {
+        let paths = crate_paths(text);
+        assert!(
+            paths
+                .iter()
+                .all(|path| path == &vec!["markdown", "redline"]),
             "{text}: {paths:?}"
         );
     }

@@ -2084,7 +2084,13 @@ fn check_comment_anchor(
     let mut changed = None;
     let mut boundary = None;
     let mut removed_paragraph = None;
-    for para in covered.first..=covered.last {
+    for (para, projection) in tx
+        .projections
+        .iter()
+        .enumerate()
+        .take(covered.last + 1)
+        .skip(covered.first)
+    {
         let start = if para == covered.first {
             covered.start
         } else {
@@ -2093,7 +2099,7 @@ fn check_comment_anchor(
         let end = if para == covered.last {
             covered.end
         } else {
-            tx.projections[para].text.len()
+            projection.text.len()
         };
         original += end - start;
         if let Some((i, _)) = edits

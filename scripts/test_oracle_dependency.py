@@ -40,10 +40,13 @@ class OracleDependency(unittest.TestCase):
         ):
             with self.subTest(lock=filename):
                 binding_lock = tomllib.loads((ROOT / filename).read_text())
-                self.assertEqual(
-                    {p["version"] for p in binding_lock["package"] if p["name"] == "zip"},
-                    {"9.0.5"},
-                )
+                versions = {p["version"] for p in binding_lock["package"] if p["name"] == "zip"}
+                # One zip 9, at or past the GHSA-m665-v7pm-7grj fix (9.0.5).
+                self.assertEqual(len(versions), 1, versions)
+                (version,) = versions
+                major, minor, patch = (int(part) for part in version.split("."))
+                self.assertEqual(major, 9, version)
+                self.assertGreaterEqual((minor, patch), (0, 5), version)
 
     def test_fork_is_explicitly_allowed(self) -> None:
         policy = tomllib.loads((ROOT / "deny.toml").read_text())

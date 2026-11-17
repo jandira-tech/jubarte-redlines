@@ -1303,15 +1303,11 @@ fn unit_text_token_count(dom: &Dom, u: &ComparisonUnit) -> usize {
 /// iff any `w:t` atom carries an alphanumeric char.
 fn unit_has_text_token(dom: &Dom, u: &ComparisonUnit) -> bool {
     !u.try_for_each_atom(&mut |a| {
-        if dom.name_is(a.content_element, &W::t())
+        !(dom.name_is(a.content_element, &W::t())
             && dom
                 .value_str(a.content_element)
                 .chars()
-                .any(|c| c.is_alphanumeric())
-        {
-            return false;
-        }
-        true
+                .any(|c| c.is_alphanumeric()))
     })
 }
 
@@ -8227,13 +8223,9 @@ fn ooxml_x_short_prose_demo(
         .map(|t| t.to_ascii_lowercase())
         .collect::<Vec<_>>();
     let joined = title.join(" ");
-    if title.iter().any(|t| t == "demo" || t == "tester")
+    !(title.iter().any(|t| t == "demo" || t == "tester")
         || joined.contains("demonstrates")
-        || joined.contains("document shows")
-    {
-        return false;
-    }
-    true
+        || joined.contains("document shows"))
 }
 
 /// Short **cell-only** table next (table_doc is a single top-level `w:tbl` of
