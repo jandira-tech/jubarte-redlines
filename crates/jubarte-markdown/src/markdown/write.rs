@@ -47,7 +47,7 @@ use super::{math, view_notes, view_stories, view_styles};
 /// to the caller; everything else lives only on the stack.
 ///
 /// ```
-/// use jubarte::markdown::{DocxOptions, markdown_to_docx};
+/// use jubarte_markdown::markdown::{DocxOptions, markdown_to_docx};
 ///
 /// let written = markdown_to_docx(
 ///     "# Terms\n\nPayment is due in {~~30~>45~~} days.",

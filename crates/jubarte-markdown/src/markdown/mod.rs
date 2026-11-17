@@ -144,7 +144,7 @@ impl PageSize {
 /// (`{>>…<<}`). `All` returns the Markdown as it is.
 ///
 /// ```
-/// use jubarte::markdown::{TrackChanges, resolve_critic};
+/// use jubarte_markdown::markdown::{TrackChanges, resolve_critic};
 ///
 /// let text = "Due in {~~30~>45~~} days.{>>Agreed on the call.<<}";
 /// assert_eq!(resolve_critic(text, TrackChanges::Accept), "Due in 45 days.");
@@ -578,7 +578,7 @@ impl Select {
 /// [`crate::document_comparer::DEFAULT_DATE`].
 ///
 /// ```
-/// let (author, date) = jubarte::markdown::docx_stamp(b"not a docx");
+/// let (author, date) = jubarte_markdown::markdown::docx_stamp(b"not a docx");
 /// assert_eq!((author, date), (None, None));
 /// ```
 pub fn docx_stamp(docx: &[u8]) -> (Option<String>, Option<String>) {
@@ -594,10 +594,10 @@ pub fn docx_stamp(docx: &[u8]) -> (Option<String>, Option<String>) {
 ///
 /// ```
 /// let md = "---\nauthor: Ann\ncreated: 2026-03-02\n---\n\nText.\n";
-/// let (author, date) = jubarte::markdown::markdown_stamp(md, None);
+/// let (author, date) = jubarte_markdown::markdown::markdown_stamp(md, None);
 /// assert_eq!(author.as_deref(), Some("Ann"));
 /// assert_eq!(date.as_deref(), Some("2026-03-02T00:00:00Z"));
-/// assert_eq!(jubarte::markdown::markdown_stamp("Text.\n", None), (None, None));
+/// assert_eq!(jubarte_markdown::markdown::markdown_stamp("Text.\n", None), (None, None));
 /// ```
 pub fn markdown_stamp(
     markdown: &str,
@@ -645,12 +645,12 @@ pub struct ReadDocx {
 /// main document part).
 ///
 /// ```
-/// use jubarte::markdown::{DocxOptions, MarkdownOptions, docx_to_markdown, markdown_to_docx};
+/// use jubarte_markdown::markdown::{DocxOptions, MarkdownOptions, docx_to_markdown, markdown_to_docx};
 ///
 /// let docx = markdown_to_docx("Due in {~~30~>45~~} days.", &DocxOptions::default())?.docx;
 /// let read = docx_to_markdown(&docx, &MarkdownOptions::default())?;
 /// assert!(read.markdown.starts_with("Due in {~~30~>45~~}"), "{}", read.markdown);
-/// # Ok::<(), jubarte::markdown::MarkdownError>(())
+/// # Ok::<(), jubarte_markdown::markdown::MarkdownError>(())
 /// ```
 pub fn docx_to_markdown(docx: &[u8], options: &MarkdownOptions) -> Result<ReadDocx, MarkdownError> {
     read_docx(docx, options, false)
@@ -786,12 +786,12 @@ pub struct ReadView {
 /// document.
 ///
 /// ```
-/// use jubarte::markdown::{DocxOptions, ReadOptions, markdown_to_docx, read};
+/// use jubarte_markdown::markdown::{DocxOptions, ReadOptions, markdown_to_docx, read};
 ///
 /// let docx = markdown_to_docx("Due in {~~30~>45~~} days.", &DocxOptions::default())?.docx;
 /// let view = read(&docx, &ReadOptions { page_markers: false, ..ReadOptions::default() })?;
 /// assert!(view.markdown.contains("<!-- p0 -->\nDue in {~~30~>45~~}{r"), "{}", view.markdown);
-/// # Ok::<(), jubarte::markdown::MarkdownError>(())
+/// # Ok::<(), jubarte_markdown::markdown::MarkdownError>(())
 /// ```
 pub fn read(docx: &[u8], options: &ReadOptions) -> Result<ReadView, MarkdownError> {
     // The view's own budget comes first: the layout pass below admits under

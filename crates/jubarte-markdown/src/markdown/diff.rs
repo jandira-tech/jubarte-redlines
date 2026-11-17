@@ -76,7 +76,7 @@ const REFLOW_MAX_BYTES: usize = 400_000;
 /// # Examples
 ///
 /// ```
-/// use jubarte::markdown::diff_markdown;
+/// use jubarte_markdown::markdown::diff_markdown;
 ///
 /// assert_eq!(
 ///     diff_markdown("Payment in 30 days.\n", "Payment in 45 days.\n"),
@@ -291,7 +291,8 @@ pub(super) fn table_row_change(line: &str, open: &str, close: &str) -> String {
 /// CriticMarkup delimiters in text, escaped so they stay text.
 ///
 /// A delimiter behind an odd number of backslashes is already escaped, as
-/// [`super::unified`] counts them, and one the reader passes over
+/// jubarte-edit's `markdown::unified` counts them (a crate above this
+/// one, so not a link), and one the reader passes over
 /// verbatim — inside a code span, a link destination, an autolink or an
 /// HTML comment — is literal: escaping it would change the text the
 /// reader gives back.
