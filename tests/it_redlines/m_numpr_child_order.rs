@@ -12,7 +12,7 @@
 //!
 //! This is a passthrough of malformed input rather than an order the comparer
 //! invents, and it is still ours to repair: the same Word-parity argument the
-//! dangling-`numId` repair already makes (`document_comparer.rs`, "Word
+//! dangling-`numId` repair already makes (`compare_documents_impl` in `document_comparer/mod.rs`, "Word
 //! synthesizes a default numbering definition … Word repairs it on open, so
 //! match it at compare time") applies unchanged here.
 //!
