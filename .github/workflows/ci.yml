@@ -215,7 +215,7 @@ jobs:
       # keeps reporting every other test.
       - run: cargo nextest run --workspace --all-features --no-fail-fast -E 'not test(markdown_and_docx_round_trip_exactly)'
       # nextest runs no doctests.
-      - run: cargo test --all-features --doc
+      - run: cargo test --workspace --all-features --doc
 
   fuzz-smoke:
     name: fuzz smoke (60 s per target)
