@@ -131,10 +131,13 @@ pub(super) fn weighted_lcs_row(k1: &[u32], k2: &[u32], w1: &[u32]) -> Vec<u64> {
     for (i, &ka) in k1.iter().enumerate() {
         cur[0] = 0;
         for (j, &kb) in k2.iter().enumerate() {
+            // A match competes with both skips: one key can carry two
+            // weights (case_insensitive keys `SS` and `ß` alike, #2454).
+            let skip = prev[j + 1].max(cur[j]);
             cur[j + 1] = if ka != 0 && ka == kb {
-                prev[j] + u64::from(w1[i])
+                (prev[j] + u64::from(w1[i])).max(skip)
             } else {
-                prev[j + 1].max(cur[j])
+                skip
             };
         }
         std::mem::swap(&mut prev, &mut cur);
