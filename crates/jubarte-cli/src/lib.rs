@@ -17,7 +17,9 @@
 
 // A5 shims: every layer below under the names the moved code uses.
 pub use jubarte_doc::comment_settlement;
-pub use jubarte_doc::{append, audit, changes, comments, debug, fields, inspect, scrub, validate};
+#[cfg(feature = "render")]
+pub use jubarte_doc::fields;
+pub use jubarte_doc::{append, audit, changes, comments, debug, inspect, scrub, validate};
 pub use jubarte_dom::{ids, namespaces, perf, unid, util, xmllinq};
 pub use jubarte_edit::{capabilities, edit, markdown, result, text_diff};
 // Host filesystem publication is unavailable to browser/WASM byte APIs

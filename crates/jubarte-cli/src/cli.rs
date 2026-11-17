@@ -2016,7 +2016,10 @@ impl From<DebugCheck> for crate::debug::Check {
             DebugCheck::Tables => Check::Tables,
             DebugCheck::Styledefs => Check::StyleDefs,
             DebugCheck::Numbering => Check::Numbering,
+            #[cfg(feature = "render")]
             DebugCheck::Render => Check::Render,
+            #[cfg(not(feature = "render"))]
+            DebugCheck::Render => Check::Orphans,
         }
     }
 }

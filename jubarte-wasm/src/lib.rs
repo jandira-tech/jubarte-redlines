@@ -57,6 +57,7 @@ mod jubarte {
     #[allow(unused_imports)]
     pub use jubarte_doc::{append, audit, changes, comments, debug, inspect, scrub, validate};
     #[cfg(feature = "doc")]
+    #[cfg(all(feature = "doc", feature = "pdf"))]
     #[allow(unused_imports)]
     pub use jubarte_doc::fields;
     #[cfg(all(feature = "edit", feature = "markdown"))]
@@ -1917,6 +1918,7 @@ pub fn markdown_to_docx(
 /// has no layout pass: it leaves `FONT_SUBSTITUTED` out (naming it is an
 /// error) and does not compare `NUMPAGES` caches with a page count.
 #[wasm_bindgen(js_name = auditDocument)]
+#[cfg(all(feature = "doc", feature = "pdf"))]
 pub fn audit_document(docx: &[u8], rules: Option<String>) -> Result<String, JsValue> {
     let rules = rules.unwrap_or_default();
     let rules: Vec<&str> = rules
