@@ -7,6 +7,37 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T4.9 (facade finalized) - 2026-11-17
+
+- Phase 4 ends. tests/crate_layering.rs's source scan is retired with
+  the split it guarded: the guard now reads every crates/*/Cargo.toml
+  and the root manifest section by section and asserts each
+  [dependencies]/[dev-dependencies] edge between workspace crates
+  points down the A1 DAG (redlines and render never name each other;
+  the facade names everything). The negative probe - adding
+  jubarte-redlines to jubarte-render - fails naming exactly that edge,
+  and the restore is green. The crate-path scanner's unit tests stay
+  (they protect the machinery jubarte debug and the historical
+  evidence reuse); one skip_trivia lesson: trim BEFORE checking for a
+  comment, or a leading space hides the comment.
+- AC1: src/ holds lib.rs and bin/ only. AC3: cargo publish
+  --workspace --dry-run --allow-dirty packaged and verified all nine
+  crates from their tarballs. AC5: the no-default/all-features loop is
+  ok for all nine packages. Goldens identical; gates 30/30 +
+  crate_layering 7/7.
+- AC4 (bench gate, D8 standing): the pre-split baseline was re-saved
+  from the T4.3a worktree (a /tmp criterion home - the old one was
+  collected) and the no-LTO consumer gate re-run at HEAD
+  (CRITERION_HOME outside the mbx cache). The no-LTO consumer gap
+  deepened with the ninth crate: +38%/+52%/+64% on the three slow
+  benchmarks (T4.3b measured +32%/+36%/+56% at three packages), the
+  fast one statistically unchanged. The workspace's own builds keep
+  thin LTO (the 5-11% improvement recorded at T4.3b); this standing
+  consumer gap is the D8 record T4.3b opened, now at its final
+  nine-package shape. Release CLI with thin LTO: 41,857,296 bytes;
+  compare-only release build (cargo build --release -p
+  jubarte-redlines, cache-hot) 0.19 s.
+
 ## T4.8 (jubarte-cli extracted) - 2026-11-17
 
 - Ninth workspace package: the CLI layer (cli/, cli.rs, update/,
