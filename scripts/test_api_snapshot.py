@@ -68,7 +68,10 @@ class Signatures(unittest.TestCase):
         )
 
     def test_impl_trait_arguments_stay_in_the_argument(self) -> None:
-        synthetic = {"name": "impl Read", "kind": {"type": {"bounds": [trait("Read")], "default": None, "is_synthetic": True}}}
+        synthetic = {
+            "name": "impl Read",
+            "kind": {"type": {"bounds": [trait("Read")], "default": None, "is_synthetic": True}},
+        }
         fn = function([synthetic], [])
         fn["sig"]["inputs"] = [["x", {"impl_trait": [trait("Read")]}]]
         self.assertEqual(api._sig(fn), "(x: impl Read)")
@@ -88,16 +91,41 @@ class CrossCrate(unittest.TestCase):
         # jubarte::admission re-exports jubarte_opc::admission: one plain
         # use of a struct, one glob use of the whole module.
         items = [
-            {"id": 1, "crate_id": 0, "name": "jubarte", "visibility": "public",
-             "inner": {"module": {"is_crate": True, "items": [2]}}},
-            {"id": 2, "crate_id": 0, "name": "admission", "visibility": "public",
-             "inner": {"module": {"is_crate": False, "items": [3, 4]}}},
-            {"id": 3, "crate_id": 0, "name": "InputLimits", "visibility": "public",
-             "inner": {"use": {"id": 100, "source": "jubarte_opc::admission::InputLimits",
-                               "is_glob": False, "name": "InputLimits"}}},
-            {"id": 4, "crate_id": 0, "name": "*", "visibility": "public",
-             "inner": {"use": {"id": 101, "source": "jubarte_opc::admission::*",
-                               "is_glob": True, "name": "*"}}},
+            {
+                "id": 1,
+                "crate_id": 0,
+                "name": "jubarte",
+                "visibility": "public",
+                "inner": {"module": {"is_crate": True, "items": [2]}},
+            },
+            {
+                "id": 2,
+                "crate_id": 0,
+                "name": "admission",
+                "visibility": "public",
+                "inner": {"module": {"is_crate": False, "items": [3, 4]}},
+            },
+            {
+                "id": 3,
+                "crate_id": 0,
+                "name": "InputLimits",
+                "visibility": "public",
+                "inner": {
+                    "use": {
+                        "id": 100,
+                        "source": "jubarte_opc::admission::InputLimits",
+                        "is_glob": False,
+                        "name": "InputLimits",
+                    }
+                },
+            },
+            {
+                "id": 4,
+                "crate_id": 0,
+                "name": "*",
+                "visibility": "public",
+                "inner": {"use": {"id": 101, "source": "jubarte_opc::admission::*", "is_glob": True, "name": "*"}},
+            },
         ]
         return {
             "root": 1,
@@ -119,23 +147,49 @@ class CrossCrate(unittest.TestCase):
         # jubarte_opc::admission holds a public struct, a doc(hidden) public
         # struct, and a public function.
         def fn_inner(name: str) -> dict:
-            return {"sig": {"inputs": [], "output": None, "is_c_variadic": False},
-                    "generics": {"params": [], "where_predicates": []},
-                    "header": {"is_const": False, "is_unsafe": False, "is_async": False}}
+            return {
+                "sig": {"inputs": [], "output": None, "is_c_variadic": False},
+                "generics": {"params": [], "where_predicates": []},
+                "header": {"is_const": False, "is_unsafe": False, "is_async": False},
+            }
+
         items = [
-            {"id": 1, "crate_id": 0, "name": "jubarte_opc", "visibility": "public",
-             "inner": {"module": {"is_crate": True, "items": [2]}}},
-            {"id": 2, "crate_id": 0, "name": "admission", "visibility": "public",
-             "inner": {"module": {"is_crate": False, "items": [3, 4, 5]}}},
-            {"id": 3, "crate_id": 0, "name": "InputLimits", "visibility": "public",
-             "inner": {"struct": {"kind": {"plain": {"fields": [], "has_stripped_fields": False}},
-                                  "impls": []}}},
-            {"id": 4, "crate_id": 0, "name": "Internal", "visibility": "public",
-             "attrs": ["#[doc(hidden)]"],
-             "inner": {"struct": {"kind": {"plain": {"fields": [], "has_stripped_fields": False}},
-                                  "impls": []}}},
-            {"id": 5, "crate_id": 0, "name": "admit", "visibility": "public",
-             "inner": {"function": fn_inner("admit")}},
+            {
+                "id": 1,
+                "crate_id": 0,
+                "name": "jubarte_opc",
+                "visibility": "public",
+                "inner": {"module": {"is_crate": True, "items": [2]}},
+            },
+            {
+                "id": 2,
+                "crate_id": 0,
+                "name": "admission",
+                "visibility": "public",
+                "inner": {"module": {"is_crate": False, "items": [3, 4, 5]}},
+            },
+            {
+                "id": 3,
+                "crate_id": 0,
+                "name": "InputLimits",
+                "visibility": "public",
+                "inner": {"struct": {"kind": {"plain": {"fields": [], "has_stripped_fields": False}}, "impls": []}},
+            },
+            {
+                "id": 4,
+                "crate_id": 0,
+                "name": "Internal",
+                "visibility": "public",
+                "attrs": ["#[doc(hidden)]"],
+                "inner": {"struct": {"kind": {"plain": {"fields": [], "has_stripped_fields": False}}, "impls": []}},
+            },
+            {
+                "id": 5,
+                "crate_id": 0,
+                "name": "admit",
+                "visibility": "public",
+                "inner": {"function": fn_inner("admit")},
+            },
         ]
         return {
             "root": 1,
@@ -149,15 +203,12 @@ class CrossCrate(unittest.TestCase):
         lines = [e.line() for e in api.entries(self.facade_doc(), {"jubarte_opc": self.opc_doc()})]
         # The plain use names the foreign struct, so the struct is part of
         # the facade surface under its facade path.
-        self.assertIn(
-            "api\tstruct\tpub\tjubarte::admission::InputLimits", lines
-        )
+        self.assertIn("api\tstruct\tpub\tjubarte::admission::InputLimits", lines)
         # The glob names the foreign module's public children under the
         # facade path too.
-        self.assertTrue(any(
-            line.startswith("api\tfunction\tpub\tjubarte::admission::admit ")
-            for line in lines
-        ), lines)
+        self.assertTrue(
+            any(line.startswith("api\tfunction\tpub\tjubarte::admission::admit ") for line in lines), lines
+        )
         # Without the other documents, no foreign item resolves.
         alone = [e.line() for e in api.entries(self.facade_doc())]
         self.assertFalse(any("admit" in line for line in alone), alone)
@@ -248,9 +299,13 @@ def demo_doc() -> dict:
         item(20, "Output", "assoc_type", {"type": {"generic": "T"}}, vis="default", crate=2),
     ]
     paths = {
-        "0": ["demo"], "1": ["demo", "api"], "2": ["demo", "hidden"],
-        "3": ["demo", "api", "Widget"], "4": ["demo", "api", "make"],
-        "5": ["demo", "api", "helper"], "8": ["demo", "hidden", "Shown"],
+        "0": ["demo"],
+        "1": ["demo", "api"],
+        "2": ["demo", "hidden"],
+        "3": ["demo", "api", "Widget"],
+        "4": ["demo", "api", "make"],
+        "5": ["demo", "api", "helper"],
+        "8": ["demo", "hidden", "Shown"],
         "18": ["demo", "hidden", "Buried"],
     }
     return {
@@ -262,22 +317,25 @@ def demo_doc() -> dict:
 
 class Listing(unittest.TestCase):
     def test_the_listing_is_the_public_surface_then_the_crate_private_rest(self) -> None:
-        self.assertEqual(api.flatten(demo_doc()), [
-            "api\tfunction\tpub\tdemo::api::Widget::new ()",
-            "api\tfunction\tpub\tdemo::api::make ()",
-            "api\timpl\t\tdemo::api::Widget::(impl Clone)",
-            "api\tmodule\tpub\tdemo",
-            "api\tmodule\tpub\tdemo::api",
-            "api\tstruct\tpub\tdemo::api::Widget",
-            "api\tstruct\tpub\tdemo::hidden::Shown",
-            "api\tstruct_field\tpub\tdemo::api::Widget::size: u8",
-            "api\tuse\tpub\tdemo::Shown = hidden::Shown",
-            "internal\tfunction\tpub(crate)\tdemo::api::helper ()",
-            "internal\tfunction\tpub(crate::api)\tdemo::api::Widget::tweak ()",
-            "internal\tmodule\tpub(crate)\tdemo::hidden",
-            "internal\tstruct\tpub\tdemo::hidden::Buried",
-            "internal\tstruct_field\t\tdemo::api::Widget::secret: u8",
-        ])
+        self.assertEqual(
+            api.flatten(demo_doc()),
+            [
+                "api\tfunction\tpub\tdemo::api::Widget::new ()",
+                "api\tfunction\tpub\tdemo::api::make ()",
+                "api\timpl\t\tdemo::api::Widget::(impl Clone)",
+                "api\tmodule\tpub\tdemo",
+                "api\tmodule\tpub\tdemo::api",
+                "api\tstruct\tpub\tdemo::api::Widget",
+                "api\tstruct\tpub\tdemo::hidden::Shown",
+                "api\tstruct_field\tpub\tdemo::api::Widget::size: u8",
+                "api\tuse\tpub\tdemo::Shown = hidden::Shown",
+                "internal\tfunction\tpub(crate)\tdemo::api::helper ()",
+                "internal\tfunction\tpub(crate::api)\tdemo::api::Widget::tweak ()",
+                "internal\tmodule\tpub(crate)\tdemo::hidden",
+                "internal\tstruct\tpub\tdemo::hidden::Buried",
+                "internal\tstruct_field\t\tdemo::api::Widget::secret: u8",
+            ],
+        )
 
     def test_blanket_and_auto_trait_impls_are_not_listed(self) -> None:
         # rustdoc writes `impl Into<U> for Widget`, `impl Send for Widget` and
@@ -308,8 +366,9 @@ class Listing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             built = Path(tmp) / "jubarte.json"
             built.write_text(json.dumps(demo_doc()))
-            with mock.patch.object(api, "build_doc_json"), mock.patch.object(
-                api, "build_workspace_docs", return_value={}
+            with (
+                mock.patch.object(api, "build_doc_json"),
+                mock.patch.object(api, "build_workspace_docs", return_value={}),
             ):
                 with mock.patch.object(api, "DOC_JSON", built):
                     with mock.patch.object(api, "API_DIR", Path(tmp) / "api"):
@@ -348,19 +407,24 @@ class Drift(unittest.TestCase):
 
     def test_the_public_surface_comes_first_and_in_full(self) -> None:
         # What can break a user (removed, changed) leads; additions follow.
-        self.assertEqual(api.render_drift("v1", "v2", self.OLD, self.NEW), "\n".join([
-            "PUBLIC API, what a user of the crate can name: 1 added, 1 removed, 1 changed",
-            "  - function  demo::api::gone ()",
-            "  ~ function  demo::api::make",
-            "        was  pub (x: u8)",
-            "        now  pub (x: u16)",
-            "  + function  demo::api::fresh ()",
-            "",
-            "CRATE-PRIVATE, by module: 2 added, 1 removed, 1 changed",
-            "    demo::hidden  +2 -1 ~1",
-            "  every line: scripts/api_snapshot.py --drift v1 v2 --private",
-            "",
-        ]))
+        self.assertEqual(
+            api.render_drift("v1", "v2", self.OLD, self.NEW),
+            "\n".join(
+                [
+                    "PUBLIC API, what a user of the crate can name: 1 added, 1 removed, 1 changed",
+                    "  - function  demo::api::gone ()",
+                    "  ~ function  demo::api::make",
+                    "        was  pub (x: u8)",
+                    "        now  pub (x: u16)",
+                    "  + function  demo::api::fresh ()",
+                    "",
+                    "CRATE-PRIVATE, by module: 2 added, 1 removed, 1 changed",
+                    "    demo::hidden  +2 -1 ~1",
+                    "  every line: scripts/api_snapshot.py --drift v1 v2 --private",
+                    "",
+                ]
+            ),
+        )
 
     def test_private_drift_is_listed_on_request(self) -> None:
         text = api.render_drift("v1", "v2", self.OLD, self.NEW, private=True)
@@ -375,15 +439,15 @@ class Drift(unittest.TestCase):
         old = [entry("internal", "function", "pub", "demo::f", " ()")]
         new = [entry("api", "function", "pub", "demo::f", " ()")]
         text = api.render_drift("v1", "v2", old, new)
-        self.assertIn(
-            "  ~ function  demo::f\n        was  internal: pub ()\n        now  api: pub ()\n", text
-        )
+        self.assertIn("  ~ function  demo::f\n        was  internal: pub ()\n        now  api: pub ()\n", text)
         self.assertIn("CRATE-PRIVATE, by module: 0 added, 0 removed, 0 changed\n", text)
 
     def test_an_item_listed_twice_is_added_and_removed_not_changed(self) -> None:
         # Two cfg variants of one function share a kind and a path.
-        old = [entry("api", "function", "pub", "demo::f", " ()"),
-               entry("api", "function", "pub", "demo::f", " (x: u8)")]
+        old = [
+            entry("api", "function", "pub", "demo::f", " ()"),
+            entry("api", "function", "pub", "demo::f", " (x: u8)"),
+        ]
         new = [entry("api", "function", "pub", "demo::f", " ()")]
         self.assertEqual(api.drift(old, new), [(old[1], None)])
 
@@ -397,13 +461,16 @@ class Drift(unittest.TestCase):
             entry("api", "struct_field", "pub", "demo::W::size", ": u8"),
         ]
         old = [entry("api", "impl", "", "demo::V::(impl Copy)")]
-        self.assertEqual(api.render_drift("v1", "v2", old, new).splitlines()[:5], [
-            "PUBLIC API, what a user of the crate can name: 5 added, 1 removed, 0 changed",
-            "  - impl  demo::V: Copy",
-            "  + struct  demo::W",
-            "  + impl  demo::W: Clone, Debug, From<u8>",
-            "  + struct_field  demo::W::size: u8",
-        ])
+        self.assertEqual(
+            api.render_drift("v1", "v2", old, new).splitlines()[:5],
+            [
+                "PUBLIC API, what a user of the crate can name: 5 added, 1 removed, 0 changed",
+                "  - impl  demo::V: Copy",
+                "  + struct  demo::W",
+                "  + impl  demo::W: Clone, Debug, From<u8>",
+                "  + struct_field  demo::W::size: u8",
+            ],
+        )
 
     def test_no_drift_says_so(self) -> None:
         text = api.render_drift("v1", "v2", self.OLD, self.OLD)
@@ -429,21 +496,23 @@ class DocBuild(unittest.TestCase):
         return [(argv, env) for argv, env in calls if argv[0] == "cargo"]
 
     def test_cargo_never_sees_a_rustdoc_flag(self) -> None:
-        for toolchains in ("stable-aarch64-apple-darwin (default)\nnightly-aarch64-apple-darwin\n",
-                           "stable-aarch64-apple-darwin (default)\n"):
-            (argv, env), = self.runs(toolchains)
+        for toolchains in (
+            "stable-aarch64-apple-darwin (default)\nnightly-aarch64-apple-darwin\n",
+            "stable-aarch64-apple-darwin (default)\n",
+        ):
+            ((argv, env),) = self.runs(toolchains)
             for flag in ("--output-format", "-Z", "unstable-options", "--document-private-items"):
                 self.assertNotIn(flag, argv, toolchains)
             self.assertIn("--output-format json", env["RUSTDOCFLAGS"])
             self.assertIn("--document-private-items", env["RUSTDOCFLAGS"])
 
     def test_a_nightly_documents_with_nightly_rustdoc(self) -> None:
-        (argv, env), = self.runs("nightly-aarch64-apple-darwin\n")
+        ((argv, env),) = self.runs("nightly-aarch64-apple-darwin\n")
         self.assertEqual(argv[:2], ["cargo", "+nightly"])
         self.assertNotIn("RUSTC_BOOTSTRAP", env)
 
     def test_without_a_nightly_the_pinned_stable_is_unlocked(self) -> None:
-        (argv, env), = self.runs("stable-aarch64-apple-darwin (default)\n")
+        ((argv, env),) = self.runs("stable-aarch64-apple-darwin (default)\n")
         self.assertNotIn("+nightly", argv)
         self.assertEqual(env["RUSTC_BOOTSTRAP"], "1")
 
@@ -468,12 +537,23 @@ class CommittedSnapshots(unittest.TestCase):
     def test_the_drift_between_two_releases_is_short_and_free_of_noise(self) -> None:
         self.assertTrue(self.report.startswith("PUBLIC API"), self.report[:80])
         self.assertLess(len(self.report.splitlines()), 120)
-        for noise in ("impl Any", "Borrow", "CloneToUninit", "Freeze", "Into<U>", "TryFrom<U>",
-                      "RefUnwindSafe", "impl Same", "ToOwned", "Unpin", "Equivalent<K>"):
+        for noise in (
+            "impl Any",
+            "Borrow",
+            "CloneToUninit",
+            "Freeze",
+            "Into<U>",
+            "TryFrom<U>",
+            "RefUnwindSafe",
+            "impl Same",
+            "ToOwned",
+            "Unpin",
+            "Equivalent<K>",
+        ):
             self.assertNotIn(noise, self.every_line, noise)
 
     def test_crate_private_items_stay_out_of_the_public_section(self) -> None:
-        public = self.report[:self.report.index("CRATE-PRIVATE")]
+        public = self.report[: self.report.index("CRATE-PRIVATE")]
         self.assertIn("  + constant  jubarte::comparer::WORD_LEVEL_KEPT_RATIO: f64\n", public)
         self.assertNotIn("pub(crate", public)
         # `pub` fields of a struct in a crate-private module are not public.
@@ -558,9 +638,14 @@ class AddedPaths(unittest.TestCase):
         ]
         for iid, inner in impls:
             items.append(item(iid, None, "impl", inner, vis="default"))
-        return _doc(items, {
-            0: ["jubarte"], 1: ["jubarte", "edit"], 2: ["jubarte", "edit", "LineSpacing"],
-        })
+        return _doc(
+            items,
+            {
+                0: ["jubarte"],
+                1: ["jubarte", "edit"],
+                2: ["jubarte", "edit", "LineSpacing"],
+            },
+        )
 
     def test_renaming_an_impl_parameter_is_not_an_added_path(self) -> None:
         # #1758: `impl<'de> Deserialize<'de>` and `impl<'input> Deserialize<'input>`
@@ -570,27 +655,47 @@ class AddedPaths(unittest.TestCase):
         # does not fail a patch for adding one.
         def de(name: str) -> dict:
             return {
-                "trait": {"path": "Deserialize", "id": 900, "args": {
-                    "angle_bracketed": {"args": [{"lifetime": name}], "constraints": []},
-                }},
+                "trait": {
+                    "path": "Deserialize",
+                    "id": 900,
+                    "args": {
+                        "angle_bracketed": {"args": [{"lifetime": name}], "constraints": []},
+                    },
+                },
                 "for": {"resolved_path": {"path": "LineSpacing", "id": 2, "args": None}},
                 "items": [],
-                "generics": {"params": [{"name": name, "kind": {"lifetime": {"outlives": []}}}],
-                             "where_predicates": []},
-                "blanket_impl": None, "is_synthetic": False,
+                "generics": {
+                    "params": [{"name": name, "kind": {"lifetime": {"outlives": []}}}],
+                    "where_predicates": [],
+                },
+                "blanket_impl": None,
+                "is_synthetic": False,
             }
 
         def from_type(name: str) -> dict:
             return {
-                "trait": {"path": "From", "id": 901, "args": {
-                    "angle_bracketed": {"args": [{"type": {"generic": name}}], "constraints": []},
-                }},
+                "trait": {
+                    "path": "From",
+                    "id": 901,
+                    "args": {
+                        "angle_bracketed": {"args": [{"type": {"generic": name}}], "constraints": []},
+                    },
+                },
                 "for": {"resolved_path": {"path": "LineSpacing", "id": 2, "args": None}},
                 "items": [],
-                "generics": {"params": [{"name": name, "kind": {
-                    "type": {"bounds": [], "default": None, "is_synthetic": False},
-                }}], "where_predicates": []},
-                "blanket_impl": None, "is_synthetic": False,
+                "generics": {
+                    "params": [
+                        {
+                            "name": name,
+                            "kind": {
+                                "type": {"bounds": [], "default": None, "is_synthetic": False},
+                            },
+                        }
+                    ],
+                    "where_predicates": [],
+                },
+                "blanket_impl": None,
+                "is_synthetic": False,
             }
 
         def serialize() -> dict:
@@ -599,7 +704,8 @@ class AddedPaths(unittest.TestCase):
                 "for": {"resolved_path": {"path": "LineSpacing", "id": 2, "args": None}},
                 "items": [],
                 "generics": {"params": [], "where_predicates": []},
-                "blanket_impl": None, "is_synthetic": False,
+                "blanket_impl": None,
+                "is_synthetic": False,
             }
 
         old = self._line_spacing([(3, de("'de")), (4, from_type("T"))])
@@ -614,9 +720,13 @@ class AddedPaths(unittest.TestCase):
             code, out, err = _run_added(old_path, added_path)
         self.assertEqual((same, same_out, same_err), (0, "", ""))
         self.assertEqual(err, "", out)
-        self.assertEqual((code, out), (
-            1, "impl jubarte::edit::LineSpacing::(impl Serialize)\n",
-        ))
+        self.assertEqual(
+            (code, out),
+            (
+                1,
+                "impl jubarte::edit::LineSpacing::(impl Serialize)\n",
+            ),
+        )
 
     def test_a_new_glob_reexport_adds_the_names_it_makes_public(self) -> None:
         # #1758: `pub use a::*` then `pub use b::*`. Both use-lines are
@@ -624,20 +734,26 @@ class AddedPaths(unittest.TestCase):
         # The glob makes `jubarte::second` nameable. A crate-private item
         # in `b` is not.
         def surface(use_ids: list[int]) -> dict:
-            return _doc([
-                item(0, "jubarte", "module", {"is_crate": True, "items": [1, 2, *use_ids]}),
-                item(1, "a", "module", {"items": [4]}),
-                item(2, "b", "module", {"items": [5, 6]}),
-                item(3, None, "use", {"source": "a::*", "name": "*", "id": 1, "is_glob": True}),
-                item(4, "first", "function", fn()),
-                item(5, "second", "function", fn()),
-                item(6, "buried", "function", fn(), vis="crate"),
-                item(8, None, "use", {"source": "b::*", "name": "*", "id": 2, "is_glob": True}),
-            ], {
-                0: ["jubarte"], 1: ["jubarte", "a"], 2: ["jubarte", "b"],
-                4: ["jubarte", "a", "first"], 5: ["jubarte", "b", "second"],
-                6: ["jubarte", "b", "buried"],
-            })
+            return _doc(
+                [
+                    item(0, "jubarte", "module", {"is_crate": True, "items": [1, 2, *use_ids]}),
+                    item(1, "a", "module", {"items": [4]}),
+                    item(2, "b", "module", {"items": [5, 6]}),
+                    item(3, None, "use", {"source": "a::*", "name": "*", "id": 1, "is_glob": True}),
+                    item(4, "first", "function", fn()),
+                    item(5, "second", "function", fn()),
+                    item(6, "buried", "function", fn(), vis="crate"),
+                    item(8, None, "use", {"source": "b::*", "name": "*", "id": 2, "is_glob": True}),
+                ],
+                {
+                    0: ["jubarte"],
+                    1: ["jubarte", "a"],
+                    2: ["jubarte", "b"],
+                    4: ["jubarte", "a", "first"],
+                    5: ["jubarte", "b", "second"],
+                    6: ["jubarte", "b", "buried"],
+                },
+            )
 
         with tempfile.TemporaryDirectory() as tmp:
             old, new = Path(tmp) / "old.json", Path(tmp) / "new.json"
@@ -651,13 +767,16 @@ class AddedPaths(unittest.TestCase):
         # `use` items with is_glob point at a module or an enum. Variants
         # carry no visibility of their own; they are as public as the enum.
         def surface(items_at_root: list[int]) -> dict:
-            return _doc([
-                item(0, "jubarte", "module", {"is_crate": True, "items": items_at_root}),
-                item(1, "E", "enum", {"variants": [2, 3], "impls": []}),
-                item(2, "A", "variant", {"kind": "plain"}, vis="default"),
-                item(3, "B", "variant", {"kind": "plain"}, vis="default"),
-                item(4, None, "use", {"source": "E::*", "name": "*", "id": 1, "is_glob": True}),
-            ], {0: ["jubarte"], 1: ["jubarte", "E"]})
+            return _doc(
+                [
+                    item(0, "jubarte", "module", {"is_crate": True, "items": items_at_root}),
+                    item(1, "E", "enum", {"variants": [2, 3], "impls": []}),
+                    item(2, "A", "variant", {"kind": "plain"}, vis="default"),
+                    item(3, "B", "variant", {"kind": "plain"}, vis="default"),
+                    item(4, None, "use", {"source": "E::*", "name": "*", "id": 1, "is_glob": True}),
+                ],
+                {0: ["jubarte"], 1: ["jubarte", "E"]},
+            )
 
         with tempfile.TemporaryDirectory() as tmp:
             old, new = Path(tmp) / "old.json", Path(tmp) / "new.json"
@@ -673,15 +792,21 @@ class AddedPaths(unittest.TestCase):
         # the gate has to name the macro. Identity is the Rust namespace
         # (type, value, macro) plus the path.
         paths = {0: ["jubarte"], 1: ["jubarte", "something"], 2: ["jubarte", "something"]}
-        old = _doc([
-            item(0, "jubarte", "module", {"is_crate": True, "items": [1]}),
-            item(1, "something", "function", fn()),
-        ], paths)
-        new = _doc([
-            item(0, "jubarte", "module", {"is_crate": True, "items": [1, 2]}),
-            item(1, "something", "function", fn()),
-            item(2, "something", "macro", "macro_rules! something { () => {}; }"),
-        ], paths)
+        old = _doc(
+            [
+                item(0, "jubarte", "module", {"is_crate": True, "items": [1]}),
+                item(1, "something", "function", fn()),
+            ],
+            paths,
+        )
+        new = _doc(
+            [
+                item(0, "jubarte", "module", {"is_crate": True, "items": [1, 2]}),
+                item(1, "something", "function", fn()),
+                item(2, "something", "macro", "macro_rules! something { () => {}; }"),
+            ],
+            paths,
+        )
         with tempfile.TemporaryDirectory() as tmp:
             old_path, new_path = Path(tmp) / "old.json", Path(tmp) / "new.json"
             old_path.write_text(json.dumps(old))
@@ -696,7 +821,9 @@ class AddedPaths(unittest.TestCase):
         new_doc["index"]["1"]["inner"]["module"]["items"].append(21)
         new_doc["index"]["21"] = item(21, "something", "function", fn())
         new_doc["paths"]["21"] = {
-            "crate_id": 0, "path": ["demo", "api", "something"], "kind": "function",
+            "crate_id": 0,
+            "path": ["demo", "api", "something"],
+            "kind": "function",
         }
         with tempfile.TemporaryDirectory() as tmp:
             old, new = Path(tmp) / "old.json", Path(tmp) / "new.json.gz"
@@ -724,21 +851,25 @@ class AddedPaths(unittest.TestCase):
             code, out, err = _run_added(old, new)
         self.assertEqual(err, "")
         self.assertEqual(code, 1)
-        self.assertEqual(out.splitlines(), [
-            "field jubarte::append::AppendError::Admission::document",
-            "impl jubarte::admission::AdmissionError::(impl Clone)",
-            "type jubarte::audit::LayoutPass",
-            "type jubarte::cli::Cli::(impl Deref)::Target",
-            "use jubarte::WmlDocument",
-        ])
+        self.assertEqual(
+            out.splitlines(),
+            [
+                "field jubarte::append::AppendError::Admission::document",
+                "impl jubarte::admission::AdmissionError::(impl Clone)",
+                "type jubarte::audit::LayoutPass",
+                "type jubarte::cli::Cli::(impl Deref)::Target",
+                "use jubarte::WmlDocument",
+            ],
+        )
 
     def test_emit_writes_a_listing_outside_docs_api(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             built = Path(tmp) / "jubarte.json"
             built.write_text(json.dumps(demo_doc()))
             out = Path(tmp) / "head.api.txt"
-            with mock.patch.object(api, "build_doc_json"), mock.patch.object(
-                api, "build_workspace_docs", return_value={}
+            with (
+                mock.patch.object(api, "build_doc_json"),
+                mock.patch.object(api, "build_workspace_docs", return_value={}),
             ):
                 with mock.patch.object(api, "DOC_JSON", built):
                     with mock.patch.object(api, "API_DIR", Path(tmp) / "api"):

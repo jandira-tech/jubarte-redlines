@@ -25,7 +25,6 @@ Regenerate after a deliberate API change, never edit by hand.
 
 from __future__ import annotations
 
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -35,16 +34,29 @@ DEFAULT_LISTING = ROOT / "docs/refactoring_best_practices/api-baseline.txt"
 DEFAULT_OUT = ROOT / "tests/facade_surface.rs"
 
 # Listing kinds a `use` statement can name.
-NAMEABLE = frozenset({
-    "module", "struct", "enum", "union", "trait", "function",
-    "constant", "static", "type_alias", "macro", "use",
-})
+NAMEABLE = frozenset(
+    {
+        "module",
+        "struct",
+        "enum",
+        "union",
+        "trait",
+        "function",
+        "constant",
+        "static",
+        "type_alias",
+        "macro",
+        "use",
+    }
+)
+
 
 def _is_associated(path: str) -> bool:
     """`Owner::name` (or `module::Owner::name`): any path segment between
     `jubarte` and the item itself names a type, not a module."""
     segments = path.split("::")
     return any(seg[:1].isupper() for seg in segments[1:-1])
+
 
 HEADER = """\
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
@@ -85,11 +97,7 @@ def facade_uses(listing: str) -> list[str]:
     # api because edit::KeptComment re-exports it). Such a path is not
     # nameable itself: every ancestor module must be an api module too.
     lines = [line.split("\t") for line in listing.splitlines() if "\t" in line]
-    api_modules = {
-        _item_path(f[1], f[3])
-        for f in lines
-        if f[0] == "api" and f[1] == "module"
-    }
+    api_modules = {_item_path(f[1], f[3]) for f in lines if f[0] == "api" and f[1] == "module"}
     uses: list[str] = []
     for fields in lines:
         if fields[0] != "api":
@@ -102,9 +110,7 @@ def facade_uses(listing: str) -> list[str]:
         if path.endswith("::*") or path.endswith("::_"):
             continue  # a glob re-export names its children, not itself
         segments = path.split("::")
-        prefixes = [
-            "::".join(segments[:i]) for i in range(2, len(segments))
-        ]
+        prefixes = ["::".join(segments[:i]) for i in range(2, len(segments))]
         if any(prefix not in api_modules for prefix in prefixes):
             continue  # a private module in the chain: the re-export covers it
         uses.append(f"use {path} as _;")
@@ -119,7 +125,8 @@ def main(argv: list[str]) -> int:
         print(f"no api items found in {listing_path}", file=sys.stderr)
         return 1
     plain = [
-        u for u in uses
+        u
+        for u in uses
         if not u.startswith("use jubarte::cli::")
         and u != "use jubarte::cli as _;"
         and not u.startswith("use jubarte::edit::inline")
@@ -130,26 +137,20 @@ def main(argv: list[str]) -> int:
     cli_uses = [u for u in cli_uses if u not in update_uses]
     gated = ""
     if cli_uses:
-        gated += (
-            "#[cfg(feature = \"cli\")]\nmod cli_gated {\n"
-            + "".join(f"    {u}\n" for u in cli_uses)
-            + "}\n"
-        )
+        gated += '#[cfg(feature = "cli")]\nmod cli_gated {\n' + "".join(f"    {u}\n" for u in cli_uses) + "}\n"
     if update_uses:
         gated += (
-            "#[cfg(feature = \"self-update\")]\nmod update_gated {\n"
+            '#[cfg(feature = "self-update")]\nmod update_gated {\n'
             + "".join(f"    {u}\n" for u in update_uses)
             + "}\n"
         )
-    body = (
-        HEADER + "\n".join(plain) + "\n" + gated
-        + "\n#[test]\nfn facade_surface_resolves() {}\n"
-    )
+    body = HEADER + "\n".join(plain) + "\n" + gated + "\n#[test]\nfn facade_surface_resolves() {}\n"
     out_path.write_text(body)
     # rustfmt's import order (a version sort, not plain ASCII) is the one
     # `cargo fmt --check` enforces on the committed file.
     subprocess.run(
-        ["rustfmt", "--edition", "2024", str(out_path)], check=True,
+        ["rustfmt", "--edition", "2024", str(out_path)],
+        check=True,
     )
     print(f"{out_path}: {len(uses)} use statements")
     return 0

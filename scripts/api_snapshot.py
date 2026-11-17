@@ -85,28 +85,26 @@ def build_workspace_docs() -> dict[str, dict]:
     """
     have_nightly = False
     try:
-        out = subprocess.run(
-            ["rustup", "toolchain", "list"], capture_output=True, text=True
-        )
+        out = subprocess.run(["rustup", "toolchain", "list"], capture_output=True, text=True)
         have_nightly = "nightly" in out.stdout
     except FileNotFoundError:
         pass
     meta = subprocess.run(
         ["cargo", "metadata", "--format-version", "1", "--no-deps"],
-        capture_output=True, text=True, check=True, cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=ROOT,
     )
     packages = json.loads(meta.stdout)["packages"]
     docs: dict[str, dict] = {}
     for package in sorted(packages, key=lambda p: p["name"]):
-        has_lib = any(
-            target.get("kind") == ["lib"] for target in package.get("targets", [])
-        )
+        has_lib = any(target.get("kind") == ["lib"] for target in package.get("targets", []))
         if not has_lib:
             continue
         env = dict(
             os.environ,
-            RUSTDOCFLAGS="-Z unstable-options --output-format json "
-                         "--document-private-items",
+            RUSTDOCFLAGS="-Z unstable-options --output-format json --document-private-items",
         )
         if not have_nightly:
             env["RUSTC_BOOTSTRAP"] = "1"
@@ -127,9 +125,7 @@ def build_doc_json() -> None:
     """Run rustdoc so target/doc/jubarte.json exists (private items included)."""
     have_nightly = False
     try:
-        out = subprocess.run(
-            ["rustup", "toolchain", "list"], capture_output=True, text=True
-        )
+        out = subprocess.run(["rustup", "toolchain", "list"], capture_output=True, text=True)
         have_nightly = "nightly" in out.stdout
     except FileNotFoundError:
         pass
@@ -138,13 +134,14 @@ def build_doc_json() -> None:
     # cargo runs ("metadata probing failed", #1769).
     env = dict(
         os.environ,
-        RUSTDOCFLAGS="-Z unstable-options --output-format json "
-                     "--document-private-items",
+        RUSTDOCFLAGS="-Z unstable-options --output-format json --document-private-items",
     )
     if have_nightly:
         subprocess.run(
             ["cargo", "+nightly", "doc", "--no-deps", "--all-features"],
-            cwd=ROOT, check=True, env=env,
+            cwd=ROOT,
+            check=True,
+            env=env,
         )
     else:
         # No nightly toolchain installed: RUSTC_BOOTSTRAP unlocks the same
@@ -152,7 +149,9 @@ def build_doc_json() -> None:
         env["RUSTC_BOOTSTRAP"] = "1"
         subprocess.run(
             ["cargo", "doc", "--no-deps", "--all-features"],
-            cwd=ROOT, check=True, env=env,
+            cwd=ROOT,
+            check=True,
+            env=env,
         )
 
 
@@ -225,7 +224,7 @@ def ty(t, names: dict[str, str] | None = None) -> str:
     if kind == "primitive":
         return val
     if kind == "borrowed_ref":
-        lt = (val.get("lifetime") or "")
+        lt = val.get("lifetime") or ""
         if names is not None and lt in names:
             lt = names[lt]
         mut = "mut " if val.get("is_mutable", val.get("mutable")) else ""
@@ -242,10 +241,7 @@ def ty(t, names: dict[str, str] | None = None) -> str:
     if kind == "impl_trait":
         return "impl " + " + ".join(bound(b, names) for b in val)
     if kind == "dyn_trait":
-        parts = [
-            _path_of(tb["trait"]) + _args(tb["trait"].get("args"), names)
-            for tb in val.get("traits", [])
-        ]
+        parts = [_path_of(tb["trait"]) + _args(tb["trait"].get("args"), names) for tb in val.get("traits", [])]
         if val.get("lifetime"):
             life = val["lifetime"]
             parts.append(names.get(life, life) if names is not None and isinstance(life, str) else life)
@@ -636,10 +632,7 @@ def entries(doc: dict, others: dict[str, dict] | None = None) -> list[Entry]:
     # Every walk goes in id order, so the listing never depends on the order
     # rustdoc happened to write the index in.
     ids = sorted(index, key=lambda iid: (len(iid), iid))
-    impls = [
-        iid for iid in ids
-        if "impl" in index[iid]["inner"] and not _is_noise_impl(index[iid]["inner"]["impl"])
-    ]
+    impls = [iid for iid in ids if "impl" in index[iid]["inner"] and not _is_noise_impl(index[iid]["inner"]["impl"])]
     api = _public_surface(index, str(doc["root"]), impls)
 
     # Parent map: rustdoc JSON records children inside container items, so a
@@ -691,9 +684,7 @@ def entries(doc: dict, others: dict[str, dict] | None = None) -> list[Entry]:
         if kind == "use" and iid not in api:
             continue  # a private import is no part of any surface
         pid = parent.get(iid)
-        in_trait_impl = bool(
-            pid and "impl" in index[pid]["inner"] and index[pid]["inner"]["impl"].get("trait")
-        )
+        in_trait_impl = bool(pid and "impl" in index[pid]["inner"] and index[pid]["inner"]["impl"].get("trait"))
         if kind == "impl":
             # An inherent impl block is its items; a trait impl is one line.
             if _is_noise_impl(inner) or not inner.get("trait"):
@@ -702,10 +693,15 @@ def entries(doc: dict, others: dict[str, dict] | None = None) -> list[Entry]:
             continue  # reachable only through a left-out impl
         elif kind == "function" and in_trait_impl:
             continue  # the trait fixes its signature
-        out.append(Entry(
-            "api" if iid in api else "internal",
-            kind, _vis(item.get("visibility")), full_path(iid), _detail(kind, inner),
-        ))
+        out.append(
+            Entry(
+                "api" if iid in api else "internal",
+                kind,
+                _vis(item.get("visibility")),
+                full_path(iid),
+                _detail(kind, inner),
+            )
+        )
         # A public glob is the names it imports, not the `*` line. `pub use
         # b::*` makes `b`'s public items nameable beside the glob.
         if kind == "use" and iid in api and isinstance(inner, dict) and inner.get("is_glob"):
@@ -726,10 +722,15 @@ def entries(doc: dict, others: dict[str, dict] | None = None) -> list[Entry]:
                 if resolved is not None:
                     f_kind, f_inner, _f_vis, f_hidden = resolved
                     if not f_hidden:
-                        out.append(Entry(
-                            "api", f_kind, _vis(item.get("visibility")),
-                            full_path(iid), _detail(f_kind, f_inner),
-                        ))
+                        out.append(
+                            Entry(
+                                "api",
+                                f_kind,
+                                _vis(item.get("visibility")),
+                                full_path(iid),
+                                _detail(f_kind, f_inner),
+                            )
+                        )
     return sorted(set(out))
 
 
@@ -802,9 +803,7 @@ def _counts(pairs: list) -> str:
     return f"{added} added, {removed} removed, {len(pairs) - added - removed} changed"
 
 
-def render_drift(
-    prev: str, label: str, old: list[Entry], new: list[Entry], private: bool = False
-) -> str:
+def render_drift(prev: str, label: str, old: list[Entry], new: list[Entry], private: bool = False) -> str:
     """The step-6 report: public drift in full, then the crate-private rest."""
     public, rest = [], []
     for pair in drift(old, new):
@@ -869,10 +868,19 @@ def _refuse_listing(msg: str) -> None:
 # macro, or a struct and a function, can share a path; the added-path gate
 # must not treat them as one item. Impls and fields are not in those
 # namespaces and keep their own groups, so a field is not a method.
-_TYPE_NS = frozenset({
-    "module", "struct", "enum", "union", "trait", "trait_alias",
-    "type_alias", "assoc_type", "variant",
-})
+_TYPE_NS = frozenset(
+    {
+        "module",
+        "struct",
+        "enum",
+        "union",
+        "trait",
+        "trait_alias",
+        "type_alias",
+        "assoc_type",
+        "variant",
+    }
+)
 _VALUE_NS = frozenset({"function", "constant", "static", "assoc_const"})
 _MACRO_NS = frozenset({"macro", "proc_macro", "proc_derive", "proc_attribute"})
 
@@ -906,9 +914,7 @@ def public_paths_of_listing(text: str, name: str) -> set[str]:
             continue
         parts = line.split("\t")
         if len(parts) != 4 or parts[0] not in ("api", "internal"):
-            _refuse_listing(
-                f"{name}:{lineno}: not a listing line (surface, kind, vis, path)"
-            )
+            _refuse_listing(f"{name}:{lineno}: not a listing line (surface, kind, vis, path)")
         surface, kind, _vis, rest = parts
         if surface == "api":
             ident = _path_identity(kind, listing_path(kind, rest))
@@ -967,26 +973,27 @@ def main(argv: list[str] | None = None) -> None:
         description="Write the API snapshot of a release, show drift, or list added public paths."
     )
     parser.add_argument("label", nargs="?", help="defaults to the Cargo version")
-    parser.add_argument("--drift", nargs=2, metavar=("PREV", "NEW"),
-                        help="report the drift between two snapshots under docs/api/")
-    parser.add_argument("--private", action="store_true",
-                        help="with --drift: list the crate-private drift line by line")
-    parser.add_argument("--added", nargs=2, metavar=("OLD", "NEW"),
-                        help="print public item paths in NEW missing from OLD "
-                             "(a listing or rustdoc JSON); exit 1 if any")
-    parser.add_argument("--emit", metavar="OUT",
-                        help="write this tree's flattened listing to OUT, not docs/api")
+    parser.add_argument(
+        "--drift", nargs=2, metavar=("PREV", "NEW"), help="report the drift between two snapshots under docs/api/"
+    )
+    parser.add_argument(
+        "--private", action="store_true", help="with --drift: list the crate-private drift line by line"
+    )
+    parser.add_argument(
+        "--added",
+        nargs=2,
+        metavar=("OLD", "NEW"),
+        help="print public item paths in NEW missing from OLD (a listing or rustdoc JSON); exit 1 if any",
+    )
+    parser.add_argument("--emit", metavar="OUT", help="write this tree's flattened listing to OUT, not docs/api")
     args = parser.parse_args(argv)
-    modes = [name for name, on in (("--drift", args.drift), ("--added", args.added),
-                                    ("--emit", args.emit)) if on]
+    modes = [name for name, on in (("--drift", args.drift), ("--added", args.added), ("--emit", args.emit)) if on]
     if len(modes) > 1:
         parser.error(f"choose one of {', '.join(modes)}")
 
     if args.drift:
         prev, new = args.drift
-        sys.stdout.write(
-            render_drift(prev, new, load_snapshot(prev), load_snapshot(new), args.private)
-        )
+        sys.stdout.write(render_drift(prev, new, load_snapshot(prev), load_snapshot(new), args.private))
         return
 
     if args.added:
@@ -999,10 +1006,7 @@ def main(argv: list[str] | None = None) -> None:
 
     build_doc_json()
     doc = json.loads(DOC_JSON.read_text())
-    others = {
-        name: d for name, d in build_workspace_docs().items()
-        if name != "jubarte"
-    }
+    others = {name: d for name, d in build_workspace_docs().items() if name != "jubarte"}
     lines = set(flatten(doc, others or None))
     for lib, other in others.items():
         # Every library's own listing joins the facade listing with its
@@ -1029,9 +1033,7 @@ def main(argv: list[str] | None = None) -> None:
             lines.update(rebased)
             continue
         lines.update(
-            line.replace(f"{lib}::", "jubarte::")
-            for line in flatten(other)
-            if not line.endswith(f"\t{lib}")
+            line.replace(f"{lib}::", "jubarte::") for line in flatten(other) if not line.endswith(f"\t{lib}")
         )  # the crate's own root-module line is not nameable in the facade
     text = "\n".join(sorted(lines)) + "\n"
     if args.emit:

@@ -54,8 +54,10 @@ produce_goldens() {
   require_fixture "$PAIR_REDLINE_A" "$PAIR_REDLINE_B" "$PAIR_LETTER_A" \
     "$PAIR_LETTER_B" "$PAIR_TABLE_A" "$PAIR_TABLE_B"
   for name in redline letter table; do
-    eval "a=\$PAIR_${name^^}_A"
-    eval "b=\$PAIR_${name^^}_B"
+    pair_a="PAIR_${name^^}_A"
+    pair_b="PAIR_${name^^}_B"
+    a=${!pair_a}
+    b=${!pair_b}
     target/release/jubarte compare "$a" "$b" \
       --author "$AUTHOR" --datetime "$DATETIME" -o "$out/redline-$name.docx"
   done

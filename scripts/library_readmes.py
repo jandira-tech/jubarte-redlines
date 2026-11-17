@@ -45,11 +45,7 @@ SOURCE = "README.md"
 
 SPDX = (
     # REUSE-IgnoreStart
-    "<!--\n"
-    "SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC\n"
-    "\n"
-    "SPDX-License-Identifier: AGPL-3.0-only\n"
-    "-->\n"
+    "<!--\nSPDX-FileCopyrightText: 2026 Jandira Technologies, LLC\n\nSPDX-License-Identifier: AGPL-3.0-only\n-->\n"
     # REUSE-IgnoreEnd
 )
 
@@ -165,15 +161,9 @@ def split_root(text: str) -> tuple[str, str, list[tuple[str, str]]]:
     """
     lines = strip_spdx(text).split("\n")
     mask = fenced_mask(lines)
-    title = next(
-        i for i, line in enumerate(lines) if line.startswith("# ") and not mask[i]
-    )
+    title = next(i for i, line in enumerate(lines) if line.startswith("# ") and not mask[i])
     banner = "\n".join(lines[:title]).strip("\n")
-    starts = [
-        i
-        for i, line in enumerate(lines)
-        if i > title and line.startswith("## ") and not mask[i]
-    ]
+    starts = [i for i, line in enumerate(lines) if i > title and line.startswith("## ") and not mask[i]]
     lead_end = starts[0] if starts else len(lines)
     lead = "\n".join(lines[title + 1 : lead_end]).strip("\n")
     sections: list[tuple[str, str]] = []
@@ -209,11 +199,7 @@ def slug(heading: str) -> str:
 def anchors(markdown: str) -> set[str]:
     lines = markdown.split("\n")
     mask = fenced_mask(lines)
-    return {
-        slug(line.lstrip("#"))
-        for i, line in enumerate(lines)
-        if line.startswith("#") and not mask[i]
-    }
+    return {slug(line.lstrip("#")) for i, line in enumerate(lines) if line.startswith("#") and not mask[i]}
 
 
 # --- link rewriting -----------------------------------------------------------
@@ -310,11 +296,7 @@ def render(lib: Library, root_text: str, version: str, root: Path = ROOT) -> str
     draft = "\n\n".join([*body_parts, fragment, *chosen])
     kept = anchors(draft)
     root_md = rewrite_links("\n\n".join([*body_parts]), "", ref, kept)
-    frag_md = (
-        rewrite_links(fragment.strip("\n"), posixpath.dirname(lib.fragment), ref, kept)
-        if lib.fragment
-        else ""
-    )
+    frag_md = rewrite_links(fragment.strip("\n"), posixpath.dirname(lib.fragment), ref, kept) if lib.fragment else ""
     shared_md = rewrite_links("\n\n".join(chosen), "", ref, kept)
     digest = hashlib.sha256(root_text.encode("utf-8")).hexdigest()[:16]
     sources = SOURCE + (f" and {lib.fragment}" if lib.fragment else "")
@@ -336,14 +318,14 @@ def python_surface(root: Path = ROOT) -> list[str]:
     tree = ast.parse((pkg / "document.py").read_text(encoding="utf-8"))
     for node in tree.body:
         if isinstance(node, ast.ClassDef) and node.name == "Document":
-            names.extend(item.name for item in node.body if isinstance(item, ast.FunctionDef) and not item.name.startswith("_"))
+            names.extend(
+                item.name for item in node.body if isinstance(item, ast.FunctionDef) and not item.name.startswith("_")
+            )
     init = ast.parse((pkg / "__init__.py").read_text(encoding="utf-8"))
     exported: list[str] = []
     for node in ast.walk(init):
         target = None
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets
-        ):
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets):
             target = node.value
         elif isinstance(node, ast.AugAssign) and getattr(node.target, "id", "") == "__all__":
             target = node.value
@@ -368,10 +350,7 @@ def wasm_surface(root: Path = ROOT) -> list[str]:
         elif depth == 0 and pending is not None:
             fn = re.match(r"pub fn (\w+)", stripped)
             if fn:
-                names.append(
-                    pending
-                    or re.sub(r"_(\w)", lambda m: m.group(1).upper(), fn.group(1))
-                )
+                names.append(pending or re.sub(r"_(\w)", lambda m: m.group(1).upper(), fn.group(1)))
                 pending = None
             elif not stripped.startswith(("///", "#[")):
                 pending = None

@@ -40,11 +40,25 @@ from pathlib import Path
 INPUTS = ("src", "crates", "assets", "schemas", "keys")
 # [package] fields cargo builds nothing from: the version, the metadata
 # tables and the crates.io listing and packaging
-LISTING = frozenset({
-    "version", "metadata", "description", "keywords", "categories", "readme",
-    "homepage", "repository", "documentation", "authors", "license",
-    "license-file", "include", "exclude", "publish",
-})
+LISTING = frozenset(
+    {
+        "version",
+        "metadata",
+        "description",
+        "keywords",
+        "categories",
+        "readme",
+        "homepage",
+        "repository",
+        "documentation",
+        "authors",
+        "license",
+        "license-file",
+        "include",
+        "exclude",
+        "publish",
+    }
+)
 RAW_STRING = re.compile(r'[bc]?r(#*)"')
 CHAR = re.compile(r"'(?:\\(?:u\{[0-9A-Fa-f_]+\}|x[0-9A-Fa-f]{2}|.)|[^\\'\n])'")
 
@@ -86,7 +100,7 @@ def rust_tokens(text: str) -> str:
             j = i + 1
             while j < n and text[j] != '"':
                 j += 2 if text[j] == "\\" else 1
-            out.append(text[i:j + 1])
+            out.append(text[i : j + 1])
             i = j + 1
             continue
         if text[i] == "'":
@@ -107,8 +121,7 @@ def rust_tokens(text: str) -> str:
 
 def git(*args: str) -> subprocess.CompletedProcess[str]:
     # surrogateescape: a byte git prints that is no UTF-8 never raises
-    return subprocess.run(["git", *args], capture_output=True, text=True,
-                          encoding="utf-8", errors="surrogateescape")
+    return subprocess.run(["git", *args], capture_output=True, text=True, encoding="utf-8", errors="surrogateescape")
 
 
 def usage(message: str) -> int:
@@ -160,8 +173,9 @@ def lockfile(doc: dict | None) -> dict | None:
         p = dict(p)
         if p["name"] in local:
             p.pop("version", None)
-        p["dependencies"] = [d.split(" ", 1)[0] if d.split(" ", 1)[0] in local else d
-                             for d in p.get("dependencies", [])]
+        p["dependencies"] = [
+            d.split(" ", 1)[0] if d.split(" ", 1)[0] in local else d for d in p.get("dependencies", [])
+        ]
         out.append(p)
     return {**doc, "package": out}
 
@@ -183,7 +197,9 @@ def main() -> int:
     commit = named.pop()
     for rev in (commit, args.rev):
         if git("cat-file", "-e", f"{rev}^{{commit}}").returncode != 0:
-            return usage(f"{rev} is no commit of this repository — git fetch, or the evidence names a build from elsewhere")
+            return usage(
+                f"{rev} is no commit of this repository — git fetch, or the evidence names a build from elsewhere"
+            )
 
     # -z: a path holding a space is one path (#1772)
     diff = git("diff", "--name-only", "-z", commit, args.rev, "--", *INPUTS)
@@ -205,8 +221,11 @@ def main() -> int:
     if lockfile(toml_at(commit, "Cargo.lock")) != lockfile(toml_at(args.rev, "Cargo.lock")):
         changed.append("Cargo.lock (beyond this workspace's own versions)")
     if changed:
-        print(f"check_evidence_engine: the evidence was scored on {commit[:12]}, and the CLI engine "
-              f"changed since in {args.rev}:", file=sys.stderr)
+        print(
+            f"check_evidence_engine: the evidence was scored on {commit[:12]}, and the CLI engine "
+            f"changed since in {args.rev}:",
+            file=sys.stderr,
+        )
         for path in changed:
             print(f"  ! {path}", file=sys.stderr)
         return 1

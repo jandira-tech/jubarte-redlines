@@ -76,20 +76,16 @@ def load_tables() -> tuple[list[str], dict[str, str]]:
         end = text.index("];", start)
         return text[start:end]
 
-    layers: list[str] = []
     layer_block = const_block("LAYERS")
-    for quoted in _quoted_strings(layer_block):
-        layers.append(quoted)
+    layers: list[str] = list(_quoted_strings(layer_block))
     if len(layers) < 2:
         raise SystemExit(f"cannot parse LAYERS from {GUARD}")
 
-    modules: dict[str, str] = {}
     module_block = const_block("MODULES")
     pairs = re.findall(r'\("([^"]+)",\s*"([^"]+)"\)', module_block)
     if not pairs:
         raise SystemExit(f"cannot parse MODULES from {GUARD}")
-    for key, layer in pairs:
-        modules[key] = layer
+    modules: dict[str, str] = dict(pairs)
     leftovers = re.sub(r'\("([^"]+)",\s*"([^"]+)"\)', "", module_block)
     leftovers = leftovers.replace("const MODULES: &[(&str, &str)] = &[", "")
     for token in ("(", ")", ",", "&", " ", "\n", "\t"):
@@ -245,9 +241,10 @@ def classify(path: Path, layers: list[str], modules: dict[str, str]) -> str:
 def main(argv: list[str]) -> int:
     layers, modules = load_tables()
     tests_dir = ROOT / "tests"
-    targets = [tests_dir / name for name in argv] if argv else sorted(
-        p for p in tests_dir.iterdir()
-        if p.suffix == ".rs" and p.stem not in STANDALONE
+    targets = (
+        [tests_dir / name for name in argv]
+        if argv
+        else sorted(p for p in tests_dir.iterdir() if p.suffix == ".rs" and p.stem not in STANDALONE)
     )
     counts: dict[str, int] = {}
     for path in targets:
