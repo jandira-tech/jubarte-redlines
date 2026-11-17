@@ -382,7 +382,7 @@ fn folded(id: &str, members: &[&Change]) -> Change {
 /// The earliest member date that reads as an instant; else the first one.
 fn earliest(members: &[&Change]) -> Option<String> {
     let key = |date: &str| {
-        crate::convert::timestamp_order_key(date)
+        crate::util::datetime::timestamp_order_key(date)
             .map(|(instant, fraction)| (instant, format!("{fraction:0<9}")))
     };
     members

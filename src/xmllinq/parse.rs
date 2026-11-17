@@ -37,7 +37,7 @@
 
 use std::collections::HashMap;
 
-use crate::admission::InputLimits;
+use crate::limits::InputLimits;
 
 use super::{Dom, NodeId, XDeclaration, XName, XNamespace};
 

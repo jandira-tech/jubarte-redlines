@@ -630,7 +630,7 @@ fn hoist_quiet<T: AsRef<std::ffi::OsStr> + Clone>(
 /// (D17): filled once here, so the binary and every host share it.
 fn fill_date(date: &mut Option<String>) {
     if date.is_none() {
-        *date = Some(crate::convert::utc_now_iso8601());
+        *date = Some(crate::util::datetime::utc_now_iso8601());
     }
 }
 

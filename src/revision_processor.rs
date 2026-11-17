@@ -1125,7 +1125,7 @@ pub fn iterate_block_content_elements(dom: &Dom, element: NodeId) -> Vec<BlockCo
 /// Accept/Reject All does, and a deleted or inserted paragraph mark inside
 /// a comment merges the comment's own paragraphs — never across the
 /// `w:comment` boundary. Text boxes are not in this list: both names live
-/// in [`crate::inspect::text_box_names`] (#1318).
+/// in [`crate::ooxml::text_box_names`] (#1318).
 fn block_level_content_containers() -> [XName; 7] {
     [
         W::body(),
@@ -1140,7 +1140,7 @@ fn block_level_content_containers() -> [XName; 7] {
 
 /// `w:txbxContent` or the Strict `wne:txbxContent`.
 fn is_text_box(name: &XName) -> bool {
-    crate::inspect::text_box_names().contains(name)
+    crate::ooxml::text_box_names().contains(name)
 }
 
 fn is_block_level_content_container(name: &XName) -> bool {

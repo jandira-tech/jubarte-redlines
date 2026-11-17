@@ -19,7 +19,7 @@ use std::fmt;
 
 use serde::Serialize;
 
-use crate::namespaces::{MC, W, W14, W15, WNE};
+use crate::namespaces::{MC, W, W14, W15};
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName};
 
@@ -294,13 +294,7 @@ impl fmt::Display for InspectError {
 
 impl std::error::Error for InspectError {}
 
-/// SHA-256 of the exact input bytes, lowercase hex: the snapshot guard shared
-/// by inspection and edit plans.
-pub fn source_sha256(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(bytes);
-    digest.iter().map(|b| format!("{b:02x}")).collect()
-}
+pub use crate::util::source_sha256;
 
 /// Body paragraphs in body order.
 ///
@@ -953,12 +947,7 @@ fn has_ancestor(dom: &Dom, node: NodeId, name: &XName) -> bool {
     !dom.ancestors(node, Some(name)).is_empty()
 }
 
-/// The two names a text box's content goes by: `w:txbxContent`, and the
-/// `wne:txbxContent` a Strict package's shapes hold (the agent view skips
-/// both by local name, so every id walk must too).
-pub(crate) fn text_box_names() -> [XName; 2] {
-    [W::txbx_content(), WNE::name("txbxContent")]
-}
+pub(crate) use crate::ooxml::text_box_names;
 
 /// Whether `node` sits inside a text box.
 pub(crate) fn in_text_box(dom: &Dom, node: NodeId) -> bool {

@@ -384,11 +384,10 @@ pub fn try_compare_bodies_faithful_with_notes(
                     {
                         continue;
                     }
-                    let rank = crate::edit::sections::sect_rank(local);
+                    let rank = crate::ooxml::sect_rank(local);
                     let later = dom.elements(clean, None).into_iter().find(|&n| {
-                        dom.name(n).is_some_and(|nm| {
-                            crate::edit::sections::sect_rank(nm.local_name()) > rank
-                        })
+                        dom.name(n)
+                            .is_some_and(|nm| crate::ooxml::sect_rank(nm.local_name()) > rank)
                     });
                     let cc = dom.clone_subtree(c);
                     match later {

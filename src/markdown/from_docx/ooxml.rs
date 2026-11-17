@@ -352,7 +352,7 @@ impl Element {
     }
 
     pub(crate) fn revision_date(&self) -> Option<String> {
-        crate::changes::revision_date(|ns, local| {
+        crate::util::datetime::revision_date(|ns, local| {
             if ns == crate::namespaces::W::URI {
                 self.attr(local)
             } else {

@@ -447,7 +447,7 @@ pub fn compile(
         date: inline
             .datetime
             .clone()
-            .unwrap_or_else(crate::convert::utc_now_iso8601),
+            .unwrap_or_else(crate::util::datetime::utc_now_iso8601),
         scope: v2::Scope::Selected { targets },
         operations,
         source_context: None,

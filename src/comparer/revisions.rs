@@ -183,7 +183,7 @@ pub fn get_revisions_from_body(
             revision_type,
             text: group_text(dom, &group),
             author: dom.attribute(rt, &W::author()).map(str::to_string),
-            date: crate::changes::revision_date(|ns, local| {
+            date: crate::util::datetime::revision_date(|ns, local| {
                 dom.attribute(rt, &XName::get(local, ns))
             }),
             content_element: Some(first.content_element),
@@ -254,7 +254,7 @@ pub fn get_revisions_from_note_definitions(
                 revision_type,
                 text: group_text(dom, &group),
                 author: dom.attribute(rt, &W::author()).map(str::to_string),
-                date: crate::changes::revision_date(|ns, local| {
+                date: crate::util::datetime::revision_date(|ns, local| {
                     dom.attribute(rt, &XName::get(local, ns))
                 }),
                 content_element: Some(first.content_element),
@@ -375,7 +375,7 @@ pub fn get_format_change_revisions(
                 .attribute(rpc, &W::author())
                 .unwrap_or_default()
                 .to_string();
-            let date = crate::changes::revision_date(|ns, local| {
+            let date = crate::util::datetime::revision_date(|ns, local| {
                 dom.attribute(rpc, &XName::get(local, ns))
             })
             .unwrap_or_default();

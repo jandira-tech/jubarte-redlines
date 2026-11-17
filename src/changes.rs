@@ -1891,47 +1891,7 @@ pub(crate) const FORMATTING: &[&str] = &[
     "cellMerge",
 ];
 
-/// The recorded instant with the author's offset, else the stored legacy date.
-pub(crate) fn revision_date<'a>(
-    mut attribute: impl FnMut(&str, &str) -> Option<&'a str>,
-) -> Option<String> {
-    let utc = attribute(
-        "http://schemas.microsoft.com/office/word/2023/wordml/word16du",
-        "dateUtc",
-    );
-    reported_date(attribute(W::URI, "date"), utc)
-}
-
-/// Revisions and comments share Word's wall-clock/UTC pair encoding.
-pub(crate) fn reported_date(local: Option<&str>, utc: Option<&str>) -> Option<String> {
-    let Some((utc, (instant, fraction))) =
-        utc.and_then(|utc| crate::convert::timestamp_order_key(utc).map(|key| (utc, key)))
-    else {
-        return local.map(str::to_string);
-    };
-    let paired = local
-        .and_then(|date| crate::convert::timestamp_order_key(date).map(|key| (date, key)))
-        .filter(|(_, (wall, digits))| {
-            digits == &fraction && (wall - instant) % 60 == 0 && (wall - instant).abs() <= 14 * 3600
-        });
-    // Equivalent fractions can have different precision. Keep the local
-    // spelling so writing the view preserves the original w:date bytes.
-    let (offset, display) = paired.map_or((0, utc), |(date, (wall, _))| (wall - instant, date));
-    if offset == 0 && display.ends_with('Z') {
-        return Some(display.to_string());
-    }
-    let display_fraction = display[19..]
-        .strip_prefix('.')
-        .unwrap_or_default()
-        .split(['Z', '+', '-'])
-        .next()
-        .unwrap_or_default();
-    Some(crate::convert::timestamp_with_offset(
-        instant,
-        display_fraction,
-        offset,
-    ))
-}
+use crate::util::datetime::revision_date;
 
 /// The revision elements under `root`, in document order.
 fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {

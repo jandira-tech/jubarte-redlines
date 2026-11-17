@@ -185,7 +185,7 @@ fn dest_uri_for_reconciled_part(dest: &PartFs, target_part: &str, bytes: &[u8]) 
         "png" | "jpeg" | "jpg" | "gif" | "tiff" | "tif" | "bmp" | "svg" | "ico" | "emf" | "wmf"
     );
     if target_part.starts_with("word/media/") || is_image {
-        let digest = crate::inspect::source_sha256(bytes);
+        let digest = crate::util::source_sha256(bytes);
         let mut n = 0usize;
         loop {
             let candidate = if n == 0 {
@@ -746,7 +746,7 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(
             first,
-            format!("word/media/P{}.png", crate::inspect::source_sha256(bytes))
+            format!("word/media/P{}.png", crate::util::source_sha256(bytes))
         );
     }
 

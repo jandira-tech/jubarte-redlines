@@ -722,46 +722,7 @@ fn collapse_ws(s: &str) -> String {
     out
 }
 
-pub(crate) fn decode_entities(s: &str) -> String {
-    if !s.contains('&') {
-        return s.to_string();
-    }
-    let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(a) = rest.find('&') {
-        out.push_str(&rest[..a]);
-        let tail = &rest[a..];
-        let semi = tail.find(';').filter(|&e| e <= 10);
-        let decoded = semi.and_then(|e| {
-            let ent = &tail[1..e];
-            let ch = match ent {
-                "amp" => Some('&'),
-                "lt" => Some('<'),
-                "gt" => Some('>'),
-                "quot" => Some('"'),
-                "apos" => Some('\''),
-                "nbsp" => Some('\u{a0}'),
-                _ if ent.starts_with("#x") || ent.starts_with("#X") => {
-                    u32::from_str_radix(&ent[2..], 16)
-                        .ok()
-                        .and_then(char::from_u32)
-                }
-                _ if ent.starts_with('#') => ent[1..].parse().ok().and_then(char::from_u32),
-                _ => None,
-            };
-            ch.map(|c| (c, e))
-        });
-        if let Some((c, e)) = decoded {
-            out.push(c);
-            rest = &tail[e + 1..];
-        } else {
-            out.push('&');
-            rest = &tail[1..];
-        }
-    }
-    out.push_str(rest);
-    out
-}
+pub(crate) use crate::util::decode_entities;
 
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")

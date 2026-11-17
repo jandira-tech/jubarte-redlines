@@ -367,7 +367,7 @@ impl NodeData {
 /// not XNodes, exactly as in LINQ-to-XML).
 ///
 /// Most callers should not allocate `Dom` directly — `WmlDocument` and the
-/// per-part helpers in [`crate::opc`] own one. The unit-struct tests at the
+/// per-part helpers in `opc` own one. The unit-struct tests at the
 /// bottom of the file (`node_data_excludes_annotations_vec`,
 /// `node_kind_rare_variants_are_boxed`) pin the in-arena byte counts so a
 /// future refactor cannot silently regress the hot per-node struct.

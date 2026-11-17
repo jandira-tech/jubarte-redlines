@@ -130,11 +130,62 @@ pub(crate) fn narrow_finite_f32(v: f64) -> Option<f32> {
     n.is_finite().then_some(n)
 }
 
+/// SHA-256 of the exact input bytes, lowercase hex: the snapshot guard shared
+/// by inspection, comparer media reconciliation and edit plans.
+pub fn source_sha256(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Decode the five predefined XML entities, `&nbsp;`, and numeric character
+/// references; unknown or invalid references remain literal.
+pub(crate) fn decode_entities(s: &str) -> String {
+    if !s.contains('&') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(a) = rest.find('&') {
+        out.push_str(&rest[..a]);
+        let tail = &rest[a..];
+        let semi = tail.find(';').filter(|&e| e <= 10);
+        let decoded = semi.and_then(|e| {
+            let ent = &tail[1..e];
+            let ch = match ent {
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                "nbsp" => Some('\u{a0}'),
+                _ if ent.starts_with("#x") || ent.starts_with("#X") => {
+                    u32::from_str_radix(&ent[2..], 16)
+                        .ok()
+                        .and_then(char::from_u32)
+                }
+                _ if ent.starts_with('#') => ent[1..].parse().ok().and_then(char::from_u32),
+                _ => None,
+            };
+            ch.map(|c| (c, e))
+        });
+        if let Some((c, e)) = decoded {
+            out.push(c);
+            rest = &tail[e + 1..];
+        } else {
+            out.push('&');
+            rest = &tail[1..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        collapse_whitespace, narrow_finite_f32, parse_finite_f32, parse_finite_f64,
-        universal_measure_half_points, universal_measure_twips,
+        collapse_whitespace, decode_entities, narrow_finite_f32, parse_finite_f32,
+        parse_finite_f64, source_sha256, universal_measure_half_points, universal_measure_twips,
     };
 
     #[test]
@@ -240,5 +291,17 @@ mod tests {
         assert_eq!(universal_measure_half_points("11pt"), Some(22.0));
         assert_eq!(universal_measure_half_points("8pt"), Some(16.0));
         assert_eq!(universal_measure_half_points("1440"), None);
+    }
+
+    #[test]
+    fn source_sha256_and_entity_decoder_work() {
+        assert_eq!(
+            source_sha256(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(
+            decode_entities("&amp;&lt;&gt;&quot;&apos;&nbsp;&#65;&#x41;"),
+            "&<>\"'\u{a0}AA"
+        );
     }
 }
