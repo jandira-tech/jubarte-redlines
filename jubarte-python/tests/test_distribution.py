@@ -38,7 +38,8 @@ def test_module_help_exits_zero():
 
 
 def test_ships_no_jubarte_import_package():
-    files = metadata.distribution(DIST).files or []
+    files = metadata.distribution(DIST).files
+    assert files is not None, f"{DIST} has no RECORD: its files cannot be checked"
     clashing = [str(f) for f in files if str(f).split("/")[0] == "jubarte"]
     assert clashing == [], f"{DIST} would overwrite the third-party `jubarte` package: {clashing}"
 
@@ -49,7 +50,6 @@ def test_console_scripts_do_not_shadow_the_third_party_jubarte_command():
         for ep in metadata.distribution(DIST).entry_points
         if ep.group == "console_scripts"
     }
-    assert scripts == {
-        "jubarte-redlines": "jubarte_redlines.__main__:main",
-        "jubarte-mcp": "jubarte_redlines.mcp_server:main",
-    }
+    assert "jubarte" not in scripts, scripts
+    assert scripts["jubarte-redlines"] == "jubarte_redlines.__main__:main"
+    assert scripts["jubarte-mcp"] == "jubarte_redlines.mcp_server:main"

@@ -43,7 +43,7 @@ default = ["redlines", "render", "doc", "markdown", "edit", "cli"]
 # Layered, each building on the one below (plan A4/T5.3), as in jubarte-wasm:
 # compare, accept/reject and list revisions.
 redlines = ["dep:jubarte-redlines"]
-# Inspect, changes, comments, validate, audit, scrub, append.
+# Inspect, changes, comments, validate, scrub, append (audit needs render too).
 doc = ["redlines", "dep:jubarte-doc"]
 # Markdown views, diffs and Markdown → DOCX.
 markdown = ["doc", "dep:jubarte-markdown"]
@@ -51,8 +51,9 @@ markdown = ["doc", "dep:jubarte-markdown"]
 edit = ["markdown", "dep:jubarte-edit"]
 # The CLI grammar `python -m jubarte_redlines` shares with the binary.
 cli = ["edit", "dep:jubarte-cli"]
-# The renderer (docx_to_pdf, docx_to_png, render, diff_render_json,
-# update_fields), forwarded down every layer that declares it.
+# The renderer (docx_to_pdf, docx_to_png, render, diff_render_json),
+# forwarded down every layer that declares it. With `doc` it adds
+# update_fields, validate_run and audit_json.
 render = [
     "dep:jubarte-render",
     "jubarte-doc?/render",
@@ -74,14 +75,18 @@ jubarte-cli = { path = "../crates/jubarte-cli", optional = true, default-feature
 pyo3 = { version = "0.30", features = ["extension-module", "abi3-py310"] }
 serde_json = "1" # structured results cross the boundary as engine-produced JSON
 
-# Never compiled (`cfg(any())` matches no target), only resolved: the
-# sub-crates inherit from the root manifest, which is also the `jubarte`
-# facade package, so cargo reads that package's targets in an unpacked
-# sdist. maturin vendors a package into the sdist only when it is in the
-# resolve graph (`cargo metadata` without --filter-platform), and without
-# this entry the sdist carries the root Cargo.toml but not the root
-# package's sources, and `pip install` of the sdist fails in
-# `cargo metadata` ("can't find `jubarte` bin").
+# Never compiled (`cfg(any())` matches no target), only resolved. The
+# vendored crates/* inherit `version.workspace`, `edition.workspace` and
+# `[lints] workspace` from the root manifest, and maturin puts that
+# manifest in the sdist only for a package in the resolve graph. Without
+# this entry the unpacked sdist has no workspace root, and both
+# `cargo metadata` and `cargo check` fail parsing the sub-crates ("error
+# inheriting `edition` from workspace root manifest's
+# `workspace.package.edition`"). The root manifest is also the `jubarte`
+# package, so cargo check then needs every target it declares: the root
+# `include` list carries them (a missing one fails as "can't find
+# `cli_flags` example at `examples/cli_flags.rs`"). CI compiles the
+# unpacked sdist to keep both true.
 [target.'cfg(any())'.dependencies]
 jubarte = { path = "..", default-features = false }
 

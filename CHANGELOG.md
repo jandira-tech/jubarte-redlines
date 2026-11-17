@@ -57,7 +57,7 @@ default, so the published wheel is unchanged: the same `jubarte_redlines`
 package, one `_native` extension, the `jubarte-redlines` and `jubarte-mcp`
 commands. The native module can be compiled in layers
 (`cargo check --no-default-features --features redlines` builds compare,
-accept and reject alone), but the Python package still imports the full
+accept, reject and the revision listing alone), but the Python package still imports the full
 native surface, so a wheel needs the default features. The wheel adds no `jubarte` import package and no `jubarte`
 command: both names belong to another project on PyPI.
 

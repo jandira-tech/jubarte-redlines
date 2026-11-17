@@ -314,6 +314,21 @@ jobs:
         run: |
           uv run --with maturin maturin develop --release
           uv run --with pytest --with 'mcp>=2.2,<3' --with anyio pytest -q
+      # Each feature layer of the binding compiles alone (plan T5.3).
+      - name: check every feature layer alone
+        working-directory: jubarte-python
+        run: |
+          for f in redlines doc markdown edit cli render; do
+            cargo check --locked --no-default-features --features "$f"
+          done
+      # A source install compiles the sdist; cargo metadata passes on one
+      # missing a declared target file, cargo check does not (#2448).
+      - name: build the sdist and compile it unpacked
+        run: |
+          out="$RUNNER_TEMP/sdist"
+          uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out "$out"
+          tar -xzf "$out"/*.tar.gz -C "$out"
+          cargo check --locked --manifest-path "$(ls -d "$out"/jubarte_redlines-*/)jubarte-python/Cargo.toml"
 
   convert-sweep-unit:
     name: convert-sweep unit
