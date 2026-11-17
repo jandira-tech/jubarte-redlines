@@ -12,7 +12,7 @@
 //! [`v2_select_all`]) match the exact logical text only: every character
 //! distinct (a space is not U+00A0, a double space is not a single one),
 //! with no lookalike reading and no Markdown-mark fallback. Those v1
-//! fallbacks stay in [`reading_hits`] under their versioned contract.
+//! fallbacks stay in `reading_hits` under their versioned contract.
 
 use super::{EditError, err};
 
@@ -187,7 +187,8 @@ fn whitespace_reading(text: &str, document: bool) -> (String, Vec<(usize, usize)
 /// `char::is_whitespace` characters match one or more on the other side. All
 /// other characters remain distinct, apart from document-only skipped formats.
 /// Offsets map back to original UTF-8 bytes, never the collapsed text.
-pub(super) fn near_matches(text: &str, anchor: &str) -> Option<NearMatches> {
+#[doc(hidden)]
+pub fn near_matches(text: &str, anchor: &str) -> Option<NearMatches> {
     let (needle, _) = whitespace_reading(anchor, false);
     if needle.is_empty() {
         return None;

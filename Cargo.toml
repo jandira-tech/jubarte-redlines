@@ -188,6 +188,7 @@ jubarte-redlines = { path = "crates/jubarte-redlines", version = "=0.18.0", defa
 jubarte-render = { path = "crates/jubarte-render", version = "=0.18.0", default-features = false }
 jubarte-doc = { path = "crates/jubarte-doc", version = "=0.18.0", default-features = false }
 jubarte-markdown = { path = "crates/jubarte-markdown", version = "=0.18.0", default-features = false }
+jubarte-edit = { path = "crates/jubarte-edit", version = "=0.18.0", default-features = false }
 
 # Upstream OPC types on zip 9 and patched quick-xml 0.41. The adapter keeps
 # its duplicate-repair and canonical-writing policy; optional crypto stays off.
@@ -261,6 +262,7 @@ jubarte-opc = { workspace = true, features = ["schema"] }
 jubarte-redlines = { workspace = true }
 jubarte-doc = { workspace = true, features = ["render", "schema"] }
 jubarte-markdown = { workspace = true, features = ["render"] }
+jubarte-edit = { workspace = true, features = ["render"] }
 jubarte-render = { workspace = true }
 oxml-opc = { workspace = true }
 zip = { workspace = true }
@@ -326,6 +328,7 @@ jubarte-redlines = { workspace = true, features = ["test-support"] }
 jubarte-render = { workspace = true, features = ["test-support"] }
 jubarte-doc = { workspace = true, features = ["render", "schema", "test-support"] }
 jubarte-markdown = { workspace = true, features = ["render", "test-support"] }
+jubarte-edit = { workspace = true, features = ["render", "test-support"] }
 jsonschema = { workspace = true }
 criterion = { workspace = true }
 ooxmlsdk = { workspace = true }

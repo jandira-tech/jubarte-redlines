@@ -39,7 +39,8 @@ const REFERENCES: &[&str] = &["commentReference", "footnoteReference", "endnoteR
 
 /// One helper bookmark and the change it marks.
 #[derive(Clone, Debug)]
-pub(super) struct Mark {
+#[doc(hidden)]
+pub struct Mark {
     op: usize,
     /// The header, footer or notes part holding the text; `None` for the body.
     part: Option<String>,

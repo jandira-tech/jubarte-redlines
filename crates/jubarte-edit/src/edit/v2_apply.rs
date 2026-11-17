@@ -81,7 +81,7 @@ pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditErro
     apply_quoting(source, plan, super::PlanSyntax::V2)
 }
 
-/// [`apply_plan`], its refusals quoting their routes in `syntax`: the
+/// [`apply_plan`](crate::edit::apply_plan), its refusals quoting their routes in `syntax`: the
 /// plan's JSON, or the options of the typed command that built it.
 pub(super) fn apply_quoting(
     source: &[u8],
@@ -3614,10 +3614,11 @@ mod tests {
     fn final_views_read_off_the_dom_match_a_reparse_of_the_emitted_primary() {
         // One (fixture, kind → target row) net per shape family; rows are
         // the paired ids `read --for-edit` prints for the frozen fixture.
-        const STRICT01: &[u8] = include_bytes!("../../tests/fixtures/strict/Strict01.docx");
-        const HARD_TABLES: &[u8] =
-            include_bytes!("../../tests/fixtures/from-docx/critic/synthetic/hard-tables.docx");
-        const F4_ORIGINAL: &[u8] = include_bytes!("../../tests/fixtures/f4/original.docx");
+        const STRICT01: &[u8] = include_bytes!("../../../../tests/fixtures/strict/Strict01.docx");
+        const HARD_TABLES: &[u8] = include_bytes!(
+            "../../../../tests/fixtures/from-docx/critic/synthetic/hard-tables.docx"
+        );
+        const F4_ORIGINAL: &[u8] = include_bytes!("../../../../tests/fixtures/f4/original.docx");
         type Net = (
             &'static str,
             &'static [u8],

@@ -37,11 +37,11 @@
 //! the refused error keeps naming the requested target. Document text stays
 //! untrusted data: it is echoed bounded (and escaped, in messages) and never
 //! lands in an argv. The caller's anchor is bounded the same way: a pasted
-//! clause shows its first [`WINDOW`] characters, with the cut said.
+//! clause shows its first `WINDOW` characters, with the cut said.
 //!
-//! Bounds: a match shows up to [`WINDOW`] characters on either side (a miss
-//! shows the first [`WINDOW`] characters of the actual target text); at most
-//! [`MAX_SUGGESTED_TARGETS`] other paragraphs are suggested.
+//! Bounds: a match shows up to `WINDOW` characters on either side (a miss
+//! shows the first `WINDOW` characters of the actual target text); at most
+//! `MAX_SUGGESTED_TARGETS` other paragraphs are suggested.
 
 use super::EditError;
 use super::anchor::{shown, v2_candidates, v2_select, v2_select_all};
@@ -206,8 +206,8 @@ pub fn v2_resolve_all(
 
 /// Validate a declared story using the same missing-target refusal as anchors.
 /// Its only caller is the CLI's typed actions (`edit::inline`).
-#[cfg(feature = "cli")]
-pub(super) fn require_story(source: &[u8], story: &str) -> Result<(), Box<Error>> {
+#[doc(hidden)]
+pub fn require_story(source: &[u8], story: &str) -> Result<(), Box<Error>> {
     let refusal = AnchorRefusal::new(story, "").with_operation("/operations/0");
     let snap = open(source, &refusal)?;
     if story == "body" || snap.stories.iter().any(|s| s.id == story) {
@@ -574,7 +574,7 @@ fn suggestions_elsewhere(snap: &Snapshot, skip: &str, anchor: &str) -> Suggestio
 
 /// Bounded elsewhere-candidate list.
 struct Suggestions {
-    /// The suggested paragraphs, at most [`MAX_SUGGESTED_TARGETS`].
+    /// The suggested paragraphs, at most `MAX_SUGGESTED_TARGETS`.
     list: Vec<(String, usize)>,
     /// Suggested paragraphs cut by the cap.
     more: usize,
@@ -585,7 +585,7 @@ fn bounded_start(working: &str) -> String {
     working.chars().take(WINDOW).collect()
 }
 
-/// The anchor as a message quotes it: escaped, and bounded to [`WINDOW`]
+/// The anchor as a message quotes it: escaped, and bounded to `WINDOW`
 /// characters with the cut said, so a pasted clause cannot make the refusal
 /// bigger than the request it answers.
 fn quoted_anchor(anchor: &str) -> String {
@@ -602,7 +602,7 @@ fn quoted_anchor(anchor: &str) -> String {
 }
 
 /// Bounded context around `[start, end)`: up to `WINDOW` characters on
-/// either side of the matched span, and up to [`WINDOW`] characters of the
+/// either side of the matched span, and up to `WINDOW` characters of the
 /// span itself (the caller's own anchor, echoed back bounded).
 fn around(working: &str, start: usize, end: usize) -> Context {
     let matched = &working[start..end];

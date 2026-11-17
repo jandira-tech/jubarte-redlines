@@ -22,7 +22,8 @@ fn pair(p: &super::for_edit::TargetPair) -> Target {
 /// `INVALID_DOCUMENT` for an unopenable package, `INVALID_ID` for an
 /// unparseable id, `INVALID_TARGET` for an id that does not name exactly
 /// one original-source carrier.
-pub(super) fn decisions(
+#[doc(hidden)]
+pub fn decisions(
     source: &[u8],
     accept: &[String],
     reject: &[String],

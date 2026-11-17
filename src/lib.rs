@@ -97,18 +97,18 @@
 pub use jubarte_doc::append;
 #[doc(inline)]
 pub use jubarte_doc::audit;
-#[doc(inline)]
-pub use jubarte_opc::admission;
-/// Table, cell and paragraph border views shared by render, markdown and debug.
-/// Word's built-in style names.
-/// Machine-readable manifest of what this build can do.
-pub mod capabilities;
 /// Tracked changes one at a time: list, accept or reject a selection.
 #[doc(inline)]
 pub use jubarte_doc::changes;
+/// Table, cell and paragraph border views shared by render, markdown and debug.
+/// Word's built-in style names.
+/// Machine-readable manifest of what this build can do.
+#[doc(inline)]
+pub use jubarte_edit::capabilities;
+#[doc(inline)]
+pub use jubarte_opc::admission;
 #[cfg(feature = "cli")]
 pub mod cli;
-pub(crate) use jubarte_doc::comment_settlement;
 #[doc(inline)]
 pub use jubarte_doc::comments;
 /// `jubarte debug`: short Word-validity triage of a package, or two compared.
@@ -137,34 +137,41 @@ pub mod document_comparer {
     pub use jubarte_redlines::document_comparer::*;
 }
 pub mod edit;
-/// V2-13 (issue #845): the checker core for `--expect` evaluations.
-pub mod expect;
 #[doc(inline)]
 pub use jubarte_doc::fields;
 /// Read-only paragraph/package views and the Markdown projection for agents.
 #[doc(inline)]
 pub use jubarte_doc::inspect;
 #[doc(inline)]
-pub use jubarte_dom::ids;
+pub use jubarte_doc::scrub;
 #[doc(inline)]
-pub use jubarte_markdown::legacy_doc;
-pub mod markdown;
+pub use jubarte_dom::ids;
 /// WordprocessingML and related namespace / `XName` constants.
 #[doc(inline)]
 pub use jubarte_dom::namespaces;
-pub(crate) use jubarte_dom::ooxml;
 /// P0-LAB-01 stage counters/timers — no-ops unless `perf-profile` is enabled.
 #[doc(inline)]
 pub use jubarte_dom::perf;
+#[doc(inline)]
+pub use jubarte_dom::unid;
+/// V2-13 (issue #845): the checker core for `--expect` evaluations.
+#[doc(inline)]
+pub use jubarte_edit::expect;
+/// The composed markdown module (A6): the markdown crate's module plus
+/// the edit crate's patch, redline and unified modules.
+pub use jubarte_edit::markdown;
+#[doc(inline)]
+pub use jubarte_edit::result;
+#[doc(inline)]
+pub use jubarte_edit::text_diff;
+#[doc(inline)]
+pub use jubarte_markdown::legacy_doc;
 /// Markup simplification (PowerTools `MarkupSimplifier` port).
 #[doc(inline)]
 pub use jubarte_opc::markup_simplifier;
 /// Open Packaging Conventions adapter (`PartFs`).
 #[doc(inline)]
 pub use jubarte_opc::opc;
-pub mod result;
-#[doc(inline)]
-pub use jubarte_doc::scrub;
 #[doc(inline)]
 pub use jubarte_opc::settings;
 /// ISO Strict → Transitional package normalization.
@@ -173,9 +180,6 @@ pub use jubarte_opc::strict_translation;
 /// Accept / reject tracked revisions across a package.
 #[doc(inline)]
 pub use jubarte_redlines::revision_processor;
-pub mod text_diff;
-#[doc(inline)]
-pub use jubarte_dom::unid;
 /// `jubarte self-update`: install a GitHub release, only when asked.
 #[cfg(feature = "self-update")]
 pub mod update;
@@ -198,4 +202,4 @@ pub use jubarte_redlines::WmlDocument;
 
 /// Capability-confined, staged filesystem publication for host applications.
 #[cfg(not(target_arch = "wasm32"))]
-pub mod publication;
+pub use jubarte_edit::publication;

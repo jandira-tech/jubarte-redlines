@@ -30,7 +30,8 @@ const LETTER: (f64, f64) = (527.85, 131.95);
 
 /// A validated watermark.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Spec {
+#[doc(hidden)]
+pub struct Spec {
     text: String,
     /// Six upper-case hex digits.
     color: String,

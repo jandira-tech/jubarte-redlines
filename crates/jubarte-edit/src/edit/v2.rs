@@ -917,7 +917,8 @@ pub fn logical_text(dom: &Dom, paragraph: NodeId) -> Result<String, EditError> {
 
 /// Validate exact typed payloads without normalization. A file's leading BOM
 /// is an encoding mark; every other U+FEFF remains content.
-pub(super) fn check_payload_text(text: &str, from_file: bool) -> Result<(), EditError> {
+#[doc(hidden)]
+pub fn check_payload_text(text: &str, from_file: bool) -> Result<(), EditError> {
     if from_file && text.starts_with('\u{feff}') {
         return Err(super::err(
             "INVALID_EDIT",

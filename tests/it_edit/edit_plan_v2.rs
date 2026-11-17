@@ -19,7 +19,10 @@ const EXAMPLES: &[&str] = &[
     include_str!("../fixtures/edit-v2/template.with-comment.json"),
 ];
 static SCHEMA_JSON: LazyLock<Value> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("../../schemas/edit-plan-v2.schema.json")).unwrap()
+    serde_json::from_str(include_str!(
+        "../../crates/jubarte-edit/schemas/edit-plan-v2.schema.json"
+    ))
+    .unwrap()
 });
 static SCHEMA: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
     jsonschema::draft202012::options()
@@ -614,7 +617,7 @@ fn codec_refuses_unrepresented_element_nesting() {
 // V2-01 adversarial review (commit 76c66221; PR #1054; issue #821).
 // Review: /tmp/v2/reviews/v2-01.md, ledger: /tmp/v2/reviews/v2-01-ledger.md.
 // Each test below pins a single row of the review. Implementation of the
-// matching fix lives in src/edit/v2.rs and schemas/edit-plan-v2.schema.json.
+// matching fix lives in jubarte-edit's edit/v2.rs and schemas/edit-plan-v2.schema.json.
 // ============================================================================
 
 // Row 1: parser and schema must agree on every whitespace character. The

@@ -48,7 +48,8 @@ pub enum ControlSelector {
 
 /// What a resolved fill writes.
 #[derive(Clone, Debug)]
-pub(super) enum FillValue {
+#[doc(hidden)]
+pub enum FillValue {
     /// Plain text (a `text` value or a choice's display text).
     Text(String),
     /// A checkbox state and the glyph that shows it.
@@ -816,7 +817,7 @@ mod control_source_boundary_tests {
     fn package(body: &str) -> Vec<u8> {
         let (dom, root) = parse(body);
         let mut pkg = PartFs::open(include_bytes!(
-            "../../tests/fixtures/word_probes/tokens/cell_a.docx"
+            "../../../../tests/fixtures/word_probes/tokens/cell_a.docx"
         ))
         .unwrap();
         pkg.set_part(

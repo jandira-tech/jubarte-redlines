@@ -119,7 +119,6 @@ api	enum	pub	jubarte::edit::Others
 api	enum	pub	jubarte::edit::RemovedAnchorComments
 api	enum	pub	jubarte::edit::Selector
 api	enum	pub	jubarte::edit::Side
-api	enum	pub	jubarte::edit::anchor_error::Working
 api	enum	pub	jubarte::edit::controls::ControlSelector
 api	enum	pub	jubarte::edit::flags::Verb
 api	enum	pub	jubarte::edit::for_edit::Correspondence
@@ -441,15 +440,6 @@ api	function	pub	jubarte::edit::EditPlan::to_json (self: &Self) -> String
 api	function	pub	jubarte::edit::EditReport::to_jsonl (self: &Self) -> String
 api	function	pub	jubarte::edit::ResolvedRevisions::is_empty (self: &Self) -> bool
 api	function	pub	jubarte::edit::RunSpec::format (self: &Self) -> RunFormat
-api	function	pub	jubarte::edit::anchor::NearMatches::copy_hint (self: &Self) -> String
-api	function	pub	jubarte::edit::anchor::v2_candidates (haystack: &str, anchor: &str) -> Vec<(usize, usize)>
-api	function	pub	jubarte::edit::anchor::v2_select (haystack: &str, anchor: &str, occurrence: Option<usize>) -> Result<(usize, usize), super::EditError>
-api	function	pub	jubarte::edit::anchor::v2_select_all (haystack: &str, anchor: &str, expected: usize) -> Result<Vec<(usize, usize)>, super::EditError>
-api	function	pub	jubarte::edit::anchor_error::AnchorRefusal::new (target: &'a str, anchor: &'a str) -> Self
-api	function	pub	jubarte::edit::anchor_error::AnchorRefusal::with_operation (self: Self, operation: &'a str) -> Self
-api	function	pub	jubarte::edit::anchor_error::AnchorRefusal::with_path (self: Self, path: &'a str) -> Self
-api	function	pub	jubarte::edit::anchor_error::v2_resolve (source: &[u8], working: Working<'_>, refusal: &AnchorRefusal<'_>, occurrence: Option<usize>) -> Result<(usize, usize), Box<crate::result::Error>>
-api	function	pub	jubarte::edit::anchor_error::v2_resolve_all (source: &[u8], working: Working<'_>, refusal: &AnchorRefusal<'_>, expected: usize) -> Result<Vec<(usize, usize)>, Box<crate::result::Error>>
 api	function	pub	jubarte::edit::apply_plan (source: &[u8], plan: &EditPlan) -> Result<EditResult, EditError>
 api	function	pub	jubarte::edit::apply_plan_json (source: &[u8], plan_json: &str) -> Result<EditResult, EditError>
 api	function	pub	jubarte::edit::apply_plan_json_with (source: &[u8], plan_json: &str, options: &PrepareOptions) -> Result<EditResult, EditError>
@@ -1685,24 +1675,6 @@ api	impl		jubarte::edit::Side::(impl Eq)
 api	impl		jubarte::edit::Side::(impl JsonSchema)
 api	impl		jubarte::edit::Side::(impl PartialEq)
 api	impl		jubarte::edit::Side::(impl Serialize)
-api	impl		jubarte::edit::anchor::NearMatches::(impl Clone)
-api	impl		jubarte::edit::anchor::NearMatches::(impl Debug)
-api	impl		jubarte::edit::anchor::NearMatches::(impl Deserialize<'0>)
-api	impl		jubarte::edit::anchor::NearMatches::(impl Eq)
-api	impl		jubarte::edit::anchor::NearMatches::(impl PartialEq)
-api	impl		jubarte::edit::anchor::NearMatches::(impl Serialize)
-api	impl		jubarte::edit::anchor::NearOccurrence::(impl Clone)
-api	impl		jubarte::edit::anchor::NearOccurrence::(impl Debug)
-api	impl		jubarte::edit::anchor::NearOccurrence::(impl Deserialize<'0>)
-api	impl		jubarte::edit::anchor::NearOccurrence::(impl Eq)
-api	impl		jubarte::edit::anchor::NearOccurrence::(impl PartialEq)
-api	impl		jubarte::edit::anchor::NearOccurrence::(impl Serialize)
-api	impl		jubarte::edit::anchor_error::AnchorRefusal::(impl Clone)
-api	impl		jubarte::edit::anchor_error::AnchorRefusal::(impl Copy)
-api	impl		jubarte::edit::anchor_error::AnchorRefusal::(impl Debug)
-api	impl		jubarte::edit::anchor_error::Working::(impl Clone)
-api	impl		jubarte::edit::anchor_error::Working::(impl Copy)
-api	impl		jubarte::edit::anchor_error::Working::(impl Debug)
 api	impl		jubarte::edit::controls::ControlSelector::(impl Clone)
 api	impl		jubarte::edit::controls::ControlSelector::(impl Debug)
 api	impl		jubarte::edit::controls::ControlSelector::(impl Deserialize<'0>)
@@ -2752,6 +2724,7 @@ api	struct	pub	jubarte::changes::ResolvedChanges
 api	struct	pub	jubarte::cli::Cli
 api	struct	pub	jubarte::cli::CompareArgs
 api	struct	pub	jubarte::cli::EditOptions
+api	struct	pub	jubarte::cli::FlagOp
 api	struct	pub	jubarte::cli::MarkdownArgs
 api	struct	pub	jubarte::cli::ReadArgs
 api	struct	pub	jubarte::cli::RenderArgs
@@ -2811,9 +2784,6 @@ api	struct	pub	jubarte::edit::RevisionCounts
 api	struct	pub	jubarte::edit::RevisionSplit
 api	struct	pub	jubarte::edit::RunFormat
 api	struct	pub	jubarte::edit::RunSpec
-api	struct	pub	jubarte::edit::anchor::NearMatches
-api	struct	pub	jubarte::edit::anchor::NearOccurrence
-api	struct	pub	jubarte::edit::anchor_error::AnchorRefusal
 api	struct	pub	jubarte::edit::flags::FlagOp
 api	struct	pub	jubarte::edit::flags::FlagPlan
 api	struct	pub	jubarte::edit::for_edit::Blocker
@@ -3285,7 +3255,6 @@ api	struct_field		jubarte::edit::Selector::Index::story: Option<String>
 api	struct_field		jubarte::edit::Selector::Name::0: String
 api	struct_field		jubarte::edit::Selector::StartsWith::starts_with: String
 api	struct_field		jubarte::edit::Selector::StartsWith::story: Option<String>
-api	struct_field		jubarte::edit::anchor_error::Working::Settled::0: &'a str
 api	struct_field		jubarte::edit::controls::ControlSelector::Alias::alias: String
 api	struct_field		jubarte::edit::controls::ControlSelector::Id::id: String
 api	struct_field		jubarte::edit::controls::ControlSelector::Name::0: String
@@ -3874,16 +3843,6 @@ api	struct_field	pub	jubarte::edit::RunSpec::highlight: Option<String>
 api	struct_field	pub	jubarte::edit::RunSpec::italic: Option<bool>
 api	struct_field	pub	jubarte::edit::RunSpec::text: String
 api	struct_field	pub	jubarte::edit::RunSpec::underline: Option<bool>
-api	struct_field	pub	jubarte::edit::anchor::NearMatches::occurrences: Vec<NearOccurrence>
-api	struct_field	pub	jubarte::edit::anchor::NearMatches::total: usize
-api	struct_field	pub	jubarte::edit::anchor::NearOccurrence::offset: usize
-api	struct_field	pub	jubarte::edit::anchor::NearOccurrence::shown: String
-api	struct_field	pub	jubarte::edit::anchor::NearOccurrence::target: Option<String>
-api	struct_field	pub	jubarte::edit::anchor::NearOccurrence::text: String
-api	struct_field	pub	jubarte::edit::anchor_error::AnchorRefusal::anchor: &'a str
-api	struct_field	pub	jubarte::edit::anchor_error::AnchorRefusal::operation: Option<&'a str>
-api	struct_field	pub	jubarte::edit::anchor_error::AnchorRefusal::path: Option<&'a str>
-api	struct_field	pub	jubarte::edit::anchor_error::AnchorRefusal::target: &'a str
 api	struct_field	pub	jubarte::edit::flags::FlagOp::accept: bool
 api	struct_field	pub	jubarte::edit::flags::FlagOp::anchor: Option<String>
 api	struct_field	pub	jubarte::edit::flags::FlagOp::at: String
@@ -4449,6 +4408,7 @@ api	use	pub	jubarte::admission::InputLimits = crate::limits::InputLimits
 api	use	pub	jubarte::admission::code_first = crate::limits::code_first
 api	use	pub	jubarte::append = jubarte_doc::append
 api	use	pub	jubarte::audit = jubarte_doc::audit
+api	use	pub	jubarte::capabilities = jubarte_edit::capabilities
 api	use	pub	jubarte::capabilities::discovery = discovery::discovery
 api	use	pub	jubarte::capabilities::discovery_text = discovery::discovery_text
 api	use	pub	jubarte::changes = jubarte_doc::changes
@@ -4481,6 +4441,7 @@ api	use	pub	jubarte::document_comparer::UnsupportedContentError = crate::limits:
 api	use	pub	jubarte::document_comparer::_ = crate::limits::UnsupportedContentError
 api	use	pub	jubarte::document_comparer::accept_revisions_keeping_comments = crate::changes::accept_revisions_keeping_comments
 api	use	pub	jubarte::document_comparer::reject_revisions_keeping_comments = crate::changes::reject_revisions_keeping_comments
+api	use	pub	jubarte::edit::* = jubarte_edit::edit
 api	use	pub	jubarte::edit::AnchorRefusal = anchor_error::AnchorRefusal
 api	use	pub	jubarte::edit::CandidateChecks = prepared::CandidateChecks
 api	use	pub	jubarte::edit::ControlSelector = controls::ControlSelector
@@ -4501,6 +4462,7 @@ api	use	pub	jubarte::edit::RemovedComment = crate::comment_settlement::RemovedCo
 api	use	pub	jubarte::edit::SectionScope = sections::SectionScope
 api	use	pub	jubarte::edit::SkippedOperation = skip::SkippedOperation
 api	use	pub	jubarte::edit::Working = anchor_error::Working
+api	use	pub	jubarte::edit::_ = skip::keep_notes
 api	use	pub	jubarte::edit::failed_plan_json = skip::failed_plan_json
 api	use	pub	jubarte::edit::introduced_findings = prepared::introduced_findings
 api	use	pub	jubarte::edit::keep_notes = skip::keep_notes
@@ -4511,6 +4473,7 @@ api	use	pub	jubarte::edit::v2_resolve = anchor_error::v2_resolve
 api	use	pub	jubarte::edit::v2_resolve_all = anchor_error::v2_resolve_all
 api	use	pub	jubarte::edit::v2_select = anchor::v2_select
 api	use	pub	jubarte::edit::v2_select_all = anchor::v2_select_all
+api	use	pub	jubarte::expect = jubarte_edit::expect
 api	use	pub	jubarte::fields = jubarte_doc::fields
 api	use	pub	jubarte::ids = jubarte_dom::ids
 api	use	pub	jubarte::ids::SHORT_EXPECTED = short::SHORT_EXPECTED
@@ -4523,6 +4486,7 @@ api	use	pub	jubarte::inspect::Table = tables::Table
 api	use	pub	jubarte::inspect::TableCell = tables::TableCell
 api	use	pub	jubarte::inspect::source_sha256 = crate::util::source_sha256
 api	use	pub	jubarte::legacy_doc = jubarte_markdown::legacy_doc
+api	use	pub	jubarte::markdown = jubarte_edit::markdown
 api	use	pub	jubarte::markdown::* = jubarte_markdown::markdown
 api	use	pub	jubarte::markdown::Attribution = unified::Attribution
 api	use	pub	jubarte::markdown::Change = unified::Change
@@ -4535,7 +4499,6 @@ api	use	pub	jubarte::markdown::PatchOptions = unified::PatchOptions
 api	use	pub	jubarte::markdown::Patched = patch::Patched
 api	use	pub	jubarte::markdown::RedlineOptions = redline::RedlineOptions
 api	use	pub	jubarte::markdown::Source = redline::Source
-api	use	pub	jubarte::markdown::_ = write::markdown_to_docx
 api	use	pub	jubarte::markdown::apply_markdown = patch::apply_markdown
 api	use	pub	jubarte::markdown::apply_markdown_strict = patch::apply_markdown_strict
 api	use	pub	jubarte::markdown::diff_markdown = diff::diff_markdown
@@ -4557,10 +4520,13 @@ api	use	pub	jubarte::opc::OpcError = oxml_opc::OpcError
 api	use	pub	jubarte::opc::Relationship = oxml_opc::Relationship
 api	use	pub	jubarte::opc::Zip32Limit = zip32::Zip32Limit
 api	use	pub	jubarte::perf = jubarte_dom::perf
+api	use	pub	jubarte::publication = jubarte_edit::publication
+api	use	pub	jubarte::result = jubarte_edit::result
 api	use	pub	jubarte::revision_processor = jubarte_redlines::revision_processor
 api	use	pub	jubarte::scrub = jubarte_doc::scrub
 api	use	pub	jubarte::settings = jubarte_opc::settings
 api	use	pub	jubarte::strict_translation = jubarte_opc::strict_translation
+api	use	pub	jubarte::text_diff = jubarte_edit::text_diff
 api	use	pub	jubarte::unid = jubarte_dom::unid
 api	use	pub	jubarte::update::ReleaseKey = zipsign::ReleaseKey
 api	use	pub	jubarte::update::verify_signature = zipsign::verify_signature
@@ -4814,8 +4780,6 @@ api	variant		jubarte::edit::Selector::Name
 api	variant		jubarte::edit::Selector::StartsWith
 api	variant		jubarte::edit::Side::After
 api	variant		jubarte::edit::Side::Before
-api	variant		jubarte::edit::anchor_error::Working::InSource
-api	variant		jubarte::edit::anchor_error::Working::Settled
 api	variant		jubarte::edit::controls::ControlSelector::Alias
 api	variant		jubarte::edit::controls::ControlSelector::Id
 api	variant		jubarte::edit::controls::ControlSelector::Name
@@ -5003,7 +4967,6 @@ api	variant		jubarte::validate::ValidateError::Refused
 api	variant		jubarte::validate::ValidateError::Usage
 internal	assoc_const	pub(crate)	jubarte::markdown::from_docx::ooxml::Element::COMMENT_DATE: &str
 internal	assoc_const	pub(crate::convert)	jubarte::convert::Squeeze::NONE: Self
-internal	assoc_const	pub(crate::edit::sections)	jubarte::edit::sections::Geometry::WORD_DEFAULT: Self
 internal	assoc_type		jubarte::publication::Backend::Staged
 internal	assoc_type		jubarte::publication::FsBackend::(impl Backend)::Staged = StagedFile
 internal	constant	pub(crate)	jubarte::capabilities::DIFF_EXTENSIONS: &[&str]
@@ -5236,9 +5199,6 @@ internal	constant	pub(crate::edit)	jubarte::edit::tracked::RANGE_ENDS: [&str; 4]
 internal	constant	pub(crate::edit)	jubarte::edit::tracked::RANGE_STARTS: [&str; 5]
 internal	constant	pub(crate::edit)	jubarte::edit::tracked::TRACKED: [&str; 4]
 internal	constant	pub(crate::edit)	jubarte::edit::watermark::MAX_TEXT: usize
-internal	constant	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::MAX_SUGGESTED_TARGETS: usize
-internal	constant	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::READ_SUGGESTION_HEAD: usize
-internal	constant	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::WINDOW: usize
 internal	constant	pub(crate::edit::controls)	jubarte::edit::controls::DAYS: [&str; 7]
 internal	constant	pub(crate::edit::controls)	jubarte::edit::controls::MONTHS: [&str; 12]
 internal	constant	pub(crate::edit::controls)	jubarte::edit::controls::UNFILLABLE: &[&str]
@@ -5465,14 +5425,10 @@ internal	enum	pub(crate::convert::metafile)	jubarte::convert::metafile::GdiObj
 internal	enum	pub(crate::convert::pdf)	jubarte::convert::pdf::Lit
 internal	enum	pub(crate::convert::preset_geom)	jubarte::convert::preset_geom::CmdRef
 internal	enum	pub(crate::edit)	jubarte::edit::OthersChange
-internal	enum	pub(crate::edit)	jubarte::edit::Resolved
-internal	enum	pub(crate::edit)	jubarte::edit::ThreadOp
-internal	enum	pub(crate::edit)	jubarte::edit::controls::FillValue
 internal	enum	pub(crate::edit)	jubarte::edit::hint::Held
 internal	enum	pub(crate::edit)	jubarte::edit::origin::Fate
 internal	enum	pub(crate::edit)	jubarte::edit::prepared::Blame
 internal	enum	pub(crate::edit)	jubarte::edit::visible::Visible
-internal	enum	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::Target
 internal	enum	pub(crate::edit::flags)	jubarte::edit::flags::Answer
 internal	enum	pub(crate::edit::flags)	jubarte::edit::flags::Group
 internal	enum	pub(crate::edit::prepared)	jubarte::edit::prepared::ExpectedScope
@@ -5664,17 +5620,7 @@ internal	function	pub(crate)	jubarte::debug::cell_ends_in_paragraph (dom: &crate
 internal	function	pub(crate)	jubarte::edit::EmptyPlacement::place (self: &mut Self, dom: &mut Dom, paragraph: NodeId, node: NodeId, attach_before: bool)
 internal	function	pub(crate)	jubarte::edit::Others::keeps (self: Self) -> bool
 internal	function	pub(crate)	jubarte::edit::RemovedAnchorComments::is_remove (self: &Self) -> bool
-internal	function	pub(crate)	jubarte::edit::RevisionCounter::allocate (self: &mut Self) -> u64
-internal	function	pub(crate)	jubarte::edit::RevisionCounter::new (used: HashSet<u64>) -> Self
-internal	function	pub(crate)	jubarte::edit::RevisionCounter::own (self: &Self) -> &BTreeSet<u64>
 internal	function	pub(crate)	jubarte::edit::RevisionCounts::from_changes <'a>(changes: impl IntoIterator<Item>) -> Self
-internal	function	pub(crate)	jubarte::edit::Transaction::edits_only_comments (self: &Self) -> bool
-internal	function	pub(crate)	jubarte::edit::Transaction::emptied_paragraphs (self: &Self) -> BTreeSet<usize>
-internal	function	pub(crate)	jubarte::edit::Transaction::final_carrier (self: &Self, para: usize) -> Option<NodeId>
-internal	function	pub(crate)	jubarte::edit::Transaction::final_paragraph (self: &Self, node: NodeId) -> Option<NodeId>
-internal	function	pub(crate)	jubarte::edit::Transaction::final_replacement (self: &Self, para: usize) -> Option<usize>
-internal	function	pub(crate)	jubarte::edit::Transaction::note_rewrites (self: &mut Self, outcome: usize, resolved: &[Resolved])
-internal	function	pub(crate)	jubarte::edit::Transaction::paragraph_walk (self: &Self) -> Vec<NodeId>
 internal	function	pub(crate)	jubarte::edit::flags::record_into (plan: Option<super::EditPlan>, more: super::EditPlan) -> Result<super::EditPlan, String>
 internal	function	pub(crate)	jubarte::edit::flags::renumber_notes (notes: Vec<String>, before: usize) -> Vec<String>
 internal	function	pub(crate)	jubarte::edit::guard_keep_others (source: &[u8], author: &str, selection: Option<&ResolveRevisions>, wholesale: Option<&str>, settle_comment_bodies: bool, syntax: PlanSyntax) -> Result<(), EditError>
@@ -8013,124 +7959,8 @@ internal	function	pub(crate::edit)	jubarte::edit::Alignment::jc (self: Self) -> 
 internal	function	pub(crate::edit)	jubarte::edit::ListKind::format (self: Self) -> crate::markdown::xml::ListFormat
 internal	function	pub(crate::edit)	jubarte::edit::ListKind::name (self: Self) -> &'static str
 internal	function	pub(crate::edit)	jubarte::edit::Others::is_allow (self: &Self) -> bool
-internal	function	pub(crate::edit)	jubarte::edit::OthersComment::note (self: &Self) -> String
-internal	function	pub(crate::edit)	jubarte::edit::OthersComment::refusal (self: &Self, reply: &str, resolve: &str) -> String
-internal	function	pub(crate::edit)	jubarte::edit::OthersComment::whose (self: &Self) -> String
-internal	function	pub(crate::edit)	jubarte::edit::RevisionCounter::copy (self: &mut Self, of: Option<u64>) -> u64
-internal	function	pub(crate::edit)	jubarte::edit::RevisionCounter::original (self: &Self, id: u64) -> u64
-internal	function	pub(crate::edit)	jubarte::edit::ThreadOp::target (self: &Self) -> u32
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::anchor_candidates (self: &Self, anchor: &str) -> (Vec<AnchorCandidate>, usize)
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::apply (self: &mut Self) -> Result<(), EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::apply_comment_spans (self: &mut Self, ids: &BTreeMap<usize, u32>)
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::apply_comments (self: &mut Self) -> BTreeMap<usize, u32>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::apply_fills (self: &mut Self)
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::apply_insertions (self: &mut Self, ids: &BTreeMap<usize, u32>) -> Vec<NodeId>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::apply_lists (self: &mut Self)
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::apply_merges (self: &mut Self)
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::apply_page_setup (self: &mut Self, targets: &Vec<(Option<crate::xmllinq::NodeId>, Geometry)>)
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::apply_page_setups (self: &mut Self)
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::apply_paragraph_deletions (self: &mut Self, emptied: &BTreeSet<usize>)
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::apply_paragraph_formatting (self: &mut Self)
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::apply_reply_markers (self: &mut Self, ids: &BTreeMap<usize, u32>)
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::apply_table_separations (self: &mut Self, tables: Vec<NodeId>)
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::apply_text_edits (self: &mut Self, ids: &BTreeMap<usize, u32>) -> Result<(), EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::apply_watermark (self: &mut Self) -> Result<BTreeSet<usize>, EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::attach_revision_refusal (self: &Self, error: EditError) -> EditError
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::body_level_marker_beside (self: &Self, para: usize, before: bool) -> bool
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::body_paragraph_count (self: &Self) -> usize
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::candidates_note (self: &Self, anchor: &str, outcome: &mut EditOutcome) -> String
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::check_comment_ids_fit (self: &Self) -> Result<(), EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::check_conflicts (self: &Self) -> Result<(), EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::check_conflicts_v2 (self: &Self) -> Result<(), EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::check_conflicts_with_comments (self: &Self, v2: bool) -> Result<(), EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::check_control_conflicts (self: &Self, deleted: &[usize]) -> Result<(), EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::check_insert_either (self: &Self, projection: &Projection, pos: usize, attach_before: &mut bool) -> Result<(), String>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::check_insert_position (self: &Self, projection: &Projection, pos: usize, attach_before: bool) -> Result<(), String>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::check_paragraph_ops (self: &Self, deleted: &[usize]) -> Result<(), EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::check_range (self: &Self, projection: &Projection, start: usize, end: usize) -> Result<(), String>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::check_redactions (self: &Self, outputs: &[&[u8]]) -> Result<(), EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::check_thread_ops (self: &Self) -> Result<(), EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::checked_pieces (self: &Self, para: usize, pieces: impl IntoIterator<Item>) -> Option<Vec<Resolved>>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::comment_anchors (self: &Self) -> BTreeMap<String, Covered>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::comment_markers (self: &Self, ids: &[u32], target: u32) -> (Vec<usize>, Option<NodeId>)
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::comment_marks (self: &Self, para: usize) -> Vec<(String, bool, usize)>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::comment_ranges (self: &Self, para: usize) -> Vec<(usize, usize)>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::comment_text (self: &Self, n: u32) -> Result<Covered, (String, String, usize)>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::commented_base (self: &Self) -> Result<std::borrow::Cow<'_, [u8]>, EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::comments_planned (self: &Self) -> usize
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::conflict (self: &Self, op_index: usize, message: &str) -> EditError
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::deleted_paragraph_ids (self: &Self) -> HashSet<String>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::deleted_text_comment (self: &Self, op: usize) -> Option<&str>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::deletes_paragraph (self: &Self, para: usize) -> Option<usize>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::deletion_comment (self: &Self, op: usize) -> Option<&str>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::edits_a_comment_range (self: &Self) -> bool
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::edits_beside_a_range_marker (self: &Self) -> bool
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::emits_directly (self: &Self) -> Result<bool, EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::empty_bookmark_markers (dom: &Dom, paragraph: NodeId) -> Vec<NodeId>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::find_range (self: &Self, projection: &Projection, find: &str, occurrence: Option<usize>, outcome: &mut EditOutcome) -> Result<(usize, usize), (String, String)>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::finish (self: &mut Self) -> Result<(Vec<u8>, Option<Vec<u8>>), EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::footnotes_story (self: &mut Self) -> Result<usize, EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::ids (self: &Self) -> origin::Ids<'_>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::image_paragraph (self: &mut Self, picture: &Picture, used: &mut HashSet<String>, drawing_id: u32) -> NodeId
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::is_range_marker (dom: &Dom, node: NodeId) -> bool
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::merge_partner (self: &Self, para: usize) -> Result<usize, String>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::new_comment (self: &mut Self, text: String) -> u32
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::not_own_comment (self: &Self, family: &crate::comments::CommentFamily, id: u32) -> Option<String>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::opaque_structure (self: &Self, run: NodeId) -> String
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::others_comments (self: &Self, family: &crate::comments::CommentFamily, op: &ThreadOp) -> Vec<OthersComment>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::paragraph_container (self: &Self, node: NodeId) -> NodeId
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::paragraph_has_own_revision (dom: &Dom, paragraph: NodeId) -> bool
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::paragraph_id (self: &Self, para: usize) -> String
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::paragraph_right_before (self: &Self, para: usize) -> Option<usize>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::paragraph_styles (self: &Self) -> Vec<(String, String)>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::pending_deleted_mark_note (self: &Self, para: usize) -> Option<String>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::range_marks (self: &Self, para: usize) -> Vec<(&'static str, Option<String>, usize)>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::refuse_opaque (self: &Self, run: NodeId, subject: &str) -> String
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::rehome_empty_bookmarks (dom: &mut Dom, paragraph: NodeId)
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::removed_anchor (self: &Self, projection: &Projection, find: &str) -> Option<String>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::removed_anchor_holder (self: &Self, para: usize, find: &str) -> Option<String>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::removed_anchor_in (self: &Self, para: usize, find: &str) -> Option<String>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::removes_comment_reference (self: &Self, stories: &std::collections::BTreeSet<usize>) -> bool
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::replace_pieces (self: &Self, resolved: Resolved, outcome: &mut EditOutcome) -> Vec<Resolved>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::reply_in_deleted (self: &Self, op: usize) -> bool
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::reply_on_deleted (self: &Self, op: usize) -> Option<(u32, usize)>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::report (self: &Self, ok: bool) -> EditReport
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::reserve_comment_id (self: &mut Self) -> u32
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::resolve (self: &mut Self) -> Result<(), EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::resolve_comment_text (self: &Self, n: u32, new_text: &str, outcome: &mut EditOutcome) -> Result<Vec<Resolved>, (String, String)>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::resolve_fill_control (self: &Self, id: &str, request: &FillRequest<'_>) -> Result<(Vec<Resolved>, EditOutcome), Box<(EditError, EditOutcome)>>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::resolve_footnote (self: &Self, para: usize, projection: &Projection, after: &str, occurrence: Option<usize>, note: &str, outcome: &mut EditOutcome) -> Result<usize, (String, String)>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::resolve_format_run (self: &Self, projection: &Projection, find: &str, occurrence: Option<usize>, format: &RunFormat, outcome: &mut EditOutcome) -> Result<(usize, usize), (String, String)>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::resolve_list (self: &Self, id: &str, selectors: &[Selector], kind: ListKind, level: u32, restart: bool) -> Result<(Resolved, EditOutcome), Box<(EditError, EditOutcome)>>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::resolve_one (self: &Self, id: &str, kind: &OperationKind) -> Result<(Resolved, EditOutcome), Box<(EditError, EditOutcome)>>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::resolve_one_unreported (self: &Self, id: &str, kind: &OperationKind) -> Result<(Resolved, EditOutcome), Box<(EditError, EditOutcome)>>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::resolve_page_setup (self: &Self, scope: SectionScope, page: Option<PageSize>, orientation: Option<Orientation>, margins: Margins, outcome: &mut EditOutcome) -> Result<Vec<(Option<crate::xmllinq::NodeId>, Geometry)>, (String, String)>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::resolve_rewrite (self: &Self, id: &str, paragraph: &Selector, new_text: &str, comment: Option<&str>) -> Result<(Vec<Resolved>, EditOutcome), Box<(EditError, EditOutcome)>>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::resolve_settings (self: &Self, id: &str, request: &crate::settings::SettingsRequest) -> Result<EditOutcome, Box<(EditError, EditOutcome)>>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::resolve_style (self: &Self, requested: &str) -> Result<String, String>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::resolve_thread (self: &Self, id: &str, kind: &OperationKind) -> Result<(Resolved, EditOutcome), Box<(EditError, EditOutcome)>>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::resolve_visible (self: &mut Self, id: &str, visible: Visible, revision: &str, comment: Option<&str>) -> Result<(Vec<Resolved>, EditOutcome), Box<(super::EditError, super::EditOutcome)>>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::resolve_watermark (self: &Self, id: &str, params: (&str, Option<&str>, Option<bool>, Option<&str>)) -> Result<(Spec, EditOutcome), Box<(EditError, EditOutcome)>>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::retain_empty_bookmarks (dom: &mut Dom, paragraph: NodeId)
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::revision_hint (self: &Self, revision: NodeId, lead: &str) -> String
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::rewrite_notes (self: &Self) -> Vec<String>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::select (self: &Self, selector: &Selector, merged_ok: bool) -> Result<usize, (String, String, usize)>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::skip_comment_ids_of (self: &mut Self, source: &[u8]) -> Result<(), EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::start (source: &[u8], plan: &'p EditPlan) -> Result<Self, EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::start_quoting (source: &[u8], plan: &'p EditPlan, syntax: PlanSyntax) -> Result<Self, EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::story_container (self: &Self, node: NodeId) -> (NodeId, &'static str)
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::style_defined (self: &Self, id: &str) -> bool
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::text_selector (self: &Self, global: usize) -> Option<String>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::touched_stories (self: &Self) -> std::collections::BTreeSet<usize>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::write_comments_part (self: &mut Self) -> Result<(), EditError>
-internal	function	pub(crate::edit)	jubarte::edit::Transaction::write_stories (self: &mut Self, stories: &std::collections::BTreeSet<usize>)
-internal	function	pub(crate::edit)	jubarte::edit::anchor::near_matches (text: &str, anchor: &str) -> Option<NearMatches>
-internal	function	pub(crate::edit)	jubarte::edit::anchor::reading_hits (text: &str, find: &str) -> Vec<(usize, usize)>
-internal	function	pub(crate::edit)	jubarte::edit::anchor::reads_as (c: char) -> Option<char>
-internal	function	pub(crate::edit)	jubarte::edit::anchor::shown (text: &str) -> String
 internal	function	pub(crate::edit)	jubarte::edit::anchor_candidate_excerpt (text: &str, (start, end): (usize, usize)) -> String
 internal	function	pub(crate::edit)	jubarte::edit::anchor_comment (dom: &mut crate::xmllinq::Dom, paragraph: crate::xmllinq::NodeId, start: usize, end: usize, id: u32, ids: &mut RevisionCounter)
-internal	function	pub(crate::edit)	jubarte::edit::anchor_error::require_story (source: &[u8], story: &str) -> Result<(), Box<crate::result::Error>>
 internal	function	pub(crate::edit)	jubarte::edit::anchor_of (kind: &OperationKind) -> Option<&str>
 internal	function	pub(crate::edit)	jubarte::edit::anchor_readings <'a>(text: &'a str, find: &'a str) -> impl Iterator<Item> + 'a
 internal	function	pub(crate::edit)	jubarte::edit::anchor_span (dom: &mut crate::xmllinq::Dom, first: crate::xmllinq::NodeId, last: crate::xmllinq::NodeId, id: u32, ids: &mut RevisionCounter)
@@ -8181,7 +8011,6 @@ internal	function	pub(crate::edit)	jubarte::edit::exactly_one (fields: &[&str]) 
 internal	function	pub(crate::edit)	jubarte::edit::excerpt (text: &str, max: usize) -> String
 internal	function	pub(crate::edit)	jubarte::edit::existing_comment_ids (opened: &crate::inspect::Opened) -> Option<u32>
 internal	function	pub(crate::edit)	jubarte::edit::finds_text (kind: &OperationKind) -> bool
-internal	function	pub(crate::edit)	jubarte::edit::for_edit::for_edit_quoting (source: &[u8], request: &ForEditRequest, syntax: super::PlanSyntax) -> Result<ForEdit, super::EditError>
 internal	function	pub(crate::edit)	jubarte::edit::for_edit::revision_pair (dom: &crate::xmllinq::Dom, el: crate::xmllinq::NodeId, story: &str, part: &str) -> TargetPair
 internal	function	pub(crate::edit)	jubarte::edit::format_paragraph (dom: &mut crate::xmllinq::Dom, paragraph: crate::xmllinq::NodeId, style: Option<&str>, alignment: Option<Alignment>, spacing: Spacing)
 internal	function	pub(crate::edit)	jubarte::edit::format_range (dom: &mut crate::xmllinq::Dom, paragraph: crate::xmllinq::NodeId, start: usize, end: usize, format: &RunFormat, ids: &mut RevisionCounter)
@@ -8228,18 +8057,7 @@ internal	function	pub(crate::edit)	jubarte::edit::notes::next_footnote_id (dom: 
 internal	function	pub(crate::edit)	jubarte::edit::open_error (error: crate::inspect::InspectError) -> EditError
 internal	function	pub(crate::edit)	jubarte::edit::operation_label (i: usize, op: &serde_json::Value) -> String
 internal	function	pub(crate::edit)	jubarte::edit::origin::Ids::id (self: &Self, global: usize) -> String
-internal	function	pub(crate::edit)	jubarte::edit::origin::Ids::paragraph_id (self: &Self, id: &str) -> Option<Result<String, String>>
 internal	function	pub(crate::edit)	jubarte::edit::origin::Ids::position (self: &Self, selector: &Selector) -> Result<Result<usize, usize>, (String, String, usize)>
-internal	function	pub(crate::edit)	jubarte::edit::origin::Origin::build (source: &[u8], plan: &EditPlan, settled_ids: &[String], settled_story: &[(usize, usize)]) -> Result<Self, EditError>
-internal	function	pub(crate::edit)	jubarte::edit::origin::Origin::control (self: &Self, id: &str) -> Option<Result<usize, String>>
-internal	function	pub(crate::edit)	jubarte::edit::origin::Origin::control_ids (self: &Self) -> &[String]
-internal	function	pub(crate::edit)	jubarte::edit::origin::Origin::control_source (self: &Self, post: usize) -> Option<&str>
-internal	function	pub(crate::edit)	jubarte::edit::origin::Origin::exact (self: &Self, source: usize) -> Result<usize, (String, String, usize)>
-internal	function	pub(crate::edit)	jubarte::edit::origin::Origin::fate (self: &Self, source: usize) -> Fate
-internal	function	pub(crate::edit)	jubarte::edit::origin::Origin::follow (self: &Self, source: usize, merged_ok: bool, settled_id: impl Fn(usize) -> String, by_text: impl Fn(usize) -> Option<String>) -> Result<usize, (String, String, usize)>
-internal	function	pub(crate::edit)	jubarte::edit::origin::Origin::had_comment (self: &Self, id: u32) -> bool
-internal	function	pub(crate::edit)	jubarte::edit::origin::Origin::ids (self: &Self) -> Ids<'_>
-internal	function	pub(crate::edit)	jubarte::edit::origin::Origin::moves (self: &Self, settled_id: impl Fn(usize) -> String) -> Vec<super::ParagraphMove>
 internal	function	pub(crate::edit)	jubarte::edit::origin::Paragraphs::control_count (self: &Self, global: usize) -> usize
 internal	function	pub(crate::edit)	jubarte::edit::origin::Paragraphs::ids (self: &Self) -> Ids<'_>
 internal	function	pub(crate::edit)	jubarte::edit::origin::Paragraphs::open (docx: &[u8]) -> Result<Self, EditError>
@@ -8291,7 +8109,6 @@ internal	function	pub(crate::edit)	jubarte::edit::set_text (dom: &mut crate::xml
 internal	function	pub(crate::edit)	jubarte::edit::settle (source: &[u8], plan: &EditPlan, probe: crate::inspect::Opened, syntax: PlanSyntax) -> Result<Settled, EditError>
 internal	function	pub(crate::edit)	jubarte::edit::skip::prepare_skipping (source: &[u8], plan: &super::EditPlan, options: &super::prepared::PrepareOptions) -> Result<super::prepared::PreparedEdit, super::EditError>
 internal	function	pub(crate::edit)	jubarte::edit::sort_edits (edits: &mut [ScheduledEdit], empty: bool)
-internal	function	pub(crate::edit)	jubarte::edit::source_refs::decisions (source: &[u8], accept: &[String], reject: &[String]) -> Result<(Vec<super::v2::Target>, Vec<super::v2::Target>), super::EditError>
 internal	function	pub(crate::edit)	jubarte::edit::split_deletion_before (dom: &mut crate::xmllinq::Dom, del: crate::xmllinq::NodeId, at: crate::xmllinq::NodeId, next_id: &mut u64)
 internal	function	pub(crate::edit)	jubarte::edit::split_run_at (dom: &mut crate::xmllinq::Dom, seg: &crate::inspect::Segment, at: usize, ids: &mut RevisionCounter)
 internal	function	pub(crate::edit)	jubarte::edit::split_run_before (dom: &mut crate::xmllinq::Dom, run: crate::xmllinq::NodeId, child: crate::xmllinq::NodeId, ids: &mut RevisionCounter)
@@ -8322,7 +8139,6 @@ internal	function	pub(crate::edit)	jubarte::edit::tracked::result_v2_with_paragr
 internal	function	pub(crate::edit)	jubarte::edit::tracked::strip_records (dom: &mut crate::xmllinq::Dom, rpr: crate::xmllinq::NodeId)
 internal	function	pub(crate::edit)	jubarte::edit::tracked::used_ids (opened: &crate::inspect::Opened, comments: &[(u32, String)]) -> std::collections::HashSet<u64>
 internal	function	pub(crate::edit)	jubarte::edit::unknown_field (key: &str, fields: &[&str], meant: Option<&str>) -> String
-internal	function	pub(crate::edit)	jubarte::edit::v2::check_payload_text (text: &str, from_file: bool) -> Result<(), super::EditError>
 internal	function	pub(crate::edit)	jubarte::edit::v2_apply::SourceModel::new (bytes: &[u8]) -> Result<Self, EditError>
 internal	function	pub(crate::edit)	jubarte::edit::v2_apply::SourceModel::selected_paragraphs (self: &Self, spec: &str, open_ranges: bool) -> Result<std::collections::HashSet<usize>, EditError>
 internal	function	pub(crate::edit)	jubarte::edit::v2_apply::apply_quoting (source: &[u8], plan: &super::v2::PlanV2, syntax: super::PlanSyntax) -> Result<V2EditResult, super::EditError>
@@ -8347,32 +8163,6 @@ internal	function	pub(crate::edit)	jubarte::edit::word_window (text: &str, start
 internal	function	pub(crate::edit)	jubarte::edit::wrap_range (dom: &mut crate::xmllinq::Dom, paragraph: crate::xmllinq::NodeId, start: usize, end: usize, open: crate::xmllinq::NodeId, close: crate::xmllinq::NodeId, ids: &mut RevisionCounter) -> bool
 internal	function	pub(crate::edit)	jubarte::edit::write_text (dom: &mut crate::xmllinq::Dom, t: crate::xmllinq::NodeId, value: &str)
 internal	function	pub(crate::edit)	jubarte::edit::write_text_new_in (dom: &mut crate::xmllinq::Dom, t: crate::xmllinq::NodeId, value: &str, new: std::ops::Range<usize>)
-internal	function	pub(crate::edit::anchor)	jubarte::edit::anchor::missing (haystack: &str, anchor: &str) -> super::EditError
-internal	function	pub(crate::edit::anchor)	jubarte::edit::anchor::probe_compare ()
-internal	function	pub(crate::edit::anchor)	jubarte::edit::anchor::reading (text: &str) -> (String, Vec<(usize, usize)>)
-internal	function	pub(crate::edit::anchor)	jubarte::edit::anchor::whitespace_reading (text: &str, document: bool) -> (String, Vec<(usize, usize)>)
-internal	function	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::around (working: &str, start: usize, end: usize) -> crate::result::Context
-internal	function	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::base (digest: &str, refusal: &AnchorRefusal<'_>, code: &str) -> crate::result::Error
-internal	function	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::bounded_start (working: &str) -> String
-internal	function	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::cell_paragraph <'s>(snap: &'s crate::inspect::Snapshot, id: &str) -> Option<(String, &'s str)>
-internal	function	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::comment (snap: &crate::inspect::Snapshot, n: u32) -> Option<&crate::comments::CommentRecord>
-internal	function	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::find_target <'s>(snap: &'s crate::inspect::Snapshot, target: &str) -> Target<'s>
-internal	function	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::missing_target (snap: &crate::inspect::Snapshot, refusal: &AnchorRefusal<'_>) -> crate::result::Error
-internal	function	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::missing_target_message (snap: &crate::inspect::Snapshot, target: &str) -> String
-internal	function	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::open (source: &[u8], refusal: &AnchorRefusal<'_>) -> Result<crate::inspect::Snapshot, Box<crate::result::Error>>
-internal	function	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::plural (n: usize, word: &str) -> String
-internal	function	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::quoted_anchor (anchor: &str) -> String
-internal	function	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::read_action (refusal: &AnchorRefusal<'_>, options: [String; 2]) -> crate::result::NextAction
-internal	function	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::read_head (refusal: &AnchorRefusal<'_>) -> crate::result::NextAction
-internal	function	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::read_target (refusal: &AnchorRefusal<'_>) -> crate::result::NextAction
-internal	function	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::refused (snap: &crate::inspect::Snapshot, working: &str, skip: &str, refusal: &AnchorRefusal<'_>, edit: &super::EditError, occurrence: Option<usize>, expected: Option<usize>) -> crate::result::Error
-internal	function	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::several_changes (snap: &crate::inspect::Snapshot, refusal: &AnchorRefusal<'_>) -> crate::result::Error
-internal	function	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::skip_id (snap: &crate::inspect::Snapshot, target: &str) -> String
-internal	function	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::suggest_read (refusal: &AnchorRefusal<'_>, id: &str, hits: usize) -> crate::result::NextAction
-internal	function	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::suggestions_elsewhere (snap: &crate::inspect::Snapshot, skip: &str, anchor: &str) -> Suggestions
-internal	function	pub(crate::edit::controls)	jubarte::edit::Transaction::cell_control (self: &Self, id: &str) -> Option<String>
-internal	function	pub(crate::edit::controls)	jubarte::edit::Transaction::fill_value (self: &Self, record: &crate::inspect::ContentControl, sdt: NodeId, request: &FillRequest<'_>) -> Result<FillValue, String>
-internal	function	pub(crate::edit::controls)	jubarte::edit::Transaction::select_control (self: &Self, selector: &ControlSelector) -> Result<usize, (&'static str, String, usize)>
 internal	function	pub(crate::edit::controls)	jubarte::edit::controls::days_in_month (y: i32, m: u32) -> u32
 internal	function	pub(crate::edit::controls)	jubarte::edit::controls::fill (dom: &mut crate::xmllinq::Dom, sdt: crate::xmllinq::NodeId, block: bool, value: &FillValue)
 internal	function	pub(crate::edit::controls)	jubarte::edit::controls::first_run_properties (dom: &mut crate::xmllinq::Dom, content: crate::xmllinq::NodeId) -> Option<crate::xmllinq::NodeId>
@@ -8517,9 +8307,6 @@ internal	function	pub(crate::edit::rewrite)	jubarte::edit::rewrite::ranges_from_
 internal	function	pub(crate::edit::rewrite)	jubarte::edit::rewrite::split_around_kept (old: &str, start: usize, end: usize, replacement: &str) -> Vec<(usize, usize, String)>
 internal	function	pub(crate::edit::rewrite)	jubarte::edit::rewrite::units (text: &str, collapse: bool) -> Vec<Unit>
 internal	function	pub(crate::edit::rewrite)	jubarte::edit::rewrite::xml_text (text: &str) -> Option<String>
-internal	function	pub(crate::edit::sections)	jubarte::edit::Transaction::sections (self: &Self) -> Vec<Option<NodeId>>
-internal	function	pub(crate::edit::sections)	jubarte::edit::sections::Geometry::changed (self: Self, page: Option<PageSize>, orientation: Option<Orientation>, margins: Margins) -> Result<Self, String>
-internal	function	pub(crate::edit::sections)	jubarte::edit::sections::Geometry::of (dom: &Dom, sect: Option<NodeId>) -> Self
 internal	function	pub(crate::edit::sections)	jubarte::edit::sections::geometry_signature (dom: &crate::xmllinq::Dom, sect: crate::xmllinq::NodeId) -> Vec<(String, Vec<(String, String)>)>
 internal	function	pub(crate::edit::sections)	jubarte::edit::sections::mid_sections (dom: &crate::xmllinq::Dom, body: crate::xmllinq::NodeId) -> Vec<crate::xmllinq::NodeId>
 internal	function	pub(crate::edit::sections)	jubarte::edit::sections::sect_child (dom: &mut crate::xmllinq::Dom, sect: crate::xmllinq::NodeId, local: &str) -> crate::xmllinq::NodeId
@@ -8533,8 +8320,6 @@ internal	function	pub(crate::edit::skip)	jubarte::edit::skip::outcome_of (e: &su
 internal	function	pub(crate::edit::skip)	jubarte::edit::skip::places_stay (plan: &super::EditPlan, left_out: &std::collections::BTreeSet<usize>) -> bool
 internal	function	pub(crate::edit::skip)	jubarte::edit::skip::rename_positions (source: &[u8], plan: &super::EditPlan, skipped: &[SkippedOperation], redline: bool, operations: &mut [super::Operation]) -> Vec<Vec<String>>
 internal	function	pub(crate::edit::skip)	jubarte::edit::skip::source_only (operation: &mut super::Operation, what: &Named, shown: &str)
-internal	function	pub(crate::edit::source_refs)	jubarte::edit::source_refs::pair (p: &super::for_edit::TargetPair) -> super::v2::Target
-internal	function	pub(crate::edit::source_refs)	jubarte::edit::source_refs::refusal (code: &str, message: impl Into<String>) -> super::EditError
 internal	function	pub(crate::edit::structural)	jubarte::edit::structural::cell_paragraph (dom: &mut crate::xmllinq::Dom, anchor: crate::xmllinq::NodeId, text: &str) -> crate::xmllinq::NodeId
 internal	function	pub(crate::edit::structural)	jubarte::edit::structural::definition (dom: &mut crate::xmllinq::Dom, id: &str) -> Option<crate::xmllinq::NodeId>
 internal	function	pub(crate::edit::structural)	jubarte::edit::structural::numbering_tree (dom: &mut crate::xmllinq::Dom, xml: &str) -> Option<(crate::xmllinq::NodeId, crate::xmllinq::NodeId)>
@@ -8666,10 +8451,6 @@ internal	function	pub(crate::edit::v2_apply)	jubarte::edit::v2_apply::resolve_op
 internal	function	pub(crate::edit::v2_apply)	jubarte::edit::v2_apply::rewrite (dom: &crate::xmllinq::Dom, projection: &crate::inspect::Projection, run: crate::xmllinq::NodeId, ranges: &[(usize, usize)]) -> Rewrite
 internal	function	pub(crate::edit::v2_apply)	jubarte::edit::v2_apply::text_component (tx: &super::Transaction<'_>, p: usize, start: usize, end: usize, text: &str, note: Option<String>, attach: bool) -> Result<super::Resolved, super::EditError>
 internal	function	pub(crate::edit::v2_apply)	jubarte::edit::v2_apply::with_operation_targets (error: super::EditError, plan: &super::v2::PlanV2) -> super::EditError
-internal	function	pub(crate::edit::visible)	jubarte::edit::Transaction::own_revision (self: &Self, visible: Visible, change: &Change) -> Option<String>
-internal	function	pub(crate::edit::visible)	jubarte::edit::Transaction::resolve_mark (self: &mut Self, id: &str, visible: Visible, one: &crate::ids::ChangeId, listed: &[Change], comment: Option<&str>, outcome: EditOutcome) -> Result<(Vec<Resolved>, EditOutcome), Box<(super::EditError, super::EditOutcome)>>
-internal	function	pub(crate::edit::visible)	jubarte::edit::Transaction::resolve_marks (self: &mut Self, id: &str, visible: Visible, marks: &[crate::ids::ChangeId], listed: &[Change], comment: Option<&str>, outcome: EditOutcome) -> Result<(Vec<Resolved>, EditOutcome), Box<(super::EditError, super::EditOutcome)>>
-internal	function	pub(crate::edit::visible)	jubarte::edit::Transaction::resolve_visible_mark (self: &Self, id: &str, visible: Visible, story: usize, one: &crate::ids::ChangeId, comment: Option<&str>, outcome: EditOutcome) -> Result<(Vec<Resolved>, EditOutcome), Box<(super::EditError, super::EditOutcome)>>
 internal	function	pub(crate::edit::visible)	jubarte::edit::visible::Visible::past (self: Self) -> &'static str
 internal	function	pub(crate::edit::visible)	jubarte::edit::visible::Visible::takes (self: Self) -> &'static str
 internal	function	pub(crate::edit::visible)	jubarte::edit::visible::container (dom: &crate::xmllinq::Dom, parent: crate::xmllinq::NodeId) -> crate::xmllinq::NodeId
@@ -8681,10 +8462,6 @@ internal	function	pub(crate::edit::visible)	jubarte::edit::visible::offset_befor
 internal	function	pub(crate::edit::visible)	jubarte::edit::visible::one_comment (resolved: Vec<super::Resolved>) -> Vec<super::Resolved>
 internal	function	pub(crate::edit::visible)	jubarte::edit::visible::restores (listed: &[crate::changes::Change], revision: &str) -> bool
 internal	function	pub(crate::edit::visible)	jubarte::edit::visible::unsupported_child (dom: &crate::xmllinq::Dom, container: crate::xmllinq::NodeId, nested: &[&str]) -> Option<&'static str>
-internal	function	pub(crate::edit::watermark)	jubarte::edit::Transaction::default_header (self: &Self, sect_pr: NodeId) -> Option<Option<usize>>
-internal	function	pub(crate::edit::watermark)	jubarte::edit::Transaction::mark_header (self: &mut Self, story: usize, markup: &str) -> Result<(), EditError>
-internal	function	pub(crate::edit::watermark)	jubarte::edit::Transaction::new_header (self: &mut Self, sect_pr: NodeId, markup: &str)
-internal	function	pub(crate::edit::watermark)	jubarte::edit::Transaction::section_properties (self: &Self) -> Vec<NodeId>
 internal	function	pub(crate::edit::watermark)	jubarte::edit::watermark::escape (s: &str) -> String
 internal	function	pub(crate::edit::watermark)	jubarte::edit::watermark::header_open () -> String
 internal	function	pub(crate::edit::watermark)	jubarte::edit::watermark::holds_watermark (dom: &crate::xmllinq::Dom, root: crate::xmllinq::NodeId) -> bool
@@ -10235,30 +10012,13 @@ internal	impl		jubarte::edit::EmptyPlacement::(impl Default)
 internal	impl		jubarte::edit::OthersChange::(impl Clone)
 internal	impl		jubarte::edit::OthersChange::(impl Copy)
 internal	impl		jubarte::edit::OthersChange::(impl Debug)
-internal	impl		jubarte::edit::OthersComment::(impl Clone)
-internal	impl		jubarte::edit::OthersComment::(impl Debug)
 internal	impl		jubarte::edit::RejectWire::(impl Deserialize<'0>)
 internal	impl		jubarte::edit::RejectWire::(impl Serialize)
 internal	impl		jubarte::edit::ResolveRevisionsWire::(impl Deserialize<'0>)
 internal	impl		jubarte::edit::ResolveRevisionsWire::(impl From<ResolveRevisions>)
 internal	impl		jubarte::edit::ResolveRevisionsWire::(impl Serialize)
-internal	impl		jubarte::edit::Resolved::(impl Clone)
-internal	impl		jubarte::edit::Resolved::(impl Debug)
-internal	impl		jubarte::edit::RevisionCounter::(impl Default)
 internal	impl		jubarte::edit::ScheduledEdit::(impl Clone)
 internal	impl		jubarte::edit::ScheduledEdit::(impl Debug)
-internal	impl		jubarte::edit::Spacing::(impl Clone)
-internal	impl		jubarte::edit::Spacing::(impl Copy)
-internal	impl		jubarte::edit::Spacing::(impl Debug)
-internal	impl		jubarte::edit::Spacing::(impl Default)
-internal	impl		jubarte::edit::Spacing::(impl Eq)
-internal	impl		jubarte::edit::Spacing::(impl PartialEq)
-internal	impl		jubarte::edit::ThreadOp::(impl Clone)
-internal	impl		jubarte::edit::ThreadOp::(impl Debug)
-internal	impl		jubarte::edit::TocSpec::(impl Clone)
-internal	impl		jubarte::edit::TocSpec::(impl Debug)
-internal	impl		jubarte::edit::controls::FillValue::(impl Clone)
-internal	impl		jubarte::edit::controls::FillValue::(impl Debug)
 internal	impl		jubarte::edit::flags::Answer::(impl Clone)
 internal	impl		jubarte::edit::flags::Answer::(impl Copy)
 internal	impl		jubarte::edit::hint::Held::(impl Clone)
@@ -10286,11 +10046,6 @@ internal	impl		jubarte::edit::refusal::Revision::(impl Deserialize<'0>)
 internal	impl		jubarte::edit::refusal::Revision::(impl Eq)
 internal	impl		jubarte::edit::refusal::Revision::(impl PartialEq)
 internal	impl		jubarte::edit::refusal::Revision::(impl Serialize)
-internal	impl		jubarte::edit::sections::Geometry::(impl Clone)
-internal	impl		jubarte::edit::sections::Geometry::(impl Copy)
-internal	impl		jubarte::edit::sections::Geometry::(impl Debug)
-internal	impl		jubarte::edit::sections::Geometry::(impl Eq)
-internal	impl		jubarte::edit::sections::Geometry::(impl PartialEq)
 internal	impl		jubarte::edit::tracked::InsertionOrigin::(impl Clone)
 internal	impl		jubarte::edit::tracked::TrackedParagraphs::(impl Clone)
 internal	impl		jubarte::edit::tracked::TrackedParagraphs::(impl Debug)
@@ -10307,17 +10062,11 @@ internal	impl		jubarte::edit::visible::Visible::(impl Copy)
 internal	impl		jubarte::edit::visible::Visible::(impl Debug)
 internal	impl		jubarte::edit::visible::Visible::(impl Eq)
 internal	impl		jubarte::edit::visible::Visible::(impl PartialEq)
-internal	impl		jubarte::edit::watermark::Spec::(impl Clone)
-internal	impl		jubarte::edit::watermark::Spec::(impl Debug)
-internal	impl		jubarte::edit::watermark::Spec::(impl Eq)
-internal	impl		jubarte::edit::watermark::Spec::(impl PartialEq)
 internal	impl		jubarte::edit::whole::Kind::(impl Clone)
 internal	impl		jubarte::edit::whole::Kind::(impl Copy)
 internal	impl		jubarte::edit::whole::Kind::(impl Debug)
 internal	impl		jubarte::edit::whole::Kind::(impl Eq)
 internal	impl		jubarte::edit::whole::Kind::(impl PartialEq)
-internal	impl		jubarte::edit::whole::Mark::(impl Clone)
-internal	impl		jubarte::edit::whole::Mark::(impl Debug)
 internal	impl		jubarte::fields::Code::(impl Debug)
 internal	impl		jubarte::fields::Code::(impl Default)
 internal	impl		jubarte::fields::Code::(impl Eq)
@@ -10624,8 +10373,6 @@ internal	module	pub(crate::convert)	jubarte::convert::preset_text_rect_data
 internal	module	pub(crate::convert)	jubarte::convert::raster
 internal	module	pub(crate::convert)	jubarte::convert::word_subst
 internal	module	pub(crate::debug)	jubarte::debug::render
-internal	module	pub(crate::edit)	jubarte::edit::anchor
-internal	module	pub(crate::edit)	jubarte::edit::anchor_error
 internal	module	pub(crate::edit)	jubarte::edit::controls
 internal	module	pub(crate::edit)	jubarte::edit::hint
 internal	module	pub(crate::edit)	jubarte::edit::images
@@ -10636,7 +10383,6 @@ internal	module	pub(crate::edit)	jubarte::edit::replacement_order
 internal	module	pub(crate::edit)	jubarte::edit::rewrite
 internal	module	pub(crate::edit)	jubarte::edit::runs
 internal	module	pub(crate::edit)	jubarte::edit::skip
-internal	module	pub(crate::edit)	jubarte::edit::source_refs
 internal	module	pub(crate::edit)	jubarte::edit::structural
 internal	module	pub(crate::edit)	jubarte::edit::tracked
 internal	module	pub(crate::edit)	jubarte::edit::visible
@@ -10733,7 +10479,6 @@ internal	struct	pub(crate)	jubarte::convert::preset_geom::Subpath
 internal	struct	pub(crate)	jubarte::convert::preset_geom::TextRect
 internal	struct	pub(crate)	jubarte::convert::word_subst::SubstRow
 internal	struct	pub(crate)	jubarte::edit::EmptyPlacement
-internal	struct	pub(crate)	jubarte::edit::RevisionCounter
 internal	struct	pub(crate)	jubarte::edit::record::RecordOptions
 internal	struct	pub(crate)	jubarte::markdown::from_docx::Converted
 internal	struct	pub(crate)	jubarte::markdown::from_docx::Options
@@ -10913,27 +10658,17 @@ internal	struct	pub(crate::document_comparer)	jubarte::document_comparer::DocDef
 internal	struct	pub(crate::document_comparer)	jubarte::document_comparer::SectionRow
 internal	struct	pub(crate::edit)	jubarte::edit::Covered
 internal	struct	pub(crate::edit)	jubarte::edit::Loaded
-internal	struct	pub(crate::edit)	jubarte::edit::OthersComment
 internal	struct	pub(crate::edit)	jubarte::edit::RejectWire
 internal	struct	pub(crate::edit)	jubarte::edit::ResolveRevisionsWire
 internal	struct	pub(crate::edit)	jubarte::edit::ScheduledEdit
 internal	struct	pub(crate::edit)	jubarte::edit::Settled
-internal	struct	pub(crate::edit)	jubarte::edit::Spacing
-internal	struct	pub(crate::edit)	jubarte::edit::StoryPart
-internal	struct	pub(crate::edit)	jubarte::edit::TocSpec
-internal	struct	pub(crate::edit)	jubarte::edit::Transaction
 internal	struct	pub(crate::edit)	jubarte::edit::controls::FillRequest
 internal	struct	pub(crate::edit)	jubarte::edit::hint::Holder
 internal	struct	pub(crate::edit)	jubarte::edit::origin::Ids
-internal	struct	pub(crate::edit)	jubarte::edit::origin::Origin
 internal	struct	pub(crate::edit)	jubarte::edit::origin::Paragraphs
-internal	struct	pub(crate::edit)	jubarte::edit::sections::Geometry
 internal	struct	pub(crate::edit)	jubarte::edit::tracked::TrackedParagraphs
 internal	struct	pub(crate::edit)	jubarte::edit::v2_apply::FinalView
 internal	struct	pub(crate::edit)	jubarte::edit::v2_apply::SourceModel
-internal	struct	pub(crate::edit)	jubarte::edit::watermark::Spec
-internal	struct	pub(crate::edit)	jubarte::edit::whole::Mark
-internal	struct	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::Suggestions
 internal	struct	pub(crate::edit::for_edit)	jubarte::edit::for_edit::NativeKeys
 internal	struct	pub(crate::edit::for_edit)	jubarte::edit::for_edit::RowCtx
 internal	struct	pub(crate::edit::for_edit)	jubarte::edit::for_edit::Selection
@@ -11259,90 +10994,6 @@ internal	struct_field		jubarte::convert::preset_geom::OwnedCmd::M::0: String
 internal	struct_field		jubarte::convert::preset_geom::OwnedCmd::M::1: String
 internal	struct_field		jubarte::convert::preset_geom::OwnedCmd::Q::0: [String; 4]
 internal	struct_field		jubarte::edit::OthersChange::DeletedWith::0: u32
-internal	struct_field		jubarte::edit::Resolved::CommentRange::end: usize
-internal	struct_field		jubarte::edit::Resolved::CommentRange::para: usize
-internal	struct_field		jubarte::edit::Resolved::CommentRange::start: usize
-internal	struct_field		jubarte::edit::Resolved::CommentRange::text: String
-internal	struct_field		jubarte::edit::Resolved::CommentSpan::last: usize
-internal	struct_field		jubarte::edit::Resolved::CommentSpan::para: usize
-internal	struct_field		jubarte::edit::Resolved::CommentSpan::text: String
-internal	struct_field		jubarte::edit::Resolved::DeleteParagraph::para: usize
-internal	struct_field		jubarte::edit::Resolved::FillControl::block: bool
-internal	struct_field		jubarte::edit::Resolved::FillControl::control: usize
-internal	struct_field		jubarte::edit::Resolved::FillControl::paragraphs: Vec<usize>
-internal	struct_field		jubarte::edit::Resolved::FillControl::value: controls::FillValue
-internal	struct_field		jubarte::edit::Resolved::FormatParagraph::alignment: Option<Alignment>
-internal	struct_field		jubarte::edit::Resolved::FormatParagraph::para: usize
-internal	struct_field		jubarte::edit::Resolved::FormatParagraph::spacing: Spacing
-internal	struct_field		jubarte::edit::Resolved::FormatParagraph::style: Option<String>
-internal	struct_field		jubarte::edit::Resolved::FormatRun::end: usize
-internal	struct_field		jubarte::edit::Resolved::FormatRun::format: RunFormat
-internal	struct_field		jubarte::edit::Resolved::FormatRun::para: usize
-internal	struct_field		jubarte::edit::Resolved::FormatRun::start: usize
-internal	struct_field		jubarte::edit::Resolved::InsertFootnote::at: usize
-internal	struct_field		jubarte::edit::Resolved::InsertFootnote::para: usize
-internal	struct_field		jubarte::edit::Resolved::InsertFootnote::text: String
-internal	struct_field		jubarte::edit::Resolved::InsertImage::anchor: usize
-internal	struct_field		jubarte::edit::Resolved::InsertImage::picture: crate::markdown::Picture
-internal	struct_field		jubarte::edit::Resolved::InsertImage::side: Side
-internal	struct_field		jubarte::edit::Resolved::InsertParagraph::anchor: usize
-internal	struct_field		jubarte::edit::Resolved::InsertParagraph::comment: Option<String>
-internal	struct_field		jubarte::edit::Resolved::InsertParagraph::keep_mark: bool
-internal	struct_field		jubarte::edit::Resolved::InsertParagraph::like: usize
-internal	struct_field		jubarte::edit::Resolved::InsertParagraph::runs: Vec<RunSpec>
-internal	struct_field		jubarte::edit::Resolved::InsertParagraph::side: Side
-internal	struct_field		jubarte::edit::Resolved::InsertParagraph::style: Option<String>
-internal	struct_field		jubarte::edit::Resolved::InsertParagraph::toc: Option<TocSpec>
-internal	struct_field		jubarte::edit::Resolved::InsertTable::add_style: bool
-internal	struct_field		jubarte::edit::Resolved::InsertTable::anchor: usize
-internal	struct_field		jubarte::edit::Resolved::InsertTable::header_row: bool
-internal	struct_field		jubarte::edit::Resolved::InsertTable::rows: Vec<Vec<String>>
-internal	struct_field		jubarte::edit::Resolved::InsertTable::side: Side
-internal	struct_field		jubarte::edit::Resolved::InsertTable::style: String
-internal	struct_field		jubarte::edit::Resolved::InsertTable::widths: Vec<u32>
-internal	struct_field		jubarte::edit::Resolved::List::add_style: bool
-internal	struct_field		jubarte::edit::Resolved::List::join: Option<String>
-internal	struct_field		jubarte::edit::Resolved::List::kind: ListKind
-internal	struct_field		jubarte::edit::Resolved::List::level: u32
-internal	struct_field		jubarte::edit::Resolved::List::paras: Vec<usize>
-internal	struct_field		jubarte::edit::Resolved::List::style: String
-internal	struct_field		jubarte::edit::Resolved::MergeParagraphs::next: usize
-internal	struct_field		jubarte::edit::Resolved::MergeParagraphs::para: usize
-internal	struct_field		jubarte::edit::Resolved::MergeParagraphs::separator: String
-internal	struct_field		jubarte::edit::Resolved::MergeParagraphs::strike: bool
-internal	struct_field		jubarte::edit::Resolved::PageSetup::targets: Vec<(Option<crate::xmllinq::NodeId>, Geometry)>
-internal	struct_field		jubarte::edit::Resolved::Restore::at: usize
-internal	struct_field		jubarte::edit::Resolved::Restore::comment: Option<String>
-internal	struct_field		jubarte::edit::Resolved::Restore::para: usize
-internal	struct_field		jubarte::edit::Resolved::Restore::text: String
-internal	struct_field		jubarte::edit::Resolved::Restore::wid: String
-internal	struct_field		jubarte::edit::Resolved::StrikeComment::end: usize
-internal	struct_field		jubarte::edit::Resolved::StrikeComment::para: usize
-internal	struct_field		jubarte::edit::Resolved::StrikeComment::start: usize
-internal	struct_field		jubarte::edit::Resolved::Text::attach_before: bool
-internal	struct_field		jubarte::edit::Resolved::Text::comment: Option<String>
-internal	struct_field		jubarte::edit::Resolved::Text::end: usize
-internal	struct_field		jubarte::edit::Resolved::Text::format: Option<RunFormat>
-internal	struct_field		jubarte::edit::Resolved::Text::para: usize
-internal	struct_field		jubarte::edit::Resolved::Text::replacement: String
-internal	struct_field		jubarte::edit::Resolved::Text::start: usize
-internal	struct_field		jubarte::edit::Resolved::Thread::anchor: Option<usize>
-internal	struct_field		jubarte::edit::Resolved::Thread::op: ThreadOp
-internal	struct_field		jubarte::edit::Resolved::Thread::stories: Vec<usize>
-internal	struct_field		jubarte::edit::ThreadOp::Delete::id: u32
-internal	struct_field		jubarte::edit::ThreadOp::Edit::id: u32
-internal	struct_field		jubarte::edit::ThreadOp::Edit::text: String
-internal	struct_field		jubarte::edit::ThreadOp::Reply::parent: u32
-internal	struct_field		jubarte::edit::ThreadOp::Reply::text: String
-internal	struct_field		jubarte::edit::ThreadOp::Resolve::done: bool
-internal	struct_field		jubarte::edit::ThreadOp::Resolve::id: u32
-internal	struct_field		jubarte::edit::anchor_error::Target::Here::0: &'s str
-internal	struct_field		jubarte::edit::controls::FillValue::Checked::font: String
-internal	struct_field		jubarte::edit::controls::FillValue::Checked::glyph: char
-internal	struct_field		jubarte::edit::controls::FillValue::Checked::on: bool
-internal	struct_field		jubarte::edit::controls::FillValue::Date::full: String
-internal	struct_field		jubarte::edit::controls::FillValue::Date::text: String
-internal	struct_field		jubarte::edit::controls::FillValue::Text::0: String
 internal	struct_field		jubarte::edit::flags::Group::Answer::comment: Option<String>
 internal	struct_field		jubarte::edit::flags::Group::Answer::how: Answer
 internal	struct_field		jubarte::edit::flags::Group::Answer::ids: Vec<String>
@@ -12941,18 +12592,12 @@ internal	struct_field	pub(crate::edit)	jubarte::edit::EmptyPlacement::next_end: 
 internal	struct_field	pub(crate::edit)	jubarte::edit::Loaded::paragraph_nodes: Vec<crate::xmllinq::NodeId>
 internal	struct_field	pub(crate::edit)	jubarte::edit::Loaded::paragraph_story: Vec<(usize, usize)>
 internal	struct_field	pub(crate::edit)	jubarte::edit::Loaded::stories: Vec<StoryPart>
-internal	struct_field	pub(crate::edit)	jubarte::edit::OthersComment::author: String
-internal	struct_field	pub(crate::edit)	jubarte::edit::OthersComment::change: OthersChange
-internal	struct_field	pub(crate::edit)	jubarte::edit::OthersComment::comment: u32
 internal	struct_field	pub(crate::edit)	jubarte::edit::RejectWire::authors: Option<Vec<String>>
 internal	struct_field	pub(crate::edit)	jubarte::edit::RejectWire::ids: Option<Vec<String>>
 internal	struct_field	pub(crate::edit)	jubarte::edit::RejectWire::kinds: Option<Vec<crate::changes::ChangeKind>>
 internal	struct_field	pub(crate::edit)	jubarte::edit::RejectWire::visible: bool
 internal	struct_field	pub(crate::edit)	jubarte::edit::ResolveRevisionsWire::accept: Option<crate::changes::ChangeFilter>
 internal	struct_field	pub(crate::edit)	jubarte::edit::ResolveRevisionsWire::reject: Option<RejectWire>
-internal	struct_field	pub(crate::edit)	jubarte::edit::RevisionCounter::copied_from: std::collections::HashMap<u64, u64>
-internal	struct_field	pub(crate::edit)	jubarte::edit::RevisionCounter::ids: crate::revision_processor::RevisionIds
-internal	struct_field	pub(crate::edit)	jubarte::edit::RevisionCounter::own: std::collections::BTreeSet<u64>
 internal	struct_field	pub(crate::edit)	jubarte::edit::ScheduledEdit::attach_before: bool
 internal	struct_field	pub(crate::edit)	jubarte::edit::ScheduledEdit::comment: Option<String>
 internal	struct_field	pub(crate::edit)	jubarte::edit::ScheduledEdit::end: usize
@@ -12965,56 +12610,6 @@ internal	struct_field	pub(crate::edit)	jubarte::edit::Settled::changed: bool
 internal	struct_field	pub(crate::edit)	jubarte::edit::Settled::comment_changes: crate::comment_settlement::AnchorChanges
 internal	struct_field	pub(crate::edit)	jubarte::edit::Settled::opened: crate::inspect::Opened
 internal	struct_field	pub(crate::edit)	jubarte::edit::Settled::resolved_revisions: ResolvedRevisions
-internal	struct_field	pub(crate::edit)	jubarte::edit::Spacing::after: Option<Points>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Spacing::before: Option<Points>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Spacing::line: Option<LineSpacing>
-internal	struct_field	pub(crate::edit)	jubarte::edit::StoryPart::document: crate::xmllinq::NodeId
-internal	struct_field	pub(crate::edit)	jubarte::edit::StoryPart::id: String
-internal	struct_field	pub(crate::edit)	jubarte::edit::StoryPart::part: String
-internal	struct_field	pub(crate::edit)	jubarte::edit::StoryPart::root: crate::xmllinq::NodeId
-internal	struct_field	pub(crate::edit)	jubarte::edit::TocSpec::levels: u8
-internal	struct_field	pub(crate::edit)	jubarte::edit::TocSpec::title: Option<String>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::anchor_candidate_cache: std::cell::RefCell<std::collections::HashMap<String, (Vec<AnchorCandidate>, usize)>>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::anchor_window: std::cell::Cell<Option<(u32, usize, usize)>>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::base: Vec<u8>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::base_sha256: String
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::claims: std::collections::BTreeMap<usize, (usize, usize, usize)>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::comments: Vec<(u32, String)>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::comments_added: usize
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::control_records: Vec<crate::inspect::ContentControl>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::controls: Vec<crate::xmllinq::NodeId>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::date: String
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::deletion_comments: Vec<(u32, usize)>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::family: Option<crate::comments::CommentFamily>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::initials: String
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::kept_comments: Vec<KeptComment>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::needed_styles: std::collections::BTreeSet<String>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::new_numbering: (Vec<String>, Vec<String>)
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::next_comment_id: u64
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::notes_story: Option<usize>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::opened: crate::inspect::Opened
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::origin: Option<origin::Origin>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::outcomes: Vec<EditOutcome>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::paragraph_nodes: Vec<crate::xmllinq::NodeId>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::paragraph_story: Vec<(usize, usize)>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::plan: &'p EditPlan
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::preset_comment_ids: Vec<u32>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::projections: Vec<crate::inspect::Projection>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::removed_comments: Vec<RemovedComment>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::reply_parents: std::collections::BTreeMap<u32, u32>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::resolved: Vec<(usize, Resolved)>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::resolved_revisions: ResolvedRevisions
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::revision_ids: RevisionCounter
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::revision_refusal: std::cell::RefCell<Option<refusal::RevisionRefusal>>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::rewritten: Vec<(usize, OthersComment)>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::settings: Option<crate::settings::SettingsRequest>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::source_sha256: String
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::stories: Vec<StoryPart>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::syntax: PlanSyntax
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::used_revision_ids: std::collections::HashSet<u64>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::watermark: Option<watermark::Spec>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::whole_marks: Vec<whole::Mark>
-internal	struct_field	pub(crate::edit)	jubarte::edit::Transaction::written_stories: std::collections::BTreeSet<usize>
 internal	struct_field	pub(crate::edit)	jubarte::edit::controls::FillRequest::checked: Option<bool>
 internal	struct_field	pub(crate::edit)	jubarte::edit::controls::FillRequest::choice: Option<&'a str>
 internal	struct_field	pub(crate::edit)	jubarte::edit::controls::FillRequest::control: &'a ControlSelector
@@ -13039,8 +12634,6 @@ internal	struct_field	pub(crate::edit)	jubarte::edit::tracked::TrackedParagraphs
 internal	struct_field	pub(crate::edit)	jubarte::edit::tracked::TrackedParagraphs::insertion_origins: std::collections::BTreeMap<String, String>
 internal	struct_field	pub(crate::edit)	jubarte::edit::tracked::TrackedParagraphs::output: Vec<crate::xmllinq::NodeId>
 internal	struct_field	pub(crate::edit)	jubarte::edit::tracked::TrackedParagraphs::output_states: Option<Vec<super::v2_apply::FinalView>>
-internal	struct_field	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::Suggestions::list: Vec<(String, usize)>
-internal	struct_field	pub(crate::edit::anchor_error)	jubarte::edit::anchor_error::Suggestions::more: usize
 internal	struct_field	pub(crate::edit::for_edit)	jubarte::edit::for_edit::NativeKeys::counts: Vec<std::collections::HashMap<u32, usize>>
 internal	struct_field	pub(crate::edit::for_edit)	jubarte::edit::for_edit::RowCtx::comments: &'a std::collections::HashMap<usize, Vec<CommentRef>>
 internal	struct_field	pub(crate::edit::for_edit)	jubarte::edit::for_edit::RowCtx::fates: &'a [super::origin::Fate]
@@ -13055,15 +12648,6 @@ internal	struct_field	pub(crate::edit::for_edit)	jubarte::edit::for_edit::RowCtx
 internal	struct_field	pub(crate::edit::for_edit)	jubarte::edit::for_edit::Selection::context: usize
 internal	struct_field	pub(crate::edit::for_edit)	jubarte::edit::for_edit::Selection::matched_by: std::collections::HashMap<usize, Vec<String>>
 internal	struct_field	pub(crate::edit::for_edit)	jubarte::edit::for_edit::Selection::selected: Vec<usize>
-internal	struct_field	pub(crate::edit::origin)	jubarte::edit::origin::Origin::control_fates: Vec<Option<usize>>
-internal	struct_field	pub(crate::edit::origin)	jubarte::edit::origin::Origin::control_ids: Vec<String>
-internal	struct_field	pub(crate::edit::origin)	jubarte::edit::origin::Origin::exact: Vec<Option<usize>>
-internal	struct_field	pub(crate::edit::origin)	jubarte::edit::origin::Origin::fates: Vec<Fate>
-internal	struct_field	pub(crate::edit::origin)	jubarte::edit::origin::Origin::opened: crate::inspect::Opened
-internal	struct_field	pub(crate::edit::origin)	jubarte::edit::origin::Origin::paragraph_nodes: Vec<crate::xmllinq::NodeId>
-internal	struct_field	pub(crate::edit::origin)	jubarte::edit::origin::Origin::paragraph_story: Vec<(usize, usize)>
-internal	struct_field	pub(crate::edit::origin)	jubarte::edit::origin::Origin::settles_all: Option<&'static str>
-internal	struct_field	pub(crate::edit::origin)	jubarte::edit::origin::Origin::story_ids: Vec<String>
 internal	struct_field	pub(crate::edit::origin)	jubarte::edit::origin::Paragraphs::opened: crate::inspect::Opened
 internal	struct_field	pub(crate::edit::origin)	jubarte::edit::origin::Paragraphs::paragraph_nodes: Vec<crate::xmllinq::NodeId>
 internal	struct_field	pub(crate::edit::origin)	jubarte::edit::origin::Paragraphs::paragraph_story: Vec<(usize, usize)>
@@ -13112,17 +12696,6 @@ internal	struct_field	pub(crate::edit::resolution)	jubarte::edit::resolution::Li
 internal	struct_field	pub(crate::edit::rewrite)	jubarte::edit::rewrite::Unit::end: usize
 internal	struct_field	pub(crate::edit::rewrite)	jubarte::edit::rewrite::Unit::key: String
 internal	struct_field	pub(crate::edit::rewrite)	jubarte::edit::rewrite::Unit::start: usize
-internal	struct_field	pub(crate::edit::sections)	jubarte::edit::sections::Geometry::bottom: i64
-internal	struct_field	pub(crate::edit::sections)	jubarte::edit::sections::Geometry::footer: i64
-internal	struct_field	pub(crate::edit::sections)	jubarte::edit::sections::Geometry::gutter: i64
-internal	struct_field	pub(crate::edit::sections)	jubarte::edit::sections::Geometry::header: i64
-internal	struct_field	pub(crate::edit::sections)	jubarte::edit::sections::Geometry::height: u32
-internal	struct_field	pub(crate::edit::sections)	jubarte::edit::sections::Geometry::keep_code: bool
-internal	struct_field	pub(crate::edit::sections)	jubarte::edit::sections::Geometry::landscape: bool
-internal	struct_field	pub(crate::edit::sections)	jubarte::edit::sections::Geometry::left: i64
-internal	struct_field	pub(crate::edit::sections)	jubarte::edit::sections::Geometry::right: i64
-internal	struct_field	pub(crate::edit::sections)	jubarte::edit::sections::Geometry::top: i64
-internal	struct_field	pub(crate::edit::sections)	jubarte::edit::sections::Geometry::width: u32
 internal	struct_field	pub(crate::edit::tracked)	jubarte::edit::tracked::InsertionOrigin::id: String
 internal	struct_field	pub(crate::edit::tracked)	jubarte::edit::tracked::InsertionOrigin::root: crate::xmllinq::NodeId
 internal	struct_field	pub(crate::edit::tracked)	jubarte::edit::tracked::InsertionOrigin::story: String
@@ -13152,18 +12725,9 @@ internal	struct_field	pub(crate::edit::v2_apply)	jubarte::edit::v2_apply::Source
 internal	struct_field	pub(crate::edit::v2_apply)	jubarte::edit::v2_apply::SourceModel::index: SourceIndex
 internal	struct_field	pub(crate::edit::v2_apply)	jubarte::edit::v2_apply::SourceModel::loaded: super::Loaded
 internal	struct_field	pub(crate::edit::v2_apply)	jubarte::edit::v2_apply::SourceModel::opened: crate::inspect::Opened
-internal	struct_field	pub(crate::edit::watermark)	jubarte::edit::watermark::Spec::color: String
-internal	struct_field	pub(crate::edit::watermark)	jubarte::edit::watermark::Spec::diagonal: bool
-internal	struct_field	pub(crate::edit::watermark)	jubarte::edit::watermark::Spec::font: String
-internal	struct_field	pub(crate::edit::watermark)	jubarte::edit::watermark::Spec::text: String
 internal	struct_field	pub(crate::edit::whole)	jubarte::edit::whole::Item::container: Option<crate::xmllinq::NodeId>
 internal	struct_field	pub(crate::edit::whole)	jubarte::edit::whole::Item::kind: Kind
 internal	struct_field	pub(crate::edit::whole)	jubarte::edit::whole::Item::node: crate::xmllinq::NodeId
-internal	struct_field	pub(crate::edit::whole)	jubarte::edit::whole::Mark::find: String
-internal	struct_field	pub(crate::edit::whole)	jubarte::edit::whole::Mark::name: String
-internal	struct_field	pub(crate::edit::whole)	jubarte::edit::whole::Mark::op: usize
-internal	struct_field	pub(crate::edit::whole)	jubarte::edit::whole::Mark::part: Option<String>
-internal	struct_field	pub(crate::edit::whole)	jubarte::edit::whole::Mark::replacement: String
 internal	struct_field	pub(crate::edit::whole)	jubarte::edit::whole::Stamp::author: &'a str
 internal	struct_field	pub(crate::edit::whole)	jubarte::edit::whole::Stamp::date: &'a str
 internal	struct_field	pub(crate::edit::whole)	jubarte::edit::whole::Stamp::next_id: &'a mut crate::revision_processor::RevisionIds
@@ -14109,33 +13673,6 @@ internal	variant		jubarte::edit::OthersChange::DeletedWith
 internal	variant		jubarte::edit::OthersChange::Reopen
 internal	variant		jubarte::edit::OthersChange::Resolve
 internal	variant		jubarte::edit::OthersChange::Reword
-internal	variant		jubarte::edit::Resolved::CommentRange
-internal	variant		jubarte::edit::Resolved::CommentSpan
-internal	variant		jubarte::edit::Resolved::DeleteParagraph
-internal	variant		jubarte::edit::Resolved::FillControl
-internal	variant		jubarte::edit::Resolved::FormatParagraph
-internal	variant		jubarte::edit::Resolved::FormatRun
-internal	variant		jubarte::edit::Resolved::InsertFootnote
-internal	variant		jubarte::edit::Resolved::InsertImage
-internal	variant		jubarte::edit::Resolved::InsertParagraph
-internal	variant		jubarte::edit::Resolved::InsertTable
-internal	variant		jubarte::edit::Resolved::List
-internal	variant		jubarte::edit::Resolved::MergeParagraphs
-internal	variant		jubarte::edit::Resolved::PageSetup
-internal	variant		jubarte::edit::Resolved::Restore
-internal	variant		jubarte::edit::Resolved::StrikeComment
-internal	variant		jubarte::edit::Resolved::Text
-internal	variant		jubarte::edit::Resolved::Thread
-internal	variant		jubarte::edit::ThreadOp::Delete
-internal	variant		jubarte::edit::ThreadOp::Edit
-internal	variant		jubarte::edit::ThreadOp::Reply
-internal	variant		jubarte::edit::ThreadOp::Resolve
-internal	variant		jubarte::edit::anchor_error::Target::Here
-internal	variant		jubarte::edit::anchor_error::Target::Missing
-internal	variant		jubarte::edit::anchor_error::Target::SeveralChanges
-internal	variant		jubarte::edit::controls::FillValue::Checked
-internal	variant		jubarte::edit::controls::FillValue::Date
-internal	variant		jubarte::edit::controls::FillValue::Text
 internal	variant		jubarte::edit::flags::Answer::ByKind
 internal	variant		jubarte::edit::flags::Answer::Restore
 internal	variant		jubarte::edit::flags::Answer::Strike

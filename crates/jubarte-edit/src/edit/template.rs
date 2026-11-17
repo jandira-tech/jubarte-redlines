@@ -288,7 +288,7 @@ pub fn generate(source: &[u8], request: &TemplateRequest) -> Result<GeneratedTem
 #[cfg(test)]
 mod tests {
     use super::*;
-    const SOURCE: &[u8] = include_bytes!("../../tests/fixtures/edit-v2/example-source.docx");
+    const SOURCE: &[u8] = include_bytes!("../../../../tests/fixtures/edit-v2/example-source.docx");
 
     #[test]
     fn read_cursor_cannot_generate_a_partial_template() {

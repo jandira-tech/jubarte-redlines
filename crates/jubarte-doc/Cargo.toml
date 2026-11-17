@@ -31,7 +31,7 @@ default = []
 render = ["dep:jubarte-render"]
 # The changes types' JSON Schema derives, which the edit layer's plan
 # schema needs (as on the floors).
-schema = ["dep:schemars"]
+schema = ["dep:schemars", "jubarte-dom/schema", "jubarte-opc/schema"]
 # Cross-crate test helpers (A4), forwarded down.
 test-support = ["jubarte-opc/test-support"]
 

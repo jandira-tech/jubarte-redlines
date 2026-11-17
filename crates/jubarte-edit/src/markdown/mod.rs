@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Markdown in and out of Word documents. The bulk lives in the
-//! jubarte-markdown crate; the patch, redline and unified modules are
-//! edit-layer files composed back here (T4.7 moves them on).
+//! The composed markdown module (A6): the markdown crate's module plus
+//! this crate's patch, redline and unified modules, reproducing the
+//! facade's historical `markdown` from one place.
 
 pub use jubarte_markdown::markdown::*;
 

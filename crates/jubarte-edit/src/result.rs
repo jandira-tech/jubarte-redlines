@@ -14,12 +14,12 @@
 //! Success requires a phase. Failures carry the last completed phase or
 //! JSON null, with `not_applied` before publication. Post-commit reporting
 //! failures retain the committed phase, actual effect and counts through
-//! [`Envelope::with_failure_data`]. [`ResultData::validate`] checks effects
-//! and predictions; [`Envelope::ok`] also rejects a missing phase. Error
-//! builders never authorize retry when [`CommitState`] is unknown.
+//! [`Envelope::with_failure_data`](crate::result::Envelope::with_failure_data). [`ResultData::validate`](crate::result::ResultData::validate) checks effects
+//! and predictions; [`Envelope::ok`](crate::result::Envelope::ok) also rejects a missing phase. Error
+//! builders never authorize retry when [`CommitState`](crate::result::CommitState) is unknown.
 //!
-//! JSONL starts with a typed [`StreamHeader`] (`"record": "header"`), then
-//! zero or more typed progress records and exactly one terminal [`Envelope`].
+//! JSONL starts with a typed [`StreamHeader`](crate::result::StreamHeader) (`"record": "header"`), then
+//! zero or more typed progress records and exactly one terminal [`Envelope`](crate::result::Envelope).
 //! The header carries schema version, command, engine version and source
 //! SHA-256. Readers reject a missing/malformed header and multiple terminals;
 //! a header-bearing stream without its terminal is incomplete. Progress uses
@@ -74,7 +74,7 @@ pub enum Phase {
 /// The primary document effect a result reports.
 ///
 /// A `generated` or `validated` phase always has [`Effect::NotApplied`],
-/// and a `committed` phase never does — see [`ResultData::validate`].
+/// and a `committed` phase never does — see [`ResultData::validate`](crate::result::ResultData::validate).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Effect {
@@ -722,8 +722,8 @@ impl ResultData {
     /// Build a result data block. Pre-commit phases require `not_applied`;
     /// the `predicted_effect` is set with
     /// [`ResultData::set_predicted`] and only allowed for `validated`.
-    /// [`Envelope::ok`] enforces both rules through
-    /// [`ResultData::validate`].
+    /// [`Envelope::ok`](crate::result::Envelope::ok) enforces both rules through
+    /// [`ResultData::validate`](crate::result::ResultData::validate).
     pub fn new(phase: Phase, effect: Effect) -> Self {
         Self {
             phase: Some(phase),
@@ -849,7 +849,7 @@ impl Envelope {
 
     /// Build a placeholder envelope with `status: ok` and no data; used by
     /// tests and scaffold code. Production callers should use
-    /// [`Envelope::ok`] (with data) or [`Envelope::refused`] /
+    /// [`Envelope::ok`](crate::result::Envelope::ok) (with data) or [`Envelope::refused`] /
     /// [`Envelope::new_error`].
     pub fn new(command: impl Into<String>, source: Source, runtime: Runtime) -> Self {
         Self {
@@ -872,7 +872,7 @@ impl Envelope {
     ///
     /// Returns [`ResultDataError`] when `data` pairs its phase with an
     /// effect or predicted effect the envelope rules forbid (see
-    /// [`ResultData::validate`]), so no contradictory `ok` envelope can be
+    /// [`ResultData::validate`](crate::result::ResultData::validate)), so no contradictory `ok` envelope can be
     /// built.
     pub fn ok(
         command: impl Into<String>,

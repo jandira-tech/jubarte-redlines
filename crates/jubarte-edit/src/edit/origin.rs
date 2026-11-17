@@ -45,7 +45,8 @@ impl Ids<'_> {
     /// the id of a paragraph with no short spelling; an expired or malformed
     /// id, the old `body:p:3` among them, is refused with its settled
     /// spelling ([`ShortId`] is the grammar).
-    pub(super) fn paragraph_id(&self, id: &str) -> Option<Result<String, String>> {
+    #[doc(hidden)]
+    pub fn paragraph_id(&self, id: &str) -> Option<Result<String, String>> {
         if let Some(refused) = source_only(id) {
             return Some(Err(refused));
         }
@@ -228,7 +229,8 @@ pub(super) enum Fate {
 
 /// The source as the plan's author read it, and where each of its
 /// paragraphs went once the plan's revisions were settled.
-pub(super) struct Origin {
+#[doc(hidden)]
+pub struct Origin {
     opened: Opened,
     story_ids: Vec<String>,
     paragraph_nodes: Vec<NodeId>,

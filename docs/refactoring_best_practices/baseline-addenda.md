@@ -7,6 +7,42 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T4.7 (jubarte-edit extracted) - 2026-11-16
+
+- Eighth workspace package: the edit product (edit/, edit.rs, the three
+  composed markdown files patch/redline/unified now in
+  jubarte_edit::markdown per A6, capabilities/, text_diff, expect,
+  publication, result) with schemas/edit-plan-v2.schema.json moved beside
+  it (D6). The facade's edit module composes jubarte_edit::edit::* plus
+  the still-local inline module (T4.8 moves it), and markdown is now
+  `pub use jubarte_edit::markdown;` - the composition lives in one
+  place, exactly as A6 drew it.
+- Plan correction, recorded here: A4's `schema` feature is NOT what the
+  edit crate wants. The plan types derive JsonSchema at their heart
+  (the legacy dispatcher builds schemas at runtime), so schemars is a
+  plain dependency; the `schema` features on jubarte-doc and below
+  stay (they gate the floors' own derives), and jubarte-edit pulls
+  jubarte-doc with render+schema always on - a plan's update_fields
+  lays out, so the doc layer's render feature is not optional here.
+  AC4's wasm32 no-default-features check passes (publication and the
+  wasm-absent fields paths gated exactly as at HEAD).
+- V2 promotions: Transaction and its fields, anchor/anchor_error/
+  source_refs modules, near_matches, removed_anchor_holder and
+  require_story (the cli cfg that hid them from a library build is
+  gone; T4.8 re-gates them inside jubarte-cli), SCHEMA_VERSION
+  re-export, plus a keyword-safe private-in-public pass (the earlier
+  script shape dropped struct/enum keywords; the recorded lesson is:
+  promote by matching the kind token, never by string surgery on the
+  visibility prefix).
+- Battery: S1 both ways, wasm32 no-default-features, clippy both
+  feature sets, fmt, RUSTDOCFLAGS doc (the header/item link scope rule
+  from T4.5 held; facade-only references became backticks), gates
+  33/33, goldens identical, AC3 the package lists the schema once,
+  listing re-baselined (481 reviewed lines), facade_surface 889
+  probes, full workspace suite 10,692/10,692 (one include rebased:
+  edit_permission_ranges reads the edit crate's source for its base-hash
+  contract test).
+
 ## T4.6 (jubarte-markdown extracted) - 2026-11-16
 
 - Seventh workspace package: the markdown layer (anchor, critic,

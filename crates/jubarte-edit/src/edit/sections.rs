@@ -116,7 +116,8 @@ const MAX_SIDE: u32 = 31_680;
 
 /// A section's page geometry, all in twentieths of a point.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Geometry {
+#[doc(hidden)]
+pub struct Geometry {
     width: u32,
     height: u32,
     landscape: bool,
@@ -615,7 +616,7 @@ mod mid_section_authored_history_boundary_tests {
     const DATE: &str = "2001-02-03T04:05:06Z";
     fn package(revised: bool, prior: bool) -> Vec<u8> {
         let mut pkg = PartFs::open(include_bytes!(
-            "../../tests/fixtures/word_probes/tokens/cell_a.docx"
+            "../../../../tests/fixtures/word_probes/tokens/cell_a.docx"
         ))
         .unwrap();
         pkg.set_part(

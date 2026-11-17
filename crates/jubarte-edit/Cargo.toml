@@ -1,0 +1,79 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[package]
+name = "jubarte-edit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The edit product of the jubarte engine: edit plans as tracked changes, text diff views, capabilities and staged publication"
+readme = "README.md"
+keywords = ["docx", "edit", "track-changes", "word", "criticmarkup"]
+categories = ["text-processing", "parser-implementations"]
+include = ["/src/**", "/schemas/**", "/README.md", "/LICENSE"]
+[lib]
+name = "jubarte_edit"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Layout needs the renderer (plan A4), forwarded down every layer that
+# declares one.
+render = ["dep:jubarte-render", "jubarte-doc/render", "jubarte-markdown/render"]
+# P0-LAB-01: compiled-out stage counters / coarse timers (capabilities.rs).
+perf-profile = ["jubarte-opc/perf-profile"]
+# The edit plan types' JSON Schema derives, which the plan schema checker
+# needs (as on the floors).
+# Cross-crate test helpers (A4), forwarded down.
+test-support = ["jubarte-doc/test-support", "jubarte-markdown/test-support"]
+
+[dependencies]
+jubarte-dom = { workspace = true }
+jubarte-opc = { workspace = true }
+jubarte-redlines = { workspace = true }
+# fields updates (plan.update_fields) lay the document out, so the
+# doc layer comes with its render feature always on; this crate's own
+# `render` only adds jubarte-render for its layout-dependent items.
+jubarte-doc = { workspace = true, features = ["render", "schema"] }
+jubarte-markdown = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+similar = { workspace = true }
+quick-xml = { workspace = true }
+pulldown-cmark = { workspace = true }
+unicode-segmentation = { workspace = true }
+unicode-properties = { workspace = true }
+regex = { workspace = true }
+zip = { workspace = true }
+base64 = { workspace = true }
+# The renderer is optional: without it no layout runs, and the public
+# items that need it do not exist (A4).
+jubarte-render = { workspace = true, optional = true }
+
+# Host filesystem publication is unavailable to browser/WASM byte APIs.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cap-std = { workspace = true }
+
+# A replaced output keeps the destination's extended attributes. Mode bits
+# are copied separately; this crate moves the attributes onto the staged inode.
+[target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
+xattr = { workspace = true }
+
+[dev-dependencies]
+jubarte-dom = { workspace = true, features = ["test-support"] }
+jubarte-opc = { workspace = true, features = ["schema", "test-support"] }
+jubarte-doc = { workspace = true, features = ["render", "test-support"] }
+jubarte-markdown = { workspace = true, features = ["render", "test-support"] }
+jubarte-redlines = { workspace = true, features = ["test-support"] }
+tempfile = { workspace = true }

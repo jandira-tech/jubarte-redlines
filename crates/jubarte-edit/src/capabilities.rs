@@ -122,9 +122,9 @@ pub struct Operations {
     pub selective_revisions: bool,
     /// List revision records.
     pub revision_records: bool,
-    /// DOCX to PDF ([`crate::convert::docx_to_pdf`]).
+    /// DOCX to PDF (`jubarte::convert::docx_to_pdf`).
     pub pdf: bool,
-    /// DOCX pages to PNG ([`crate::convert::docx_to_png`]).
+    /// DOCX pages to PNG (`jubarte::convert::docx_to_png`).
     pub png: bool,
     /// Body paragraph inspection ([`crate::inspect::paragraphs`],
     /// [`crate::inspect::summary`]).
@@ -152,7 +152,7 @@ pub struct Operations {
     #[serde(default)]
     pub patch: bool,
     /// Which pages of two documents differ, pixel for pixel, with overlays
-    /// of the changed region ([`crate::convert::diff_render`]; `jubarte
+    /// of the changed region (`jubarte::convert::diff_render`; `jubarte
     /// visual-diff`).
     #[serde(default)]
     pub diff_render: bool,
@@ -170,7 +170,7 @@ pub struct Operations {
     #[serde(default)]
     pub edit_keeps_revisions: bool,
     /// One document after another, carrying images, links, styles, lists
-    /// and notes ([`crate::append::append_documents`]; `jubarte append`).
+    /// and notes (`jubarte::append::append_documents`; `jubarte append`).
     #[serde(default)]
     pub append: bool,
     /// `read --json` lists the body's content controls and edit plans fill

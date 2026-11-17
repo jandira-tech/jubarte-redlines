@@ -1623,7 +1623,8 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
 }
 
 /// Build the working view with refusals in the caller's syntax.
-pub(super) fn for_edit_quoting(
+#[doc(hidden)]
+pub fn for_edit_quoting(
     source: &[u8],
     request: &ForEditRequest,
     syntax: super::PlanSyntax,
