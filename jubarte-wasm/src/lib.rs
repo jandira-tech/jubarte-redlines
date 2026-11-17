@@ -44,40 +44,42 @@ use wasm_bindgen::prelude::*;
 /// binding already uses (plan A6/T5.1). Each line sits under the feature
 /// that provides it, so a slim build links only the layers it exports.
 mod jubarte {
+    #[cfg(feature = "cli")]
+    #[allow(unused_imports)]
+    pub use jubarte_cli::cli;
+    #[cfg(feature = "doc")]
+    #[cfg(all(feature = "doc", feature = "pdf"))]
+    #[allow(unused_imports)]
+    pub use jubarte_doc::fields;
+    #[cfg(feature = "doc")]
+    #[allow(unused_imports)]
+    pub use jubarte_doc::{append, audit, changes, comments, debug, inspect, scrub, validate};
     #[cfg(feature = "compare")]
     #[allow(unused_imports)]
     pub use jubarte_dom::{namespaces, util, xmllinq};
+    #[cfg(all(feature = "edit", feature = "markdown"))]
+    #[allow(unused_imports)]
+    pub use jubarte_edit::markdown;
+    #[cfg(all(feature = "edit", not(target_arch = "wasm32")))]
+    #[allow(unused_imports)]
+    pub use jubarte_edit::publication;
+    #[cfg(feature = "edit")]
+    #[allow(unused_imports)]
+    pub use jubarte_edit::{capabilities, edit, expect, result, text_diff};
+    #[cfg(feature = "markdown")]
+    #[allow(unused_imports)]
+    pub use jubarte_markdown::legacy_doc;
+    #[cfg(all(not(feature = "edit"), feature = "markdown"))]
+    #[allow(unused_imports)]
+    pub use jubarte_markdown::markdown;
     #[cfg(feature = "compare")]
     #[allow(unused_imports)]
     pub use jubarte_opc::{admission, opc, strict_translation};
     #[cfg(feature = "compare")]
     #[allow(unused_imports)]
-    pub use jubarte_redlines::{comparer, comparison_log, document_comparer, revision_processor, wml_document, WmlDocument};
-    #[cfg(feature = "doc")]
-    #[allow(unused_imports)]
-    pub use jubarte_doc::{append, audit, changes, comments, debug, inspect, scrub, validate};
-    #[cfg(feature = "doc")]
-    #[cfg(all(feature = "doc", feature = "pdf"))]
-    #[allow(unused_imports)]
-    pub use jubarte_doc::fields;
-    #[cfg(all(feature = "edit", feature = "markdown"))]
-    #[allow(unused_imports)]
-    pub use jubarte_edit::markdown;
-    #[cfg(all(not(feature = "edit"), feature = "markdown"))]
-    #[allow(unused_imports)]
-    pub use jubarte_markdown::markdown;
-    #[cfg(feature = "markdown")]
-    #[allow(unused_imports)]
-    pub use jubarte_markdown::legacy_doc;
-    #[cfg(feature = "edit")]
-    #[allow(unused_imports)]
-    pub use jubarte_edit::{capabilities, edit, expect, result, text_diff};
-    #[cfg(all(feature = "edit", not(target_arch = "wasm32")))]
-    #[allow(unused_imports)]
-    pub use jubarte_edit::publication;
-    #[cfg(feature = "cli")]
-    #[allow(unused_imports)]
-    pub use jubarte_cli::cli;
+    pub use jubarte_redlines::{
+        WmlDocument, comparer, comparison_log, document_comparer, revision_processor, wml_document,
+    };
     #[cfg(feature = "pdf")]
     #[allow(unused_imports)]
     pub use jubarte_render::convert;
