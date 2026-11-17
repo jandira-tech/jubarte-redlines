@@ -219,7 +219,7 @@ SPDX-License-Identifier = "LicenseRef-Bench-Fixtures"
 # from a Word-written fixture by scripts/table_styles_asset.py; provenance in
 # LICENSES/LicenseRef-Word-Table-Styles.txt.
 [[annotations]]
-path = "src/markdown/word_table_styles.tsv"
+path = "crates/jubarte-markdown/src/markdown/word_table_styles.tsv"
 precedence = "override"
 SPDX-FileCopyrightText = "Microsoft Corporation"
 SPDX-License-Identifier = "LicenseRef-Word-Table-Styles"

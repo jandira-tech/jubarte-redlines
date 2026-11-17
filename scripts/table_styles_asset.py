@@ -4,7 +4,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Writes src/markdown/word_table_styles.tsv: Word's built-in table styles,
+"""Writes crates/jubarte-markdown/src/markdown/word_table_styles.tsv: Word's built-in table styles,
 the Grid and List Tables (1 to 7, plain and Accent 1 to 6) as Word wrote
 them into a document that uses all 98, and the older families (Light
 Shading, Medium List 2, …) as Word wrote them into the extra sources
@@ -38,7 +38,7 @@ SOURCE = ROOT / (
     "tests/corpus/neurotic_docx_bench/grok_run/fixtures_500/"
     "00f45b1b7812db57f5a024f116de6c6f0cfab5b79c9bc33657a6be57657d181d.docx"
 )
-OUT = ROOT / "src/markdown/word_table_styles.tsv"
+OUT = ROOT / "crates/jubarte-markdown/src/markdown/word_table_styles.tsv"
 FAMILY = re.compile(r"((?:Grid|List)Table\d(?:Light|Dark|Colorful)?)(?:-Accent(\d))?1$")
 # Word's older table styles (Light Shading, Medium List 2, …), named by the
 # id they had before the Grid and List Tables; also one family per accent.
