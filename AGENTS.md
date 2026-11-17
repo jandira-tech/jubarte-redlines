@@ -21,9 +21,24 @@ The names used at each boundary are intentional:
 - local source folder: `jubarte-redlines`
 - GitHub repository: `jandira-tech/jubarte-redlines` (PyPI and npm keep
   `jubarte-redlines`; Rust path: `jubarte::`)
-- Cargo package, library target and CLI binary: `jubarte` (0.19.0 takes
-  the name; the compare-only crate `jubarte-redlines` arrives with the
-  split's T4.3b)
+- Cargo workspace (since 0.19.0): nine crates published together at one
+  version.
+  - `jubarte` (repository root: `src/lib.rs` and `src/bin/` only): the
+    facade library that re-exports the whole suite under `jubarte::`, and
+    the `jubarte` CLI binary.
+  - `crates/jubarte-dom`: the arena XML DOM, namespaces, ids and shared
+    utilities.
+  - `crates/jubarte-opc`: the OPC package floor (admission, packages,
+    styles, numbering, settings, the shared Word tables).
+  - `crates/jubarte-redlines` (library `jubarte_redlines`): the compare
+    product, alone; this is the crates.io `jubarte-redlines` from 0.19.0.
+  - `crates/jubarte-render`: DOCX and Markdown to PDF and PNG.
+  - `crates/jubarte-doc`: changes, comments, validate, audit, scrub,
+    append, fields, inspect and debug.
+  - `crates/jubarte-markdown`: Markdown in and out, and `.doc` reading.
+  - `crates/jubarte-edit`: edit plans, text diffs, capabilities and
+    publication.
+  - `crates/jubarte-cli`: the clap command line and `self-update`.
 - benchmark native vendor/method: `jubarte-rust`
 - benchmark WASM adapter: `jubarte-wasm`
 
@@ -91,10 +106,19 @@ new semantics.
 - Run tests with cargo-nextest (`cargo install --locked cargo-nextest`).
   Day to day, run only the tests the change touches: `cargo nextest run
   --test NAME` or `cargo nextest run -E 'test(PATTERN)'`.
+  - Integration tests stay in the root `tests/` and belong to the
+    `jubarte` package; a plain `cargo nextest run` at the root runs them
+    and the unit tests of the `jubarte` binary (`src/bin/`). They form
+    seven suite binaries, one per layer of the split, not one per crate:
+    `it_core` (jubarte-dom and jubarte-opc), `it_redlines`, `it_render`,
+    `it_doc`, `it_markdown`, `it_edit`, `it_cli`.
+  - A crate's unit tests (`#[cfg(test)]` under `crates/<crate>/src/`)
+    run with `cargo nextest run -p <crate>` (for example `-p
+    jubarte-redlines`); `--workspace` runs every crate.
 - Run the full suite rarely: before a release, or when a change reaches
-  across the crate. The full run is `cargo miri nextest run` (nightly with
-  the `miri` component; `.config/nextest.toml` holds its `default-miri`
-  profile). Know its cost before starting it:
+  across crates. The full run is `cargo miri nextest run --workspace`
+  (nightly with the `miri` component; `.config/nextest.toml` holds its
+  `default-miri` profile). Know its cost before starting it:
   - Under nextest, Miri compiles the test crate again for every test.
   - Miri cannot spawn processes, and this repository runs it with its
     default isolation (no `-Zmiri-disable-isolation` in `MIRIFLAGS`),
@@ -225,8 +249,9 @@ the error is what you initially thought because we get this wrong routinely.
   clones and variants from its findings instead of ad-hoc scripts.
 - Every Word-invalid shape we find becomes a check in `jubarte validate`,
   every time, before the fix lands: a Ring-1 invariant in
-  `src/validate.rs` (`ring1`, which `jubarte validate`, Python and WASM all
-  report), with a broken probe in `tests/m_validity_ring1.rs`;
+  `crates/jubarte-doc/src/validate.rs` (`ring1`, which `jubarte
+  validate`, Python and WASM all report), with a broken probe in
+  `tests/m_validity_ring1.rs`;
   `tests/common/validity.rs` only wraps `ring1` for the test gate. Run
   `jubarte validate` on the broken file to see the new check fire.
   The one exception is a shape the package open refuses before any part
@@ -301,8 +326,9 @@ Microsoft Word is not installed. `cargo nextest`, `jubarte validate`, and
 neurotic_docx_bench have no Word to drive here.
 
 Run one Cargo process at a time. Day to day, `cargo nextest run -E
-'test(PATTERN)'` is the test command; a full `cargo test --all-features`
-links hundreds of binaries. `cargo fmt --check` and `cargo run --locked
+'test(PATTERN)'` is the test command (add `-p <crate>` for a crate's unit
+tests); a full `cargo test --workspace --all-features` links hundreds of
+binaries. `cargo fmt --check` and `cargo run --locked
 --bin jubarte -- --help` are the smoke checks.
 
 The consulting letter under `examples/adoption/08-accept-reject/` is an

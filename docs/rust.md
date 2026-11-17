@@ -46,6 +46,29 @@ API reference: [docs.rs/jubarte](https://docs.rs/jubarte)
 (built with `--all-features`). Per-release flattened API snapshots live in
 [docs/api/](api/).
 
+### Crates
+
+`jubarte` is the facade: every module below is reachable as `jubarte::<module>`,
+except `limits`, which is jubarte-dom's own (its input budget types reach the
+facade as `jubarte::admission::InputLimits`).
+Depend on a single crate only when you want its part alone.
+
+| Crate (library) | Holds |
+|---|---|
+| `jubarte` (`jubarte`) | the facade and the `jubarte` CLI binary |
+| `jubarte-dom` (`jubarte_dom`) | arena XML DOM (`xmllinq`), `namespaces`, `ids`, `unid`, `util`, `limits` |
+| `jubarte-opc` (`jubarte_opc`) | `opc`, `admission`, `markup_simplifier`, `strict_translation`, `settings`, styles, numbering and the shared Word tables |
+| `jubarte-redlines` (`jubarte_redlines`) | `document_comparer`, `comparer`, `revision_processor`, `comparison_log` |
+| `jubarte-render` (`jubarte_render`) | `convert`: DOCX and Markdown to PDF and PNG |
+| `jubarte-doc` (`jubarte_doc`) | `changes`, `comments`, `validate`, `audit`, `scrub`, `append`, `fields`, `inspect`, `debug` |
+| `jubarte-markdown` (`jubarte_markdown`) | `markdown` reader and writer, `legacy_doc` |
+| `jubarte-edit` (`jubarte_edit`) | `edit`, `text_diff`, `expect`, `capabilities`, `publication` |
+| `jubarte-cli` (`jubarte_cli`) | the clap command line and `self-update` |
+
+All nine share one version and pin each other exactly. Migrating from 0.18:
+replace `jubarte-redlines = "0.18"` with `jubarte = "0.19"`; `use jubarte::…`
+paths stay as they were.
+
 ### Features
 
 | Feature | Default | Adds |
