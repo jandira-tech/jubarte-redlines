@@ -7,6 +7,27 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T7.1 (finalize.rs becomes a directory module) - 2026-11-17
+
+- comparer/finalize.rs (35,492 lines) is now finalize/mod.rs (1,279)
+  plus 13 production siblings (largest merge_replaced.rs, 3,718) and
+  35 test files under finalize/tests/ (largest 3,671). Moved code only.
+- AC2: git diff -M90% against pre-release: 35,681 insertions, 35,492
+  deletions; 35,030 inserted lines match a deleted line. Unmatched: 83
+  mod, 28 use, 151 visibility, 68 blank, 321 other (0.916% of moved:
+  SPDX headers and module docs of the new files, rustfmt reflows, five
+  include_bytes! paths two directories deeper).
+- AC1: goldens identical; the listing diff shows 5 internal lines that
+  pre-release already carries (convert::font, edit::prepared,
+  markdown::from_docx::ooxml), none under comparer; facade_surface
+  passes. jubarte-redlines 941 passed + 1 skipped (942, unchanged),
+  it_redlines 1330 passed + 1 skipped; clippy, fmt, doc exit 0.
+- AC4 (no-LTO consumer gate): pre-split baseline re-saved from
+  pre-release 8173feefa (CRITERION_HOME under .scratch); the branch
+  compares at -4.9% / -3.9% / -3.3% / -10.0% (canonical_dense_edits,
+  short_into_long, tables_bookmark_vmerge, comment_heavy), no
+  regression.
+
 ## T5.1 (wasm features + slim build) - 2026-11-17
 
 - The binding's features are the plan A4 stack (compare -> doc ->
