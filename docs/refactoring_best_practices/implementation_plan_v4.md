@@ -8,15 +8,18 @@
 > the physical move into `crates/jubarte-*` happens in the crate-split phase.
 > `tests/crate_layering.rs` enforces the target layering in the meantime.
 >
-> **Status audit 2026-11-16**: Phase 1–3 extraction executed through T4.7
-> (commits `ce4a8740b`–`ec6f02efa`); all eight `crates/jubarte-*` crates
-> exist. T4.8 (`jubarte-cli` extraction) is staged but uncommitted and does
-> not yet compile: `crates/jubarte-cli/src/update.rs:1823` still points
-> `include_bytes!` at `../tests/...` instead of `../../../tests/...`, and
-> `lib.rs` carries 3 unused-import warnings. Remaining open work: §2.3 WASM
-> feature split, §2.4 Python dual packaging, `oxml-opc`/`quick-xml-041`
-> retirement (§4), all five mega-file decompositions (§5), §7 workspace
-> unification for the binding crates, per-crate `cargo publish`, and the
+> **Status audit 2026-11-16 (updated)**: Phase 1–3 extraction is complete
+> through T4.9 (commits `ce4a8740b`–`01cf08020`); all eight
+> `crates/jubarte-*` crates exist, `jubarte-cli` is extracted (T4.8,
+> commits `6d105445a`/`0bb1de9a5`), and the facade + workspace DAG gates
+> landed (T4.9, commits `d644a058c`/`01cf08020`). The earlier T4.8
+> stragglers are fixed: `crates/jubarte-cli/src/update.rs:1823` now reads
+> `../../../tests/...`, and `crates/jubarte-cli/build.rs` resolves the repo
+> root via `CARGO_MANIFEST_DIR/../..` so `JUBARTE_BUILD_VERSION` keeps its
+> `+<sha>` suffix. Remaining open work: §2.3 WASM feature split, §2.4
+> Python dual packaging, `oxml-opc`/`quick-xml-041` retirement (§4), all
+> five mega-file decompositions (§5), §7 workspace unification for the
+> binding crates (still `exclude`d), per-crate `cargo publish`, and the
 > root `ISSUE_TRIAGE_REPORT.md` move.
 
 ## 1. Executive Summary & Architectural Goals
@@ -159,7 +162,7 @@ Every upward or peer cross-crate reference across all 122 files in `src/` (inclu
 | **10** | `src/cli.rs:2894-2899, 3159`, `src/markdown/mod.rs:804, 1101, 1136`, `src/markdown/from_docx/mod.rs:916`, `src/fields.rs:79, 170, 257`, `src/debug/render.rs:1158-1162` | `convert::{PdfOptions, RenderRequest, RevisionStyle, RevisionPalette, RevisionColor, MarkLines, CommentPlacement, render, docx_render_report, layout_facts}` | Move the pure config/value types (`PdfOptions`, `RenderRequest`, `RevisionStyle`, `RevisionPalette`, `RevisionColor`, `MarkLines`, `CommentPlacement`) to `jubarte-opc::render_options` (re-exported in `jubarte-render` and `jubarte::convert`), and gate the actual layout calls in `fields.rs`, `debug/render.rs`, and `markdown::page_texts` behind `#[cfg(feature = "render")]`. | Done (verified 2026-11-16, commit `035ceb527`): `crates/jubarte-opc/src/render_options.rs` holds `PdfOptions`, `RenderRequest`, `RevisionStyle`, `RevisionPalette`, `RevisionColor`, `MarkLines`, `CommentPlacement`; render-gated call sites compile under the `render` feature. |
 | **11** | `src/debug.rs:1808` | `text_diff::critic_literal` | Move `critic_literal` to `jubarte-doc::debug`; re-export in `jubarte-edit::text_diff`. | Done, via seam not a move (verified 2026-11-16): `critic_literal` stays `pub(crate)` in `jubarte-edit/src/text_diff.rs`; `jubarte-doc::debug` takes a `CriticEscape = fn(&str) -> String` parameter injected by callers, since `jubarte-doc` cannot name the edit layer. |
 | **12** | `src/markdown/patch.rs`, `src/markdown/redline.rs`, `src/markdown/unified.rs` | `edit::{apply_plan, EditPlan, Others, ...}` | Place `patch.rs`, `redline.rs`, `unified.rs`, and `text_diff.rs` in `jubarte-edit`; re-export into `jubarte::markdown` in the root facade. | Done (verified 2026-11-16, commit `ec6f02efa`): `crates/jubarte-edit/src/markdown/{patch,redline,unified}.rs` and `crates/jubarte-edit/src/text_diff.rs`. |
-| **13** | `src/edit/inline.rs:12, 463` | `cli::{edit_actions::EditAction, Cli, Command}` | Move `src/edit/inline.rs` (already `#[cfg(feature = "cli")]`) to `jubarte-cli`; re-export `#[cfg(feature = "cli")] pub use jubarte_cli::inline;` in `jubarte::edit`. | In progress (verified 2026-11-16): staged but uncommitted T4.8 moves `src/edit/inline.rs` → `crates/jubarte-cli/src/inline.rs` along with `cli.rs`, `cli/edit_actions.rs`, `cli/edit_template.rs`, `update.rs`, `update/zipsign.rs`, `build.rs`. `cargo check --workspace --all-targets` currently FAILS: `update.rs:1823` still uses `include_bytes!("../tests/data/self_update/unsigned.tar.gz")` (needs `../../../tests/...`, the §6.3 mechanical fix), and `lib.rs` has 3 unused-import warnings. |
+| **13** | `src/edit/inline.rs:12, 463` | `cli::{edit_actions::EditAction, Cli, Command}` | Move `src/edit/inline.rs` (already `#[cfg(feature = "cli")]`) to `jubarte-cli`; re-export `#[cfg(feature = "cli")] pub use jubarte_cli::inline;` in `jubarte::edit`. | Done (verified 2026-11-16, commits `6d105445a`/`0bb1de9a5`): `src/edit/inline.rs` moved to `crates/jubarte-cli/src/inline.rs` along with `cli.rs`, `cli/edit_actions.rs`, `cli/edit_template.rs`, `update.rs`, `update/zipsign.rs`, `build.rs`; the `include_bytes!` path and unused-import stragglers are fixed. |
 | **14** | `src/comparer/finalize.rs:24548..27574`, `src/settings.rs:528`, `src/append.rs:1044` (`#[cfg(test)]`) | `validate::ring1`, `comments::list_comments`, `markdown::markdown_to_docx` | Extract those cross-crate integration unit tests to `tests/it_redlines/` and `tests/it_doc/` so `[dev-dependencies]` have zero cycles. | Done (verified 2026-11-16): no `ring1` / `list_comments` / `markdown_to_docx` references remain in `comparer/finalize.rs`, `settings.rs` or `append.rs`; the `tests/it_*/` suites exist (§6). |
 
 ### 3.1 Cross-Crate Visibility (`__private`), `#[doc(inline)]` & [scripts/api_snapshot.py](../../scripts/api_snapshot.py)
@@ -228,7 +231,7 @@ Classified deterministically by actual symbol/feature usage:
 
 - [x] **`mod common;` $\rightarrow$ `use crate::common;` in-place** — *done (verified 2026-11-16): 217 consolidated files use `crate::common`; each `tests/it_*/main.rs` declares `mod common;` once.*
 - [x] **Prepend `../` to relative `include_bytes!` / `include_str!` calls in `tests/it_<suite>/*.rs`** — *done (verified 2026-11-16): e.g. `it_redlines/m9_roundtrip.rs` uses `include_bytes!("../fixtures/f4/...")`.*
-- [~] **Update the `#[cfg(test)]` `include_bytes!` and `CARGO_MANIFEST_DIR` paths inside `crates/*/src/`** — *almost done (verified 2026-11-16): the moved crates' test paths compile except one straggler in the uncommitted T4.8 — `crates/jubarte-cli/src/update.rs:1823` still reads `include_bytes!("../tests/data/self_update/unsigned.tar.gz")` and must become `"../../../tests/..."`.*
+- [x] **Update the `#[cfg(test)]` `include_bytes!` and `CARGO_MANIFEST_DIR` paths inside `crates/*/src/`** — *done (verified 2026-11-16): the last straggler landed with T4.8 — `crates/jubarte-cli/src/update.rs:1823` now reads `include_bytes!("../../../tests/data/self_update/unsigned.tar.gz")`.*
 
 ---
 
@@ -237,7 +240,7 @@ Classified deterministically by actual symbol/feature usage:
 - [~] **Unified Root Cargo Workspace ([Cargo.toml](../../Cargo.toml), `.cargo/config.toml`, `crates/jubarte-cli/build.rs`)** — *partial, with deviation (verified 2026-11-16):*
   - Root `[workspace]` exists with `resolver = "3"`, `[workspace.package]`, `[workspace.lints]`, `[workspace.dependencies]` — but `members = [".", "crates/*"]` and `jubarte-python`, `jubarte-wasm`, `jubarte-rust-inproc`, `fuzz` are in `exclude`, each keeping its own workspace + `Cargo.lock` (deviation: plan wanted them as members).
   - No root `strip = "none"` `[profile.release]`; no root `.cargo/config.toml` — the `wasm32` rustflags still live in `jubarte-wasm/.cargo/config.toml`.
-  - `crates/jubarte-cli/build.rs` only probes `CARGO_MANIFEST_DIR/.git`, which does not exist inside `crates/` — `JUBARTE_BUILD_VERSION` currently loses the `+<sha>` suffix. The `CARGO_MANIFEST_DIR/../..` fallback is not implemented.
+  - `crates/jubarte-cli/build.rs` now resolves the repo root at `CARGO_MANIFEST_DIR/../..` and reruns on `HEAD`/ref changes, so `JUBARTE_BUILD_VERSION` keeps its `+<sha>` suffix (fixed with T4.8).
   - `members = ["crates/*", ".", "jubarte-python", "jubarte-wasm", "jubarte-rust-inproc"]` and `exclude = ["fuzz"]`.
   - Root `[profile.release]` sets `strip = "none"` (protecting `jubarte-python` macOS Mach-O `LINKEDIT`).
   - Move `jubarte-wasm/.cargo/config.toml` `[target.wasm32-unknown-unknown]` `rustflags` into root `.cargo/config.toml`.
