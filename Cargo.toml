@@ -52,6 +52,10 @@ include = [
   "/src/**",
   "/schemas/**",
   "/benches/**",
+  # The declared [[example]]: an unpacked jubarte-python sdist reads this
+  # manifest as its workspace root, and cargo refuses a declared example
+  # whose file is missing.
+  "/examples/cli_flags.rs",
   "/Cargo.toml",
   "/build.rs",
   "/README.md",

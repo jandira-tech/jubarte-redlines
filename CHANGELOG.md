@@ -48,6 +48,19 @@ embedding - slim features - read picture headers with it (format and
 dimensions for the admission limit). jubarte-render, rustybuzz,
 ttf-parser, tiny-skia and the fonts are absent.
 
+### Python build features
+
+`jubarte-python` builds against the sub-crates instead of the `jubarte`
+facade (plan T5.3). Its Cargo features are `redlines`, `doc`, `markdown`,
+`edit`, `cli` (each building on the one before) and `render`, all on by
+default, so the published wheel is unchanged: the same `jubarte_redlines`
+package, one `_native` extension, the `jubarte-redlines` and `jubarte-mcp`
+commands. The native module can be compiled in layers
+(`cargo check --no-default-features --features redlines` builds compare,
+accept and reject alone), but the Python package still imports the full
+native surface, so a wheel needs the default features. The wheel adds no `jubarte` import package and no `jubarte`
+command: both names belong to another project on PyPI.
+
 ## [0.18.0] - 2026-11-10
 
 > **Summary.** Security: unsafe OPC part names, foreign-namespace content-type and relationship roots, and ZIP names falsely flagged UTF-8 are refused on open (#2078, #2080, #2081); `self-update` bounds the archive it unpacks (#2084, #2085); a redaction the leak scan cannot certify is refused (#2086); legacy `.doc` input, field nesting, comment anchors, the font index, the font caches and dashed borders are bounded (#2091, #2087, #2202-#2205, #2215); network and device image paths are refused before they are resolved (#2206); the MCP server refuses a path outside its root that links into it (#2228). Changed: Linux binaries run on glibc 2.28 and later, with static musl archives beside them (#2112); the dependency gate refuses duplicated crates and lists the crates whose build scripts may run (#2088, #2216). New: `apply_markdown_strict` (#2208), `scrub::leak_scan` with its receipt (#2086) and `ChangeError::ExposedFinalMark` (#2096). Over a hundred compare, accept/reject, edit-plan, Markdown-view, validate and table-autofit fixes. On the 600-pair and 860-document sets, scored against Word's own output: redlines mean 74.69 (Docxodus 71.67), counting as 0 the 3 redlines Word 16.115 crashes opening; PDFs mean 78.02 (LibreOffice 58.07) with no failed document. The full Miri suite (cargo miri nextest run) did not run for this release; fuzzing, parity, the Ring-2 validator ratchet, the criterion and parity-ladder gates against 0.17.0, and the bench ran instead.

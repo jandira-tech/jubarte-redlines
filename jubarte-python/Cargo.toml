@@ -38,12 +38,52 @@ repository = "https://github.com/jandira-tech/jubarte-redlines"
 name = "jubarte_python"
 crate-type = ["cdylib"]
 
+[features]
+default = ["redlines", "render", "doc", "markdown", "edit", "cli"]
+# Layered, each building on the one below (plan A4/T5.3), as in jubarte-wasm:
+# compare, accept/reject and list revisions.
+redlines = ["dep:jubarte-redlines"]
+# Inspect, changes, comments, validate, audit, scrub, append.
+doc = ["redlines", "dep:jubarte-doc"]
+# Markdown views, diffs and Markdown → DOCX.
+markdown = ["doc", "dep:jubarte-markdown"]
+# Edit plans, text diffs, capabilities and the MCP output root.
+edit = ["markdown", "dep:jubarte-edit"]
+# The CLI grammar `python -m jubarte_redlines` shares with the binary.
+cli = ["edit", "dep:jubarte-cli"]
+# The renderer (docx_to_pdf, docx_to_png, render, diff_render_json,
+# update_fields), forwarded down every layer that declares it.
+render = [
+    "dep:jubarte-render",
+    "jubarte-doc?/render",
+    "jubarte-markdown?/render",
+    "jubarte-edit?/render",
+    "jubarte-cli?/render",
+]
+
 [dependencies]
-# Shared CLI grammar, without the engine's default allocator features.
-jubarte = { path = "..", default-features = false, features = ["cli"] }
+# Admission (input budgets, code-first errors) is used by every entry point.
+jubarte-opc = { path = "../crates/jubarte-opc", default-features = false }
+jubarte-redlines = { path = "../crates/jubarte-redlines", optional = true, default-features = false }
+jubarte-render = { path = "../crates/jubarte-render", optional = true, default-features = false }
+jubarte-doc = { path = "../crates/jubarte-doc", optional = true, default-features = false }
+jubarte-markdown = { path = "../crates/jubarte-markdown", optional = true, default-features = false }
+jubarte-edit = { path = "../crates/jubarte-edit", optional = true, default-features = false }
+jubarte-cli = { path = "../crates/jubarte-cli", optional = true, default-features = false }
 # abi3-py310: one wheel per platform covers every CPython >= 3.10.
 pyo3 = { version = "0.30", features = ["extension-module", "abi3-py310"] }
 serde_json = "1" # structured results cross the boundary as engine-produced JSON
+
+# Never compiled (`cfg(any())` matches no target), only resolved: the
+# sub-crates inherit from the root manifest, which is also the `jubarte`
+# facade package, so cargo reads that package's targets in an unpacked
+# sdist. maturin vendors a package into the sdist only when it is in the
+# resolve graph (`cargo metadata` without --filter-platform), and without
+# this entry the sdist carries the root Cargo.toml but not the root
+# package's sources, and `pip install` of the sdist fails in
+# `cargo metadata` ("can't find `jubarte` bin").
+[target.'cfg(any())'.dependencies]
+jubarte = { path = "..", default-features = false }
 
 [profile.release]
 opt-level = 3
