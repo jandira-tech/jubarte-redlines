@@ -1218,3 +1218,15 @@ fn math_detection_finds_direct_and_ancestor_equations_with_real_text() {
     let plain = paragraphs(&mut dom, &["ordinary prose", ""]);
     assert!(!looks_like_math_doc(&dom, &plain));
 }
+
+/// One key, two weights: under case_insensitive the key is the uppercased
+/// text, the weight the raw characters, so `SS` (2) and `ß` (1) share a
+/// key. The heaviest common subsequence of [SS, ß] against [ß] keeps the
+/// SS match (2); the row must not trade it for the later, lighter one
+/// (#2454).
+#[test]
+fn weighted_lcs_keeps_the_heavier_match_when_one_key_carries_two_weights() {
+    assert_eq!(weighted_lcs_row(&[7, 7], &[7], &[2, 1]).last(), Some(&2));
+    let pairs = weighted_lcs_pairs(&[7, 7], &[7], &[2, 1]);
+    assert_eq!(pairs, vec![(0, 0)], "the pairs keep the weight-2 match");
+}
