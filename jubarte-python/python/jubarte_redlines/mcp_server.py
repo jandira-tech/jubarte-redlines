@@ -100,7 +100,9 @@ def build_server(*, root: Path) -> MCPServer:
         try:
             return Document(authority.read(p.relative_to(root).as_posix()), p.name)
         except OSError as e:
-            raise ToolError(f"cannot read file {path}: {e.strerror or 'OS error'}") from e
+            # The OS's own wording (strerror) is not repeated: errors name
+            # neither the server's files nor its OS (#2355).
+            raise ToolError(f"cannot read file {path}") from e
 
     def fresh(path: Path, overwrite: bool) -> Path:
         # An output may itself be a symlink (dangling ones report exists() False);
@@ -181,7 +183,9 @@ def build_server(*, root: Path) -> MCPServer:
         pdf or png_dpi the redline is also rendered to redline.pdf and
         redline-page-NN.png. Existing files are kept unless overwrite is true.
         """
-        if len(json.dumps(plan)) > _PLAN_LIMIT:
+        # The plan's real size: escaped JSON would count a CJK character
+        # as six bytes and refuse plans far under the limit.
+        if len(json.dumps(plan, ensure_ascii=False).encode()) > _PLAN_LIMIT:
             raise ToolError("Edit plan exceeds 1MB limit")
         doc = load(path)
         out = contained(out_dir)

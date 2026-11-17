@@ -194,6 +194,32 @@ def test_missing_and_corrupt_inputs_are_tool_errors(tmp_path: Path) -> None:
     assert error_text(junk) != "Error executing tool docx_inspect"
 
 
+def test_a_read_failure_names_the_path_but_no_os_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jubarte_redlines import _native
+
+    real = _native._OutputRoot
+
+    class Denied:
+        """The real output root, whose reads fail the way the OS words them."""
+
+        def __init__(self, root: str) -> None:
+            self._real = real(root)
+
+        def read(self, path: str) -> bytes:
+            raise PermissionError(13, "Permission denied", path)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._real, name)
+
+    monkeypatch.setattr(_native, "_OutputRoot", Denied)
+    (tmp_path / "c.docx").write_bytes(make_document("The fee is ten."))
+    (denied,) = call(tmp_path, ("docx_text", {"path": "c.docx"}))
+    text = error_text(denied)
+    assert "c.docx" in text
+    assert "Permission denied" not in text, text
+    assert "Errno" not in text, text
+
+
 # -- reading ---------------------------------------------------------------
 
 
@@ -253,6 +279,17 @@ def test_an_edit_plan_over_one_megabyte_is_refused_before_any_write(tmp_path: Pa
     assert "1MB" in text
     assert "xxxx" not in text
     assert not (tmp_path / "out").exists()
+
+
+def test_the_plan_limit_counts_utf8_bytes_not_escaped_json(tmp_path: Path) -> None:
+    # 300k CJK characters: about 900 KB of UTF-8, but about 1.8 MB once
+    # json.dumps escapes each one as \\uXXXX. Under the 1 MiB limit.
+    (tmp_path / "c.docx").write_bytes(make_document("The fee is ten."))
+    plan = {**PLAN, "padding": "\u4e2d" * 300_000}
+    assert len(json.dumps(plan)) > 1024 * 1024
+    assert len(json.dumps(plan, ensure_ascii=False).encode()) < 1024 * 1024
+    (result,) = call(tmp_path, ("docx_edit", {"path": "c.docx", "plan": plan, "out_dir": "out"}))
+    assert "1MB" not in error_text(result)
 
 
 def test_resolve_accepts_only_accept_and_reject() -> None:
