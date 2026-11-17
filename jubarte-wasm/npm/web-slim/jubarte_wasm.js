@@ -399,52 +399,6 @@ export function applyEditPlan(docx, plan_json, name, syntax) {
 }
 
 /**
- * Audit findings as JSON `{findings, rules, layout}` (see `jubarte validate --rules`).
- * `rules` is a comma-separated list of rule sets (`a11y`, `style`,
- * `structure`) or codes; omitted or empty runs every rule. The slim build
- * has no layout pass: it leaves `FONT_SUBSTITUTED` out (naming it is an
- * error) and does not compare `NUMPAGES` caches with a page count.
- * @param {Uint8Array | number[]} docx
- * @param {string | null} [rules]
- * @returns {string}
- */
-export function auditDocument(docx, rules) {
-    let deferred4_0;
-    let deferred4_1;
-    try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
-        let ptr0, len0, ptr1, len1;
-        try {
-            ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
-            len0 = WASM_VECTOR_LEN;
-            ptr1 = isLikeNone(rules) ? 0 : passStringToWasm0(rules, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-            len1 = WASM_VECTOR_LEN;
-        } catch (e) {
-            if (ptr1) { wasm.__wbindgen_export3(ptr1, len1 * 1, 1); }
-            if (ptr0) { wasm.__wbindgen_export3(ptr0, len0 * 1, 1); }
-            throw e;
-        }
-        wasm.auditDocument(retptr, ptr0, len0, ptr1, len1);
-        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
-        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
-        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
-        var ptr3 = r0;
-        var len3 = r1;
-        if (r3) {
-            ptr3 = 0; len3 = 0;
-            throw takeFromExternrefTable0(r2);
-        }
-        deferred4_0 = ptr3;
-        deferred4_1 = len3;
-        return getStringFromWasm0(ptr3, len3);
-    } finally {
-        wasm.__wbindgen_add_to_stack_pointer(16);
-        wasm.__wbindgen_export3(deferred4_0, deferred4_1, 1);
-    }
-}
-
-/**
  * Check that every text change from `original` to `edited` is a revision
  * by `author`. Returns the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`,
  * `FOREIGN_COMMENT` for another author's comment gone, reworded, resolved

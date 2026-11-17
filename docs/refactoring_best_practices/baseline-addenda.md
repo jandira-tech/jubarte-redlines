@@ -7,6 +7,42 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T5.1 (wasm features + slim build) - 2026-11-17
+
+- The binding's features are the plan A4 stack (compare -> doc ->
+  markdown -> edit -> cli -> pdf; slim = the stack, full = slim + pdf;
+  redlines = compare alias; default = full + console-panic), every
+  sub-crate an optional path dep, and the jubarte:: paths survive
+  through a private mod jubarte mirroring the A6 facade (markdown
+  resolves to jubarte-edit's composed module when edit is on; each line
+  under the feature that provides it, #[allow(unused_imports)] so the
+  whole mirror can stay legible). Every export, helper, options struct
+  and impl block carries its minimum feature; updateFields is
+  all(pdf, doc), convertMarkdown and auditDocument all(pdf, +doc/
+  markdown).
+- Two engine edges fixed to make slim real: jubarte-edit no longer
+  forces jubarte-doc/render (EditReport.fields and the update_fields
+  path are behind the edit crate's own render feature; schema stays
+  unconditional), and jubarte-cli gates its fields re-export and
+  Check::Render arm the same way (a non-render build maps
+  DebugCheck::Render to Check::Orphans).
+- Deviation on AC1: the slim tree still names `image` - markdown and
+  edit picture embedding (slim features) genuinely sniff picture
+  headers with it (read_picture, raster_extension; header fields
+  only). Replacing it means hand-written PNG/JPEG/GIF/BMP/TIFF/WebP
+  dimension parsers behind the MAX_PIXELS admission limit - a parity
+  risk not worth taking silently. jubarte-render, rustybuzz,
+  ttf-parser, tiny-skia and the fonts are absent.
+- AC2: the 64-byte Carlito slice appears once in the full
+  (23,107,948 bytes) and zero times in the slim (13,332,638 bytes).
+  AC3: npm-smoke passes (node+browser, full+slim), clippy
+  --all-features -D warnings clean, per-feature checks (redlines,
+  slim, pdf, full, default) all exit 0. AC4: the slim .d.ts drops 8
+  exports (docxToPdf, pdfPageCount, renderPdf+RenderOutput,
+  updateFields+FieldsOutput, convertMarkdown, auditDocument) - recorded
+  under CHANGELOG.md's "Slim build" heading. build-npm.sh slim builds
+  pass --no-default-features --features slim,console-panic.
+
 ## T4.9 (facade finalized) - 2026-11-17
 
 - Phase 4 ends. tests/crate_layering.rs's source scan is retired with
