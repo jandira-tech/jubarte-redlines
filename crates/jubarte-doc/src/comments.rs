@@ -1830,3 +1830,64 @@ mod authored_thread_reference_contract_tests {
         assert_eq!(pkg.to_zip().unwrap(), frozen);
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod family_edit_tests {
+    use super::*;
+
+    fn received() -> (PartFs, String) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/agent-view/received.docx");
+        let pkg = PartFs::open(&std::fs::read(path).unwrap()).unwrap();
+        (pkg, "word/document.xml".to_string())
+    }
+
+    /// Edits name an id; one the family lacks changes nothing, and a parent
+    /// it lacks (or the comment itself) leaves the comment a thread root.
+    #[test]
+    fn edits_to_absent_comments_change_nothing() {
+        let (mut pkg, main) = received();
+        let mut family = CommentFamily::load(&pkg, &main).unwrap();
+        let before: Vec<_> = [5, 6, 11].map(|id| family.record(id)).into();
+        family.set_text(999, "nobody");
+        family.set_thread(999, Some(5), true);
+        family.set_done(999, true);
+        assert_eq!(family.remove(999), [999]);
+        family.set_thread(11, Some(11), false);
+        family.set_thread(6, Some(404), false);
+        assert_eq!(family.record(11).parent, None);
+        assert_eq!(family.record(6).parent, None);
+        assert_eq!(family.record(5), before[0]);
+        // A real edit keeps the paragraph's properties and its id.
+        family.set_text(5, "Reworded.");
+        let edited = family.record(5);
+        assert_eq!(edited.text, "Reworded.");
+        assert_eq!(edited.last_paragraph, before[0].last_paragraph);
+        family.store(&mut pkg, &main);
+        let xml = pkg.part_string("word/comments.xml").unwrap();
+        let five = &xml[xml.find("w:id=\"5\"").unwrap()..];
+        let five = &five[..five.find("</w:comment>").unwrap()];
+        assert!(
+            five.contains("CommentText") && five.contains("Reworded."),
+            "{five}"
+        );
+        assert!(!xml.contains("statutory cap"), "{xml}");
+    }
+
+    /// Only full eight-digit hex values count as used paraIds, even when a
+    /// part ends right after the attribute opens.
+    #[test]
+    fn truncated_para_ids_are_not_counted() {
+        let (mut pkg, _) = received();
+        let base = package_para_ids(&pkg, "");
+        pkg.set_part(
+            "word/extra.xml",
+            b"<x a=\"1\" paraId=\"abcdef01\"/><x paraId=\"zz\"/>paraId=\"12".to_vec(),
+        );
+        let used = package_para_ids(&pkg, "");
+        assert_eq!(used.len(), base.len() + 1);
+        assert!(used.contains("ABCDEF01"));
+        assert_eq!(package_para_ids(&pkg, "word/extra.xml"), base);
+    }
+}

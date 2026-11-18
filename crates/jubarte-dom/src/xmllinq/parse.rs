@@ -2075,3 +2075,72 @@ mod unescape_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod scan_branch_tests {
+    use super::*;
+
+    #[test]
+    fn nesting_scans_skip_prologs_and_count_open_elements() {
+        let deep = "<?xml version=\"1.0\"?><?xml-stylesheet href=\"a\"?><!--c--><!DOCTYPE r [<!ENTITY e \"]>\">]><a><b><c/></b></a>";
+        assert!(nests_deeper(deep, 1));
+        assert!(!nests_deeper(deep, 2));
+        assert!(!nests_deeper("<?xml", 0));
+        assert!(!nests_deeper("text first<a><b/></a>", 0));
+        let inner = "<a><!--x--><![CDATA[<b><c>]]><?pi <d>?>text<e></e ><f></f></a>";
+        assert!(nests_deeper(inner, 1));
+        assert!(!nests_deeper("<a><![CDATA[<b><c>]]></a>", 1));
+        assert!(!nests_deeper("<a><!--open", 1));
+        assert!(!nests_deeper("<a><![CDATA[open", 1));
+        assert!(!nests_deeper("<a></a", 1));
+        assert!(!nests_deeper("<a p='x' ?>", 1));
+    }
+
+    fn round_trip(xml: &str) -> String {
+        let mut dom = Dom::new();
+        let doc = parse_xdocument(&mut dom, xml);
+        dom.serialize_document(doc)
+    }
+
+    #[test]
+    fn the_permissive_parser_keeps_what_it_can_read() {
+        assert_eq!(
+            round_trip("<a b=\"1\r\n2\t3\">x<?pi data?><?t?>y</a>"),
+            "<a b=\"1 2 3\">x<?pi data?><?t?>y</a>"
+        );
+        assert_eq!(round_trip("<a><![CDATA[1\r\n2]]>tail"), "<a>1\n2tail</a>");
+        assert_eq!(round_trip("<a><!--open"), "<a><!--open--></a>");
+        assert_eq!(round_trip("<a><?open"), "<a><?open?></a>");
+        assert_eq!(round_trip("<a></a"), "<a />");
+        // A start tag holding no attribute name stops there and the
+        // parser moves on: the attribute before it stays, the text reads.
+        let odd = round_trip("<a p='x' =y>t</a>");
+        assert!(
+            odd.starts_with("<a p=\"x\">") && odd.ends_with("t</a>"),
+            "{odd}"
+        );
+        let mut dom = Dom::new();
+        assert!(try_parse_xdocument(&mut dom, "<a b='1' b='2'/>").is_err());
+        let long = format!("<{}/>", "n".repeat(MAX_NAME_BYTES + 1));
+        assert!(
+            validate_xml(&long).is_err_and(|e| e.contains("exceeds")),
+            "long name"
+        );
+        assert!(validate_xml("<x:a xmlns:x=\"u\"><x:b xmlns:x=\"v\"/><x:c/></x:a>").is_ok());
+    }
+
+    #[test]
+    fn scans_and_parses_reach_the_end_of_unclosed_input() {
+        assert!(!nests_deeper("<a>text to the end", 1));
+        assert!(!nests_deeper("<!DOCTYPE never closed", 0));
+        assert_eq!(round_trip("<a><?pi?><?pj>x?></a>"), "<a><?pi?><?pj>x?></a>");
+        assert_eq!(round_trip("<a b=\"1\r2\"/>"), "<a b=\"1 2\" />");
+        let mut policy = TagPolicy::new(InputLimits::default());
+        // A close with nothing open is a no-op, and the policy still works.
+        policy.close();
+        let tag = quick_xml::events::BytesStart::new("a");
+        assert!(policy.open(&tag).is_ok());
+        policy.close();
+    }
+}

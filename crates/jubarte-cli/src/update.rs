@@ -1826,4 +1826,292 @@ mod tests {
         confine_update_zip(&fixture, TAR_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
             .expect("the signed-update fixture tar is a regular member");
     }
+
+    fn gzip_raw(raw: &[u8]) -> Vec<u8> {
+        use std::io::Write;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(raw).expect("gzip");
+        encoder.finish().expect("finish gzip")
+    }
+
+    fn confine_tar(entries: &[([u8; 512], &[u8])], budget: u64) -> Result<(), String> {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = tar_archive(dir.path(), entries);
+        confine_update_zip(&archive, TAR_MEMBER, budget)
+    }
+
+    fn confine_raw(raw: &[u8]) -> Result<(), String> {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.tar.gz", &gzip_raw(raw));
+        confine_update_zip(&archive, TAR_MEMBER, UPDATE_ARCHIVE_BYTE_BUDGET)
+    }
+
+    fn gnu(mut header: [u8; 512]) -> [u8; 512] {
+        header[257..263].copy_from_slice(b"ustar ");
+        header[263..265].copy_from_slice(b" \0");
+        tar_reseal(&mut header);
+        header
+    }
+
+    #[test]
+    fn update_tar_header_damage_is_refused() {
+        let mut bad = tar_header(TAR_MEMBER, b'0', 0o755, 1, "");
+        bad[148] ^= 1;
+        let err = confine_tar(&[(bad, &b"x"[..])], UPDATE_ARCHIVE_BYTE_BUDGET).unwrap_err();
+        assert_eq!(err, "update archive is not a tar");
+        let header = tar_header(TAR_MEMBER, b'0', 0o755, 1, "");
+        let err = confine_raw(&header[..100]).unwrap_err();
+        assert_eq!(err, "update archive ended inside a tar header");
+        let big = tar_header(TAR_MEMBER, b'0', 0o755, 600, "");
+        let mut raw = big.to_vec();
+        raw.extend_from_slice(&[7u8; 100]);
+        assert_eq!(
+            confine_raw(&raw).unwrap_err(),
+            "update archive ended inside a tar member"
+        );
+        // The budget runs out inside the header, then inside the body.
+        for budget in [200, 520] {
+            let err = confine_tar(&[(header, &b"x"[..])], budget).unwrap_err();
+            assert!(
+                err.contains(&format!("inflates past the {budget}-byte budget")),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn update_tar_member_count_must_be_one() {
+        let member = tar_header(TAR_MEMBER, b'0', 0o755, 1, "");
+        let err = confine_tar(
+            &[(member, &b"x"[..]), (member, &b"x"[..])],
+            UPDATE_ARCHIVE_BYTE_BUDGET,
+        )
+        .unwrap_err();
+        assert!(err.contains("more than once"), "{err}");
+        let other = tar_header("README", b'0', 0o644, 1, "");
+        let err = confine_tar(&[(other, &b"x"[..])], UPDATE_ARCHIVE_BYTE_BUDGET).unwrap_err();
+        assert!(err.contains("has no member"), "{err}");
+    }
+
+    #[test]
+    fn update_tar_long_names_name_the_next_member_once() {
+        let long_body = format!("{TAR_MEMBER}\0");
+        let long = gnu(tar_header(
+            "././@LongLink",
+            b'L',
+            0o644,
+            long_body.len() as u64,
+            "",
+        ));
+        let plain = gnu(tar_header("short", b'0', 0o755, 1, ""));
+        confine_tar(
+            &[(long, long_body.as_bytes()), (plain, &b"x"[..])],
+            UPDATE_ARCHIVE_BYTE_BUDGET,
+        )
+        .expect("a GNU long name naming the member is the member");
+        let err = confine_tar(
+            &[
+                (long, long_body.as_bytes()),
+                (long, long_body.as_bytes()),
+                (plain, &b"x"[..]),
+            ],
+            UPDATE_ARCHIVE_BYTE_BUDGET,
+        )
+        .unwrap_err();
+        assert!(err.contains("one member twice"), "{err}");
+        let err =
+            confine_tar(&[(long, long_body.as_bytes())], UPDATE_ARCHIVE_BYTE_BUDGET).unwrap_err();
+        assert!(err.contains("never follows"), "{err}");
+        let huge = tar_header("././@LongLink", b'L', 0o644, TAR_EXTENSION_LIMIT + 1, "");
+        let err = confine_tar(&[(huge, &b""[..])], UPDATE_ARCHIVE_BYTE_BUDGET).unwrap_err();
+        assert!(err.contains("exceeds"), "{err}");
+        // Without a recognised magic an `L` entry is an ordinary member.
+        let mut unmarked = tar_header("././@LongLink", b'L', 0o644, long_body.len() as u64, "");
+        unmarked[257..265].fill(0);
+        tar_reseal(&mut unmarked);
+        let err = confine_tar(
+            &[(unmarked, long_body.as_bytes())],
+            UPDATE_ARCHIVE_BYTE_BUDGET,
+        )
+        .unwrap_err();
+        assert!(err.contains("has no member"), "{err}");
+    }
+
+    #[test]
+    fn update_tar_ustar_prefix_joins_the_name() {
+        let (prefix, name) = TAR_MEMBER.split_once('/').unwrap();
+        let mut header = tar_header(name, b'0', 0o755, 1, "");
+        header[345..345 + prefix.len()].copy_from_slice(prefix.as_bytes());
+        tar_reseal(&mut header);
+        confine_tar(&[(header, &b"x"[..])], UPDATE_ARCHIVE_BYTE_BUDGET)
+            .expect("prefix/name is the member");
+        let absolute = tar_header("/etc/jubarte", b'0', 0o755, 1, "");
+        let err = confine_tar(&[(absolute, &b"x"[..])], UPDATE_ARCHIVE_BYTE_BUDGET).unwrap_err();
+        assert!(err.contains("escapes"), "{err}");
+        assert!(tar_name_escapes("\\jubarte"));
+        assert!(!tar_name_escapes("dir/jubarte"));
+    }
+
+    #[test]
+    fn tar_fields_parse_as_the_tar_crate_reads_them() {
+        assert_eq!(tar_octal(b" +17 \0junk"), Ok(15));
+        assert!(tar_octal(b"   \0").is_err());
+        assert!(tar_octal(b"9").is_err());
+        assert!(tar_octal(b"7777777777777777777777777").is_err());
+        assert_eq!(pax_value(&pax_record("path", "a"), b"size"), Ok(None));
+        assert_eq!(
+            pax_value(b"x", b"path").unwrap_err(),
+            "update archive PAX header is malformed"
+        );
+        assert!(pax_value(b"9 path\n", b"path").is_err());
+    }
+
+    fn stored_zip(members: &[&str], comment: &str) -> Vec<u8> {
+        use std::io::Write;
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options: zip::write::FullFileOptions<'_, '_> =
+            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        for member in members {
+            if let Some(dir) = member.strip_suffix('/') {
+                writer
+                    .add_directory(dir, options.clone())
+                    .expect("directory");
+            } else {
+                writer
+                    .start_file(*member, options.clone())
+                    .expect("start member");
+                writer.write_all(b"binary").expect("write member");
+            }
+        }
+        writer.set_comment(comment).unwrap();
+        writer.finish().expect("finish zip").into_inner()
+    }
+
+    fn confine_bytes(bytes: &[u8]) -> Result<(), String> {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_update_archive(dir.path(), "jubarte.zip", bytes);
+        confine_update_zip(&archive, "jubarte.exe", UPDATE_ARCHIVE_BYTE_BUDGET)
+    }
+
+    /// Offset of the end record in a zip written without a comment.
+    fn eocd(bytes: &[u8]) -> usize {
+        bytes.len() - 22
+    }
+
+    fn central(bytes: &[u8]) -> usize {
+        let at = eocd(bytes);
+        u32::from_le_bytes(bytes[at + 16..at + 20].try_into().unwrap()) as usize
+    }
+
+    #[test]
+    fn update_zip_directory_damage_is_refused() {
+        let good = stored_zip(&["bin/", "jubarte.exe"], "");
+        confine_bytes(&good).expect("one regular member");
+        // A comment after the end record still finds it.
+        confine_bytes(&stored_zip(&["jubarte.exe"], "signed by nobody")).expect("commented zip");
+
+        let mut zip64 = good.clone();
+        let at = eocd(&zip64);
+        zip64[at + 10..at + 12].copy_from_slice(&u16::MAX.to_le_bytes());
+        assert!(confine_bytes(&zip64).unwrap_err().contains("ZIP64"));
+
+        let mut count = good.clone();
+        let at = eocd(&count);
+        count[at + 10..at + 12].copy_from_slice(&3u16.to_le_bytes());
+        assert!(
+            confine_bytes(&count)
+                .unwrap_err()
+                .contains("does not match its end record")
+        );
+
+        let mut torn = good.clone();
+        let cd = central(&torn);
+        torn[cd] = b'X';
+        assert!(
+            confine_bytes(&torn)
+                .unwrap_err()
+                .contains("central directory is truncated")
+        );
+
+        let mut long = good.clone();
+        let cd = central(&long);
+        long[cd + 28..cd + 30].copy_from_slice(&u16::MAX.to_le_bytes());
+        assert!(
+            confine_bytes(&long)
+                .unwrap_err()
+                .contains("runs past the directory")
+        );
+
+        let mut empty = vec![0x50, 0x4b, 0x05, 0x06];
+        empty.extend_from_slice(&[0u8; 18]);
+        assert!(confine_bytes(&empty).unwrap_err().contains("has no member"));
+    }
+
+    #[test]
+    fn update_files_that_are_not_zips_are_told_apart() {
+        let err = confine_bytes(b"PK\x03\x04 not really a zip").unwrap_err();
+        assert_eq!(err, "update archive has no zip end record");
+        confine_bytes(b"P").expect("a one-byte file is no archive this gate knows");
+        assert!(member_names_match(b"./bin\\jubarte", "bin/jubarte"));
+        assert!(!member_names_match(b"bin/", "bin/"));
+        assert!(!member_names_match(b"bin/jubartf", "bin/jubarte"));
+    }
+
+    #[test]
+    fn update_tar_extensions_left_dangling_or_unterminated() {
+        let long = gnu(tar_header(
+            "././@LongLink",
+            b'L',
+            0o644,
+            TAR_MEMBER.len() as u64,
+            "",
+        ));
+        let plain = gnu(tar_header("short", b'0', 0o755, 1, ""));
+        confine_tar(
+            &[(long, TAR_MEMBER.as_bytes()), (plain, &b"x"[..])],
+            UPDATE_ARCHIVE_BYTE_BUDGET,
+        )
+        .expect("a long name without its NUL still names the member");
+        let link = gnu(tar_header("././@LongLink", b'K', 0o644, 4, ""));
+        let err = confine_tar(&[(link, &b"dest"[..])], UPDATE_ARCHIVE_BYTE_BUDGET).unwrap_err();
+        assert!(err.contains("never follows"), "{err}");
+        let records = pax_record("comment", "x");
+        let pax = tar_header("pax", b'x', 0o644, records.len() as u64, "");
+        let err = confine_tar(&[(pax, &records[..])], UPDATE_ARCHIVE_BYTE_BUDGET).unwrap_err();
+        assert!(err.contains("never follows"), "{err}");
+        // An archive that stops at a block boundary, with no end blocks.
+        let header = tar_header(TAR_MEMBER, b'0', 0o755, 1, "");
+        let mut raw = header.to_vec();
+        raw.extend_from_slice(&[b'x'; 512]);
+        confine_raw(&raw).expect("a clean end after a whole member");
+    }
+
+    #[test]
+    fn update_zip_end_records_hidden_or_impossible() {
+        // A comment holding an end-record signature is skipped over.
+        let fake = format!("PK\u{5}\u{6}{}", "z".repeat(30));
+        confine_bytes(&stored_zip(&["jubarte.exe"], &fake)).expect("the real end record is found");
+        let good = stored_zip(&["jubarte.exe"], "");
+        for field in [12, 16] {
+            let mut zip64 = good.clone();
+            let at = eocd(&zip64);
+            zip64[at + field..at + field + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+            assert!(
+                confine_bytes(&zip64).unwrap_err().contains("ZIP64"),
+                "{field}"
+            );
+        }
+        // A nameless entry whose comment holds the old name's bytes.
+        let mut nameless = good.clone();
+        let cd = central(&nameless);
+        let name_len = nameless[cd + 28..cd + 30].to_vec();
+        nameless[cd + 28..cd + 30].copy_from_slice(&[0, 0]);
+        nameless[cd + 30..cd + 32].copy_from_slice(&[0, 0]);
+        nameless[cd + 32..cd + 34].copy_from_slice(&name_len);
+        assert!(
+            confine_bytes(&nameless)
+                .unwrap_err()
+                .contains("has no member")
+        );
+    }
 }

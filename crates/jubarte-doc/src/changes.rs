@@ -2360,3 +2360,35 @@ pub fn accept_revisions_keeping_comments(docx: &[u8]) -> Result<ResolvedChanges,
 pub fn reject_revisions_keeping_comments(docx: &[u8]) -> Result<ResolvedChanges, ChangeError> {
     reject_changes_keeping_comments(docx, &ChangeFilter::default())
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod run_character_tests {
+    use super::*;
+
+    fn run(inner: &str) -> bool {
+        let xml = format!(
+            "<w:r xmlns:w=\"{}\" xmlns:x=\"urn:x\">{inner}</w:r>",
+            W::URI
+        );
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom.root(doc).unwrap();
+        run_has_characters(&dom, root)
+    }
+
+    #[test]
+    fn a_run_has_characters_only_outside_its_properties() {
+        assert!(!run(""));
+        assert!(!run("<w:rPr><w:t>hidden</w:t></w:rPr>"));
+        assert!(!run("<w:t></w:t><w:delText></w:delText>"));
+        assert!(run("<w:delText>x</w:delText>"));
+        assert!(run("<w:tab/>"));
+        // A foreign wrapper is looked into; a foreign rPr is not properties.
+        assert!(run("<x:wrap><w:t>x</w:t></x:wrap>"));
+        assert!(run("<x:rPr><w:t>x</w:t></x:rPr>"));
+        assert!(!run("<w:lastRenderedPageBreak/>"));
+        assert_eq!(atom(&XName::get("tab", "urn:x")), None);
+        assert_eq!(atom(&W::name("sym")), Some('\u{FFFD}'));
+    }
+}

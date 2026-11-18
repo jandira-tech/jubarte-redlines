@@ -898,3 +898,47 @@ mod bounded_input_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod leak_branch_tests {
+    use super::*;
+
+    #[test]
+    fn only_utf8_and_utf16le_are_certified() {
+        assert!(
+            uncertified_encoding(&[0x00, 0x00, 0xFE, 0xFF])
+                .unwrap()
+                .starts_with("UTF-32BE")
+        );
+        assert!(
+            uncertified_encoding(&[0xFF, 0xFE, 0x00, 0x00])
+                .unwrap()
+                .starts_with("UTF-32LE")
+        );
+        assert!(
+            uncertified_encoding(&[0xFE, 0xFF, 0x00, 0x3C])
+                .unwrap()
+                .starts_with("UTF-16BE")
+        );
+        assert_eq!(uncertified_encoding(&[0xFF, 0xFE, 0x3C, 0x00]), None);
+        assert_eq!(uncertified_encoding(b"<x/>"), None);
+        assert!(!contains(b"abc", b""));
+        assert!(contains(b"abc", b"bc"));
+    }
+
+    #[test]
+    fn a_needle_is_found_wherever_xml_can_hold_it() {
+        assert!(xml_holds("plain text Secret", "Secret"), "not XML");
+        assert!(xml_holds("<r><!-- Secret --></r>", "Secret"), "comment");
+        assert!(xml_holds("<r><?pi Secret?></r>", "Secret"), "instruction");
+        assert!(xml_holds("<r a=\"Secret\"/>", "Secret"), "attribute");
+        // A numeric attribute that happens to contain the needle is no leak.
+        assert!(!xml_holds("<r id=\"1234\"/>", "23"));
+        assert!(xml_holds("<r name=\"1234\"/>", "23"));
+        assert!(
+            !xml_holds("<r xmlns:s=\"urn:Secret\"/>", "Secret"),
+            "declaration"
+        );
+    }
+}

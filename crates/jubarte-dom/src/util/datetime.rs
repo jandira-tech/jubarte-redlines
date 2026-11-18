@@ -414,3 +414,68 @@ mod tests {
         assert!(parse_w3cdtf("2023-02-28T23:59:59.5+14:00").is_some());
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod shape_branch_tests {
+    use super::*;
+
+    #[test]
+    fn datetimes_need_every_separator_in_place() {
+        for bad in [
+            "2026/10-01T09:00:00Z",
+            "2026-10/01T09:00:00Z",
+            "2026-10-01 09:00:00Z",
+            "2026-10-01T09-00:00Z",
+            "2026-10-01T09:00-00Z",
+            "2026-02-29T09:00:00Z",
+            "2026-10-01T09:00:00.Z",
+            "2026-10-01T09:00:00+15:00",
+        ] {
+            assert!(parse_datetime(bad).is_err(), "{bad}");
+        }
+        for good in [
+            "2024-02-29T00:00:00Z",
+            "2026-10-01T09:00:00.5-03:30",
+            "2000-02-29T23:59:59",
+        ] {
+            assert_eq!(parse_datetime(good).as_deref(), Ok(good));
+        }
+    }
+
+    #[test]
+    fn civil_days_reach_before_the_epoch_and_leap_years() {
+        assert_eq!(civil_from_unix_days(-1), (1969, 12, 31));
+        assert_eq!(civil_from_unix_days(-719_468), (0, 3, 1));
+        assert_eq!(unix_days_from_civil(1600, 2, 29), -135_081);
+        assert_eq!(civil_from_unix_days(-135_081), (1600, 2, 29));
+        assert!(parse_w3cdtf("1900-02-29").is_none());
+        assert!(parse_w3cdtf("2000-02-29").is_some());
+        assert!(parse_w3cdtf("1996-02-29T10:00Z").is_some());
+    }
+
+    #[test]
+    fn offsets_fold_into_the_reported_date() {
+        assert_eq!(
+            reported_date(
+                Some("2026-01-01T06:00:00-03:00"),
+                Some("2026-01-01T09:00:00Z")
+            )
+            .as_deref(),
+            Some("2026-01-01T06:00:00-03:00")
+        );
+        assert_eq!(
+            reported_date(
+                Some("2026-01-01T12:00:00+03:00"),
+                Some("2026-01-01T09:00:00Z")
+            )
+            .as_deref(),
+            Some("2026-01-01T12:00:00+03:00")
+        );
+        assert_eq!(
+            reported_date(None, Some("2026-01-01T09:00:00Z")).as_deref(),
+            Some("2026-01-01T09:00:00Z")
+        );
+        assert_eq!(reported_date(Some("local"), None).as_deref(), Some("local"));
+    }
+}

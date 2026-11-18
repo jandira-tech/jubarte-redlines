@@ -1617,3 +1617,44 @@ mod tests {
         assert_eq!((spans[1].start, spans[1].end, spans[1].bold), (4, 6, false));
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod span_branch_tests {
+    use super::*;
+
+    fn format(bold: bool, highlight: Option<&str>) -> Format {
+        Format {
+            bold,
+            italic: false,
+            underline: false,
+            highlight: highlight.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn touching_equal_formats_merge_and_gaps_split() {
+        let text = "ab cd ef";
+        let spans = merge_spans(
+            text,
+            vec![
+                (0, 1, format(true, None)),
+                (1, 2, format(true, None)),
+                (3, 5, format(true, None)),
+            ],
+        );
+        assert_eq!(
+            spans.iter().map(|s| (s.start, s.end)).collect::<Vec<_>>(),
+            [(0, 2), (3, 5)]
+        );
+    }
+
+    #[test]
+    fn highlight_alone_is_marked_and_space_stays_outside() {
+        let span = merge_spans("x", vec![(0, 1, format(false, Some("yellow")))]).remove(0);
+        assert_eq!(emphasize(" lit ", &span), " ==lit== ");
+        let plain = merge_spans("x", vec![(0, 1, format(false, None))]).remove(0);
+        assert_eq!(emphasize(" lit ", &plain), " lit ");
+        assert_eq!(emphasize("  ", &span), "  ");
+    }
+}

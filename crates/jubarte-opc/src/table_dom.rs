@@ -149,3 +149,50 @@ pub fn wrapped_children(dom: &Dom, parent: NodeId, local: &str) -> Vec<NodeId> {
     }
     out
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod prior_change_tests {
+    use super::*;
+
+    const W_NS: &str = "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"";
+
+    /// The first `w:ind` under `w:pPr`, read with and without a recorded
+    /// change wrapping an older one.
+    fn ind_val(wrapper: &str) -> Option<String> {
+        let xml = format!(
+            "<w:pPr {W_NS}><w:{wrapper}><w:pPr><w:ind w:left=\"old\"/></w:pPr></w:{wrapper}><w:ind w:left=\"live\"/></w:pPr>"
+        );
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom.root(doc).unwrap();
+        let ind = first_named(&dom, root, "ind")?;
+        dom.attribute(ind, &W::name("left")).map(str::to_string)
+    }
+
+    #[test]
+    fn every_kind_of_recorded_change_hides_its_old_properties() {
+        for wrapper in [
+            "pPrChange",
+            "rPrChange",
+            "tblPrChange",
+            "trPrChange",
+            "tcPrChange",
+            "sectPrChange",
+            "numPrChange",
+        ] {
+            assert_eq!(ind_val(wrapper).as_deref(), Some("live"), "{wrapper}");
+        }
+        // Any other wrapper is live content: its descendant comes first.
+        assert_eq!(ind_val("customXml").as_deref(), Some("old"));
+    }
+
+    #[test]
+    fn the_walk_stops_at_the_root_and_at_a_detached_node() {
+        let mut dom = Dom::new();
+        let root = dom.new_element(W::name("pPr"));
+        assert!(!under_prior_change(&dom, root, root));
+        let detached = dom.new_element(W::name("ind"));
+        assert!(!under_prior_change(&dom, root, detached));
+    }
+}

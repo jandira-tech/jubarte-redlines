@@ -431,3 +431,48 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod parse_branch_tests {
+    use super::*;
+
+    fn parse(text: &str) -> Option<Border> {
+        Border::parse(&text.split_whitespace().collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn border_words_refuse_what_they_cannot_name() {
+        for bad in [
+            "sin_gle",
+            "single theme ac-cent1",
+            "single theme",
+            "single tint 4",
+            "single shade GG",
+            "single FF00",
+            "single 12345G",
+            "single space 2",
+        ] {
+            assert_eq!(parse(bad), None, "{bad}");
+        }
+        let full =
+            parse("thick-thin 1.5pt FF00aa theme accent1 tint 99 shade 0A shadow frame space 2pt")
+                .unwrap();
+        assert_eq!(full.color.as_deref(), Some("FF00aa"));
+        assert_eq!(full.size, Some(12));
+        assert_eq!(full.theme.as_deref(), Some("accent1"));
+        assert_eq!(
+            (full.tint.as_deref(), full.shade.as_deref()),
+            (Some("99"), Some("0A"))
+        );
+        assert!(full.shadow && full.frame);
+        assert_eq!(
+            full.xml("top"),
+            "<w:top w:val=\"thick-thin\" w:sz=\"12\" w:space=\"2\" w:color=\"FF00aa\" w:themeColor=\"accent1\" w:themeTint=\"99\" w:themeShade=\"0A\" w:shadow=\"1\" w:frame=\"1\"/>"
+        );
+        assert_eq!(
+            parse("single").unwrap().xml("left"),
+            "<w:left w:val=\"single\" w:space=\"0\"/>"
+        );
+    }
+}

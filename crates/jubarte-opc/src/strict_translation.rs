@@ -1419,3 +1419,68 @@ mod tests {
         assert_eq!(file.name().unwrap(), "word/document.xml");
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod markup_branch_tests {
+    use super::*;
+    use std::io::Write;
+
+    const STRICT_W: &str = "http://purl.oclc.org/ooxml/wordprocessingml/main";
+    const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+    #[test]
+    fn opaque_markup_and_broken_tags_keep_their_bytes() {
+        let doctype = format!("<!DOCTYPE d><w:document xmlns:w=\"{STRICT_W}\"/>");
+        assert_eq!(
+            transitional_part("word/document.xml", &doctype),
+            format!("<!DOCTYPE d><w:document xmlns:w=\"{W}\"/>")
+        );
+        let cdata = format!("<w:t xmlns:w=\"{STRICT_W}\"><![CDATA[{STRICT_W}]]></w:t>");
+        assert_eq!(
+            transitional_part("word/document.xml", &cdata),
+            format!("<w:t xmlns:w=\"{W}\"><![CDATA[{STRICT_W}]]></w:t>")
+        );
+        let open = format!("<w:document xmlns:w=\"{STRICT_W}\"/><!DOCTYPE never closed");
+        assert_eq!(
+            transitional_part("word/document.xml", &open),
+            format!("<w:document xmlns:w=\"{W}\"/><!DOCTYPE never closed")
+        );
+        let unterminated = format!("<w:document xmlns:w=\"{STRICT_W}\"/><w:p a=\"x");
+        assert_eq!(
+            transitional_part("word/document.xml", &unterminated),
+            format!("<w:document xmlns:w=\"{W}\"/><w:p a=\"x")
+        );
+        let comment = format!("<!-- {STRICT_W} --><!-- open");
+        assert_eq!(transitional_part("word/document.xml", &comment), comment);
+    }
+
+    fn package(document: Option<&str>) -> Vec<u8> {
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        writer.start_file("[Content_Types].xml", options).unwrap();
+        writer.write_all(b"<Types/>").unwrap();
+        if let Some(document) = document {
+            writer.start_file("word/document.xml", options).unwrap();
+            writer.write_all(document.as_bytes()).unwrap();
+        }
+        writer.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn the_main_part_decides_the_dialect_however_it_starts() {
+        assert!(!main_part_is_strict(b"not a zip"));
+        assert!(!main_part_is_strict(&package(None)));
+        assert!(!main_part_is_strict(&package(Some("<!-- no root -->"))));
+        let long = format!(
+            "<!--{}--><w:document xmlns:w=\"{STRICT_W}\"/>",
+            "x".repeat(40_000)
+        );
+        assert!(main_part_is_strict(&package(Some(&long))));
+        let cut = format!("<w:document xmlns:w=\"{STRICT_W}\"");
+        assert!(main_part_is_strict(&package(Some(&cut))));
+        let transitional =
+            format!("<w:document xmlns:w=\"{W}\"><w:t>{STRICT_W}</w:t></w:document>");
+        assert!(!main_part_is_strict(&package(Some(&transitional))));
+    }
+}

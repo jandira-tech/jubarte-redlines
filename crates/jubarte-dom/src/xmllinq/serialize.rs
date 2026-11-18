@@ -1162,3 +1162,106 @@ mod xml_structure_namespace_boundary_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod prefix_branch_tests {
+    use super::*;
+    use crate::xmllinq::Dom;
+
+    const W_URI: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+    /// The tree the cases below serialize: `w` bound to another namespace
+    /// on the root, then WordprocessingML, an unknown namespace, `xml:` and
+    /// unqualified attributes, instructions and text below it.
+    fn tree(dom: &mut Dom) -> (NodeId, NodeId) {
+        let doc = dom.new_document();
+        let root = dom.new_element(XName::get("root", "urn:other"));
+        dom.set_attributes(
+            root,
+            vec![(
+                XName::get("w", "http://www.w3.org/2000/xmlns/"),
+                "urn:other".to_string(),
+            )],
+        );
+        dom.add(doc, root);
+        let child = dom.new_element(XName::get("p", W_URI));
+        dom.set_attributes(
+            child,
+            vec![
+                (XName::get("val", W_URI), "1".to_string()),
+                (XName::get("space", XML_NAMESPACE), "preserve".to_string()),
+                (XName::get("plain", ""), "x".to_string()),
+                (XName::get("odd", "urn:unknown"), "y".to_string()),
+            ],
+        );
+        dom.add(root, child);
+        let unknown = dom.new_element(XName::get("u", "urn:unknown2"));
+        dom.add(child, unknown);
+        // The parser keeps the space before an instruction's data.
+        let pi = dom.new_pi("target", " data");
+        dom.add(child, pi);
+        let bare = dom.new_pi("bare", "");
+        dom.add(child, bare);
+        dom.add_text(child, "t");
+        let outer_pi = dom.new_pi("top", " x");
+        dom.add_first(doc, outer_pi);
+        (doc, root)
+    }
+
+    const ELEMENT: &str = r#"<w:root xmlns:w="urn:other"><ns0:p xmlns:ns0="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:ns1="urn:unknown" ns0:val="1" xml:space="preserve" plain="x" ns1:odd="y"><ns2:u xmlns:ns2="urn:unknown2" /><?target data?><?bare?>t</ns0:p></w:root>"#;
+
+    #[test]
+    fn a_taken_well_known_prefix_and_unknown_namespaces_get_made_up_prefixes() {
+        let mut dom = Dom::new();
+        let (doc, root) = tree(&mut dom);
+        assert_eq!(serialize_element(&dom, root), ELEMENT);
+        assert_eq!(serialize_document(&dom, doc), format!("<?top x?>{ELEMENT}"));
+        // The streamed hash is the hash of the text it would write.
+        use sha1::Digest;
+        assert_eq!(
+            serialize_element_sha1_hex(&dom, root),
+            crate::util::sha1::hex_string_from_bytes(&sha1::Sha1::digest(ELEMENT.as_bytes()))
+        );
+        // Text and instructions do not change the structure hash.
+        let mut other = Dom::new();
+        let (_, other_root) = tree(&mut other);
+        let p = other.elements(other_root, None)[0];
+        for node in other.nodes(p) {
+            if other.is_pi(node) || other.is_text(node) {
+                other.remove(node);
+            }
+        }
+        assert_eq!(
+            serialize_element_structure_sha1_hex(&other, other_root),
+            serialize_element_structure_sha1_hex(&dom, root)
+        );
+        let lone = dom.new_element(XName::get("lone", ""));
+        assert_eq!(serialize_element(&dom, lone), "<lone />");
+        assert_eq!(
+            serialize_element_sha1_hex(&dom, lone),
+            crate::util::sha1::hex_string_from_bytes(&sha1::Sha1::digest(b"<lone />"))
+        );
+    }
+
+    #[test]
+    fn made_up_prefixes_skip_taken_names_and_xml_declarations_are_dropped() {
+        let xmlns = "http://www.w3.org/2000/xmlns/";
+        let mut dom = Dom::new();
+        let root = dom.new_element(XName::get("root", "urn:taken"));
+        dom.set_attributes(
+            root,
+            vec![
+                (XName::get("ns0", xmlns), "urn:taken".to_string()),
+                (XName::get("xml", xmlns), XML_NAMESPACE.to_string()),
+                (XName::get("alias", xmlns), XML_NAMESPACE.to_string()),
+            ],
+        );
+        let child = dom.new_element(XName::get("c", "urn:fresh"));
+        dom.add(root, child);
+        assert_eq!(
+            serialize_element(&dom, root),
+            r#"<ns0:root xmlns:ns0="urn:taken"><ns1:c xmlns:ns1="urn:fresh" /></ns0:root>"#
+        );
+    }
+}

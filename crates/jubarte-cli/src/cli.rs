@@ -4626,3 +4626,151 @@ mod slash_path_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod parse_branch_tests {
+    use super::*;
+
+    fn parse(line: &str) -> Result<(), String> {
+        let mut argv = vec!["jubarte".to_string()];
+        argv.extend(line.split(' ').map(str::to_string));
+        Cli::try_parse_from(argv)
+            .map(drop)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Each command line and the start of its refusal; empty for a line the
+    /// parser accepts.
+    const LINES: &[(&str, &str)] = &[
+        (
+            "edit x.docx -p p1 --anchor a --anchor b --content c",
+            "-p p1: --anchor given twice",
+        ),
+        (
+            "edit x.docx -p p1 --content a --content b",
+            "-p p1: --content given twice",
+        ),
+        (
+            "edit x.docx -p p1 --anchor a --occurrence 2 --occurrence 3 --content c",
+            "-p p1: --occurrence given twice",
+        ),
+        (
+            "edit x.docx --anchor a -p p1 --content c",
+            "--anchor comes before the first -p/--location",
+        ),
+        (
+            "edit x.docx -p p1 --occurrence 2 --content c",
+            "-p p1: --occurrence must come after --anchor",
+        ),
+        (
+            "edit x.docx -p c1 --reply hi --reply again",
+            "-p c1: --reply given twice",
+        ),
+        ("edit x.docx -p c1 --resolve", ""),
+        (
+            "edit --plan doc.docx",
+            "--plan doc.docx names a Word document",
+        ),
+        (
+            "edit --plan=doc.docx",
+            "--plan doc.docx names a Word document",
+        ),
+        (
+            "edit --out-dir out.docx",
+            "--out-dir out.docx names a Word document",
+        ),
+        ("convert a.docx -o .md", ""),
+        ("convert a.md --from docx -o b.docx", ""),
+        (
+            "convert a.docx --pdf --pages 1,x",
+            "'x' is not a page number",
+        ),
+        ("convert a.docx --pdf --pages 1-3,5", ""),
+        ("read a.docx --for-edit -o out.md", "--for-edit prints JSON"),
+        (
+            "read a.docx --tables -o out.json",
+            "--tables writes the grids as text",
+        ),
+        (
+            "read a.docx --ignore-case",
+            "--ignore-case needs --find TEXT or --regex PATTERN",
+        ),
+        ("read a.docx --ignore-case --for-edit", ""),
+        ("compare original", "compare needs <MODIFIED>"),
+        ("diff a.docx b.docx --format patch --columns 80", ""),
+        (
+            "diff a.docx b.docx --context 3",
+            "--context requires a text diff format",
+        ),
+        (
+            "diff a.docx b.docx --full-lines",
+            "--full-lines requires a text diff format",
+        ),
+        (
+            "edit insert x.docx --kind paragraph --at p1 --text hi -o y.docx",
+            "--kind paragraph requires --position",
+        ),
+        (
+            "edit insert x.docx --kind text --at p1 --text hi -o y.docx",
+            "--kind paragraph requires --position",
+        ),
+        (
+            "edit insert x.docx --kind text --position after --at p1 --text hi -o y.docx",
+            "--kind paragraph requires --position",
+        ),
+        (
+            "edit insert x.docx --kind paragraph --position after --at p1 --text hi -o y.docx",
+            "",
+        ),
+        (
+            "edit insert x.docx --kind text --edge end --at p1 --text hi -o y.docx",
+            "",
+        ),
+        ("edit -q replace x.docx --find a --text b -o y.docx", ""),
+        (
+            "edit replace x.docx --find a --text b",
+            "writes require -o FILE",
+        ),
+        (
+            "edit replace x.docx --find a --text b --dry-run --expect-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "",
+        ),
+        (
+            "edit replace x.docx --find a --text b --dry-run --expect-sha256 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "64 lowercase hexadecimal",
+        ),
+        (
+            "edit replace x.docx --find a --text b --dry-run --expect-sha256 abc",
+            "64 lowercase hexadecimal",
+        ),
+    ];
+
+    #[test]
+    fn command_lines_parse_or_say_why_not() {
+        for (line, refusal) in LINES {
+            match parse(line) {
+                Ok(()) => assert!(refusal.is_empty(), "{line} parsed"),
+                Err(e) => {
+                    assert!(!refusal.is_empty(), "{line}: {e}");
+                    assert!(e.contains(refusal), "{line}: {e}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn json_errors_take_a_leading_upper_case_code() {
+        let code = |message: &str| -> String {
+            let v: serde_json::Value =
+                serde_json::from_str(&runtime_json_error(message, 1)).unwrap();
+            v["error"]["code"].as_str().unwrap().to_string()
+        };
+        assert_eq!(code("STALE_SOURCE: x"), "STALE_SOURCE");
+        assert_eq!(code("AB_1: x"), "AB_1");
+        assert_eq!(code("ab: x"), "ERROR");
+        assert_eq!(code("Abc1: x"), "ERROR");
+        assert_eq!(code("AB: x"), "ERROR");
+        assert_eq!(code("nothing"), "ERROR");
+    }
+}
