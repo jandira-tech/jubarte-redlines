@@ -36,7 +36,7 @@ re-recording never loses these entries; add new ones below, newest first.
   changed on 657)`, `residue: 0`, exit 0. Every `pub(super)` was added
   because rustc refused the build without it (unresolved name, private
   field, method or type).
-- AC3: one file is over 8,000 lines. layout.rs is 9,977, of which 9,657
+- AC3: one file is over 8,000 lines. layout.rs is 9,977, of which 9,734
   are the single `impl<'a> Layout<'a>` block; splitting the block would
   change an item, which AC2 allows no residue for. Every other file is
   under 2,300; the largest test file is coverage_round_three_tests.rs

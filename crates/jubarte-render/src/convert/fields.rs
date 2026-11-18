@@ -3,7 +3,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Fields: bookmarks, word counts, STYLEREF, REF and PAGEREF, and date and
-//! time pictures.
+//! time pictures, with the document's core dates (`CoreDates`,
+//! `load_core_dates`, from `docProps/core.xml`). Also two table helpers
+//! the field walk shares: `keep_opening_row_mark` (`w:hideMark` on the
+//! first row) and `grid_table_cells` (`w:adjustLineHeightInTable`).
 
 use super::*;
 

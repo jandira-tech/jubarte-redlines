@@ -3,7 +3,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Comments: balloons, anchors, the end-of-document listing and their
-//! painting.
+//! painting. Also the document walk's entry point, `collect_blocks` (the
+//! package to `Vec<Block>`, building the `WalkCtx` it passes to
+//! `walk_container`), and the `changed_only` page filter,
+//! `keep_changed_pages`.
 
 use super::*;
 

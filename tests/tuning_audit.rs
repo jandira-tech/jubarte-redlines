@@ -128,13 +128,9 @@ fn excerpt_hit<'a>(rows: &'a [AuditRow], file: &str, excerpt: &str) -> Option<&'
         if row.file != file {
             return false;
         }
-        if row.disposition.contains(excerpt) {
-            return true;
-        }
-        // Comments get a parenthetical in a later PR; the table symbol
-        // still names the site (Aptos-only gate after #111).
-        let sym = row.symbol.trim();
-        !sym.is_empty() && excerpt.contains(sym)
+        // The row must quote the site's line: a row that names the right
+        // mini id but quotes another line does not cover this one.
+        row.disposition.contains(excerpt)
     })
 }
 
@@ -158,6 +154,7 @@ fn tuning_audit_covers_every_mini_comment_site() {
         let key = format!("{file}:{line}");
         let hit = by_line
             .get(&key)
+            .filter(|(_, disp)| disp.contains(excerpt.as_str()))
             .map(|(class, disp)| (*class, disp.as_str()))
             .or_else(|| {
                 excerpt_hit(&rows, file, excerpt).map(|row| (row.class, row.disposition.as_str()))
@@ -178,6 +175,29 @@ fn tuning_audit_covers_every_mini_comment_site() {
         "TUNING_AUDIT.md missing {} mini site(s):\n{}",
         missing.len(),
         missing.join("\n")
+    );
+}
+
+#[test]
+fn tuning_audit_row_must_quote_its_own_line() {
+    // #2459 review: rows that kept a mini id but copied another site's
+    // quote passed the gate through the symbol fallback.
+    let body = "\
+| file | line | symbol | class | disposition |\n\
+|---|---|---|---|\n\
+| src/convert/a.rs | 7 | mini 511 | b | KEEP. // Other boxes keep the hairline (mini 511). |\n";
+    let (_, rows) = audit_table(body);
+    assert!(
+        excerpt_hit(&rows, "src/convert/a.rs", "// lnRef idx=2 -> 1pt. Mini 511").is_none(),
+        "a row quoting another line must not cover this site"
+    );
+    assert!(
+        excerpt_hit(
+            &rows,
+            "src/convert/a.rs",
+            "// Other boxes keep the hairline (mini 511)."
+        )
+        .is_some()
     );
 }
 

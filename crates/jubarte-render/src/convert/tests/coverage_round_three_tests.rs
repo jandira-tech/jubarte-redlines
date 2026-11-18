@@ -6138,6 +6138,7 @@ mod coverage_deep_layout_tests {
         }
     }
 }
+
 mod coverage_frame_and_chrome_boundary_tests {
     use super::*;
 
