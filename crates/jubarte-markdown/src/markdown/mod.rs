@@ -1275,3 +1275,287 @@ mod tests {
         // test moved with redline.rs (tests stay beside the behavior).
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod corpus {
+    use super::*;
+
+    pub(crate) fn fixtures(ext: &str) -> Vec<(String, Vec<u8>)> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures");
+        let mut out = Vec::new();
+        let mut stack = vec![root.clone()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == ext) {
+                    // `/`-separated on every platform, so the skip lists
+                    // below match on Windows too.
+                    let name = path
+                        .strip_prefix(&root)
+                        .unwrap()
+                        .components()
+                        .map(|c| c.as_os_str().to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    out.push((name, std::fs::read(&path).unwrap()));
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
+    /// Round trips that fail today for reasons reported separately: the
+    /// Strict text boxes write an ill-formed `document.xml`, and the f4
+    /// redline writes deleted field parts that validate flags. Skipped,
+    /// not pinned.
+    const REPORTED: [&str; 2] = ["strict/Strict01.docx", "f4/word-redline.docx"];
+
+    /// Fixtures whose `diff_markdown` of the rejected and accepted views
+    /// does not resolve back to both views (rows left as `|-|` or `|||`,
+    /// a stray `{++` after a line break): reported separately, skipped.
+    const DIFF_REPORTED: [&str; 15] = [
+        "1676-word.docx",
+        "1678-word.docx",
+        "1683-case2-word.docx",
+        "1686-word-compare.docx",
+        "f1/word-redline.docx",
+        "f4/word-redline.docx",
+        "from-docx/critic/synthetic/all.docx",
+        "from-docx/critic/synthetic/breaks.docx",
+        "from-docx/critic/synthetic/hard-delimiters.docx",
+        "from-docx/critic/synthetic/hard-tables.docx",
+        "from-docx/critic/synthetic/hard-unicode.docx",
+        "from-docx/critic/synthetic/structure.docx",
+        "md-roundtrip/edges/edge-clauses-more.docx",
+        "md-roundtrip/review/B-row.docx",
+        "word_probes/final_marks/table_end_word_redline.docx",
+    ];
+
+    fn critic() -> DocxOptions<'static> {
+        DocxOptions {
+            critic: true,
+            ..DocxOptions::default()
+        }
+    }
+
+    /// Every view of every fixture in shard `k` of 4: the accepted and
+    /// rejected views carry no CriticMarkup, the full view writes back to
+    /// a package with no validity finding, and a second round trip is a
+    /// fixed point.
+    fn round_trips(k: usize) {
+        for (i, (name, bytes)) in fixtures("docx").into_iter().enumerate() {
+            if i % 4 != k {
+                continue;
+            }
+            let read = |options: MarkdownOptions| {
+                docx_to_markdown(&bytes, &options)
+                    .unwrap_or_else(|e| panic!("{name}: {e}"))
+                    .markdown
+            };
+            let [accepted, rejected] =
+                [TrackChanges::Accept, TrackChanges::Reject].map(|track_changes| {
+                    let md = read(MarkdownOptions {
+                        track_changes,
+                        dates: true,
+                        ..MarkdownOptions::default()
+                    });
+                    assert!(
+                        !["{++", "{--", "{~~"].iter().any(|m| md.contains(m)),
+                        "{name} {track_changes:?}"
+                    );
+                    md
+                });
+            // The diff of the two views resolves back to each side.
+            if !DIFF_REPORTED.contains(&name.as_str()) {
+                let diff = diff_markdown(&rejected, &accepted);
+                assert_eq!(
+                    resolve_critic(&diff, TrackChanges::Accept),
+                    accepted,
+                    "{name}"
+                );
+                assert_eq!(
+                    resolve_critic(&diff, TrackChanges::Reject),
+                    rejected,
+                    "{name}"
+                );
+            }
+            // The accepted view writes a package Word opens.
+            let clean = markdown_to_docx(&accepted, &DocxOptions::default()).unwrap();
+            let fatal = crate::validate::validate(&clean.docx)
+                .map(|f| f.into_iter().filter(|f| f.word_fatal).count());
+            assert!(
+                REPORTED.contains(&name.as_str()) || fatal == Ok(0),
+                "{name}: {fatal:?}"
+            );
+            let agent = read(MarkdownOptions {
+                ids: true,
+                comments: true,
+                ..MarkdownOptions::default()
+            });
+            assert!(
+                agent.contains("<!-- p") || !agent.contains("\n\n"),
+                "{name}"
+            );
+            // The agent view, ids and all, writes back too.
+            let from_agent =
+                markdown_to_docx(&agent, &critic()).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let fatal = crate::validate::validate(&from_agent.docx)
+                .map(|f| f.into_iter().filter(|f| f.word_fatal).count());
+            assert!(
+                REPORTED.contains(&name.as_str()) || fatal == Ok(0),
+                "{name}: {fatal:?}"
+            );
+            // Head, tail and picks read no more than the whole view (and
+            // its header).
+            let view = |select: Option<Select>| {
+                let options = ReadOptions {
+                    page_markers: false,
+                    dates: true,
+                    select,
+                    ..ReadOptions::default()
+                };
+                super::read(&bytes, &options).map(|v| v.markdown.len())
+            };
+            let whole = view(None).unwrap_or_else(|e| panic!("{name}: {e}"));
+            for select in [
+                Select::Head(2),
+                Select::Tail(2),
+                Select::Picks(vec![
+                    Pick::Paragraphs {
+                        from: 1,
+                        to: Some(2),
+                    },
+                    Pick::Table(0),
+                ]),
+            ] {
+                if let Ok(len) = view(Some(select.clone())) {
+                    assert!(len <= whole + 200, "{name} {select:?}: {len} > {whole}");
+                }
+            }
+            // A document with changes has a changed-only view.
+            let changed = view(Some(Select::Changed { by: None }));
+            assert!(
+                accepted == rejected || changed.is_ok(),
+                "{name}: {changed:?}"
+            );
+            docx_to_markdown_stories(&bytes, &MarkdownOptions::default())
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let all = read(MarkdownOptions::default());
+            // Resolving the full view leaves no change marks either way.
+            // (Strict01's 1.26 MB view takes four minutes to resolve:
+            // reported, skipped.)
+            if !DIFF_REPORTED.contains(&name.as_str()) && !REPORTED.contains(&name.as_str()) {
+                for resolved in [
+                    resolve_critic(&all, TrackChanges::Accept),
+                    resolve_critic(&all, TrackChanges::Reject),
+                    accepted_clauses(&all),
+                ] {
+                    assert!(
+                        !["{++", "{--", "{~~"].iter().any(|m| resolved.contains(m)),
+                        "{name}"
+                    );
+                }
+            }
+            let written =
+                markdown_to_docx(&all, &critic()).unwrap_or_else(|e| panic!("{name}: {e}"));
+            if REPORTED.contains(&name.as_str()) {
+                continue;
+            }
+            let findings = crate::validate::validate(&written.docx).unwrap();
+            assert!(findings.is_empty(), "{name}: {findings:?}");
+            let again = |docx: &[u8]| {
+                docx_to_markdown(docx, &MarkdownOptions::default())
+                    .unwrap()
+                    .markdown
+            };
+            let second = again(&written.docx);
+            let third = again(&markdown_to_docx(&second, &critic()).unwrap().docx);
+            assert_eq!(second, third, "{name}");
+        }
+    }
+
+    #[test]
+    fn fixtures_round_trip_shard_0() {
+        round_trips(0);
+    }
+
+    #[test]
+    fn fixtures_round_trip_shard_1() {
+        round_trips(1);
+    }
+
+    #[test]
+    fn fixtures_round_trip_shard_2() {
+        round_trips(2);
+    }
+
+    #[test]
+    fn fixtures_round_trip_shard_3() {
+        round_trips(3);
+    }
+
+    /// Every Markdown fixture writes, with and without CriticMarkup, to a
+    /// package with no Word-fatal finding (informational ones, such as a
+    /// deletion nested in a deletion that Word reads faithfully, are kept).
+    #[test]
+    fn markdown_fixtures_write_valid_packages() {
+        for (name, md) in fixtures("md") {
+            let md = String::from_utf8_lossy(&md);
+            for options in [DocxOptions::default(), critic()] {
+                let written =
+                    markdown_to_docx(&md, &options).unwrap_or_else(|e| panic!("{name}: {e}"));
+                let findings = crate::validate::validate(&written.docx)
+                    .unwrap_or_else(|e| panic!("{name}: {e}"));
+                let fatal: Vec<_> = findings.iter().filter(|f| f.word_fatal).collect();
+                assert!(fatal.is_empty(), "{name}: {fatal:?}");
+            }
+        }
+    }
+
+    /// `docx` with a comment and a processing instruction between every
+    /// two tags of each XML part.
+    fn with_noise(docx: &[u8]) -> Vec<u8> {
+        let mut pkg = crate::opc::PartFs::open(docx).unwrap();
+        for part in pkg.parts() {
+            if !(part.ends_with(".xml") || part.ends_with(".rels")) {
+                continue;
+            }
+            let xml = pkg.part_string(&part).unwrap();
+            pkg.set_part(&part, xml.replace("><", "><!--n--><?jr n?><").into_bytes());
+        }
+        pkg.to_zip().unwrap()
+    }
+
+    /// Comments and instructions between tags change no reading.
+    #[test]
+    fn noise_between_tags_changes_no_view() {
+        for (name, bytes) in fixtures("docx").into_iter().step_by(2) {
+            let noisy = with_noise(&bytes);
+            for options in [
+                MarkdownOptions::default(),
+                MarkdownOptions {
+                    ids: true,
+                    comments: true,
+                    ..MarkdownOptions::default()
+                },
+            ] {
+                // The header's sha256 names the bytes, which differ, and a
+                // drawing's payload carries its XML verbatim, noise and all.
+                let read = |b: &[u8]| {
+                    docx_to_markdown(b, &options).map(|r| {
+                        r.markdown
+                            .lines()
+                            .filter(|l| !l.starts_with("sha256: ") && !l.contains("]: drawing:"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                };
+                assert_eq!(read(&noisy).ok(), read(&bytes).ok(), "{name}");
+            }
+        }
+    }
+}

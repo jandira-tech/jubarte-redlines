@@ -3424,3 +3424,50 @@ mod legacy_regular_sector_source_owners {
         assert_eq!(SOURCE, original.as_slice());
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod damaged_file_tests {
+    use super::*;
+
+    fn fixtures() -> Vec<(String, Vec<u8>)> {
+        let dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/legacy");
+        ["services.doc", "styles.doc", "breaks.doc"]
+            .into_iter()
+            .map(|n| (n.to_string(), std::fs::read(dir.join(n)).unwrap()))
+            .collect()
+    }
+
+    /// A compound file cut short or with a byte changed anywhere is read or
+    /// refused with an error: never a panic, and whatever reads converts.
+    #[test]
+    fn damaged_compound_files_are_read_or_refused() {
+        for (name, bytes) in fixtures() {
+            let whole = doc_to_markdown(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert!(!whole.trim().is_empty(), "{name}");
+            let step = (bytes.len() / 97).max(1);
+            let mut opened = 0;
+            let mut refused = 0;
+            for at in (0..bytes.len()).step_by(step) {
+                let mut cut = bytes[..at].to_vec();
+                let mut flipped = bytes.clone();
+                flipped[at] ^= 0xFF;
+                for damaged in [std::mem::take(&mut cut), flipped] {
+                    match read(&damaged) {
+                        Ok(document) => {
+                            opened += 1;
+                            let _ = to_markdown(&document);
+                            let _ = doc_to_docx(&damaged);
+                        }
+                        Err(_) => refused += 1,
+                    }
+                }
+            }
+            assert!(
+                refused > 0 && opened > 0,
+                "{name}: read {opened}, refused {refused}"
+            );
+        }
+    }
+}
