@@ -7,6 +7,43 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T7.4 (edit.rs becomes a directory module) - 2026-11-17
+
+- crates/jubarte-edit/src/edit.rs (12,353 lines) is now edit/mod.rs
+  (2,399: every `pub` item, the plan types, the drivers and the
+  Transaction state) plus 7 production siblings: transaction.rs (4,881,
+  the whole `impl<'p> Transaction<'p>` block, moved as one item),
+  apply.rs (689), comments.rs (603), locating.rs (589), formatting.rs
+  (580), settlement.rs (542) and plan.rs (424); and 2 test files under
+  edit/tests/ (deeper_boundary_tests.rs 1,483, tests.rs 279). The 29
+  existing files under edit/ are untouched. Moved code only.
+- AC2 (scripts/split_equivalence.py from #2457, --base 1f3e47b57):
+  items matched 1,128 (visibility changed on 84), residue 0, exit 0.
+  Not compared: use 198 -> 211, mod declarations 59 -> 66, plain
+  comments 386 -> 428 (the 42 new lines are the 9 SPDX headers and
+  the 7 module docs; no comment line of the base is missing).
+- AC1: jubarte-edit 313 passed (313 before; same 313 names), it_edit
+  632 passed + 1 skipped (unchanged), it_cli 2,488 passed (unchanged),
+  facade_surface 1 passed; fmt, clippy -D warnings and doc -D warnings
+  exit 0; reuse lint compliant; `jubarte --help` exits 0. Goldens
+  identical. One test reads edit.rs with include_str!
+  (tests/it_cli/edit_permission_ranges.rs); it now reads edit/mod.rs,
+  where `pub base_sha256: String` stays.
+- API listing: no `api` row changes. 139 `internal` rows of moved
+  private items leave `jubarte::edit::` and return at their definer
+  paths under edit::{apply,comments,formatting,locating,plan,settlement}
+  (139 rows) plus 7 module rows. They await the api_snapshot.py fix and
+  re-record after T7.5; api-baseline.txt is not re-recorded.
+- Behaviour identity (the bench never runs edit): 313 edit, add, edit
+  apply, edit template, read --for-edit, check and capabilities
+  commands over every edit plan fixture (examples/adoption 09-15,
+  examples/agents, tests/fixtures/edit-v2, docs/design/cli-v2/examples,
+  operation flags on 09 and 08, -d pinned) with the base and head
+  release binaries: 1,148 output files (144 docx), 0 differing. The
+  600 bench redlines are byte-identical to pre-release
+  (vs_scored.py: SAME 600).
+- AC4: not required for edit.rs by the plan; not run.
+
 ## T7 AC2 replaced by the item equivalence check - 2026-11-17
 
 The T7.N AC2 in implementation_plan.md is now
