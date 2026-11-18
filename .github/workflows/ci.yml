@@ -363,10 +363,12 @@ jobs:
       - run: python3 scripts/test_publish_crates.py
       - run: python3 scripts/test_glibc_floor.py
       - run: python3 scripts/test_gen_docs.py
-      - run: uv run --with pyyaml python3 scripts/test_release_workflow.py
-      - run: uv run --with pyyaml python3 scripts/test_docs_workflow.py
-      - run: uv run --with pyyaml python3 scripts/test_jules_workflow.py
-      - run: uv run --with pyyaml python3 scripts/test_codeql_config.py
+      # pyyaml for the four workflow-review tests: hash-verified wheels only.
+      - run: uv pip install --no-build --require-hashes -r scripts/ci-requirements.txt
+      - run: python3 scripts/test_release_workflow.py
+      - run: python3 scripts/test_docs_workflow.py
+      - run: python3 scripts/test_jules_workflow.py
+      - run: python3 scripts/test_codeql_config.py
       - run: python3 scripts/test_check_engine_commit.py
       - run: python3 scripts/test_check_npm_paths.py
       - run: python3 scripts/test_table_styles_asset.py
