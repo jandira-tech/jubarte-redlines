@@ -435,3 +435,8 @@ mod coverage_real_source_route_matrix_tests;
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 #[path = "tests/deep_lcs_source_conservation_tests.rs"]
 mod deep_lcs_source_conservation_tests;
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[path = "tests/unrelated_gate_sweep_tests.rs"]
+mod unrelated_gate_sweep_tests;

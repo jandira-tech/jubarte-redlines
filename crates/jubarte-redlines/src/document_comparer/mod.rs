@@ -2806,3 +2806,8 @@ fn track_added_section_breaks(
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[path = "tests/cross_shape_roundtrip_tests.rs"]
+mod cross_shape_roundtrip_tests;
