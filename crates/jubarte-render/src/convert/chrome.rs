@@ -981,7 +981,7 @@ pub(super) fn renderer_understands_namespace(uri: &str) -> bool {
 /// `mc:Choice` whose `Requires` it understands
 /// ([`renderer_understands_namespace`]), else the `mc:Fallback` (#1876). The walks that follow know nothing of the wrapper: they drew
 /// both branches of a run-level one and nothing of a block-level one.
-/// Drawing wrappers stay for [`alternate_choice`]. A part is rewritten only
+/// Drawing wrappers stay for `drawing::alternate_choice`. A part is rewritten only
 /// when a wrapper went.
 pub(super) fn resolve_text_alternates(pkg: &mut PartFs, main: &str) {
     let wrapper = MC::alternate_content();

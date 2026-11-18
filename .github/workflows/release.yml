@@ -472,7 +472,7 @@ jobs:
   publish-crates:
     name: publish crates.io
     needs: version
-    runs-on: self-hosted
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
     environment: release
     permissions:
       contents: read
@@ -497,7 +497,9 @@ jobs:
           echo "::warning::${{ steps.pending.outputs.new }} crate(s) have never been published to crates.io; trusted publishing cannot create a crate. Publish $VER with scripts/release.sh $VER … --local-publish, then register this workflow as each new crate's trusted publisher."
       - if: steps.pending.outputs.pending != '0' && steps.pending.outputs.new == '0'
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
-      - if: steps.pending.outputs.pending != '0' && steps.pending.outputs.new == '0'
+      # mbx's cache server is on the self-hosted network; on GitHub's runners
+      # (LINUX_RUNNER=ubuntu-latest) the publish builds without a cache.
+      - if: steps.pending.outputs.pending != '0' && steps.pending.outputs.new == '0' && (vars.LINUX_RUNNER || 'self-hosted') == 'self-hosted'
         uses: ./.github/actions/mbx
       - if: steps.pending.outputs.pending != '0' && steps.pending.outputs.new == '0'
         uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
@@ -518,7 +520,7 @@ jobs:
   publish-pypi:
     name: publish PyPI
     needs: [version, wheels, sdist]
-    runs-on: self-hosted
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
     environment: release
     permissions:
       contents: read
