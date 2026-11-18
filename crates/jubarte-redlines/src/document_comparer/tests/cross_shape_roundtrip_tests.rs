@@ -970,7 +970,7 @@ const KNOWN_DIVERGENCES: &[&str] = &[
     "tracked -> tracked/0 [powertools]",
 ];
 
-fn check(results: Vec<(String, Result<bool, String>)>) {
+fn check(results: &[(String, Result<bool, String>)]) {
     let failures: Vec<String> = results
         .iter()
         .filter_map(|(context, r)| r.as_ref().err().map(|e| format!("{context}: {e}")))
@@ -1009,7 +1009,7 @@ fn sweep(left: &[&str]) {
             }
         }
     }
-    check(results);
+    check(&results);
 }
 
 /// The edits applied to one shape: move, delete, insert, duplicate,
@@ -1137,7 +1137,7 @@ fn edit_sweep(left: &[&str]) {
             }
         }
     }
-    check(results);
+    check(&results);
 }
 
 #[test]
@@ -1523,7 +1523,7 @@ fn random_sweep(seed: u64, count: usize) {
             ));
         }
     }
-    check(results);
+    check(&results);
 }
 
 #[test]
@@ -1551,6 +1551,12 @@ fn random_pairs_round_trip_3() {
 /// every container it walks (body, properties, styles, numbering, notes,
 /// comments and headers).
 fn with_xml_comments(docx: &[u8]) -> Vec<u8> {
+    with_noise(docx, "<!--n-->")
+}
+
+/// `noise` after every closing and empty tag of every `word/` XML part
+/// (and a comment after the root start tag).
+fn with_noise(docx: &[u8], noise: &str) -> Vec<u8> {
     let mut pkg = PartFs::open(docx).unwrap();
     for part in pkg.parts() {
         if !part.starts_with("word/") || !part.ends_with(".xml") {
@@ -1560,7 +1566,13 @@ fn with_xml_comments(docx: &[u8]) -> Vec<u8> {
         let mut noisy = String::with_capacity(source.len() * 2);
         let mut rest = source.as_str();
         // Past the root start tag only: nothing may precede the root.
-        let root_open = rest.find("<w:").unwrap();
+        let Some(root_open) = rest
+            .match_indices('<')
+            .map(|(i, _)| i)
+            .find(|&i| rest[i + 1..].starts_with(|c: char| c.is_ascii_alphabetic()))
+        else {
+            continue;
+        };
         let root_end = root_open + rest[root_open..].find('>').unwrap() + 1;
         noisy.push_str(&rest[..root_end]);
         noisy.push_str("<!--root-->");
@@ -1571,7 +1583,7 @@ fn with_xml_comments(docx: &[u8]) -> Vec<u8> {
             // After a closing or empty tag, never inside text.
             let tag = &head[head.rfind('<').unwrap_or(0)..];
             if tag.starts_with("</") || tag.ends_with("/>") {
-                noisy.push_str("<!--n-->");
+                noisy.push_str(noise);
             }
             rest = tail;
         }
@@ -1608,7 +1620,7 @@ fn xml_comments_in_every_part_round_trip() {
             }
         }
     }
-    check(results);
+    check(&results);
 }
 
 /// Whole-document templates for the shapes the unrelated-source and
@@ -1866,7 +1878,7 @@ fn template_sweep(seed: u64, count: usize) {
             ));
         }
     }
-    check(results);
+    check(&results);
 }
 
 #[test]
@@ -2052,7 +2064,7 @@ fn fixture_sweep(left: std::ops::Range<usize>) {
             ));
         }
     }
-    check(results);
+    check(&results);
 }
 
 #[test]
@@ -2113,7 +2125,7 @@ fn large_fixture_sweep(large: std::ops::Range<usize>) {
             ));
         }
     }
-    check(results);
+    check(&results);
 }
 
 #[test]
@@ -2151,20 +2163,29 @@ fn corpus(folder: &str) -> Vec<(String, Vec<u8>)> {
 /// Corpus documents in `part` of `parts` against the documents `offsets`
 /// places after them: pairs the corpus's own pair tests never make.
 fn corpus_sweep(folder: &str, offsets: &[usize], part: usize, parts: usize) {
+    corpus_sweep_in(folder, offsets, part, parts, "word");
+}
+
+/// [`corpus_sweep`] in the named preset of [`all_presets`].
+fn corpus_sweep_in(folder: &str, offsets: &[usize], part: usize, parts: usize, preset: &str) {
     let docs = corpus(folder);
-    let settings = presets().remove(0).1;
+    let settings = all_presets()
+        .into_iter()
+        .find(|(name, _)| *name == preset)
+        .unwrap()
+        .1;
     let mut results = Vec::new();
     for i in (0..docs.len()).filter(|i| i % parts == part) {
         for offset in offsets {
             let (name_a, a) = &docs[i];
             let (name_b, b) = &docs[(i + offset) % docs.len()];
             results.push((
-                format!("corpus {name_a} -> {name_b} [word]"),
+                format!("corpus {name_a} -> {name_b} [{preset}]"),
                 round_trip(a, b, &settings),
             ));
         }
     }
-    check(results);
+    check(&results);
 }
 
 #[test]
@@ -2306,4 +2327,11 @@ fn tracking_corpus_pairs_round_trip_1() {
 #[test]
 fn tracking_corpus_pairs_round_trip_2() {
     corpus_sweep(TRACKING, &[1], 2, 3);
+}
+
+const SUPERDOC: &str = "neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source";
+
+#[test]
+fn superdoc_corpus_pairs_round_trip_powertools() {
+    corpus_sweep_in(SUPERDOC, &[1, 17], 0, 1, "powertools");
 }

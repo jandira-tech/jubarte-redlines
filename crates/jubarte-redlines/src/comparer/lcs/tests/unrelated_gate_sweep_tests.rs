@@ -639,7 +639,10 @@ fn run_pair(a: &str, b: &str, context: &str, failures: &mut Vec<String>) -> usiz
     replaced
 }
 
-fn sweep(seed: u64, count: usize) {
+/// `count` seeded pairs. With `same_pool` both sides draw their words
+/// from one small pool, so the gates meet fingerprinted shapes whose
+/// vocabularies overlap and must decline them.
+fn sweep(seed: u64, count: usize, same_pool: bool) {
     let mut replaced = 0;
     let mut failures = Vec::new();
     for case in 0..count {
@@ -647,9 +650,13 @@ fn sweep(seed: u64, count: usize) {
             .wrapping_add(case as u64)
             .wrapping_mul(0x9e37_79b9_7f4a_7c15));
         let start = rng.below(POOL.len() - 10);
-        let width = 4 + rng.below(16);
+        let width = if same_pool {
+            3 + rng.below(4)
+        } else {
+            4 + rng.below(16)
+        };
         let left_pool = &POOL[start..(start + width).min(POOL.len())];
-        let shift = rng.below(10);
+        let shift = if same_pool { 0 } else { rng.below(10) };
         let right_start = (start + shift).min(POOL.len() - 4);
         let right_pool = &POOL[right_start..(right_start + width).min(POOL.len())];
         let sa = case % SHAPES;
@@ -674,22 +681,22 @@ fn sweep(seed: u64, count: usize) {
 
 #[test]
 fn shape_pairs_keep_both_sources_0() {
-    sweep(1, 240);
+    sweep(1, 240, false);
 }
 
 #[test]
 fn shape_pairs_keep_both_sources_1() {
-    sweep(5_000, 240);
+    sweep(5_000, 240, false);
 }
 
 #[test]
 fn shape_pairs_keep_both_sources_2() {
-    sweep(9_000, 240);
+    sweep(9_000, 240, false);
 }
 
 #[test]
 fn shape_pairs_keep_both_sources_3() {
-    sweep(13_000, 240);
+    sweep(13_000, 240, false);
 }
 
 /// Every shape against every other, without random edits.
@@ -718,6 +725,12 @@ fn every_shape_against_every_shape_keeps_both_sources() {
 /// finding for the gate that produced it; the list keeps the sweep a
 /// guard for every other pair.
 const KNOWN: &[&str] = &[
+    "unrelated 21000+239 shapes 15->16 [coarse/0]",
+    "unrelated 21000+239 shapes 15->16 [faithful/0]",
+    "unrelated 21000+239 shapes 15->16 [word/0]",
+    "unrelated 25000+198 shapes 6->16 [coarse/0]",
+    "unrelated 25000+198 shapes 6->16 [faithful/0]",
+    "unrelated 25000+198 shapes 6->16 [word/0]",
     "unrelated 1+189 shapes 29->16 [coarse/0]",
     "unrelated 1+189 shapes 29->16 [faithful/0]",
     "unrelated 1+189 shapes 29->16 [word/0]",
@@ -751,4 +764,19 @@ fn check(failures: &[String]) {
             .collect::<Vec<_>>()
             .join("\n")
     );
+}
+
+#[test]
+fn shared_vocabulary_shape_pairs_keep_both_sources_0() {
+    sweep(17_000, 300, true);
+}
+
+#[test]
+fn shared_vocabulary_shape_pairs_keep_both_sources_1() {
+    sweep(21_000, 300, true);
+}
+
+#[test]
+fn shared_vocabulary_shape_pairs_keep_both_sources_2() {
+    sweep(25_000, 300, true);
 }
