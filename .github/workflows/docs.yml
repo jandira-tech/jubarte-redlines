@@ -74,7 +74,7 @@ env:
 jobs:
   drift:
     name: generated docs drift
-    runs-on: self-hosted
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -96,7 +96,7 @@ jobs:
 
   claims:
     name: adoption claims (tests/adoption.rs)
-    runs-on: self-hosted
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -109,7 +109,7 @@ jobs:
 
   examples:
     name: side-by-side examples (examples/adoption)
-    runs-on: self-hosted
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
     needs: claims
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
