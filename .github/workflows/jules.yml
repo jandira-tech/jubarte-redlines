@@ -178,10 +178,13 @@ jobs:
         env:
           BASE_REF: ${{ steps.pr.outputs.base_ref }}
         run: |
-          # A checkout by SHA leaves no origin/<base> ref, so the diff failed
-          # ("Invalid symmetric difference expression", #2443), and a fetch in
-          # an earlier step did not survive the skills checkout. Fetch the
-          # base right here and stop with a clear error if it is still absent.
+          # Blacksmith's git mirror pre-writes refs/remotes/origin/* as packed
+          # refs, some naming objects this clone never received ("bad object
+          # refs/remotes/origin/…"). origin/<base> then does not resolve
+          # ("Invalid symmetric difference expression", #2443) and a fetch
+          # fails its connectivity check. Drop those refs, fetch the base
+          # here, and stop with a clear error if it is still absent.
+          git for-each-ref --format='delete %(refname)' refs/remotes/origin | git update-ref --stdin
           git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
           git rev-parse --verify --quiet "origin/${BASE_REF}" >/dev/null \
             || { echo "::error::origin/${BASE_REF} is not resolvable after the fetch"; exit 1; }
