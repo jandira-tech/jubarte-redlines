@@ -814,6 +814,135 @@ const KNOWN_DIVERGENCES: &[&str] = &[
     "random 1000+3 [word-coarse]",
     "random 2000+42 [word-coarse]",
     "random 3000+61 [word-coarse]",
+    "corpus 24_id_paraid_overflow.docx -> alternate_content.docx [word]",
+    "corpus alternate_content.docx -> bold_underline_highlight_demo_id_paraid_overflow.docx [word]",
+    "corpus alternate_content.docx -> gdocs_comments_export.docx [word]",
+    "corpus nested_table_rowspan.docx -> alternate_content.docx [word]",
+    "",
+    "corpus 060415914f_file_63__vs__58d11506a5_file_64_redline_f51694bde0.docx -> 07fce8e954_docx_lots_of_comments_addition.docx [word]",
+    "corpus 0bf5192ed0__vs__aa5340125d_redline_c88672a4fd.docx -> 12941c2a77__vs__1424386e9b_redline_23127ea8e1.docx [word]",
+    "corpus 0e4dfd953d_rejected_tracking.docx -> 0f031c23c3_rejected_tracking.docx [word]",
+    "corpus 16833a9d55_rejected_tracking.docx -> 1ae50cba31_rejected_tracking.docx [word]",
+    "corpus 1ae50cba31_rejected_tracking.docx -> 58c827e77a_rejected_tracking.docx [word]",
+    "corpus 1bbdcbcf65.docx -> 56915a8dc8.docx [word]",
+    "corpus 2061218d44_rejected_tracking.docx -> 64d05c8af4_rejected_tracking.docx [word]",
+    "corpus 221997f1c7.docx -> 2288f27be1.docx [word]",
+    "corpus 23cdfeee74__vs__bd3824dd1e_redline_546a6e0c15.docx -> 32328b55db_docx_lots_of_comments_addition_removal_redline_r.docx [word]",
+    "corpus 2c123533f6_rejected_tracking.docx -> 30f20e787b_rejected_tracking.docx [word]",
+    "corpus 2e3f1e261d.docx -> 3866f441cc.docx [word]",
+    "corpus 33e7d339be__vs__b4b7c76ecd_redline_340dd11242.docx -> 3890d0a960_file_27.docx [word]",
+    "corpus 4ed1b6d133__vs__aa5340125d_redline_5b44fd7ae2.docx -> 4f1b13334b__vs__1424386e9b_redline_aa270fe985.docx [word]",
+    "corpus 5068b053d6_rejected_tracking.docx -> 8644055513_rejected_tracking.docx [word]",
+    "corpus 512b24be1e.docx -> 56915a8dc8.docx [word]",
+    "corpus 589b832f86_rejected_tracking.docx -> 58c827e77a_rejected_tracking.docx [word]",
+    "corpus 72cc9f4ac6_rejected_tracking.docx -> 72d7218610_rejected_tracking.docx [word]",
+    "corpus 7cc19c9376_rejected_tracking.docx -> cbf73c2d81_rejected_tracking.docx [word]",
+    "corpus 823e29543e_rejected_tracking.docx -> db13a691da_rejected_tracking.docx [word]",
+    "corpus 8836f9bbdb.docx -> 92075b7449.docx [word]",
+    "corpus 97fefb0aa2_rejected_tracking.docx -> ecad91f16e_rejected_tracking.docx [word]",
+    "corpus a202881c62.docx -> d6b1d609c1.docx [word]",
+    "corpus a33b3d7ea2_rejected_tracking.docx -> a6aab38897_rejected_tracking.docx [word]",
+    "corpus ae59d6042a_file_78.docx -> aeb0ace263__vs__1000537d17_redline_3d4318d7e9.docx [word]",
+    "corpus af568343b6.docx -> ebeb91fe7f.docx [word]",
+    "corpus b3cc5c1abe_rejected_tracking.docx -> 0f031c23c3_rejected_tracking.docx [word]",
+    "corpus b4cd671041.docx -> bc0135eaa1.docx [word]",
+    "corpus b6f757462e__vs__deff0e697a_redline_c0d5b06bcf.docx -> bcae83f080_docx_lots_of_comments_addition_removal.docx [word]",
+    "corpus c6d6371812_rejected_tracking.docx -> 205503ead9_rejected_tracking.docx [word]",
+    "corpus cda19d51ed.docx -> d6b1d609c1.docx [word]",
+    "corpus d20ada3e0a_rejected_tracking.docx -> 30f20e787b_rejected_tracking.docx [word]",
+    "corpus d94eec287b_rejected_tracking.docx -> db13a691da_rejected_tracking.docx [word]",
+    "corpus ddd1e0f952.docx -> ebeb91fe7f.docx [word]",
+    "corpus f1257ca7ea.docx -> 2288f27be1.docx [word]",
+    "corpus fc29454fff__vs__e3d461d691_redline_8644055513.docx -> fc5d9fecb7__vs__aa5340125d_redline_9f271c8e1d.docx [word]",
+    "corpus fd5a40bd94__vs__f43929f70c_redline_c964f553ef.docx -> 00f467c010__vs__aa5340125d_redline_ecad91f16e.docx [word]",
+    "corpus fedc2c0ba6_rejected_tracking.docx -> 029c0275ad_rejected_tracking.docx [word]",
+    "corpus fedc2c0ba6_rejected_tracking.docx -> 4aca112da9_rejected_tracking.docx [word]",
+    "corpus ff27140d0a.docx -> 2e3f1e261d.docx [word]",
+    "corpus 0018843794_889f4c3958e28978a0d96a95a8938d9eb0dc100e66f7c483.docx -> 1424386e9b_017447de83753a0e3b7afc659df038ef56972925336c6a5b.docx [word]",
+    "corpus 0018843794_889f4c3958e28978a0d96a95a8938d9eb0dc100e66f7c483.docx -> 68fdec049c_docx_lots_of_comments.docx [word]",
+    "corpus 00da16e738_heading_4_style_demo_id_paraid_overflow_2.docx -> 24b9811b05_file_22.docx [word]",
+    "corpus 0f5a806b4c_file_141__vs__dccd972179_file_142_redline_b3cc5c1abe.docx -> b175a00954_file_27.docx [word]",
+    "corpus 133e9207c0_file_34.docx -> 308862bb53_i_am_sharing_microsoft_word_vs_google_docs_compr.docx [word]",
+    "corpus 1e212fbfdc_file_122__vs__85692b483f_file_123_redline_71159007ab.docx -> b2b3095b48_file_52__vs__ec3dd0df69_file_53_redline_589b832f86.docx [word]",
+    "corpus 2f23773d63_super_editor__pagination_blank_2a98ed7a.docx -> 308862bb53_i_am_sharing_microsoft_word_vs_google_docs_compr.docx [word]",
+    "corpus 2f23773d63_super_editor__pagination_blank_2a98ed7a.docx -> d0e7f278b8_i_am_sharing_microsoft_word_vs_google_docs_compr.docx [word]",
+    "corpus 308862bb53_i_am_sharing_microsoft_word_vs_google_docs_compr.docx -> 68fdec049c_docx_lots_of_comments.docx [word]",
+    "corpus 308862bb53_i_am_sharing_microsoft_word_vs_google_docs_compr.docx -> d560bc7296_header_no_rels.docx [word]",
+    "corpus 342f364d46_001342333d45627868f4dc5282abbba4598a91b4a7584b08.docx -> df9ffe9a8c_file_16.docx [word]",
+    "corpus 3acaee795f__vs__70fd78a4f8_redline_1dbbf3be63.docx -> 3f91c8f0cd_file_9.docx [word]",
+    "corpus 6867e05e76_00b0d42bbea3b9bac7bc95466cf416f6c89a8cda62bbf3d7.docx -> 68fdec049c_docx_lots_of_comments.docx [word]",
+    "corpus 799980e6af_file_12__vs__2bd5ae6064_file_13_redline_e212b559b2.docx -> 3fcadf4761__vs__24ad1aa6e5_redline_30f20e787b.docx [word]",
+    "corpus 799980e6af_file_12__vs__2bd5ae6064_file_13_redline_e212b559b2.docx -> b2b3095b48_file_52__vs__ec3dd0df69_file_53_redline_589b832f86.docx [word]",
+    "corpus 8441c4ae21_sd_2517_localized_heading_styles.docx -> d0e7f278b8_i_am_sharing_microsoft_word_vs_google_docs_compr.docx [word]",
+    "corpus a94f4c516b_text_box.docx -> df9ffe9a8c_file_16.docx [word]",
+    "corpus adc9f524d1__vs__5d17fd43a9_redline_2061218d44.docx -> 68526de79b_file_77__vs__7476f5fbb1_file_78_redline_7cc19c9376.docx [word]",
+    "corpus adc9f524d1__vs__5d17fd43a9_redline_2061218d44.docx -> b175a00954_file_27.docx [word]",
+    "corpus blue_centered_title_demo_style_default_missing.docx -> docx_lots_of_comments_addition_removal_redline_removal_v_addition.docx [word]",
+    "corpus cc82deb093_file_144.docx -> d0e7f278b8_i_am_sharing_microsoft_word_vs_google_docs_compr.docx [word]",
+    "corpus center_aligned_bold_text_id_paraid_overflow.docx -> center_alignment_demo_id_paraid_overflow.docx [word]",
+    "corpus center_aligned_bold_text_id_paraid_overflow.docx -> docx_lots_of_comments.docx [word]",
+    "corpus center_alignment_demo_id_paraid_overflow_2.docx -> docx_lots_of_comments_addition_redline.docx [word]",
+    "corpus center_alignment_demo_id_paraid_overflow.docx -> docx_lots_of_comments_addition.docx [word]",
+    "corpus center_bold_demo_id_paraid_overflow.docx -> docx_lots_of_comments_addition_redline_addition_v_removal.docx [word]",
+    "corpus clear_formatting_demo_id_paraid_overflow.docx -> docx_lots_of_comments_addition_removal.docx [word]",
+    "corpus comments.docx -> docx_lots_of_comments_addition_removal_redline.docx [word]",
+    "corpus d0e7f278b8_i_am_sharing_microsoft_word_vs_google_docs_compr.docx -> d560bc7296_header_no_rels.docx [word]",
+    "corpus d560bc7296_header_no_rels.docx -> df9ffe9a8c_file_16.docx [word]",
+    "corpus d93f1dafca__vs__970fd9303f_redline_cbd854cb68.docx -> 3f91c8f0cd_file_9.docx [word]",
+    "corpus document_100_ultimate_demo_id_paraid_overflow.docx -> docx_lots_of_comments_addition_removal_redline_removal_v_addition.docx [word]",
+    "corpus document_100_ultimate_demo_id_paraid_overflow.docx -> docx_lots_of_comments.docx [word]",
+    "corpus docx_lots_of_comments_addition_redline.docx -> docx_lots_of_comments_addition_redline_addition_v_removal.docx [word]",
+    "corpus docx_lots_of_comments_addition_removal.docx -> docx_lots_of_comments_addition_removal_redline.docx [word]",
+    "corpus ec900bd182_file_17.docx -> 308862bb53_i_am_sharing_microsoft_word_vs_google_docs_compr.docx [word]",
+    "corpus employee_directory_table_2.docx -> strict01.docx [word]",
+    "corpus f43929f70c__vs__3413da1703_redline_7da45f822a.docx -> 3fcadf4761__vs__24ad1aa6e5_redline_30f20e787b.docx [word]",
+    "corpus file_130.docx -> file_131.docx [word]",
+    "corpus file_148.docx -> file_196.docx [word]",
+    "corpus file_18.docx -> file_27.docx [word]",
+    "corpus file_192.docx -> file_196.docx [word]",
+    "corpus file_196.docx -> file_197.docx [word]",
+    "corpus file_196.docx -> file_38.docx [word]",
+    "corpus file_24.docx -> file_27.docx [word]",
+    "corpus file_24.docx -> file_74.docx [word]",
+    "corpus file_3.docx -> file_34.docx [word]",
+    "corpus file_30.docx -> file_8.docx [word]",
+    "corpus file_34.docx -> file_55.docx [word]",
+    "corpus file_44.docx -> file_9.docx [word]",
+    "corpus file_73.docx -> file_74.docx [word]",
+    "corpus file_79.docx -> file_131.docx [word]",
+    "corpus file_79.docx -> file_8.docx [word]",
+    "corpus file_81.docx -> file_82.docx [word]",
+    "corpus file_89.docx -> file_9.docx [word]",
+    "corpus font_color_demo_style_default_missing.docx -> strict01_sdt_controls.docx [word]",
+    "corpus ooxml_style_link.docx -> strict01.docx [word]",
+    "corpus open_sans_bold_underline_id_paraid_overflow.docx -> strict01_sdt_controls.docx [word]",
+    "corpus sd_2517_localized_heading_styles.docx -> strict01.docx [word]",
+    "corpus strict01_sdt_controls.docx -> center_alignment_demo_id_paraid_overflow.docx [word]",
+    "corpus strict01_sdt_controls.docx -> subtitle_style_demo_id_paraid_overflow.docx [word]",
+    "corpus strict01_sdt_controls.docx -> title_style_demo_style_default_missing.docx [word]",
+    "corpus strict01.docx -> center_aligned_bold_text_id_paraid_overflow.docx [word]",
+    "corpus strict01.docx -> strict01_sdt_controls.docx [word]",
+    "corpus strict01.docx -> title_style_demo_id_paraid_overflow.docx [word]",
+    "corpus super_editor__fields_test_4a8ffd8c.docx -> super_editor__h_f_normal_5d2a8d96.docx [word]",
+    "corpus title_style_demo_id_paraid_overflow.docx -> docx_lots_of_comments.docx [word]",
+    "corpus title_style_demo_style_default_missing.docx -> docx_lots_of_comments_addition.docx [word]",
+    "corpus word_tolerated_broken_media_rel.docx -> docx_lots_of_comments_addition_redline.docx [word]",
+    "corpus word_tolerated_duplicate_ppr.docx -> docx_lots_of_comments_addition_redline_addition_v_removal.docx [word]",
+    "corpus word_tolerated_orphan_comment.docx -> docx_lots_of_comments_addition_removal.docx [word]",
+    "corpus yellow_highlight_demo_id_paraid_overflow.docx -> docx_lots_of_comments_addition_removal_redline.docx [word]",
+    "fixture agent-view/word-checklist.docx -> md-roundtrip/demo.docx [word]",
+    "fixture agent-view/word-checklist.docx -> strict/Strict01.docx [word]",
+    "fixture f4/original.docx -> nested_table/hf_a.docx [word]",
+    "fixture from-docx/critic/synthetic/structure.accepted.docx -> md-roundtrip/demo.docx [word]",
+    "fixture from-docx/equations.docx -> md-roundtrip/demo.docx [word]",
+    "fixture from-docx/equations.docx -> strict/Strict01.docx [word]",
+    "fixture inline-pictures/1975-header.docx -> md-roundtrip/demo.docx [word]",
+    "fixture inline-pictures/1975-textbox.docx -> md-roundtrip/demo.docx [word]",
+    "fixture nested_table/hf_a.docx -> inline-pictures/1975-header.docx [word]",
+    "fixture re-dialect/step1.docx -> md-roundtrip/demo.docx [word]",
+    "fixture sections/multi_section.docx -> md-roundtrip/demo.docx [word]",
+    "fixture strict/Strict01.docx -> agent-view/word-checklist.docx [word]",
+    "fixture strict/Strict01.docx -> from-docx/equations.docx [word]",
     "template 10+45 [word-coarse]",
     "template 10+58 [word-coarse]",
     "template 10+58 [word-nomoves]",
@@ -1758,4 +1887,423 @@ fn template_pairs_round_trip_2() {
 #[test]
 fn template_pairs_round_trip_3() {
     template_sweep(40_000, 200);
+}
+
+/// Real documents from the repository's fixtures, paired across files
+/// no fixture compares: Word styles, numbering, notes, comments, fields,
+/// equations, pictures, sections and strict markup in combinations the
+/// synthetic shapes do not produce.
+const FIXTURES: &[(&str, &[u8])] = &[
+    (
+        "1676-word.docx",
+        include_bytes!("../../../../../tests/fixtures/1676-word.docx"),
+    ),
+    (
+        "1677-word.docx",
+        include_bytes!("../../../../../tests/fixtures/1677-word.docx"),
+    ),
+    (
+        "1683-case1-word.docx",
+        include_bytes!("../../../../../tests/fixtures/1683-case1-word.docx"),
+    ),
+    (
+        "1686-word-compare.docx",
+        include_bytes!("../../../../../tests/fixtures/1686-word-compare.docx"),
+    ),
+    (
+        "f4/original.docx",
+        include_bytes!("../../../../../tests/fixtures/f4/original.docx"),
+    ),
+    (
+        "redline/original.docx",
+        include_bytes!("../../../../../tests/fixtures/redline/original.docx"),
+    ),
+    (
+        "redline/modified.docx",
+        include_bytes!("../../../../../tests/fixtures/redline/modified.docx"),
+    ),
+    (
+        "nested_table/hf_a.docx",
+        include_bytes!("../../../../../tests/fixtures/nested_table/hf_a.docx"),
+    ),
+    (
+        "nested_table/hf_b.docx",
+        include_bytes!("../../../../../tests/fixtures/nested_table/hf_b.docx"),
+    ),
+    (
+        "sections/multi_section.docx",
+        include_bytes!("../../../../../tests/fixtures/sections/multi_section.docx"),
+    ),
+    (
+        "multibody/multibody.docx",
+        include_bytes!("../../../../../tests/fixtures/multibody/multibody.docx"),
+    ),
+    (
+        "relids/hyperlink_doc.docx",
+        include_bytes!("../../../../../tests/fixtures/relids/hyperlink_doc.docx"),
+    ),
+    (
+        "relids/image_doc.docx",
+        include_bytes!("../../../../../tests/fixtures/relids/image_doc.docx"),
+    ),
+    (
+        "math/builtin-equations.docx",
+        include_bytes!("../../../../../tests/fixtures/math/builtin-equations.docx"),
+    ),
+    (
+        "math/quadratic-in-table.docx",
+        include_bytes!("../../../../../tests/fixtures/math/quadratic-in-table.docx"),
+    ),
+    (
+        "math/matrix-subscripts.docx",
+        include_bytes!("../../../../../tests/fixtures/math/matrix-subscripts.docx"),
+    ),
+    (
+        "math/word2007-equations.docx",
+        include_bytes!("../../../../../tests/fixtures/math/word2007-equations.docx"),
+    ),
+    (
+        "from-docx/equations.docx",
+        include_bytes!("../../../../../tests/fixtures/from-docx/equations.docx"),
+    ),
+    (
+        "from-docx/critic/synthetic/all.accepted.docx",
+        include_bytes!(
+            "../../../../../tests/fixtures/from-docx/critic/synthetic/all.accepted.docx"
+        ),
+    ),
+    (
+        "from-docx/critic/synthetic/tables.accepted.docx",
+        include_bytes!(
+            "../../../../../tests/fixtures/from-docx/critic/synthetic/tables.accepted.docx"
+        ),
+    ),
+    (
+        "from-docx/critic/synthetic/hard-notes.accepted.docx",
+        include_bytes!(
+            "../../../../../tests/fixtures/from-docx/critic/synthetic/hard-notes.accepted.docx"
+        ),
+    ),
+    (
+        "from-docx/critic/synthetic/hard-lists.accepted.docx",
+        include_bytes!(
+            "../../../../../tests/fixtures/from-docx/critic/synthetic/hard-lists.accepted.docx"
+        ),
+    ),
+    (
+        "from-docx/critic/synthetic/structure.accepted.docx",
+        include_bytes!(
+            "../../../../../tests/fixtures/from-docx/critic/synthetic/structure.accepted.docx"
+        ),
+    ),
+    (
+        "from-docx/critic/synthetic/comments.accepted.docx",
+        include_bytes!(
+            "../../../../../tests/fixtures/from-docx/critic/synthetic/comments.accepted.docx"
+        ),
+    ),
+    (
+        "agent-view/received.docx",
+        include_bytes!("../../../../../tests/fixtures/agent-view/received.docx"),
+    ),
+    (
+        "agent-view/word-checklist.docx",
+        include_bytes!("../../../../../tests/fixtures/agent-view/word-checklist.docx"),
+    ),
+    (
+        "re-dialect/annex.docx",
+        include_bytes!("../../../../../tests/fixtures/re-dialect/annex.docx"),
+    ),
+    (
+        "re-dialect/step1.docx",
+        include_bytes!("../../../../../tests/fixtures/re-dialect/step1.docx"),
+    ),
+    (
+        "inline-pictures/1975-header.docx",
+        include_bytes!("../../../../../tests/fixtures/inline-pictures/1975-header.docx"),
+    ),
+    (
+        "inline-pictures/1975-textbox.docx",
+        include_bytes!("../../../../../tests/fixtures/inline-pictures/1975-textbox.docx"),
+    ),
+    (
+        "md-roundtrip/demo.docx",
+        include_bytes!("../../../../../tests/fixtures/md-roundtrip/demo.docx"),
+    ),
+    (
+        "word_probes/keep_next_picture_kn_1001.docx",
+        include_bytes!("../../../../../tests/fixtures/word_probes/keep_next_picture_kn_1001.docx"),
+    ),
+];
+
+/// Each fixture in `left` against the fixtures a few places after it (a
+/// fixed spread of offsets keeps the sweep to a few hundred pairs).
+fn fixture_sweep(left: std::ops::Range<usize>) {
+    const OFFSETS: [usize; 7] = [1, 2, 3, 5, 8, 13, 21];
+    let settings = presets().remove(0).1;
+    let mut results = Vec::new();
+    for i in left {
+        let (name_a, a) = FIXTURES[i];
+        for offset in OFFSETS {
+            let (name_b, b) = FIXTURES[(i + offset) % FIXTURES.len()];
+            results.push((
+                format!("fixture {name_a} -> {name_b} [word]"),
+                round_trip(a, b, &settings),
+            ));
+        }
+    }
+    check(results);
+}
+
+#[test]
+fn fixture_pairs_round_trip_0() {
+    fixture_sweep(0..8);
+}
+
+#[test]
+fn fixture_pairs_round_trip_1() {
+    fixture_sweep(8..16);
+}
+
+#[test]
+fn fixture_pairs_round_trip_2() {
+    fixture_sweep(16..24);
+}
+
+#[test]
+fn fixture_pairs_round_trip_3() {
+    fixture_sweep(24..FIXTURES.len());
+}
+
+/// The larger fixtures (long contracts, a strict-markup package) cost
+/// seconds per comparison, so each meets two partners, both ways.
+const LARGE_FIXTURES: &[(&str, &[u8])] = &[
+    (
+        "redline-inpi/original-new.docx",
+        include_bytes!("../../../../../tests/fixtures/redline-inpi/original-new.docx"),
+    ),
+    (
+        "redline-inpi/modified-new-2.docx",
+        include_bytes!("../../../../../tests/fixtures/redline-inpi/modified-new-2.docx"),
+    ),
+    (
+        "strict/Strict01.docx",
+        include_bytes!("../../../../../tests/fixtures/strict/Strict01.docx"),
+    ),
+    (
+        "f4/modified.docx",
+        include_bytes!("../../../../../tests/fixtures/f4/modified.docx"),
+    ),
+];
+
+fn large_fixture_sweep(large: std::ops::Range<usize>) {
+    let settings = presets().remove(0).1;
+    let mut results = Vec::new();
+    for i in large {
+        let (name_l, l) = LARGE_FIXTURES[i];
+        for offset in [3, 11] {
+            let (name_s, s) = FIXTURES[(i * 7 + offset) % FIXTURES.len()];
+            results.push((
+                format!("fixture {name_l} -> {name_s} [word]"),
+                round_trip(l, s, &settings),
+            ));
+            results.push((
+                format!("fixture {name_s} -> {name_l} [word]"),
+                round_trip(s, l, &settings),
+            ));
+        }
+    }
+    check(results);
+}
+
+#[test]
+fn large_fixture_pairs_round_trip_0() {
+    large_fixture_sweep(0..2);
+}
+
+#[test]
+fn large_fixture_pairs_round_trip_1() {
+    large_fixture_sweep(2..4);
+}
+
+/// The sorted `.docx` files of a corpus folder under `tests/corpus`.
+fn corpus(folder: &str) -> Vec<(String, Vec<u8>)> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus")
+        .join(folder);
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|x| x == "docx"))
+        .collect();
+    files.sort();
+    files
+        .into_iter()
+        .map(|p| {
+            (
+                p.file_name().unwrap().to_string_lossy().into_owned(),
+                std::fs::read(&p).unwrap(),
+            )
+        })
+        .collect()
+}
+
+/// Corpus documents in `part` of `parts` against the documents `offsets`
+/// places after them: pairs the corpus's own pair tests never make.
+fn corpus_sweep(folder: &str, offsets: &[usize], part: usize, parts: usize) {
+    let docs = corpus(folder);
+    let settings = presets().remove(0).1;
+    let mut results = Vec::new();
+    for i in (0..docs.len()).filter(|i| i % parts == part) {
+        for offset in offsets {
+            let (name_a, a) = &docs[i];
+            let (name_b, b) = &docs[(i + offset) % docs.len()];
+            results.push((
+                format!("corpus {name_a} -> {name_b} [word]"),
+                round_trip(a, b, &settings),
+            ));
+        }
+    }
+    check(results);
+}
+
+#[test]
+fn superdoc_corpus_pairs_round_trip_0() {
+    corpus_sweep(
+        "neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source",
+        &[1, 17, 43],
+        0,
+        4,
+    );
+}
+
+#[test]
+fn superdoc_corpus_pairs_round_trip_1() {
+    corpus_sweep(
+        "neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source",
+        &[1, 17, 43],
+        1,
+        4,
+    );
+}
+
+#[test]
+fn superdoc_corpus_pairs_round_trip_2() {
+    corpus_sweep(
+        "neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source",
+        &[1, 17, 43],
+        2,
+        4,
+    );
+}
+
+#[test]
+fn superdoc_corpus_pairs_round_trip_3() {
+    corpus_sweep(
+        "neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source",
+        &[1, 17, 43],
+        3,
+        4,
+    );
+}
+
+const WORD_BASED: &str = "neurotic_docx_bench/corpus/word_based/docx_source";
+const WORD_CLEAN: &str = "neurotic_docx_bench/corpus/word/clean/docx";
+const RANDOMIZED: &str = "neurotic_docx_bench/corpus/word_based/docx_source_randomized";
+const COMMENTED: &str = "neurotic_docx_bench/corpus/word/with_comments_tracking/docx";
+const STAMPED: &str = "broken_ones_two/sources";
+
+#[test]
+fn word_based_corpus_pairs_round_trip_0() {
+    corpus_sweep(WORD_BASED, &[1, 7, 19], 0, 2);
+}
+
+#[test]
+fn word_based_corpus_pairs_round_trip_1() {
+    corpus_sweep(WORD_BASED, &[1, 7, 19], 1, 2);
+}
+
+#[test]
+fn word_clean_corpus_pairs_round_trip_0() {
+    corpus_sweep(WORD_CLEAN, &[1, 7, 19], 0, 2);
+}
+
+#[test]
+fn word_clean_corpus_pairs_round_trip_1() {
+    corpus_sweep(WORD_CLEAN, &[1, 7, 19], 1, 2);
+}
+
+#[test]
+fn randomized_corpus_pairs_round_trip() {
+    corpus_sweep(RANDOMIZED, &[1, 7, 19], 0, 1);
+}
+
+#[test]
+fn commented_corpus_pairs_round_trip() {
+    corpus_sweep(COMMENTED, &[1, 7, 19], 0, 1);
+}
+
+#[test]
+fn stamped_corpus_pairs_round_trip_0() {
+    corpus_sweep(STAMPED, &[1, 29], 0, 3);
+}
+
+#[test]
+fn stamped_corpus_pairs_round_trip_1() {
+    corpus_sweep(STAMPED, &[1, 29], 1, 3);
+}
+
+#[test]
+fn stamped_corpus_pairs_round_trip_2() {
+    corpus_sweep(STAMPED, &[1, 29], 2, 3);
+}
+
+const UNACCEPTED: &str = "_to_improve_accepted_changes/_original_unaccepted_docx";
+const REJECTED: &str = "neurotic_docx_bench/grok_run/wr0928/rejected_tracking/docx";
+const GROK_WORD_BASED: &str = "neurotic_docx_bench/grok_run/word_based/docx_source";
+const TRACKING: &str = "neurotic_docx_bench/corpus/word/tracking_without_comments/docx";
+
+#[test]
+fn unaccepted_corpus_pairs_round_trip_0() {
+    corpus_sweep(UNACCEPTED, &[1, 13], 0, 2);
+}
+
+#[test]
+fn unaccepted_corpus_pairs_round_trip_1() {
+    corpus_sweep(UNACCEPTED, &[1, 13], 1, 2);
+}
+
+#[test]
+fn rejected_corpus_pairs_round_trip_0() {
+    corpus_sweep(REJECTED, &[1, 31], 0, 3);
+}
+
+#[test]
+fn rejected_corpus_pairs_round_trip_1() {
+    corpus_sweep(REJECTED, &[1, 31], 1, 3);
+}
+
+#[test]
+fn rejected_corpus_pairs_round_trip_2() {
+    corpus_sweep(REJECTED, &[1, 31], 2, 3);
+}
+
+#[test]
+fn grok_word_based_corpus_pairs_round_trip() {
+    corpus_sweep(GROK_WORD_BASED, &[1, 7], 0, 1);
+}
+
+#[test]
+fn tracking_corpus_pairs_round_trip_0() {
+    corpus_sweep(TRACKING, &[1], 0, 3);
+}
+
+#[test]
+fn tracking_corpus_pairs_round_trip_1() {
+    corpus_sweep(TRACKING, &[1], 1, 3);
+}
+
+#[test]
+fn tracking_corpus_pairs_round_trip_2() {
+    corpus_sweep(TRACKING, &[1], 2, 3);
 }

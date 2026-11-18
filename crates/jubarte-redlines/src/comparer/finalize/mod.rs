@@ -1277,3 +1277,8 @@ mod live_opaque_row_source_boundary_tests;
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 #[path = "tests/deleted_carrier_echo_source_owner_tests.rs"]
 mod deleted_carrier_echo_source_owner_tests;
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[path = "tests/redline_pass_sweep_tests.rs"]
+mod redline_pass_sweep_tests;

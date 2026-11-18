@@ -1,0 +1,464 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! Seeded redline bodies through each finalizer pass on its own. A pass
+//! may move a pilcrow, a property or a run between paragraphs, reorder
+//! deleted and inserted blocks, or drop an empty paragraph, but the
+//! document it leaves must accept to the same text and reject to the same
+//! text as the one it was given.
+
+use super::*;
+
+const DATE: &str = "2026-01-01T00:00:00Z";
+
+struct Lcg(u64);
+
+impl Lcg {
+    fn next(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        self.0 >> 33
+    }
+    fn below(&mut self, n: usize) -> usize {
+        (self.next() % n as u64) as usize
+    }
+    fn chance(&mut self, percent: u64) -> bool {
+        self.next() % 100 < percent
+    }
+}
+
+const WORDS: [&str; 24] = [
+    "harbor",
+    "lantern",
+    "meadow",
+    "copper",
+    "orchard",
+    "summit",
+    "a",
+    "b",
+    "ONE",
+    "TWO",
+    "1",
+    "2",
+    "Demo",
+    "Document",
+    "Title",
+    "the",
+    "and",
+    "for",
+    "agreement",
+    "notice",
+    "section",
+    "List",
+    "Text",
+    "Bold",
+];
+
+fn text(rng: &mut Lcg, n: usize) -> String {
+    (0..n)
+        .map(|_| WORDS[rng.below(WORDS.len())])
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn run(kind: &str, s: &str, id: &mut u32) -> String {
+    let leaf = if kind == "del" { "delText" } else { "t" };
+    let r = format!(
+        "<w:r><w:rPr><w:lang w:val=\"en-US\"/></w:rPr><w:{leaf} xml:space=\"preserve\">{s}</w:{leaf}></w:r>"
+    );
+    if kind == "eq" {
+        r
+    } else {
+        *id += 1;
+        format!("<w:{kind} w:id=\"{id}\" w:author=\"Editor\" w:date=\"{DATE}\">{r}</w:{kind}>")
+    }
+}
+
+/// Paragraph properties: a style, numbering, spacing, justification and
+/// a mark revision or a property change, each by chance.
+fn ppr(rng: &mut Lcg, mark: Option<&str>, id: &mut u32) -> String {
+    let mut out = String::from("<w:pPr>");
+    match rng.below(6) {
+        0 => out.push_str("<w:pStyle w:val=\"Title\"/>"),
+        1 => out.push_str("<w:pStyle w:val=\"Heading1\"/>"),
+        2 => out.push_str("<w:pStyle w:val=\"ListParagraph\"/>"),
+        3 => out.push_str("<w:pStyle w:val=\"Normal\"/>"),
+        _ => {}
+    }
+    if rng.chance(30) {
+        out.push_str(&format!(
+            "<w:numPr><w:ilvl w:val=\"{}\"/><w:numId w:val=\"9\"/></w:numPr>",
+            rng.below(3)
+        ));
+    }
+    if rng.chance(40) {
+        out.push_str(&format!(
+            "<w:spacing w:before=\"{}\" w:after=\"{}\"/>",
+            rng.below(3) * 120,
+            rng.below(3) * 80
+        ));
+    }
+    if rng.chance(25) {
+        out.push_str(
+            [
+                "<w:jc w:val=\"center\"/>",
+                "<w:jc w:val=\"left\"/>",
+                "<w:jc w:val=\"both\"/>",
+            ][rng.below(3)],
+        );
+    }
+    if let Some(kind) = mark {
+        *id += 1;
+        out.push_str(&format!(
+            "<w:rPr><w:{kind} w:id=\"{id}\" w:author=\"Editor\" w:date=\"{DATE}\"/></w:rPr>"
+        ));
+    }
+    if rng.chance(20) {
+        *id += 1;
+        out.push_str(&format!(
+            "<w:pPrChange w:id=\"{id}\" w:author=\"Editor\" w:date=\"{DATE}\"><w:pPr><w:spacing w:after=\"200\"/><w:jc w:val=\"right\"/></w:pPr></w:pPrChange>"
+        ));
+    }
+    out.push_str("</w:pPr>");
+    out
+}
+
+/// One redline paragraph: plain, pure inserted, pure deleted, mixed, or
+/// empty, with or without a revised pilcrow.
+fn paragraph(rng: &mut Lcg, id: &mut u32) -> String {
+    let n = 1 + rng.below(6);
+    let kind = rng.below(9);
+    let mark = match kind {
+        1 | 5 => Some("ins"),
+        2 | 6 => Some("del"),
+        3 | 4 if rng.chance(50) => Some(if rng.chance(50) { "ins" } else { "del" }),
+        _ => None,
+    };
+    let props = ppr(rng, mark, id);
+    let body = match kind {
+        0 => run("eq", &text(rng, n), id),
+        1 => run("ins", &text(rng, n), id),
+        2 => run("del", &text(rng, n), id),
+        3 => {
+            let mut s = String::new();
+            for _ in 0..2 + rng.below(4) {
+                let k = ["eq", "ins", "del"][rng.below(3)];
+                let words = 1 + rng.below(3);
+                s.push_str(&run(k, &format!("{} ", text(rng, words)), id));
+            }
+            s
+        }
+        4 => format!(
+            "{}{}",
+            run("del", &text(rng, n), id),
+            run("ins", &text(rng, n), id)
+        ),
+        5 | 6 => String::new(),
+        7 => run(if rng.chance(50) { "ins" } else { "del" }, "   ", id),
+        _ => format!("{}{}", run("eq", &text(rng, 1), id), run("ins", "  ", id)),
+    };
+    format!("<w:p>{props}{body}</w:p>")
+}
+
+fn body(rng: &mut Lcg) -> String {
+    let mut id = 100;
+    let mut out = String::new();
+    for _ in 0..2 + rng.below(12) {
+        if rng.chance(8) {
+            out.push_str(&format!(
+                "<w:tbl><w:tblPr><w:tblW w:w=\"3600\" w:type=\"dxa\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"3600\"/></w:tblGrid><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>",
+                paragraph(rng, &mut id)
+            ));
+        } else {
+            out.push_str(&paragraph(rng, &mut id));
+        }
+    }
+    out
+}
+
+fn document(fragment: &str) -> (Dom, NodeId) {
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&format!(
+        "<w:document xmlns:w=\"{}\" xmlns:m=\"{}\"><w:body>{fragment}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr></w:body></w:document>",
+        W::URI,
+        M::URI
+    ));
+    let root = dom.root(doc).unwrap();
+    (dom, root)
+}
+
+fn inside(dom: &Dom, n: NodeId, names: &[XName]) -> bool {
+    let mut cur = dom.parent(n);
+    while let Some(p) = cur {
+        if names.iter().any(|name| dom.name_is(p, name)) {
+            return true;
+        }
+        cur = dom.parent(p);
+    }
+    false
+}
+
+/// `(accepted, rejected)` non-whitespace text of the body.
+fn views(dom: &Dom, root: NodeId) -> (String, String) {
+    let mut accepted = String::new();
+    let mut rejected = String::new();
+    for n in dom.descendants(root, None) {
+        let is_t = dom.name_is(n, &W::t());
+        let is_del = dom.name_is(n, &W::del_text());
+        if !is_t && !is_del {
+            continue;
+        }
+        let v: String = dom
+            .value_str(n)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        let in_del = is_del || inside(dom, n, &[W::del(), W::move_from()]);
+        let in_ins = inside(dom, n, &[W::ins(), W::move_to()]);
+        if !in_del {
+            accepted.push_str(&v);
+        }
+        if !in_ins {
+            rejected.push_str(&v);
+        }
+    }
+    (accepted, rejected)
+}
+
+type Pass = (&'static str, fn(&mut Dom, NodeId));
+
+fn passes() -> Vec<Pass> {
+    vec![
+        (
+            "restore_echoed_heading_deletions_before_table",
+            restore_echoed_heading_deletions_before_table,
+        ),
+        (
+            "strip_leading_del_echoing_prev_pure_i",
+            strip_leading_del_echoing_prev_pure_i,
+        ),
+        (
+            "splice_trailing_short_pure_dels_midstream",
+            splice_trailing_short_pure_dels_midstream,
+        ),
+        (
+            "split_digits_ins_from_mixed_title",
+            split_digits_ins_from_mixed_title,
+        ),
+        (
+            "peel_trailing_ins_from_mix_into_following_pure_del",
+            peel_trailing_ins_from_mix_into_following_pure_del,
+        ),
+        (
+            "restore_short_del_before_long_ins",
+            restore_short_del_before_long_ins,
+        ),
+        (
+            "peel_trailing_del_from_mix_into_following_pure_ins",
+            peel_trailing_del_from_mix_into_following_pure_ins,
+        ),
+        (
+            "fold_short_list_label_into_empty_pure_del",
+            fold_short_list_label_into_empty_pure_del,
+        ),
+        (
+            "strip_trailing_bare_empty_after_pure_i_dominant",
+            strip_trailing_bare_empty_after_pure_i_dominant,
+        ),
+        (
+            "promote_live_numpr_on_pure_d_from_pprchange",
+            promote_live_numpr_on_pure_d_from_pprchange,
+        ),
+        (
+            "ensure_pure_i_list_snug_spacing",
+            ensure_pure_i_list_snug_spacing,
+        ),
+        ("normalize_incomplete_spacing", normalize_incomplete_spacing),
+        (
+            "strip_redundant_normal_pstyle_and_bidi",
+            strip_redundant_normal_pstyle_and_bidi,
+        ),
+        (
+            "strip_list_layout_from_mid_pure_del",
+            strip_list_layout_from_mid_pure_del,
+        ),
+        (
+            "free_mesh_shared_title_token_in_mix",
+            free_mesh_shared_title_token_in_mix,
+        ),
+        ("free_mesh_wholesale_body_mix", free_mesh_wholesale_body_mix),
+        ("free_mesh_bookended_ins_del", free_mesh_bookended_ins_del),
+        (
+            "peel_trailing_for_word_onto_next_mix",
+            peel_trailing_for_word_onto_next_mix,
+        ),
+        ("residual_short_label_zip", residual_short_label_zip),
+        (
+            "interleave_list_cluster_after_coalesce",
+            interleave_list_cluster_after_coalesce,
+        ),
+        ("reorder_replaced_blocks", reorder_replaced_blocks),
+        ("coalesce_all_paragraphs", coalesce_all_paragraphs),
+        (
+            "fix_paragraph_mark_revision_order",
+            fix_paragraph_mark_revision_order,
+        ),
+        (
+            "strip_trailing_empty_pure_del_mark",
+            strip_trailing_empty_pure_del_mark,
+        ),
+        (
+            "strip_trailing_empty_pure_ins",
+            strip_trailing_empty_pure_ins,
+        ),
+        (
+            "relocate_title_page_last_empty_after_pure_dels",
+            relocate_title_page_last_empty_after_pure_dels,
+        ),
+        (
+            "strip_empty_pure_ins_before_trailing_pure_dels",
+            strip_empty_pure_ins_before_trailing_pure_dels,
+        ),
+        (
+            "fold_whitespace_pure_ins_into_following_pure_del",
+            fold_whitespace_pure_ins_into_following_pure_del,
+        ),
+        (
+            "rotate_ins_mark_del_only_paragraph",
+            rotate_ins_mark_del_only_paragraph,
+        ),
+        (
+            "restamp_stranded_del_mark_onto_del_only_paragraph",
+            restamp_stranded_del_mark_onto_del_only_paragraph,
+        ),
+        (
+            "split_head_short_title_long_del_mix",
+            split_head_short_title_long_del_mix,
+        ),
+        (
+            "fold_leading_ins_from_mix_into_preceding_pure_del",
+            fold_leading_ins_from_mix_into_preceding_pure_del,
+        ),
+        (
+            "strip_last_pure_del_mark_only_ppr",
+            strip_last_pure_del_mark_only_ppr,
+        ),
+        (
+            "cleanup_spacing_and_default_jc",
+            cleanup_spacing_and_default_jc,
+        ),
+        (
+            "last_pure_del_inherit_prev_jc",
+            last_pure_del_inherit_prev_jc,
+        ),
+        (
+            "strip_empty_pprchange_on_mix_with_live_jc",
+            strip_empty_pprchange_on_mix_with_live_jc,
+        ),
+        ("strip_propertyless_ppr", strip_propertyless_ppr),
+        (
+            "promote_heading_spacing_from_pprchange_on_last_mix",
+            promote_heading_spacing_from_pprchange_on_last_mix,
+        ),
+        (
+            "strip_last_pure_del_mark_when_pprchange",
+            strip_last_pure_del_mark_when_pprchange,
+        ),
+        ("merge_replaced_paragraphs", |dom, root| {
+            merge_replaced_paragraphs(dom, root, "Editor")
+        }),
+        ("last_pure_del_spacing_to_pprchange", |dom, root| {
+            last_pure_del_spacing_to_pprchange(
+                dom,
+                root,
+                &WmlComparerSettings::default(),
+                &mut 900,
+            );
+        }),
+        ("mixed_spacing_to_following_empty", |dom, root| {
+            mixed_spacing_to_following_empty(dom, root, &WmlComparerSettings::default(), &mut 900);
+        }),
+        ("park_mixed_spacing_onto_trailing_pure_del", |dom, root| {
+            park_mixed_spacing_onto_trailing_pure_del(
+                dom,
+                root,
+                &WmlComparerSettings::default(),
+                &mut 900,
+            );
+        }),
+        (
+            "park_mixed_numpr_onto_trailing_empty_pure_del",
+            |dom, root| {
+                park_mixed_numpr_onto_trailing_empty_pure_del(
+                    dom,
+                    root,
+                    &WmlComparerSettings::default(),
+                    &mut 900,
+                );
+            },
+        ),
+    ]
+}
+
+fn sweep(seed: u64, count: usize) {
+    let mut failures = Vec::new();
+    let mut changed = 0usize;
+    for case in 0..count {
+        let mut rng = Lcg(seed
+            .wrapping_add(case as u64)
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15));
+        let fragment = body(&mut rng);
+        for (name, pass) in passes() {
+            let (mut dom, root) = document(&fragment);
+            let before = views(&dom, root);
+            let xml = dom.serialize_element(root);
+            pass(&mut dom, root);
+            if dom.serialize_element(root) != xml {
+                changed += 1;
+            }
+            let after = views(&dom, root);
+            if after != before {
+                failures.push(format!("{seed}+{case} {name}: {before:?} -> {after:?}"));
+            }
+        }
+    }
+    assert!(
+        failures
+            .iter()
+            .all(|f| KNOWN.iter().any(|k| f.starts_with(k))),
+        "{} passes changed a view:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+    assert!(changed > 0, "no pass changed any document");
+}
+
+/// Pass runs that change the accepted or rejected text; each is a finding
+/// for the pass, kept here so the sweep guards everything else.
+const KNOWN: &[&str] = &[
+    "1+0 strip_leading_del_echoing_prev_pure_i:",
+    "1+228 residual_short_label_zip:",
+    "1+284 strip_leading_del_echoing_prev_pure_i:",
+    "1+70 strip_leading_del_echoing_prev_pure_i:",
+    "1+82 residual_short_label_zip:",
+    "7000+217 restore_short_del_before_long_ins:",
+    "7000+242 strip_leading_del_echoing_prev_pure_i:",
+];
+
+#[test]
+fn passes_keep_both_views_0() {
+    sweep(1, 300);
+}
+
+#[test]
+fn passes_keep_both_views_1() {
+    sweep(7_000, 300);
+}
+
+#[test]
+fn passes_keep_both_views_2() {
+    sweep(11_000, 300);
+}
