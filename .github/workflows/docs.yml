@@ -74,9 +74,9 @@ env:
 jobs:
   drift:
     name: generated docs drift
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: self-hosted
     steps:
-      - uses: useblacksmith/checkout@75c49b6ed30ce59336e9252425796cfcfac155f8 # v1.8.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
@@ -96,9 +96,9 @@ jobs:
 
   claims:
     name: adoption claims (tests/adoption.rs)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: self-hosted
     steps:
-      - uses: useblacksmith/checkout@75c49b6ed30ce59336e9252425796cfcfac155f8 # v1.8.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
@@ -109,10 +109,10 @@ jobs:
 
   examples:
     name: side-by-side examples (examples/adoption)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: self-hosted
     needs: claims
     steps:
-      - uses: useblacksmith/checkout@75c49b6ed30ce59336e9252425796cfcfac155f8 # v1.8.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
