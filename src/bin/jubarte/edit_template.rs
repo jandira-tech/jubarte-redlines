@@ -67,7 +67,8 @@ fn read(path: &Path) -> Result<Vec<u8>, Failure> {
     std::fs::read(path).map_err(|e| failure("IO_ERROR", format!("reading {}: {e}", path.display())))
 }
 fn alias(path: &Path, input: &Path) -> Result<(), Failure> {
-    refuse_output_alias(path, &[(input, "the source")]).map_err(|(_, m)| failure("OUTPUT_ALIAS", m))
+    refuse_output_alias(path, &[(input, "the source")])
+        .map_err(|(_, m)| failure("OUTPUT_ALIAS", edit_typed::without_code("OUTPUT_ALIAS", &m)))
 }
 fn generate(
     options: &TemplateOptions,
