@@ -7,6 +7,32 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## api-baseline.txt re-recorded after T7.1-T7.5 - 2026-11-17
+
+`python3 scripts/api_snapshot.py --emit` on pre-release fdbe86dd5 (after
+#2459): 13,865 -> 13,930 lines; 3,009 rows removed, 3,074 added. Reviewed:
+
+- No `api` row is removed or changed. The 23 added `api` rows are the
+  definer-path duplicates the T7.2 entry predicted: the 9 pub functions
+  of the private lcs siblings (`lcs::para_marks::split_at_paragraph_mark`,
+  ...), their 7 module rows and 7 glob `pub use` rows. Each function's
+  public path (`comparer::lcs::split_at_paragraph_mark`, ...) is listed
+  as before. The siblings are `pub(crate::comparer::lcs)`, so nothing
+  new is nameable outside lcs.
+- The 3,009 removed and 3,051 added `internal` rows are private items
+  that changed module with their code: 2,581 under convert (T7.5), 161
+  under comparer (lcs), 146 under edit (T7.4, including the review's
+  visibility narrowing), 121 under document_comparer. The one convert
+  row that drifted before T7, `convert::font::indexed_faces_with`, is
+  among them.
+
+api_snapshot.py is left as it is. Listing an item only at its re-export
+path would mean re-pathing every type's methods too, a change to the
+listing model, which implementation_plan.md settles the other way: drift
+from definer-path keying is reviewed per task and re-baselined. Release
+step 6 will show the 23 rows as added api against 0.18.0; 0.19.0 is a
+minor release, so the patch gate (`--added`) does not apply.
+
 ## T7.5 (convert/mod.rs split into siblings) - 2026-11-17
 
 - crates/jubarte-render/src/convert/mod.rs (68,191 lines) is now mod.rs
