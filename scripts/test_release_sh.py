@@ -385,7 +385,7 @@ class Lessons0101(unittest.TestCase):
         text = (HERE / "gen_docs.sh").read_text()
         block = text[text.index("GENERATED_DOCS=(") : ]
         block = block[: block.index(")") + 1]
-        generated = re.findall(r"[\w./-]+\.md", block)
+        generated = re.findall(r"[\w./*-]+\.md", block)
         self.assertIn("docs/locations.md", generated)
         s8 = step(8)
         start = s8.index("git add Cargo.toml")
