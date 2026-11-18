@@ -9,57 +9,20 @@
 //! text as the one it was given.
 
 use super::*;
+use crate::test_docs::{Lcg, split};
 
 const DATE: &str = "2026-01-01T00:00:00Z";
 
-struct Lcg(u64);
-
-impl Lcg {
-    fn next(&mut self) -> u64 {
-        self.0 = self
-            .0
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        self.0 >> 33
-    }
-    fn below(&mut self, n: usize) -> usize {
-        (self.next() % n as u64) as usize
-    }
-    fn chance(&mut self, percent: u64) -> bool {
-        self.next() % 100 < percent
-    }
+/// The vocabulary of generated runs.
+fn words() -> Vec<&'static str> {
+    split(WORD_LIST)
 }
 
-const WORDS: [&str; 24] = [
-    "harbor",
-    "lantern",
-    "meadow",
-    "copper",
-    "orchard",
-    "summit",
-    "a",
-    "b",
-    "ONE",
-    "TWO",
-    "1",
-    "2",
-    "Demo",
-    "Document",
-    "Title",
-    "the",
-    "and",
-    "for",
-    "agreement",
-    "notice",
-    "section",
-    "List",
-    "Text",
-    "Bold",
-];
+const WORD_LIST: &str = "harbor lantern meadow copper orchard summit a b ONE TWO 1 2 Demo Document Title the and for agreement notice section List Text Bold";
 
 fn text(rng: &mut Lcg, n: usize) -> String {
     (0..n)
-        .map(|_| WORDS[rng.below(WORDS.len())])
+        .map(|_| words()[rng.below(words().len())])
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -192,8 +155,8 @@ fn paragraph(rng: &mut Lcg, id: &mut u32, forced: Option<usize>) -> String {
         ),
         _ => format!(
             "{}{}",
-            run("del", WORDS[6 + rng.below(6)], id),
-            run("ins", WORDS[6 + rng.below(6)], id)
+            run("del", words()[6 + rng.below(6)], id),
+            run("ins", words()[6 + rng.below(6)], id)
         ),
     };
     format!("<w:p>{props}{body}</w:p>")
@@ -289,143 +252,56 @@ fn views(dom: &Dom, root: NodeId) -> (String, String) {
 
 type Pass = (&'static str, fn(&mut Dom, NodeId));
 
+/// `(name, pass)` for each named finalizer pass.
+macro_rules! named {
+    ($($pass:ident),* $(,)?) => {
+        vec![$((stringify!($pass), $pass as fn(&mut Dom, NodeId))),*]
+    };
+}
+
 fn passes() -> Vec<Pass> {
-    vec![
-        (
-            "restore_echoed_heading_deletions_before_table",
-            restore_echoed_heading_deletions_before_table,
-        ),
-        (
-            "strip_leading_del_echoing_prev_pure_i",
-            strip_leading_del_echoing_prev_pure_i,
-        ),
-        (
-            "splice_trailing_short_pure_dels_midstream",
-            splice_trailing_short_pure_dels_midstream,
-        ),
-        (
-            "split_digits_ins_from_mixed_title",
-            split_digits_ins_from_mixed_title,
-        ),
-        (
-            "peel_trailing_ins_from_mix_into_following_pure_del",
-            peel_trailing_ins_from_mix_into_following_pure_del,
-        ),
-        (
-            "restore_short_del_before_long_ins",
-            restore_short_del_before_long_ins,
-        ),
-        (
-            "peel_trailing_del_from_mix_into_following_pure_ins",
-            peel_trailing_del_from_mix_into_following_pure_ins,
-        ),
-        (
-            "fold_short_list_label_into_empty_pure_del",
-            fold_short_list_label_into_empty_pure_del,
-        ),
-        (
-            "strip_trailing_bare_empty_after_pure_i_dominant",
-            strip_trailing_bare_empty_after_pure_i_dominant,
-        ),
-        (
-            "promote_live_numpr_on_pure_d_from_pprchange",
-            promote_live_numpr_on_pure_d_from_pprchange,
-        ),
-        (
-            "ensure_pure_i_list_snug_spacing",
-            ensure_pure_i_list_snug_spacing,
-        ),
-        ("normalize_incomplete_spacing", normalize_incomplete_spacing),
-        (
-            "strip_redundant_normal_pstyle_and_bidi",
-            strip_redundant_normal_pstyle_and_bidi,
-        ),
-        (
-            "strip_list_layout_from_mid_pure_del",
-            strip_list_layout_from_mid_pure_del,
-        ),
-        (
-            "free_mesh_shared_title_token_in_mix",
-            free_mesh_shared_title_token_in_mix,
-        ),
-        ("free_mesh_wholesale_body_mix", free_mesh_wholesale_body_mix),
-        ("free_mesh_bookended_ins_del", free_mesh_bookended_ins_del),
-        (
-            "peel_trailing_for_word_onto_next_mix",
-            peel_trailing_for_word_onto_next_mix,
-        ),
-        ("residual_short_label_zip", residual_short_label_zip),
-        (
-            "interleave_list_cluster_after_coalesce",
-            interleave_list_cluster_after_coalesce,
-        ),
-        ("reorder_replaced_blocks", reorder_replaced_blocks),
-        ("coalesce_all_paragraphs", coalesce_all_paragraphs),
-        (
-            "fix_paragraph_mark_revision_order",
-            fix_paragraph_mark_revision_order,
-        ),
-        (
-            "strip_trailing_empty_pure_del_mark",
-            strip_trailing_empty_pure_del_mark,
-        ),
-        (
-            "strip_trailing_empty_pure_ins",
-            strip_trailing_empty_pure_ins,
-        ),
-        (
-            "relocate_title_page_last_empty_after_pure_dels",
-            relocate_title_page_last_empty_after_pure_dels,
-        ),
-        (
-            "strip_empty_pure_ins_before_trailing_pure_dels",
-            strip_empty_pure_ins_before_trailing_pure_dels,
-        ),
-        (
-            "fold_whitespace_pure_ins_into_following_pure_del",
-            fold_whitespace_pure_ins_into_following_pure_del,
-        ),
-        (
-            "rotate_ins_mark_del_only_paragraph",
-            rotate_ins_mark_del_only_paragraph,
-        ),
-        (
-            "restamp_stranded_del_mark_onto_del_only_paragraph",
-            restamp_stranded_del_mark_onto_del_only_paragraph,
-        ),
-        (
-            "split_head_short_title_long_del_mix",
-            split_head_short_title_long_del_mix,
-        ),
-        (
-            "fold_leading_ins_from_mix_into_preceding_pure_del",
-            fold_leading_ins_from_mix_into_preceding_pure_del,
-        ),
-        (
-            "strip_last_pure_del_mark_only_ppr",
-            strip_last_pure_del_mark_only_ppr,
-        ),
-        (
-            "cleanup_spacing_and_default_jc",
-            cleanup_spacing_and_default_jc,
-        ),
-        (
-            "last_pure_del_inherit_prev_jc",
-            last_pure_del_inherit_prev_jc,
-        ),
-        (
-            "strip_empty_pprchange_on_mix_with_live_jc",
-            strip_empty_pprchange_on_mix_with_live_jc,
-        ),
-        ("strip_propertyless_ppr", strip_propertyless_ppr),
-        (
-            "promote_heading_spacing_from_pprchange_on_last_mix",
-            promote_heading_spacing_from_pprchange_on_last_mix,
-        ),
-        (
-            "strip_last_pure_del_mark_when_pprchange",
-            strip_last_pure_del_mark_when_pprchange,
-        ),
+    let mut out: Vec<Pass> = named!(
+        restore_echoed_heading_deletions_before_table,
+        strip_leading_del_echoing_prev_pure_i,
+        splice_trailing_short_pure_dels_midstream,
+        split_digits_ins_from_mixed_title,
+        peel_trailing_ins_from_mix_into_following_pure_del,
+        restore_short_del_before_long_ins,
+        peel_trailing_del_from_mix_into_following_pure_ins,
+        fold_short_list_label_into_empty_pure_del,
+        strip_trailing_bare_empty_after_pure_i_dominant,
+        promote_live_numpr_on_pure_d_from_pprchange,
+        ensure_pure_i_list_snug_spacing,
+        normalize_incomplete_spacing,
+        strip_redundant_normal_pstyle_and_bidi,
+        strip_list_layout_from_mid_pure_del,
+        free_mesh_shared_title_token_in_mix,
+        free_mesh_wholesale_body_mix,
+        free_mesh_bookended_ins_del,
+        peel_trailing_for_word_onto_next_mix,
+        residual_short_label_zip,
+        interleave_list_cluster_after_coalesce,
+        reorder_replaced_blocks,
+        coalesce_all_paragraphs,
+        fix_paragraph_mark_revision_order,
+        strip_trailing_empty_pure_del_mark,
+        strip_trailing_empty_pure_ins,
+        relocate_title_page_last_empty_after_pure_dels,
+        strip_empty_pure_ins_before_trailing_pure_dels,
+        fold_whitespace_pure_ins_into_following_pure_del,
+        rotate_ins_mark_del_only_paragraph,
+        restamp_stranded_del_mark_onto_del_only_paragraph,
+        split_head_short_title_long_del_mix,
+        fold_leading_ins_from_mix_into_preceding_pure_del,
+        strip_last_pure_del_mark_only_ppr,
+        cleanup_spacing_and_default_jc,
+        last_pure_del_inherit_prev_jc,
+        strip_empty_pprchange_on_mix_with_live_jc,
+        strip_propertyless_ppr,
+        promote_heading_spacing_from_pprchange_on_last_mix,
+        strip_last_pure_del_mark_when_pprchange
+    );
+    let wrapped: Vec<Pass> = vec![
         ("merge_replaced_paragraphs", |dom, root| {
             merge_replaced_paragraphs(dom, root, "Editor");
         }),
@@ -527,7 +403,9 @@ fn passes() -> Vec<Pass> {
         ("drop_sectpr_from_deleted_marks", |dom, root| {
             drop_sectpr_from_deleted_marks(dom, root, &HashSet::new());
         }),
-    ]
+    ];
+    out.extend(wrapped);
+    out
 }
 
 fn sweep(seed: u64, count: usize) {

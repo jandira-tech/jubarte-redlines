@@ -37,6 +37,10 @@ pub mod comparison_log;
 pub mod document_comparer;
 /// Accept and reject tracked revisions across a package.
 pub mod revision_processor;
+/// Document builders shared by the sweep tests.
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod test_docs;
 /// `WmlDocument`: document bytes plus the lazily parsed main part.
 pub mod wml_document;
 

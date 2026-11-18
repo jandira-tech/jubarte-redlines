@@ -14,6 +14,7 @@
 
 use super::*;
 use crate::namespaces::{M, R};
+use crate::test_docs::{Lcg, Shapes, para, plain, split, words};
 use CorrelationStatus::{Deleted, Equal, Inserted};
 
 fn source(dom: &mut Dom, fragment: &str, settings: &WmlComparerSettings) -> Vec<ComparisonUnit> {
@@ -120,34 +121,6 @@ fn text(atoms: &[(NodeId, String, String)]) -> String {
         .collect()
 }
 
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;")
-}
-
-fn para(text: &str, style: &str, level: Option<u8>, rpr: &str) -> String {
-    let style = if style.is_empty() {
-        String::new()
-    } else {
-        format!("<w:pStyle w:val=\"{style}\"/>")
-    };
-    let num = level.map_or_else(String::new, |l| {
-        format!("<w:numPr><w:ilvl w:val=\"{l}\"/><w:numId w:val=\"9\"/></w:numPr>")
-    });
-    let run = if text.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "<w:r><w:rPr>{rpr}</w:rPr><w:t xml:space=\"preserve\">{}</w:t></w:r>",
-            esc(text)
-        )
-    };
-    format!("<w:p><w:pPr>{style}{num}</w:pPr>{run}</w:p>")
-}
-
-fn plain(text: &str) -> String {
-    para(text, "", None, "")
-}
-
 fn table(rows: &[Vec<String>]) -> String {
     let mut out = String::from("<w:tbl><w:tblPr><w:tblStyle w:val=\"TableGrid\"/></w:tblPr>");
     for row in rows {
@@ -169,87 +142,21 @@ fn textbox(text: &str) -> String {
     )
 }
 
-struct Lcg(u64);
-
-impl Lcg {
-    fn next(&mut self) -> u64 {
-        self.0 = self
-            .0
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        self.0 >> 33
-    }
-    fn below(&mut self, n: usize) -> usize {
-        (self.next() % n as u64) as usize
-    }
-    fn chance(&mut self, percent: u64) -> bool {
-        self.next() % 100 < percent
-    }
-}
-
-const POOL: [&str; 40] = [
-    "harbor",
-    "lantern",
-    "meadow",
-    "copper",
-    "orchard",
-    "summit",
-    "glacier",
-    "willow",
-    "saffron",
-    "bronze",
-    "quartz",
-    "harvest",
-    "violet",
-    "cobalt",
-    "silver",
-    "mariner",
-    "agreement",
-    "client",
-    "payment",
-    "notice",
-    "section",
-    "party",
-    "term",
-    "report",
-    "the",
-    "and",
-    "for",
-    "with",
-    "to",
-    "of",
-    "a",
-    "is",
-    "Document",
-    "Tester",
-    "Demo",
-    "List",
-    "Table",
-    "Style",
-    "Text",
-    "Bold",
-];
-
-fn words(rng: &mut Lcg, pool: &[&str], n: usize) -> String {
-    (0..n)
-        .map(|_| pool[rng.below(pool.len())])
-        .collect::<Vec<_>>()
-        .join(" ")
-}
+const POOL: &str = "harbor lantern meadow copper orchard summit glacier willow saffron \
+    bronze quartz harvest violet cobalt silver mariner agreement client \
+    payment notice section party term report the and for with to of a is \
+    Document Tester Demo List Table Style Text Bold";
 
 const SHAPES: usize = 32;
 
 /// One document of shape `shape` over `pool`.
 fn shape_doc(rng: &mut Lcg, pool: &[&str], shape: usize) -> Vec<String> {
-    let pick = |rng: &mut Lcg| pool[rng.below(pool.len())].to_string();
-    let filler = |rng: &mut Lcg, n: usize| -> Vec<String> {
-        (0..n)
-            .map(|_| {
-                let k = 3 + rng.below(10);
-                plain(&words(rng, pool, k))
-            })
-            .collect()
+    let shapes = Shapes {
+        pool,
+        filler_span: 10,
     };
+    let pick = |rng: &mut Lcg| shapes.pick(rng);
+    let filler = |rng: &mut Lcg, n: usize| shapes.filler(rng, n);
     let mut out: Vec<String> = Vec::new();
     match shape {
         0 => {
@@ -317,14 +224,7 @@ fn shape_doc(rng: &mut Lcg, pool: &[&str], shape: usize) -> Vec<String> {
             out.push(plain("page 3"));
         }
         8 => {
-            out.push(para("MEMORANDUM", "Title", None, ""));
-            out.push(plain(&format!("TO: {}", pick(rng))));
-            out.push(plain(&format!("FROM: {}", pick(rng))));
-            out.push(plain("DATE: March 3, 2040"));
-            out.push(plain(&format!("RE: {}", pick(rng))));
-            out.push(plain("Dear colleagues,"));
-            let n = 2 + rng.below(30);
-            out.extend(filler(rng, n));
+            out.extend(shapes.memo(rng, 2, 30));
         }
         9 => {
             out.push(para("OOXML w:b property tester", "Title", None, ""));
@@ -370,41 +270,16 @@ fn shape_doc(rng: &mut Lcg, pool: &[&str], shape: usize) -> Vec<String> {
             out.push(plain(&words(rng, pool, n)));
         }
         14 => {
-            out.push(plain(&format!("file_{}.docx", 190 + rng.below(9))));
-            out.push(para(
-                &format!("{} images essay", pick(rng)),
-                "Title",
-                None,
-                "",
-            ));
-            let n = 1 + rng.below(25);
-            out.extend(filler(rng, n));
+            out.extend(shapes.essay(rng, 1, 25));
         }
         15 => {
-            out.push(para(
-                &format!("{} {} Demo", pick(rng), pick(rng)),
-                "Title",
-                None,
-                "",
-            ));
-            out.push(plain(&format!(
-                "This document demonstrates {} {}",
-                pick(rng),
-                pick(rng)
-            )));
-            out.push(plain(&format!("This text is {}", pick(rng))));
+            out.extend(shapes.demo(rng));
         }
         16 => {
-            out.push(para(&format!("{} List Demo", pick(rng)), "Title", None, ""));
-            for ordinal in ["First", "Second", "Third"] {
-                out.push(para(&format!("{ordinal} item"), "", Some(0), ""));
-            }
+            out.extend(shapes.list_demo(rng));
         }
         17 => {
-            for (i, letter) in ['A', 'B', 'C', 'D'].iter().enumerate() {
-                out.push(plain(&format!("{letter}) {} section {i}", pick(rng))));
-                out.extend(filler(rng, 1));
-            }
+            out.extend(shapes.lettered(rng));
         }
         18 => {
             out.push(para(&format!("{} Tester", pick(rng)), "Title", None, ""));
@@ -648,22 +523,23 @@ fn run_pair(a: &str, b: &str, context: &str, failures: &mut Vec<String>) -> usiz
 /// from one small pool, so the gates meet fingerprinted shapes whose
 /// vocabularies overlap and must decline them.
 fn sweep(seed: u64, count: usize, same_pool: bool) {
+    let pool = split(POOL);
     let mut replaced = 0;
     let mut failures = Vec::new();
     for case in 0..count {
         let mut rng = Lcg(seed
             .wrapping_add(case as u64)
             .wrapping_mul(0x9e37_79b9_7f4a_7c15));
-        let start = rng.below(POOL.len() - 10);
+        let start = rng.below(pool.len() - 10);
         let width = if same_pool {
             3 + rng.below(4)
         } else {
             4 + rng.below(16)
         };
-        let left_pool = &POOL[start..(start + width).min(POOL.len())];
+        let left_pool = &pool[start..(start + width).min(pool.len())];
         let shift = if same_pool { 0 } else { rng.below(10) };
-        let right_start = (start + shift).min(POOL.len() - 4);
-        let right_pool = &POOL[right_start..(right_start + width).min(POOL.len())];
+        let right_start = (start + shift).min(pool.len() - 4);
+        let right_pool = &pool[right_start..(right_start + width).min(pool.len())];
         let sa = case % SHAPES;
         let sb = (case / SHAPES + case * 7) % SHAPES;
         let a = shape_doc(&mut rng, left_pool, sa);
@@ -707,13 +583,14 @@ fn shape_pairs_keep_both_sources_3() {
 /// Every shape against every other, without random edits.
 #[test]
 fn every_shape_against_every_shape_keeps_both_sources() {
+    let pool = split(POOL);
     let mut replaced = 0;
     let mut failures = Vec::new();
     for sa in 0..SHAPES {
         for sb in 0..SHAPES {
             let mut rng = Lcg((sa * 97 + sb) as u64);
-            let a = shape_doc(&mut rng, &POOL[..16], sa);
-            let b = shape_doc(&mut rng, &POOL[8..28], sb);
+            let a = shape_doc(&mut rng, &pool[..16], sa);
+            let b = shape_doc(&mut rng, &pool[8..28], sb);
             replaced += run_pair(
                 &a.concat(),
                 &b.concat(),

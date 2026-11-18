@@ -14,6 +14,7 @@
 //! text, paragraph by paragraph, and rejecting it yields the original's.
 
 use super::*;
+use crate::test_docs::{Lcg, Shapes, para, plain, split};
 
 const MAIN: &str = "word/document.xml";
 const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
@@ -149,35 +150,6 @@ fn package(body: &str, side: usize) -> Vec<u8> {
     pkg.to_zip().unwrap()
 }
 
-fn esc(text: &str) -> String {
-    text.replace('&', "&amp;").replace('<', "&lt;")
-}
-
-/// One paragraph: optional style, optional list level, run properties.
-fn para(text: &str, style: &str, level: Option<u8>, rpr: &str) -> String {
-    let style = if style.is_empty() {
-        String::new()
-    } else {
-        format!("<w:pStyle w:val='{style}'/>")
-    };
-    let num = level.map_or_else(String::new, |l| {
-        format!("<w:numPr><w:ilvl w:val='{l}'/><w:numId w:val='9'/></w:numPr>")
-    });
-    let run = if text.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "<w:r><w:rPr>{rpr}</w:rPr><w:t xml:space='preserve'>{}</w:t></w:r>",
-            esc(text)
-        )
-    };
-    format!("<w:p><w:pPr>{style}{num}</w:pPr>{run}</w:p>")
-}
-
-fn plain(text: &str) -> String {
-    para(text, "", None, "")
-}
-
 fn table(rows: &[&[&str]]) -> String {
     let cols = rows.first().map_or(1, |r| r.len());
     let grid: String = (0..cols).map(|_| "<w:gridCol w:w='2400'/>").collect();
@@ -215,48 +187,13 @@ const VOCAB: [[&str; 8]; 3] = [
 
 /// The document shapes. `side` picks a vocabulary: 0 and 1 are disjoint,
 /// 2 is side 0 with one word changed in every paragraph.
-const FAMILIES: [&str; 40] = [
-    "prose",
-    "long_prose",
-    "demo",
-    "demo_short",
-    "stamped",
-    "stamped_long",
-    "labels",
-    "label_stubs",
-    "nested_list",
-    "uniform_list",
-    "flat_list",
-    "table",
-    "digits_table",
-    "multi_table",
-    "math",
-    "picture",
-    "textless",
-    "cover",
-    "sectioned",
-    "headings",
-    "format_demo",
-    "breaks",
-    "ooxml_demo",
-    "first_second",
-    "single",
-    "blank_led",
-    "footnoted",
-    "commented",
-    "linked",
-    "fielded",
-    "controls",
-    "textbox",
-    "tracked",
-    "moved",
-    "merged_cells",
-    "nested_table",
-    "sectioned_breaks",
-    "headed",
-    "symbols",
-    "paragraph_props",
-];
+const FAMILIES: &str = "prose long_prose demo demo_short stamped stamped_long labels \
+    label_stubs nested_list uniform_list flat_list table digits_table \
+    multi_table math picture textless cover sectioned headings \
+    format_demo breaks ooxml_demo first_second single blank_led \
+    footnoted commented linked fielded controls textbox tracked moved \
+    merged_cells nested_table sectioned_breaks headed symbols \
+    paragraph_props";
 
 fn blocks(family: &str, side: usize) -> Vec<String> {
     let v = VOCAB[side];
@@ -999,9 +936,9 @@ fn check(results: &[(String, Result<bool, String>)]) {
 /// Compare every family in `left` against every family (disjoint
 /// vocabulary), and against its own lightly edited copy.
 fn sweep(left: &[&str]) {
-    let docs: Vec<(&str, usize, Vec<u8>)> = FAMILIES
-        .iter()
-        .flat_map(|&f| (0..3).map(move |side| (f, side)))
+    let docs: Vec<(&str, usize, Vec<u8>)> = split(FAMILIES)
+        .into_iter()
+        .flat_map(|f| (0..3).map(move |side| (f, side)))
         .map(|(f, side)| (f, side, package(&blocks(f, side).concat(), side)))
         .collect();
     let mut results = Vec::new();
@@ -1149,205 +1086,81 @@ fn edit_sweep(left: &[&str]) {
 
 #[test]
 fn prose_and_demo_shapes_round_trip_against_every_shape() {
-    sweep(&["prose", "long_prose", "demo", "demo_short", "single"]);
+    sweep(&split("prose long_prose demo demo_short single"));
 }
 
 #[test]
 fn stamped_and_cover_shapes_round_trip_against_every_shape() {
-    sweep(&["stamped", "stamped_long", "cover", "blank_led"]);
+    sweep(&split("stamped stamped_long cover blank_led"));
 }
 
 #[test]
 fn list_shapes_round_trip_against_every_shape() {
-    sweep(&[
-        "labels",
-        "label_stubs",
-        "nested_list",
-        "uniform_list",
-        "flat_list",
-    ]);
+    sweep(&split(
+        "labels label_stubs nested_list uniform_list flat_list",
+    ));
 }
 
 #[test]
 fn table_shapes_round_trip_against_every_shape() {
-    sweep(&[
-        "table",
-        "digits_table",
-        "multi_table",
-        "merged_cells",
-        "nested_table",
-    ]);
+    sweep(&split(
+        "table digits_table multi_table merged_cells nested_table",
+    ));
 }
 
 #[test]
 fn payload_shapes_round_trip_against_every_shape() {
-    sweep(&[
-        "math", "picture", "textless", "breaks", "textbox", "symbols",
-    ]);
+    sweep(&split("math picture textless breaks textbox symbols"));
 }
 
 #[test]
 fn styled_shapes_round_trip_against_every_shape() {
-    sweep(&[
-        "sectioned",
-        "headings",
-        "format_demo",
-        "ooxml_demo",
-        "first_second",
-        "paragraph_props",
-    ]);
+    sweep(&split(
+        "sectioned headings format_demo ooxml_demo first_second paragraph_props",
+    ));
 }
 
 #[test]
 fn annotated_shapes_round_trip_against_every_shape() {
-    sweep(&[
-        "footnoted",
-        "commented",
-        "linked",
-        "fielded",
-        "controls",
-        "tracked",
-        "moved",
-        "sectioned_breaks",
-        "headed",
-    ]);
+    sweep(&split(
+        "footnoted commented linked fielded controls tracked moved sectioned_breaks headed",
+    ));
 }
 
 #[test]
 fn prose_edits_round_trip() {
-    edit_sweep(&[
-        "prose",
-        "long_prose",
-        "demo",
-        "demo_short",
-        "single",
-        "moved",
-        "cover",
-        "blank_led",
-        "stamped",
-    ]);
+    edit_sweep(&split(
+        "prose long_prose demo demo_short single moved cover blank_led stamped",
+    ));
 }
 
 #[test]
 fn list_and_table_edits_round_trip() {
-    edit_sweep(&[
-        "labels",
-        "label_stubs",
-        "nested_list",
-        "uniform_list",
-        "flat_list",
-        "table",
-        "digits_table",
-        "multi_table",
-        "merged_cells",
-        "nested_table",
-    ]);
+    edit_sweep(&split(
+        "labels label_stubs nested_list uniform_list flat_list table digits_table multi_table merged_cells nested_table",
+    ));
 }
 
 #[test]
 fn payload_and_style_edits_round_trip() {
-    edit_sweep(&[
-        "math",
-        "picture",
-        "textless",
-        "breaks",
-        "textbox",
-        "symbols",
-        "sectioned",
-        "headings",
-        "format_demo",
-        "ooxml_demo",
-        "first_second",
-        "paragraph_props",
-    ]);
+    edit_sweep(&split(
+        "math picture textless breaks textbox symbols sectioned headings format_demo ooxml_demo first_second paragraph_props",
+    ));
 }
 
 #[test]
 fn annotated_edits_round_trip() {
-    edit_sweep(&[
-        "footnoted",
-        "commented",
-        "linked",
-        "fielded",
-        "controls",
-        "tracked",
-        "sectioned_breaks",
-        "headed",
-        "stamped_long",
-    ]);
+    edit_sweep(&split(
+        "footnoted commented linked fielded controls tracked sectioned_breaks headed stamped_long",
+    ));
 }
 
 /// A small deterministic generator (64-bit LCG) for the random sweep.
-struct Lcg(u64);
-
-impl Lcg {
-    fn next(&mut self) -> u64 {
-        self.0 = self
-            .0
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        self.0 >> 33
-    }
-
-    fn below(&mut self, n: usize) -> usize {
-        (self.next() % n as u64) as usize
-    }
-
-    fn chance(&mut self, percent: u64) -> bool {
-        self.next() % 100 < percent
-    }
-}
-
-const POOL: [&str; 48] = [
-    "agreement",
-    "party",
-    "the",
-    "of",
-    "and",
-    "text",
-    "sample",
-    "demo",
-    "bold",
-    "italic",
-    "table",
-    "row",
-    "item",
-    "list",
-    "first",
-    "second",
-    "end",
-    "summary",
-    "section",
-    "clause",
-    "quartz",
-    "bronze",
-    "saffron",
-    "walnut",
-    "orchard",
-    "harvest",
-    "copper",
-    "meadow",
-    "violet",
-    "cobalt",
-    "glacier",
-    "silver",
-    "harbor",
-    "mariner",
-    "sapphire",
-    "summit",
-    "test",
-    "a",
-    "b",
-    "ONE",
-    "TWO",
-    "3",
-    "this",
-    "document",
-    "demonstrates",
-    "heading",
-    "is",
-    "with",
-];
+const POOL: &str = "agreement party the of and text sample demo bold italic table row \
+    item list first second end summary section clause quartz bronze \
+    saffron walnut orchard harvest copper meadow violet cobalt glacier \
+    silver harbor mariner sapphire summit test a b ONE TWO 3 this \
+    document demonstrates heading is with";
 
 /// One random block drawn from the shapes the comparer special-cases.
 fn random_block(rng: &mut Lcg, words: &[&str]) -> String {
@@ -1501,31 +1314,51 @@ fn all_presets() -> Vec<(&'static str, WmlComparerSettings)> {
 /// documents over overlapping vocabularies, half are edits of one
 /// document. Every pair must round trip in both presets.
 fn random_sweep(seed: u64, count: usize) {
+    seeded_sweep(
+        "random",
+        seed,
+        count,
+        0x9e37_79b9_7f4a_7c15,
+        |rng, left, right| {
+            let span = if rng.chance(20) { 30 } else { 8 };
+            let len_a = 1 + rng.below(span);
+            let a = random_doc(rng, left, len_a);
+            let b = if rng.chance(50) {
+                random_edit(rng, &a, right)
+            } else {
+                let span = if rng.chance(20) { 30 } else { 8 };
+                let len_b = 1 + rng.below(span);
+                random_doc(rng, right, len_b)
+            };
+            (a, b)
+        },
+    );
+}
+
+/// `count` seeded cases from `seed`: each draws two overlapping windows of
+/// [`POOL`] and builds a pair from them with `make`.
+fn seeded_sweep(
+    label: &str,
+    seed: u64,
+    count: usize,
+    stride: u64,
+    make: impl Fn(&mut Lcg, &[&str], &[&str]) -> (Vec<String>, Vec<String>),
+) {
+    let pool = split(POOL);
     let mut results = Vec::new();
     for case in 0..count {
-        let mut rng = Lcg(seed
-            .wrapping_add(case as u64)
-            .wrapping_mul(0x9e37_79b9_7f4a_7c15));
-        let start = rng.below(POOL.len() - 12);
+        let mut rng = Lcg(seed.wrapping_add(case as u64).wrapping_mul(stride));
+        let start = rng.below(pool.len() - 12);
         let width = 4 + rng.below(16);
-        let left_words = &POOL[start..(start + width).min(POOL.len())];
+        let left_words = &pool[start..(start + width).min(pool.len())];
         let shift = rng.below(12);
-        let right_start = (start + shift).min(POOL.len() - 4);
-        let right_words = &POOL[right_start..(right_start + width).min(POOL.len())];
-        let span = if rng.chance(20) { 30 } else { 8 };
-        let len_a = 1 + rng.below(span);
-        let a = random_doc(&mut rng, left_words, len_a);
-        let b = if rng.chance(50) {
-            random_edit(&mut rng, &a, right_words)
-        } else {
-            let span = if rng.chance(20) { 30 } else { 8 };
-            let len_b = 1 + rng.below(span);
-            random_doc(&mut rng, right_words, len_b)
-        };
+        let right_start = (start + shift).min(pool.len() - 4);
+        let right_words = &pool[right_start..(right_start + width).min(pool.len())];
+        let (a, b) = make(&mut rng, left_words, right_words);
         let (a, b) = (package(&a.concat(), 0), package(&b.concat(), 0));
         for (name, settings) in all_presets() {
             results.push((
-                format!("random {seed}+{case} [{name}]"),
+                format!("{label} {seed}+{case} [{name}]"),
                 round_trip(&a, &b, &settings),
             ));
         }
@@ -1603,7 +1436,7 @@ fn with_noise(docx: &[u8], noise: &str) -> Vec<u8> {
 #[test]
 fn xml_comments_in_every_part_round_trip() {
     let mut results = Vec::new();
-    for family in FAMILIES {
+    for family in split(FAMILIES) {
         for side in [0, 1] {
             let base = blocks(family, side);
             let a = with_xml_comments(&package(&base.concat(), side));
@@ -1638,19 +1471,11 @@ fn xml_comments_in_every_part_round_trip() {
 /// colon lists. Random filler blocks over `words` pad some of them.
 fn template_doc(rng: &mut Lcg, words: &[&str]) -> Vec<String> {
     let pick = |rng: &mut Lcg| words[rng.below(words.len())];
-    let filler = |rng: &mut Lcg, n: usize| -> Vec<String> {
-        (0..n)
-            .map(|_| {
-                let k = 3 + rng.below(9);
-                plain(
-                    &(0..k)
-                        .map(|_| words[rng.below(words.len())])
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                )
-            })
-            .collect()
+    let shapes = Shapes {
+        pool: words,
+        filler_span: 9,
     };
+    let filler = |rng: &mut Lcg, n: usize| shapes.filler(rng, n);
     let mut out: Vec<String> = Vec::new();
     match rng.below(24) {
         0 => {
@@ -1707,14 +1532,7 @@ fn template_doc(rng: &mut Lcg, words: &[&str]) -> Vec<String> {
             out.push(plain("page 3"));
         }
         8 => {
-            out.push(para("MEMORANDUM", "Title", None, ""));
-            out.push(plain(&format!("TO: {}", pick(rng))));
-            out.push(plain(&format!("FROM: {}", pick(rng))));
-            out.push(plain("DATE: March 3, 2040"));
-            out.push(plain(&format!("RE: {}", pick(rng))));
-            out.push(plain("Dear colleagues,"));
-            let n = 14 + rng.below(10);
-            out.extend(filler(rng, n));
+            out.extend(shapes.memo(rng, 14, 10));
         }
         9 => {
             out.push(para("OOXML w:b property tester", "Title", None, ""));
@@ -1758,41 +1576,16 @@ fn template_doc(rng: &mut Lcg, words: &[&str]) -> Vec<String> {
             ));
         }
         14 => {
-            out.push(plain(&format!("file_{}.docx", 190 + rng.below(9))));
-            out.push(para(
-                &format!("{} images essay", pick(rng)),
-                "Title",
-                None,
-                "",
-            ));
-            let n = 3 + rng.below(25);
-            out.extend(filler(rng, n));
+            out.extend(shapes.essay(rng, 3, 25));
         }
         15 => {
-            out.push(para(
-                &format!("{} {} Demo", pick(rng), pick(rng)),
-                "Title",
-                None,
-                "",
-            ));
-            out.push(plain(&format!(
-                "This document demonstrates {} {}",
-                pick(rng),
-                pick(rng)
-            )));
-            out.push(plain(&format!("This text is {}", pick(rng))));
+            out.extend(shapes.demo(rng));
         }
         16 => {
-            out.push(para(&format!("{} List Demo", pick(rng)), "Title", None, ""));
-            for ordinal in ["First", "Second", "Third"] {
-                out.push(para(&format!("{ordinal} item"), "", Some(0), ""));
-            }
+            out.extend(shapes.list_demo(rng));
         }
         17 => {
-            for (i, letter) in ['A', 'B', 'C', 'D'].iter().enumerate() {
-                out.push(plain(&format!("{letter}) {} section {i}", pick(rng))));
-                out.extend(filler(rng, 1));
-            }
+            out.extend(shapes.lettered(rng));
         }
         18 => {
             out.push(para("Tab Alignment", "Title", None, ""));
@@ -1860,32 +1653,21 @@ fn template_doc(rng: &mut Lcg, words: &[&str]) -> Vec<String> {
 /// `count` seeded template pairs: two templates over overlapping
 /// vocabularies, or one template and its random edit, in every preset.
 fn template_sweep(seed: u64, count: usize) {
-    let mut results = Vec::new();
-    for case in 0..count {
-        let mut rng = Lcg(seed
-            .wrapping_add(case as u64)
-            .wrapping_mul(0x2545_f491_4f6c_dd1d));
-        let start = rng.below(POOL.len() - 12);
-        let width = 4 + rng.below(16);
-        let left_words = &POOL[start..(start + width).min(POOL.len())];
-        let shift = rng.below(12);
-        let right_start = (start + shift).min(POOL.len() - 4);
-        let right_words = &POOL[right_start..(right_start + width).min(POOL.len())];
-        let a = template_doc(&mut rng, left_words);
-        let b = if rng.chance(25) {
-            random_edit(&mut rng, &a, right_words)
-        } else {
-            template_doc(&mut rng, right_words)
-        };
-        let (a, b) = (package(&a.concat(), 0), package(&b.concat(), 0));
-        for (name, settings) in all_presets() {
-            results.push((
-                format!("template {seed}+{case} [{name}]"),
-                round_trip(&a, &b, &settings),
-            ));
-        }
-    }
-    check(&results);
+    seeded_sweep(
+        "template",
+        seed,
+        count,
+        0x2545_f491_4f6c_dd1d,
+        |rng, left, right| {
+            let a = template_doc(rng, left);
+            let b = if rng.chance(25) {
+                random_edit(rng, &a, right)
+            } else {
+                template_doc(rng, right)
+            };
+            (a, b)
+        },
+    );
 }
 
 #[test]
@@ -1912,159 +1694,45 @@ fn template_pairs_round_trip_3() {
 /// no fixture compares: Word styles, numbering, notes, comments, fields,
 /// equations, pictures, sections and strict markup in combinations the
 /// synthetic shapes do not produce.
-const FIXTURES: &[(&str, &[u8])] = &[
-    (
-        "1676-word.docx",
-        include_bytes!("../../../../../tests/fixtures/1676-word.docx"),
-    ),
-    (
-        "1677-word.docx",
-        include_bytes!("../../../../../tests/fixtures/1677-word.docx"),
-    ),
-    (
-        "1683-case1-word.docx",
-        include_bytes!("../../../../../tests/fixtures/1683-case1-word.docx"),
-    ),
-    (
-        "1686-word-compare.docx",
-        include_bytes!("../../../../../tests/fixtures/1686-word-compare.docx"),
-    ),
-    (
-        "f4/original.docx",
-        include_bytes!("../../../../../tests/fixtures/f4/original.docx"),
-    ),
-    (
-        "redline/original.docx",
-        include_bytes!("../../../../../tests/fixtures/redline/original.docx"),
-    ),
-    (
-        "redline/modified.docx",
-        include_bytes!("../../../../../tests/fixtures/redline/modified.docx"),
-    ),
-    (
-        "nested_table/hf_a.docx",
-        include_bytes!("../../../../../tests/fixtures/nested_table/hf_a.docx"),
-    ),
-    (
-        "nested_table/hf_b.docx",
-        include_bytes!("../../../../../tests/fixtures/nested_table/hf_b.docx"),
-    ),
-    (
-        "sections/multi_section.docx",
-        include_bytes!("../../../../../tests/fixtures/sections/multi_section.docx"),
-    ),
-    (
-        "multibody/multibody.docx",
-        include_bytes!("../../../../../tests/fixtures/multibody/multibody.docx"),
-    ),
-    (
-        "relids/hyperlink_doc.docx",
-        include_bytes!("../../../../../tests/fixtures/relids/hyperlink_doc.docx"),
-    ),
-    (
-        "relids/image_doc.docx",
-        include_bytes!("../../../../../tests/fixtures/relids/image_doc.docx"),
-    ),
-    (
-        "math/builtin-equations.docx",
-        include_bytes!("../../../../../tests/fixtures/math/builtin-equations.docx"),
-    ),
-    (
-        "math/quadratic-in-table.docx",
-        include_bytes!("../../../../../tests/fixtures/math/quadratic-in-table.docx"),
-    ),
-    (
-        "math/matrix-subscripts.docx",
-        include_bytes!("../../../../../tests/fixtures/math/matrix-subscripts.docx"),
-    ),
-    (
-        "math/word2007-equations.docx",
-        include_bytes!("../../../../../tests/fixtures/math/word2007-equations.docx"),
-    ),
-    (
-        "from-docx/equations.docx",
-        include_bytes!("../../../../../tests/fixtures/from-docx/equations.docx"),
-    ),
-    (
-        "from-docx/critic/synthetic/all.accepted.docx",
-        include_bytes!(
-            "../../../../../tests/fixtures/from-docx/critic/synthetic/all.accepted.docx"
-        ),
-    ),
-    (
-        "from-docx/critic/synthetic/tables.accepted.docx",
-        include_bytes!(
-            "../../../../../tests/fixtures/from-docx/critic/synthetic/tables.accepted.docx"
-        ),
-    ),
-    (
-        "from-docx/critic/synthetic/hard-notes.accepted.docx",
-        include_bytes!(
-            "../../../../../tests/fixtures/from-docx/critic/synthetic/hard-notes.accepted.docx"
-        ),
-    ),
-    (
-        "from-docx/critic/synthetic/hard-lists.accepted.docx",
-        include_bytes!(
-            "../../../../../tests/fixtures/from-docx/critic/synthetic/hard-lists.accepted.docx"
-        ),
-    ),
-    (
-        "from-docx/critic/synthetic/structure.accepted.docx",
-        include_bytes!(
-            "../../../../../tests/fixtures/from-docx/critic/synthetic/structure.accepted.docx"
-        ),
-    ),
-    (
-        "from-docx/critic/synthetic/comments.accepted.docx",
-        include_bytes!(
-            "../../../../../tests/fixtures/from-docx/critic/synthetic/comments.accepted.docx"
-        ),
-    ),
-    (
-        "agent-view/received.docx",
-        include_bytes!("../../../../../tests/fixtures/agent-view/received.docx"),
-    ),
-    (
-        "agent-view/word-checklist.docx",
-        include_bytes!("../../../../../tests/fixtures/agent-view/word-checklist.docx"),
-    ),
-    (
-        "re-dialect/annex.docx",
-        include_bytes!("../../../../../tests/fixtures/re-dialect/annex.docx"),
-    ),
-    (
-        "re-dialect/step1.docx",
-        include_bytes!("../../../../../tests/fixtures/re-dialect/step1.docx"),
-    ),
-    (
-        "inline-pictures/1975-header.docx",
-        include_bytes!("../../../../../tests/fixtures/inline-pictures/1975-header.docx"),
-    ),
-    (
-        "inline-pictures/1975-textbox.docx",
-        include_bytes!("../../../../../tests/fixtures/inline-pictures/1975-textbox.docx"),
-    ),
-    (
-        "md-roundtrip/demo.docx",
-        include_bytes!("../../../../../tests/fixtures/md-roundtrip/demo.docx"),
-    ),
-    (
-        "word_probes/keep_next_picture_kn_1001.docx",
-        include_bytes!("../../../../../tests/fixtures/word_probes/keep_next_picture_kn_1001.docx"),
-    ),
-];
+const FIXTURES: &str = "1676-word.docx 1677-word.docx 1683-case1-word.docx \
+    1686-word-compare.docx f4/original.docx redline/original.docx \
+    redline/modified.docx nested_table/hf_a.docx \
+    nested_table/hf_b.docx sections/multi_section.docx \
+    multibody/multibody.docx relids/hyperlink_doc.docx \
+    relids/image_doc.docx math/builtin-equations.docx \
+    math/quadratic-in-table.docx math/matrix-subscripts.docx \
+    math/word2007-equations.docx from-docx/equations.docx \
+    from-docx/critic/synthetic/all.accepted.docx \
+    from-docx/critic/synthetic/tables.accepted.docx \
+    from-docx/critic/synthetic/hard-notes.accepted.docx \
+    from-docx/critic/synthetic/hard-lists.accepted.docx \
+    from-docx/critic/synthetic/structure.accepted.docx \
+    from-docx/critic/synthetic/comments.accepted.docx \
+    agent-view/received.docx agent-view/word-checklist.docx \
+    re-dialect/annex.docx re-dialect/step1.docx \
+    inline-pictures/1975-header.docx inline-pictures/1975-textbox.docx \
+    md-roundtrip/demo.docx word_probes/keep_next_picture_kn_1001.docx";
 
 /// Each fixture in `left` against the fixtures a few places after it (a
 /// fixed spread of offsets keeps the sweep to a few hundred pairs).
+/// Each fixture of `list` (paths under `tests/fixtures`) with its bytes.
+fn fixtures(list: &str) -> Vec<(&str, Vec<u8>)> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures");
+    split(list)
+        .into_iter()
+        .map(|name| (name, std::fs::read(root.join(name)).unwrap()))
+        .collect()
+}
+
 fn fixture_sweep(left: std::ops::Range<usize>) {
     const OFFSETS: [usize; 7] = [1, 2, 3, 5, 8, 13, 21];
     let settings = presets().remove(0).1;
+    let small = fixtures(FIXTURES);
     let mut results = Vec::new();
     for i in left {
-        let (name_a, a) = FIXTURES[i];
+        let (name_a, a) = &small[i];
         for offset in OFFSETS {
-            let (name_b, b) = FIXTURES[(i + offset) % FIXTURES.len()];
+            let (name_b, b) = &small[(i + offset) % small.len()];
             results.push((
                 format!("fixture {name_a} -> {name_b} [word]"),
                 round_trip(a, b, &settings),
@@ -2091,37 +1759,22 @@ fn fixture_pairs_round_trip_2() {
 
 #[test]
 fn fixture_pairs_round_trip_3() {
-    fixture_sweep(24..FIXTURES.len());
+    fixture_sweep(24..split(FIXTURES).len());
 }
 
 /// The larger fixtures (long contracts, a strict-markup package) cost
 /// seconds per comparison, so each meets two partners, both ways.
-const LARGE_FIXTURES: &[(&str, &[u8])] = &[
-    (
-        "redline-inpi/original-new.docx",
-        include_bytes!("../../../../../tests/fixtures/redline-inpi/original-new.docx"),
-    ),
-    (
-        "redline-inpi/modified-new-2.docx",
-        include_bytes!("../../../../../tests/fixtures/redline-inpi/modified-new-2.docx"),
-    ),
-    (
-        "strict/Strict01.docx",
-        include_bytes!("../../../../../tests/fixtures/strict/Strict01.docx"),
-    ),
-    (
-        "f4/modified.docx",
-        include_bytes!("../../../../../tests/fixtures/f4/modified.docx"),
-    ),
-];
+const LARGE_FIXTURES: &str = "redline-inpi/original-new.docx redline-inpi/modified-new-2.docx \
+    strict/Strict01.docx f4/modified.docx";
 
-fn large_fixture_sweep(large: std::ops::Range<usize>) {
+fn large_fixture_sweep(range: std::ops::Range<usize>) {
     let settings = presets().remove(0).1;
+    let (small, large) = (fixtures(FIXTURES), fixtures(LARGE_FIXTURES));
     let mut results = Vec::new();
-    for i in large {
-        let (name_l, l) = LARGE_FIXTURES[i];
+    for i in range {
+        let (name_l, l) = &large[i];
         for offset in [3, 11] {
-            let (name_s, s) = FIXTURES[(i * 7 + offset) % FIXTURES.len()];
+            let (name_s, s) = &small[(i * 7 + offset) % small.len()];
             results.push((
                 format!("fixture {name_l} -> {name_s} [word]"),
                 round_trip(l, s, &settings),
