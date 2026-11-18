@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-import jubarte_redlines as jubarte
-from jubarte_redlines.__main__ import main
+import jubarte as jubarte
+from jubarte.__main__ import main
 from docx_fixture import docx, para
 
 DELETED = '<w:p><w:del w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>gone</w:t></w:r></w:del></w:p>'

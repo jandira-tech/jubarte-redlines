@@ -12,7 +12,7 @@ from zipfile import ZipFile, ZipInfo
 
 import pytest
 
-import jubarte_redlines as jubarte
+import jubarte as jubarte
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 

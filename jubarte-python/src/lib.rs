@@ -2,11 +2,11 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Python bindings for the canonical **jubarte-redlines** engine.
+//! Python bindings for the canonical **jubarte** engine (PyPI `jubarte-docx`).
 //!
-//! Built with **PyO3** + **maturin** as the `jubarte_redlines._native`
+//! Built with **PyO3** + **maturin** as the `jubarte._native`
 //! extension module; the public Python surface (typed `Document`, edit plans,
-//! the `python -m jubarte_redlines` CLI) lives in `python/jubarte_redlines/`.
+//! the `python -m jubarte` CLI) lives in `python/jubarte/`.
 //!
 //! Every entry point detaches from the interpreter for the whole pure-Rust
 //! compute, so long operations don't block other Python threads. Structured
@@ -46,10 +46,10 @@ use pyo3::types::PyBytes;
 use pyo3::types::{PyBool, PyInt};
 
 create_exception!(
-    jubarte_redlines,
+    jubarte,
     JubarteError,
     PyException,
-    "Raised when the jubarte-redlines engine cannot process a document."
+    "Raised when the jubarte engine cannot process a document."
 );
 
 /// An engine error as `JubarteError`; an admission refusal reads code
@@ -933,7 +933,7 @@ fn diff_view(
 #[cfg(feature = "cli")]
 /// Pure shared clap parser. Arguments exclude argv0; no host I/O is done.
 #[pyfunction]
-#[pyo3(signature = (arguments, program = "jubarte-redlines", supported = None))]
+#[pyo3(signature = (arguments, program = "jubarte", supported = None))]
 fn parse_cli_json(arguments: Vec<String>, program: &str, supported: Option<Vec<String>>) -> String {
     jubarte::cli::parse_json(&arguments, program, &supported.unwrap_or_default())
 }

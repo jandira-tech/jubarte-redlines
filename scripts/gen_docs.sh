@@ -7,7 +7,7 @@
 # docs/javascript.md:
 #
 #   - the Rust `jubarte` CLI reference (built from source, clap help)
-#   - the Python `jubarte-redlines` CLI reference and API reference
+#   - the Python `jubarte` CLI reference (PyPI jubarte-docx) and API reference
 #   - the npm `jubarte-redlines` CLI reference and the jubarte-wasm API
 #   - docs/flags_datetime.md (every flag) and docs/locations.md (every id)
 #
@@ -57,25 +57,25 @@ python3 scripts/cli_locations.py
 # --- Python CLI + API ---------------------------------------------------------
 PY=$ROOT/jubarte-python/.venv/bin/python
 # Rebuild when the package is absent, not only when the interpreter is: a
-# venv left by a failed `maturin develop` has Python but no jubarte_redlines
+# venv left by a failed `maturin develop` has Python but no jubarte
 # (#1810). find_spec does not execute the package, so an installed copy whose
 # import raises still skips the build and fails at the runner as before.
-if [ ! -x "$PY" ] || ! "$PY" -c 'import importlib.util, sys; sys.exit(importlib.util.find_spec("jubarte_redlines") is None)'; then
+if [ ! -x "$PY" ] || ! "$PY" -c 'import importlib.util, sys; sys.exit(importlib.util.find_spec("jubarte") is None)'; then
   command -v uv >/dev/null \
-    || { echo "error: uv not found and $PY cannot find jubarte_redlines" >&2; exit 1; }
+    || { echo "error: uv not found and $PY cannot find jubarte" >&2; exit 1; }
   uv run --directory jubarte-python --with maturin maturin develop --release
 fi
 # --runner repeats once per argv word (gen_cli_docs.py appends them): a `-m`
 # in argv form needs the --runner=WORD spelling — argparse ends a space-
 # separated value at the dash (#1810). Each word reaches the runner verbatim.
-if [ -x "$ROOT/jubarte-python/.venv/bin/jubarte-redlines" ]; then
-  PY_RUNNER=("$ROOT/jubarte-python/.venv/bin/jubarte-redlines")
+if [ -x "$ROOT/jubarte-python/.venv/bin/jubarte" ]; then
+  PY_RUNNER=("$ROOT/jubarte-python/.venv/bin/jubarte")
 else
-  PY_RUNNER=("$PY" -m jubarte_redlines)
+  PY_RUNNER=("$PY" -m jubarte)
 fi
 python3 scripts/gen_cli_docs.py \
   "${PY_RUNNER[@]/#/--runner=}" \
-  --display jubarte-redlines --file docs/python.md --marker cli-python
+  --display jubarte --file docs/python.md --marker cli-python
 "$PY" scripts/gen_python_api.py --file docs/python.md
 
 # --- npm CLI + API ------------------------------------------------------------

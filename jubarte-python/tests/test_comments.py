@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """Comment threads from Python: ``Document.comments()``, the ``EditPlan``
-thread builders, and ``python -m jubarte_redlines comments``."""
+thread builders, and ``python -m jubarte comments``."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-import jubarte_redlines as jubarte
-from jubarte_redlines.__main__ import main
+import jubarte as jubarte
+from jubarte.__main__ import main
 
 from docx_fixture import docx, para
 

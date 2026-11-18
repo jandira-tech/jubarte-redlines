@@ -4,7 +4,7 @@
 
 //! The agent-facing CLI surface: `inspect`, `text`, `edit`, `convert --png`,
 //! `capabilities`. Every command here has a Python twin with the same names
-//! and JSON shapes (`python -m jubarte_redlines`).
+//! and JSON shapes (`python -m jubarte`).
 //!
 //! Every test drives the CLI binary and some name `jubarte::cli` and
 //! `same-file`, which only the `cli` feature builds (#1786).

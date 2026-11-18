@@ -80,9 +80,9 @@ LIBRARIES: tuple[Library, ...] = (
         lead=True,
     ),
     Library(
-        name="PyPI jubarte-redlines",
+        name="PyPI jubarte-docx",
         out="jubarte-python/README.md",
-        title="jubarte-redlines (Python)",
+        title="jubarte-docx (Python)",
         badges=("PyPI", "CI", "license"),
         keep=(
             "Rendering and fonts",
@@ -313,7 +313,7 @@ def render(lib: Library, root_text: str, version: str, root: Path = ROOT) -> str
 
 def python_surface(root: Path = ROOT) -> list[str]:
     """Public ``Document`` methods and exported functions of the Python package."""
-    pkg = root / "jubarte-python/python/jubarte_redlines"
+    pkg = root / "jubarte-python/python/jubarte"
     names: list[str] = []
     tree = ast.parse((pkg / "document.py").read_text(encoding="utf-8"))
     for node in tree.body:

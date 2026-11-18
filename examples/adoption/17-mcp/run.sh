@@ -5,8 +5,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 JUBARTE="${JUBARTE:-jubarte}"
 # The MCP server under test: the PyPI release by default; CI points it at the
-# checkout with JUBARTE_MCP_FROM='jubarte-redlines[mcp] @ <repo>/jubarte-python'.
-export JUBARTE_MCP_FROM="${JUBARTE_MCP_FROM:-jubarte-redlines[mcp]}"
+# checkout with JUBARTE_MCP_FROM='jubarte-docx[mcp] @ <repo>/jubarte-python'.
+export JUBARTE_MCP_FROM="${JUBARTE_MCP_FROM:-jubarte-docx[mcp]}"
 
 rm -f input.docx mcp_help.txt mcp_session.jsonl mcp_stderr.txt tool_versions_*.txt
 
@@ -25,7 +25,7 @@ if command -v uvx >/dev/null; then
   uvx --version > tool_versions_uvx.txt
   uvx --from "$JUBARTE_MCP_FROM" jubarte-mcp --help > mcp_help.txt
   uvx --from "$JUBARTE_MCP_FROM" python -c \
-    'from importlib.metadata import version; print(version("jubarte-redlines"))' \
+    'from importlib.metadata import version; print(version("jubarte-docx"))' \
     > tool_versions_mcp.txt
   python3 mcp_session.py
 else

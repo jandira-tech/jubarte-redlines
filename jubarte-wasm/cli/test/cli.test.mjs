@@ -4,7 +4,7 @@
 
 // `npx jubarte-redlines …` end to end: the bin over the checked-in
 // jubarte-wasm build (../npm), with the commands, flags, messages and exit
-// codes of `uvx jubarte-redlines`. Run: node --test jubarte-wasm/cli/test/
+// codes of `uvx --from jubarte-docx jubarte`. Run: node --test jubarte-wasm/cli/test/
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -1374,7 +1374,7 @@ test("unsupported host options are rejected before input I/O (integration)", () 
   // Markdown to Markdown has no engine call here; it says where it runs.
   const markdown = run("convert", "missing.md", "-o", "output.md");
   assert.equal(markdown.code, 2, markdown.err);
-  assert.match(markdown.err, /uvx jubarte-redlines convert/);
+  assert.match(markdown.err, /uvx --from jubarte-docx jubarte convert/);
   for (const flags of [["--png"]]) {
     const result = run("edit", "missing.docx", "--plan", "missing.json", "--out-dir", "missing-dir", ...flags);
     assert.equal(result.code, 2, `${flags}: ${result.err}`);

@@ -32,7 +32,13 @@ REQUIRED_WHEEL_TAGS: tuple[str, ...] = (
 
 # abi3-py310 (jubarte-python/Cargo.toml): one wheel per platform, tagged
 # cp310-abi3, covers every CPython >= 3.10.
-_WHEEL = re.compile(r"^jubarte_redlines-(?P<version>[^-]+)-cp310-abi3-(?P<tag>.+)\.whl$")
+_WHEEL = re.compile(r"^jubarte_docx-(?P<version>[^-]+)-cp310-abi3-(?P<tag>.+)\.whl$")
+
+
+def shim_files(version: str) -> tuple[str, str]:
+    """The `jubarte-redlines` shim's wheel and sdist (jubarte-python/compat):
+    pure Python, one of each, published beside `jubarte-docx`."""
+    return (f"jubarte_redlines-{version}-py3-none-any.whl", f"jubarte_redlines-{version}.tar.gz")
 
 
 def missing_platforms(filenames: list[str], *, version: str) -> set[str]:
@@ -64,9 +70,15 @@ def main(argv: list[str] | None = None) -> int:
     if missing:
         print("missing wheels for " + args.version + ": " + ", ".join(sorted(missing)), file=sys.stderr)
         return 1
-    sdist = f"jubarte_redlines-{args.version}.tar.gz"
-    if args.sdist and sdist not in {pathlib.PurePosixPath(n).name for n in names}:
+    present = {pathlib.PurePosixPath(n).name for n in names}
+    sdist = f"jubarte_docx-{args.version}.tar.gz"
+    if args.sdist and sdist not in present:
         print(f"missing sdist for {args.version}: {sdist}", file=sys.stderr)
+        return 1
+    shim = [f for f in shim_files(args.version) if args.sdist or f.endswith(".whl")]
+    lost = [f for f in shim if f not in present]
+    if lost:
+        print(f"missing jubarte-redlines shim for {args.version}: {', '.join(lost)}", file=sys.stderr)
         return 1
     print(f"all {len(REQUIRED_WHEEL_TAGS)} advertised wheel platforms present for {args.version}")
     return 0

@@ -6,7 +6,7 @@ license: AGPL-3.0-only
 
 # DOCX with jubarte: read, edit as tracked changes, verify
 
-`jubarte` is one binary (or `python -m jubarte_redlines`, the same commands
+`jubarte` is one binary (or `python -m jubarte`, the same commands
 and files except `append` and `scrub`) that reads a `.docx` into addressable paragraphs, applies a
 plan of exact edits as Word tracked changes with comments, produces the clean
 copy, and renders pages to PDF and PNG from its own layout engine. You never
@@ -25,7 +25,7 @@ touch `word/document.xml`.
 | Will Word open it, is every edit tracked | `jubarte validate redline.docx --original file.docx --author "Name"` (`--repair fixed.docx` fixes what it can) |
 | What can this build do | `jubarte capabilities` (`--json` for the manifest) |
 
-Python: `import jubarte_redlines as jubarte; doc = jubarte.read("file.docx")`,
+Python: `import jubarte; doc = jubarte.read("file.docx")`,
 then `doc.markdown()`, `doc.inspect()`, `doc.edit(plan)`, `doc.to_png()`,
 `doc.render()`, `doc.compare(other, author=...)`, `doc.accept()`,
 `doc.validate()`, `doc.repair()`, `doc.audit_tracked(original, author=...)`.
@@ -438,7 +438,7 @@ pages that changed with the change boxed, and `diff.json` with each page's
 `jubarte convert file.docx -o pages.png --pages 3-5` renders three pages
 from one layout pass (`-o file.pdf --pages 3-5` makes a three-page PDF);
 PNGs are named by the document's page number (`pages-page-03.png`).
-`--changed-pages` keeps the pages a revision or a comment touches. Python: `jubarte_redlines.diff_render(a, b, dpi=100)` and
+`--changed-pages` keeps the pages a revision or a comment touches. Python: `jubarte.diff_render(a, b, dpi=100)` and
 `Document.to_png(pages=[3, 4, 5])` (pages counted from 1).
 
 Gotchas:
@@ -572,9 +572,9 @@ Typed `--json`/`--jsonl` delivery retains its machine-readable receipt.
 
 ## Dependencies
 
-`jubarte` (single binary) or `pip install jubarte-redlines` (`python -m
-jubarte_redlines`, same commands but `append` and `scrub`) · `docx` (npm) for new documents. As MCP tools (Claude Code, Codex, Gemini CLI):
-`uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` (see `docs/adoption/mcp.md`). Legacy
+`jubarte` (single binary) or `pip install jubarte-docx` (`python -m
+jubarte`, same commands but `append` and `scrub`) · `docx` (npm) for new documents. As MCP tools (Claude Code, Codex, Gemini CLI):
+`uvx --from 'jubarte-docx[mcp]' jubarte-mcp --root .` (see `docs/adoption/mcp.md`). Legacy
 `.doc` is refused with `LEGACY_DOC` by every task but `convert`: `jubarte
 convert old.doc -o old.docx` reads its text, headings, lists and tables into
 a `.docx` (for full fidelity, save it as `.docx` in Word). An encrypted

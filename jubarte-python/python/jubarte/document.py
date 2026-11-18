@@ -328,7 +328,7 @@ class Document:
         full_lines: bool = False,
     ) -> Diff:
         """The changes from this document to ``other`` (a ``Document`` or
-        Markdown text), as ``jubarte_redlines.diff`` gives them."""
+        Markdown text), as ``jubarte.diff`` gives them."""
         if not isinstance(other, (Document, str)):
             raise TypeError("other must be a Document or Markdown text")
         return diff(self, other, author=author, date=date, columns=columns, format=format, context=context, accept_changes=accept_changes, full_lines=full_lines)

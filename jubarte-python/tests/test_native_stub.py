@@ -7,9 +7,9 @@
 import re
 from pathlib import Path
 
-from jubarte_redlines import _native
+from jubarte import _native
 
-STUB = Path(__file__).parents[1] / "python" / "jubarte_redlines" / "_native.pyi"
+STUB = Path(__file__).parents[1] / "python" / "jubarte" / "_native.pyi"
 
 
 def test_the_stub_declares_every_native_function() -> None:

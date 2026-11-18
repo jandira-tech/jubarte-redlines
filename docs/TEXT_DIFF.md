@@ -82,7 +82,7 @@ a Word document with tracked changes.
 ## Python
 
 ```python
-from jubarte_redlines import read, diff
+from jubarte import read, diff
 
 print(read("a.docx").diff(read("b.docx"), format="github").text)
 print(diff("Due in {~~30~>45~~} days.\n", "Due in 60 days.\n",

@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Regenerate the Python API reference block in ``docs/python.md``.
 
-Must run under the interpreter that has ``jubarte_redlines`` importable —
+Must run under the interpreter that has ``jubarte`` importable —
 ``scripts/gen_docs.sh`` uses ``jubarte-python/.venv/bin/python``. Reflects
 over the installed package (``__all__`` order, ``inspect`` signatures,
 dataclass fields, docstrings), so the page can never disagree with the
@@ -97,7 +97,7 @@ def build_block(module: object) -> str:
     names = list(getattr(module, "__all__", []))
     version = getattr(module, "__version__", "?")
     parts: list[str] = [
-        "Reflects the `jubarte_redlines` package built from this source tree "
+        "Reflects the `jubarte` package built from this source tree "
         f"(`__version__` reports `{version}`)."
     ]
     for name in names:
@@ -129,7 +129,7 @@ def main() -> None:
     parser.add_argument("--marker", default="python-api", help="gen block marker id")
     args = parser.parse_args()
 
-    import jubarte_redlines as module
+    import jubarte as module
 
     block = build_block(module)
     with open(args.file, encoding="utf-8") as f:

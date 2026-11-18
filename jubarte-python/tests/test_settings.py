@@ -11,7 +11,7 @@ import zipfile
 
 import pytest
 
-from jubarte_redlines import Document, EditPlan, EditPlanError
+from jubarte import Document, EditPlan, EditPlanError
 from docx_fixture import docx, para
 
 

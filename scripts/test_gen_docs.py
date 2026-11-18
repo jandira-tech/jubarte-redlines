@@ -7,8 +7,8 @@
 """Python-runner contract of scripts/gen_docs.sh and scripts/gen_cli_docs.py.
 
 Two regressions from the 0.14.0 release (#1810): a venv whose interpreter
-exists but lacks ``jubarte_redlines`` must rebuild the package, and the
-``python -m jubarte_redlines`` fallback must reach ``gen_cli_docs.py`` — its
+exists but lacks ``jubarte`` must rebuild the package, and the
+``python -m jubarte`` fallback must reach ``gen_cli_docs.py`` — its
 ``--runner`` repeats once per argv word (``--runner=WORD``), an argv list
 argparse's ``nargs="+"`` cannot carry past a ``-m``. Each word reaches the
 subprocess verbatim: no shlex split, no printf %q round-trip.
@@ -98,7 +98,7 @@ class PackageGuard(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)
             site = tmp / "site"
-            pkg = site / "jubarte_redlines"
+            pkg = site / "jubarte"
             pkg.mkdir(parents=True)
             (pkg / "__init__.py").write_text("raise RuntimeError('broken install')\n")
             self.assertFalse(
@@ -114,7 +114,7 @@ class RunnerArgument(unittest.TestCase):
         lines = script_lines()
         start = next(
             i for i, l in enumerate(lines)
-            if l.startswith('if [ -x "$ROOT/jubarte-python/.venv/bin/jubarte-redlines" ]')
+            if l.startswith('if [ -x "$ROOT/jubarte-python/.venv/bin/jubarte" ]')
         )
         end = next(i for i, l in enumerate(lines) if "--marker cli-python" in l)
         return "\n".join(lines[start : end + 1])
@@ -132,8 +132,8 @@ class RunnerArgument(unittest.TestCase):
         py.write_text(STUB_INSTALLED)
         py.chmod(0o755)
         if console_script:
-            (venv_bin / "jubarte-redlines").write_text(STUB_INSTALLED)
-            (venv_bin / "jubarte-redlines").chmod(0o755)
+            (venv_bin / "jubarte").write_text(STUB_INSTALLED)
+            (venv_bin / "jubarte").chmod(0o755)
         env = dict(
             os.environ,
             ROOT=str(root),
@@ -146,7 +146,7 @@ class RunnerArgument(unittest.TestCase):
         return argv[1 : argv.index("--display")]
 
     def test_fallback_module_runner_is_one_word_per_option(self) -> None:
-        # With no console script, `python -m jubarte_redlines` is three words,
+        # With no console script, `python -m jubarte` is three words,
         # each its own --runner=WORD (argparse append; `-m` needs the `=` form).
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)
@@ -155,7 +155,7 @@ class RunnerArgument(unittest.TestCase):
             args = self.runner_args(root, console_script=False, tmp=tmp)
         self.assertEqual(
             args,
-            [f"--runner={py}", "--runner=-m", "--runner=jubarte_redlines"],
+            [f"--runner={py}", "--runner=-m", "--runner=jubarte"],
             f"--runner got {args!r} (argparse drops -m without the = form)",
         )
 
@@ -163,7 +163,7 @@ class RunnerArgument(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)
             root = tmp / "root"
-            script = root / "jubarte-python" / ".venv" / "bin" / "jubarte-redlines"
+            script = root / "jubarte-python" / ".venv" / "bin" / "jubarte"
             args = self.runner_args(root, console_script=True, tmp=tmp)
         self.assertEqual(args, [f"--runner={script}"], f"--runner got {args!r}")
 
@@ -177,7 +177,7 @@ class RunnerArgument(unittest.TestCase):
             args = self.runner_args(root, console_script=False, tmp=tmp)
         self.assertEqual(
             args,
-            [f"--runner={py}", "--runner=-m", "--runner=jubarte_redlines"],
+            [f"--runner={py}", "--runner=-m", "--runner=jubarte"],
             f"--runner got {args!r}",
         )
 
@@ -215,12 +215,12 @@ class RunnerEndToEnd(unittest.TestCase):
     def test_dash_m_runner_reaches_the_cli(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)
-            (tmp / "jubarte_redlines.py").write_text(
+            (tmp / "jubarte.py").write_text(
                 "print('jubarte-redlines 0.15.0')\nprint('Read documents')\n"
             )
             page = self.page(tmp)
             result = self.run_docs(
-                [sys.executable, "-m", "jubarte_redlines"],
+                [sys.executable, "-m", "jubarte"],
                 page,
                 PYTHONPATH=str(tmp),
             )

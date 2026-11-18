@@ -19,8 +19,8 @@ engine runs.
 ## Install
 
 ```sh
-pip install jubarte-redlines
-# or: uv add jubarte-redlines
+pip install jubarte-docx
+# or: uv add jubarte-docx
 ```
 
 Prebuilt wheels are `abi3` (one wheel per platform, CPython ≥ 3.10).
@@ -32,26 +32,28 @@ The native `jubarte` binary offers `--keep-nested-comment` on `accept`,
 yet dispatch that option or return its kept-thread receipts; use the native
 binary when retention is needed.
 
-The wheel installs a `jubarte-redlines` command, but no `jubarte` command
-and no `jubarte` import package: on PyPI both names belong to an unrelated
-project, so the import is always `jubarte_redlines`. `uvx` runs the
-command without installing anything:
+The distribution is `jubarte-docx`; the import package and the command are
+both `jubarte`, as `python-dotenv` ships `dotenv`. PyPI's own `jubarte` is an
+unrelated project: `pip install jubarte` and `uvx jubarte` do not install
+this engine, and installing both projects in one environment breaks
+whichever was installed first. `uvx --from jubarte-docx` runs the command
+without installing anything:
 
 ```sh
-uvx jubarte-redlines redline original.docx modified.docx -o redline.docx --author Legal
-uvx jubarte-redlines changes redline.docx
-uvx jubarte-redlines accept redline.docx -o clean.docx --kind formatting
-uvx jubarte-redlines reject redline.docx -o original-again.docx --id r12
-uvx jubarte-redlines convert redline.docx --revisions word
-uvx jubarte-redlines read contract.docx
-uvx jubarte-redlines read contract.docx --json
-uvx jubarte-redlines edit contract.docx -p p12 --anchor "thirty" --content "sixty" -a NAME
-uvx jubarte-redlines edit contract.docx --plan plan.json --out-dir review --pdf
-uvx jubarte-redlines capabilities
-uvx jubarte-redlines --help
+uvx --from jubarte-docx jubarte redline original.docx modified.docx -o redline.docx --author Legal
+uvx --from jubarte-docx jubarte changes redline.docx
+uvx --from jubarte-docx jubarte accept redline.docx -o clean.docx --kind formatting
+uvx --from jubarte-docx jubarte reject redline.docx -o original-again.docx --id r12
+uvx --from jubarte-docx jubarte convert redline.docx --revisions word
+uvx --from jubarte-docx jubarte read contract.docx
+uvx --from jubarte-docx jubarte read contract.docx --json
+uvx --from jubarte-docx jubarte edit contract.docx -p p12 --anchor "thirty" --content "sixty" -a NAME
+uvx --from jubarte-docx jubarte edit contract.docx --plan plan.json --out-dir review --pdf
+uvx --from jubarte-docx jubarte capabilities
+uvx --from jubarte-docx jubarte --help
 ```
 
-`redline` is an alias of `compare`; `python -m jubarte_redlines` runs the same
+`redline` is an alias of `compare`; `python -m jubarte` runs the same
 commands. `changes` lists what a document tracks, one change per line with
 its short id (`r12`; `--json` for one object per line); `accept` and `reject`
 take repeatable `--id` (`r12`, `r1+2`, `header1.r1`),
@@ -68,7 +70,7 @@ success, 1 error, 2 usage, 3 edit plan refused. Inputs are `.docx`: save a Word
 
 ```python
 from pathlib import Path
-from jubarte_redlines import (
+from jubarte import (
     compare_documents,
     get_revisions,
     accept_revisions,
@@ -98,7 +100,7 @@ Path("redline.pdf").write_bytes(docx_to_pdf(redline))
 `compare_documents(original, modified, author="Redline", date=None)` stamps
 revisions with a fixed epoch date by default so output is deterministic;
 pass an ISO-8601 `date` to override. Errors raise
-`jubarte_redlines.JubarteError`.
+`jubarte.JubarteError`.
 
 Both inputs are admitted under a size budget before anything is inflated
 (512 MiB per file and per part, 2 GiB inflated, 10,000 entries, XML depth
@@ -117,7 +119,7 @@ raises `JubarteError` with `INPUT_LIMIT`, and an unknown key raises
 operation mutating it or writing files:
 
 ```python
-from jubarte_redlines import read, EditPlan, diff
+from jubarte import read, EditPlan, diff
 
 doc = read("contract.docx")
 doc.markdown()    # body and every header/footer/notes story, <!-- pN --> id lines
@@ -221,14 +223,14 @@ unchanged (`inspect()` decodes it). `scrub` takes `author_alias`, `rsids`,
 
 - **Rust crate**: [`jubarte`](https://crates.io/crates/jubarte) (this engine, plus a CLI)
 - **npm / WebAssembly**: [`jubarte-wasm`](https://www.npmjs.com/package/jubarte-wasm) (Node and browser builds)
-- **MCP server**: `pip install 'jubarte-redlines[mcp]'` then `jubarte-mcp --root .` ([setup for Claude Code, Codex and Gemini CLI](https://github.com/jandira-tech/jubarte-redlines/blob/main/docs/adoption/mcp.md))
+- **MCP server**: `pip install 'jubarte-docx[mcp]'` then `jubarte-mcp --root .` ([setup for Claude Code, Codex and Gemini CLI](https://github.com/jandira-tech/jubarte-redlines/blob/main/docs/adoption/mcp.md))
 
 ## Text comparisons
 
 ```sh
-jubarte-redlines diff a.docx b.docx --format github
-jubarte-redlines diff a.docx b.docx --format github -U0 --accept-changes
-jubarte-redlines diff a.docx b.docx --format word
+jubarte diff a.docx b.docx --format github
+jubarte diff a.docx b.docx --format github -U0 --accept-changes
+jubarte diff a.docx b.docx --format word
 ```
 
 Line views (`github`, `normal`, `context`, `side-by-side`) retain each input’s

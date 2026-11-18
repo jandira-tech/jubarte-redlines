@@ -270,13 +270,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --no-index --find-links jubarte-python/dist jubarte-redlines
-          python -c "import jubarte_redlines as j; print(j.capabilities()['engine_version'])"
+          python -m pip install --no-index --find-links jubarte-python/dist jubarte-docx
+          python -c "import jubarte as j; print(j.capabilities()['engine_version'])"
       - if: matrix.manylinux == 'musllinux_1_2'
         run: |
           set -euo pipefail
           docker run --rm -v "$PWD/jubarte-python/dist:/dist:ro" python:3.12-alpine \
-            sh -ec 'pip install --no-index --find-links /dist jubarte-redlines && python -c "import jubarte_redlines as j; print(j.capabilities()[\"engine_version\"])"'
+            sh -ec 'pip install --no-index --find-links /dist jubarte-docx && python -c "import jubarte as j; print(j.capabilities()[\"engine_version\"])"'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wheel-${{ needs.version.outputs.version }}-${{ matrix.artifact }}
@@ -284,7 +284,9 @@ jobs:
           if-no-files-found: error
 
   # The one sdist: the GitHub release attaches it and publish-pypi uploads
-  # it, so both carry the same bytes (two maturin runs would not).
+  # it, so both carry the same bytes (two maturin runs would not). The
+  # jubarte-redlines shim (jubarte-python/compat), pure Python, is built
+  # here too: its wheel and sdist pin jubarte-docx at this version.
   sdist:
     name: PyPI sdist
     needs: version
@@ -296,6 +298,7 @@ jobs:
         with:
           persist-credentials: false
       - run: pipx run maturin sdist --manifest-path jubarte-python/Cargo.toml --out dist
+      - run: pipx run uv build jubarte-python/compat --out-dir dist
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sdist-${{ needs.version.outputs.version }}
@@ -540,9 +543,18 @@ jobs:
       - id: live
         run: |
           set -euo pipefail
-          if curl -sf "https://pypi.org/pypi/jubarte-redlines/json" \
-              | python3 -c 'import json, sys; sys.exit(sys.argv[1] not in json.load(sys.stdin)["releases"])' "$VER"; then
-            echo "jubarte-redlines $VER is already on PyPI: skipped"
+          # jubarte-docx (the engine) and jubarte-redlines (its shim).
+          live=true
+          for dist in jubarte-docx jubarte-redlines; do
+            if curl -sf "https://pypi.org/pypi/$dist/json" \
+                | python3 -c 'import json, sys; sys.exit(sys.argv[1] not in json.load(sys.stdin)["releases"])' "$VER"; then
+              echo "$dist $VER is already on PyPI"
+            else
+              live=false
+            fi
+          done
+          if [ "$live" = true ]; then
+            echo "both distributions hold $VER: skipped"
             echo "live=true" >> "$GITHUB_OUTPUT"
           fi
       - if: steps.live.outputs.live != 'true'
@@ -563,7 +575,9 @@ jobs:
           set -euo pipefail
           ls -l dist/pypi
           python3 scripts/check_release_artifacts.py dist/pypi --version "$VER" --sdist
-          uv publish --trusted-publishing always dist/pypi/*
+          # --check-url skips a file PyPI already holds, so a rerun after a
+          # partial upload (one distribution live, the other not) resumes.
+          uv publish --trusted-publishing always --check-url https://pypi.org/simple/ dist/pypi/*
 
   # npm trusted publishing accepts GitHub-hosted runners only ("Self-hosted
   # runners are not currently supported"; it answers ENEEDAUTH), so this job

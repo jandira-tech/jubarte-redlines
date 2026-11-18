@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""The patch of a change: ``Document.diff``, ``jubarte_redlines.diff`` and
+"""The patch of a change: ``Document.diff``, ``jubarte.diff`` and
 ``EditResult.diff``. Every test runs against the rebuilt native module with
 in-memory documents or temporary files; nothing is mocked."""
 
@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-import jubarte_redlines as jubarte
-from jubarte_redlines import Diff, Document, EditPlan, Hunk
+import jubarte as jubarte
+from jubarte import Diff, Document, EditPlan, Hunk
 
 from docx_fixture import docx, para
 

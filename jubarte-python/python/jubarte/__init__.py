@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Word-faithful DOCX redline engine (jubarte-redlines).
+"""Word-faithful DOCX redline engine (jubarte, on PyPI as jubarte-docx).
 
 Compare two Word documents into a tracked-changes document that opens cleanly
 in Microsoft Word; list, accept, or reject revisions; render DOCX to PDF.
@@ -12,7 +12,7 @@ Document arguments and results are ``bytes`` (whole DOCX/PDF packages);
 ``get_revisions_json`` their JSON string. The GIL is released while the
 Rust engine runs.
 
->>> from jubarte_redlines import compare_documents, get_revisions
+>>> from jubarte import compare_documents, get_revisions
 >>> redline = compare_documents(original_bytes, modified_bytes, author="Reviewer")
 >>> for rev in get_revisions(redline):
 ...     print(rev["type"], rev.get("text"))

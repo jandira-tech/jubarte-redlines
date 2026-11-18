@@ -62,4 +62,4 @@ ignore = ["RUF012", "E722", "RUF105", "RUF201"]
 "tests/fixtures/from-docx/critic/libreoffice-oracle.py" = ["PERF203"]
 # The package's public functions live in its `__init__`.
 # Its `__all__` order is the order docs/python.md documents the API in.
-"jubarte-python/python/jubarte_redlines/__init__.py" = ["RUF022", "RUF067"]
+"jubarte-python/python/jubarte/__init__.py" = ["RUF022", "RUF067"]

@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-import jubarte_redlines as jubarte
+import jubarte as jubarte
 from docx_fixture import docx, para
 
 PAGE_BREAK = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
@@ -77,7 +77,7 @@ def test_a_report_without_fields_decodes_to_an_empty_tuple():
 
 
 def test_convert_update_fields_writes_the_refreshed_docx_and_its_report(tmp_path, capsys):
-    from jubarte_redlines.__main__ import main
+    from jubarte.__main__ import main
 
     source = tmp_path / "in.docx"
     source.write_bytes(docx(para("One") + PAGE_BREAK + NUMPAGES))
@@ -102,7 +102,7 @@ def test_convert_update_fields_writes_the_refreshed_docx_and_its_report(tmp_path
 def test_convert_update_fields_refuses_a_report_on_the_input_or_the_output(tmp_path, capsys):
     # CodeRabbit on #393: the report is written apart from the .docx, so a
     # shared path would silently replace one with the other.
-    from jubarte_redlines.__main__ import main
+    from jubarte.__main__ import main
 
     source = tmp_path / "in.docx"
     original = docx(para("One") + PAGE_BREAK + NUMPAGES)

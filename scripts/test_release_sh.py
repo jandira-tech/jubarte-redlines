@@ -344,9 +344,14 @@ class Lessons0101(unittest.TestCase):
         # PyPI's CDN keeps a 404 for /pypi/<name>/<version>/json once asked
         # before the upload; v0.11.0's verify failed on a release that was
         # live. The project listing is purged on upload.
-        line = next(l for l in RELEASE_SH.read_text().splitlines() if l.startswith("pypi_has()"))
-        self.assertNotIn("/$VER/json", line)
-        self.assertIn("pypi.org/pypi/jubarte-redlines/json", line)
+        lines = RELEASE_SH.read_text().splitlines()
+        probe = next(l for l in lines if l.startswith("pypi_dist_has()"))
+        self.assertNotIn("/$VER/json", probe)
+        self.assertIn("pypi.org/pypi/$1/json", probe)
+        # A release holds the engine (jubarte-docx) and its shim (jubarte-redlines).
+        both = next(l for l in lines if l.startswith("pypi_has()"))
+        self.assertIn("pypi_dist_has jubarte-docx", both)
+        self.assertIn("pypi_dist_has jubarte-redlines", both)
 
     def test_the_gates_build_the_public_docs_without_warnings(self) -> None:
         # The 0.11.0 docs carried 41 dead intra-doc links (rendered as bare
@@ -1057,8 +1062,10 @@ GH_RELEASE_STUB = "#!/bin/bash\n" + GH_BOUND + r"""case "$*" in
     if [ -z "${PARTIAL:-}" ] && [ "$n" -ge 3 ]; then
       for t in macosx_10_12_x86_64 macosx_11_0_arm64 manylinux_2_28_x86_64 \
                manylinux_2_28_aarch64 musllinux_1_2_x86_64 musllinux_1_2_aarch64 win_amd64; do
-        echo "jubarte_redlines-9.9.9-cp310-abi3-$t.whl"
+        echo "jubarte_docx-9.9.9-cp310-abi3-$t.whl"
       done
+      echo jubarte_docx-9.9.9.tar.gz
+      echo jubarte_redlines-9.9.9-py3-none-any.whl
       echo jubarte_redlines-9.9.9.tar.gz
     fi ;;
   "run list"*)
@@ -1131,13 +1138,15 @@ class WheelDownload(unittest.TestCase):
     if [ -t 0 ] || [ -t 1 ]; then echo "error querying terminal: OSC 11" >&2; exit 1; fi
     [ -z "${DLFAIL:-}" ] || { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
     dir=$(echo "$*" | sed 's/.*--dir \([^ ]*\).*/\1/')
-    : > "$dir/jubarte_redlines-9.9.9-cp310-abi3-win_amd64.whl" ;;
+    : > "$dir/jubarte_docx-9.9.9-cp310-abi3-win_amd64.whl" ;;
   "release view v9.9.9 --json assets"*)
     [ -z "${NOWHEELS:-}" ] || { echo jubarte-9.9.9-macos-aarch64.tar.gz; exit 0; }
     for t in macosx_10_12_x86_64 macosx_11_0_arm64 manylinux_2_28_x86_64 \
              manylinux_2_28_aarch64 musllinux_1_2_x86_64 musllinux_1_2_aarch64 win_amd64; do
-      echo "jubarte_redlines-9.9.9-cp310-abi3-$t.whl"
+      echo "jubarte_docx-9.9.9-cp310-abi3-$t.whl"
     done
+    echo jubarte_docx-9.9.9.tar.gz
+    echo jubarte_redlines-9.9.9-py3-none-any.whl
     echo jubarte_redlines-9.9.9.tar.gz ;;
   *) echo "unexpected gh $*" >&2; exit 9 ;;
 esac
@@ -1227,7 +1236,7 @@ fi
         state = tmp / "calls"
         script = (
             "set -euo pipefail\nVER=9.9.9\nsleep() { :; }\n"
-            f"{shell_functions('pypi_has', 'eventually')}\n"
+            f"{shell_functions('pypi_dist_has', 'pypi_has', 'eventually')}\n"
             "if eventually pypi_has; then echo listed; else echo missing; fi\n"
         )
         env = dict(os.environ, PATH=f"{tmp}:{os.environ['PATH']}", STATE=str(state), READY_AT=ready_at)
@@ -1235,8 +1244,9 @@ fi
         return r, int(state.read_text()) if state.exists() else 0
 
     def test_a_listing_that_lags_the_upload_is_asked_again(self) -> None:
+        # Two misses, then jubarte-docx and jubarte-redlines on the third try.
         r, calls = self.probe("3")
-        self.assertEqual((r.stdout, calls), ("listed\n", 3), r.stderr)
+        self.assertEqual((r.stdout, calls), ("listed\n", 4), r.stderr)
 
     def test_a_version_that_never_appears_is_missing_after_a_bounded_wait(self) -> None:
         r, calls = self.probe("99")
@@ -2395,8 +2405,10 @@ GH_FALLBACK_STUB = "#!/bin/bash\n" + GH_BOUND + r"""case "$1 $2" in
     mkdir -p dist/release-art/x
     for t in macosx_10_12_x86_64 macosx_11_0_arm64 manylinux_2_28_x86_64 \
              manylinux_2_28_aarch64 musllinux_1_2_x86_64 musllinux_1_2_aarch64 win_amd64; do
-      : > "dist/release-art/x/jubarte_redlines-9.9.9-cp310-abi3-$t.whl"
+      : > "dist/release-art/x/jubarte_docx-9.9.9-cp310-abi3-$t.whl"
     done
+    : > dist/release-art/x/jubarte_docx-9.9.9.tar.gz
+    : > dist/release-art/x/jubarte_redlines-9.9.9-py3-none-any.whl
     : > dist/release-art/x/jubarte_redlines-9.9.9.tar.gz
     for a in linux-x86_64 linux-aarch64 linux-musl-x86_64 linux-musl-aarch64 macos-x86_64 macos-aarch64; do
       : > "dist/release-art/x/jubarte-9.9.9-$a.tar.gz"

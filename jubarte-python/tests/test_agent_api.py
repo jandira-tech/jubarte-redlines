@@ -12,8 +12,8 @@ import json
 
 import pytest
 
-import jubarte_redlines as jubarte
-from jubarte_redlines import (
+import jubarte as jubarte
+from jubarte import (
     Document,
     EditPlan,
     EditPlanError,
@@ -396,7 +396,7 @@ def test_plan_builder_validates_selectors_runs_and_options() -> None:
         snap.unique(starts_with="a", contains="b")
     with pytest.raises(ValueError):
         snap.unique()
-    from jubarte_redlines.models import plan_json
+    from jubarte.models import plan_json
 
     with pytest.raises(TypeError):
         plan_json(3.0)  # type: ignore[arg-type]

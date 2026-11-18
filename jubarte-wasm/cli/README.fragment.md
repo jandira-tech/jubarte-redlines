@@ -31,7 +31,7 @@ the command stays `npx jubarte-redlines`.
 view without `-o`. `read --json` (paragraph ids and package facts, changes
 and comments with their short ids) and `capabilities` (what this build can
 do; `--json` the manifest) are also available. The
-command set, messages and exit codes match `uvx jubarte-redlines` (Python)
+command set, messages and exit codes match `uvx --from jubarte-docx jubarte` (Python)
 and the `jubarte` binary (Rust): 0 success, 1 error, 2 usage, 3 edit plan
 refused. `-o` writes what its extension names (`.docx`, the `.md` view,
 the `.json` snapshot or a `.pdf`), as the binary does. `convert` also

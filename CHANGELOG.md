@@ -43,7 +43,24 @@ ships the `jubarte` CLI binary.
   `jubarte_redlines`. Depend on it alone only when compare is all you need.
 - The CLI installs with `cargo install jubarte`; the binary is still
   `jubarte`.
-- The Python (`jubarte-redlines` on PyPI) and npm packages keep their names.
+- npm packages keep their names.
+
+### Python: `jubarte-docx`, imported as `jubarte`
+
+- The Python engine is now the `jubarte-docx` distribution. Its import
+  package and its command are both `jubarte`, in the way `python-dotenv`
+  ships `dotenv`: `pip install jubarte-docx`, then `import jubarte` or
+  `uvx --from jubarte-docx jubarte redline a.docx b.docx -o redline.docx`.
+  `jubarte-mcp` moved with it (`uvx --from 'jubarte-docx[mcp]' jubarte-mcp`).
+- `jubarte-redlines` on PyPI is now a small compatibility shim. It installs
+  `jubarte-docx` at the same version and keeps `import jubarte_redlines`
+  (the very same objects as `import jubarte`), `python -m
+  jubarte_redlines` and the `jubarte-redlines` command working. No file
+  belongs to both distributions, so upgrading from 0.18 with pip or uv
+  loses nothing.
+- PyPI's own `jubarte` is an unrelated project that also ships a `jubarte/`
+  package and a `jubarte` command. `pip install jubarte` does not install
+  this engine, and the two cannot share one environment.
 
 ### Fixed
 

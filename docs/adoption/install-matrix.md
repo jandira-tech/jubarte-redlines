@@ -30,15 +30,18 @@ measured on 2026-10-04 by
 
 | Channel | Artifact | Platforms |
 |---|---|---|
-| PyPI `jubarte-redlines` | abi3 wheels, Python >= 3.10 | Linux x86_64 and aarch64, glibc 2.28 or newer (`manylinux_2_28`) and musl 1.2 (`musllinux_1_2`); macOS x86_64 (10.12+) and arm64 (11.0+); Windows x86_64; sdist |
+| PyPI `jubarte-docx` (import `jubarte`; `jubarte-redlines` is its compatibility shim) | abi3 wheels, Python >= 3.10 | Linux x86_64 and aarch64, glibc 2.28 or newer (`manylinux_2_28`) and musl 1.2 (`musllinux_1_2`); macOS x86_64 (10.12+) and arm64 (11.0+); Windows x86_64; sdist |
 | crates.io `jubarte` (library `jubarte`) | `cargo install jubarte` | anywhere Rust 1.88+ builds (1.94+ from 0.11.3), Windows included |
 | npm `jubarte-wasm` | WebAssembly library | any Node 18+ or browser |
 | npm `jubarte-redlines` | the command line, `npx jubarte-redlines` | any Node 18.3+ |
 | GitHub release `v0.11.2` | `jubarte` binary archives + `SHA256SUMS.txt` | Linux x86_64 and aarch64, macOS x86_64 and aarch64, Windows x86_64 |
 
-The wheel installs two console scripts: `jubarte-redlines` (so
-`uvx jubarte-redlines redline a.docx b.docx -o redline.docx` runs with no
+The wheel installs two console scripts: `jubarte` (so
+`uvx --from jubarte-docx jubarte redline a.docx b.docx -o redline.docx` runs with no
 install) and, with the `mcp` extra, `jubarte-mcp` ([mcp.md](mcp.md)).
+`pip install jubarte-redlines` still works: since 0.19.0 it is a shim that
+installs `jubarte-docx` and keeps `import jubarte_redlines` and the
+`jubarte-redlines` command.
 
 Gaps a provider's sandbox may still hit:
 
@@ -58,7 +61,7 @@ Gaps a provider's sandbox may still hit:
 ## Check it yourself
 
 ```bash
-curl -s https://pypi.org/pypi/jubarte-redlines/json \
+curl -s https://pypi.org/pypi/jubarte-docx/json \
   | python3 -c "import sys,json; [print(u['filename']) for u in json.load(sys.stdin)['urls']]"
-uv run --no-project --with jubarte-redlines python -m jubarte_redlines --help
+uv run --no-project --with jubarte-docx python -m jubarte --help
 ```

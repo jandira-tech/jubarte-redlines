@@ -4,8 +4,8 @@
 
 Speaks JSON-RPC (newline-delimited, MCP stdio transport) to
     uvx --from "$JUBARTE_MCP_FROM" jubarte-mcp --root .
-where JUBARTE_MCP_FROM defaults to 'jubarte-redlines[mcp]' (the release on
-PyPI); CI sets it to the checkout ('jubarte-redlines[mcp] @ ./jubarte-python').
+where JUBARTE_MCP_FROM defaults to 'jubarte-docx[mcp]' (the release on
+PyPI); CI sets it to the checkout ('jubarte-docx[mcp] @ ./jubarte-python').
 sends initialize, the initialized notification, tools/list, and a
 tools/call that reads input.docx as text, and appends every message
 sent or received to mcp_session.jsonl as one JSON object per line.
@@ -22,7 +22,7 @@ from pathlib import Path
 
 FOLDER = Path(__file__).resolve().parent
 TIMEOUT = 300.0  # uvx may build the environment on first use
-SOURCE = os.environ.get("JUBARTE_MCP_FROM", "jubarte-redlines[mcp]")
+SOURCE = os.environ.get("JUBARTE_MCP_FROM", "jubarte-docx[mcp]")
 
 proc = subprocess.Popen(
     ["uvx", "--from", SOURCE, "jubarte-mcp", "--root", str(FOLDER)],

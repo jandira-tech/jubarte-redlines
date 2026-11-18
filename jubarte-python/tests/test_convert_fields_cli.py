@@ -11,8 +11,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from jubarte_redlines import Document, FieldUpdate, UpdatedFields
-from jubarte_redlines import __main__ as cli
+from jubarte import Document, FieldUpdate, UpdatedFields
+from jubarte import __main__ as cli
 from docx_fixture import docx
 
 PAGE_BREAK = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'

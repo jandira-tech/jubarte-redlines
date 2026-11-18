@@ -22,18 +22,21 @@ from pathlib import Path
 from check_release_artifacts import REQUIRED_WHEEL_TAGS, main, missing_platforms
 
 # The four wheels PyPI holds for 0.10.1, plus the sdist, as listed on
-# https://pypi.org/project/jubarte-redlines/0.10.1/#files on 2026-10-02.
+# https://pypi.org/project/jubarte-redlines/0.10.1/#files on 2026-10-02,
+# under the engine's distribution name since 0.19.0 (jubarte-docx).
 PUBLISHED_0_10_1 = [
-    "jubarte_redlines-0.10.1-cp310-abi3-macosx_10_12_x86_64.whl",
-    "jubarte_redlines-0.10.1-cp310-abi3-macosx_11_0_arm64.whl",
-    "jubarte_redlines-0.10.1-cp310-abi3-manylinux_2_34_aarch64.whl",
-    "jubarte_redlines-0.10.1-cp310-abi3-manylinux_2_34_x86_64.whl",
-    "jubarte_redlines-0.10.1.tar.gz",
+    "jubarte_docx-0.10.1-cp310-abi3-macosx_10_12_x86_64.whl",
+    "jubarte_docx-0.10.1-cp310-abi3-macosx_11_0_arm64.whl",
+    "jubarte_docx-0.10.1-cp310-abi3-manylinux_2_34_aarch64.whl",
+    "jubarte_docx-0.10.1-cp310-abi3-manylinux_2_34_x86_64.whl",
+    "jubarte_docx-0.10.1.tar.gz",
 ]
 
 
 def complete_set(version: str) -> list[str]:
-    return [f"jubarte_redlines-{version}-cp310-abi3-{tag}.whl" for tag in REQUIRED_WHEEL_TAGS]
+    """Every engine wheel plus the jubarte-redlines shim's wheel."""
+    wheels = [f"jubarte_docx-{version}-cp310-abi3-{tag}.whl" for tag in REQUIRED_WHEEL_TAGS]
+    return [*wheels, f"jubarte_redlines-{version}-py3-none-any.whl"]
 
 
 class MissingPlatforms(unittest.TestCase):
@@ -52,19 +55,19 @@ class MissingPlatforms(unittest.TestCase):
 
     def test_a_complete_set_passes_and_a_foreign_version_is_ignored(self) -> None:
         names = complete_set("0.11.0")
-        names += ["jubarte_redlines-0.11.0.tar.gz", "jubarte_redlines-0.10.1-cp310-abi3-win_amd64.whl"]
+        names += ["jubarte_docx-0.11.0.tar.gz", "jubarte_docx-0.10.1-cp310-abi3-win_amd64.whl"]
         self.assertEqual(missing_platforms(names, version="0.11.0"), set())
 
     def test_a_2_34_wheel_does_not_satisfy_the_2_28_floor(self) -> None:
         names = complete_set("0.11.0")
-        names.remove("jubarte_redlines-0.11.0-cp310-abi3-manylinux_2_28_x86_64.whl")
-        names.append("jubarte_redlines-0.11.0-cp310-abi3-manylinux_2_34_x86_64.whl")
+        names.remove("jubarte_docx-0.11.0-cp310-abi3-manylinux_2_28_x86_64.whl")
+        names.append("jubarte_docx-0.11.0-cp310-abi3-manylinux_2_34_x86_64.whl")
         self.assertEqual(missing_platforms(names, version="0.11.0"), {"manylinux_2_28_x86_64"})
 
     def test_a_wheel_of_another_version_does_not_count(self) -> None:
         names = complete_set("0.11.0")
-        names.remove("jubarte_redlines-0.11.0-cp310-abi3-win_amd64.whl")
-        names.append("jubarte_redlines-0.11.0rc1-cp310-abi3-win_amd64.whl")
+        names.remove("jubarte_docx-0.11.0-cp310-abi3-win_amd64.whl")
+        names.append("jubarte_docx-0.11.0rc1-cp310-abi3-win_amd64.whl")
         self.assertEqual(missing_platforms(names, version="0.11.0"), {"win_amd64"})
 
     def test_paths_are_reduced_to_their_file_name(self) -> None:
@@ -102,7 +105,7 @@ class CommandLine(unittest.TestCase):
         self.assertNotIn("macosx", err)
 
     def test_a_complete_dist_exits_0(self) -> None:
-        for name in [*complete_set("0.11.0"), "jubarte_redlines-0.11.0.tar.gz", "SHA256SUMS.txt"]:
+        for name in [*complete_set("0.11.0"), "jubarte_docx-0.11.0.tar.gz", "SHA256SUMS.txt"]:
             (self.dist / name).write_bytes(b"")
         code, out, err = self.run_main(str(self.dist), "--version", "0.11.0")
         self.assertEqual(code, 0, err)
@@ -127,15 +130,28 @@ class CommandLine(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn(REQUIRED_WHEEL_TAGS[0], err)
 
-    def test_sdist_requires_the_versions_sdist(self) -> None:
-        names = [*complete_set("0.11.2"), "jubarte_redlines-0.11.1.tar.gz"]
+    def test_sdist_requires_the_versions_sdists(self) -> None:
+        names = [*complete_set("0.11.2"), "jubarte_docx-0.11.1.tar.gz", "jubarte_redlines-0.11.2.tar.gz"]
+        code, _out, err = self.run_stdin(names, "--version", "0.11.2", "--sdist")
+        self.assertEqual(code, 1)
+        self.assertIn("jubarte_docx-0.11.2.tar.gz", err)
+        names.append("jubarte_docx-0.11.2.tar.gz")
+        code, _out, err = self.run_stdin(names, "--version", "0.11.2", "--sdist")
+        self.assertEqual(code, 0, err)
+        names.remove("jubarte_redlines-0.11.2.tar.gz")
         code, _out, err = self.run_stdin(names, "--version", "0.11.2", "--sdist")
         self.assertEqual(code, 1)
         self.assertIn("jubarte_redlines-0.11.2.tar.gz", err)
-        code, _out, err = self.run_stdin([*names, "jubarte_redlines-0.11.2.tar.gz"],
-                                         "--version", "0.11.2", "--sdist")
-        self.assertEqual(code, 0, err)
 
+    def test_the_shim_wheel_is_required(self) -> None:
+        names = [n for n in complete_set("0.19.0") if not n.startswith("jubarte_redlines-")]
+        code, _out, err = self.run_stdin(names, "--version", "0.19.0")
+        self.assertEqual(code, 1)
+        self.assertIn("jubarte_redlines-0.19.0-py3-none-any.whl", err)
+
+    def test_wheels_under_the_old_engine_name_do_not_count(self) -> None:
+        old = [f"jubarte_redlines-0.19.0-cp310-abi3-{tag}.whl" for tag in REQUIRED_WHEEL_TAGS]
+        self.assertEqual(missing_platforms(old, version="0.19.0"), set(REQUIRED_WHEEL_TAGS))
 
 if __name__ == "__main__":
     unittest.main()

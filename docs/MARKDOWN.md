@@ -187,9 +187,9 @@ warning.
 The same writer is in Python and JavaScript:
 
 ```python
-import jubarte_redlines
+import jubarte
 
-doc = jubarte_redlines.from_markdown("Due in {~~30~>45~~} days.", page="a4")
+doc = jubarte.from_markdown("Due in {~~30~>45~~} days.", page="a4")
 doc.to_bytes()  # the .docx
 ```
 
@@ -197,7 +197,7 @@ doc.to_bytes()  # the .docx
 const docx = markdownToDocx("Due in {~~30~>45~~} days.", JSON.stringify({ page: "a4" }));
 ```
 
-`python -m jubarte_redlines convert draft.md` writes `draft.docx` with the
+`python -m jubarte convert draft.md` writes `draft.docx` with the
 same flags. Neither binding reads image files: pictures are written as
 their alt text.
 
@@ -1555,7 +1555,7 @@ saying so.
 
 `jubarte edit` writes the same patch of its redline to `patch.diff` and
 prints it after the report's summary; `-q` prints nothing. In Python,
-`jubarte_redlines.diff(old, new)` and `Document.diff(other)` return it
+`jubarte.diff(old, new)` and `Document.diff(other)` return it
 (`str(diff)`, `diff.hunks`; a `diff` block in Jupyter) and an edit's result
 has `.diff`; in WASM, `diffDocuments` and `applyEditPlan(...).patch`.
 

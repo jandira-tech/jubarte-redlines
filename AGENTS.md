@@ -19,8 +19,11 @@ and must not be edited, built, benchmarked, or treated as current evidence.
 The names used at each boundary are intentional:
 
 - local source folder: `jubarte-redlines`
-- GitHub repository: `jandira-tech/jubarte-redlines` (PyPI and npm keep
+- GitHub repository: `jandira-tech/jubarte-redlines` (npm keeps
   `jubarte-redlines`; Rust path: `jubarte::`)
+- PyPI (since 0.19.0): `jubarte-docx`, imported as `jubarte`, with the
+  `jubarte` command; `jubarte-redlines` is its pure-Python compatibility
+  shim (`jubarte-python/compat`)
 - Cargo workspace (since 0.19.0): nine crates published together at one
   version.
   - `jubarte` (repository root: `src/lib.rs` and `src/bin/` only): the

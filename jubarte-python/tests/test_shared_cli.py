@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from jubarte_redlines import _native
-from jubarte_redlines.__main__ import build_parser, main
+from jubarte import _native
+from jubarte.__main__ import build_parser, main
 from docx_fixture import docx, para
 
 
@@ -27,7 +27,7 @@ def test_shared_aliases_defaults_and_selection_mapping():
 
 def test_help_and_version_are_shared_clap_text(capsys):
     for arguments in (["--help"], ["diff", "--help"], ["--version"]):
-        expected = json.loads(_native.parse_cli_json(arguments, program="jubarte-redlines", supported=list(build_parser().supported)))
+        expected = json.loads(_native.parse_cli_json(arguments, program="jubarte", supported=list(build_parser().supported)))
         with pytest.raises(SystemExit) as exit:
             build_parser().parse_args(arguments)
         assert exit.value.code == expected["exit_code"] == 0
@@ -126,7 +126,7 @@ def test_paragraph_critic_default_word_output_and_compare_shorthand(tmp_path, ca
 
 @pytest.mark.integration
 def test_text_track_changes_modes_and_convert_output(tmp_path, capsys):
-    import jubarte_redlines as jubarte
+    import jubarte as jubarte
 
     source = tmp_path / "tracked.docx"
     source.write_bytes(jubarte.from_markdown("Due in {~~30~>45~~} days.\n").to_bytes())
@@ -348,7 +348,7 @@ def test_an_error_under_json_is_a_json_line_on_stdout(tmp_path, capsys):
     line = json.loads(captured.out)
     assert line["error"]["code"] == "USAGE"
     assert "--tables" in line["error"]["message"]
-    assert line["error"]["usage"] == "jubarte-redlines read [OPTIONS] <FILE>"
+    assert line["error"]["usage"] == "jubarte read [OPTIONS] <FILE>"
     assert captured.err.startswith("error: ")
     assert _main(["read", "missing.docx", "--json"]) == 1
     captured = capsys.readouterr()

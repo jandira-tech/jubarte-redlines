@@ -10,7 +10,7 @@ findings F10, F11, F12; the v1 phases below are unchanged except where
 noted.
 
     uv run tools/parity/parity_check.py --cli <jubarte-binary> \
-        [--py-python <venv-python-with-jubarte_redlines>] \
+        [--py-python <venv-python-with-jubarte>] \
         [--wasm <jubarte-wasm dir or jubarte_wasm.js>] \
         [--expect-commit <engine-HEAD-sha>] [--engine-dir <engine-checkout>] \
         [--max-wasm-missing-emoji N] \
@@ -47,7 +47,7 @@ of passing as "nothing to compare".
      (the bench's invocation plus the author/date the CLI already defaults
      to: author "Redline", src/bin/jubarte.rs:87; date DEFAULT_DATE,
      src/bin/jubarte.rs:92-96).
-   - Python: jubarte_redlines.compare_documents(base, nxt, author="Redline",
+   - Python: jubarte.compare_documents(base, nxt, author="Redline",
             date="1970-01-01T00:00:00Z")  (jubarte-python/src/lib.rs:66-81;
             its own defaults differ — author "jubarte" — hence the pin).
    - WASM:  compareDocuments(base, nxt, "Redline")  (jubarte-wasm/src/lib.rs:86-99).
@@ -131,9 +131,9 @@ DEFAULT_CORPUS_REL = Path("corpus/word")
 DEFAULT_AUTHOR = "Redline"
 DEFAULT_DATE = "1970-01-01T00:00:00Z"
 
-# Runs under the interpreter that has jubarte_redlines importable (either
+# Runs under the interpreter that has jubarte importable (either
 # in-process, or the --py-python venv built with maturin). Uses only the
-# library surface re-exported by jubarte-python/python/jubarte_redlines/__init__.py.
+# library surface re-exported by jubarte-python/python/jubarte/__init__.py.
 # v2 (F10): also reports the native extension module's file path so the
 # report can record the Python binding's build identity (path/sha256/mtime).
 PY_DRIVER = r"""
@@ -141,11 +141,11 @@ import json, sys
 from pathlib import Path
 
 job = json.loads(Path(sys.argv[1]).read_text())
-from jubarte_redlines import __version__, compare_documents, docx_to_pdf
+from jubarte import __version__, compare_documents, docx_to_pdf
 
 results = {"version": __version__, "jobs": []}
 try:
-    from jubarte_redlines import _native
+    from jubarte import _native
     results["native_module"] = getattr(_native, "__file__", None)
 except Exception:
     results["native_module"] = None
@@ -475,7 +475,7 @@ def cli_version(cli: Path, timeout: float) -> str:
 
 def run_python_jobs(jobs: dict, jobs_path: Path, results_path: Path,
                     py_python: Path | None, timeout: float) -> dict:
-    """Run the compare/topdf jobs under jubarte_redlines. Returns the driver's
+    """Run the compare/topdf jobs under jubarte. Returns the driver's
     results JSON, or {"error": ...} when the binding cannot run at all."""
     jobs_path.write_text(json.dumps(jobs))
     budget = max(timeout, timeout * len(jobs["jobs"]))
@@ -708,7 +708,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="jubarte CLI/Python/WASM parity check (v2)")
     ap.add_argument("--cli", required=True, type=Path, help="jubarte Rust CLI binary")
     ap.add_argument("--py-python", type=Path, default=None,
-                    help="python interpreter with jubarte_redlines importable (default: the "
+                    help="python interpreter with jubarte importable (default: the "
                          "invoking interpreter; the maturin venv is jubarte-python/.venv/bin/python)")
     ap.add_argument("--wasm", default=None,
                     help="jubarte-wasm: jubarte_wasm.js file, or a directory holding it "

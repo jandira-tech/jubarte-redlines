@@ -3,7 +3,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// `npx jubarte-redlines`: the commands of `uvx jubarte-redlines` (and the
+// `npx jubarte-redlines`: the commands of `uvx --from jubarte-docx jubarte` (and the
 // `jubarte` binary) over the jubarte-wasm package, with the same names,
 // flags, output files, messages and exit codes.
 //
@@ -1059,7 +1059,7 @@ function validateHost(name, o) {
   }
   // PNG pages and --pages need the native renderer (D14).
   if (name !== "edit" && name !== "convert" && o.output_format === "png") {
-    throw new UsageError("-o FILE.png is not supported by the npm CLI: PNG pages need the Python or Rust build (uvx jubarte-redlines)");
+    throw new UsageError("-o FILE.png is not supported by the npm CLI: PNG pages need the Python or Rust build (uvx --from jubarte-docx jubarte)");
   }
   if (name !== "convert" && o.pages != null) reject("pages");
   if (name === "compare") for (const flag of ["reference_doc", "critic", "resource_path"]) if (o[flag] != null && o[flag] !== false) reject(flag);
@@ -1068,7 +1068,7 @@ function validateHost(name, o) {
       if (o[flag] != null && o[flag] !== false) reject(flag);
     }
     if (o.png || o.to === "png" || path.extname(o.output ?? "").toLowerCase() === ".png") {
-      throw new UsageError("PNG pages need the Python or Rust build (uvx jubarte-redlines convert --png)");
+      throw new UsageError("PNG pages need the Python or Rust build (uvx --from jubarte-docx jubarte convert --png)");
     }
   }
   if (name === "convert") {
@@ -1083,7 +1083,7 @@ function validateHost(name, o) {
     // such engine call.
     const markdownOut = o.to === "md" || (o.to == null && o.output_format === "md");
     if (markdownOut && namedKind(o.file) === "md") {
-      throw new UsageError("Markdown to Markdown is not supported by the npm CLI: `uvx jubarte-redlines convert` resolves CriticMarkup");
+      throw new UsageError("Markdown to Markdown is not supported by the npm CLI: `uvx --from jubarte-docx jubarte convert` resolves CriticMarkup");
     }
   }
   if (name === "edit") {

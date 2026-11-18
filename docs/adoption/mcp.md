@@ -7,13 +7,13 @@ SPDX-License-Identifier: AGPL-3.0-only
 # MCP server: Claude Code, Codex and Gemini CLI
 
 `jubarte-mcp` serves the Python `Document` API as Model Context Protocol tools
-over stdio. It ships in the `jubarte-redlines` wheel behind the `mcp` extra,
+over stdio. It ships in the `jubarte-docx` wheel behind the `mcp` extra,
 so any host that can start a command can use it:
 
 ```sh
-uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .
+uvx --from 'jubarte-docx[mcp]' jubarte-mcp --root .
 # or
-pip install 'jubarte-redlines[mcp]' && jubarte-mcp --root .
+pip install 'jubarte-docx[mcp]' && jubarte-mcp --root .
 ```
 
 ## Tools
@@ -85,7 +85,7 @@ Project scope, checked into the repository as `.mcp.json`:
     "jubarte": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["--from", "jubarte-redlines[mcp]", "jubarte-mcp", "--root", "."]
+      "args": ["--from", "jubarte-docx[mcp]", "jubarte-mcp", "--root", "."]
     }
   }
 }
@@ -95,7 +95,7 @@ Or from the command line:
 
 ```sh
 claude mcp add --transport stdio jubarte --scope project -- \
-  uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .
+  uvx --from 'jubarte-docx[mcp]' jubarte-mcp --root .
 ```
 
 Shape checked against code.claude.com/docs/en/mcp on 2026-10-02.
@@ -107,7 +107,7 @@ Shape checked against code.claude.com/docs/en/mcp on 2026-10-02.
 ```toml
 [mcp_servers.jubarte]
 command = "uvx"
-args = ["--from", "jubarte-redlines[mcp]", "jubarte-mcp", "--root", "."]
+args = ["--from", "jubarte-docx[mcp]", "jubarte-mcp", "--root", "."]
 # The first run downloads the wheel; give it longer than the 10 s default.
 startup_timeout_sec = 60
 # Rendering a long document can pass the 60 s default.
@@ -117,7 +117,7 @@ tool_timeout_sec = 180
 Or from the command line:
 
 ```sh
-codex mcp add jubarte -- uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .
+codex mcp add jubarte -- uvx --from 'jubarte-docx[mcp]' jubarte-mcp --root .
 ```
 
 Shape checked against the Codex MCP documentation on 2026-10-02.

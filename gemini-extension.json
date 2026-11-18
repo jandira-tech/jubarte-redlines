@@ -5,7 +5,7 @@
   "mcpServers": {
     "jubarte": {
       "command": "uvx",
-      "args": ["--from", "jubarte-redlines[mcp]", "jubarte-mcp", "--root", "${workspacePath}"]
+      "args": ["--from", "jubarte-docx[mcp]", "jubarte-mcp", "--root", "${workspacePath}"]
     }
   },
   "contextFileName": "GEMINI.md"

@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-import jubarte_redlines as jubarte
-from jubarte_redlines import AuditFinding, Document, JubarteError
+import jubarte as jubarte
+from jubarte import AuditFinding, Document, JubarteError
 
 from docx_fixture import docx, para
 

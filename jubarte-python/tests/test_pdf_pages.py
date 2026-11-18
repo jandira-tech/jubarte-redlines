@@ -13,9 +13,9 @@ from pathlib import Path
 
 import pytest
 
-import jubarte_redlines as jubarte
-from jubarte_redlines import _native
-from jubarte_redlines.__main__ import main
+import jubarte as jubarte
+from jubarte import _native
+from jubarte.__main__ import main
 
 from docx_fixture import docx, para
 

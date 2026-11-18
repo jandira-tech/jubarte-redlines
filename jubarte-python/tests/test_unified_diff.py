@@ -4,7 +4,7 @@
 """Memory-only regressions; RED starts at the existing unsupported format."""
 import pytest
 
-import jubarte_redlines as jubarte
+import jubarte as jubarte
 from docx_fixture import docx, para
 
 
