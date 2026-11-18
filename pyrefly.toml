@@ -13,9 +13,6 @@ project-excludes = ["**/target/**", "**/.venv/**", "**/node_modules/**", "**/__p
 search-path = [
   "jubarte-python/python",
   "jubarte-python/tests",
-  "eval/cli-v2-pilot",
-  "eval/cli-v2-pilot/harness",
-  "eval/cli-v2-pilot/tests",
   "scripts",
   "tools",
 ]

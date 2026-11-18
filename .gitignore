@@ -123,7 +123,7 @@ report.json
 /scripts/fetch_issues.py
 .issues/
 
-# uv-managed virtualenv (created by `uv sync` in eval/cli-v2-pilot/)
+# uv-managed virtualenvs (`uv sync` in any Python project here)
 .venv/
 merge013/
 
