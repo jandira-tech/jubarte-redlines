@@ -67,6 +67,10 @@ minor release, so the patch gate (`--added`) does not apply.
   change an item, which AC2 allows no residue for. Every other file is
   under 2,300; the largest test file is coverage_round_three_tests.rs
   at 6,851.
+  Decision (Arthur, 2026-11-17): option A. The exception stands for
+  0.19.0. Option B, splitting the `impl Layout` block across files as
+  separate `impl` blocks, comes after 0.19.0 as its own change, whose
+  AC2 run will name the moved methods as an expected residue.
 - AC1: counts identical before (pre-release) and after.
   jubarte-render --all-features 1115 passed / 1115 (same test names);
   it_render 21 / 21; it_cli 2488 / 2488; facade_surface 1 / 1;

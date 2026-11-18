@@ -117,30 +117,30 @@ graph TD
 
 ### 2.3 WebAssembly (`jubarte-wasm`) Product Split & Subpath Exports (Shrinking `slim` from 23 MB to ~4 MB)
 
-- [ ] **Granular Feature Flags on [jubarte-wasm/Cargo.toml](../../jubarte-wasm/Cargo.toml) & [jubarte-wasm/src/lib.rs](../../jubarte-wasm/src/lib.rs)** — *pending (verified 2026-11-16): `default = ["console-panic", "pdf"]`; no `full`/`slim`/`redlines` features yet.*
+- [x] **Granular Feature Flags on [jubarte-wasm/Cargo.toml](../../jubarte-wasm/Cargo.toml) & [jubarte-wasm/src/lib.rs](../../jubarte-wasm/src/lib.rs)** — *done (verified 2026-11-17 on pre-release): `default = ["full", "console-panic"]`, with layered `compare` → `doc` → `markdown` → `edit` → `cli` features and a separate `pdf` (T5.1).*
   - `default = ["full", "console-panic"]`
   - `full = ["compare", "pdf", "doc", "markdown", "edit", "cli"]`
   - `slim = ["compare", "doc", "markdown", "edit", "cli"]` (compiles `jubarte-doc`, `jubarte-markdown`, `jubarte-edit` with `default-features = false` so `jubarte-render` and the 17 MB of uncompressed fonts are completely omitted, shrinking `node-slim`/`web-slim` from **23 MB to ~4 MB**!)
   - `redlines = ["compare"]` (pure compare/redlines product: `compareDocuments`, `acceptRevisions`, `rejectRevisions`, `getRevisions`)
   - `pdf` (standalone DOCX-to-PDF/PNG product: `docxToPdf`, `docxToPng`, `renderPdf`, `pdfPageCount`, `diffRender`)
   - Every `#[wasm_bindgen]` entrypoint and `#[cfg(test)]` test in [jubarte-wasm/src/lib.rs](../../jubarte-wasm/src/lib.rs) is gated by its corresponding feature (`compare`, `pdf`, `doc`, `markdown`, `edit`, `cli`; with `convert_markdown` gated by `#[cfg(all(feature = "pdf", feature = "markdown"))]`).
-- [ ] **Subpath Exports & Module `package.json` Files in [jubarte-wasm/npm/](../../jubarte-wasm/npm/package.json)** — *pending (verified 2026-11-16): `npm/` still ships only `node`, `node-slim`, `web`, `web-slim`; no `*-redlines` or `*-pdf` subpaths.*
+- [x] **Subpath Exports & Module `package.json` Files in [jubarte-wasm/npm/](../../jubarte-wasm/npm/package.json)** — *done (verified 2026-11-17 on pre-release): `npm/` ships `node`, `web`, `*-slim`, `*-redlines` and `*-pdf`; `exports` names `./redlines`, `./pdf`, `./convert` and each build (T5.2).*
   - `jubarte-wasm` (`.` / `./node` / `./web`): Full `jubarte` WASM facade.
   - `jubarte-wasm/redlines` (`./node-redlines`, `./web-redlines`) and `jubarte-wasm/slim` (`./node-slim`, `./web-slim`): Redlines & document operations without PDF/fonts.
   - `jubarte-wasm/pdf` and `jubarte-wasm/convert` (`./node-pdf`, `./web-pdf`): Standalone DOCX-to-PDF/PNG converter without compare/edit.
   - Track `package.json` files inside `npm/node-redlines/`, `npm/node-pdf/` (`{"type": "commonjs"}`) and `npm/web-redlines/`, `npm/web-pdf/` (`{"type": "module", "sideEffects": ["./snippets/*"]}`) so Node ESM/CJS resolution in [jubarte-wasm/npm-smoke.mjs](../../jubarte-wasm/npm-smoke.mjs) succeeds.
-- [ ] **Dual CLI Binaries in [jubarte-wasm/cli/package.json](../../jubarte-wasm/cli/package.json)** — *pending (verified 2026-11-16): `"bin"` exposes only `"jubarte-redlines"`; the `"jubarte"` alias is absent.*
+- [x] **Dual CLI Binaries in [jubarte-wasm/cli/package.json](../../jubarte-wasm/cli/package.json)** — *done (verified 2026-11-17 on pre-release): `"bin"` exposes `"jubarte"` and `"jubarte-redlines"`, both on `bin/jubarte-redlines.mjs`.*
   - Expose both `"jubarte": "bin/jubarte-redlines.mjs"` and `"jubarte-redlines": "bin/jubarte-redlines.mjs"` in `"bin"`.
 
 ### 2.4 Python (`jubarte-python`) Dual-Namespace & Product Submodules
 
 Publishing 3 separate native PyO3 C-extension distributions on PyPI is not advisable (it would triple the 7-wheel CI build matrix to 21 wheels, duplicate the compiled `.abi3.so`/`.pyd` binary in memory when both are installed, and break PyPI OIDC trusted publisher binding). Instead:
 
-- [ ] **Dual Top-Level Packages (`jubarte` and `jubarte_redlines`) + Product Submodules (`jubarte.redlines`, `jubarte.convert`)** — *pending (verified 2026-11-16): `jubarte-python/python/` still contains only `jubarte_redlines/`; `[project.scripts]` has no `jubarte` entry.*
+- [ ] **Dual Top-Level Packages (`jubarte` and `jubarte_redlines`) + Product Submodules (`jubarte.redlines`, `jubarte.convert`)** — *pending (verified 2026-11-17 on pre-release): `jubarte-python/python/` still contains only `jubarte_redlines/`; `[project.scripts]` has no `jubarte` entry.*
   - Add `jubarte-python/python/jubarte/` (`__init__.py`, `__main__.py`, `redlines.py`, `convert.py`, `py.typed`) alongside `jubarte-python/python/jubarte_redlines/`.
   - In [jubarte-python/pyproject.toml](../../jubarte-python/pyproject.toml), set `python-packages = ["jubarte_redlines", "jubarte"]` under `[tool.maturin]` so `maturin` bundles both top-level packages into every wheel!
   - Add `jubarte = "jubarte_redlines.__main__:main"` alongside `jubarte-redlines` and `jubarte-mcp` in `[project.scripts]`.
-- [ ] **Granular Cargo Features in [jubarte-python/Cargo.toml](../../jubarte-python/Cargo.toml)** — *pending (verified 2026-11-16): no `[features]` section; depends on `jubarte = { path = "..", default-features = false, features = ["cli"] }` and keeps its own workspace + `Cargo.lock`.*
+- [x] **Granular Cargo Features in [jubarte-python/Cargo.toml](../../jubarte-python/Cargo.toml)** — *done (verified 2026-11-17 on pre-release): `[features]` layers `redlines` → `doc` → `markdown` → `edit` → `cli` plus `render` over optional engine crates (T5.3). It still keeps its own `Cargo.lock`, and the `cfg(any())` `jubarte` entry stays until the root becomes a virtual manifest (after 0.19.0).*
 
 ---
 
@@ -175,7 +175,7 @@ Every upward or peer cross-crate reference across all 122 files in `src/` (inclu
 
 ## 4. Dependency & Asset Optimization (Phase 2)
 
-- [ ] **Retire `oxml-opc` and `quick-xml-041`** — *pending (verified 2026-11-16): `oxml-opc = 0.14.4` and `quick-xml-041` still in root `Cargo.toml`; `crates/jubarte-opc/src/opc/mod.rs` still wraps `oxml_opc::{OpcPackage, ContentTypes, Relationships, OpcError, Relationship}`.*
+- [ ] **Retire `oxml-opc` and `quick-xml-041`** — *pending (verified 2026-11-17 on pre-release): `oxml-opc = 0.15.0` and `quick-xml-041` still in root `Cargo.toml`; `crates/jubarte-opc/src/opc/mod.rs` still wraps `oxml_opc::{OpcPackage, ContentTypes, Relationships, OpcError, Relationship}`.*
   - Replace the 4 types imported from `oxml-opc` in [src/opc/mod.rs](../../src/opc/mod.rs#L35) (`Part`, `PartURI`, `Relationships`, `OpcError`) with native types in `jubarte-opc` built on `zip 9.0.5` and `quick-xml 0.42` ([docs/ZIP9_OXML_OPC_MIGRATION.md](../../docs/ZIP9_OXML_OPC_MIGRATION.md)).
   - Removes `oxml-opc`, `quick-xml 0.41`, and transitive `chrono` from `Cargo.lock` and [deny.toml](../../deny.toml).
 - [x] **Remove `uuid`** — *done 2026-11-16 (commit `684352f3c`): no `uuid` dependency in any `Cargo.toml`; `crates/jubarte-edit/src/publication.rs` uses a hashed staging suffix.*
