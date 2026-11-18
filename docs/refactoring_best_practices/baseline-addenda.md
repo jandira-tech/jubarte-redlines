@@ -7,6 +7,49 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T7 AC2 replaced by the item equivalence check - 2026-11-17
+
+The T7.N AC2 in implementation_plan.md is now
+`scripts/split_equivalence.py`: zero residue, not a percentage of diff
+lines. Run against each merged or open split:
+
+- T7.1 finalize (`--base e6e159273^1 --head e6e159273^2`): 848 items
+  matched, visibility changed on 152, residue 0.
+- T7.2 lcs (`--base 143e5d5eb^1 --head 143e5d5eb^2`): 536 matched,
+  visibility changed on 158, residue 0.
+- T7.3 document_comparer (#2456, `--base 143e5d5eb --head 4a21df273`):
+  343 matched, visibility changed on 83, residue 0.
+
+Before the three rustfmt reflow allowances were added, each split left 3
+residue pairs (9 in all), every one a test or signature that rustfmt
+rewrote after its module lost an indent level: a one-expression closure
+or match-arm body without its braces, or a trailing comma in a
+one-argument call or parameter list. A one-character probe (`>= 2` to
+`>= 3` in finalize/mod.rs `conjoin_transform`) leaves 2 residue items.
+
+The MiniMax-M3 review of #2457 then reproduced seven false negatives:
+`pub`, trailing commas and closure braces inside macro token trees,
+tuple commas after `for`, `as`, `where` and a comparison `>`, same-named
+items swapping bodies across modules, and module `cfg` or name changes.
+The checker now compares macro token trees exactly (std expression
+macros excepted), keeps tuple commas outside real call syntax, and
+carries each item's module context. All five splits re-measured residue
+0 with it: finalize 848, lcs 536, document_comparer 343, edit (#2458)
+1128, convert (#2459) 2670. The edit run found one more legitimate
+reflow, now allowed: a trailing comma on a generic fn's parameters.
+
+The literal diff-line numbers recorded below for T7.1 and T7.2 stay as
+the history of the old measure.
+
+Output identity at the same time, against the binary the bench scored
+(.scratch/pre-release/bench3/jubarte, 8173feefa):
+- Redlines: all 600 are byte-identical to the scored .docx for
+  8173feefa, the v0.18.0 release, pre-release with #2455 (db07f4e79),
+  and #2456 (4a21df273).
+- PDF conversions (`scripts/identity.py`, sample_conversion_0.19.0.csv):
+  860 / 860 identical for pre-release (1f3e47b57) and for #2456
+  (4a21df273).
+
 ## T7.3 (document_comparer.rs becomes a directory module) - 2026-11-17
 
 - document_comparer.rs (14,853 lines) is now document_comparer/mod.rs

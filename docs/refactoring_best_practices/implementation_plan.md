@@ -730,7 +730,12 @@ Splitting a file inside one crate does not change what the compiler builds; the 
 
 **Acceptance criteria:**
 - AC1: Measure: S2, S3, S4, S6.
-- AC2: Measure: `git diff --stat -M90% <base>` shows moved lines only: insertions outside `mod`, `use` and visibility lines number fewer than 1% of the lines moved.
+- AC2: Measure: `python3 scripts/split_equivalence.py --base <base> --head <head> <module path without .rs>` prints `residue: 0` and exits 0. It cuts both sides into items (descending into inline modules), compares each item's tokens, and requires every old item to reappear exactly once and no new one to appear: zero residue, not a percentage. String literals, attributes and comments must match exactly. It allows only the adaptations a split needs, each covered by `scripts/test_split_equivalence.py`:
+  - visibility changes;
+  - `include_*!` paths that resolve to the same file;
+  - three rustfmt reflows that follow a moved test losing one indent level: a trailing comma in call arguments, parameters or multi-element groups (never in a one-element tuple); the braces of a one-expression closure body; and the braces of a one-expression match arm.
+
+  It does not compare `use` items, `mod` declarations, inner attributes or docs, or plain comments between items (SPDX headers, banners). Replaced on 2026-11-17: the original measure (insertions outside `mod`, `use` and visibility lines under 1% of the lines moved, from `git diff --stat -M90%`) counted required SPDX headers and rustfmt reflows and failed every split (T7.1 1.11%, T7.2 1.33%, T7.3 1.13%), while still allowing up to 1% of unexamined lines. The item check passes all three with zero residue.
 - AC3: Measure: no file in the new directory exceeds 8,000 lines (`wc -l`), or the commit message says why one does.
 - AC4 (for `finalize.rs`, `lcs.rs`, `document_comparer.rs`): the T4.3b benchmark gate.
 
