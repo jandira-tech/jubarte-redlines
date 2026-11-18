@@ -1299,6 +1299,7 @@ if [ "$SKIP_GATES" = 0 ]; then
   uv run -q --no-project --python 3.12 --with pytest python -m pytest -q -p no:cacheprovider tools/parity >/dev/null
   "${py312[@]}" scripts/test_library_readmes.py
   "${py312[@]}" scripts/test_api_snapshot.py
+  "${py312[@]}" scripts/test_split_equivalence.py
   # Python bindings: build the extension from this checkout and run pytest.
   # jubarte-python/uv.lock is tracked; whatever uv rewrites in it ships in
   # the release commit (step 8), so the tree stays clean for a resumed run.

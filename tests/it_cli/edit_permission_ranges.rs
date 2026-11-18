@@ -1158,7 +1158,7 @@ fn a_repeated_permission_id_changes_the_base_hash_on_a_revision_free_source() {
         two.base_sha256, two.source_sha256,
         "normalizing a repeated permission id changes the base hash"
     );
-    let src = include_str!("../../crates/jubarte-edit/src/edit.rs");
+    let src = include_str!("../../crates/jubarte-edit/src/edit/mod.rs");
     let at = src
         .find("pub base_sha256: String")
         .expect("base hash field");
