@@ -2744,3 +2744,247 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod branch_tests {
+    use super::*;
+
+    fn dropped(entry: &str) -> Vec<String> {
+        first_section(&format!("headers:\n  default: {entry}\n")).dropped
+    }
+
+    #[test]
+    fn paragraph_formats_refuse_what_they_cannot_hold() {
+        for bad in [
+            "{id: header1, p0: {text: a, indent: {sideways: 1in}}}",
+            "{id: header1, p0: {text: a, indent: {left: [1in]}}}",
+            "{id: header1, p0: {text: a, indent: {left: 1ch, left: 2ch}}}",
+            "{id: header1, p0: {text: a, indent: {left: 1in, left: 2in}}}",
+            "{id: header1, p0: {text: a, indent: {left: 99in}}}",
+            "{id: header1, p0: {text: a, indent: flat}}",
+            "{id: header1, p0: {text: a, tabs: [sideways 100]}}",
+            "{id: header1, p0: {text: a, tabs: [left dot 100 extra]}}",
+            "{id: header1, p0: {text: a, tabs: [left 99999999]}}",
+            "{id: header1, p0: {text: a, tabs: [left]}}",
+            "{id: header1, p0: {text: a, tabs: flat}}",
+            "{id: header1, p0: {text: a, spacing: \"\"}}",
+            "{id: header1, p0: {text: a, spacing: \"before\"}}",
+            "{id: header1, p0: {text: a, spacing: [x]}}",
+            "{id: header1, p0: {text: a, shading: {val: wavy}}}",
+            "{id: header1, p0: {text: a, shading: {fill: FF0000, fill: 00FF00}}}",
+            "{id: header1, p0: {text: a, shading: {val: [x]}}}",
+            "{id: header1, p0: {text: a, shading: flat}}",
+            "{id: header1, p1001: {text: a}}",
+            "{id: header1.px, text: a}",
+            "{id: headerx, text: a}",
+            "{id: page1, text: a}",
+            "{id: header1, text: a",
+            "{id: header1 text: a}",
+            "{id: \"header1, text: a}",
+            "{id: 'header1, text: a}",
+            "{id: header1, text: [a, b}",
+        ] {
+            assert_eq!(dropped(bad), ["headers: default"], "{bad}");
+        }
+    }
+
+    #[test]
+    fn paragraph_formats_read_tabs_spacing_shading_and_indents() {
+        let stories = first_section(
+            "headers:\n  default:\n    id: header1\n    p0: {text: a, tabs: [left none 100, right dot 9360, center 4680], spacing: \"before 6pt, after 0pt\", shading: {val: clear, fill: FFFF00, color: auto}, indent: {left: 1in, left: 2ch, first-line: 0.5in}, color: \"12AB34\", right}\n    p2: {text: c}\n    inactive: true\n  even: {id: header2, text: [x, y], styles: [Header, Normal]}\n  first: {id: header3, text: \"\", style: Header, rev: r1 @A; r2 @A, fmt: r3 @A}\n",
+        );
+        assert!(stories.dropped.is_empty(), "{:?}", stories.dropped);
+        let default = &stories.stories[0];
+        assert!(!default.active);
+        assert_eq!(default.more, ["", "c"]);
+        let format = &default.formats[0];
+        assert_eq!(format.tabs.len(), 3);
+        assert_eq!(format.tabs[0].leader, None);
+        assert_eq!(format.tabs[1].leader.as_deref(), Some("dot"));
+        assert!(format.spacing.is_some());
+        assert_eq!(format.shading.len(), 3);
+        assert_eq!(format.left, Some(1440));
+        assert!(format.left_chars.is_some());
+        assert_eq!(format.color.as_deref(), Some("12AB34"));
+        assert_eq!(default.align, Some("right"));
+        let even = &stories.stories[1];
+        assert_eq!(
+            (even.text.as_str(), even.more.as_slice()),
+            ("x", &["y".to_string()][..])
+        );
+        assert_eq!(even.styles, ["Header", "Normal"]);
+        let first = &stories.stories[2];
+        assert_eq!(first.styles, ["Header"]);
+        assert_eq!(first.rev, ["r1 @A", "r2 @A"]);
+        assert_eq!(stories.title_page, Some(true));
+    }
+
+    #[test]
+    fn flow_maps_lists_and_scalars_end_where_yaml_ends_them() {
+        assert_eq!(flow_list(" ]rest"), Some((vec![], "rest")));
+        assert_eq!(
+            flow_list("a, 'b'' c' ]x"),
+            Some((vec!["a".to_string(), "b' c".to_string()], "x"))
+        );
+        assert_eq!(flow_list("a b"), None);
+        assert_eq!(scalar("key:"), Some(("key".to_string(), ":")));
+        assert_eq!(
+            scalar("\"a\\\"b\" tail"),
+            Some(("a\"b".to_string(), " tail"))
+        );
+        assert_eq!(scalar("\"bad \\x\""), None);
+        assert_eq!(scalar(""), None);
+        assert_eq!(scalar("'open"), None);
+        assert_eq!(
+            flow_text("{rev: r1 @A, fmt: [x]}", "rev").as_deref(),
+            Some("r1 @A")
+        );
+        assert_eq!(flow_text("{rev: r1 @A, fmt: [x]}", "fmt"), None);
+        assert_eq!(flow_text("{flag, other: 1}", "flag"), None);
+        assert_eq!(story_id("footer12.p3"), Some(("footer12".to_string(), 3)));
+        assert_eq!(story_id("header"), None);
+        assert_eq!(story_id("header1.p1001"), None);
+        assert_eq!(story_id("header1.q1"), None);
+        assert!(story("header", "odd", &[]).is_none());
+    }
+
+    #[test]
+    fn later_sections_read_maps_none_and_drop_the_rest() {
+        let stories = section(
+            "{p1-p2, headers: {first: none, default: {id: header1, text: a}, even: plain, odd: {id: header2, text: b}}, footers: flat, columns: 2}",
+        );
+        assert_eq!(stories.title_page, Some(true));
+        assert_eq!(stories.stories.len(), 1);
+        assert_eq!(stories.dropped, ["headers: even", "headers: odd"]);
+        let stories = section("{p1, footers: {first: {id: footer1, text: x, inactive}}}");
+        assert_eq!(stories.title_page, Some(false));
+        assert!(section("plain words").dropped.is_empty());
+        // The first section's later entry of a type replaces the earlier.
+        let stories = first_section(
+            "headers:\n  # note\n  default: {id: header1, text: a}\n  default: {id: header2, text: b}\n  orphan line\nfooters:\n  first: {id: footer1, text: f, inactive}\nother:\n  default: {id: header9, text: z}\n",
+        );
+        assert_eq!(stories.stories.len(), 2);
+        assert_eq!(stories.stories[0].part, "header2");
+        assert_eq!(stories.title_page, Some(false));
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod run_branch_tests {
+    use super::*;
+
+    #[test]
+    fn format_tags_read_only_the_character_marks() {
+        for not_a_tag in [
+            "<!-- x -->",
+            "<?pi?>",
+            "<1b>",
+            "<>",
+            "<b-x>",
+            "<div>",
+            "<b",
+            "plain",
+        ] {
+            assert!(format_tag(not_a_tag).is_none(), "{not_a_tag}");
+        }
+        for (tag, len) in [
+            ("<strong>", 8),
+            ("</em>", 5),
+            ("<u/>", 4),
+            ("<del >", 6),
+            ("<SUP>", 5),
+            ("<sub>", 5),
+            ("<code>", 6),
+        ] {
+            assert_eq!(format_tag(tag).map(|(_, n)| n), Some(len), "{tag}");
+        }
+        assert!(format_tag("<u/>").is_some_and(|(t, _)| t.empty));
+        assert!(format_tag("</em>").is_some_and(|(t, _)| t.closing));
+    }
+
+    #[test]
+    fn mark_colours_come_from_a_class_word_word_lists() {
+        assert_eq!(mark_colour("mark class=\"hl-cyan big\""), "cyan");
+        assert_eq!(mark_colour("mark class='x hl-Green'"), "green");
+        assert_eq!(mark_colour("mark class=hl-red/"), "red");
+        assert_eq!(mark_colour("mark subclass=hl-red"), "yellow");
+        assert_eq!(mark_colour("mark class"), "yellow");
+        assert_eq!(mark_colour("mark class=\"hl-none\""), "yellow");
+        assert_eq!(mark_colour("mark class=\"hl-mauve\" class=hl-blue"), "blue");
+        assert_eq!(named_highlight("h"), None);
+        assert_eq!(named_highlight("xx-red"), None);
+    }
+
+    #[test]
+    fn open_marks_become_run_properties_in_schema_order() {
+        let mut fmt = StoryFmt::default();
+        assert_eq!(fmt.properties(), "");
+        for tag in [
+            "<code>",
+            "<b>",
+            "<i>",
+            "<s>",
+            "<mark class=\"hl-cyan\">",
+            "<u>",
+            "<sub>",
+            "<br/>",
+        ] {
+            if let Some((tag, _)) = format_tag(tag) {
+                apply_format(&mut fmt, &tag);
+            }
+        }
+        assert_eq!(
+            fmt.properties(),
+            "<w:rPr><w:rStyle w:val=\"VerbatimChar\"/><w:b/><w:bCs/><w:i/><w:iCs/><w:strike/><w:highlight w:val=\"cyan\"/><w:u w:val=\"single\"/><w:vertAlign w:val=\"subscript\"/></w:rPr>"
+        );
+        for tag in ["<sup>", "</mark>", "</b>", "</b>", "<b/>"] {
+            let (tag, _) = format_tag(tag).expect("tag");
+            apply_format(&mut fmt, &tag);
+        }
+        let props = fmt.properties();
+        assert!(
+            props.contains("superscript")
+                && !props.contains("highlight")
+                && !props.contains("<w:b/>"),
+            "{props}"
+        );
+    }
+
+    #[test]
+    fn colours_join_existing_properties_before_highlight() {
+        assert_eq!(
+            paint_run_color(
+                "<w:fldSimple/><w:r><w:t>a</w:t></w:r><w:r><w:rPr><w:b/><w:u w:val=\"single\"/></w:rPr><w:t>b</w:t></w:r>tail",
+                "FF0000"
+            ),
+            "<w:fldSimple/><w:r><w:rPr><w:color w:val=\"FF0000\"/></w:rPr><w:t>a</w:t></w:r><w:r><w:rPr><w:b/><w:color w:val=\"FF0000\"/><w:u w:val=\"single\"/></w:rPr><w:t>b</w:t></w:r>tail"
+        );
+        assert_eq!(
+            paint_run_color("<w:r><w:rPr><w:b/>", "00FF00"),
+            "<w:r><w:rPr><w:b/>"
+        );
+        assert_eq!(unescape("{\\++a++\\} ~\\> plain"), "{++a++} ~> plain");
+        assert_eq!(unescape("no escapes"), "no escapes");
+        assert_eq!(substitution_ids(&[]), (&[][..], &[][..]));
+        assert_eq!(substitution_ids(&[5, 6, 3, 4]), (&[5, 6][..], &[3, 4][..]));
+    }
+
+    #[test]
+    fn empty_elements_go_and_title_pages_land_before_later_settings() {
+        assert_eq!(
+            without_empty_elements(
+                "<w:titlePg/><w:titlePgX/><w:titlePg w:val=\"1\"/><w:titlePg>x</w:titlePg><w:titlePg",
+                "w:titlePg"
+            ),
+            "<w:titlePgX/><w:titlePg>x</w:titlePg><w:titlePg"
+        );
+        let section = "<w:sectPr><w:pgSz/><w:docGrid/><w:bidi/></w:sectPr>";
+        assert_eq!(title_page_at(section, 0), section.find("<w:docGrid"));
+        assert_eq!(title_page_at("<w:sectPr>", 0), None);
+        assert!(field("{}").is_none());
+        assert!(field("{page}").is_none());
+        assert!(field("{PAGE").is_none());
+    }
+}

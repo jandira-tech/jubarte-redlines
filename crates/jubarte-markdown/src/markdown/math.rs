@@ -2226,4 +2226,210 @@ mod tests {
         let xml = omml(r"a \\ b", true, None, &mut |_| String::new());
         assert_eq!(xml.matches("<m:oMath>").count(), 1, "{xml}");
     }
+
+    /// Every construct the parser reads, and the malformed inputs it
+    /// reads as text or as empty arguments: brackets left open, groups
+    /// never closed, scripts with no base, a `\left` with no `\right`.
+    #[test]
+    fn every_construct_and_its_malformed_forms_build_a_shape() {
+        assert_eq!(
+            shape("\\operatorname*{argmax}_x f"),
+            "func(fName(limLow(e(r(argmax))lim(r(x))))e(r(f)))"
+        );
+        assert_eq!(shape("\\sqrt[3]{x}"), "rad(deg(r(3))e(r(x)))");
+        assert_eq!(shape("\\sqrt{x}"), "rad(deg()e(r(x)))");
+        assert_eq!(shape("\\sqrt[3"), "rad(deg()e(r([)))r(3)");
+        assert_eq!(shape("a]"), "r(a])");
+        assert_eq!(shape("(a"), "r((a)");
+        assert_eq!(shape("{(}"), "r(()");
+        assert_eq!(shape("(a & b)"), "r((a &amp; b))");
+        assert_eq!(shape("(a \\\\ b)"), "eqArr(e(r((a))e(r(b))))");
+        assert_eq!(shape("\\left( a \\right)"), "d(e(r(a)))");
+        assert_eq!(shape("\\left( a"), "d(e(r(a)))");
+        assert_eq!(shape("\\left"), "d(e())");
+        assert_eq!(shape("\\left( a \\middle/ b \\right)"), "d(e(r(a))e(r(b)))");
+        assert_eq!(shape("\\left( a \\middle| b \\right."), "d(e(r(a))e(r(b)))");
+        assert_eq!(shape("f'_i"), "sSubSup(e(r(f))sub(r(i))sup(r(′)))");
+        assert_eq!(shape("f''^2_j"), "sSubSup(e(r(f))sub(r(j))sup(r(″2)))");
+        assert_eq!(shape("\\frac{a}{b"), "f(num(r(a))den(r(b)))");
+        assert_eq!(shape("\\frac"), "f(num()den())");
+        assert_eq!(
+            shape("\\text{a {b} c \\alpha  d \\{ x^y_z & \\\\}"),
+            "r(a {b} c αd { x^y_z &amp; \\\\)"
+        );
+        assert_eq!(shape("\\text x"), "r(x)");
+        assert_eq!(shape("\\text{"), "");
+        assert_eq!(shape("x_1_2"), "sSub(e(sSub(e(r(x))sub(r(1))))sub(r(2)))");
+        assert_eq!(shape("x^1^2"), "sSup(e(sSup(e(r(x))sup(r(1))))sup(r(2)))");
+        assert_eq!(
+            shape("\\sum\\limits_0^n x"),
+            "nary(sub(r(0))sup(r(n))e(r(x)))"
+        );
+        assert_eq!(shape("\\sum^n_0 x"), "nary(sub(r(0))sup(r(n))e(r(x)))");
+        assert_eq!(shape("{\\sum}"), "nary(sub()sup()e())");
+        assert_eq!(shape("\\sum_0"), "nary(sub(r(0))sup()e())");
+        assert_eq!(
+            shape("\\int x^2"),
+            "nary(sub()sup()e(sSup(e(r(x))sup(r(2)))))"
+        );
+        assert_eq!(
+            shape("\\sum{a}_i"),
+            "nary(sub()sup()e(sSub(e(r(a))sub(r(i)))))"
+        );
+        assert_eq!(shape("\\sum{a}"), "nary(sub()sup()e(r(a)))");
+        assert_eq!(
+            shape("\\int \\alpha_1"),
+            "nary(sub()sup()e(sSub(e(r(α))sub(r(1)))))"
+        );
+        assert_eq!(shape("\\genfrac{}{}{0pt}{}{a}{b}"), "f(num(r(a))den(r(b)))");
+        assert_eq!(
+            shape("\\genfrac(]{1pt}{}{a}{b}"),
+            "d(e(f(num(r(a))den(r(b)))))"
+        );
+        assert_eq!(
+            shape("\\genfrac({}{}{}{a}{b}"),
+            "d(e(f(num(r(a))den(r(b)))))"
+        );
+        assert_eq!(
+            shape("\\genfrac{}]{}{}{a}{b}"),
+            "d(e(f(num(r(a))den(r(b)))))"
+        );
+        assert_eq!(shape("\\{ a \\}"), "d(e(r( a )))");
+        assert_eq!(shape("\\{ a"), "r({ a)");
+        assert_eq!(
+            shape("\\overbrace{x}^{n}"),
+            "limUpp(e(groupChr(e(r(x))))lim(r(n)))"
+        );
+        assert_eq!(shape("\\overbrace{x}"), "groupChr(e(r(x)))");
+        assert_eq!(
+            shape("\\underbrace{x}_{n}"),
+            "limLow(e(groupChr(e(r(x))))lim(r(n)))"
+        );
+        assert_eq!(shape("\\underbrace{x}"), "groupChr(e(r(x)))");
+        assert_eq!(shape("\\not="), "r(≠)");
+        assert_eq!(shape("\\not\\in"), "r(∉)");
+        assert_eq!(shape("\\not \\in"), "r(∉)");
+        assert_eq!(shape("\\not\\foo"), "r(\\not\\foo)");
+        assert_eq!(shape("\\not"), "r(\\not)");
+        assert_eq!(shape("\\not\\|"), "r(\\not‖)");
+        assert_eq!(shape("\\not\\{"), "r(\\not{)");
+        assert_eq!(shape("\\not\\le x"), "r(≰x)");
+        assert_eq!(
+            shape("\\begin{matrix} a & b \\\\ c \\end{matrix}"),
+            "m(mr(e(r(a))e(r(b)))mr(e(r(c))e()))"
+        );
+        assert_eq!(shape("\\begin{pmatrix}a"), "d(e(m(mr(e(r(a))))))");
+        assert_eq!(
+            shape("\\begin{array}{cc} a&b \\end{array}"),
+            "m(mr(e(r(a))e(r(b))))"
+        );
+        assert_eq!(
+            shape("\\begin{array} a&b \\end{array}"),
+            "m(mr(e(r(a))e(r(b))))"
+        );
+        assert_eq!(
+            shape("\\begin{cases} a & x \\\\ b \\end{cases}"),
+            "d(e(eqArr(e(r(a &amp; x))e(r(b)))))"
+        );
+        assert_eq!(
+            shape("\\begin{aligned} a &= b \\\\ c &= d \\end{aligned}"),
+            "eqArr(e(r(a &amp;= b))e(r(c &amp;= d)))"
+        );
+        assert_eq!(
+            shape("\\begin{Vmatrix}a\\end{Vmatrix}"),
+            "d(e(m(mr(e(r(a))))))"
+        );
+        assert_eq!(
+            shape("\\begin{vmatrix}a\\end{vmatrix}"),
+            "d(e(m(mr(e(r(a))))))"
+        );
+        assert_eq!(
+            shape("\\begin{Bmatrix}a\\end{Bmatrix}"),
+            "d(e(m(mr(e(r(a))))))"
+        );
+        assert_eq!(
+            shape("\\begin{bmatrix}a\\end{bmatrix}"),
+            "d(e(m(mr(e(r(a))))))"
+        );
+        assert_eq!(shape("a \\\\ b \\\\"), "eqArr(e(r(a))e(r(b))e())");
+        assert_eq!(shape("\\\\ a"), "eqArr(e()e(r(a)))");
+        assert_eq!(shape("a \\end b"), "r(a \\end b)");
+        assert_eq!(
+            shape("\\overline{x}\\underline{y}"),
+            "bar(e(r(x)))bar(e(r(y)))"
+        );
+        assert_eq!(shape("\\mathbf{x}\\mathsf{y}\\mathtt{z}"), "r(x)r(y)r(z)");
+        assert_eq!(shape("\\bigl( a \\bigr)"), "d(e(r( a )))");
+        assert_eq!(shape("\\displaystyle x"), "r(x)");
+        assert_eq!(shape("\\bmod"), "r(mod)");
+        assert_eq!(shape("\\pmod{n}"), "d(e(r(mod)r( n)))");
+        assert_eq!(
+            shape("\\prescript{a}{b}{X}"),
+            "sPre(sub(r(a))sup(r(b))e(r(X)))"
+        );
+        assert_eq!(shape("\\hat x \\vec{y}"), "acc(e(r(x)))r( )acc(e(r(y)))");
+        assert_eq!(
+            shape("\\lim_{n\\to\\infty} a_n"),
+            "func(fName(limLow(e(r(lim))lim(r(n→∞))))e(sSub(e(r(a))sub(r(n)))))"
+        );
+        assert_eq!(shape("\\sin x"), "func(fName(r(sin))e(r(x)))");
+        assert_eq!(shape("\\boxed{x}"), "r(\\boxed{x})");
+        assert_eq!(shape("\\mathop{x}"), "box(e(r(x)))");
+        assert_eq!(shape("_a"), "sSub(e()sub(r(a)))");
+        assert_eq!(shape("^b"), "sSup(e()sup(r(b)))");
+        assert_eq!(shape("'a"), "r('a)");
+        assert_eq!(shape("x'"), "sSup(e(r(x))sup(r(′)))");
+        assert_eq!(shape("\\\\"), "eqArr(e()e())");
+        assert_eq!(shape("\\"), "r(\\)");
+        assert_eq!(shape("\\*"), "r(\\*)");
+        assert_eq!(shape("\\hspace{1em}x"), "r(x)");
+        assert_eq!(shape("\\stackrel{a}{=}"), "limUpp(e(r(=))lim(r(a)))");
+        assert_eq!(shape("\\underset{a}{b}"), "limLow(e(r(b))lim(r(a)))");
+        assert_eq!(shape("\\overset{a}{b}"), "limUpp(e(r(b))lim(r(a)))");
+        assert_eq!(shape("\\binom{n}{k}"), "d(e(f(num(r(n))den(r(k)))))");
+        assert_eq!(shape("\\tbinom"), "d(e(f(num()den())))");
+        assert_eq!(shape("\\cfrac{1}{2}"), "f(num(r(1))den(r(2)))");
+    }
+
+    /// Past the deepest nesting Word builds, the rest reads as text,
+    /// closed or not.
+    #[test]
+    fn nesting_past_the_limit_reads_as_text() {
+        let deep = format!("{}x{}", "{".repeat(70), "}".repeat(70));
+        let shape_deep = shape(&deep);
+        assert!(shape_deep.starts_with("r({{"), "{shape_deep}");
+        assert!(shape_deep.ends_with("}})"), "{shape_deep}");
+        let open = shape(&format!("{}x", "{".repeat(70)));
+        assert!(open.starts_with("r({") && open.ends_with("x)"), "{open}");
+    }
+
+    /// A change marker inside an argument marks the runs it holds. Inside
+    /// `\text{…}` the markers are read past, and the text is one run in
+    /// the change around the command (none here).
+    #[test]
+    fn changes_inside_arguments_mark_their_runs() {
+        let mut mark = |kind: Kind| {
+            format!(
+                "w:{} w:id=\"9\"",
+                if kind == Kind::Insert { "ins" } else { "del" }
+            )
+        };
+        for latex in [
+            format!(r"\frac{{{INSERT_START}a{INSERT_END}}}{{b}}"),
+            format!(r"x^{INSERT_START}{{2}}{INSERT_END}"),
+        ] {
+            let xml = omml(&latex, false, None, &mut mark);
+            assert!(xml.contains("<w:ins w:id=\"9\">"), "{latex}: {xml}");
+        }
+        let xml = omml(
+            &format!(r"\text{{a{DELETE_START}b{DELETE_END}c}}"),
+            false,
+            None,
+            &mut mark,
+        );
+        assert!(
+            xml.contains("<m:t>abc</m:t>") && !xml.contains("w:del"),
+            "{xml}"
+        );
+    }
 }

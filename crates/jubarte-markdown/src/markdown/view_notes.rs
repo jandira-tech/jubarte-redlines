@@ -2633,3 +2633,377 @@ fn section_page_clause(line: &str) -> Option<(usize, Option<&str>)> {
         .unwrap_or(page.len());
     Some((number, Some(&page[..end])))
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod header_branch_tests {
+    use super::*;
+
+    #[test]
+    fn authors_skip_comments_owners_odd_handles_and_empty_names() {
+        let table = authors(
+            "authors:\n# a note\n\n  document_owner: Ann\n  no colon\n  A B: Spaced\n  AC: \"\"\n  ??: \"\"\n  BD: Bob   # 2 revisions, 2026-03-02\n  CE: Cy  # 1 comment, latest 2026-03-04T10:00:00Z\n  DF: Di  # 2 revisions, 2026-03-02..2026-03-04\n  EG: Ed  # undated\nother:\n  ZZ: not an author\n",
+        );
+        let mut handles: Vec<&str> = table.keys().map(String::as_str).collect();
+        handles.sort_unstable();
+        assert_eq!(handles, ["??", "BD", "CE", "DF", "EG"]);
+        assert_eq!(table["??"].name, "");
+        assert_eq!(table["BD"].date.as_deref(), Some("2026-03-02T00:00:00Z"));
+        assert_eq!(table["CE"].latest.as_deref(), Some("2026-03-04T10:00:00Z"));
+        assert_eq!(
+            table["DF"].range,
+            Some(("2026-03-02".to_string(), "2026-03-04".to_string()))
+        );
+        assert_eq!(table["EG"].date, None);
+    }
+
+    #[test]
+    fn reversed_ranges_name_only_backwards_days() {
+        let found = reversed_ranges(
+            "authors:\n# note\n\n  AB: Ann  # 2026-03-04..2026-03-02\n  CD: Cy  # 2026-03-02..2026-03-04\n  EF: Ed  # 2026-03-02..2026-03-02\n  GH: Gil  # 2026-03-04T10:00:00Z..2026-03-02\n  IJ: Ivy\nnot:\n  KL: Kim  # 2026-03-04..2026-03-02\n",
+        );
+        assert_eq!(found, ["AB", "GH"]);
+        assert_eq!(
+            day_range("2026-03-02T10:00:00+02:00..2026-03-02"),
+            Some(("2026-03-02".into(), "2026-03-02".into()))
+        );
+        assert_eq!(day_range("2026-03-02x..2026-03-03"), None);
+        assert_eq!(day_range("no range"), None);
+    }
+
+    #[test]
+    fn file_defaults_rank_date_keys_and_name_the_first_unread() {
+        let defaults = file_defaults(
+            "\u{feff}---\r\n  indented: x\n# comment\nnot a key\nauthor: ~\nauthor: \"\"\nauthor: Ann\nauthor: Bob\ncreated: soon\ndate: later\nmodified: 2026-02-03\n...\nbody\n",
+        );
+        assert_eq!(defaults.author.as_deref(), Some("Ann"));
+        assert_eq!(defaults.date.as_deref(), Some("2026-02-03T00:00:00Z"));
+        assert_eq!(defaults.unread, None);
+        let defaults = file_defaults("---\ndate: later\ncreated: soon\n---\n");
+        assert_eq!(defaults.date, None);
+        assert_eq!(
+            defaults.unread,
+            Some(("date".to_string(), "later".to_string()))
+        );
+        let defaults = file_defaults("---\nlast_modified: 2026-02-03T04:05:06Z\n---\n");
+        assert_eq!(defaults.date.as_deref(), Some("2026-02-03T04:05:06Z"));
+        assert_eq!(file_defaults("---\nauthor: Ann\n").author, None);
+        assert_eq!(file_defaults("no front matter").author, None);
+    }
+
+    #[test]
+    fn the_document_owner_reads_its_note_and_empty_forms() {
+        assert_eq!(
+            document_owner("authors:\n# c\n\n  document_owner:  # a note\n"),
+            None
+        );
+        assert!(empty_owner("authors:\n  document_owner: ~\n"));
+        assert!(!empty_owner("authors:\n  document_owner: \"~\"\n"));
+        assert_eq!(
+            document_owner("authors:\n  document_owner: none # no docProps/core.xml\n"),
+            Some(Owner::NoPart)
+        );
+        assert_eq!(
+            document_owner("authors:\n  document_owner: none\n"),
+            Some(Owner::Unnamed)
+        );
+        assert_eq!(
+            document_owner("authors:\n  document_owner: none # dc:creator\n"),
+            Some(Owner::Creator("none".into()))
+        );
+        assert_eq!(
+            document_owner("authors:\n  document_owner: Ann # cp:lastModifiedBy\n"),
+            Some(Owner::LastModifiedBy("Ann".into()))
+        );
+        assert_eq!(document_owner("other:\n  document_owner: Ann\n"), None);
+        assert!(is_handle("??") && is_handle("AC2") && !is_handle("") && !is_handle("A-C"));
+    }
+
+    #[test]
+    fn scalars_unquote_json_and_single_quotes_and_keep_their_comment() {
+        assert_eq!(
+            scalar_and_comment("\"a\\\"b\" # c"),
+            ("a\"b".to_string(), Some("c"))
+        );
+        assert_eq!(scalar_and_comment("\"broken"), (String::new(), None));
+        assert_eq!(scalar_and_comment("'it''s' # n").0, "it's");
+        assert_eq!(
+            scalar_and_comment("plain # note"),
+            ("plain".to_string(), Some("note"))
+        );
+    }
+
+    #[test]
+    fn plain_revisions_parse_ids_authors_and_dates() {
+        assert_eq!(
+            trailing_bare_group("Ann (x) (2026-01-01T00:00:00Z)"),
+            Some(8)
+        );
+        assert_eq!(trailing_bare_group("Ann \\(x)"), None);
+        assert_eq!(trailing_bare_group("Ann (a (b))"), Some(4));
+        assert_eq!(trailing_bare_group("no group"), None);
+        assert_eq!(trailing_bare_group(")"), None);
+        let plain = plain_revision("r5 Ann (2026-01-01T00:00:00Z)").expect("plain");
+        assert_eq!(
+            (plain.ids, plain.author.as_str(), plain.date.as_str()),
+            (vec![5], "Ann", "2026-01-01T00:00:00Z")
+        );
+        let plain = plain_revision("noid Bo").expect("noid");
+        assert!(plain.ids.is_empty() && plain.author == "Bo" && plain.date.is_empty());
+        assert!(plain_revision("header1.noid").is_some());
+        assert!(plain_revision("5 Ann").is_none());
+        assert!(plain_revision("#5 Ann").is_none());
+        assert!(plain_revision("r5 @AC").is_none());
+        assert!(plain_revision("r5 Ann: x").is_none());
+        assert!(plain_revision("r5 Ann (2026-01-01T00:00:00Z) tail").is_none());
+        assert_eq!(
+            plain_revision("r4294967295 Ann").map(|p| p.ids),
+            Some(vec![])
+        );
+        assert_eq!(
+            plain_revisions("r1 A (2026-01-01T00:00:00Z); r2 B").map(|p| p.len()),
+            Some(2)
+        );
+        assert_eq!(plain_revisions("r1 A; x: y"), None);
+        // A fold's parts hold no bare parenthesis in their author.
+        assert_eq!(
+            nested_plain_revisions("r3 Bo (2026-01-01T00:00:00Z) re r1 Al").map(|p| p.len()),
+            Some(2)
+        );
+        assert_eq!(nested_plain_revisions("r3 B(o) re r1 Al"), None);
+        // An escaped parenthesis passes the fold's check, but no plain
+        // revision holds one.
+        assert_eq!(nested_plain_revisions("r3 B\\(o re r1 Al"), None);
+        assert_eq!(nested_plain_revisions("r3 Bo"), None);
+    }
+
+    #[test]
+    fn unplaced_and_empty_notes_read_their_lists() {
+        assert!(unplaced("no list").is_empty());
+        let entries = unplaced(
+            "[del r1 @A in p2, fmt r2 @A in p3, r3 @A in p4, x in p5, r4 @A in q1, r5 @A] # n",
+        );
+        let kinds: Vec<(usize, &str)> = entries.iter().map(|(n, k, _)| (*n, *k)).collect();
+        assert_eq!(kinds, [(2, "del"), (3, "fmt"), (4, "ins")]);
+        assert_eq!(empty_notes("{rev: x}"), Ok(vec![]));
+        assert_eq!(
+            empty_notes(
+                "{rev: \"a \\\" empty: [x]\", empty: [footnotes, endnotes, footnotes]} # empty: [x]"
+            ),
+            Ok(vec!["footnote", "endnote"])
+        );
+        assert_eq!(
+            empty_notes("{empty: [footnotes], rev: x}"),
+            Err("empty: is not the map's last clause, a [list]".to_string())
+        );
+        assert_eq!(
+            empty_notes("{empty: [comments]}"),
+            Err("empty: names comments, not footnotes or endnotes".to_string())
+        );
+        assert_eq!(empty_notes("{empty: [ , ]}"), Ok(vec![]));
+        assert!(note_formats("{rev: x}").is_empty());
+        assert!(note_revisions("{fmt: x}").is_none());
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod line_branch_tests {
+    use super::*;
+
+    #[test]
+    fn table_lines_read_every_clause_and_skip_what_names_nothing() {
+        let line = table_line(
+            "<!-- t0 center 2x2, fmt r1 @??, fmt r2 @A in t0.row0.cell1; r3 @A in t0.row1; r4 @A in p5; r5 @A in bogus; bad tag, rev r6 @A in t0.row0.cell0; r8 @A in t0.row1; r9 @A in junk; no place; nonsense in t0.row1, rev-merge r10 @A in t0.row1, gaps x before 1; t0.row1 before 2 after 1 extra 3, row-borders top single 1pt in t0.row1; top s!ngle in t0.row2; plain, cell-borders top single 1pt in all t0.row1 t0.row1.cell0 bogus; top s!ngle in all; nothing, merged t0.row0.cell0 across 2 down 2 extra 1; bogus across 1, break-ins r11 @A in p1; junk; r12 @A in q2, in c5 c6, cells t0.row0 p1-p3 t0.row1 p9-p4 -->",
+        )
+        .expect("a table line");
+        assert_eq!(line.grid_fmt, Some(1));
+        assert_eq!(line.columns, Some(2));
+        assert_eq!(line.align, Some("center"));
+        assert!(line.cell_fmt.contains_key(&(0, 1)));
+        assert!(line.row_fmt.contains_key(&1));
+        assert_eq!(line.para_fmt.get(&5).map(Vec::len), Some(1));
+        assert!(line.cell_marks.contains_key(&(0, 0)));
+        assert!(line.row_marks.contains_key(&1));
+        assert_eq!(line.gaps.get(&1), Some(&(2, 1)));
+        assert_eq!(line.row_borders.len(), 1);
+        assert_eq!(line.cell_borders.len(), 3);
+        assert_eq!(line.merges.get(&(0, 0)), Some(&(2, 2)));
+        assert_eq!(line.marks.get(&1).map(Vec::len), Some(1));
+        assert!(line.in_comment);
+        assert_eq!(line.row_paragraphs, None, "p9-p4 counts backwards");
+        // A table line with a fmt @?? that names no id keeps no grid change.
+        let line = table_line("<!-- t1 1x1, fmt bogus @??, style \"My Table\" -->").expect("line");
+        assert_eq!(line.grid_fmt, None);
+        assert_eq!(line.style.as_deref(), Some("My Table"));
+        assert!(table_line("<!-- p1 -->").is_none());
+        assert!(table_line("t0").is_none());
+        assert_eq!(row_of("t0.row1.cell2"), None);
+        assert_eq!(row_and_cell("t0.row1.cell2.x"), None);
+        assert_eq!(paragraph_range("p5-p200000"), None);
+    }
+
+    #[test]
+    fn note_lines_read_ranges_styles_and_spacing() {
+        assert_eq!(
+            note_paragraphs("<!-- endnotes.p2-p3, rev r1 @A -->"),
+            Some(2)
+        );
+        assert_eq!(note_paragraphs("<!-- footnotes.x1 -->"), None);
+        assert_eq!(note_paragraphs("<!-- comments.p1 -->"), None);
+        assert_eq!(
+            note_styles("<!-- footnotes.p1-p2 FootnoteText, \"My Note\" -->"),
+            Some(vec!["FootnoteText".to_string(), "My Note".to_string()])
+        );
+        assert_eq!(note_styles("<!-- footnotes.p1, rev r1 @A -->"), None);
+        assert_eq!(note_styles("<!-- footnotes.p1 \"\" -->"), None);
+        assert_eq!(note_styles("<!-- footnotes.p1 after 0pt -->"), None);
+        assert_eq!(note_styles("<!-- footnotes.p1 -->"), None);
+        assert_eq!(note_styles("<!-- footnotes.p1 open -- >"), None);
+        let spacings =
+            note_spacings("<!-- footnotes.p0-p2 Note after 0pt, line 1; ; before 6pt -->");
+        assert_eq!(spacings.len(), 3);
+        assert!(!spacings[0].is_empty() && spacings[1].is_empty());
+        assert!(note_spacings("<!-- p0 after 0pt -->").is_empty());
+        assert!(note_spacings("<!-- footnotes.p0 Note -->").is_empty());
+        assert!(note_spacings("<!-- footnotes.p0 after 0pt").is_empty());
+        assert!(endnote_line("<!-- endnotes.p0 -->") && !endnote_line("<!-- footnotes.p0 -->"));
+        assert!(footnote_line("<!-- footnotes.p0-->"));
+    }
+
+    #[test]
+    fn styles_and_labels_quote_and_split_as_printed() {
+        assert_eq!(style_token("Plain"), "Plain");
+        assert_eq!(style_token(""), "\"\"");
+        assert_eq!(style_token("center"), "\"center\"");
+        assert_eq!(style_token("A \"B\"\\C"), "\"A \\\"B\\\"\\\\C\"");
+        assert_eq!(
+            take_style("\"A\\\"B\", rest"),
+            Some(("A\"B".to_string(), "rest"))
+        );
+        assert_eq!(take_style("\"open"), None);
+        assert_eq!(take_style("\"esc\\"), None);
+        assert_eq!(take_style("center x"), None);
+        assert_eq!(take_style(""), None);
+        let (all, each) = comment_styles(
+            "2 threads open, style Normal, c6 style \"Comment Text\", cx style A, c7 style center, style \"open",
+        );
+        assert_eq!(all.as_deref(), Some("Normal"));
+        assert_eq!(each.get(&6).map(String::as_str), Some("Comment Text"));
+        assert_eq!(each.len(), 1);
+        assert_eq!(
+            split_clauses("a, \"b, \\\"c\", d,e"),
+            ["a", "\"b, \\\"c\"", "d,e"]
+        );
+        assert_eq!(
+            take_label("Body num \"(a)\" center"),
+            ("Body center".to_string(), Some("(a)".to_string()))
+        );
+        assert_eq!(
+            take_label("left, num \"1.\", right"),
+            ("left, right".to_string(), Some("1.".to_string()))
+        );
+        assert_eq!(
+            take_label("num \"\\\"x\\\\\""),
+            (String::new(), Some("\"x\\".to_string()))
+        );
+        assert_eq!(take_label("num \"open"), ("num \"open".to_string(), None));
+        assert_eq!(take_label("num \"esc\\"), ("num \"esc\\".to_string(), None));
+        assert_eq!(take_label("xnum \"a\""), ("xnum \"a\"".to_string(), None));
+        assert_eq!(
+            take_label("left, num \"1.\""),
+            ("left".to_string(), Some("1.".to_string()))
+        );
+    }
+
+    #[test]
+    fn id_lines_read_indents_spacing_holds_and_breaks() {
+        let line = id_line(
+            "<!-- p3-p4 \"My Style\" num \"(a)\", center, first-line 2ch, hanging 1ch, left 3ch, right 4ch, before 6pt, after 99999pt, line 1, size 9pt, size 9999pt, mark style, level 2, level 9, outline 3, outline 0, break-ins r1 @A, break-del r2 @A, page-break-del r3 @A, fmt r4 @A, rev r5 @A, rev-del r6 @A, in c1 c2, in rx, holds del r70 c0 start c1 end c2 ref, unknown word, section-break, bullet -->",
+        )
+        .expect("an id line");
+        assert_eq!(line.number, 3);
+        assert_eq!(line.style.as_deref(), Some("My Style"));
+        assert!(matches!(line.label, Some(Label::Bullet)));
+        assert_eq!(line.align, Some("center"));
+        assert!(line.first_line_chars.is_some() && line.hanging_chars.is_some());
+        assert!(line.left_chars.is_some() && line.right_chars.is_some());
+        assert_eq!(line.size, Some(18));
+        assert!(line.mark_inherits);
+        assert_eq!(line.level, None, "level 9 is past Word's");
+        assert_eq!(line.outline, None, "outline 0 is none");
+        assert!(line.break_ins.is_some() && line.break_del.is_some());
+        assert!(line.page_break && line.section_break);
+        assert!(matches!(line.page_break_change, Some((false, _))));
+        assert_eq!(line.fmt.len(), 1);
+        assert_eq!(line.rev.len(), 2);
+        assert_eq!(line.rev_del.len(), 1);
+        assert_eq!(line.in_comments, [1, 2]);
+        assert_eq!(line.holds.len(), 3);
+        let line = id_line("<!-- p1 left 1in, right 0.5in, hanging 99in, first-line xin -->")
+            .expect("line");
+        assert_eq!(
+            (line.left, line.right, line.hanging, line.first_line),
+            (Some(1440), Some(720), None, None)
+        );
+        for holds in [
+            "holds ins x",
+            "holds mov r1 c0 start",
+            "holds del r1 c0",
+            "holds del r1 x0 start",
+            "holds del r1 c0 middle",
+        ] {
+            let line = id_line(&format!("<!-- p1 {holds} -->")).expect("line");
+            assert!(line.holds.is_empty(), "{holds}");
+        }
+        assert!(id_line("<!-- q1 -->").is_none());
+    }
+
+    #[test]
+    fn spacing_words_and_comment_heads_refuse_partial_clauses() {
+        let (spacing, size, inherits) =
+            spacing_words("before 1 lines after 2pt line 8.65pt exact size 9pt mark style")
+                .expect("words");
+        assert!(!spacing.is_empty() && size == Some(18) && inherits);
+        assert!(spacing_words("mark other").is_none());
+        assert!(spacing_words("before").is_none());
+        assert!(spacing_words("size huge").is_none());
+        assert!(spacing_words("color red").is_none());
+        assert!(comment_numbers("c1 c2") && !comment_numbers("") && !comment_numbers("c1 r2"));
+        let (head, body) =
+            comment_head("c5 @AC 2026-01-01T00:00:00Z in r13, after 0pt; ; line 1: text")
+                .expect("head");
+        assert_eq!(
+            (head.number, head.held_in.as_slice(), body),
+            (5, &[13][..], "text")
+        );
+        assert_eq!(head.spacing.len(), 3);
+        let (head, body) = comment_head("c6 @AC resolved:").expect("empty body");
+        assert!(head.resolved && body.is_empty());
+        assert_eq!(
+            comment_head("c7 re c5: x").map(|(h, _)| h.reply_to),
+            Some(Some(5))
+        );
+        for refused in [
+            "c5 @A-C: x",
+            "c5 in 13: x",
+            "c5 in header1.r3: x",
+            "c5 in rx: x",
+            "c5 in r4294967295: x",
+            "c5 re 6: x",
+            "c5 other words: x",
+            "c5, color red: x",
+            "c5, after: x",
+            "5: item",
+            "no colon",
+        ] {
+            assert!(comment_head(refused).is_none(), "{refused}");
+        }
+        assert_eq!(grid_pitch("15.6pt"), Some(312));
+        assert_eq!(grid_pitch("0pt"), None);
+        assert_eq!(grid_pitch("NaNpt"), None);
+        assert_eq!(page_twips("-1in"), None);
+        assert_eq!(page_twips("infin"), None);
+        assert_eq!(page_twips("1in"), Some(1440));
+    }
+}
