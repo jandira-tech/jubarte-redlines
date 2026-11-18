@@ -8,7 +8,7 @@
 
 use super::*;
 
-fn fonts() -> Fonts<'static> {
+pub(super) fn fonts() -> Fonts<'static> {
     let mut fonts = Fonts::new();
     for face in FaceId::all() {
         let key = face.key();
@@ -34,10 +34,15 @@ fn package() -> PartFs {
 }
 
 fn parsed(source: &str) -> (Vec<Block>, PageSetup) {
-    let pkg = package();
+    parsed_with(&package(), "", source)
+}
+
+/// `source` as the body of a main part of `pkg`, its root also declaring
+/// `namespaces`, walked with Memory Mono 12 pt as the default run.
+pub(super) fn parsed_with(pkg: &PartFs, namespaces: &str, source: &str) -> (Vec<Block>, PageSetup) {
     let mut dom = Dom::new();
     let doc = dom.parse_xdocument(&format!(
-        r#"<w:document xmlns:w="{}"><w:body>{source}</w:body></w:document>"#,
+        r#"<w:document xmlns:w="{}" {namespaces}><w:body>{source}</w:body></w:document>"#,
         W::URI
     ));
     let root = dom.root(doc).unwrap();
@@ -56,7 +61,7 @@ fn parsed(source: &str) -> (Vec<Block>, PageSetup) {
     let sects = live_sect_prs(&dom, body);
     let page = load_page_setup(&dom, body, &sheet.defaults.page);
     let ctx = WalkCtx {
-        pkg: &pkg,
+        pkg,
         main: "word/document.xml",
         sheet: &sheet,
         sects: &sects,
@@ -71,7 +76,7 @@ fn parsed(source: &str) -> (Vec<Block>, PageSetup) {
         body,
         &mut Numbering::default(),
         &mut blocks,
-        &mut EndnoteBag::load(&pkg, "word/document.xml"),
+        &mut EndnoteBag::load(pkg, "word/document.xml"),
     );
     (blocks, page)
 }

@@ -6,6 +6,7 @@
 //! WordprocessingML built in code, with the bundled faces only: where each
 //! object lands, how text flows around it, and what the page paints.
 
+use super::layout_scenario_branch_tests::{fonts, parsed_with};
 use super::*;
 
 const PNG: [u8; 70] = [
@@ -25,16 +26,6 @@ const NS: &str = concat!(
     r#"xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" "#,
     r#"xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing""#,
 );
-
-fn fonts() -> Fonts<'static> {
-    let mut fonts = Fonts::new();
-    for face in FaceId::all() {
-        let key = face.key();
-        fonts.insert_embedded(&key.family, key.bold, key.italic, face.bytes());
-    }
-    fonts.insert_embedded("Memory Mono", false, false, FaceId::MonoRegular.bytes());
-    fonts
-}
 
 /// A package holding one picture, `rId1` of the main part.
 fn package() -> PartFs {
@@ -59,46 +50,7 @@ fn package() -> PartFs {
 }
 
 fn parsed(source: &str) -> (Vec<Block>, PageSetup) {
-    let pkg = package();
-    let mut dom = Dom::new();
-    let doc = dom.parse_xdocument(&format!(
-        r#"<w:document xmlns:w="{}" {NS}><w:body>{source}</w:body></w:document>"#,
-        W::URI
-    ));
-    let root = dom.root(doc).unwrap();
-    let body = dom.element(root, &W::body()).unwrap();
-    let mut defaults = Defaults::word();
-    defaults.run.family = "Memory Mono".into();
-    defaults.run.size = 12.0;
-    let sheet = StyleSheet {
-        defaults,
-        by_id: HashMap::new(),
-        tables: HashMap::new(),
-        theme: ThemeFonts::default(),
-        latent: true,
-        default_table: true,
-    };
-    let sects = live_sect_prs(&dom, body);
-    let page = load_page_setup(&dom, body, &sheet.defaults.page);
-    let ctx = WalkCtx {
-        pkg: &pkg,
-        main: "word/document.xml",
-        sheet: &sheet,
-        sects: &sects,
-        authors: RefCell::new(AuthorColors::default()),
-        comments: HashMap::new(),
-        open_comments: RefCell::new(Vec::new()),
-    };
-    let mut blocks = Vec::new();
-    walk_container(
-        &ctx,
-        &dom,
-        body,
-        &mut Numbering::default(),
-        &mut blocks,
-        &mut EndnoteBag::load(&pkg, "word/document.xml"),
-    );
-    (blocks, page)
+    parsed_with(&package(), NS, source)
 }
 
 fn lay(source: &str) -> Vec<Page> {
