@@ -981,3 +981,89 @@ mod tests {
         assert!(!hint.contains("erases"), "{hint}");
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod holder_branch_tests {
+    use super::*;
+
+    #[test]
+    fn flags_list_each_occurrence_with_cut_marks_on_long_sides() {
+        let text = "x long words before the anchor here and then many more words after anchor";
+        let hits: Vec<(usize, usize)> = text
+            .match_indices("anchor")
+            .map(|(s, a)| (s, s + a.len()))
+            .collect();
+        let message = PlanSyntax::Flags.ambiguous_anchor(text, "anchor", &hits);
+        assert!(message.contains("occurs 2 times"), "{message}");
+        assert!(message.contains("--occurrence 1..=2"), "{message}");
+        let lines: Vec<&str> = message.lines().filter(|l| l.starts_with("  ")).collect();
+        assert_eq!(lines.len(), 2, "{message}");
+        // The first hit has over 20 chars on both sides, the last none after.
+        assert!(lines[0].contains('…'), "{message}");
+        assert!(!lines[1].trim_end().ends_with("…\""), "{message}");
+        let short = PlanSyntax::V1.ambiguous_anchor("ab ab", "ab", &[(0, 2), (3, 5)]);
+        assert!(short.contains("\"occurrence\" to 1..=2"), "{short}");
+        assert!(!short.contains("\n  1:"), "{short}");
+    }
+
+    fn paragraph(xml: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(r#"<w:p xmlns:w="{}">{xml}</w:p>"#, W::URI));
+        let p = dom.root(doc).unwrap();
+        (dom, p)
+    }
+
+    #[test]
+    fn removed_holder_finds_the_deletion_an_anchor_reaches_into() {
+        let (dom, p) = paragraph(
+            r#"<w:r><w:t xml:space="preserve">Keep </w:t><w:tab/><w:br w:type="page"/><w:br/><w:cr/><w:noBreakHyphen/><w:softHyphen/><w:sym w:char="F0E0"/><w:lastRenderedPageBreak/></w:r><w:del w:id="3" w:author="Bo"><w:r><w:delText>gone words</w:delText></w:r></w:del><w:r><w:pict><w:p><w:r><w:t>boxed gone</w:t></w:r></w:p></w:pict></w:r>"#,
+        );
+        let del = dom.descendants(p, Some(&W::del()))[0];
+        assert_eq!(removed_holder(&dom, p, "gone words"), Some(del));
+        assert_eq!(removed_holder(&dom, p, "{--gone--}"), Some(del));
+        assert_eq!(
+            removed_holder(&dom, p, "\n\u{2011}\u{ad}\u{fffc}gone"),
+            Some(del)
+        );
+        assert_eq!(removed_holder(&dom, p, "Keep"), None);
+        assert_eq!(removed_holder(&dom, p, "boxed"), None);
+        assert_eq!(removed_holder(&dom, p, ""), None);
+    }
+
+    fn holder<'a>(held: Held, restorable: bool, text: &'a str) -> Holder<'a> {
+        Holder {
+            held,
+            id: "r3",
+            long_id: "body:rev:3",
+            author: "Bo",
+            actor: "Ed",
+            keep_others: true,
+            text,
+            paragraph: "p0",
+            lead: "the text is inside",
+            restorable,
+        }
+    }
+
+    #[test]
+    fn strike_and_restore_fragments_follow_the_kind_and_syntax() {
+        let ins = holder(Held::Inserted, false, "new");
+        let del = holder(Held::Deleted, true, "old");
+        for syntax in PlanSyntax::ALL {
+            let has = syntax != PlanSyntax::Typed;
+            assert_eq!(strike(syntax, &ins).is_some(), has, "{syntax:?}");
+            assert_eq!(restore(syntax, &del).is_some(), has, "{syntax:?}");
+            assert_eq!(strike(syntax, &del), None);
+            assert_eq!(restore(syntax, &ins), None);
+            assert_eq!(restore(syntax, &holder(Held::Deleted, false, "old")), None);
+            assert_eq!(restore(syntax, &holder(Held::Deleted, true, "")), None);
+        }
+        assert_eq!(strike(PlanSyntax::Flags, &ins).unwrap(), "-p r3 --strike");
+        assert_eq!(shell_word(""), "''");
+        assert_eq!(shell_word("#x"), "'#x'");
+        assert_eq!(shell_word("a b"), "'a b'");
+        assert_eq!(shell_word("it's"), r"'it'\''s'");
+        assert_eq!(shell_word("body:rev:1"), "body:rev:1");
+    }
+}

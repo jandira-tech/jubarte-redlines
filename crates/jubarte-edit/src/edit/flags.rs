@@ -1790,3 +1790,290 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod flag_branch_tests {
+    use super::*;
+    use crate::changes::ChangeKind;
+
+    fn op(at: &str) -> FlagOp {
+        FlagOp {
+            at: at.into(),
+            ..FlagOp::default()
+        }
+    }
+
+    fn with(at: &str, set: impl Fn(&mut FlagOp)) -> FlagOp {
+        let mut op = op(at);
+        set(&mut op);
+        op
+    }
+
+    fn refused(verb: Verb, op: FlagOp) -> String {
+        plan_from_flags(verb, &[op], "A", None, Some(ExistingRevisions::Keep), b"")
+            .expect_err("refused")
+    }
+
+    fn planned(verb: Verb, op: FlagOp) -> OperationKind {
+        let mut plan = plan_from_flags(verb, &[op], "A", None, Some(ExistingRevisions::Keep), b"")
+            .expect("planned")
+            .plan;
+        assert_eq!(plan.operations.len(), 1);
+        plan.operations.remove(0).kind
+    }
+
+    #[test]
+    fn occurrence_needs_an_anchor_and_counts_from_one() {
+        let e = refused(Verb::Edit, with("p1", |o| o.occurrence = Some(2)));
+        assert_eq!(e, "-p p1: --occurrence requires --anchor");
+        let e = refused(
+            Verb::Edit,
+            with("p1", |o| {
+                o.occurrence = Some(0);
+                o.anchor = Some("x".into());
+                o.delete = true;
+            }),
+        );
+        assert_eq!(e, "-p p1: --occurrence is 1-based");
+    }
+
+    #[test]
+    fn style_sizes_outside_the_word_range_are_refused() {
+        for size in ["0", "-3", "1639", "NaN", "inf", "big"] {
+            let e = refused(
+                Verb::Edit,
+                with("p1", |o| {
+                    o.anchor = Some("x".into());
+                    o.styles = vec![format!("size={size}")];
+                }),
+            );
+            assert_eq!(
+                e,
+                format!("-p p1: --style size={size}: points between 0 and 1638")
+            );
+        }
+        let kind = planned(
+            Verb::Edit,
+            with("p1", |o| {
+                o.anchor = Some("x".into());
+                o.styles = vec!["size=10.5".into()];
+            }),
+        );
+        assert!(
+            matches!(kind, OperationKind::FormatRun { ref format, .. } if format.size_pt == Some(HalfPoints(21)))
+        );
+    }
+
+    #[test]
+    fn a_reply_takes_no_revision_flag_or_paragraph_flag() {
+        let e = refused(
+            Verb::Edit,
+            with("c1", |o| {
+                o.reply = Some("ok".into());
+                o.visible = true;
+            }),
+        );
+        assert_eq!(e, "-p c1: --reply takes no other flag");
+        for set in [
+            (|o: &mut FlagOp| o.delete = true) as fn(&mut FlagOp),
+            |o| o.styles = vec!["bold".into()],
+            |o| o.content = Some("x".into()),
+        ] {
+            let e = refused(
+                Verb::Edit,
+                with("c1", |o| {
+                    o.reply = Some("ok".into());
+                    set(o);
+                }),
+            );
+            assert_eq!(e, "-p c1: --reply takes no other flag");
+        }
+    }
+
+    #[test]
+    fn a_revision_group_takes_only_its_verb() {
+        for set in [
+            (|o: &mut FlagOp| o.resolve = true) as fn(&mut FlagOp),
+            |o| o.before = true,
+            |o| o.comment = true,
+            |o| o.styles = vec!["bold".into()],
+        ] {
+            let e = refused(
+                Verb::Edit,
+                with("r1", |o| {
+                    o.accept = true;
+                    set(o);
+                }),
+            );
+            assert_eq!(
+                e,
+                "-p r1: a revision takes --accept, --reject, --strike or --restore"
+            );
+        }
+    }
+
+    #[test]
+    fn paragraph_flags_that_contradict_each_other_are_refused() {
+        let e = refused(Verb::Edit, op("  "));
+        assert_eq!(e, "-p needs a location");
+        let e = refused(
+            Verb::Edit,
+            with("p1", |o| {
+                o.delete = true;
+                o.resolve = true;
+            }),
+        );
+        assert_eq!(e, "-p p1: --delete excludes --content and --resolve");
+        for set in [
+            (|o: &mut FlagOp| o.content = Some("x".into())) as fn(&mut FlagOp),
+            |o| o.anchor = Some("x".into()),
+            |o| o.styles = vec!["bold".into()],
+        ] {
+            let e = refused(
+                Verb::Edit,
+                with("p1", |o| {
+                    o.resolve = true;
+                    set(o);
+                }),
+            );
+            assert_eq!(
+                e,
+                "-p p1: --resolve takes no --anchor, --content or --style"
+            );
+        }
+        let e = refused(
+            Verb::Add,
+            with("p1", |o| {
+                o.before = true;
+                o.comment = true;
+                o.content = Some("x".into());
+            }),
+        );
+        assert_eq!(e, "-p p1: --before is for a new paragraph, not a comment");
+        for set in [(|o: &mut FlagOp| o.before = true) as fn(&mut FlagOp), |o| {
+            o.comment = true;
+        }] {
+            let e = refused(
+                Verb::Edit,
+                with("p1", |o| {
+                    o.content = Some("x".into());
+                    set(o);
+                }),
+            );
+            assert_eq!(e, "-p p1: --before and --comment belong to add");
+        }
+    }
+
+    #[test]
+    fn comment_groups_map_to_their_comment_operation() {
+        for set in [(|o: &mut FlagOp| o.before = true) as fn(&mut FlagOp), |o| {
+            o.comment = true;
+        }] {
+            let e = flag_operation(
+                Verb::Add,
+                &with("c1", |o| {
+                    o.content = Some("x".into());
+                    set(o);
+                }),
+            )
+            .expect_err("refused");
+            assert!(e.starts_with("-p c1"), "{e}");
+        }
+        let kind = planned(Verb::Edit, with("c4", |o| o.resolve = true));
+        assert!(matches!(
+            kind,
+            OperationKind::ResolveComment {
+                comment_id: 4,
+                done: true
+            }
+        ));
+    }
+
+    #[test]
+    fn paragraph_styles_and_run_formats_fit_only_their_operations() {
+        let e = refused(
+            Verb::Edit,
+            with("p1", |o| {
+                o.anchor = Some("x".into());
+                o.content = Some("y".into());
+                o.styles = vec!["Heading1".into()];
+            }),
+        );
+        assert_eq!(e, "-p p1: a paragraph style takes no --anchor");
+        for style in ["Heading1", "bold"] {
+            let e = refused(
+                Verb::Edit,
+                with("p1", |o| {
+                    o.content = Some("y".into());
+                    o.styles = vec![style.into()];
+                }),
+            );
+            assert!(e.starts_with("-p p1: a rewrite takes no --style"), "{e}");
+        }
+        let e = refused(
+            Verb::Edit,
+            with("p1", |o| {
+                o.delete = true;
+                o.styles = vec!["Heading1".into()];
+            }),
+        );
+        assert_eq!(e, "-p p1: --delete takes no --style");
+    }
+
+    fn plan(reject: Option<ChangeFilter>, visible: bool) -> EditPlan {
+        let mut plan = plan_from_flags(
+            Verb::Edit,
+            &[with("p1", |o| o.content = Some("x".into()))],
+            "A",
+            None,
+            Some(ExistingRevisions::Keep),
+            b"",
+        )
+        .unwrap()
+        .plan;
+        plan.resolve_revisions = Some(ResolveRevisions {
+            accept: None,
+            reject,
+            reject_visible: visible,
+        });
+        plan
+    }
+
+    #[test]
+    fn recording_joins_visible_rejects_and_the_others_guard() {
+        let ids = |v: &[&str]| {
+            Some(ChangeFilter::ids(
+                v.iter().map(|s| s.to_string()).collect::<Vec<String>>(),
+            ))
+        };
+        // A visible reject recorded into a visible plan joins it.
+        let merged =
+            record_into(Some(plan(ids(&["r1"]), true)), plan(ids(&["r2"]), true)).expect("joined");
+        let reject = merged.resolve_revisions.unwrap().reject.unwrap();
+        assert_eq!(reject.ids.unwrap(), ["r1", "r2"]);
+        // The others guard, once recorded, holds for the plan.
+        let mut more = plan(None, false);
+        more.others = super::super::Others::Keep;
+        let merged = record_into(Some(plan(None, false)), more).unwrap();
+        assert_eq!(merged.others, super::super::Others::Keep);
+        // A held filter by author, by kind or of every change refuses ids.
+        for held in [
+            ChangeFilter {
+                ids: Some(vec!["r1".into()]),
+                authors: Some(vec!["Bo".into()]),
+                kinds: None,
+            },
+            ChangeFilter {
+                ids: Some(vec!["r1".into()]),
+                authors: None,
+                kinds: Some(vec![ChangeKind::Insertion]),
+            },
+            ChangeFilter::default(),
+        ] {
+            let e = record_into(Some(plan(Some(held), false)), plan(ids(&["r2"]), false))
+                .expect_err("narrowing");
+            assert!(e.starts_with("the plan's reject selects revisions"), "{e}");
+        }
+    }
+}

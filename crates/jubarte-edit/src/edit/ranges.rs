@@ -510,3 +510,167 @@ pub(super) fn restore(
     out.to_zip()
         .map_err(|e| err("PACKAGE_WRITE", None, e.to_string()))
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod restore_branch_tests {
+    use super::super::deeper_boundary_fixture::{docx, para, part_string};
+    use super::super::{EditPlan, apply_plan};
+    use super::*;
+
+    const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+    fn wrap(body: &str) -> String {
+        format!(r#"<w:document xmlns:w="{W_NS}"><w:body>{body}</w:body></w:document>"#)
+    }
+
+    #[test]
+    fn the_eligibility_scan_reads_markers_text_and_malformed_xml() {
+        // Permissions always need restoring.
+        assert!(needs_restore("<x>permStart</x>"));
+        assert!(needs_restore("<x>permEnd</x>"));
+        // No bookmark at all: nothing to do.
+        assert!(!needs_restore(&wrap(&para("plain"))));
+        // A bookmark in an empty paragraph, as an empty or a start tag.
+        assert!(needs_restore(&wrap(
+            r#"<w:p><w:bookmarkStart w:id="0" w:name="a"/><w:bookmarkEnd w:id="0"/></w:p>"#
+        )));
+        assert!(needs_restore(&wrap(
+            r#"<w:p><w:bookmarkStart w:id="0" w:name="a"></w:bookmarkStart><w:bookmarkEnd w:id="0"></w:bookmarkEnd></w:p>"#
+        )));
+        // A bookmark beside text, plain or CDATA, stays off the path.
+        assert!(!needs_restore(&wrap(
+            r#"<w:p><w:bookmarkStart w:id="0" w:name="a"/><w:r><w:t>text</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#
+        )));
+        assert!(!needs_restore(&wrap(
+            r#"<w:p><w:bookmarkStart w:id="0" w:name="a"/><w:r><w:t><![CDATA[text]]></w:t></w:r></w:p>"#
+        )));
+        // An empty text element is no text.
+        assert!(needs_restore(&wrap(
+            r#"<w:p><w:bookmarkStart w:id="0" w:name="a"/><w:r><w:t></w:t><w:t><![CDATA[]]></w:t></w:r></w:p>"#
+        )));
+        // Bookmarks outside any paragraph, in either tag form.
+        assert!(!needs_restore(&wrap(
+            r#"<w:bookmarkStart w:id="0" w:name="a"/><w:bookmarkEnd w:id="0"></w:bookmarkEnd><w:p><w:r><w:t>x</w:t></w:r></w:p>"#
+        )));
+        // A foreign bookmarkStart is not Word's.
+        assert!(!needs_restore(
+            r#"<root xmlns:x="urn:x"><x:p><x:bookmarkStart/></x:p></root>"#
+        ));
+        // Text and CDATA between tags are no paragraph text.
+        assert!(needs_restore(&wrap(
+            "<w:p>\n  <w:bookmarkStart w:id=\"0\" w:name=\"a\"/>\n  <![CDATA[x]]><w:r><w:t/></w:r></w:p>"
+        )));
+        // Malformed XML is conservative.
+        assert!(needs_restore("<w:p xmlns:w='u'><bookmarkStart></w:p>"));
+    }
+
+    #[test]
+    fn rsid_and_package_attributes_do_not_change_a_structural_key() {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            r#"<w:root xmlns:w="{W_NS}" xmlns:pt="{}"><w:p w:rsidR="00AA" pt:Unid="1"><w:r><w:t>a</w:t></w:r></w:p><w:p w:rsidR="00BB" pt:Unid="2"><w:r><w:t>a</w:t></w:r></w:p><w:p w:keep="1"><w:r><w:t>a</w:t></w:r></w:p></w:root>"#,
+            PT::URI
+        ));
+        let root = dom.root(doc).unwrap();
+        let ps = dom.elements(root, None);
+        assert_eq!(key(&dom, ps[0], true, false), key(&dom, ps[1], true, false));
+        assert_ne!(key(&dom, ps[0], true, false), key(&dom, ps[2], true, false));
+    }
+
+    fn plan(ops: serde_json::Value) -> EditPlan {
+        let mut value = serde_json::json!({
+            "schema_version": 1,
+            "author": "Ed",
+            "date": "2026-02-02T00:00:00Z",
+        });
+        value["operations"] = ops;
+        EditPlan::from_json(&value.to_string()).unwrap()
+    }
+
+    #[test]
+    fn an_edit_keeps_permissions_and_bookmarks_of_empty_paragraphs() {
+        let body = format!(
+            r#"{}<w:p><w:bookmarkStart w:id="3" w:name="Spot"/><w:bookmarkEnd w:id="3"/></w:p><w:p><w:bookmarkStart w:id="4" w:name="Spot"/><w:bookmarkEnd w:id="4"/><w:bookmarkStart w:id="9" w:name="_GoBack"/><w:bookmarkEnd w:id="9"/><w:bookmarkEnd w:id="77"/></w:p><w:p><w:permStart w:id="5" w:edGrp="everyone"/><w:r><w:t>Editable text</w:t></w:r><w:permEnd w:id="5"/></w:p><w:p><w:permStart w:id="5" w:edGrp="everyone"/><w:permEnd w:id="5"/></w:p>{}"#,
+            para("First paragraph."),
+            para("Last paragraph.")
+        );
+        let source = docx(&body);
+        let result = apply_plan(
+            &source,
+            &plan(serde_json::json!([
+                {"kind":"rewrite","paragraph":"p0","text":"First paragraph, rewritten."}
+            ])),
+        )
+        .unwrap();
+        for bytes in [&result.redline, &result.clean] {
+            let xml = part_string(bytes, "word/document.xml").unwrap();
+            assert_eq!(xml.matches("w:name=\"Spot\"").count(), 2, "{xml}");
+            assert_eq!(xml.matches("permStart").count(), 2, "{xml}");
+            assert_eq!(xml.matches("permEnd").count(), 2, "{xml}");
+        }
+        let redline = part_string(&result.redline, "word/document.xml").unwrap();
+        assert!(redline.contains("rewritten"), "{redline}");
+    }
+
+    #[test]
+    fn bookmarks_alone_are_restored_without_the_permission_pass() {
+        let body = format!(
+            r#"{}<w:p><w:bookmarkStart w:id="3" w:name="Only"/><w:bookmarkEnd w:id="3"/></w:p>{}"#,
+            para("Alpha."),
+            para("Omega.")
+        );
+        let source = docx(&body);
+        let result = apply_plan(
+            &source,
+            &plan(serde_json::json!([
+                {"kind":"rewrite","paragraph":"p2","text":"Omega, revised."}
+            ])),
+        )
+        .unwrap();
+        let xml = part_string(&result.redline, "word/document.xml").unwrap();
+        assert_eq!(xml.matches("w:name=\"Only\"").count(), 1, "{xml}");
+        assert_eq!(xml.matches("bookmarkEnd").count(), 1, "{xml}");
+        assert!(!xml.contains("permStart"));
+    }
+
+    #[test]
+    fn a_textless_story_keeps_its_permissions() {
+        let body = r#"<w:p><w:permStart w:id="1" w:edGrp="everyone"/><w:permEnd w:id="1"/></w:p><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:permStart w:id="2" w:edGrp="everyone"/><w:permEnd w:id="2"/></w:p><w:p/>"#;
+        let source = docx(body);
+        let result = apply_plan(
+            &source,
+            &plan(serde_json::json!([
+                {"kind":"delete_paragraph","paragraph":"p2"}
+            ])),
+        );
+        let result = result.unwrap();
+        let xml = part_string(&result.clean, "word/document.xml").unwrap();
+        assert_eq!(xml.matches("permStart").count(), 2, "{xml}");
+        assert_eq!(xml.matches("permEnd").count(), 2, "{xml}");
+    }
+
+    #[test]
+    fn restore_skips_parts_missing_from_either_side() {
+        let original = docx(&para("a"));
+        // The redline itself carries nothing to restore: returned as is.
+        assert_eq!(
+            restore(&original, &original, &original, "Ed").unwrap(),
+            original
+        );
+        // Bytes that are no package are refused.
+        let e = restore(b"nope", &original, &original, "Ed").unwrap_err();
+        assert_eq!(e.code, "COMPARE_FAILED");
+        // Repeated permission ids get fresh ones; unique ones stay.
+        let twice = docx(
+            r#"<w:p><w:permStart w:id="5" w:edGrp="everyone"/><w:r><w:t>a</w:t></w:r><w:permEnd w:id="5"/></w:p><w:p><w:permStart w:id="5" w:edGrp="everyone"/><w:r><w:t>b</w:t></w:r><w:permEnd w:id="5"/></w:p>"#,
+        );
+        let renamed = normalize_permission_ids(&twice).unwrap().expect("renamed");
+        let xml = part_string(&renamed, "word/document.xml").unwrap();
+        assert_eq!(xml.matches(r#"w:id="5""#).count(), 2, "{xml}");
+        let once = docx(
+            r#"<w:p><w:permStart w:id="5" w:edGrp="everyone"/><w:r><w:t>a</w:t></w:r><w:permEnd w:id="5"/></w:p>"#,
+        );
+        assert!(normalize_permission_ids(&once).unwrap().is_none());
+    }
+}

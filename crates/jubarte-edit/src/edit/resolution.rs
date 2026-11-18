@@ -391,3 +391,136 @@ mod tests {
         assert_eq!(escape_critic("plain"), "plain");
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod pairing_branch_tests {
+    use super::super::deeper_boundary_fixture::{Part, docx, docx_with};
+    use super::*;
+
+    const INS: &str = r#"<w:ins w:id="1" w:author="Bo" w:date="2026-01-01T00:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins>"#;
+    const DEL: &str = r#"<w:del w:id="2" w:author="Bo" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>old</w:delText></w:r></w:del>"#;
+
+    fn listed(source: &[u8]) -> Vec<Change> {
+        crate::changes::list_changes(source).unwrap()
+    }
+
+    #[test]
+    fn substitution_pairs_need_one_text_paragraph_story_and_no_move() {
+        let source = docx(&format!("<w:p><w:r><w:t>a </w:t></w:r>{INS}{DEL}</w:p>"));
+        let changes = listed(&source);
+        assert_eq!(changes.len(), 2);
+        let (ins, del) = (&changes[0], &changes[1]);
+        assert!(is_substitution_pair(ins, del));
+        assert!(is_substitution_pair(del, ins));
+        // No paragraph.
+        let mut loose = ins.clone();
+        loose.paragraph = None;
+        assert!(!is_substitution_pair(&loose, &loose.clone()));
+        // A paragraph-mark side.
+        let mut mark = del.clone();
+        mark.target = "paragraph_mark";
+        assert!(!is_substitution_pair(ins, &mark));
+        assert!(!is_substitution_pair(&mark, ins));
+        // Two insertions.
+        assert!(!is_substitution_pair(ins, ins));
+        // Moves never pair, on either side.
+        let mut moved = del.clone();
+        moved.move_name = Some("m1".into());
+        assert!(!is_substitution_pair(ins, &moved));
+        assert!(!is_substitution_pair(&moved, ins));
+        // An id with no short spelling.
+        let mut odd = del.clone();
+        odd.id = "not an id".into();
+        assert!(!is_substitution_pair(ins, &odd));
+        // Another story.
+        let mut other = del.clone();
+        other.id = "header1.r2".into();
+        assert!(!is_substitution_pair(ins, &other));
+        assert_eq!(pair_ref(ins, &other), None);
+        let mut header_ins = ins.clone();
+        header_ins.id = "header1.r1".into();
+        assert_eq!(
+            pair_ref(&header_ins, &other).as_deref(),
+            Some("header1.r1+2")
+        );
+        assert_eq!(pair_ref(ins, del).as_deref(), Some("r1+2"));
+    }
+
+    #[test]
+    fn adjacent_pairs_print_once_and_split_pairs_print_twice() {
+        let source = docx(&format!("<w:p><w:r><w:t>a </w:t></w:r>{INS}{DEL}</w:p>"));
+        let changes = listed(&source);
+        let ids: Vec<String> = changes.iter().map(|c| c.id.clone()).collect();
+        let accepted = ResolvedRevisions {
+            accepted: ids.clone(),
+            rejected: Vec::new(),
+        };
+        let lines = resolution_lines(&source, &accepted).unwrap();
+        assert_eq!(lines, [r#"accepted r1+2 in p0: "{~~old~>new~~}" > "new""#]);
+        // Resolved differently: one line each.
+        let split = ResolvedRevisions {
+            accepted: vec![ids[0].clone()],
+            rejected: vec![ids[1].clone()],
+        };
+        let lines = resolution_lines(&source, &split).unwrap();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].starts_with("accepted r1 in p0"), "{lines:?}");
+        assert!(lines[1].starts_with("rejected r2 in p0"), "{lines:?}");
+        // Text between the halves: not adjacent, two lines.
+        let apart = docx(&format!("<w:p>{INS}<w:r><w:t> mid </w:t></w:r>{DEL}</w:p>"));
+        let lines = resolution_lines(&apart, &accepted).unwrap();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        // Inline containers are transparent to adjacency.
+        let wrapped = docx(&format!(
+            r#"<w:p><w:hyperlink w:anchor="x">{INS}</w:hyperlink><w:sdt><w:sdtContent>{DEL}</w:sdtContent></w:sdt><w:proofErr w:type="spellStart"/></w:p>"#
+        ));
+        let lines = resolution_lines(&wrapped, &accepted).unwrap();
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("r1+2"), "{lines:?}");
+        // An adjacent pair with an id-less half does not pair.
+        let idless = docx(&format!(
+            r#"<w:p><w:ins w:author="Bo"><w:r><w:t>x</w:t></w:r></w:ins>{DEL}</w:p>"#
+        ));
+        let all: Vec<String> = listed(&idless).iter().map(|c| c.id.clone()).collect();
+        let lines = resolution_lines(
+            &idless,
+            &ResolvedRevisions {
+                accepted: all,
+                rejected: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+    }
+
+    #[test]
+    fn header_changes_pair_inside_their_own_story() {
+        let header = format!(
+            r#"<w:hdr xmlns:w="{}"><w:p>{INS}{DEL}</w:p></w:hdr>"#,
+            crate::namespaces::W::URI
+        );
+        let source = docx_with(
+            "<w:p><w:r><w:t>body</w:t></w:r></w:p>",
+            &[Part {
+                name: "word/header1.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+                xml: &header,
+            }],
+        );
+        let changes = listed(&source);
+        assert_eq!(changes.len(), 2, "{changes:?}");
+        let lines = resolution_lines(
+            &source,
+            &ResolvedRevisions {
+                accepted: Vec::new(),
+                rejected: changes.iter().map(|c| c.id.clone()).collect(),
+            },
+        )
+        .unwrap();
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].starts_with("rejected header1.r1+2"), "{lines:?}");
+        assert!(lines[0].ends_with(r#""old""#), "{lines:?}");
+    }
+}

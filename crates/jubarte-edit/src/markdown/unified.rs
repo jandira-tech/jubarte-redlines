@@ -1803,3 +1803,468 @@ mod review_tests {
         assert_eq!(text, "A\n");
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod attribution_branch_tests {
+    use super::super::view_notes::Author;
+    use super::*;
+
+    const D1: &str = "2026-01-02T03:04:05Z";
+    const D2: &str = "2026-02-03T04:05:06Z";
+
+    fn owner() -> Attribution {
+        Attribution {
+            author: "Owner".to_string(),
+            date: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn change(old: &str, new: &str) -> Segment {
+        let mut edit = Edit::default();
+        if !old.is_empty() {
+            edit.push(Side::Old, old, true);
+        }
+        if !new.is_empty() {
+            edit.push(Side::New, new, true);
+        }
+        Segment::Edit(edit)
+    }
+
+    fn tag(text: &str) -> Segment {
+        Segment::Note(text.to_string(), true)
+    }
+
+    fn who(author: &str, date: &str) -> Option<(String, String)> {
+        Some((author.to_string(), date.to_string()))
+    }
+
+    type By = (Option<(String, String)>, Option<(String, String)>);
+
+    /// Each edit's (deletion-or-only, insertion) attribution, and every
+    /// note that stayed a note.
+    fn run(segments: Vec<Segment>, authors: &HashMap<String, Author>) -> (Vec<By>, Vec<String>) {
+        let mut edits = Vec::new();
+        let mut notes = Vec::new();
+        for segment in attribute(segments, authors, &owner()) {
+            match segment {
+                Segment::Edit(edit) => edits.push((edit.by, edit.new_by)),
+                Segment::Note(text, _) => notes.push(text),
+                _ => {}
+            }
+        }
+        (edits, notes)
+    }
+
+    fn authors() -> HashMap<String, Author> {
+        HashMap::from([
+            (
+                "AL".to_string(),
+                Author {
+                    name: "Ana Lima".to_string(),
+                    date: None,
+                    latest: None,
+                    range: Some(("2026-03-02".to_string(), "2026-03-04".to_string())),
+                },
+            ),
+            (
+                "BO".to_string(),
+                Author {
+                    name: "Ben Ode".to_string(),
+                    date: Some(D1.to_string()),
+                    latest: None,
+                    range: None,
+                },
+            ),
+            (
+                "LT".to_string(),
+                Author {
+                    name: "Lia Tam".to_string(),
+                    date: None,
+                    latest: Some(D2.to_string()),
+                    range: Some(("2026-03-02".to_string(), "2026-03-04".to_string())),
+                },
+            ),
+            (
+                "ND".to_string(),
+                Author {
+                    name: "No Date".to_string(),
+                    date: None,
+                    latest: None,
+                    range: None,
+                },
+            ),
+        ])
+    }
+
+    #[test]
+    fn two_plain_parts_name_each_side_of_a_substitution_only() {
+        let none = HashMap::new();
+        let (edits, notes) = run(
+            vec![
+                change("a", "b"),
+                tag(&format!("r1 Ana Lima ({D1}); r2 ({D2})")),
+            ],
+            &none,
+        );
+        assert_eq!(edits, [(who("Ana Lima", D1), who("", D2))]);
+        assert!(notes.is_empty());
+        // Parts that name no one and carry no date leave both sides open.
+        let (edits, _) = run(vec![change("a", "b"), tag("r1; r2")], &none);
+        assert_eq!(edits, [(None, None)]);
+        // Two parts on a one-sided change are no substitution: the first
+        // plain revision path does not apply, and the note names no one.
+        for one_sided in [change("", "b"), change("a", "")] {
+            let (edits, notes) = run(
+                vec![
+                    one_sided,
+                    tag(&format!("r1 Ana Lima ({D1}); r2 Ben ({D2})")),
+                ],
+                &none,
+            );
+            assert_eq!(edits, [(None, None)]);
+            assert_eq!(notes, [format!("r1 Ana Lima ({D1}); r2 Ben ({D2})")]);
+        }
+    }
+
+    #[test]
+    fn agent_tags_resolve_through_the_authors_table() {
+        let table = authors();
+        // Two tags on a substitution: deletion, then insertion; the ranged
+        // author's insertion takes the last day of the range.
+        let (edits, _) = run(vec![change("a", "b"), tag("r1 @BO; r2 @AL")], &table);
+        assert_eq!(
+            edits,
+            [(who("Ben Ode", D1), who("Ana Lima", "2026-03-04T23:59:59Z"))]
+        );
+        // One ranged tag on a substitution: the insertion keeps the first
+        // day and the deletion takes the last.
+        let (edits, _) = run(vec![change("a", "b"), tag("r1 @AL")], &table);
+        assert_eq!(
+            edits,
+            [(
+                who("Ana Lima", "2026-03-04T23:59:59Z"),
+                who("Ana Lima", "2026-03-02T00:00:00Z")
+            )]
+        );
+        // One ranged tag on an insertion takes the last day.
+        let (edits, _) = run(vec![change("", "b"), tag("r1 @AL")], &table);
+        assert_eq!(edits, [(who("Ana Lima", "2026-03-04T23:59:59Z"), None)]);
+        // A dated tag wins over the table, and is no range.
+        let (edits, _) = run(vec![change("", "b"), tag(&format!("r1 @AL {D2}"))], &table);
+        assert_eq!(edits, [(who("Ana Lima", D2), None)]);
+        // The latest date of a row with a range wins over the range.
+        let (edits, _) = run(vec![change("", "b"), tag("r1 @LT")], &table);
+        assert_eq!(edits, [(who("Lia Tam", D2), None)]);
+        // A row with no date leaves the change undated; an unknown handle
+        // takes the owner; the unnamed handle names no one.
+        let (edits, _) = run(
+            vec![
+                change("", "b"),
+                tag("r1 @ND"),
+                change("", "c"),
+                tag("r2 @ZZ"),
+                change("", "d"),
+                tag("r3 @??"),
+            ],
+            &table,
+        );
+        assert_eq!(
+            edits,
+            [
+                (who("No Date", ""), None),
+                (who("Owner", "2026-01-01T00:00:00Z"), None),
+                (who("", ""), None),
+            ]
+        );
+        // Two tags on a one-sided change: the first names it.
+        let (edits, _) = run(vec![change("", "b"), tag("r1 @BO; r2 @ND")], &table);
+        assert_eq!(edits, [(who("Ben Ode", D1), None)]);
+        // A nested tag names the change by its own (first) tag.
+        let (edits, _) = run(vec![change("a", ""), tag("r3 @BO re r1 @ND")], &table);
+        assert_eq!(edits, [(who("Ben Ode", D1), None)]);
+    }
+
+    #[test]
+    fn later_tags_fill_the_open_side_or_stay_notes() {
+        let table = authors();
+        // A second single tag on a substitution names the insertion; a third
+        // has no side left and stays a note.
+        let (edits, notes) = run(
+            vec![
+                change("a", "b"),
+                tag("r1 @BO"),
+                tag("r2 @AL"),
+                tag("r3 @ND"),
+            ],
+            &table,
+        );
+        assert_eq!(
+            edits,
+            [(who("Ben Ode", D1), who("Ana Lima", "2026-03-04T23:59:59Z"))]
+        );
+        assert_eq!(notes, ["r3 @ND"]);
+        // A number alone names no one; the next tag on the one-sided
+        // change then names it.
+        let (edits, _) = run(vec![change("", "b"), tag("r3"), tag("r4 @BO")], &table);
+        assert_eq!(edits, [(who("Ben Ode", D1), None)]);
+        // A named one-sided change keeps its author against a later tag.
+        let (edits, notes) = run(vec![change("", "b"), tag("r1 @BO"), tag("r2 @ND")], &table);
+        assert_eq!(edits, [(who("Ben Ode", D1), None)]);
+        assert_eq!(notes, ["r2 @ND"]);
+    }
+
+    #[test]
+    fn plain_and_named_notes_fill_sides_in_order() {
+        let none = HashMap::new();
+        // Plain revisions: the first names the deletion, the second the
+        // insertion; a nameless third stays a note.
+        let (edits, notes) = run(
+            vec![
+                change("a", "b"),
+                tag(&format!("r1 Ana Lima ({D1})")),
+                tag(&format!("r2 Ben Ode ({D2})")),
+                tag("r3"),
+            ],
+            &none,
+        );
+        assert_eq!(edits, [(who("Ana Lima", D1), who("Ben Ode", D2))]);
+        assert_eq!(notes, ["r3"]);
+        // A bare `Name (date)` note names a change too.
+        let (edits, _) = run(
+            vec![change("", "b"), tag(&format!("Ana Lima ({D1})"))],
+            &none,
+        );
+        assert_eq!(edits, [(who("Ana Lima", D1), None)]);
+        // A dated note with no name, or a comment after a name, names no
+        // one and stays.
+        let (edits, notes) = run(
+            vec![
+                change("", "b"),
+                tag(&format!("({D1})")),
+                tag(&format!("Ana Lima ({D1}): why")),
+            ],
+            &none,
+        );
+        assert_eq!(edits, [(None, None)]);
+        assert_eq!(notes.len(), 2);
+        // A nameless number leaves the substitution's insertion open to the
+        // next named note, never to another nameless one.
+        let (edits, notes) = run(
+            vec![
+                change("a", "b"),
+                tag(&format!("r1 Ana Lima ({D1})")),
+                tag("r2"),
+            ],
+            &none,
+        );
+        assert_eq!(edits, [(who("Ana Lima", D1), None)]);
+        assert_eq!(notes, ["r2"]);
+        // On a one-sided change named by nobody, a later plain note names it.
+        let (edits, _) = run(
+            vec![
+                change("a", ""),
+                tag("r2"),
+                tag(&format!("r3 Ben Ode ({D2})")),
+            ],
+            &none,
+        );
+        assert_eq!(edits, [(who("Ben Ode", D2), None)]);
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod segment_branch_tests {
+    use super::*;
+
+    fn show(segments: &[Segment]) -> Vec<String> {
+        segments
+            .iter()
+            .map(|s| match s {
+                Segment::Same(t) => format!("S:{t}"),
+                Segment::Edit(e) => {
+                    format!("E:{}|{}|{}|{}", e.old, e.new, e.old_marked, e.new_marked)
+                }
+                Segment::Note(t, a) => format!("N:{t}:{a}"),
+                Segment::HighlightStart => "H<".to_string(),
+                Segment::HighlightEnd => "H>".to_string(),
+            })
+            .collect()
+    }
+
+    fn insert(text: &str) -> Segment {
+        let mut edit = Edit::default();
+        edit.push(Side::New, text, true);
+        Segment::Edit(edit)
+    }
+
+    fn delete(text: &str) -> Segment {
+        let mut edit = Edit::default();
+        edit.push(Side::Old, text, true);
+        Segment::Edit(edit)
+    }
+
+    fn marked_insert(plain: &str, marked: &str) -> Segment {
+        Segment::Edit(Edit {
+            new: plain.to_string(),
+            new_marked: marked.to_string(),
+            ..Edit::default()
+        })
+    }
+
+    fn by(segment: Segment, author: &str) -> Segment {
+        match segment {
+            Segment::Edit(mut edit) => {
+                edit.by = Some((author.to_string(), String::new()));
+                Segment::Edit(edit)
+            }
+            other => other,
+        }
+    }
+
+    #[test]
+    fn highlight_marks_are_text_in_plain_runs_changes_and_comments() {
+        assert_eq!(show(&segments("a ==b== c")), ["S:a ==b== c"]);
+        assert_eq!(
+            show(&segments("x {++y ==z== w++} {>>see ==q==<<}")),
+            ["S:x ", "E:|y z w||y ==z== w", "S: ", "N:see ==q==:false"]
+        );
+    }
+
+    #[test]
+    fn a_paragraph_tag_owns_the_separator_after_it() {
+        // Two newlines after the tag: a boundary change named by the tag.
+        assert_eq!(
+            show(&segments("a¶{r1 @AL}\n\nb")),
+            ["S:a", "E:|\n\n||\n\n", "N:r1 @AL:true", "S:b"]
+        );
+        // CRLF separators count as one break each.
+        assert_eq!(
+            show(&segments("a¶{r1 @AL}\r\n\r\nb")),
+            ["S:a", "E:|\r\n\r\n||\r\n\r\n", "N:r1 @AL:true", "S:b"]
+        );
+        // Text right after the tag: no separator to own.
+        assert_eq!(show(&segments("a¶{r1 @AL}b")), ["S:ab"]);
+        // A single break at the end stays text.
+        assert_eq!(show(&segments("a¶{r1 @AL}\n")), ["S:a\n"]);
+    }
+
+    #[test]
+    fn detach_breaks_moves_paragraph_marks_out_of_whole_paragraph_changes() {
+        // A whole inserted paragraph that ends the story: its break follows.
+        assert_eq!(
+            show(&detach_breaks(vec![insert("Para.\n\n")])),
+            ["E:|Para.||Para.", "S:\n\n"]
+        );
+        // After visible text on the same line the change starts inside a
+        // paragraph and keeps its break.
+        assert_eq!(
+            show(&detach_breaks(vec![
+                Segment::Same("x".into()),
+                insert("Para.\n\n")
+            ])),
+            ["S:x", "E:|Para.\n\n||Para.\n\n"]
+        );
+        // Markup after the break keeps the break inside.
+        assert_eq!(
+            show(&detach_breaks(vec![marked_insert(
+                "Para.\n\n",
+                "Para.\n\n=="
+            )])),
+            ["E:|Para.\n\n||Para.\n\n=="]
+        );
+        // A leading break moves out before the change.
+        assert_eq!(
+            show(&detach_breaks(vec![
+                Segment::Same("a".into()),
+                delete("\n\nGone")
+            ])),
+            ["S:a\n\n", "E:Gone||Gone|"]
+        );
+        // Unless markup leads the change.
+        assert_eq!(
+            show(&detach_breaks(vec![marked_insert("\n\nNew", "==\n\nNew")])),
+            ["E:|\n\nNew||==\n\nNew"]
+        );
+    }
+
+    #[test]
+    fn leading_breaks_need_a_whole_same_side_paragraph_after_them() {
+        let note = || Segment::Note("r1 @AL".into(), true);
+        // Break, then the paragraph's text ending the story.
+        assert_eq!(
+            leading_breaks(&[insert("\n\n"), note(), insert("Para.")]),
+            HashSet::from([0])
+        );
+        // The other side's change after the break: no paragraph.
+        assert!(leading_breaks(&[insert("\n\n"), delete("x")]).is_empty());
+        // Another author's text: no paragraph.
+        assert!(leading_breaks(&[insert("\n\n"), by(insert("Para."), "Bo")]).is_empty());
+        // A soft line break inside the paragraph is fine; a plain newline
+        // is a second paragraph.
+        assert_eq!(
+            leading_breaks(&[insert("\n\n"), insert("one\\\ntwo")]),
+            HashSet::from([0])
+        );
+        assert!(leading_breaks(&[insert("\n\n"), insert("one\ntwo")]).is_empty());
+        // A same-side change starting a new paragraph ends it; another
+        // side's change does not.
+        assert_eq!(
+            leading_breaks(&[insert("\n\n"), insert("P"), insert("\n\nQ")]),
+            HashSet::from([0])
+        );
+        assert!(leading_breaks(&[insert("\n\n"), insert("P"), delete("\n\nQ")]).is_empty());
+        // Text after the paragraph on the same line joins paragraphs.
+        assert!(
+            leading_breaks(&[insert("\n\n"), insert("P"), Segment::Same(" tail".into())])
+                .is_empty()
+        );
+        assert_eq!(
+            leading_breaks(&[insert("\n\n"), insert("P"), Segment::Same("\nnext".into())]),
+            HashSet::from([0])
+        );
+    }
+
+    #[test]
+    fn soft_breaks_inside_a_paragraph_keep_one_block() {
+        // A continuation line after an empty block start goes to the
+        // separator, not the block.
+        let out = blocks(vec![Segment::Same("\ncontinued\n\nnext".into())]);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].separator, "\n");
+        assert_eq!(out[0].text(Side::New), "continued");
+        assert_eq!(out[1].separator, "\n\n");
+        assert_eq!(out[1].text(Side::Old), "next");
+    }
+
+    #[test]
+    fn comments_need_a_colon_after_the_attribution() {
+        let owner = Attribution {
+            author: "Owner".into(),
+            date: "2026-01-01T00:00:00Z".into(),
+        };
+        let named = comment("Ana Lima (2026-02-02T00:00:00Z): why", &owner, None);
+        assert_eq!(
+            (named.author.as_str(), named.text.as_str()),
+            ("Ana Lima", "why")
+        );
+        let bare = comment("Ana Lima (2026-02-02T00:00:00Z)", &owner, None);
+        assert_eq!((bare.author.as_str(), bare.text.as_str()), ("Ana Lima", ""));
+        let text_after = comment("Ana Lima (2026-02-02T00:00:00Z) why", &owner, None);
+        assert_eq!(text_after.author, "Owner");
+        assert_eq!(text_after.text, "Ana Lima (2026-02-02T00:00:00Z) why");
+    }
+
+    #[test]
+    fn tilde_fences_keep_long_code_lines_whole() {
+        let long = "word ".repeat(20);
+        let text = format!("~~~\n{long}\n~~~\n{long}");
+        let wrapped = wrap(&text, 20);
+        let lines: Vec<&str> = wrapped.lines().collect();
+        assert_eq!(lines[0], "~~~");
+        assert_eq!(lines[1], long);
+        assert_eq!(lines[2], "~~~");
+        assert!(lines[3..].iter().all(|l| l.chars().count() <= 20));
+    }
+}

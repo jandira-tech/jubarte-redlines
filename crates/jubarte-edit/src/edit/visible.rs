@@ -1042,3 +1042,236 @@ fn one_comment(resolved: Vec<Resolved>) -> Vec<Resolved> {
     }
     out
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod visible_branch_tests {
+    use super::super::deeper_boundary_fixture::{Part, docx, docx_with_sect, part_string};
+    use super::super::{EditResult, apply_plan};
+    use super::*;
+
+    const INS: &str = r#"<w:ins w:id="1" w:author="Bo" w:date="2026-01-01T00:00:00Z"><w:r><w:t>added words</w:t></w:r></w:ins>"#;
+    const DEL: &str = r#"<w:del w:id="2" w:author="Bo" w:date="2026-01-01T00:00:00Z"><w:r><w:rPr><w:b/><w:ins w:id="8" w:author="Bo" w:date="2026-01-01T00:00:00Z"/></w:rPr><w:delText>old</w:delText><w:tab/><w:delText>words</w:delText></w:r></w:del>"#;
+
+    fn body() -> String {
+        format!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Lead </w:t></w:r>{INS}<w:r><w:t xml:space="preserve"> mid </w:t></w:r>{DEL}<w:r><w:t xml:space="preserve"> end.</w:t></w:r></w:p>"#
+        )
+    }
+
+    fn plan(extra: serde_json::Value) -> EditPlan {
+        let mut value = serde_json::json!({
+            "schema_version": 1,
+            "author": "Ed",
+            "date": "2026-02-02T00:00:00Z",
+            "existing_revisions": "keep",
+            "operations": [],
+        });
+        let serde_json::Value::Object(extra) = extra else {
+            panic!("plan fields are an object");
+        };
+        for (k, v) in extra {
+            value[k.as_str()] = v;
+        }
+        EditPlan::from_json(&value.to_string()).unwrap()
+    }
+
+    fn ok(source: &[u8], extra: serde_json::Value) -> EditResult {
+        apply_plan(source, &plan(extra)).unwrap()
+    }
+
+    fn refused(source: &[u8], extra: serde_json::Value) -> EditError {
+        match apply_plan(source, &plan(extra)) {
+            Ok(_) => panic!("expected a refusal"),
+            Err(e) => e,
+        }
+    }
+
+    fn document(result: &EditResult) -> String {
+        part_string(&result.redline, "word/document.xml").unwrap()
+    }
+
+    #[test]
+    fn a_visible_reject_lowers_to_a_strike_and_a_restore() {
+        let source = docx(&body());
+        let result = ok(
+            &source,
+            serde_json::json!({"resolve_revisions": {"reject": {"ids": ["r1", "r2"], "visible": true}}}),
+        );
+        let xml = document(&result);
+        // Ed's deletion sits inside Bo's insertion; Ed's insertion copies
+        // Bo's deleted words, the tab included, and keeps the bold.
+        assert!(xml.contains(r#"w:author="Ed""#), "{xml}");
+        let changes = crate::changes::list_changes(&result.redline).unwrap();
+        let ed: Vec<_> = changes
+            .iter()
+            .filter(|c| c.author.as_deref() == Some("Ed"))
+            .collect();
+        assert!(
+            ed.iter()
+                .any(|c| c.kind == ChangeKind::Deletion && c.text.contains("added words")),
+            "{ed:?}"
+        );
+        assert!(
+            ed.iter()
+                .any(|c| c.kind == ChangeKind::Insertion && c.text.contains("old")),
+            "{ed:?}"
+        );
+        // Bo's changes stay.
+        assert!(changes.iter().any(|c| c.author.as_deref() == Some("Bo")));
+    }
+
+    #[test]
+    fn a_visible_reject_needs_keep_and_known_ids() {
+        let source = docx(&body());
+        let e = refused(
+            &source,
+            serde_json::json!({
+                "existing_revisions": "refuse",
+                "resolve_revisions": {"reject": {"ids": ["r1"], "visible": true}}
+            }),
+        );
+        assert_eq!(e.code, "INVALID_PLAN");
+        assert!(
+            e.message.contains("needs existing_revisions keep"),
+            "{}",
+            e.message
+        );
+        let e = refused(
+            &source,
+            serde_json::json!({"resolve_revisions": {"reject": {"ids": ["r9"], "visible": true}}}),
+        );
+        assert_eq!(e.code, "UNKNOWN_CHANGE", "{}", e.message);
+        // A visible reject that also accepts keeps the accept side.
+        let both = docx(&format!(
+            r#"{}<w:p><w:ins w:id="3" w:author="Cy" w:date="2026-01-01T00:00:00Z"><w:r><w:t>more</w:t></w:r></w:ins></w:p>"#,
+            body()
+        ));
+        let result = ok(
+            &both,
+            serde_json::json!({"resolve_revisions": {
+                "accept": {"ids": ["r3"]},
+                "reject": {"ids": ["r1"], "visible": true}
+            }}),
+        );
+        assert_eq!(result.report.resolved_revisions.accepted, ["r3"]);
+        assert!(result.report.resolved_revisions.rejected.is_empty());
+    }
+
+    #[test]
+    fn strike_and_restore_operations_take_comments() {
+        let source = docx(&body());
+        let result = ok(
+            &source,
+            serde_json::json!({"operations": [
+                {"kind":"strike","revision":"r1","comment":"not agreed"},
+                {"kind":"restore","revision":"r2","comment":"keep these"}
+            ]}),
+        );
+        let comments = crate::comments::list_comments(&result.redline).unwrap();
+        let texts: Vec<&str> = comments.iter().map(|c| c.text.as_str()).collect();
+        assert!(texts.contains(&"not agreed"), "{texts:?}");
+        assert!(texts.contains(&"keep these"), "{texts:?}");
+        assert!(comments.iter().all(|c| c.author == "Ed"));
+    }
+
+    #[test]
+    fn strike_and_restore_refuse_the_wrong_kind_and_content() {
+        let source = docx(&body());
+        for (op, said) in [
+            (
+                serde_json::json!({"kind":"strike","revision":"r2"}),
+                "r2 is a deletion, not an insertion",
+            ),
+            (
+                serde_json::json!({"kind":"restore","revision":"r1"}),
+                "r1 is an insertion, not a deletion",
+            ),
+        ] {
+            let e = refused(&source, serde_json::json!({"operations": [op]}));
+            assert_eq!(e.code, "INVALID_EDIT");
+            assert!(e.message.starts_with(said), "{}", e.message);
+        }
+        // A deletion holding a field is no plain text to restore.
+        let field = docx(
+            r#"<w:p><w:r><w:t>a </w:t></w:r><w:del w:id="4" w:author="Bo" w:date="2026-01-01T00:00:00Z"><w:r><w:delText xml:space="preserve">see </w:delText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:delInstrText>PAGE</w:delInstrText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:del></w:p>"#,
+        );
+        let e = refused(
+            &field,
+            serde_json::json!({"operations": [{"kind":"restore","revision":"r4"}]}),
+        );
+        assert!(e.message.contains("a field"), "{}", e.message);
+        // A deletion with no words has nothing to restore.
+        let empty = docx(
+            r#"<w:p><w:r><w:t>a</w:t></w:r><w:del w:id="4" w:author="Bo" w:date="2026-01-01T00:00:00Z"><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:del></w:p>"#,
+        );
+        let e = refused(
+            &empty,
+            serde_json::json!({"operations": [{"kind":"restore","revision":"r4"}]}),
+        );
+        assert_eq!(e.message, "r4 holds no text: nothing to restore");
+        // A plan that does not keep revisions refuses a strike outright.
+        let e = refused(
+            &source,
+            serde_json::json!({
+                "existing_revisions": "accept",
+                "operations": [{"kind":"strike","revision":"r1"}]
+            }),
+        );
+        assert_eq!(e.code, "INVALID_PLAN");
+        assert!(e.message.contains("already be settled"), "{}", e.message);
+    }
+
+    #[test]
+    fn a_header_strike_takes_no_comment() {
+        let header = format!(
+            r#"<w:hdr xmlns:w="{}"><w:p><w:r><w:t xml:space="preserve">Head </w:t></w:r>{INS}</w:p></w:hdr>"#,
+            W::URI
+        );
+        let source = docx_with_sect(
+            "<w:p><w:r><w:t>Body.</w:t></w:r></w:p>",
+            &[Part {
+                name: "word/header1.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+                xml: &header,
+            }],
+            r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+        );
+        let e = refused(
+            &source,
+            serde_json::json!({"operations": [{"kind":"strike","revision":"header1.r1","comment":"no"}]}),
+        );
+        assert_eq!(e.code, "COMMENT_NOT_IN_BODY");
+        let result = ok(
+            &source,
+            serde_json::json!({"operations": [{"kind":"strike","revision":"header1.r1"}]}),
+        );
+        let header = part_string(&result.redline, "word/header1.xml").unwrap();
+        assert!(header.contains(r#"w:author="Ed""#), "{header}");
+    }
+
+    #[test]
+    fn restored_words_only_hold_plain_glyphs() {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            r#"<w:p xmlns:w="{}"><w:del w:id="1"><w:r><w:delText/></w:r></w:del><w:del w:id="2"><w:r><w:tab/></w:r></w:del><w:del w:id="3"><w:bookmarkStart w:id="0" w:name="b"/><w:r><w:delText>x</w:delText></w:r></w:del><w:ins w:id="4"><w:del w:id="5"><w:r><w:delText>y</w:delText></w:r></w:del></w:ins><w:del w:id="6"><w:hyperlink><w:r><w:delText>z</w:delText></w:r></w:hyperlink></w:del><w:del w:id="7"><w:sdt/></w:del><w:del w:id="8"><w:fldSimple/></w:del><w:del w:id="9"><w:r><w:drawing/></w:r></w:del></w:p>"#,
+            W::URI
+        ));
+        let p = dom.root(doc).unwrap();
+        let dels = dom.descendants(p, Some(&W::del()));
+        let ok: Vec<bool> = dels.iter().map(|&d| restorable(&dom, d, 1)).collect();
+        assert_eq!(ok, [false, true, true, true, false, false, false, false]);
+        assert!(!restorable(&dom, dels[2], 2));
+        assert_eq!(unsupported_child(&dom, dels[4], &[]), Some("a hyperlink"));
+        assert_eq!(
+            unsupported_child(&dom, dels[5], &[]),
+            Some("a content control")
+        );
+        assert_eq!(unsupported_child(&dom, dels[6], &[]), Some("a field"));
+        assert_eq!(
+            unsupported_child(&dom, dels[7], &[]),
+            Some("a picture or an object")
+        );
+    }
+}
