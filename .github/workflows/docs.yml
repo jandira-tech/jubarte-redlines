@@ -61,6 +61,8 @@ on:
       - docs/SELF_UPDATE.md
       - crates/*/examples/**
       - crates/*/Cargo.toml
+      - crates/*/README.md
+      - crates/*/README.fragment.md
       - examples/quickstart.rs
       - scripts/check_rtd.py
       - scripts/test_check_rtd.py
