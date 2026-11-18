@@ -618,3 +618,90 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod note_branch_tests {
+    use super::*;
+
+    fn plan(extra: serde_json::Value, ops: serde_json::Value) -> EditPlan {
+        let mut value = serde_json::json!({
+            "schema_version": 1,
+            "author": "Ed",
+            "date": "2026-02-02T00:00:00Z",
+        });
+        let serde_json::Value::Object(extra) = extra else {
+            panic!("plan fields are an object");
+        };
+        for (k, v) in extra {
+            value[k.as_str()] = v;
+        }
+        value["operations"] = ops;
+        EditPlan::from_json(&value.to_string()).unwrap()
+    }
+
+    #[test]
+    fn keep_notes_name_each_refused_kind_once() {
+        let fills = plan(
+            serde_json::json!({}),
+            serde_json::json!([
+                {"kind": "fill_control", "control": "p0.cc0", "text": "a"},
+                {"kind": "fill_control", "control": "p1.cc0", "text": "b"},
+                {"kind": "replace", "paragraph": "p0", "find": "x", "replacement": "y"},
+            ]),
+        );
+        let skipped: Vec<SkippedOperation> = fills
+            .operations
+            .iter()
+            .enumerate()
+            .map(|(index, operation)| SkippedOperation {
+                index,
+                operation: operation.clone(),
+                code: "ANCHOR_NOT_FOUND".into(),
+                message: "missing".into(),
+            })
+            .collect();
+        let notes = keep_notes(&skipped, ExistingRevisions::Keep);
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].starts_with("fill_control cannot run under existing_revisions keep"));
+        assert!(keep_notes(&skipped, ExistingRevisions::Refuse).is_empty());
+    }
+
+    #[test]
+    fn control_names_split_into_paragraph_and_index() {
+        let name = |s: &str| ControlSelector::Name(s.into());
+        assert_eq!(control_paragraph(&name("p3.cc0")), Some(("p3", "0")));
+        assert_eq!(
+            control_paragraph(&ControlSelector::Id {
+                id: "t0.row1.cell2.cc4".into()
+            }),
+            Some(("t0.row1.cell2", "4"))
+        );
+        assert_eq!(control_paragraph(&name(".cc0")), None);
+        assert_eq!(control_paragraph(&name("p3.ccx")), None);
+        assert_eq!(control_paragraph(&name("cc1")), None);
+        assert_eq!(
+            control_paragraph(&ControlSelector::Tag { tag: "T".into() }),
+            None
+        );
+    }
+
+    #[test]
+    fn settling_revisions_moves_places() {
+        let ops = serde_json::json!([
+            {"kind": "replace", "paragraph": "p0", "find": "x", "replacement": "y"}
+        ]);
+        let none = BTreeSet::new();
+        assert!(places_stay(
+            &plan(serde_json::json!({}), ops.clone()),
+            &none
+        ));
+        let settling = plan(
+            serde_json::json!({"resolve_revisions": {"accept": {"ids": ["r1"]}}}),
+            ops.clone(),
+        );
+        assert!(!places_stay(&settling, &none));
+        let refreshing = plan(serde_json::json!({"update_fields": true}), ops);
+        assert!(!places_stay(&refreshing, &none));
+    }
+}

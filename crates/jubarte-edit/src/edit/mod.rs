@@ -2397,3 +2397,130 @@ mod deeper_boundary_fixture;
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 #[path = "tests/deeper_boundary_tests.rs"]
 mod deeper_boundary_tests;
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod jsonl_branch_tests {
+    use super::deeper_boundary_fixture::{docx, para};
+    use super::*;
+
+    fn lines(report: &EditReport) -> Vec<serde_json::Value> {
+        report
+            .to_jsonl()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_skipped_run_with_landed_operations_reports_partial() {
+        let plan = EditPlan::from_json(
+            &serde_json::json!({
+                "schema_version": 1,
+                "author": "Ed",
+                "date": "2026-02-02T00:00:00Z",
+                "operations": [
+                    {"kind": "replace", "paragraph": "p0", "find": "one", "replacement": "1"},
+                    {"kind": "replace", "paragraph": "p0", "find": "two", "replacement": "2"},
+                ],
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let mut report = apply_plan(&docx(&para("one two")), &plan).unwrap().report;
+        report.ok = false;
+        report.skipped = 1;
+        report.operations[1].status = "failed".into();
+        report.operations[1].near = Some(anchor::NearMatches {
+            total: 0,
+            occurrences: Vec::new(),
+        });
+        report.clean_removed_comments.push(RemovedComment {
+            id: "c3".into(),
+            author: "Bo".into(),
+            replies: Vec::new(),
+            why: "anchor removed".into(),
+            decision: None,
+        });
+        let out = lines(&report);
+        let summary = out.last().unwrap();
+        assert_eq!(summary["status"], "partial");
+        assert_eq!(summary["ops"]["skipped"], 1);
+        assert_eq!(summary["clean_removed_comments"][0]["id"], "c3");
+        assert!(out.iter().any(|l| l.get("near").is_some()), "{out:?}");
+        // Nothing landed: failed.
+        report.operations[0].status = "failed".into();
+        assert_eq!(lines(&report).last().unwrap()["status"], "failed");
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod keep_others_branch_tests {
+    use super::deeper_boundary_fixture::{docx, para};
+    use super::*;
+
+    fn selection(json: serde_json::Value) -> ResolveRevisions {
+        serde_json::from_value(json).unwrap()
+    }
+
+    #[test]
+    fn a_wholesale_policy_names_nameless_changes_and_passes_clean_sources() {
+        let plain = docx(&para("Plain."));
+        assert!(
+            guard_keep_others(&plain, "Ed", None, Some("accept"), false, PlanSyntax::V1).is_ok()
+        );
+        let nameless = docx(
+            r#"<w:p><w:r><w:t xml:space="preserve">Kept </w:t></w:r><w:ins w:id="1" w:date="2026-01-01T00:00:00Z"><w:r><w:t>added</w:t></w:r></w:ins></w:p>"#,
+        );
+        let e = guard_keep_others(&nameless, "Ed", None, Some("accept"), false, PlanSyntax::V1)
+            .unwrap_err();
+        assert_eq!(e.code, "CHANGE_NOT_YOURS");
+        assert!(
+            e.message
+                .contains(r#""existing_revisions": "accept" would erase"#),
+            "{}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn a_visible_reject_leaves_the_reject_ids_to_the_strike() {
+        let source = docx(
+            r#"<w:p><w:r><w:t xml:space="preserve">Kept </w:t></w:r><w:ins w:id="1" w:author="Bo" w:date="2026-01-01T00:00:00Z"><w:r><w:t>added</w:t></w:r></w:ins></w:p>"#,
+        );
+        let visible = selection(serde_json::json!({"reject": {"ids": ["r1"], "visible": true}}));
+        assert!(visible.reject_visible);
+        assert!(
+            guard_keep_others(&source, "Ed", Some(&visible), None, false, PlanSyntax::V1).is_ok()
+        );
+        let silent = selection(serde_json::json!({"reject": {"ids": ["r1"]}}));
+        let e = guard_keep_others(&source, "Ed", Some(&silent), None, false, PlanSyntax::V1)
+            .unwrap_err();
+        assert_eq!(e.code, "CHANGE_NOT_YOURS");
+    }
+
+    #[test]
+    fn colon_ids_need_a_known_story_and_a_number() {
+        let source = docx(&para("Plain."));
+        let got = paragraph_ids(&source, &["body:p:0", "body:p:x", "nowhere:p:1"]).unwrap();
+        assert!(
+            got[0]
+                .as_ref()
+                .unwrap_err()
+                .ends_with("the settled spelling is p0"),
+            "{got:?}"
+        );
+        assert!(
+            got[1]
+                .as_ref()
+                .unwrap_err()
+                .starts_with("body:p:x: -p takes"),
+            "{got:?}"
+        );
+        assert!(
+            got[2].as_ref().unwrap_err().starts_with("unknown story"),
+            "{got:?}"
+        );
+    }
+}

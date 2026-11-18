@@ -543,3 +543,226 @@ pub(super) fn load_stories(opened: &mut Opened) -> Result<Loaded, EditError> {
         paragraph_story,
     })
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod guard_branch_tests {
+    use super::super::deeper_boundary_fixture::docx;
+    use super::*;
+
+    const INS: &str = r#"<w:ins w:id="1" w:author="Bo" w:date="2026-01-01T00:00:00Z"><w:r><w:t>added words</w:t></w:r></w:ins>"#;
+
+    fn run(source: &[u8], author: &str, ops: serde_json::Value) -> Vec<u8> {
+        let mut value = serde_json::json!({
+            "schema_version": 1,
+            "author": author,
+            "date": "2026-02-02T00:00:00Z",
+            "existing_revisions": "keep",
+        });
+        value["operations"] = ops;
+        let plan = EditPlan::from_json(&value.to_string()).unwrap();
+        apply_plan(source, &plan).unwrap().redline
+    }
+
+    /// Bo's insertion, Cy's comment on it, and Di's reply to the comment.
+    fn threaded() -> Vec<u8> {
+        let source = docx(&format!(
+            "<w:p><w:r><w:t xml:space=\"preserve\">Lead </w:t></w:r>{INS}</w:p>"
+        ));
+        let commented = run(
+            &source,
+            "Cy",
+            serde_json::json!([{"kind":"comment","paragraph":"p0","find":"added","text":"why?"}]),
+        );
+        let id = crate::comments::list_comments(&commented).unwrap()[0].id;
+        run(
+            &commented,
+            "Di",
+            serde_json::json!([{"kind":"reply_comment","comment_id":id,"text":"because"}]),
+        )
+    }
+
+    fn insertion(source: &[u8]) -> Change {
+        crate::changes::list_changes(source)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.kind == ChangeKind::Insertion && c.author.as_deref() == Some("Bo"))
+            .expect("Bo's insertion")
+    }
+
+    #[test]
+    fn removing_a_thread_needs_its_root_and_every_reply_to_be_yours() {
+        let source = threaded();
+        let change = insertion(&source);
+        assert!(!change.holds_comments.is_empty(), "{change:?}");
+        // The same comment through the change and a nested one is held once.
+        let nested = vec![&change];
+        let removals = [(&change, false, nested)];
+        let e = guard_removed_comments(&source, "Di", &removals).unwrap_err();
+        assert_eq!(e.code, "COMMENT_NOT_YOURS");
+        assert!(
+            e.message.starts_with("rejecting r1 would delete c"),
+            "{}",
+            e.message
+        );
+        assert!(e.message.ends_with("which is by \"Cy\""), "{}", e.message);
+        // The root's author still meets the reply by another.
+        let removals = [(&change, true, Vec::new())];
+        let e = guard_removed_comments(&source, "Cy", &removals).unwrap_err();
+        assert!(
+            e.message.starts_with("accepting r1 would delete c"),
+            "{}",
+            e.message
+        );
+        assert!(e.message.ends_with("which is by \"Di\""), "{}", e.message);
+        // A comment the document does not hold is not guarded.
+        let mut ghost = change.clone();
+        ghost.holds_comments = vec!["c99".into()];
+        let removals = [(&ghost, true, Vec::new())];
+        assert!(guard_removed_comments(&source, "Zed", &removals).is_ok());
+    }
+
+    #[test]
+    fn a_thread_wholly_yours_is_removable() {
+        let source = docx(&format!("<w:p>{INS}</w:p>"));
+        let mine = run(
+            &source,
+            "Cy",
+            serde_json::json!([{"kind":"comment","paragraph":"p0","find":"added","text":"mine"}]),
+        );
+        let id = crate::comments::list_comments(&mine).unwrap()[0].id;
+        let mine = run(
+            &mine,
+            "Cy",
+            serde_json::json!([{"kind":"reply_comment","comment_id":id,"text":"still mine"}]),
+        );
+        let change = insertion(&mine);
+        let removals = [(&change, false, Vec::new())];
+        assert!(guard_removed_comments(&mine, "Cy", &removals).is_ok());
+    }
+
+    fn bare(id: &str, kind: ChangeKind, author: Option<&str>) -> Change {
+        let source = docx(&format!("<w:p>{INS}</w:p>"));
+        let mut change = insertion(&source);
+        change.id = id.into();
+        change.kind = kind;
+        change.author = author.map(str::to_string);
+        change
+    }
+
+    #[test]
+    fn foreign_authors_are_named_once_in_order_and_styles_are_no_one() {
+        let mut authors = Vec::new();
+        let mut nameless = false;
+        for change in [
+            bare("r1", ChangeKind::Insertion, Some("Bo")),
+            bare("r2", ChangeKind::Insertion, Some("Bo")),
+            bare("r3", ChangeKind::Deletion, Some("Me")),
+            bare("styles.r4", ChangeKind::Formatting, Some("Zed")),
+            bare("r5", ChangeKind::Deletion, Some("Cy")),
+        ] {
+            note_foreign(&change, "Me", &mut authors, &mut nameless);
+        }
+        assert_eq!(authors, ["Bo", "Cy"]);
+        assert!(!nameless);
+        note_foreign(
+            &bare("r6", ChangeKind::Insertion, Some("")),
+            "Me",
+            &mut authors,
+            &mut nameless,
+        );
+        assert!(nameless);
+        assert_eq!(
+            join_authors(&authors, nameless),
+            r#""Bo", "Cy" and one that names no author"#
+        );
+        assert_eq!(join_authors(&[], true), "one that names no author");
+        assert_eq!(
+            join_authors(&["Bo".into()], true),
+            r#""Bo" and one that names no author"#
+        );
+    }
+
+    #[test]
+    fn refusal_sentences_name_the_author_or_its_absence() {
+        assert!(owns_change(Some("Me"), "Me"));
+        assert!(!owns_change(Some(""), ""));
+        assert!(!owns_change(None, "Me"));
+        assert_eq!(
+            change_not_yours(&bare("r1", ChangeKind::Insertion, Some(""))),
+            "r1 names no author; strike it (-p r1 --strike), or comment on it"
+        );
+        assert_eq!(
+            change_not_yours(&bare("r2", ChangeKind::Deletion, Some("Bo"))),
+            "r2 is by \"Bo\"; answer it visibly (-p r2 --restore), or comment on it"
+        );
+        assert_eq!(
+            comment_not_yours("accepting", "r1", "c3", ""),
+            "accepting r1 would delete c3, which names no author"
+        );
+    }
+
+    #[test]
+    fn taken_along_follows_inside_chains_and_stops_on_cycles() {
+        let root = bare("r1", ChangeKind::Insertion, Some("Bo"));
+        let mut child = bare("r2", ChangeKind::Deletion, Some("Cy"));
+        child.inside = Some("r1".into());
+        let mut grandchild = bare("r3", ChangeKind::Deletion, Some("Cy"));
+        grandchild.inside = Some("r2".into());
+        let mut style = bare("styles.r4", ChangeKind::Formatting, Some("Cy"));
+        style.inside = Some("r1".into());
+        let mut loop_a = bare("r5", ChangeKind::Deletion, None);
+        loop_a.inside = Some("r6".into());
+        let mut loop_b = bare("r6", ChangeKind::Deletion, None);
+        loop_b.inside = Some("r5".into());
+        let mut stray = bare("r7", ChangeKind::Deletion, None);
+        stray.inside = Some("r99".into());
+        let listed = vec![
+            root.clone(),
+            child,
+            grandchild,
+            style,
+            loop_a,
+            loop_b,
+            stray,
+        ];
+        let along: Vec<&str> = taken_along(&listed, &root)
+            .iter()
+            .map(|c| c.id.as_str())
+            .collect();
+        assert_eq!(along, ["r2", "r3"]);
+    }
+
+    #[test]
+    fn an_unnormalizable_filter_names_nothing() {
+        let source = docx(&format!("<w:p>{INS}</w:p>"));
+        let listed = crate::changes::list_changes(&source).unwrap();
+        let replacement = ChangeFilter {
+            ids: None,
+            authors: None,
+            kinds: Some(vec![ChangeKind::Replacement]),
+        };
+        assert!(named_ids(&listed, Some(&replacement)).is_empty());
+        assert!(named_ids(&listed, None).is_empty());
+        assert_eq!(named_ids(&listed, Some(&ChangeFilter::default())), ["r1"]);
+    }
+
+    #[test]
+    fn a_visible_reject_settles_nothing_before_the_plan() {
+        let source = docx(&format!("<w:p>{INS}</w:p>"));
+        let selection = ResolveRevisions {
+            accept: None,
+            reject: Some(ChangeFilter::ids(vec!["r1".to_string()])),
+            reject_visible: true,
+        };
+        let (bytes, resolved, _) = resolve_selected(
+            &source,
+            Some(&selection),
+            RemovedAnchorComments::default(),
+            PlanSyntax::default(),
+        )
+        .unwrap();
+        assert!(bytes.is_none());
+        assert!(resolved.accepted.is_empty() && resolved.rejected.is_empty());
+    }
+}

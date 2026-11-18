@@ -1913,3 +1913,200 @@ mod tests {
         assert_eq!(error.code, "CURSOR_BASIS_CHANGED");
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod request_branch_tests {
+    use super::super::deeper_boundary_fixture::{docx, para};
+    use super::*;
+
+    fn source() -> Vec<u8> {
+        docx(&format!(
+            "{}{}{}",
+            para("Alpha one."),
+            para("Beta two."),
+            para("Gamma three.")
+        ))
+    }
+
+    fn token(json: &serde_json::Value) -> String {
+        use base64::Engine;
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json.to_string())
+    }
+
+    #[test]
+    fn previews_cut_only_between_words() {
+        let at_space = TextValue::bounded("ab cd", 3);
+        assert_eq!(at_space.text_preview.as_deref(), Some("ab "));
+        let before_space = TextValue::bounded("ab cd", 2);
+        assert_eq!(before_space.text_preview.as_deref(), Some("ab"));
+        let mid_word = TextValue::bounded("abcd ef", 2);
+        assert_eq!(mid_word.text_preview.as_deref(), Some("abcd"));
+        assert!(TextValue::bounded("abcd", 2).complete);
+    }
+
+    #[test]
+    fn requests_refuse_conflicting_or_incomplete_filters() {
+        let source = source();
+        let both = ForEditRequest {
+            find: Some("a".into()),
+            regex: Some("b".into()),
+            ..ForEditRequest::default()
+        };
+        assert_eq!(
+            for_edit(&source, &both).unwrap_err().message,
+            "--find and --regex conflict"
+        );
+        let by = ForEditRequest {
+            by: Some("Bo".into()),
+            ..ForEditRequest::default()
+        };
+        assert_eq!(
+            for_edit(&source, &by).unwrap_err().message,
+            "--by needs --changed"
+        );
+        let by_any = ForEditRequest {
+            by_any: vec!["Bo".into()],
+            ..ForEditRequest::default()
+        };
+        assert_eq!(
+            for_edit(&source, &by_any).unwrap_err().message,
+            "--by needs --changed"
+        );
+    }
+
+    #[test]
+    fn cursors_must_be_ours_and_inside_the_selection() {
+        let source = source();
+        let page = ForEditRequest {
+            limit: Some(1),
+            ..ForEditRequest::default()
+        };
+        let first = for_edit(&source, &page).unwrap();
+        assert_eq!(first.paragraphs.len(), 1);
+        let next = first.next_cursor.clone().expect("more to read");
+        let second = for_edit(
+            &source,
+            &ForEditRequest {
+                cursor: Some(next.clone()),
+                ..page.clone()
+            },
+        )
+        .unwrap();
+        assert_eq!(second.paragraphs.len(), 1);
+        assert_ne!(second.paragraphs[0].target, first.paragraphs[0].target);
+        let basis = {
+            use base64::Engine;
+            let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(&next)
+                .unwrap();
+            let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            v["basis"].as_str().unwrap().to_string()
+        };
+        for bad in [
+            serde_json::json!({"v": 2, "basis": basis, "offset": 1}),
+            serde_json::json!({"v": 1, "basis": basis, "offset": "1"}),
+            serde_json::json!({"v": 1, "basis": 7, "offset": 1}),
+        ] {
+            let e = for_edit(
+                &source,
+                &ForEditRequest {
+                    cursor: Some(token(&bad)),
+                    ..page.clone()
+                },
+            )
+            .unwrap_err();
+            assert_eq!(e.code, "USAGE", "{bad}");
+        }
+        let past = for_edit(
+            &source,
+            &ForEditRequest {
+                cursor: Some(cursor_token(&basis, 99)),
+                ..page.clone()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(past.code, "CURSOR_BASIS_CHANGED");
+        assert!(
+            past.message.contains("past the frozen selection"),
+            "{}",
+            past.message
+        );
+    }
+
+    #[test]
+    fn head_and_tail_pick_body_paragraphs() {
+        let source = source();
+        let ids = |request: ForEditRequest| -> Vec<String> {
+            for_edit(&source, &request)
+                .unwrap()
+                .paragraphs
+                .into_iter()
+                .map(|r| r.original.text.unwrap_or_default())
+                .collect()
+        };
+        let head = ids(ForEditRequest {
+            head: Some(1),
+            ..ForEditRequest::default()
+        });
+        assert_eq!(head, ["Alpha one."]);
+        let tail = ids(ForEditRequest {
+            tail: Some(2),
+            ..ForEditRequest::default()
+        });
+        assert_eq!(tail, ["Beta two.", "Gamma three."]);
+        let none = for_edit(
+            &source,
+            &ForEditRequest {
+                find: Some("zzz".into()),
+                ..ForEditRequest::default()
+            },
+        )
+        .unwrap();
+        assert!(none.paragraphs.is_empty());
+        assert!(
+            none.coverage
+                .omissions
+                .iter()
+                .any(|o| o.contains("every filter given: find")),
+            "{:?}",
+            none.coverage.omissions
+        );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod reference_branch_tests {
+    use super::*;
+
+    #[test]
+    fn values_escape_every_byte_outside_the_literal_set() {
+        assert_eq!(escape_value("a.b_c:9"), "a.b_c:9");
+        assert_eq!(escape_value("a b/é"), "a-20b-2F-C3-A9");
+    }
+
+    #[test]
+    fn a_resolved_comment_reads_done() {
+        let mut record = crate::comments::CommentRecord {
+            id: 4,
+            r#ref: "c4".into(),
+            author: "Bo".into(),
+            initials: None,
+            date: None,
+            text: "Note".into(),
+            parent: None,
+            done: true,
+            paragraph: None,
+            last_paragraph: None,
+            anchor_text: String::new(),
+            before: String::new(),
+            after: String::new(),
+        };
+        let done = comment_ref(&record);
+        assert_eq!(done.short_id, "c4");
+        assert_eq!(done.status, "done");
+        record.done = false;
+        assert_eq!(comment_ref(&record).status, "open");
+    }
+}

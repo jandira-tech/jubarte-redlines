@@ -601,3 +601,151 @@ pub(super) fn wrap_range(
         _ => false,
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod reference_branch_tests {
+    use super::super::deeper_boundary_fixture::{Part, docx, docx_with_sect, part_string};
+    use super::*;
+
+    const MARK: &str = r#"<w:pPr><w:rPr><w:del w:id="90" w:author="Ed" w:date="2026-01-01T00:00:00Z"/></w:rPr></w:pPr>"#;
+
+    fn reference(id: u32) -> String {
+        format!(
+            r#"<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="{id}"/></w:r>"#
+        )
+    }
+
+    fn deleted(text: &str) -> String {
+        format!(
+            r#"<w:del w:id="91" w:author="Ed" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>{text}</w:delText></w:r></w:del>"#
+        )
+    }
+
+    /// Whether comment `id`'s reference runs all sit inside a `w:del`.
+    fn enclosed(xml: &str, id: u32) -> bool {
+        inside(xml, id) == count(xml, id)
+    }
+
+    fn count(xml: &str, id: u32) -> usize {
+        xml.matches(&format!(r#"<w:commentReference w:id="{id}" />"#))
+            .count()
+    }
+
+    /// How many of comment `id`'s references sit inside a `w:del`.
+    fn inside(xml: &str, id: u32) -> usize {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).unwrap();
+        dom.descendants(root, Some(&W::comment_reference()))
+            .into_iter()
+            .filter(|&r| dom.attribute(r, &W::id()) == Some(id.to_string().as_str()))
+            .filter(|&r| dom.ancestors(r, Some(&W::del())).len() == 1)
+            .count()
+    }
+
+    #[test]
+    fn references_join_the_deletion_of_their_wholly_deleted_paragraph() {
+        let body = format!(
+            // p0: wholly deleted by Ed; comment 1 lives only here (its
+            // reference appears twice), comment 2 also anchors in p1, the
+            // run with two references and the run with text stay put.
+            r#"<w:p>{MARK}<w:commentRangeStart w:id="1"/>{}<w:commentRangeEnd w:id="1"/>{}{}<w:r><w:commentReference w:id="3"/><w:commentReference w:id="4"/></w:r><w:r><w:t>x</w:t><w:commentReference w:id="5"/></w:r><w:commentRangeStart w:id="2"/>{}<w:r><w:t>y</w:t></w:r></w:p><w:p><w:commentRangeEnd w:id="2"/><w:r><w:t>tail</w:t></w:r></w:p>"#,
+            deleted("gone"),
+            reference(1),
+            reference(1),
+            reference(2),
+        );
+        let source = docx(&body);
+        let out = enclose_deleted_paragraph_comment_references(&source, "Ed").unwrap();
+        let xml = part_string(&out, "word/document.xml").unwrap();
+        // The first of comment 1's references joins; its repeat stays.
+        assert_eq!((inside(&xml, 1), count(&xml, 1)), (1, 2), "{xml}");
+        for id in [2, 3, 4, 5] {
+            assert_eq!(inside(&xml, id), 0, "{id}: {xml}");
+        }
+        // Another author's deleted paragraph is left alone: nothing changes.
+        let out = enclose_deleted_paragraph_comment_references(&source, "Bo").unwrap();
+        assert_eq!(out, source);
+    }
+
+    #[test]
+    fn a_deletion_without_text_still_takes_the_reference() {
+        let body = format!(
+            r#"<w:p>{MARK}<w:del w:id="92" w:author="Ed" w:date="2026-01-01T00:00:00Z"><w:r><w:delText></w:delText></w:r></w:del><w:del w:id="93" w:author="Bo" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>b</w:delText></w:r></w:del><w:commentRangeStart w:id="1"/><w:commentRangeEnd w:id="1"/>{}</w:p><w:p>{MARK}<w:commentRangeStart w:id="6"/><w:commentRangeEnd w:id="6"/>{}</w:p><w:p><w:del w:id="94" w:author="Ed" w:date="2026-01-01T00:00:00Z"><w:r><w:pict><w:p>{MARK}{}{}</w:p></w:pict></w:r></w:del></w:p>"#,
+            reference(1),
+            reference(6),
+            deleted("boxed"),
+            reference(8),
+        );
+        let source = docx(&body);
+        let out = enclose_deleted_paragraph_comment_references(&source, "Ed").unwrap();
+        let xml = part_string(&out, "word/document.xml").unwrap();
+        assert!(enclosed(&xml, 1), "{xml}");
+        // No content deletion of the author's: the reference stays.
+        assert!(!enclosed(&xml, 6), "{xml}");
+    }
+
+    #[test]
+    fn header_references_join_their_deleted_paragraph_too() {
+        let header = format!(
+            r#"<w:hdr xmlns:w="{}"><w:p>{MARK}<w:commentRangeStart w:id="4"/>{}<w:commentRangeEnd w:id="4"/>{}</w:p></w:hdr>"#,
+            W::URI,
+            deleted("head"),
+            reference(4)
+        );
+        let part = Part {
+            name: "word/header1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+            xml: &header,
+        };
+        let sect = r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#;
+        let source = docx_with_sect("<w:p><w:r><w:t>Body.</w:t></w:r></w:p>", &[part], sect);
+        let out = enclose_deleted_paragraph_comment_references(&source, "Ed").unwrap();
+        assert!(enclosed(&part_string(&out, "word/header1.xml").unwrap(), 4));
+        let body = part_string(&out, "word/document.xml").unwrap();
+        assert!(body.contains("Body."));
+    }
+
+    #[test]
+    fn comment_markers_leave_the_deletions_that_took_their_words() {
+        let body = format!(
+            r#"<w:p><w:del w:id="1" w:author="Ed" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>a</w:delText></w:r><w:commentRangeStart w:id="7"/><w:r><w:delText>b</w:delText></w:r><w:commentRangeEnd w:id="7"/>{}<w:r><w:delText>c</w:delText></w:r></w:del></w:p><w:p><w:del w:id="2" w:author="Ed" w:date="2026-01-01T00:00:00Z"><w:commentRangeStart w:id="8"/><w:r><w:delText>d</w:delText></w:r><w:commentRangeEnd w:id="8"/></w:del></w:p>"#,
+            reference(7)
+        );
+        let source = docx(&body);
+        assert_eq!(lift_deletion_comments(&source, &[]).unwrap(), source);
+        let out = lift_deletion_comments(&source, &[7, 8, 9]).unwrap();
+        let xml = part_string(&out, "word/document.xml").unwrap();
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom.root(doc).unwrap();
+        for local in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
+            for marker in dom.descendants(root, Some(&W::name(local))) {
+                assert!(
+                    dom.ancestors(marker, Some(&W::del())).is_empty(),
+                    "{local} left in a deletion: {xml}"
+                );
+            }
+        }
+        // a, b, c and d stay deleted, b in a fresh deletion of its own.
+        let deleted: Vec<String> = dom
+            .descendants(root, Some(&W::del()))
+            .into_iter()
+            .map(|d| {
+                dom.descendants(d, Some(&W::del_text()))
+                    .into_iter()
+                    .map(|t| dom.value(t).to_string())
+                    .collect()
+            })
+            .collect();
+        assert_eq!(deleted, ["a", "b", "c", "d"]);
+        let ids: HashSet<&str> = dom
+            .descendants(root, Some(&W::del()))
+            .into_iter()
+            .filter_map(|d| dom.attribute(d, &W::id()))
+            .collect();
+        assert_eq!(ids.len(), 4, "split parts take fresh ids: {xml}");
+    }
+}
