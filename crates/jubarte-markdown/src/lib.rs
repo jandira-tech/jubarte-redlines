@@ -5,9 +5,9 @@
 //! # jubarte-markdown
 //!
 //! Markdown in and out of Word documents: `markdown::markdown_to_docx`
-//! writes CriticMarkup as tracked changes and comments, the readers
-//! (`view_notes`, `view_stories`, `view_styles`, `from_docx`) project a
-//! package to the agent view's Markdown, and `markdown::diff_markdown`
+//! writes CriticMarkup as tracked changes and comments,
+//! `markdown::docx_to_markdown` (with `markdown::MarkdownOptions`) projects
+//! a package to the agent view's Markdown, and `markdown::diff_markdown`
 //! diffs two documents as pandiff-style CriticMarkup. `legacy_doc` reads
 //! Word 97-2003 `.doc` files.
 //!

@@ -47,5 +47,5 @@ pub(crate) use jubarte_opc::{
     markup_simplifier, numbering, render_options, strict_translation, table_dom,
 };
 
-/// DOCX and Markdown to PDF and PNG, with Word-faithful layout.
+/// DOCX to PDF and PNG, with Word-faithful layout.
 pub mod convert;

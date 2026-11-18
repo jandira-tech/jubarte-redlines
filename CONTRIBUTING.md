@@ -30,7 +30,7 @@ the CLI binary (`src/bin/`); the engine lives in `crates/`:
 | `jubarte-dom` | arena XML DOM, namespaces, ids, shared utilities |
 | `jubarte-opc` | OPC package floor: admission, packages, styles, numbering, settings |
 | `jubarte-redlines` | compare: `document_comparer`, `comparer`, `revision_processor` |
-| `jubarte-render` | DOCX and Markdown to PDF and PNG (`convert`), embedded fonts |
+| `jubarte-render` | DOCX to PDF and PNG (`convert`), embedded fonts |
 | `jubarte-doc` | changes, comments, validate, audit, scrub, append, fields, inspect, debug |
 | `jubarte-markdown` | Markdown in and out, `.doc` reading |
 | `jubarte-edit` | edit plans, text diffs, capabilities, publication |
