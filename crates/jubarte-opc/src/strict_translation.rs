@@ -894,7 +894,10 @@ pub fn strict_to_transitional_docx_within(
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
     let options = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Deflated)
-        .last_modified_time(zip::DateTime::default());
+        .last_modified_time(zip::DateTime::default())
+        // The host would otherwise pick the "made by" system (DOS on
+        // Windows), and the same input would write different bytes there.
+        .system(zip::System::Unix);
     for (name, data) in &entries {
         if writer.start_file(name, options).is_err() {
             return Ok(bytes.to_vec());
