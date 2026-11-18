@@ -396,12 +396,17 @@ class Provenance(unittest.TestCase):
         self.assertLess(i, self.named("Publish release"))
 
 
+LINUX_RUNNER = "${{ vars.LINUX_RUNNER || 'self-hosted' }}"
+
+
 class Crates(unittest.TestCase):
     def setUp(self) -> None:
         self.job = load()["jobs"]["publish-crates"]
 
     def test_runs_on_the_self_hosted_runners(self) -> None:
-        self.assertEqual(self.job["runs-on"], "self-hosted")
+        # Self-hosted unless the LINUX_RUNNER variable names a GitHub-hosted
+        # runner while the self-hosted ones are down.
+        self.assertEqual(self.job["runs-on"], LINUX_RUNNER)
 
     def test_the_token_comes_from_the_auth_action(self) -> None:
         i = step_index(self.job, lambda s: "rust-lang/crates-io-auth-action@" in s.get("uses", ""))
@@ -457,7 +462,9 @@ class PyPI(unittest.TestCase):
         self.job = load()["jobs"]["publish-pypi"]
 
     def test_runs_on_the_self_hosted_runners(self) -> None:
-        self.assertEqual(self.job["runs-on"], "self-hosted")
+        # Self-hosted unless the LINUX_RUNNER variable names a GitHub-hosted
+        # runner while the self-hosted ones are down.
+        self.assertEqual(self.job["runs-on"], LINUX_RUNNER)
 
     def test_waits_for_every_wheel(self) -> None:
         self.assertIn("wheels", self.job["needs"])
