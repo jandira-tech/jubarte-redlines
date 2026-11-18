@@ -188,7 +188,7 @@ Every upward or peer cross-crate reference across all 122 files in `src/` (inclu
 
 ## 5. Decomposing the 5 Mega-Files (Phase 4)
 
-- [ ] **`crates/jubarte-render/src/` (from [src/convert/mod.rs](../../src/convert/mod.rs) — 69,056 LOC)** — *pending (verified 2026-11-16): the file moved to `crates/jubarte-render/src/convert/mod.rs` but is still one 68,191-LOC file; only leaf modules were peeled off (`font.rs`, `font_table.rs`, `pdf.rs`, `altchunk.rs`, `math_*`, `metafile.rs`, `preset_geom.rs`, `diff_render.rs`).*
+- [x] **`crates/jubarte-render/src/` (from [src/convert/mod.rs](../../src/convert/mod.rs) — 69,056 LOC)** — *done in T7.5 (#2459): `convert/mod.rs` is a 936-line module root with 24 production siblings and 30 test files under `convert/tests/`; see baseline-addenda.md.*
   - `lib.rs`, `model.rs`, `parse/{document,styles,tables,drawings,math,fields}.rs`, `layout/{engine,paragraph,line_break,table,float,footnote,header_footer,columns,revisions,balloons}.rs`, `font.rs`, `font_table.rs`, `pdf.rs`, `raster.rs`, `altchunk.rs`.
 - [x] **`crates/jubarte-redlines/src/comparer/finalize/` (from [src/comparer/finalize.rs](../../src/comparer/finalize.rs) — 35,346 LOC)** — *done in T7.1 (#2452): a directory module of 14 production files and 35 test files; see baseline-addenda.md.*
   - `mod.rs`, `coalesce.rs`, `moves.rs`, `tables.rs`, `paragraph_marks.rs`, `formatting.rs`, `notes_comments.rs`, `ids_relationships.rs`, `sect_pr.rs`.
