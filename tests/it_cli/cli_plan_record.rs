@@ -1014,6 +1014,40 @@ fn typed_routes_protect_plan_payload_and_source_aliases() {
     assert_eq!(std::fs::read(dir.join("plan.json")).unwrap(), before);
 }
 
+/// The template route names its refusal once: the code is the error's
+/// `code`, and neither the message nor the human line repeats it.
+#[test]
+fn template_output_alias_names_its_code_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir, "letter.docx", "Regards.");
+    let (code, out, err) = run(
+        dir,
+        &[
+            "edit",
+            "template",
+            "letter.docx",
+            "-o",
+            "letter.docx",
+            "--json",
+        ],
+    );
+    assert_ne!(code, 0, "{out} {err}");
+    let receipt: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(receipt["error"]["code"], "OUTPUT_ALIAS");
+    let message = receipt["error"]["message"].as_str().unwrap();
+    assert!(
+        !message.starts_with("OUTPUT_ALIAS"),
+        "code repeated: {message}"
+    );
+    let (code, out, err) = run(
+        dir,
+        &["edit", "template", "letter.docx", "-o", "letter.docx"],
+    );
+    assert_ne!(code, 0, "{out} {err}");
+    assert_eq!(err.matches("OUTPUT_ALIAS").count(), 1, "{err}");
+}
+
 fn plan_with_moved_source(dir: &Path) -> Vec<u8> {
     let file = letter(dir, "a.docx", "Last.");
     let before = std::fs::read(&file).unwrap();
@@ -1114,6 +1148,11 @@ fn moved_source_applies_its_plan_and_still_refuses_output_aliases() {
         assert_ne!(code, 0, "{path}: {out} {err}");
         let receipt: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(receipt["error"]["code"], "OUTPUT_ALIAS");
+        let message = receipt["error"]["message"].as_str().unwrap();
+        assert!(
+            !message.starts_with("OUTPUT_ALIAS"),
+            "code repeated: {message}"
+        );
         assert_eq!(std::fs::read(dir.join("moved/b.docx")).unwrap(), before);
         assert_eq!(std::fs::read(dir.join("plan.json")).unwrap(), plan_before);
     }

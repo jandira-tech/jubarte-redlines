@@ -49,15 +49,25 @@ pub(super) fn publish_failure((_, message): (u8, String)) -> Failure {
     };
     Box::new(
         Error::new(code)
-            .with_message(message)
+            .with_message(without_code(code, &message))
             .with_commit_state(state),
     )
+}
+/// `message` without a leading `CODE: `, when `code` is the code it names:
+/// the error carries the code in its own field, and printing it again in
+/// the message reads `OUTPUT_ALIAS: OUTPUT_ALIAS: …`.
+pub(super) fn without_code<'a>(code: &str, message: &'a str) -> &'a str {
+    message
+        .strip_prefix(code)
+        .and_then(|rest| rest.strip_prefix(": "))
+        .unwrap_or(message)
 }
 fn read(path: &Path) -> Result<Vec<u8>, Failure> {
     std::fs::read(path).map_err(|e| io_error(format!("reading {}: {e}", path.display())))
 }
 fn alias(path: &Path, inputs: &[(&Path, &str)]) -> Result<(), Failure> {
-    refuse_output_alias(path, inputs).map_err(|(_, message)| failure("OUTPUT_ALIAS", message))
+    refuse_output_alias(path, inputs)
+        .map_err(|(_, message)| failure("OUTPUT_ALIAS", without_code("OUTPUT_ALIAS", &message)))
 }
 fn writable(path: &Path, inputs: &[(&Path, &str)], force: bool) -> Result<(), Failure> {
     alias(path, inputs)?;
