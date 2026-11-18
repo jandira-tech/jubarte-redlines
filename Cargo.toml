@@ -265,7 +265,9 @@ jsonschema = { version = "0.61", default-features = false }
 criterion = "0.8"
 # Round-trip validation of produced .docx files in integration tests; only the
 # `parts` feature (= dep:zip) is built.
-ooxmlsdk = { version = "0.13.2", default-features = false, features = ["parts"] }
+# 0.15.0 requires zip ^9.2.2 (RUSTSEC-2026-0367/-0368/-0369, GHSA-m665-v7pm-7grj),
+# so the git patch onto jandira-tech/ooxmlsdk is gone (#1092).
+ooxmlsdk = { version = "0.15.0", default-features = false, features = ["parts"] }
 # tests/agent_text_view.rs: the agent view's header must parse as YAML.
 saphyr = "0.3"
 tempfile = "3"
@@ -354,10 +356,3 @@ tempfile = { workspace = true }
 [[bench]]
 name = "redline"
 harness = false
-
-# Use zip 9 for RUSTSEC-2026-0367, -0368 and -0369 (jandira-tech/ooxmlsdk#1),
-# and zip >= 9.0.5 for GHSA-m665-v7pm-7grj (zip cloaking; recorded in
-# SECURITY.md; admission refuses disagreeing headers, ZIP_HEADER_MISMATCH).
-# Remove this patch when an ooxmlsdk release requires zip >= 9 (#1092).
-[patch.crates-io]
-ooxmlsdk = { git = "https://github.com/jandira-tech/ooxmlsdk", rev = "d7c3ae016da8ef661d9a04e12c47003d8fe51eff" }
