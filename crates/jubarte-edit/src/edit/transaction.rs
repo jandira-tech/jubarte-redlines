@@ -5110,3 +5110,53 @@ mod resolve_branch_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod restored_hint_branch_tests {
+    use super::super::deeper_boundary_fixture::docx;
+    use super::super::{EditPlan, apply_plan};
+
+    fn refused(restore: &str) -> super::super::EditError {
+        let source = docx(
+            r#"<w:p><w:r><w:t xml:space="preserve">Kept </w:t></w:r><w:del w:id="1" w:author="Bo" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>gone</w:delText></w:r></w:del><w:del w:id="2" w:author="Bo" w:date="2026-01-01T00:00:00Z"><w:r><w:delText xml:space="preserve"> away</w:delText></w:r></w:del></w:p>"#,
+        );
+        let plan = EditPlan::from_json(
+            &serde_json::json!({
+                "schema_version": 1,
+                "author": "Ed",
+                "date": "2026-02-02T00:00:00Z",
+                "existing_revisions": "keep",
+                "operations": [
+                    {"kind": "restore", "revision": restore},
+                    {"kind": "replace", "paragraph": "p0", "find": "gone", "replacement": "back"},
+                ],
+            })
+            .to_string(),
+        )
+        .unwrap();
+        apply_plan(&source, &plan).unwrap_err()
+    }
+
+    #[test]
+    fn only_a_restore_of_the_same_deletion_says_it_lands_first() {
+        let same = refused("r1");
+        let other = refused("r2");
+        assert_ne!(
+            same.message, other.message,
+            "{}\n{}",
+            same.message, other.message
+        );
+        assert_eq!(same.code, other.code);
+        assert!(
+            same.message.contains("which this command restores"),
+            "{}",
+            same.message
+        );
+        assert!(
+            !other.message.contains("which this command restores"),
+            "{}",
+            other.message
+        );
+    }
+}

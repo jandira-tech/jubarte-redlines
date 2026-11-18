@@ -2832,3 +2832,119 @@ pub(crate) mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod blame_branch_tests {
+    use super::*;
+
+    fn refusal(artifact: &'static str, code: &str, part: &str, subject: &str) -> Refusal {
+        Refusal {
+            artifact,
+            code: code.into(),
+            part: part.into(),
+            subject: subject.into(),
+            error: err("CANDIDATE_INVALID", None, "bad"),
+        }
+    }
+
+    #[test]
+    fn the_same_defect_matches_on_every_field_but_the_error() {
+        let base = refusal("redline", "X", "word/document.xml", "r1");
+        assert!(base.same(&refusal("redline", "X", "word/document.xml", "r1")));
+        for other in [
+            refusal("clean", "X", "word/document.xml", "r1"),
+            refusal("redline", "Y", "word/document.xml", "r1"),
+            refusal("redline", "X", "word/header1.xml", "r1"),
+            refusal("redline", "X", "word/document.xml", "r2"),
+        ] {
+            assert!(!base.same(&other), "{other:?}");
+        }
+    }
+
+    fn outcome(id: &str, paragraph: Option<&str>) -> EditOutcome {
+        EditOutcome {
+            id: id.into(),
+            kind: "replace".into(),
+            status: "ok".into(),
+            paragraph: paragraph.map(Into::into),
+            matches: 1,
+            context: None,
+            comment_id: None,
+            anchor_given: None,
+            anchor_read_as: None,
+            near: None,
+            candidates: Vec::new(),
+            code: None,
+            message: None,
+        }
+    }
+
+    #[test]
+    fn naming_lists_every_operation_that_brings_the_defect() {
+        let outcomes = [
+            outcome("e1", Some("p0")),
+            outcome("e2", None),
+            outcome("e3", None),
+        ];
+        let error = || err("CANDIDATE_INVALID", None, "broken");
+        assert_eq!(naming(error(), &[], &outcomes).message, "broken");
+        let one = naming(error(), &[0], &outcomes);
+        assert_eq!(one.operation.as_deref(), Some("e1"));
+        assert_eq!(one.message, "broken; e1 (replace on p0) introduces it");
+        let two = naming(error(), &[1, 0], &outcomes);
+        assert_eq!(
+            two.message,
+            "broken; e2 (replace) introduces it, together with e1 (replace on p0)"
+        );
+        let many = naming(error(), &[0, 1, 2, 7], &outcomes);
+        assert_eq!(
+            many.message,
+            "broken; e1 (replace on p0) introduces it, together with e2 (replace), e3 (replace) and /operations/7"
+        );
+        let unknown = naming(error(), &[9], &outcomes);
+        assert_eq!(unknown.operation.as_deref(), Some("/operations/9"));
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod marker_branch_tests {
+    use super::super::deeper_boundary_fixture::docx;
+    use super::*;
+
+    #[test]
+    fn range_markers_skip_go_back_and_nameless_bookmarks() {
+        let source = docx(
+            r#"<w:p><w:bookmarkStart w:id="0" w:name="_GoBack"/><w:bookmarkEnd w:id="0"/><w:bookmarkStart w:id="1"/><w:bookmarkEnd w:id="1"/><w:bookmarkStart w:id="2" w:name="Kept"/><w:bookmarkEnd w:id="2"/><w:permStart w:id="3" w:edGrp="everyone"/><w:r><w:t>Text</w:t></w:r><w:permEnd w:id="3"/></w:p>"#,
+        );
+        let markers = range_markers(&source);
+        assert_eq!(
+            markers.bookmarks.into_iter().collect::<Vec<_>>(),
+            vec!["Kept"]
+        );
+        assert_eq!(markers.permissions, 1);
+        assert_eq!(markers.comments, 0);
+        let none = range_markers(b"not a package");
+        assert!(none.bookmarks.is_empty() && none.permissions == 0);
+    }
+
+    #[test]
+    fn a_location_without_a_step_moves_nowhere() {
+        let source = docx("<w:p><w:r><w:t>Text</w:t></w:r></w:p>");
+        let pkg = crate::opc::PartFs::open(&source).unwrap();
+        let (mut a, mut b) = (HashMap::new(), HashMap::new());
+        assert_eq!(
+            moved_location(
+                &pkg,
+                &pkg,
+                &mut a,
+                &mut b,
+                "word/document.xml",
+                "/w:document"
+            ),
+            None
+        );
+        assert!(a.is_empty() && b.is_empty());
+    }
+}

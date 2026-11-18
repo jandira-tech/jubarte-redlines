@@ -3276,3 +3276,69 @@ mod residual_byte_and_geometry_contract_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod symbol_text_branch_tests {
+    use super::*;
+
+    #[test]
+    fn symbol_face_codes_read_as_their_latin_text() {
+        let symbol = |low: u32| symbol_font_text(char::from_u32(0xF000 + low).unwrap(), true);
+        for (low, want) in [
+            (0x6D, 'µ'),
+            (0xA4, '⁄'),
+            (0xA6, 'ƒ'),
+            (0xB7, '•'),
+            (0xB8, '÷'),
+            (0xBC, '…'),
+            (0xD8, '¬'),
+            (0x41, 'A'),
+        ] {
+            assert_eq!(symbol(low), want, "{low:#x}");
+        }
+        // Another symbol face reads every code as its low byte.
+        for low in [0x6D, 0xA4, 0xA6, 0xB7, 0xB8, 0xBC, 0xD8] {
+            let c = char::from_u32(0xF000 + low).unwrap();
+            assert_eq!(symbol_font_text(c, false), char::from_u32(low).unwrap());
+        }
+        assert_eq!(symbol_font_text('x', true), 'x');
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod chrome_branch_tests {
+    use super::*;
+
+    #[test]
+    fn the_markup_pane_needs_room_and_falls_back_off_the_table() {
+        assert!(markup_chrome(100.0, 800.0, 10_000.0).is_none());
+        // A4 at 300 dpi is in the table; an unlisted right margin is not.
+        let pt = |px: f32| px * 72.0 / 300.0;
+        let listed = markup_chrome(pt(2480.0), pt(3508.0), pt(300.0)).unwrap();
+        assert!((listed.k - 223.0 / 300.0).abs() < 1e-6, "{}", listed.k);
+        let unlisted = markup_chrome(pt(2480.0), pt(3508.0), pt(417.0)).unwrap();
+        assert!(unlisted.k > 0.0 && unlisted.k < 1.0);
+        assert!(
+            (unlisted.k * 300.0).fract().abs() < 1e-3,
+            "floored to a 300th"
+        );
+    }
+
+    #[test]
+    fn hiding_and_scaling_leave_non_text_ops_alone() {
+        let line = Op::Line {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+            width: 0.5,
+            color: [0.0; 3],
+        };
+        let Op::Line { x2, width, .. } = line.hidden().scaled(2.0) else {
+            panic!("a line stays a line");
+        };
+        assert_eq!((x2, width), (1.0, 0.5));
+    }
+}

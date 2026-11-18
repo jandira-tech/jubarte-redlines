@@ -687,3 +687,80 @@ pub(super) fn refresh_run_history(dom: &mut Dom, run: NodeId, ids: &mut Revision
         crate::revision_processor::refresh_property_ids(dom, rpr, |old| ids.copy(old));
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod range_edge_branch_tests {
+    use super::super::deeper_boundary_fixture::{docx, part_string};
+    use super::super::{EditPlan, apply_plan};
+
+    fn plan(find: &str, replacement: &str) -> EditPlan {
+        EditPlan::from_json(
+            &serde_json::json!({
+                "schema_version": 1,
+                "author": "Ed",
+                "date": "2026-02-02T00:00:00Z",
+                "operations": [
+                    {"kind": "replace", "paragraph": "p0", "find": find, "replacement": replacement}
+                ],
+            })
+            .to_string(),
+        )
+        .unwrap()
+    }
+
+    /// The clean output's text of `xml`'s body, with `[` and `]` where the
+    /// range named `marker` starts and ends.
+    fn marked(xml: &str, start: &str, end: &str) -> String {
+        let mut out = String::new();
+        let mut rest = xml;
+        while let Some(at) = rest.find('<') {
+            let close = rest[at..].find('>').unwrap() + at;
+            let tag = &rest[at + 1..close];
+            if tag.starts_with(start) {
+                out.push('[');
+            } else if tag.starts_with(end) {
+                out.push(']');
+            } else if tag == "w:t" || tag.starts_with("w:t ") {
+                let text_end = rest[close..].find("</w:t>").unwrap() + close;
+                out.push_str(&rest[close + 1..text_end]);
+            }
+            rest = &rest[close + 1..];
+        }
+        out
+    }
+
+    #[test]
+    fn words_added_at_a_range_edge_stay_outside_the_range() {
+        for (body, find, replacement, start, end, want) in [
+            (
+                r#"<w:p><w:bookmarkStart w:id="1" w:name="Spot"/><w:r><w:t>Hello</w:t></w:r><w:bookmarkEnd w:id="1"/><w:r><w:t xml:space="preserve"> world</w:t></w:r></w:p>"#,
+                "Hello",
+                "Oh Hello",
+                "w:bookmarkStart",
+                "w:bookmarkEnd",
+                "Oh [Hello] world",
+            ),
+            (
+                r#"<w:p><w:r><w:t xml:space="preserve">Say </w:t></w:r><w:commentRangeStart w:id="2"/><w:r><w:t>Hello</w:t></w:r><w:commentRangeEnd w:id="2"/><w:r><w:commentReference w:id="2"/></w:r></w:p>"#,
+                "Hello",
+                "Hello there",
+                "w:commentRangeStart",
+                "w:commentRangeEnd",
+                "Say [Hello] there",
+            ),
+            (
+                r#"<w:p><w:bookmarkStart w:id="1" w:name="Spot"/><w:r><w:tab/></w:r><w:bookmarkEnd w:id="1"/><w:r><w:t>end</w:t></w:r></w:p>"#,
+                "end",
+                "x end",
+                "w:bookmarkStart",
+                "w:bookmarkEnd",
+                "[]x end",
+            ),
+        ] {
+            let result = apply_plan(&docx(body), &plan(find, replacement)).unwrap();
+            let xml = part_string(&result.clean, "word/document.xml").unwrap();
+            assert_eq!(marked(&xml, start, end), want, "{xml}");
+        }
+    }
+}

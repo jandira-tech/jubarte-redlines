@@ -921,3 +921,65 @@ mod control_source_boundary_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod calendar_branch_tests {
+    use super::*;
+
+    #[test]
+    fn dates_need_the_shape_and_a_real_day() {
+        assert_eq!(parse_date("2024-02-29"), Some((2024, 2, 29)));
+        assert_eq!(parse_date("2023-02-29"), None);
+        assert_eq!(parse_date("2000-02-29"), Some((2000, 2, 29)));
+        assert_eq!(parse_date("1900-02-29"), None);
+        assert_eq!(parse_date("2026-04-31"), None);
+        assert_eq!(parse_date("2026-13-01"), None);
+        for bad in [
+            "2026-1-01",
+            "2026/01/01",
+            "2026-01/01",
+            "20x6-01-01",
+            "2026-01-0x",
+        ] {
+            assert_eq!(parse_date(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn weekdays_count_from_sunday() {
+        assert_eq!(weekday(2026, 1, 4), 0);
+        assert_eq!(weekday(2026, 2, 2), 1);
+        assert_eq!(weekday(2026, 11, 18), 3);
+        assert_eq!(weekday(2000, 3, 1), 3);
+    }
+
+    #[test]
+    fn run_properties_drop_the_placeholder_style_and_marks() {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            r#"<w:sdtContent xmlns:w="{}"><w:r><w:rPr><w:rStyle w:val="PlaceholderText"/><w:b/><w:rStyle w:val="Strong"/><w:ins w:id="1"/><w:del w:id="2"/><w:rPrChange w:id="3"/></w:rPr><w:t>x</w:t></w:r></w:sdtContent>"#,
+            W::URI
+        ));
+        let content = dom.root(doc).unwrap();
+        let rpr = first_run_properties(&mut dom, content).unwrap();
+        let kept: Vec<String> = dom
+            .elements(rpr, None)
+            .into_iter()
+            .map(|c| {
+                let local = dom.name(c).unwrap().local_name().to_string();
+                match dom.attribute(c, &W::val()) {
+                    Some(v) => format!("{local}={v}"),
+                    None => local,
+                }
+            })
+            .collect();
+        assert_eq!(kept, ["b", "rStyle=Strong"]);
+        let empty = dom.parse_xdocument(&format!(
+            r#"<w:sdtContent xmlns:w="{}"><w:r><w:t>x</w:t></w:r></w:sdtContent>"#,
+            W::URI
+        ));
+        let content = dom.root(empty).unwrap();
+        assert_eq!(first_run_properties(&mut dom, content), None);
+    }
+}

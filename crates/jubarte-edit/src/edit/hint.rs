@@ -1002,6 +1002,8 @@ mod holder_branch_tests {
         // The first hit has over 20 chars on both sides, the last none after.
         assert!(lines[0].contains('…'), "{message}");
         assert!(!lines[1].trim_end().ends_with("…\""), "{message}");
+        let near = PlanSyntax::Flags.ambiguous_anchor("ab x ab", "ab", &[(0, 2), (5, 7)]);
+        assert!(!near.contains('…'), "{near}");
         let short = PlanSyntax::V1.ambiguous_anchor("ab ab", "ab", &[(0, 2), (3, 5)]);
         assert!(short.contains("\"occurrence\" to 1..=2"), "{short}");
         assert!(!short.contains("\n  1:"), "{short}");

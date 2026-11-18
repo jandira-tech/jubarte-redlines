@@ -1064,3 +1064,78 @@ pub fn rebind_to_output(
         requirements,
     })
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod shape_branch_tests {
+    use super::*;
+
+    #[test]
+    fn keys_start_with_a_letter_and_take_word_dots_and_dashes() {
+        for good in ["a", "a_b", "a.b", "a-b", "A9"] {
+            assert!(is_valid_key(good), "{good}");
+        }
+        for bad in ["", "9a", "_a", "a b", "a/b"] {
+            assert!(!is_valid_key(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_pair_names_one_paragraph_only_in_its_own_part() {
+        let keys = std::collections::HashMap::from([("p1".to_string(), "1A2B3C4D".to_string())]);
+        assert!(ids_name_one_entity("p0", "document.w:p.j:short.p0", &keys));
+        assert!(ids_name_one_entity(
+            "p1",
+            "document.w:p.w14:paraId.1A2B3C4D",
+            &keys
+        ));
+        assert!(ids_name_one_entity(
+            "header1.p0",
+            "header1.w:p.j:short.header1.p0",
+            &keys
+        ));
+        for (short, long) in [
+            ("not an id", "document.w:p.j:short.p0"),
+            ("c5", "comments.w:comment.w:id.5"),
+            ("p0", "document.w:p"),
+            ("p0", "document.w:tbl.j:short.p0"),
+            ("p0", "header1.w:p.j:short.p0"),
+            ("header1.p0", "document.w:p.j:short.header1.p0"),
+            ("p0", "document.w:p.j:short.p1"),
+            ("p2", "document.w:p.w14:paraId.1A2B3C4D"),
+            ("p0", "document.w:p.w:id.0"),
+        ] {
+            assert!(!ids_name_one_entity(short, long, &keys), "{short} {long}");
+        }
+    }
+
+    #[test]
+    fn unopenable_output_refuses_checks_and_leaves_prose_unassessed() {
+        let source =
+            crate::markdown::markdown_to_docx("One.\n", &crate::markdown::DocxOptions::default())
+                .unwrap()
+                .docx;
+        let spec = parse_expectations(
+            &serde_json::json!({
+                "schema_version": 1,
+                "source": {"sha256": crate::inspect::source_sha256(&source)},
+                "text_view": "final",
+                "requirements": [
+                    {"key": "prose", "description": "reads well", "checks": []},
+                    {"key": "typed", "description": "keeps one", "checks": [{
+                        "kind": "text_equals",
+                        "target": {"short_id": "p0", "long_id": "document.w:p.j:short.p0"},
+                        "text": "One.",
+                    }]},
+                ],
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let identity = identity_correspondence(&source).unwrap();
+        let report = evaluate(&spec, &source, b"not a docx", &identity);
+        assert_eq!(report.unassessed_requirements, vec!["prose".to_string()]);
+        assert_eq!(report.checks.len(), 1);
+        assert_eq!(report.checks[0].reason, Some(RefusalReason::InvalidOutput));
+    }
+}

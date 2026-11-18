@@ -674,3 +674,35 @@ mod restore_branch_tests {
         assert!(normalize_permission_ids(&once).unwrap().is_none());
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod half_permission_branch_tests {
+    use super::super::deeper_boundary_fixture::{docx, para, part_string};
+    use super::*;
+
+    /// A permission marker on either side, alone, still sends the part
+    /// through the permission carry; the output keeps its text.
+    #[test]
+    fn a_lone_permission_marker_on_either_side_is_carried() {
+        let plain = docx(&para("Body text."));
+        let end_only = docx(&format!(
+            r#"{}<w:p><w:permEnd w:id="5"/></w:p>"#,
+            para("Body text.")
+        ));
+        let start_only = docx(
+            r#"<w:p><w:permStart w:id="5" w:edGrp="everyone"/><w:r><w:t>Body text.</w:t></w:r></w:p>"#,
+        );
+        for (original, revised) in [
+            (&end_only, &plain),
+            (&plain, &start_only),
+            (&plain, &end_only),
+        ] {
+            let out = restore(&plain, original, revised, "Ed").unwrap();
+            let xml = part_string(&out, "word/document.xml").unwrap();
+            assert!(xml.contains("Body text."), "{xml}");
+        }
+        // Neither side holds a marker: the redline comes back as it was.
+        assert_eq!(restore(&plain, &plain, &plain, "Ed").unwrap(), plain);
+    }
+}

@@ -2268,3 +2268,39 @@ mod segment_branch_tests {
         assert!(lines[3..].iter().all(|l| l.chars().count() <= 20));
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod fence_branch_tests {
+    use super::super::view_notes::Author;
+    use super::*;
+
+    #[test]
+    fn backtick_fences_keep_their_lines_whole() {
+        let text = "```\na code line far longer than ten columns\n```\nprose words that wrap";
+        let wrapped = wrap(text, 10);
+        assert_eq!(
+            wrapped,
+            "```\na code line far longer than ten columns\n```\nprose\nwords that\nwrap"
+        );
+    }
+
+    #[test]
+    fn only_a_bare_range_dates_marks_by_range() {
+        let range = Some(("2026-03-02".to_string(), "2026-03-04".to_string()));
+        let author = |date: Option<&str>, latest: Option<&str>, range| Author {
+            name: "A".to_string(),
+            date: date.map(str::to_string),
+            latest: latest.map(str::to_string),
+            range,
+        };
+        assert!(ranged_only(&author(None, None, range.clone())));
+        assert!(!ranged_only(&author(
+            Some("2026-03-02"),
+            None,
+            range.clone()
+        )));
+        assert!(!ranged_only(&author(None, Some("2026-03-04"), range)));
+        assert!(!ranged_only(&author(None, None, None)));
+    }
+}
