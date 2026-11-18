@@ -27,6 +27,17 @@ or match-arm body without its braces, or a trailing comma in a
 one-argument call or parameter list. A one-character probe (`>= 2` to
 `>= 3` in finalize/mod.rs `conjoin_transform`) leaves 2 residue items.
 
+The MiniMax-M3 review of #2457 then reproduced seven false negatives:
+`pub`, trailing commas and closure braces inside macro token trees,
+tuple commas after `for`, `as`, `where` and a comparison `>`, same-named
+items swapping bodies across modules, and module `cfg` or name changes.
+The checker now compares macro token trees exactly (std expression
+macros excepted), keeps tuple commas outside real call syntax, and
+carries each item's module context. All five splits re-measured residue
+0 with it: finalize 848, lcs 536, document_comparer 343, edit (#2458)
+1128, convert (#2459) 2670. The edit run found one more legitimate
+reflow, now allowed: a trailing comma on a generic fn's parameters.
+
 The literal diff-line numbers recorded below for T7.1 and T7.2 stay as
 the history of the old measure.
 
@@ -38,6 +49,57 @@ Output identity at the same time, against the binary the bench scored
 - PDF conversions (`scripts/identity.py`, sample_conversion_0.19.0.csv):
   860 / 860 identical for pre-release (1f3e47b57) and for #2456
   (4a21df273).
+
+## T7.3 (document_comparer.rs becomes a directory module) - 2026-11-17
+
+- document_comparer.rs (14,853 lines) is now document_comparer/mod.rs
+  (2,808: every pub item, the compare driver, the validity sweeps and
+  the added-section-break tracking) plus 3 production siblings
+  (styles.rs 4,480, stories.rs 1,589, pre_process.rs 474) and 13 test
+  files under document_comparer/tests/ (largest
+  coverage_boundary_tests.rs, 3,101; the existing
+  based_style_record_tests.rs moved there unchanged). Moved code only.
+  No sibling defines a pub item, so mod.rs imports them with
+  `use sibling::*;` (a `pub use` glob would re-export nothing); 85
+  `pub(super)` prefixes (82 items another file names, plus
+  DocDefaultPprDelta and its two fields, read by two test modules).
+- AC2: git diff -M90% against pre-release: 14,926 insertions, 14,853
+  deletions; 14,649 inserted lines match a deleted line. Unmatched: 28
+  mod, 6 use, 77 visibility, 19 blank, 147 other. Read literally (every
+  insertion outside mod, use and visibility lines, blanks included), AC2
+  is 166 / 14,649 = 1.13%: over the 1% ceiling. 45 of those lines are
+  the SPDX headers REUSE requires on each of the 15 new files; without
+  them, 121 / 14,649 = 0.83%. The rest: 19 blank, 3 module docs, 12
+  include_bytes! paths two directories deeper, 87 rustfmt reflows (41 in
+  production siblings, mostly signatures that `pub(super)` pushed past
+  100 columns; 49 in test files, lines rustfmt re-joins once the module
+  body sits one indent level left). The move is otherwise proven by
+  identity: all 600 bench redlines are byte-identical to the pre-split
+  binary (scripts/identity.py, 600 jobs: 600 identical).
+- AC1: goldens identical. The listing diff under document_comparer is
+  internal rows only, no `api` row: the 122 rows of moved private items
+  leave their old path and reappear at their definer path
+  (document_comparer::{styles,stories,pre_process}::..., 121 rows), with
+  3 module rows for the siblings; one row (run_properties_before_section)
+  only changes place. These definer-path rows await the api_snapshot.py
+  fix and re-record that follows T7.5; api-baseline.txt is not
+  re-recorded. The rest of the listing diff is the comparer::lcs and
+  comparer::finalize rows of T7.1/T7.2, awaiting the same follow-up, and
+  the 5 internal lines pre-release already carries (convert::font,
+  edit::prepared, markdown::from_docx::ooxml). facade_surface passes.
+  jubarte-redlines 941 passed + 1 skipped (unchanged; 117
+  document_comparer tests before and after), it_redlines 1330 passed + 1
+  skipped (unchanged); clippy, fmt, doc exit 0; reuse lint compliant.
+- AC4 (no-LTO consumer gate): pre-split baseline saved before any edit
+  at 0c8ef13d8 (CRITERION_HOME under .scratch; pre-release 143e5d5eb has
+  the same tree but for one visibility change in lcs/step_h.rs). The
+  first branch run compares at +1.75% / +1.93% / +2.48% / +0.78%
+  (canonical_dense_edits, short_into_long, tables_bookmark_vmerge,
+  comment_heavy), under the 3% ceiling; a rerun at lower load gives
+  -0.98% / -0.66% / +0.38% for the first three. Other agents' test runs
+  kept the load average between 5 and 100 throughout, and a base
+  re-measured under that load ran 3% to 51% slower than the saved baseline,
+  so differences of a few percent here are load noise.
 
 ## T7.2 (lcs.rs becomes a directory module) - 2026-11-17
 
