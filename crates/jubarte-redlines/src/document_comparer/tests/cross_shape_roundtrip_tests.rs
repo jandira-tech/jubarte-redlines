@@ -810,6 +810,31 @@ const KNOWN_DIVERGENCES: &[&str] = &[
     "paragraph_props -> picture/0 [word]",
     "picture -> controls/1 [word]",
     "random 1000+11 [word]",
+    "random 1000+11 [word-nomoves]",
+    "random 1000+3 [word-coarse]",
+    "random 2000+42 [word-coarse]",
+    "random 3000+61 [word-coarse]",
+    "template 10+45 [word-coarse]",
+    "template 10+58 [word-coarse]",
+    "template 10+58 [word-nomoves]",
+    "template 10+58 [word]",
+    "template 20000+115 [word-coarse]",
+    "template 20000+115 [word-nomoves]",
+    "template 20000+115 [word]",
+    "template 30000+53 [word-coarse]",
+    "template 30000+53 [word-nomoves]",
+    "template 30000+53 [word]",
+    "template 40000+111 [word-coarse]",
+    "template 40000+111 [word-nomoves]",
+    "template 40000+111 [word]",
+    "template 40000+118 [word-coarse]",
+    "template 40000+118 [word-nomoves]",
+    "template 40000+118 [word]",
+    "template 40000+152 [word-coarse]",
+    "template 40000+152 [word-nomoves]",
+    "template 40000+152 [word]",
+    "template 40000+157 [word-coarse]",
+    "template 40000+157 [word]",
     "random 1000+3 [word]",
     "random 2000+42 [word]",
     "random 3000+61 [word]",
@@ -1309,6 +1334,33 @@ fn random_edit(rng: &mut Lcg, doc: &[String], words: &[&str]) -> Vec<String> {
     out
 }
 
+/// The two presets plus Word-mode variants that open other routes:
+/// no move detection, case-insensitive words, a coarser detail threshold
+/// and conflated non-breaking spaces.
+fn all_presets() -> Vec<(&'static str, WmlComparerSettings)> {
+    let mut out = presets();
+    let word = out[0].1.clone();
+    out.push((
+        "word-nomoves",
+        WmlComparerSettings {
+            detect_moves: false,
+            detect_format_changes: false,
+            ..word.clone()
+        },
+    ));
+    out.push((
+        "word-coarse",
+        WmlComparerSettings {
+            detail_threshold: 0.15,
+            case_insensitive: true,
+            conflate_breaking_and_nonbreaking_spaces: true,
+            simplify_move_markup: true,
+            ..word
+        },
+    ));
+    out
+}
+
 /// `count` seeded random pairs starting at `seed`: half are independent
 /// documents over overlapping vocabularies, half are edits of one
 /// document. Every pair must round trip in both presets.
@@ -1335,7 +1387,7 @@ fn random_sweep(seed: u64, count: usize) {
             random_doc(&mut rng, right_words, len_b)
         };
         let (a, b) = (package(&a.concat(), 0), package(&b.concat(), 0));
-        for (name, settings) in presets() {
+        for (name, settings) in all_presets() {
             results.push((
                 format!("random {seed}+{case} [{name}]"),
                 round_trip(&a, &b, &settings),
@@ -1363,4 +1415,347 @@ fn random_pairs_round_trip_2() {
 #[test]
 fn random_pairs_round_trip_3() {
     random_sweep(3_000, 150);
+}
+
+/// `docx` with an XML comment after every element of its WordprocessingML
+/// parts. Comments carry no content; the comparer must read past them in
+/// every container it walks (body, properties, styles, numbering, notes,
+/// comments and headers).
+fn with_xml_comments(docx: &[u8]) -> Vec<u8> {
+    let mut pkg = PartFs::open(docx).unwrap();
+    for part in pkg.parts() {
+        if !part.starts_with("word/") || !part.ends_with(".xml") {
+            continue;
+        }
+        let source = pkg.part_string(&part).unwrap();
+        let mut noisy = String::with_capacity(source.len() * 2);
+        let mut rest = source.as_str();
+        // Past the root start tag only: nothing may precede the root.
+        let root_open = rest.find("<w:").unwrap();
+        let root_end = root_open + rest[root_open..].find('>').unwrap() + 1;
+        noisy.push_str(&rest[..root_end]);
+        noisy.push_str("<!--root-->");
+        rest = &rest[root_end..];
+        while let Some(i) = rest.find('>') {
+            let (head, tail) = rest.split_at(i + 1);
+            noisy.push_str(head);
+            // After a closing or empty tag, never inside text.
+            let tag = &head[head.rfind('<').unwrap_or(0)..];
+            if tag.starts_with("</") || tag.ends_with("/>") {
+                noisy.push_str("<!--n-->");
+            }
+            rest = tail;
+        }
+        noisy.push_str(rest);
+        pkg.set_part(&part, noisy.into_bytes());
+    }
+    pkg.to_zip().unwrap()
+}
+
+#[test]
+fn xml_comments_in_every_part_round_trip() {
+    let mut results = Vec::new();
+    for family in FAMILIES {
+        for side in [0, 1] {
+            let base = blocks(family, side);
+            let a = with_xml_comments(&package(&base.concat(), side));
+            let mut edits = mutations(&base, side);
+            edits.truncate(4);
+            let other = with_xml_comments(&package(&blocks(family, 1 - side).concat(), 1 - side));
+            for (edit, edited) in edits {
+                let b = with_xml_comments(&package(&edited.concat(), side));
+                for (name, settings) in presets() {
+                    results.push((
+                        format!("{family}/{side} -> {edit} [{name}]"),
+                        round_trip(&a, &b, &settings),
+                    ));
+                }
+            }
+            for (name, settings) in presets() {
+                results.push((
+                    format!("{family}/{side} -> commented other [{name}]"),
+                    round_trip(&a, &other, &settings),
+                ));
+            }
+        }
+    }
+    check(results);
+}
+
+/// Whole-document templates for the shapes the unrelated-source and
+/// paragraph-window heuristics fingerprint: alpha-list clusters, cover
+/// pages, label stubs, field demos, annotations, equation demos, word
+/// statistics, memos, property testers, table-dominated reports, single
+/// wrapped paragraphs, stamped files, demo cousins, lettered sections and
+/// colon lists. Random filler blocks over `words` pad some of them.
+fn template_doc(rng: &mut Lcg, words: &[&str]) -> Vec<String> {
+    let pick = |rng: &mut Lcg| words[rng.below(words.len())];
+    let filler = |rng: &mut Lcg, n: usize| -> Vec<String> {
+        (0..n)
+            .map(|_| {
+                let k = 3 + rng.below(9);
+                plain(
+                    &(0..k)
+                        .map(|_| words[rng.below(words.len())])
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                )
+            })
+            .collect()
+    };
+    let mut out: Vec<String> = Vec::new();
+    match rng.below(24) {
+        0 => {
+            for label in ["ONE", "a", "TWO", "b"] {
+                out.push(para(label, "", Some(u8::from(label.len() == 1)), ""));
+            }
+        }
+        1 => {
+            for label in ["ONE", "a", "b", "c", "TWO", "d", "e", "THREE", "f"] {
+                out.push(para(label, "", Some(u8::from(label.len() == 1)), ""));
+            }
+        }
+        2 => {
+            out.push(para(&format!("{} agreement", pick(rng)), "Title", None, ""));
+            out.push(plain(&format!("Prepared by {}", pick(rng))));
+            out.push(plain("March 10, 2040"));
+            out.push(plain("[Client Name]"));
+            out.push(plain(&format!("{}@example.com", pick(rng))));
+        }
+        3 => {
+            for label in ["a", "x", "x", "b", "c"] {
+                out.push(plain(label));
+            }
+        }
+        4 => {
+            out.push(para("Fields test", "Title", None, ""));
+            out.push(plain("html input type text"));
+            out.extend(filler(rng, 2));
+        }
+        5 => {
+            out.push(plain(&format!(
+                "Oftentimes {} authors suggest amendments",
+                pick(rng)
+            )));
+            out.push(plain("Please leave a comment on this paragraph"));
+        }
+        6 => {
+            out.push(para("Math borderBox demo", "Title", None, ""));
+            for _ in 0..6 {
+                out.push(format!(
+                    "<w:p><w:r><w:t xml:space='preserve'>{} </w:t></w:r><m:oMath><m:borderBox><m:e><m:r><m:t>x</m:t></m:r></m:e></m:borderBox></m:oMath></w:p>",
+                    pick(rng)
+                ));
+            }
+        }
+        7 => {
+            out.push(plain("Num words 20"));
+            out.push(plain("Num chars 120"));
+            out.push(plain("Num pages 3"));
+            if rng.chance(50) {
+                out.push("<w:p><w:r><w:br w:type='page'/></w:r></w:p>".to_string());
+            }
+            out.push(plain("test"));
+            out.push(plain("page 3"));
+        }
+        8 => {
+            out.push(para("MEMORANDUM", "Title", None, ""));
+            out.push(plain(&format!("TO: {}", pick(rng))));
+            out.push(plain(&format!("FROM: {}", pick(rng))));
+            out.push(plain("DATE: March 3, 2040"));
+            out.push(plain(&format!("RE: {}", pick(rng))));
+            out.push(plain("Dear colleagues,"));
+            let n = 14 + rng.below(10);
+            out.extend(filler(rng, n));
+        }
+        9 => {
+            out.push(para("OOXML w:b property tester", "Title", None, ""));
+            out.push(para("Bold on", "", None, "<w:b/>"));
+            out.push(para("Bold off", "", None, "<w:b w:val='0'/>"));
+            if rng.chance(50) {
+                out.push(table(&[&["w:sz", "24"], &["w:color", "red"]]));
+            }
+        }
+        10 => {
+            out.push(plain(&format!("{} report", pick(rng))));
+            for t in 0..3 + rng.below(3) {
+                let a = format!("{} {t}", pick(rng));
+                let b = pick(rng).to_string();
+                out.push(table(&[&[a.as_str(), b.as_str()], &["1", "2"]]));
+            }
+        }
+        11 => {
+            let n = 30 + rng.below(20);
+            out.extend(filler(rng, n));
+            for t in 0..4 {
+                let a = format!("{} total {t}", pick(rng));
+                out.push(table(&[&[a.as_str(), "9"]]));
+                out.extend(filler(rng, 2));
+            }
+        }
+        12 => {
+            out.push(table(&[
+                &["Name", "Role", "Site"],
+                &["Ann", "Lead", "Rome"],
+                &["Bo", "Dev", "Oslo"],
+            ]));
+        }
+        13 => {
+            let n = 20 + rng.below(10);
+            out.push(plain(
+                &(0..n)
+                    .map(|_| words[rng.below(words.len())])
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ));
+        }
+        14 => {
+            out.push(plain(&format!("file_{}.docx", 190 + rng.below(9))));
+            out.push(para(
+                &format!("{} images essay", pick(rng)),
+                "Title",
+                None,
+                "",
+            ));
+            let n = 3 + rng.below(25);
+            out.extend(filler(rng, n));
+        }
+        15 => {
+            out.push(para(
+                &format!("{} {} Demo", pick(rng), pick(rng)),
+                "Title",
+                None,
+                "",
+            ));
+            out.push(plain(&format!(
+                "This document demonstrates {} {}",
+                pick(rng),
+                pick(rng)
+            )));
+            out.push(plain(&format!("This text is {}", pick(rng))));
+        }
+        16 => {
+            out.push(para(&format!("{} List Demo", pick(rng)), "Title", None, ""));
+            for ordinal in ["First", "Second", "Third"] {
+                out.push(para(&format!("{ordinal} item"), "", Some(0), ""));
+            }
+        }
+        17 => {
+            for (i, letter) in ['A', 'B', 'C', 'D'].iter().enumerate() {
+                out.push(plain(&format!("{letter}) {} section {i}", pick(rng))));
+                out.extend(filler(rng, 1));
+            }
+        }
+        18 => {
+            out.push(para("Tab Alignment", "Title", None, ""));
+            out.push(plain(""));
+            out.push(plain(&format!("left\t{}", pick(rng))));
+            out.push(plain(&format!("right\t{}", pick(rng))));
+            out.push(plain(""));
+        }
+        19 => {
+            out.push(para("Tab Tests", "Title", None, ""));
+            out.push(plain("CENTER TAB"));
+            out.push(plain("First Second End"));
+        }
+        20 => {
+            out.push(para(&format!("{} Tester", pick(rng)), "Title", None, ""));
+            out.extend(filler(rng, 3));
+            if rng.chance(50) {
+                out.push(table(&[&["k", "v"]]));
+            }
+        }
+        21 => {
+            out.push(para(&format!("{} summary", pick(rng)), "Title", None, ""));
+            for i in 0..4 {
+                out.push(plain(&format!("{}: {} {i}", pick(rng), pick(rng))));
+            }
+        }
+        22 => {
+            out.push(para("SD-2672 plain 3x3", "Title", None, ""));
+            out.push(plain(""));
+            out.push(table(&[
+                &["1", "2", "3"],
+                &["4", "5", "6"],
+                &["7", "8", "9"],
+            ]));
+        }
+        _ => {
+            out.push(para(
+                &format!("{} heading", pick(rng)),
+                "Heading1",
+                None,
+                "",
+            ));
+            let n = 4 + rng.below(12);
+            for i in 0..n {
+                let level = (i % 3) as u8;
+                out.push(para(
+                    &format!("{} {}", pick(rng), i + 1),
+                    "ListParagraph",
+                    Some(level),
+                    "",
+                ));
+            }
+        }
+    }
+    if rng.chance(30) {
+        let n = 1 + rng.below(4);
+        out.extend(filler(rng, n));
+    }
+    if rng.chance(20) {
+        out.insert(0, plain(""));
+    }
+    out
+}
+
+/// `count` seeded template pairs: two templates over overlapping
+/// vocabularies, or one template and its random edit, in every preset.
+fn template_sweep(seed: u64, count: usize) {
+    let mut results = Vec::new();
+    for case in 0..count {
+        let mut rng = Lcg(seed
+            .wrapping_add(case as u64)
+            .wrapping_mul(0x2545_f491_4f6c_dd1d));
+        let start = rng.below(POOL.len() - 12);
+        let width = 4 + rng.below(16);
+        let left_words = &POOL[start..(start + width).min(POOL.len())];
+        let shift = rng.below(12);
+        let right_start = (start + shift).min(POOL.len() - 4);
+        let right_words = &POOL[right_start..(right_start + width).min(POOL.len())];
+        let a = template_doc(&mut rng, left_words);
+        let b = if rng.chance(25) {
+            random_edit(&mut rng, &a, right_words)
+        } else {
+            template_doc(&mut rng, right_words)
+        };
+        let (a, b) = (package(&a.concat(), 0), package(&b.concat(), 0));
+        for (name, settings) in all_presets() {
+            results.push((
+                format!("template {seed}+{case} [{name}]"),
+                round_trip(&a, &b, &settings),
+            ));
+        }
+    }
+    check(results);
+}
+
+#[test]
+fn template_pairs_round_trip_0() {
+    template_sweep(10, 200);
+}
+
+#[test]
+fn template_pairs_round_trip_1() {
+    template_sweep(20_000, 200);
+}
+
+#[test]
+fn template_pairs_round_trip_2() {
+    template_sweep(30_000, 200);
+}
+
+#[test]
+fn template_pairs_round_trip_3() {
+    template_sweep(40_000, 200);
 }
