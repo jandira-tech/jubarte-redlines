@@ -2981,3 +2981,179 @@ mod zip32_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod package_branch_tests {
+    use super::*;
+    use std::io::{Read, Write};
+
+    const PKG_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+    const R_IMAGE: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+    const R_LINK: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+
+    fn fixture() -> Vec<u8> {
+        include_bytes!("../../../../tests/fixtures/redline/original.docx").to_vec()
+    }
+
+    /// `docx` with entry `name` holding `data` instead.
+    fn with_entry(docx: &[u8], name: &str, data: &str) -> Vec<u8> {
+        let mut archive = zip::ZipArchive::new(Cursor::new(docx)).unwrap();
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).unwrap();
+            let entry_name = entry.name().unwrap().to_string();
+            let mut bytes = Vec::new();
+            entry.read_to_end(&mut bytes).unwrap();
+            writer.start_file(entry_name.as_str(), options).unwrap();
+            if entry_name == name {
+                writer.write_all(data.as_bytes()).unwrap();
+            } else {
+                writer.write_all(&bytes).unwrap();
+            }
+        }
+        writer.finish().unwrap().into_inner()
+    }
+
+    fn rels(items: &[(&str, &str, &str)]) -> String {
+        let mut xml = format!("<Relationships xmlns=\"{PKG_NS}\">");
+        for (id, ty, target) in items {
+            xml.push_str(&format!(
+                "<Relationship Id=\"{id}\" Type=\"{ty}\" Target=\"{target}\"/>"
+            ));
+        }
+        xml + "</Relationships>"
+    }
+
+    #[test]
+    fn rel_targets_are_relative_only_inside_the_source_folder() {
+        assert_eq!(
+            relative_rel_target("/word/document.xml", "/word/media/a.png"),
+            "media/a.png"
+        );
+        assert_eq!(
+            relative_rel_target("word/document.xml", "media/a.png"),
+            "/media/a.png"
+        );
+        assert_eq!(
+            relative_rel_target("document.xml", "media/a.png"),
+            "/media/a.png"
+        );
+    }
+
+    #[test]
+    fn metadata_roots_must_be_one_element_in_their_namespace() {
+        let ok = format!("<Relationships xmlns=\"{PKG_NS}\"/>");
+        assert_eq!(
+            metadata_document(ok.as_bytes(), "Relationships", PKG_NS),
+            Ok(())
+        );
+        // A syntax error is left to the record reader that follows.
+        assert_eq!(
+            metadata_document(b"<Relationships", "Relationships", PKG_NS),
+            Ok(())
+        );
+        let prefixed = format!("<r:Relationships xmlns:r=\"{PKG_NS}\"/>");
+        assert_eq!(
+            metadata_document(prefixed.as_bytes(), "Relationships", PKG_NS),
+            Ok(())
+        );
+        for (xml, why) in [
+            ("<Types/>", "is not Relationships"),
+            ("<Relationships/><Relationships/>", "multiple XML roots"),
+            ("<r:Relationships/>", "prefix is not bound"),
+            ("<r:Relationships xmlns:r=\"urn:other\"/>", "namespace"),
+            ("<!DOCTYPE r><Relationships/>", "DTD"),
+        ] {
+            let err = metadata_document(xml.as_bytes(), "Relationships", PKG_NS).unwrap_err();
+            assert!(err.contains(why), "{xml}: {err}");
+        }
+    }
+
+    #[test]
+    fn repeated_relationship_ids_are_kept_once_or_refused() {
+        let docx = fixture();
+        let name = "word/_rels/document.xml.rels";
+        let original = PartFs::open(&docx).unwrap();
+        let existing = original
+            .read_rels_for("word/document.xml")
+            .unwrap()
+            .to_xml()
+            .map(|x| String::from_utf8(x).unwrap())
+            .unwrap();
+        let mut twice = existing.clone();
+        let one =
+            format!("<Relationship Id=\"rId900\" Type=\"{R_IMAGE}\" Target=\"media/x.png\"/>");
+        twice = twice.replace("</Relationships>", &format!("{one}{one}</Relationships>"));
+        let repaired = PartFs::open(&with_entry(&docx, name, &twice)).unwrap();
+        assert_eq!(repaired.repaired_duplicate_ids().len(), 1);
+        for other in [
+            format!("<Relationship Id=\"rId900\" Type=\"{R_LINK}\" Target=\"media/x.png\"/>"),
+            format!("<Relationship Id=\"rId900\" Type=\"{R_IMAGE}\" Target=\"media/y.png\"/>"),
+            format!(
+                "<Relationship Id=\"rId900\" Type=\"{R_IMAGE}\" Target=\"media/x.png\" TargetMode=\"External\"/>"
+            ),
+        ] {
+            let clash =
+                existing.replace("</Relationships>", &format!("{one}{other}</Relationships>"));
+            assert!(
+                PartFs::open(&with_entry(&docx, name, &clash)).is_err(),
+                "{other}"
+            );
+        }
+    }
+
+    #[test]
+    fn metadata_set_as_parts_replaces_the_parsed_copy_only_when_it_reads() {
+        let mut pkg = PartFs::open(&fixture()).unwrap();
+        let name = "word/_rels/document.xml.rels";
+        pkg.set_part(name, rels(&[("rId1", R_IMAGE, "media/a.png")]).into_bytes());
+        let read = pkg
+            .read_rels_for("word/document.xml")
+            .unwrap()
+            .to_xml()
+            .map(|x| String::from_utf8(x).unwrap())
+            .unwrap();
+        assert!(read.contains("media/a.png"), "{read}");
+        pkg.set_part(name, b"<not rels".to_vec());
+        let still = pkg
+            .read_rels_for("word/document.xml")
+            .unwrap()
+            .to_xml()
+            .map(|x| String::from_utf8(x).unwrap())
+            .unwrap();
+        assert!(still.contains("media/a.png"), "{still}");
+        let before = pkg.content_type_for("/word/document.xml");
+        pkg.set_part("[Content_Types].xml", b"<broken".to_vec());
+        assert_eq!(pkg.content_type_for("/word/document.xml"), before);
+        // Removing from a part with no relationships invents none.
+        pkg.remove_relationships_by_type("word/styles.xml", R_IMAGE);
+        assert!(pkg.read_rels_for("word/styles.xml").is_none());
+        pkg.remove_related_part("word/styles.xml", "rId1");
+        assert!(pkg.read_rels_for("word/styles.xml").is_none());
+        let id = pkg.add_document_relationship_external(
+            "word/document.xml",
+            R_LINK,
+            "https://example.com/",
+        );
+        let xml = pkg
+            .read_rels_for("word/document.xml")
+            .unwrap()
+            .to_xml()
+            .map(|x| String::from_utf8(x).unwrap())
+            .unwrap();
+        assert!(
+            xml.contains(&format!("Id=\"{id}\"")) && xml.contains("TargetMode=\"External\""),
+            "{xml}"
+        );
+    }
+
+    #[test]
+    fn refusals_name_the_duplicate_only_for_a_readable_zip() {
+        let err = OpcError::DuplicatePartName("word/document.xml".into());
+        assert_eq!(refusal_message(b"not a zip", &err), err.to_string());
+    }
+}

@@ -6824,3 +6824,85 @@ mod page_field_tests {
         assert!(!holds(r#"<w:r><w:t>PAGE</w:t></w:r>"#));
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod unreadable_part_tests {
+    use super::*;
+
+    fn pkg() -> PartFs {
+        PartFs::open(include_bytes!(
+            "../../../tests/fixtures/redline/original.docx"
+        ))
+        .unwrap()
+    }
+
+    fn codes(findings: &[Finding]) -> Vec<(&str, &str)> {
+        let mut out: Vec<(&str, &str)> = findings
+            .iter()
+            .map(|f| (f.code.as_str(), f.part.as_str()))
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// Every check skips a part that holds no element: each reports
+    /// nothing of its own, and the content-type pass names the parts that
+    /// do not parse.
+    #[test]
+    fn checks_skip_parts_with_no_root_element() {
+        let mut package = pkg();
+        let r = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+        for (kind, target) in [
+            ("comments", "comments.xml"),
+            ("header", "header1.xml"),
+            ("footnotes", "footnotes.xml"),
+        ] {
+            package.add_document_relationship("word/document.xml", &format!("{r}/{kind}"), target);
+        }
+        for name in [
+            "word/document.xml",
+            "word/styles.xml",
+            "word/numbering.xml",
+            "word/settings.xml",
+            "word/comments.xml",
+            "word/header1.xml",
+            "word/footnotes.xml",
+        ] {
+            package.set_part(name, b"no element here".to_vec());
+        }
+        package.set_part("word/fontTable.xml", b"<".to_vec());
+        let findings = ring1(&package);
+        let found = codes(&findings);
+        assert!(
+            found.contains(&("MALFORMED_XML", "word/fontTable.xml")),
+            "{found:?}"
+        );
+        // The per-part checks skip a part with no root element instead of
+        // inventing findings about its content. Whether a rootless part
+        // should itself be reported is open: today it is not, so a fix that
+        // reports it as MALFORMED_XML still passes here.
+        for (code, part) in &found {
+            assert!(
+                matches!(*code, "MALFORMED_XML" | "MISSING_CONTENT_TYPE")
+                    || (*code, *part) == ("COMMENT_PARTS_INCONSISTENT", "word/comments.xml"),
+                "{code}: {found:?}"
+            );
+        }
+    }
+
+    /// With no main document part the body checks have nothing to read.
+    #[test]
+    fn checks_without_a_main_part_report_only_the_package() {
+        let mut package = pkg();
+        package.remove_part("word/document.xml");
+        package.remove_package_relationships_by_type(
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument",
+        );
+        let findings = ring1(&package);
+        for f in &findings {
+            assert_ne!(f.part, "word/document.xml", "{f:?}");
+        }
+    }
+}

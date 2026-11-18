@@ -1563,3 +1563,85 @@ mod attribute_iter_tests {
         assert_eq!(dom.attributes(nodes[2]), before);
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod arena_branch_tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "non-container parent")]
+    fn a_text_node_holds_no_child() {
+        let mut dom = Dom::new();
+        let text = dom.new_text("t");
+        let child = dom.new_element(XName::get("a", ""));
+        dom.add(text, child);
+    }
+
+    #[test]
+    #[should_panic(expected = "to itself")]
+    fn a_node_is_not_its_own_child() {
+        let mut dom = Dom::new();
+        let element = dom.new_element(XName::get("a", ""));
+        dom.add(element, element);
+    }
+
+    #[test]
+    #[should_panic(expected = "beneath its own descendant")]
+    fn an_ancestor_does_not_go_below_its_descendant() {
+        let mut dom = Dom::new();
+        let top = dom.new_element(XName::get("a", ""));
+        let middle = dom.new_element(XName::get("b", ""));
+        dom.add(top, middle);
+        let middle = dom.elements(top, None)[0];
+        let leaf = dom.new_element(XName::get("c", ""));
+        dom.add(middle, leaf);
+        let leaf = dom.elements(middle, None)[0];
+        dom.add(leaf, top);
+    }
+
+    #[test]
+    fn names_declarations_and_annotations_touch_only_their_own_kind() {
+        let mut dom = Dom::new();
+        let doc = dom.new_document();
+        let text = dom.new_text("t");
+        dom.set_name(text, XName::get("x", ""));
+        assert_eq!(dom.name(text), None);
+        let element = dom.new_element(XName::get("a", ""));
+        dom.set_name(element, XName::get("b", "urn:b"));
+        assert_eq!(dom.name(element), Some(XName::get("b", "urn:b")));
+        dom.set_declaration(element, None);
+        assert!(dom.declaration(element).is_none());
+        let decl = dom.parse_xdocument("<?xml version=\"1.0\" encoding=\"UTF-8\"?><r/>");
+        let kept = dom.declaration(decl).cloned();
+        assert!(kept.is_some());
+        dom.set_declaration(doc, kept);
+        assert!(dom.declaration(doc).is_some());
+        dom.set_declaration(doc, None);
+        assert!(dom.declaration(doc).is_none());
+        // A detached element belongs to no document.
+        assert_eq!(dom.document(element), None);
+        dom.add(doc, element);
+        let attached = dom.root(doc).unwrap();
+        assert_eq!(dom.document(attached), Some(doc));
+        // Annotations: one type goes, the other stays, then the entry goes.
+        dom.add_annotation(attached, 7u32);
+        dom.add_annotation(attached, "label");
+        dom.remove_annotations::<u32>(attached);
+        assert_eq!(dom.annotation::<u32>(attached), None);
+        assert_eq!(dom.annotation::<&str>(attached), Some(&"label"));
+        dom.remove_annotations::<&str>(attached);
+        assert_eq!(dom.annotation::<&str>(attached), None);
+        dom.remove_annotations::<u8>(text);
+        assert_eq!(dom.annotation::<u8>(text), None);
+        // Self-and-descendants filters by name and skips a non-element start.
+        let tree = dom.parse_xdocument("<a><b/><c><b/></c></a>");
+        let root = dom.root(tree).unwrap();
+        let mut seen = 0;
+        dom.for_each_descendant_and_self(root, Some(&XName::get("b", "")), |_| seen += 1);
+        assert_eq!(seen, 2);
+        let mut all = 0;
+        dom.for_each_descendant_and_self(tree, None, |_| all += 1);
+        assert_eq!(all, 4);
+    }
+}

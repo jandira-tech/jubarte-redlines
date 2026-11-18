@@ -1019,3 +1019,33 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod spelling_branch_tests {
+    use super::*;
+
+    #[test]
+    fn an_id_with_no_short_spelling_keeps_its_long_form() {
+        assert_eq!(ChangeId::new("body", "1+2").short(), "body:rev:1+2");
+        assert_eq!(ChangeId::new("body", "007").short(), "body:rev:007");
+        assert_eq!(ChangeId::new("header1", "7").short(), "header1.r7");
+        assert_eq!(change_id("r1+2"), None);
+        assert_eq!(change_id("r7"), Some(ChangeId::new("body", "7")));
+        assert_eq!(change_id("nonsense"), None);
+    }
+
+    #[test]
+    fn shell_words_quote_only_what_a_shell_reads() {
+        use crate::util::shell_word;
+        assert_eq!(shell_word("a/b.docx"), "a/b.docx");
+        assert_ne!(shell_word(""), "");
+        assert_ne!(shell_word("a b"), "a b");
+        assert_eq!(crate::util::universal_measure_twips("1in"), Some(1440.0));
+        assert_eq!(crate::util::universal_measure_twips("1e400pt"), None);
+        assert_eq!(
+            crate::util::universal_measure_twips(&format!("{}pt", "9".repeat(30))),
+            None
+        );
+    }
+}

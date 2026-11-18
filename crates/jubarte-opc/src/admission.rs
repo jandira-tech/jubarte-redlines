@@ -3011,3 +3011,153 @@ pub mod limit_test_support {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod part_name_tests {
+    use super::*;
+
+    fn why(name: &str) -> Option<String> {
+        check_part_name(name).err().map(|e| e.to_string())
+    }
+
+    #[test]
+    fn unsafe_entry_names_are_refused_with_their_reason() {
+        for (name, reason) in [
+            ("", "empty"),
+            ("/word/document.xml", "absolute path"),
+            ("C:/word/document.xml", "absolute path"),
+            ("word\\document.xml", "backslash or NUL"),
+            ("word/doc\0.xml", "backslash or NUL"),
+            ("word/%41.xml", "percent-encoded unreserved character"),
+            ("word//document.xml", "empty, . or .. segment"),
+            ("word/./document.xml", "empty, . or .. segment"),
+            ("word/document.", "trailing dot"),
+            ("%5BContent_Types%5D.xml", "reserved metadata name"),
+            ("word/%2F/document.xml", "empty, . or .. segment"),
+            ("word/%zz.xml", "bad percent-encoding"),
+            ("word/100%", "bad percent-encoding"),
+        ] {
+            let got = why(name).unwrap_or_else(|| panic!("{name:?} admitted"));
+            assert!(got.contains(reason), "{name:?}: {got}");
+        }
+        for good in [
+            "word/document.xml",
+            "word/media/a%20b.png",
+            "[Content_Types].xml",
+            "word/",
+        ] {
+            assert_eq!(why(good), None, "{good:?}");
+        }
+    }
+
+    #[test]
+    fn a_part_that_is_another_parts_folder_is_found() {
+        let names = |list: &[&str]| list.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            ancestor_part(&names(&[
+                "word/Document.xml",
+                "word/document.xml/child.bin"
+            ])),
+            Some("word/Document.xml")
+        );
+        assert_eq!(ancestor_part(&names(&["word/", "word/document.xml"])), None);
+        assert_eq!(hex_digit(b'f'), Some(15));
+        assert_eq!(hex_digit(b'F'), Some(15));
+        assert_eq!(hex_digit(b'g'), None);
+    }
+
+    /// A 0x7075 Unicode Path field: version 1, CRC32 of `of`, `content`.
+    fn unicode_path(of: &[u8], content: &[u8]) -> Vec<u8> {
+        let mut body = vec![1u8];
+        body.extend_from_slice(&crc32(of).to_le_bytes());
+        body.extend_from_slice(content);
+        let mut field = 0x7075u16.to_le_bytes().to_vec();
+        field.extend_from_slice(&(body.len() as u16).to_le_bytes());
+        field.extend_from_slice(&body);
+        field
+    }
+
+    #[test]
+    fn unicode_path_fields_rename_only_with_a_matching_crc() {
+        let raw = b"caf\x82.xml";
+        assert_eq!(zip_entry_name_raw(raw, 0, &[]).unwrap(), "café.xml");
+        let adopted = unicode_path(raw, "café.xml".as_bytes());
+        assert_eq!(zip_entry_name_raw(raw, 0, &adopted).unwrap(), "café.xml");
+        // A field for another name is ignored; a short one is no field.
+        let stray = unicode_path(b"other", b"x.xml");
+        assert_eq!(zip_entry_name_raw(b"a.xml", 0, &stray).unwrap(), "a.xml");
+        assert_eq!(
+            zip_entry_name_raw(b"a.xml", 0, &[0x75, 0x70, 2, 0, 1, 2]).unwrap(),
+            "a.xml"
+        );
+        // A field whose length runs past the block ends the walk.
+        assert_eq!(
+            zip_entry_name_raw(b"a.xml", 0, &[0x75, 0x70, 99, 0, 1]).unwrap(),
+            "a.xml"
+        );
+        // Content that is not UTF-8 under a matching CRC is refused.
+        let bad = unicode_path(b"a.xml", b"\xff\xfe");
+        assert!(zip_entry_name_raw(b"a.xml", 0, &bad).is_err());
+        // Bit 11 says UTF-8: bytes that are not are refused.
+        assert!(zip_entry_name_raw(b"\xff.xml", 0x0800, &[]).is_err());
+    }
+
+    #[test]
+    fn markup_is_sniffed_past_byte_order_marks_and_space() {
+        assert!(looks_like_markup(&[0xFF, 0xFE, b' ', 0, b'<', 0]));
+        assert!(looks_like_markup(&[0xFE, 0xFF, 0, b'<']));
+        assert!(!looks_like_markup(&[0xFF, 0xFE, b'x', 0]));
+        let limits = InputLimits::default();
+        let part =
+            part_inflated_over("word/document.xml", limits.max_part_bytes, &limits).to_string();
+        assert!(part.contains("the part limit"), "{part}");
+        let package = part_inflated_over("word/document.xml", 7, &limits).to_string();
+        assert!(package.contains("the package limit"), "{package}");
+    }
+
+    const MAIN_TYPE: &str =
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
+
+    /// A minimal package whose main part is `main`, typed `main_type`.
+    fn package(main: &str, main_type: &str) -> Vec<u8> {
+        use std::io::Write;
+        let types = format!(
+            "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+             <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+             <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+             <Override PartName=\"/{main}\" ContentType=\"{main_type}\"/></Types>"
+        );
+        let rels = format!(
+            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+             <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"{main}\"/></Relationships>"
+        );
+        let doc = "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p><w:r><w:t>Hello there</w:t></w:r></w:p></w:body></w:document>";
+        let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        for (name, data) in [
+            ("[Content_Types].xml", types.as_str()),
+            ("_rels/.rels", rels.as_str()),
+            (main, doc),
+        ] {
+            out.start_file(name, options).unwrap();
+            out.write_all(data.as_bytes()).unwrap();
+        }
+        out.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn the_main_part_is_admitted_by_its_type_whatever_its_name() {
+        let limits = InputLimits::default();
+        assert!(admit(&package("word/document.xml", MAIN_TYPE), limits).is_ok());
+        assert!(admit(&package("word/document.dat", MAIN_TYPE), limits).is_ok());
+        let wrong = admit(&package("word/document.xml", "application/xml"), limits).unwrap_err();
+        assert!(wrong.to_string().contains("word/document.xml"), "{wrong}");
+        let small = InputLimits {
+            max_part_bytes: 60,
+            ..limits
+        };
+        let big = admit(&package("word/document.xml", MAIN_TYPE), small).unwrap_err();
+        assert!(big.to_string().contains("part limit"), "{big}");
+    }
+}

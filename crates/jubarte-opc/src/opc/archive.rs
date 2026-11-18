@@ -1183,3 +1183,84 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod record_branch_tests {
+    use super::*;
+    use std::io::Cursor;
+
+    const SIG: u32 = 0x0807_4b50;
+
+    fn words(list: &[u32]) -> Vec<u8> {
+        list.iter().flat_map(|w| w.to_le_bytes()).collect()
+    }
+
+    fn extent(bytes: &[u8], zip64: bool, crc: u32, c: u64, u: u64) -> Result<u64, &'static str> {
+        descriptor_extent(&mut Cursor::new(bytes), 0, zip64, crc, c, u)
+    }
+
+    #[test]
+    fn data_descriptors_are_read_in_every_width_and_shape() {
+        assert_eq!(extent(&words(&[7, 3, 4]), false, 7, 3, 4), Ok(12));
+        assert_eq!(extent(&words(&[SIG, 7, 3, 4]), false, 7, 3, 4), Ok(16));
+        // ZIP64 sizes: CRC then two 8-byte sizes.
+        let wide = words(&[7, 3, 0, 4, 0]);
+        assert_eq!(extent(&wide, true, 7, 3, 4), Ok(20));
+        // A 32-bit descriptor in a ZIP64 entry still matches, narrow.
+        assert_eq!(extent(&words(&[7, 3, 4]), true, 7, 3, 4), Ok(12));
+        assert_eq!(
+            extent(
+                &words(&[SIG, SIG, SIG, SIG]),
+                false,
+                SIG,
+                u64::from(SIG),
+                u64::from(SIG)
+            ),
+            Err("has an ambiguous data descriptor")
+        );
+        assert_eq!(
+            extent(&words(&[7, 3, 5]), false, 7, 3, 4),
+            Err("has no data descriptor matching its central record")
+        );
+        assert_eq!(
+            extent(&words(&[7, 3]), false, 7, 3, 4),
+            Err("has a truncated data descriptor")
+        );
+        assert_eq!(
+            extent(&[], false, 7, 3, 4),
+            Err("has a truncated data descriptor")
+        );
+    }
+
+    #[test]
+    fn zip64_fields_are_found_past_other_fields() {
+        let mut extra = vec![0x99, 0x99, 2, 0, 1, 2];
+        extra.extend_from_slice(&[1, 0, 16, 0]);
+        extra.extend_from_slice(&10u64.to_le_bytes());
+        extra.extend_from_slice(&20u64.to_le_bytes());
+        assert_eq!(zip64_sizes(&extra), Some((10, 20)));
+        assert_eq!(resolved_local_size(u32::MAX, &extra, 1), Some(20));
+        assert_eq!(resolved_local_size(5, &extra, 1), Some(5));
+        // An earlier field that overruns the block hides the rest.
+        assert_eq!(zip64_field(&[0x99, 0x99, 200, 0, 1, 0, 0, 0]), None);
+        // A short ZIP64 field carries no sizes.
+        assert_eq!(zip64_sizes(&[1, 0, 4, 0, 1, 2, 3, 4]), None);
+        assert_eq!(resolved_local_size(u32::MAX, &[], 0), None);
+    }
+
+    #[test]
+    fn a_header_whose_name_runs_past_the_reader_is_cut_short() {
+        let mut head = vec![0u8; CENTRAL_HEADER.name];
+        head[..4].copy_from_slice(CENTRAL_HEADER.signature);
+        head[CENTRAL_HEADER.name_length] = 10;
+        head.extend_from_slice(b"abc");
+        let fields = header_fields(&mut Cursor::new(&head[..]), 0, &CENTRAL_HEADER).unwrap();
+        assert_eq!(fields.name, b"abc");
+        assert_eq!(fields.name_length, 10);
+        assert!(fields.extra.is_empty());
+        head[0] = b'X';
+        assert!(header_fields(&mut Cursor::new(&head[..]), 0, &CENTRAL_HEADER).is_none());
+        assert!(header_fields(&mut Cursor::new(&head[..4]), 0, &CENTRAL_HEADER).is_none());
+    }
+}
