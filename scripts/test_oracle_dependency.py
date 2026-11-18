@@ -4,7 +4,13 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Integration checks for the temporary zip 9 oracle dependency patch."""
+"""Integration checks for the ooxmlsdk test oracle and the zip 9 floor.
+
+ooxmlsdk (a dev-dependency: round-trip validation of produced .docx files)
+came from a git patch onto jandira-tech/ooxmlsdk until a release required
+zip 9 (#1092). 0.15.0 requires zip ^9.2.2, so the oracle comes from
+crates.io and no lock or cargo-deny allowance names a git source.
+"""
 
 import re
 import tempfile
@@ -13,33 +19,33 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-FORK = "https://github.com/jandira-tech/ooxmlsdk"
-REV = "d7c3ae016da8ef661d9a04e12c47003d8fe51eff"
+REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
+LOCKS = (
+    "Cargo.lock",
+    "jubarte-python/Cargo.lock",
+    "jubarte-wasm/Cargo.lock",
+    "jubarte-rust-inproc/Cargo.lock",
+)
 
 
 class OracleDependency(unittest.TestCase):
-    def test_patch_uses_pinned_fork(self) -> None:
+    def test_oracle_is_a_crates_io_release_without_a_patch(self) -> None:
         manifest = tomllib.loads((ROOT / "Cargo.toml").read_text())
-        self.assertEqual(
-            manifest["patch"]["crates-io"]["ooxmlsdk"],
-            {"git": FORK, "rev": REV},
-        )
+        self.assertNotIn("ooxmlsdk", manifest.get("patch", {}).get("crates-io", {}))
         # The root dev-dependency inherits the workspace's requirement.
         self.assertEqual(manifest["dev-dependencies"]["ooxmlsdk"], {"workspace": True})
-        self.assertEqual(manifest["workspace"]["dependencies"]["ooxmlsdk"]["version"], "0.13.2")
+        self.assertEqual(manifest["workspace"]["dependencies"]["ooxmlsdk"]["version"], "0.15.0")
 
-    def test_oracle_and_derive_resolve_from_same_revision(self) -> None:
+    def test_oracle_and_derive_resolve_from_crates_io(self) -> None:
         lock = tomllib.loads((ROOT / "Cargo.lock").read_text())
         packages = {p["name"]: p for p in lock["package"]}
         for name in ("ooxmlsdk", "ooxmlsdk-derive"):
             with self.subTest(package=name):
-                self.assertEqual(packages[name].get("source"), f"git+{FORK}?rev={REV}#{REV}")
-        for filename in (
-            "Cargo.lock",
-            "jubarte-python/Cargo.lock",
-            "jubarte-wasm/Cargo.lock",
-            "jubarte-rust-inproc/Cargo.lock",
-        ):
+                self.assertEqual(packages[name].get("source"), REGISTRY)
+        self.assertEqual(packages["ooxmlsdk"]["version"], packages["ooxmlsdk-derive"]["version"])
+
+    def test_every_lock_holds_one_zip_9_past_the_cloaking_fix(self) -> None:
+        for filename in LOCKS:
             with self.subTest(lock=filename):
                 binding_lock = tomllib.loads((ROOT / filename).read_text())
                 versions = {p["version"] for p in binding_lock["package"] if p["name"] == "zip"}
@@ -50,9 +56,15 @@ class OracleDependency(unittest.TestCase):
                 self.assertEqual(major, 9, version)
                 self.assertGreaterEqual((minor, patch), (0, 5), version)
 
-    def test_fork_is_explicitly_allowed(self) -> None:
+    def test_no_lock_or_policy_names_a_git_source(self) -> None:
+        for filename in LOCKS:
+            with self.subTest(lock=filename):
+                lock = tomllib.loads((ROOT / filename).read_text())
+                git = [p["name"] for p in lock["package"] if p.get("source", "").startswith("git+")]
+                self.assertEqual(git, [])
         policy = tomllib.loads((ROOT / "deny.toml").read_text())
-        self.assertIn(FORK, policy["sources"].get("allow-git", []))
+        self.assertEqual(policy["sources"].get("allow-git", []), [])
+        self.assertEqual(policy["sources"]["unknown-git"], "deny")
 
     def test_vendored_oracle_is_removed(self) -> None:
         self.assertFalse((ROOT / "vendor" / "ooxmlsdk").exists())

@@ -82,9 +82,8 @@ skip = [
 
 [sources]
 unknown-registry = "deny"
-unknown-git = "warn"
+unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = ["https://github.com/jandira-tech/ooxmlsdk"]
 
 # Closed inventory of crates whose build scripts may run. This list is
 # an inventory, not a sandbox: cargo-deny does not constrain what the
