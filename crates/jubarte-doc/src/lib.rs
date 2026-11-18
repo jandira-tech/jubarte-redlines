@@ -70,7 +70,15 @@ pub(crate) mod corpus {
                 if path.is_dir() {
                     stack.push(path);
                 } else if path.extension().is_some_and(|e| e == "docx") {
-                    let name = path.strip_prefix(&root).unwrap().display().to_string();
+                    // `/`-separated on every platform, so names match
+                    // literals such as `f4/original.docx` on Windows too.
+                    let name = path
+                        .strip_prefix(&root)
+                        .unwrap()
+                        .components()
+                        .map(|c| c.as_os_str().to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join("/");
                     out.push((name, std::fs::read(&path).expect("read")));
                 }
             }
