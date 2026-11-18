@@ -4879,3 +4879,284 @@ impl<'p> Transaction<'p> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod resolve_branch_tests {
+    use super::super::deeper_boundary_fixture::{Part, docx, docx_with_sect, para, part_string};
+    use super::super::{EditResult, apply_plan};
+    use super::*;
+
+    fn plan(author: &str, extra: serde_json::Value) -> EditPlan {
+        let mut value = serde_json::json!({
+            "schema_version": 1,
+            "author": author,
+            "date": "2026-02-02T00:00:00Z",
+            "operations": [],
+        });
+        let serde_json::Value::Object(extra) = extra else {
+            panic!("plan fields are an object");
+        };
+        for (k, v) in extra {
+            value[k.as_str()] = v;
+        }
+        EditPlan::from_json(&value.to_string()).unwrap()
+    }
+
+    fn ok(source: &[u8], extra: serde_json::Value) -> EditResult {
+        apply_plan(source, &plan("Ed", extra)).unwrap()
+    }
+
+    fn refused(source: &[u8], extra: serde_json::Value) -> EditError {
+        match apply_plan(source, &plan("Ed", extra)) {
+            Ok(_) => panic!("expected a refusal"),
+            Err(e) => e,
+        }
+    }
+
+    fn three() -> Vec<u8> {
+        docx(&format!(
+            "{}{}{}",
+            para("Alpha one."),
+            para("Beta two."),
+            para("Gamma three.")
+        ))
+    }
+
+    fn with_header(header_text: &str) -> Vec<u8> {
+        let header = format!(
+            r#"<w:hdr xmlns:w="{}"><w:p><w:r><w:t>{header_text}</w:t></w:r></w:p></w:hdr>"#,
+            W::URI
+        );
+        docx_with_sect(
+            &para("Body text."),
+            &[Part {
+                name: "word/header1.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+                xml: &header,
+            }],
+            r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+        )
+    }
+
+    #[test]
+    fn a_comment_span_must_run_forward_in_one_story() {
+        let e = refused(
+            &three(),
+            serde_json::json!({"operations": [
+                {"kind":"comment","paragraph":"p2","through":"p0","text":"backwards"}
+            ]}),
+        );
+        assert_eq!(e.code, "INVALID_EDIT");
+        assert!(
+            e.message.contains("must be in the same story"),
+            "{}",
+            e.message
+        );
+        let e = refused(
+            &with_header("Head."),
+            serde_json::json!({"operations": [
+                {"kind":"comment","paragraph":"p0","through":"header1.p0","text":"across"}
+            ]}),
+        );
+        assert_eq!(e.code, "INVALID_EDIT");
+        assert_eq!(
+            e.message,
+            "through (header1) must be in the same story as paragraph and not before it"
+        );
+        let result = ok(
+            &three(),
+            serde_json::json!({"operations": [
+                {"kind":"comment","paragraph":"p0","through":"p2","text":"all three"}
+            ]}),
+        );
+        let comments = crate::comments::list_comments(&result.redline).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].text, "all three");
+    }
+
+    #[test]
+    fn a_missing_comment_anchor_names_where_the_text_is() {
+        let e = refused(
+            &three(),
+            serde_json::json!({"operations": [
+                {"kind":"comment","paragraph":"p0","find":"Gamma","text":"wrong paragraph"}
+            ]}),
+        );
+        assert_eq!(e.code, "ANCHOR_NOT_FOUND");
+        assert!(e.message.contains("p2"), "{}", e.message);
+    }
+
+    #[test]
+    fn header_rewrites_take_no_comment() {
+        let source = with_header("Head line.");
+        let e = refused(
+            &source,
+            serde_json::json!({"operations": [
+                {"kind":"rewrite","paragraph":"header1.p0","text":"Head, new.","comment":"why"}
+            ]}),
+        );
+        assert_eq!(e.code, "COMMENT_NOT_IN_BODY");
+        let result = ok(
+            &source,
+            serde_json::json!({"operations": [
+                {"kind":"rewrite","paragraph":"header1.p0","text":"Head line, new."}
+            ]}),
+        );
+        let header = part_string(&result.clean, "word/header1.xml").unwrap();
+        assert!(header.contains("Head line, new."), "{header}");
+    }
+
+    #[test]
+    fn comment_text_rewrites_cover_at_most_two_following_paragraphs() {
+        let source = docx(&format!(
+            "{}{}{}",
+            r#"<w:p><w:r><w:t xml:space="preserve">Alpha </w:t></w:r><w:commentRangeStart w:id="0"/><w:r><w:t>one.</w:t></w:r></w:p>"#,
+            r#"<w:p><w:r><w:t>Beta</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r><w:r><w:t xml:space="preserve"> two.</w:t></w:r></w:p>"#,
+            r#"<w:p><w:commentRangeStart w:id="1"/><w:r><w:t>Gamma</w:t></w:r></w:p><w:p><w:r><w:t>Delta</w:t></w:r></w:p><w:p><w:r><w:t>Eps</w:t></w:r><w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="1"/></w:r></w:p>"#,
+        ));
+        // Two paragraphs that follow each other: rewritten as one.
+        let result = ok(
+            &source,
+            serde_json::json!({"existing_revisions":"keep","operations": [
+                {"kind":"rewrite","paragraph":"c0.text","text":"joined"}
+            ]}),
+        );
+        let xml = part_string(&result.clean, "word/document.xml").unwrap();
+        assert!(xml.contains("joined"), "{xml}");
+        assert!(!xml.contains("one."), "{xml}");
+        // Three paragraphs apart: refused.
+        let e = refused(
+            &source,
+            serde_json::json!({"existing_revisions":"keep","operations": [
+                {"kind":"rewrite","paragraph":"c1.text","text":"x"}
+            ]}),
+        );
+        assert!(e.message.contains("covers text from"), "{}", e.message);
+        // A comment on its rewrite is refused.
+        let e = refused(
+            &source,
+            serde_json::json!({"existing_revisions":"keep","operations": [
+                {"kind":"rewrite","paragraph":"c0.text","text":"x","comment":"no"}
+            ]}),
+        );
+        assert!(e.message.contains("takes no comment"), "{}", e.message);
+    }
+
+    #[test]
+    fn a_kept_rewrite_marks_what_the_comparer_marks() {
+        let source = docx(&para("The quick brown fox jumps."));
+        let result = ok(
+            &source,
+            serde_json::json!({"existing_revisions":"keep","operations": [
+                {"kind":"rewrite","paragraph":"p0","text":"The quick red fox leaps."}
+            ]}),
+        );
+        let changes = crate::changes::list_changes(&result.redline).unwrap();
+        let deleted: Vec<&str> = changes
+            .iter()
+            .filter(|c| c.kind == crate::changes::ChangeKind::Deletion)
+            .map(|c| c.text.as_str())
+            .collect();
+        assert!(deleted.iter().any(|t| t.contains("brown")), "{deleted:?}");
+        assert!(deleted.iter().any(|t| t.contains("jumps")), "{deleted:?}");
+    }
+
+    #[test]
+    fn editing_inside_another_authors_deletion_points_at_the_answer() {
+        let source = docx(
+            r#"<w:p><w:r><w:t xml:space="preserve">Keep </w:t></w:r><w:del w:id="3" w:author="Bo" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>old words</w:delText></w:r></w:del><w:r><w:t xml:space="preserve"> end.</w:t></w:r></w:p>"#,
+        );
+        // The same plan restores it first: the edit waits.
+        let e = refused(
+            &source,
+            serde_json::json!({"existing_revisions":"keep","operations": [
+                {"kind":"restore","revision":"r3"},
+                {"kind":"replace","paragraph":"p0","find":"old words","replacement":"new"}
+            ]}),
+        );
+        assert_eq!(e.code, "UNSUPPORTED_STRUCTURE");
+        assert!(
+            e.message.ends_with("which this command restores: edit the restored words in a command of their own, after the restore."),
+            "{}",
+            e.message
+        );
+        // Alone, the hint offers restore.
+        let e = refused(
+            &source,
+            serde_json::json!({"existing_revisions":"keep","operations": [
+                {"kind":"replace","paragraph":"p0","find":"old words","replacement":"new"}
+            ]}),
+        );
+        assert!(e.message.contains(r#""kind":"restore""#), "{}", e.message);
+        // The plan's own deletion is no other author's.
+        let own = apply_plan(
+            &source,
+            &plan(
+                "Bo",
+                serde_json::json!({"existing_revisions":"keep","operations": [
+                    {"kind":"replace","paragraph":"p0","find":"old words","replacement":"new"}
+                ]}),
+            ),
+        );
+        match own {
+            Ok(_) => panic!("the plan's own deletion is still a deletion"),
+            Err(e) => {
+                assert_eq!(e.code, "UNSUPPORTED_STRUCTURE");
+                assert!(e.message.contains("let it go:"), "{}", e.message);
+                assert!(!e.message.contains("\"restore\""), "{}", e.message);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod restored_hint_branch_tests {
+    use super::super::deeper_boundary_fixture::docx;
+    use super::super::{EditPlan, apply_plan};
+
+    fn refused(restore: &str) -> super::super::EditError {
+        let source = docx(
+            r#"<w:p><w:r><w:t xml:space="preserve">Kept </w:t></w:r><w:del w:id="1" w:author="Bo" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>gone</w:delText></w:r></w:del><w:del w:id="2" w:author="Bo" w:date="2026-01-01T00:00:00Z"><w:r><w:delText xml:space="preserve"> away</w:delText></w:r></w:del></w:p>"#,
+        );
+        let plan = EditPlan::from_json(
+            &serde_json::json!({
+                "schema_version": 1,
+                "author": "Ed",
+                "date": "2026-02-02T00:00:00Z",
+                "existing_revisions": "keep",
+                "operations": [
+                    {"kind": "restore", "revision": restore},
+                    {"kind": "replace", "paragraph": "p0", "find": "gone", "replacement": "back"},
+                ],
+            })
+            .to_string(),
+        )
+        .unwrap();
+        apply_plan(&source, &plan).unwrap_err()
+    }
+
+    #[test]
+    fn only_a_restore_of_the_same_deletion_says_it_lands_first() {
+        let same = refused("r1");
+        let other = refused("r2");
+        assert_ne!(
+            same.message, other.message,
+            "{}\n{}",
+            same.message, other.message
+        );
+        assert_eq!(same.code, other.code);
+        assert!(
+            same.message.contains("which this command restores"),
+            "{}",
+            same.message
+        );
+        assert!(
+            !other.message.contains("which this command restores"),
+            "{}",
+            other.message
+        );
+    }
+}

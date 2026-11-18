@@ -905,3 +905,65 @@ mod residual_custom_path_contract_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod first_command_branch_tests {
+    use super::*;
+
+    fn s(v: &str) -> String {
+        v.to_string()
+    }
+
+    fn one(cmds: Vec<OwnedCmd>) -> Vec<EvalPath> {
+        let geom = CustomGeom {
+            av: vec![],
+            gd: vec![],
+            paths: vec![CustomPath {
+                w: 100.0,
+                h: 100.0,
+                fill: Fill::Norm,
+                stroke: true,
+                cmds,
+            }],
+        };
+        evaluate_custom(&geom, 100.0, 100.0)
+    }
+
+    #[test]
+    fn a_path_without_a_move_starts_at_its_first_point() {
+        // A line, an arc, a cubic and a quadratic each open a subpath at
+        // the pen when nothing came before.
+        let line = one(vec![
+            OwnedCmd::L(s("50"), s("0")),
+            OwnedCmd::L(s("50"), s("50")),
+        ]);
+        assert_eq!(line[0].subpaths[0].pts, [(50.0, 0.0), (50.0, 50.0)]);
+        let arc = one(vec![OwnedCmd::A(s("10"), s("10"), s("0"), s("5400000"))]);
+        assert_eq!(arc[0].subpaths.len(), 1);
+        assert_eq!(arc[0].subpaths[0].pts[0], (0.0, 0.0));
+        assert!(arc[0].subpaths[0].pts.len() > 2);
+        let cubic = one(vec![OwnedCmd::C([
+            s("0"),
+            s("10"),
+            s("10"),
+            s("10"),
+            s("10"),
+            s("0"),
+        ])]);
+        assert_eq!(cubic[0].subpaths[0].pts.len(), 13);
+        assert_eq!(*cubic[0].subpaths[0].pts.last().unwrap(), (10.0, 0.0));
+        let quad = one(vec![OwnedCmd::Q([s("5"), s("10"), s("10"), s("0")])]);
+        assert_eq!(quad[0].subpaths[0].pts.len(), 11);
+        // A close with no subpath is nothing; a lone point is dropped.
+        let closed = one(vec![OwnedCmd::Z, OwnedCmd::M(s("1"), s("1"))]);
+        assert!(closed[0].subpaths.is_empty());
+    }
+
+    #[test]
+    fn an_overflowing_guide_reads_as_zero() {
+        let guides = HashMap::new();
+        assert_eq!(formula("*/ 1e300 1e300 1", &guides), 0.0);
+        assert_eq!(formula("*/ 6 4 2", &guides), 12.0);
+    }
+}

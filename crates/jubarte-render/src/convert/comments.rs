@@ -940,3 +940,22 @@ fn dotted(
         at += 2.0 * dot;
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod dotted_branch_tests {
+    use super::*;
+
+    fn lines(from: (f32, f32), to: (f32, f32), dot: f32) -> usize {
+        let mut ops = Vec::new();
+        dotted(&mut ops, from, to, dot, 0.5, [0.0; 3]);
+        ops.len()
+    }
+
+    #[test]
+    fn a_dotted_connector_needs_length_and_a_dot() {
+        assert_eq!(lines((0.0, 0.0), (0.0, 0.0), 1.0), 0);
+        assert_eq!(lines((0.0, 0.0), (10.0, 0.0), 0.0), 0);
+        assert!(lines((0.0, 0.0), (10.0, 0.0), 1.0) > 0);
+    }
+}

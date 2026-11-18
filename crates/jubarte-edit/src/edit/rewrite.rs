@@ -576,3 +576,109 @@ mod tests {
         assert_eq!(apply(old, &edits), "");
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod marks_branch_tests {
+    use super::*;
+
+    fn segs(list: &[(char, &str)]) -> Vec<(char, String)> {
+        list.iter().map(|&(k, s)| (k, s.to_string())).collect()
+    }
+
+    #[test]
+    fn marks_rebuild_edits_only_when_they_read_back_as_old() {
+        let old = "the red fox";
+        let edits = ranges_from_marks(
+            old,
+            &segs(&[
+                ('=', "the "),
+                ('-', "red"),
+                ('+', "big"),
+                ('+', " brown"),
+                ('=', " fox"),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(edits, [(4, 7, "big brown".to_string())]);
+        // A pure insertion lands at the cursor; an empty one is no edit.
+        let edits = ranges_from_marks(
+            old,
+            &segs(&[('+', ""), ('=', "the "), ('+', "sly "), ('=', "red fox")]),
+        )
+        .unwrap();
+        assert_eq!(edits, [(4, 4, "sly ".to_string())]);
+        // Kept or deleted text that is not old's next bytes, an unknown
+        // mark, or marks that stop short of old's end: no edits.
+        assert_eq!(ranges_from_marks(old, &segs(&[('=', "a red fox")])), None);
+        assert_eq!(ranges_from_marks(old, &segs(&[('-', "a red fox")])), None);
+        assert_eq!(ranges_from_marks(old, &segs(&[('?', "the red fox")])), None);
+        assert_eq!(ranges_from_marks(old, &segs(&[('=', "the ")])), None);
+    }
+
+    #[test]
+    fn xml_text_escapes_markup_and_refuses_controls() {
+        assert_eq!(
+            xml_text("a<b>&c\td\ne\r").as_deref(),
+            Some("a&lt;b&gt;&amp;c\td\ne\r")
+        );
+        assert_eq!(xml_text("bell\u{7}"), None);
+        assert_eq!(plain_docx("bell\u{7}"), None);
+        assert_eq!(comparer_ranges("bell\u{7}", "bell"), None);
+    }
+
+    #[test]
+    fn the_comparer_marks_whole_words_and_reads_back_as_new() {
+        let old = "The quick brown fox jumps.";
+        let new = "The quick red fox leaps.";
+        let edits = comparer_ranges(old, new).unwrap();
+        assert_eq!(apply_ranges(old, &edits), new);
+        assert!(edits.iter().all(|(s, e, _)| s <= e), "{edits:?}");
+        // An insertion alone.
+        let edits = comparer_ranges("one three", "one two three").unwrap();
+        assert_eq!(apply_ranges("one three", &edits), "one two three");
+    }
+
+    #[test]
+    fn replacements_split_around_kept_symbols() {
+        let old = "a\u{FFFC}bc\u{FFFC}d";
+        // As many symbols in the replacement: each gap takes its part, and
+        // an unchanged gap is no edit.
+        let pieces = split_around_kept(old, 0, old.len(), "x\u{FFFC}bc\u{FFFC}y");
+        assert_eq!(
+            pieces,
+            [
+                (0, 1, "x".to_string()),
+                (old.len() - 1, old.len(), "y".to_string())
+            ]
+        );
+        // Fewer symbols: the text goes to the first piece, the others go.
+        let pieces = split_around_kept(old, 0, old.len(), "zz");
+        assert_eq!(pieces.len(), 3);
+        assert_eq!(pieces[0], (0, 1, "zz".to_string()));
+        assert!(pieces[1..].iter().all(|(_, _, t)| t.is_empty()));
+        // Only symbols in the range: the text lands after them, or nothing.
+        let sym = "\u{FFFC}\u{FFFC}";
+        let end = sym.len();
+        assert_eq!(
+            split_around_kept(sym, 0, end, "new"),
+            [(end, end, "new".to_string())]
+        );
+        assert!(split_around_kept(sym, 0, end, "").is_empty());
+    }
+
+    #[test]
+    fn deletions_join_across_spaces_into_one_hunk() {
+        let old = "keep alpha beta gamma end";
+        let new = "keep one two end";
+        let edits = rewrite_ranges(old, new);
+        assert_eq!(apply_ranges(old, &edits), new);
+        assert_eq!(edits.len(), 1, "{edits:?}");
+        // A kept word between two changes splits them.
+        let old = "aa keep bb";
+        let new = "xx keep yy";
+        let edits = rewrite_ranges(old, new);
+        assert_eq!(apply_ranges(old, &edits), new);
+        assert_eq!(edits.len(), 2, "{edits:?}");
+    }
+}

@@ -4247,3 +4247,276 @@ mod tests {
         )));
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod token_branch_tests {
+    use super::*;
+    use crate::edit::deeper_boundary_fixture::{Part, docx, docx_with, para};
+
+    #[test]
+    fn part_tokens_name_word_parts_and_encode_the_rest() {
+        for (part, token) in [
+            ("/word/document.xml", "document"),
+            ("word/footnotes.xml", "footnotes"),
+            ("word/numbering.xml", "numbering"),
+            ("word/header2.xml", "header2"),
+            ("word/footer10.xml", "footer10"),
+            // Not a canonical number, not a known stem, not under word/.
+            ("word/header02.xml", "pkg:word-2Fheader02-2Exml"),
+            ("word/headerx.xml", "pkg:word-2Fheaderx-2Exml"),
+            ("word/theme/theme1.xml", "pkg:word-2Ftheme-2Ftheme1-2Exml"),
+            ("word/document.bin", "pkg:word-2Fdocument-2Ebin"),
+            ("custom/a_b.xml", "pkg:custom-2Fa_b-2Exml"),
+        ] {
+            assert_eq!(part_token(part), token, "{part}");
+        }
+        assert_eq!(encode("a.b_c:d-e f"), "a.b_c:d-2De-20f");
+    }
+
+    #[test]
+    fn long_ids_keep_native_ids_and_shorten_the_rest() {
+        assert_eq!(
+            revision_long_id("word/document.xml", "ins", "body", "7"),
+            "document.w:ins.w:id.7"
+        );
+        let foreign = revision_long_id("word/header1.xml", "del", "header1", "x y");
+        assert!(foreign.starts_with("header1.w:del.j:short."), "{foreign}");
+    }
+
+    #[test]
+    fn history_reads_unlisted_change_marks_in_any_xml_part() {
+        assert!(!has_history(&docx(&para("Plain."))).unwrap());
+        let image = Part {
+            name: "word/media/image1.png",
+            content_type: "image/png",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+            xml: "not really a png",
+        };
+        assert!(!has_history(&docx_with(&para("Plain."), &[image])).unwrap());
+        // A paragraph-properties change no change list reports.
+        let marked = docx(
+            r#"<w:p><w:pPr><w:jc w:val="center"/><w:pPrChange w:id="4" w:author="Bo"><w:pPr/></w:pPrChange></w:pPr><w:r><w:t>Moved.</w:t></w:r></w:p>"#,
+        );
+        assert!(has_history(&marked).unwrap());
+        let change = docx(
+            r#"<w:p><w:r><w:t>x</w:t></w:r></w:p><w:numberingChange w:id="9" w:author="Bo"/>"#,
+        );
+        assert!(has_history(&change).unwrap());
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod order_branch_tests {
+    use super::super::deeper_boundary_fixture::{docx, para};
+    use super::*;
+
+    fn three() -> Vec<u8> {
+        docx(&format!(
+            "{}{}{}",
+            para("Alpha."),
+            para("Beta."),
+            para("Gamma.")
+        ))
+    }
+
+    #[test]
+    fn a_range_runs_forward_only() {
+        let source = three();
+        let model = SourceModel::new(&source).unwrap();
+        let forward = model.selected_paragraphs("p0-p2", false).unwrap();
+        assert_eq!(forward.len(), 3);
+        // The parser refuses `p2-p0`; a range built past it still is.
+        let mut out = std::collections::HashSet::new();
+        let backward = ShortId::Range {
+            first: Box::new("p2".parse::<ShortId>().unwrap()),
+            last: 0,
+        };
+        let backward = model.select_parsed(backward, &mut out).unwrap_err();
+        assert_eq!(backward.code, "USAGE");
+        assert!(
+            backward.message.contains("ordered paragraphs"),
+            "{}",
+            backward.message
+        );
+    }
+
+    fn comment_plan(source: &[u8], through: &str) -> String {
+        serde_json::json!({
+            "schema_version": 2,
+            "source": {"sha256": crate::inspect::source_sha256(source)},
+            "policy": {"track": "on", "existing_revisions": "keep", "text_view": "final"},
+            "resolve_revisions": {"accept": [], "reject": []},
+            "author": "T",
+            "date": "2026-10-18T00:00:00Z",
+            "scope": {"kind": "all"},
+            "operations": [{
+                "kind": "comment",
+                "target": {"short_id": "p2", "long_id": "document.w:p.j:short.p2"},
+                "text": "Note",
+                "through": {"short_id": through, "long_id": format!("document.w:p.j:short.{through}")},
+            }],
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn a_comment_through_an_earlier_paragraph_is_refused() {
+        let source = three();
+        let plan = PlanV2::from_json(&comment_plan(&source, "p0")).unwrap();
+        let error = apply_plan(&source, &plan).unwrap_err();
+        assert_eq!(error.code, "INVALID_EDIT", "{}", error.message);
+        assert!(
+            error.message.contains("through must follow target"),
+            "{}",
+            error.message
+        );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod story_comment_branch_tests {
+    use super::super::deeper_boundary_fixture::{Part, docx_with_sect};
+    use super::*;
+
+    fn header_source() -> Vec<u8> {
+        let header = format!(
+            r#"<w:hdr xmlns:w="{}"><w:p><w:r><w:t>Head line</w:t></w:r></w:p></w:hdr>"#,
+            W::URI
+        );
+        docx_with_sect(
+            "<w:p><w:r><w:t>Body.</w:t></w:r></w:p>",
+            &[Part {
+                name: "word/header1.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+                xml: &header,
+            }],
+            r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+        )
+    }
+
+    fn replace(source: &[u8], text: &str) -> Result<V2EditResult, EditError> {
+        let long = SourceModel::new(source)
+            .unwrap()
+            .selector_pair("header1.p0")
+            .unwrap()
+            .long_id;
+        let plan = serde_json::json!({
+            "schema_version": 2,
+            "source": {"sha256": crate::inspect::source_sha256(source)},
+            "policy": {"track": "on", "existing_revisions": "keep", "text_view": "final"},
+            "resolve_revisions": {"accept": [], "reject": []},
+            "author": "T",
+            "date": "2026-10-18T00:00:00Z",
+            "scope": {"kind": "all"},
+            "operations": [{
+                "kind": "replace",
+                "target": {"short_id": "header1.p0", "long_id": long},
+                "find": "line",
+                "text": text,
+                "attached_comment": {"text": "Why"},
+            }],
+        });
+        apply_plan(source, &PlanV2::from_json(&plan.to_string()).unwrap())
+    }
+
+    #[test]
+    fn a_comment_through_another_story_is_refused() {
+        let source = header_source();
+        let model = SourceModel::new(&source).unwrap();
+        let body = model.selector_pair("p0").unwrap();
+        let header = model.selector_pair("header1.p0").unwrap();
+        let plan = serde_json::json!({
+            "schema_version": 2,
+            "source": {"sha256": crate::inspect::source_sha256(&source)},
+            "policy": {"track": "on", "existing_revisions": "keep", "text_view": "final"},
+            "resolve_revisions": {"accept": [], "reject": []},
+            "author": "T",
+            "date": "2026-10-18T00:00:00Z",
+            "scope": {"kind": "all"},
+            "operations": [{
+                "kind": "comment",
+                "target": {"short_id": body.short_id, "long_id": body.long_id},
+                "text": "Note",
+                "through": {"short_id": header.short_id, "long_id": header.long_id},
+            }],
+        });
+        let error =
+            apply_plan(&source, &PlanV2::from_json(&plan.to_string()).unwrap()).unwrap_err();
+        assert_eq!(error.code, "INVALID_EDIT", "{}", error.message);
+        assert!(error.message.contains("same story"), "{}", error.message);
+    }
+
+    #[test]
+    fn a_header_replace_takes_no_comment_changed_or_not() {
+        let source = header_source();
+        for text in ["line", "row"] {
+            let error = replace(&source, text).unwrap_err();
+            assert_eq!(
+                error.code, "COMMENT_NOT_IN_BODY",
+                "{text}: {}",
+                error.message
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod pair_branch_tests {
+    use super::super::deeper_boundary_fixture::{Part, docx_with};
+    use super::*;
+
+    fn source() -> Vec<u8> {
+        let comments = format!(
+            r#"<w:comments xmlns:w="{}"><w:comment w:id="0" w:author="Bo"><w:p><w:r><w:t>Note</w:t></w:r></w:p></w:comment></w:comments>"#,
+            W::URI
+        );
+        docx_with(
+            r#"<w:p><w:commentRangeStart w:id="0"/><w:r><w:t xml:space="preserve">Kept </w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r><w:ins w:id="1" w:author="Bo" w:date="2026-01-01T00:00:00Z"><w:r><w:t>added</w:t></w:r></w:ins></w:p>"#,
+            &[Part {
+                name: "word/comments.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+                xml: &comments,
+            }],
+        )
+    }
+
+    fn target(short_id: &str, long_id: &str) -> Target {
+        Target {
+            short_id: short_id.into(),
+            long_id: long_id.into(),
+        }
+    }
+
+    #[test]
+    fn revisions_and_comments_need_their_own_long_ids() {
+        let source = source();
+        let model = SourceModel::new(&source).unwrap();
+        assert!(matches!(
+            model.entity(&target("c0", "comments.w:comment.w:id.0")),
+            Ok(Entity::Comment(0))
+        ));
+        assert!(matches!(
+            model.entity(&target("r1", "document.w:ins.w:id.1")),
+            Ok(Entity::Revision(_))
+        ));
+        for (short, long) in [
+            ("c0", "comments.w:comment.w:id.9"),
+            ("c7", "comments.w:comment.w:id.7"),
+            ("r1", "document.w:ins.w:id.2"),
+            ("r9", "document.w:ins.w:id.9"),
+        ] {
+            let Err(error) = model.entity(&target(short, long)) else {
+                panic!("{short} {long} named an entity");
+            };
+            assert_eq!(error.code, "TARGET_ID_MISMATCH", "{short}");
+        }
+        assert!(model.revision_paragraphs("x").is_empty());
+        assert_eq!(model.revision_paragraphs("r1"), vec![0]);
+    }
+}

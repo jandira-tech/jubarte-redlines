@@ -1363,3 +1363,26 @@ mod residual_import_contract_tests {
         assert_eq!(source, before);
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod attr_branch_tests {
+    use super::*;
+
+    #[test]
+    fn attributes_read_at_the_start_unquoted_and_bare() {
+        assert_eq!(attr("class=lead", "class").as_deref(), Some("lead"));
+        assert_eq!(attr("p class=lead id=x", "class").as_deref(), Some("lead"));
+        assert_eq!(attr("p\tclass='a b'", "class").as_deref(), Some("a b"));
+        assert_eq!(attr("p class=", "class"), None);
+        assert_eq!(attr("p subclass=x", "class"), None);
+    }
+
+    #[test]
+    fn a_stray_cell_end_outside_a_table_is_ignored() {
+        let wml = html_to_wml("<html><body><p>One</td> two</p></body></html>");
+        assert!(wml.contains("One"), "{wml}");
+        assert!(wml.contains("two"), "{wml}");
+        assert!(!wml.contains("<w:tc>"), "{wml}");
+    }
+}

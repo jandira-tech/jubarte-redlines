@@ -934,3 +934,13 @@ mod automatic_column_source_matrix_tests;
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 #[path = "tests/chrome_collector_source_boundary_tests.rs"]
 mod chrome_collector_source_boundary_tests;
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[path = "tests/flow_picture_branch_tests.rs"]
+mod flow_picture_branch_tests;
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[path = "tests/layout_scenario_branch_tests.rs"]
+mod layout_scenario_branch_tests;

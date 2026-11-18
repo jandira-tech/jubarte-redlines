@@ -320,3 +320,80 @@ pub(super) fn body_op_yrange(ops: &[Op]) -> Option<(f32, f32)> {
     }
     (min_y.is_finite() && max_y.is_finite()).then_some((min_y, max_y))
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod glyph_piece_branch_tests {
+    use super::*;
+
+    fn run(text: &str) -> TextRun {
+        TextRun::new(text.to_string(), default_run_style())
+    }
+
+    fn text(x: f32, s: &str) -> Op {
+        Op::Text {
+            face: FaceRef::Embedded(0),
+            size: 12.0,
+            x,
+            y: 100.0,
+            glyphs: Vec::new(),
+            color: [0.0; 3],
+            text: s.to_string(),
+            hscale: 1.0,
+            hidden: false,
+        }
+    }
+
+    fn texts(runs: &[TextRun]) -> Vec<String> {
+        runs.iter().map(|r| r.text.clone()).collect()
+    }
+
+    #[test]
+    fn prefixes_split_on_the_run_that_crosses_n() {
+        let runs = [run("ab"), run("cde"), run("f")];
+        assert_eq!(texts(&prefix_runs(&runs, 0)), Vec::<String>::new());
+        assert_eq!(texts(&prefix_runs(&runs, 2)), ["ab"]);
+        assert_eq!(texts(&prefix_runs(&runs, 4)), ["ab", "cd"]);
+        assert_eq!(texts(&prefix_runs(&runs, 9)), ["ab", "cde", "f"]);
+    }
+
+    #[test]
+    fn pieces_start_at_the_first_glyph_after_tabs_and_at_run_starts() {
+        // "ab" one op, a tab with a dot leader, then "cd" in two ops; the
+        // empty op is skipped.
+        let ops = [
+            text(10.0, "ab"),
+            text(0.0, ""),
+            text(30.0, ".."),
+            text(50.0, "c"),
+            text(60.0, "d"),
+        ];
+        let runs = [run("ab\tc"), run("d")];
+        let (pieces, pos) = first_line_pieces(&ops, 0, 99, &runs);
+        assert_eq!(pieces, [(0, 10.0), (3, 50.0), (4, 60.0)]);
+        assert_eq!(pos, 5);
+        // A line break ends the line.
+        let (pieces, pos) = first_line_pieces(&ops, 0, 5, &[run("ab\nzz")]);
+        assert_eq!((pieces, pos), (vec![(0, 10.0)], 2));
+        // A mismatch keeps what was recorded.
+        let (pieces, pos) = first_line_pieces(&ops, 0, 5, &[run("ax")]);
+        assert_eq!((pieces, pos), (vec![(0, 10.0)], 1));
+        // The glyphs run out.
+        let (pieces, pos) = first_line_pieces(&ops[..1], 0, 1, &[run("abc")]);
+        assert_eq!((pieces, pos), (vec![(0, 10.0)], 2));
+        // A tab whose next glyph is the character itself skips nothing,
+        // and a non-leader glyph stops the skip.
+        let ops = [text(0.0, "a"), text(20.0, "-b")];
+        let (pieces, _) = first_line_pieces(&ops, 0, 2, &[run("a\t-b")]);
+        assert_eq!(pieces, [(0, 0.0), (2, 20.0)]);
+        let ops = [text(0.0, "a"), text(20.0, "xb")];
+        let (pieces, pos) = first_line_pieces(&ops, 0, 2, &[run("a\tb")]);
+        assert_eq!((pieces, pos), (vec![(0, 0.0)], 2));
+    }
+
+    #[test]
+    fn y_ranges_need_a_painted_op() {
+        assert_eq!(body_op_yrange(&[]), None);
+        assert_eq!(body_op_yrange(&[text(0.0, "a")]), Some((100.0, 112.0)));
+    }
+}

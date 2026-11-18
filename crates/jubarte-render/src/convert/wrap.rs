@@ -1265,3 +1265,32 @@ pub(super) fn wrap_runs_segment(
     }
     lines
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod piece_branch_tests {
+    use super::*;
+
+    #[test]
+    fn small_caps_split_by_case_and_take_nothing_from_nothing() {
+        let style = default_run_style();
+        assert!(small_caps_pieces("", &style).is_empty());
+        let pieces = small_caps_pieces("Ab", &style);
+        let texts: Vec<_> = pieces.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(texts, ["A", "B"]);
+        assert!(pieces[1].1.size < pieces[0].1.size);
+    }
+
+    #[test]
+    fn a_url_ending_in_a_hyphen_leaves_no_empty_tail() {
+        assert_eq!(url_wrap_pieces("https://a-b-"), ["https://a-", "b-"]);
+        assert_eq!(url_wrap_pieces("https://a-b"), ["https://a-", "b"]);
+        assert_eq!(url_wrap_pieces("plain-word"), ["plain-word"]);
+    }
+
+    #[test]
+    fn private_use_symbols_hang_as_markers() {
+        assert!(is_list_marker_text("\u{F0B7}x", false));
+        assert!(!is_list_marker_text("ab", false));
+    }
+}
