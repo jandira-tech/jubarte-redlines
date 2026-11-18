@@ -8014,3 +8014,88 @@ mod helper_branch_tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod inline_branch_tests {
+    use super::*;
+
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+    /// The written package's `part`, from `markdown` with `critic` on or off.
+    fn part(markdown: &str, critic: bool, part: &str) -> String {
+        let options = DocxOptions {
+            critic,
+            ..DocxOptions::default()
+        };
+        let written = markdown_to_docx(markdown, &options).expect("writes");
+        crate::opc::PartFs::open(&written.docx)
+            .expect("opens")
+            .part_string(part)
+            .unwrap_or_default()
+    }
+
+    fn body(markdown: &str) -> String {
+        part(markdown, true, "/word/document.xml")
+    }
+
+    #[test]
+    fn math_where_no_equation_goes_stays_latex_text() {
+        let image = format!("![see $x^2$ and $$y$$](data:image/png;base64,{PNG})");
+        for critic in [true, false] {
+            let xml = part(&image, critic, "/word/document.xml");
+            assert!(
+                xml.contains("descr=\"see $x^2$ and $$y$$\""),
+                "{critic}: {xml}"
+            );
+        }
+        let comments = part("Text{>>has $x$ and $$y$$<<}", true, "/word/comments.xml");
+        assert!(comments.contains("has $x$ and $$y$$"), "{comments}");
+        assert!(!body("Text{>>has $x$<<}").contains("<m:oMath"));
+    }
+
+    #[test]
+    fn inline_html_writes_symbols_links_bookmarks_and_breaks() {
+        let xml = body(
+            "A<sym font=\"Symbol\" char=\"F0B7\"/>B<sym font=\"\" char=\"F0B7\"/>C<sym font=\"Symbol\" char=\"F0B7\">D",
+        );
+        assert_eq!(xml.matches("<w:sym ").count(), 1, "{xml}");
+        assert!(xml.contains("w:font=\"Symbol\" w:char=\"F0B7\""), "{xml}");
+        let xml = body(
+            "Go <a href=\"https://x.test\" title=\"tip\">there</a> or <a name=\"spot\">here</a><a id=\"\">x</a>.",
+        );
+        assert!(xml.contains("<w:hyperlink"), "{xml}");
+        assert!(xml.contains("w:name=\"spot\""), "{xml}");
+        assert_eq!(xml.matches("<w:bookmarkStart").count(), 1, "{xml}");
+        let xml = body("one<br>two</br>three<b/>four");
+        assert_eq!(xml.matches("<w:br/>").count(), 1, "{xml}");
+        assert!(!xml.contains("<w:b/>"), "{xml}");
+        let xml = body("Mail <a@b.co> now");
+        assert!(xml.contains("<w:hyperlink"), "{xml}");
+        assert!(xml.contains(">a@b.co</w:t>"), "{xml}");
+        let xml = body("<div>\nblock text\n</div>\n\nAfter");
+        assert!(xml.contains("After"), "{xml}");
+        let xml = body("Note{>>a <b>bold</b> word<<} after");
+        assert!(xml.contains(">after<") || xml.contains(" after<"), "{xml}");
+        assert!(!xml.contains("<w:b/>"), "{xml}");
+    }
+
+    #[test]
+    fn tables_and_lists_keep_their_cells_and_items() {
+        let xml = body(
+            "| a | b | c |\n|:--|:-:|--:|\n| 1 |   | 3 |\n| x |\n\n- one\n- two\n  - nested\n\n1. first\n2. second\n",
+        );
+        assert_eq!(
+            xml.matches("<w:tr>").count() + xml.matches("<w:tr ").count(),
+            3,
+            "{xml}"
+        );
+        assert!(
+            xml.contains("w:val=\"center\"") && xml.contains("w:val=\"right\""),
+            "{xml}"
+        );
+        for text in ["nested", "first", "second"] {
+            assert!(xml.contains(text), "{text}: {xml}");
+        }
+    }
+}

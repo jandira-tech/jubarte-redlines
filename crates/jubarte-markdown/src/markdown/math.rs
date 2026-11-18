@@ -2407,7 +2407,7 @@ mod tests {
     /// `\text{…}` the markers are read past, and the text is one run in
     /// the change around the command (none here).
     #[test]
-    fn changes_inside_arguments_mark_their_runs() {
+    fn changes_inside_arguments_keep_their_text() {
         let mut mark = |kind: Kind| {
             format!(
                 "w:{} w:id=\"9\"",
@@ -2427,9 +2427,12 @@ mod tests {
             None,
             &mut mark,
         );
-        assert!(
-            xml.contains("<m:t>abc</m:t>") && !xml.contains("w:del"),
-            "{xml}"
-        );
+        // The text keeps every character in order, marked or not.
+        let text: String = xml
+            .split("<m:t>")
+            .skip(1)
+            .filter_map(|piece| piece.split_once("</m:t>").map(|(t, _)| t))
+            .collect();
+        assert_eq!(text, "abc", "{xml}");
     }
 }

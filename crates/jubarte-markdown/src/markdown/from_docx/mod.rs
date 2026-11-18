@@ -7416,6 +7416,123 @@ mod tests {
             .collect()
     }
 
+    /// A package with one rich header and a first-page footer: fields,
+    /// tracked runs, character marks, tabs, shading and indents.
+    fn story_package(header: &str, footer: &str, section_extra: &str) -> Vec<u8> {
+        let types = ODD_TYPES.replace(
+            "</Types>",
+            r#"<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>"#,
+        );
+        let rels = ODD_RELS.replace(
+            "</Relationships>",
+            r#"<Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/><Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/></Relationships>"#,
+        );
+        let document = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?><w:document {NS}><w:body><w:p><w:r><w:t>Body</w:t></w:r></w:p><w:sectPr><w:headerReference w:type="default" r:id="rId8"/><w:footerReference w:type="first" r:id="rId9"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>{section_extra}<w:titlePg/></w:sectPr></w:body></w:document>"#
+        );
+        let header = format!(r#"<w:hdr {NS}>{header}</w:hdr>"#);
+        let footer = format!(r#"<w:ftr {NS}>{footer}</w:ftr>"#);
+        let styles = format!(
+            r#"<w:styles {NS}><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Header"><w:name w:val="header, odd"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="character" w:styleId="VerbatimChar"><w:name w:val="Verbatim Char"/></w:style></w:styles>"#
+        );
+        zip(&[
+            (
+                "_rels/.rels",
+                r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#,
+            ),
+            ("[Content_Types].xml", &types),
+            ("word/_rels/document.xml.rels", &rels),
+            ("word/document.xml", &document),
+            ("word/header1.xml", &header),
+            ("word/footer1.xml", &footer),
+            ("word/styles.xml", &styles),
+            ("word/comments.xml", &format!("<w:comments {NS}/>")),
+            ("word/footnotes.xml", &format!("<w:footnotes {NS}/>")),
+            ("word/endnotes.xml", &format!("<w:endnotes {NS}/>")),
+            ("word/numbering.xml", &format!("<w:numbering {NS}/>")),
+        ])
+    }
+
+    fn story_reads(header: &str, footer: &str, section_extra: &str) -> Vec<String> {
+        let bytes = story_package(header, footer, section_extra);
+        [
+            Options::default(),
+            Options {
+                ids: true,
+                ..Options::default()
+            },
+            Options {
+                stories: true,
+                ids: true,
+                ..Options::default()
+            },
+            Options {
+                stories: true,
+                ids: true,
+                revisions: Revisions::Reject,
+                ..Options::default()
+            },
+        ]
+        .iter()
+        .map(|options| convert(&bytes, options).expect("reads").markdown)
+        .collect()
+    }
+
+    /// A header's paragraph formats, character marks, fields, changes,
+    /// content controls and AlternateContent read into its story entry;
+    /// a first-page footer sets the title page.
+    #[test]
+    fn header_stories_read_their_formats_fields_and_changes() {
+        let fld = |kind: &str| format!(r#"<w:r><w:fldChar w:fldCharType="{kind}"/></w:r>"#);
+        let header = format!(
+            r#"<w:p><w:pPr><w:pStyle w:val="Header"/><w:keepNext/><w:keepLines/><w:spacing w:before="120" w:after="0" w:line="360" w:lineRule="auto"/><w:ind w:left="720" w:hanging="360"/><w:contextualSpacing/><w:tabs><w:tab w:val="center" w:pos="4680"/><w:tab w:val="right" w:leader="dot" w:pos="9360"/><w:tab w:val="weird" w:pos="10"/><w:tab w:val="left" w:pos="999999"/></w:tabs><w:shd w:val="clear" w:color="auto" w:fill="FFFF00"/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:i/><w:u w:val="single"/><w:strike/><w:highlight w:val="cyan"/></w:rPr><w:t>Marked</w:t></w:r><w:r><w:rPr><w:rStyle w:val="VerbatimChar"/></w:rPr><w:t>code</w:t></w:r><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t>up</w:t></w:r><w:r><w:rPr><w:vertAlign w:val="subscript"/></w:rPr><w:t>down</w:t></w:r><w:r><w:tab/><w:t xml:space="preserve"> Page </w:t></w:r>{}<w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>{}<w:r><w:t>1</w:t></w:r>{}<w:r><w:t xml:space="preserve"> of </w:t></w:r><w:fldSimple w:instr=" NUMPAGES "><w:r><w:t>9</w:t></w:r></w:fldSimple><w:ins w:id="20" w:author="Ann" w:date="2026-01-01T00:00:00Z"><w:r><w:t>added</w:t></w:r></w:ins><w:del w:id="21" w:author="Bo" w:date="2026-01-02T00:00:00Z"><w:r><w:delText>gone</w:delText></w:r></w:del>{}<w:r><w:instrText>DATE</w:instrText></w:r>{}<w:r><w:instrText>TIME</w:instrText></w:r>{}<w:r><w:t>t</w:t></w:r>{}{}<w:r><w:t>d</w:t></w:r>{}<w:sdt><w:sdtContent><w:r><w:t>sdt text</w:t></w:r></w:sdtContent></w:sdt><w:r><mc:AlternateContent><mc:Choice Requires="w14"><w:t>pick</w:t></mc:Choice><mc:Fallback><w:t>other</w:t></mc:Fallback></mc:AlternateContent></w:r></w:p><w:p><w:pPr><w:ind w:firstLine="360" w:right="100"/><w:jc w:val="both"/></w:pPr><w:r><w:t>Second</w:t></w:r></w:p>"#,
+            fld("begin"),
+            fld("separate"),
+            fld("end"),
+            fld("begin"),
+            fld("begin"),
+            fld("separate"),
+            fld("end"),
+            fld("separate"),
+            fld("end")
+        );
+        let footer =
+            r#"<w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:t>Footer one</w:t></w:r></w:p>"#;
+        let grid = r#"<w:pgBorders><w:top w:val="single" w:sz="4" w:space="1" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="1" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="1" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="1" w:color="auto"/></w:pgBorders><w:cols w:space="720"/><w:docGrid w:type="lines" w:linePitch="360" w:charSpace="10"/>"#;
+        let views = story_reads(&header, footer, grid);
+        // The plain view prints the body alone.
+        assert_eq!(views[0].trim(), "Body");
+        let tracked = &views[1];
+        for part in [
+            "page: Letter portrait, margins 1in, header/footer 0.5in, line grid 18pt",
+            "  first: none                      # page 1 shows no header",
+            r#"p0: {text: "<b><i><u><mark class=\"hl-cyan\"><s>Marked</s></mark></u></i></b><code>code</code><sup>up</sup><sub>down</sub>\t Page {PAGE}1{/} of {NUMPAGES}9{/}{++added++}{header1.r20 @A}{--gone--}{header1.r21 @B}{DATE}sdt textpick", center, indent: {hanging: 0.25in, left: 0.5in}, tabs: [center 4680, right dot 9360], spacing: "before 6pt, after 0pt, line 1.5", shading: {val: clear, color: auto, fill: FFFF00}}"#,
+            "p1: {text: Second, justify, indent: {first-line: 0.25in, right: 0.0694in}}",
+            "styles: [Header, Normal]",
+            "first: {id: footer1, text: Footer one, right, style: Normal}",
+        ] {
+            assert!(tracked.contains(part), "{part}\n{tracked}");
+        }
+        // A tab stop Word does not list, or one past its limit, is left out.
+        assert!(
+            !tracked.contains("weird") && !tracked.contains("999999"),
+            "{tracked}"
+        );
+        // The stories view prints the header's text in the body as well.
+        assert!(
+            views[2].contains("\nSecond\n\nFooter one\n"),
+            "{}",
+            views[2]
+        );
+        // Rejecting keeps the deletion's text and drops the insertion's.
+        let rejected = views[3]
+            .lines()
+            .find(|line| line.trim_start().starts_with("p0: "))
+            .expect("p0");
+        assert!(rejected.contains("{NUMPAGES}9{/}gone{DATE}"), "{rejected}");
+        assert!(!rejected.contains("added"), "{rejected}");
+    }
+
     /// Parts Word seldom writes still read: a comment or note with no id
     /// is skipped, a reference with no id prints nothing, a field's code
     /// keeps its text out of the view, a style cycle ends, numbering

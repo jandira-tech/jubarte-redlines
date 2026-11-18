@@ -4721,3 +4721,73 @@ mod branch_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod scanner_branch_tests {
+    use super::*;
+
+    #[test]
+    fn comment_closers_count_nesting_and_skip_escapes() {
+        let s = "a{>>b<<}c<<}";
+        assert_eq!(comment_closer(s, "{>>", "<<}", 0, s.len()), Some(9));
+        let s = "\\<<}é<<}";
+        assert_eq!(comment_closer(s, "{>>", "<<}", 0, s.len()), Some(6));
+        let s = "\\{>>x<<}";
+        assert_eq!(comment_closer(s, "{>>", "<<}", 0, s.len()), Some(5));
+        assert_eq!(comment_closer("abc<<}", "{>>", "<<}", 0, 3), None);
+        assert_eq!(comment_closer("abc", "{>>", "<<}", 0, 3), None);
+    }
+
+    #[test]
+    fn separators_sit_at_depth_one_only() {
+        let s = "a~>b";
+        assert_eq!(
+            comment_separator(s, "{~~", "~~}", "~>", 0, s.len()),
+            Some(1)
+        );
+        let s = "{~~c~>d~~}é~>e";
+        assert_eq!(
+            comment_separator(s, "{~~", "~~}", "~>", 0, s.len()),
+            Some(12)
+        );
+        let s = "abc~~}~>";
+        assert_eq!(comment_separator(s, "{~~", "~~}", "~>", 0, s.len()), None);
+        let s = "a\\~>b\\~~}c~>";
+        assert_eq!(
+            comment_separator(s, "{~~", "~~}", "~>", 0, s.len()),
+            Some(10)
+        );
+        assert_eq!(comment_separator("abc", "{~~", "~~}", "~>", 0, 3), None);
+    }
+
+    #[test]
+    fn definitions_comments_autolinks_and_fence_escapes_read_their_shapes() {
+        assert_eq!(definition_destination("[a]: x"), Some(4));
+        assert_eq!(definition_destination("   [a\\]]: x"), Some(9));
+        assert_eq!(definition_destination("[]: x"), None);
+        assert_eq!(definition_destination("[a] x"), None);
+        assert_eq!(definition_destination("[a[b]: x"), None);
+        assert_eq!(definition_destination("    [a]: x"), None);
+        assert_eq!(definition_destination("[^1]: x"), None);
+        assert_eq!(definition_destination("[open"), None);
+        assert_eq!(comment_end("<!-- x --> y", 0), Some(10));
+        assert_eq!(comment_end("<!-- open", 0), None);
+        assert_eq!(comment_end("<b>", 0), None);
+        assert_eq!(autolink_end("<https://a.example> x", 0), Some(19));
+        assert_eq!(autolink_end("<https://a b>", 0), None);
+        assert_eq!(autolink_end("<https://a<b>", 0), None);
+        assert_eq!(autolink_end("<https://open", 0), None);
+        assert_eq!(autolink_end("<h:x>", 0), None);
+        assert_eq!(autolink_end("<mailto x>", 0), None);
+        assert_eq!(
+            fence_escape_at("\\{r1 @A}", 0),
+            Some(("{r1 @A}".to_string(), 8))
+        );
+        assert_eq!(
+            fence_escape_at("\\\\{r1 @A}", 0),
+            Some(("\\\\{r1 @A}".to_string(), 9))
+        );
+        assert_eq!(fence_escape_at("plain", 0), None);
+    }
+}
