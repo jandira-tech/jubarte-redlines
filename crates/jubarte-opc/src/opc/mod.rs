@@ -1007,13 +1007,16 @@ impl PartFs {
     /// profile) while producing content-identical decompressed bytes — Word
     /// opens any deflate level. ZIP-LEVEL-01 (docs/WASM_PERF_PLAN.md).
     ///
-    /// Every entry is dated 1980-01-01 00:00, as Office dates its own, so the
-    /// same input writes the same bytes.
+    /// Every entry is dated 1980-01-01 00:00, as Office dates its own, and
+    /// names Unix as its "made by" system whatever the host (the zip crate
+    /// would pick DOS on Windows), so the same input writes the same bytes
+    /// on every platform.
     pub fn to_zip(&self) -> Result<Vec<u8>, OpcError> {
         let options = SimpleFileOptions::default()
             .compression_method(CompressionMethod::Deflated)
             .compression_level(Some(1))
-            .last_modified_time(zip::DateTime::default());
+            .last_modified_time(zip::DateTime::default())
+            .system(zip::System::Unix);
 
         let ct_xml = unchanged_xml(
             self.pkg.content_types.to_xml()?,
@@ -1374,6 +1377,29 @@ mod tests {
     use super::*;
     use crate::admission::zip_names;
     use zip::ZipArchive;
+
+    /// Every entry `to_zip` writes names Unix as its "made by" system, on
+    /// every host. Left to the zip crate, that byte follows the host (DOS
+    /// on Windows), so the same input wrote different bytes there and an
+    /// edit plan bound by `source_sha256` to an earlier output refused as
+    /// STALE_SOURCE on Windows only.
+    #[test]
+    fn to_zip_names_the_same_system_on_every_host() {
+        let source = package_with_document_rels(
+            "<Relationship Id=\"rId1\" Type=\"test\" Target=\"a.xml\"/>",
+        );
+        let written = PartFs::open(&source).unwrap().to_zip().unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(written)).unwrap();
+        for i in 0..archive.len() {
+            let entry = archive.by_index(i).unwrap();
+            assert_eq!(
+                entry.system(),
+                zip::System::Unix,
+                "{:?} names a host-dependent system",
+                entry.name()
+            );
+        }
+    }
 
     #[test]
     fn opc_attribute_budget_bounds_upstream_duplicate_checks() {
