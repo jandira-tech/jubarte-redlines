@@ -242,6 +242,7 @@ flag-off output retain their existing behavior. The Python and WebAssembly
 bindings do not yet dispatch that option or return its kept-thread receipts;
 use the native binary when retention is needed.
 
+<!-- ANCHOR: cli-rust (docs/rtd books include this block) -->
 <!-- gen:cli-rust:start -->
 #### `jubarte`
 
@@ -2105,6 +2106,7 @@ Examples:
   jubarte self-update --version 0.9.3  install that release (also older)
 ```
 <!-- gen:cli-rust:end -->
+<!-- ANCHOR_END: cli-rust -->
 
 ## Keeping this page current
 
