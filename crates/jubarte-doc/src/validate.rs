@@ -331,7 +331,6 @@ pub struct Repaired {
     pub remaining: Vec<Finding>,
 }
 
-#[cfg(feature = "render")]
 /// [`validate`] with rule sets: `word` (the default), `edits`, and the
 /// [`crate::audit`] sets or codes (`a11y`, `style`, `structure`,
 /// `LITERAL_BULLET`, ...). `original` (the document before the edits and the
@@ -393,7 +392,6 @@ pub fn validate_with(
 /// same original ([`baseline_keyed`], each side's keys read in its own
 /// document by [`identities`]). That original is `base` unless `original`
 /// names another; `author` turns the `edits` rule on as `validate_with`'s
-#[cfg(feature = "render")]
 /// `original` does, so the other party's changes `base` already had are
 /// the input's, not the edit's. `Baselined::authors` names who signed the
 /// markup `docx` gained over the baseline, whoever that is (#1893): the
@@ -408,17 +406,20 @@ pub fn validate_baselined(
     rules: &[&str],
     original: Option<&[u8]>,
     author: Option<&str>,
-    mut layout: Option<crate::audit::LayoutPass<'_>>,
+    layout: Option<crate::audit::LayoutPass<'_>>,
 ) -> Result<Baselined, ValidateError> {
     let against = original.or(Some(base)).zip(author);
-    let findings = validate_with(
-        docx,
-        rules,
-        against,
-        layout
-            .as_mut()
-            .map(|pass| &mut **pass as crate::audit::LayoutPass<'_>),
-    )?;
+    // The pass runs once per document: lend it to the first call and keep
+    // it for the second. Without the renderer the only value is `None`.
+    #[cfg(feature = "render")]
+    let mut layout = layout;
+    #[cfg(feature = "render")]
+    let first = layout
+        .as_mut()
+        .map(|pass| &mut **pass as crate::audit::LayoutPass<'_>);
+    #[cfg(not(feature = "render"))]
+    let first = layout;
+    let findings = validate_with(docx, rules, against, first)?;
     let inherited = validate_with(base, rules, against, layout)?;
     let keys = identities(docx, &findings);
     let inherited_keys = identities(base, &inherited);

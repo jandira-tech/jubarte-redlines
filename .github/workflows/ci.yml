@@ -65,6 +65,15 @@ jobs:
       # The library without the `cli` feature (clap) must still build: a
       # library path once called into src/cli.rs and only --all-features ran.
       - run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+      # Each crate alone, on its own default features, as a registry user
+      # builds it. `--workspace` cannot: the root enables `render` on the
+      # layers, and feature unification hides what only builds without it
+      # (#2450: the audit compiled out of jubarte-doc, so 0.19.0's slim npm
+      # build lost auditDocument).
+      - run: |
+          for p in jubarte-dom jubarte-opc jubarte-redlines jubarte-render jubarte-doc jubarte-markdown jubarte-edit jubarte-cli; do
+            cargo clippy -p "$p" --all-targets -- -D warnings
+          done
       # No network crate without self-update, and no network API outside
       # src/update (#2018): Word fetches remote templates on open; jubarte
       # must not. Here, not in the scripts job, because it runs cargo tree.
@@ -102,13 +111,12 @@ jobs:
         run: cargo clippy --all-features --target wasm32-unknown-unknown -- -D warnings
       # The narrow npm builds (plan T5.2), with the features build-npm.sh
       # gives them: a helper only a wider layer uses is dead code there.
-      # The slim build is not linted yet: the engine crates warn without
-      # `render` (#2450).
       - name: clippy jubarte-wasm narrow builds (wasm32-unknown-unknown)
         working-directory: jubarte-wasm
         env:
           RUSTFLAGS: -D warnings
         run: |
+          cargo clippy --no-default-features --features slim,console-panic --target wasm32-unknown-unknown -- -D warnings
           cargo clippy --no-default-features --features redlines,console-panic --target wasm32-unknown-unknown -- -D warnings
           cargo clippy --no-default-features --features pdf,console-panic --target wasm32-unknown-unknown -- -D warnings
       # The desktop app is its own repository (arthrod/jubarte-app): its CI
@@ -154,7 +162,9 @@ jobs:
       # exports as Rust, natively. Left out, a stale one went unseen.
       - name: test jubarte-wasm
         working-directory: jubarte-wasm
-        run: cargo test --lib
+        run: |
+          cargo test --lib
+          cargo test --lib --no-default-features --features slim
 
   coverage:
     name: coverage

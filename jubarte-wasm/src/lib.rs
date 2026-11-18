@@ -1932,7 +1932,7 @@ pub fn markdown_to_docx(
 /// has no layout pass: it leaves `FONT_SUBSTITUTED` out (naming it is an
 /// error) and does not compare `NUMPAGES` caches with a page count.
 #[wasm_bindgen(js_name = auditDocument)]
-#[cfg(all(feature = "doc", feature = "pdf"))]
+#[cfg(feature = "doc")]
 pub fn audit_document(docx: &[u8], rules: Option<String>) -> Result<String, JsValue> {
     let rules = rules.unwrap_or_default();
     let rules: Vec<&str> = rules
