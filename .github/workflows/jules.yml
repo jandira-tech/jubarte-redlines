@@ -178,16 +178,6 @@ jobs:
         env:
           BASE_REF: ${{ steps.pr.outputs.base_ref }}
         run: |
-          # Blacksmith's git mirror pre-writes refs/remotes/origin/* as packed
-          # refs, some naming objects this clone never received ("bad object
-          # refs/remotes/origin/…"). origin/<base> then does not resolve
-          # ("Invalid symmetric difference expression", #2443) and a fetch
-          # fails its connectivity check. Drop those refs, fetch the base
-          # here, and stop with a clear error if it is still absent.
-          git for-each-ref --format='delete %(refname)' refs/remotes/origin | git update-ref --stdin
-          git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
-          git rev-parse --verify --quiet "origin/${BASE_REF}" >/dev/null \
-            || { echo "::error::origin/${BASE_REF} is not resolvable after the fetch"; exit 1; }
           CHANGED_FILES="$(git diff --name-only --diff-filter=ACMR "origin/${BASE_REF}...HEAD")"
           {
             echo "changed_files<<__JULES_EOF__"
@@ -484,8 +474,6 @@ jobs:
           diff="$(mktemp)"
           printf '%s\n' "$CHANGED_FILES" > "$raw" && utf8 "$raw" "$files"
           printf '%s\n' "$STATIC_REPORT" > "$raw" && utf8 "$raw" "$report"
-          git rev-parse --verify --quiet "origin/${BASE_REF}" >/dev/null \
-            || git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
           git diff --no-color "origin/${BASE_REF}...HEAD" > "$raw"
           utf8 "$raw" "$diff"
           size=$(wc -c < "$diff")
