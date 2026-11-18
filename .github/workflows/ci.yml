@@ -38,7 +38,7 @@ env:
 jobs:
   lint:
     name: fmt + clippy
-    runs-on: self-hosted
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -48,7 +48,12 @@ jobs:
           components: rustfmt, clippy
           # jubarte-wasm is linted for the target it ships on.
           targets: wasm32-unknown-unknown
-      - uses: ./.github/actions/mbx
+      # mbx's cache server is on the self-hosted network; GitHub's
+      # runners (LINUX_RUNNER=ubuntu-latest) use rust-cache instead.
+      - if: (vars.LINUX_RUNNER || 'self-hosted') == 'self-hosted'
+        uses: ./.github/actions/mbx
+      - if: (vars.LINUX_RUNNER || 'self-hosted') != 'self-hosted'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo fmt --check
       # Every workspace, as release.sh step 5 checks them (#1760): the root
       # check never reads jubarte-wasm, jubarte-python, jubarte-rust-inproc or fuzz.
@@ -114,7 +119,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [self-hosted, macos-latest, windows-latest]
+        os: ["${{ vars.LINUX_RUNNER || 'self-hosted' }}", macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       # tests/corpus keeps the bench's file names, some past Windows'
@@ -153,7 +158,7 @@ jobs:
 
   coverage:
     name: coverage
-    runs-on: self-hosted
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -164,7 +169,12 @@ jobs:
           # Branch instrumentation and doctest coverage require nightly.
           # Production remains supported by the separate stable/MSRV jobs.
           components: llvm-tools-preview
-      - uses: ./.github/actions/mbx
+      # mbx's cache server is on the self-hosted network; GitHub's
+      # runners (LINUX_RUNNER=ubuntu-latest) use rust-cache instead.
+      - if: (vars.LINUX_RUNNER || 'self-hosted') == 'self-hosted'
+        uses: ./.github/actions/mbx
+      - if: (vars.LINUX_RUNNER || 'self-hosted') != 'self-hosted'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # Downloads a prebuilt binary instead of `cargo install` (minutes → seconds).
       # install-action picks the tool from the ref (`@cargo-llvm-cov`) or, as
       # here with the ref pinned to a commit SHA, from the `tool` input.
@@ -204,7 +214,7 @@ jobs:
 
   msrv:
     name: MSRV (1.94)
-    runs-on: self-hosted
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -213,7 +223,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master branch, pinned 2026-10-01
         with:
           toolchain: "1.94"
-      - uses: ./.github/actions/mbx
+      # mbx's cache server is on the self-hosted network; GitHub's
+      # runners (LINUX_RUNNER=ubuntu-latest) use rust-cache instead.
+      - if: (vars.LINUX_RUNNER || 'self-hosted') == 'self-hosted'
+        uses: ./.github/actions/mbx
+      - if: (vars.LINUX_RUNNER || 'self-hosted') != 'self-hosted'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # cargo-llvm-cov tag, pinned 2026-10-01
         with:
           tool: cargo-nextest
@@ -230,7 +245,7 @@ jobs:
 
   fuzz-smoke:
     name: fuzz smoke (60 s per target)
-    runs-on: self-hosted
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
     # Four ordinary runs, two native runs, and a cold instrumented C build.
     # A cold sanitizer build of jubarte takes 13 min on a free M-series Mac
     # and over 25 min on the shared self-hosted runners: under the old
@@ -291,7 +306,7 @@ jobs:
 
   package:
     name: publish dry run
-    runs-on: self-hosted
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -309,7 +324,7 @@ jobs:
 
   python:
     name: python bindings
-    runs-on: self-hosted
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -343,7 +358,7 @@ jobs:
 
   convert-sweep-unit:
     name: convert-sweep unit
-    runs-on: self-hosted
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -369,6 +384,7 @@ jobs:
       - run: python3 scripts/test_docs_workflow.py
       - run: python3 scripts/test_jules_workflow.py
       - run: python3 scripts/test_codeql_config.py
+      - run: python3 scripts/test_ci_runners.py
       - run: python3 scripts/test_check_engine_commit.py
       - run: python3 scripts/test_check_npm_paths.py
       - run: python3 scripts/test_table_styles_asset.py
@@ -409,7 +425,7 @@ jobs:
   # (docs/superpowers/specs/2026-10-13-ids-and-markdown-roundtrip.md §0).
   roundtrip:
     name: md -> docx -> md, exact
-    runs-on: self-hosted
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
