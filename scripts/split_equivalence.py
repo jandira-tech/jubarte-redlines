@@ -16,12 +16,30 @@ outer attributes, doc comments and tokens; whitespace never counts, so
 rustfmt line breaks and indentation cannot differ. String literals,
 comments inside items, attributes and doc comments must match exactly.
 
+An item is compared together with its module context: the behavioural
+attributes (`#[cfg]`, `#[cfg_attr]`, ...; not `#[path]`, docs or lint
+levels) of the modules that enclose it, whether inline, through `#![..]`,
+or on the `mod x;` declaration that loads its file. Two items of one name
+in different modules match by module, so they cannot swap bodies; an item
+held once may change module, since that is what a split does. Every
+module the old side has must still exist on the new side; new sibling
+modules may appear.
+
+Macro token trees are compared exactly (a `macro_rules!` matcher can see
+every comma, brace and `pub`), except the arguments of std expression
+macros (`assert_eq!`, `format!`, `vec!`, ...), which rustfmt formats as
+Rust code and which accept an optional trailing comma.
+
 The adaptations a split needs are allowed, and only these:
-  - visibility (`pub`, `pub(crate)`, `pub(super)`, `pub(self)`, `pub(in ..)`);
+  - visibility (`pub`, `pub(crate)`, `pub(super)`, `pub(self)`, `pub(in ..)`)
+    as an item's own prefix, never inside a macro token tree;
   - a trailing comma before `]`, `}` or `>`, or before `)` in call
     arguments, parameters, or a group that holds another comma (rustfmt
-    adds and drops them when it wraps or unwraps a line); a one-element
-    tuple `(x,)` keeps its comma, as an expression, pattern or type;
+    adds and drops them when it wraps or unwraps a line). Call arguments
+    and parameters are a `(` after a non-keyword identifier, `)`, `]`, a
+    std expression macro's `!`, or the `>` that closes `fn name<..>` or a
+    turbofish; a one-element tuple `(x,)` keeps its comma anywhere else
+    (`for (x,)`, `as (u8,)`, `where (u8,):`, `a > (b,)`);
   - the braces of a one-expression block after a closure's `|..|` or a
     match arm's `=>` (and the comma rustfmt then puts after the arm):
     rustfmt removes them when a moved test loses an indent level and the
@@ -29,10 +47,10 @@ The adaptations a split needs are allowed, and only these:
     comment stays strict;
   - the literal path of `include_bytes!`, `include_str!` or `include!`
     when it resolves to the same file from the item's new location;
-  - `use` items, `mod` declarations (inline or out of line, with any
-    `#[path]`), inner attributes and inner docs (`#![..]`, `//!`), and
-    plain comments between items (SPDX headers, section banners) are not
-    items and are not compared.
+  - `use` items, the form of `mod` declarations (inline or out of line,
+    with any `#[path]`), inner docs (`//!`), and plain comments between
+    items (SPDX headers, section banners) are not items and are not
+    compared.
 
 Every other difference is residue, and the allowed residue is zero: each
 old item must reappear exactly once and no new item may appear. Exit 0
@@ -202,6 +220,8 @@ class Item:
     key: str
     path: str
     toks: list[str]
+    ctx: tuple[str, ...] = ()  # behavioural attributes of the enclosing modules
+    leaf: str = ""  # the innermost module's name
     norm: tuple[str, ...] = ()
     norm_vis: tuple[str, ...] = ()
 
@@ -265,9 +285,42 @@ def _key(toks: list[str], h: int) -> str:
     return f"{kw} {nxt}"
 
 
-def items_of(toks: list[str], path: str, excluded: dict[str, int] | None = None) -> list[Item]:
-    """The items of one file's tokens, inline modules flattened."""
+MOD_TALLY = "\x00mod "  # excluded-dict key prefix counting module names, not printed
+
+NON_BEHAVIOURAL_ATTRS = {"path", "doc", "allow", "warn", "deny", "forbid", "expect"}
+
+
+def _attr_text(toks: list[str]) -> str:
+    return " ".join(toks)
+
+
+def _behavioural(attr: list[str]) -> bool:
+    """Whether an attribute (`#` .. `]` tokens) can change what is compiled or how."""
+    body = attr[2:] if attr[1] == "[" else attr[3:]
+    return bool(body) and body[0] not in NON_BEHAVIOURAL_ATTRS
+
+
+@dataclass
+class ModDecl:
+    name: str
+    attrs: list[list[str]]  # outer attributes, `#` .. `]`
+    path_attr: str | None
+    inline_dirs: tuple[str, ...]  # inline modules enclosing the declaration
+    ctx: tuple[str, ...] = ()  # context in force where the declaration stands
+
+
+def items_of(
+    toks: list[str],
+    path: str,
+    excluded: dict[str, int] | None = None,
+    ctx: tuple[str, ...] = (),
+    leaf: str = "",
+    decls: list[ModDecl] | None = None,
+    inline_dirs: tuple[str, ...] = (),
+) -> list[Item]:
+    """The items of one file's tokens, inline modules flattened, each with its module context."""
     excluded = {} if excluded is None else excluded
+    decls = [] if decls is None else decls
     out: list[Item] = []
     i, n = 0, len(toks)
     while i < n:
@@ -277,12 +330,22 @@ def items_of(toks: list[str], path: str, excluded: dict[str, int] | None = None)
             i += 1
             continue
         if t == "#" and i + 1 < n and toks[i + 1] == "!":
+            end = _group_end(toks, i + 2)
+            attr = toks[i:end]
+            if _behavioural(attr):
+                ctx = (*ctx, _attr_text(["#", *attr[2:]]))
             excluded["inner attribute"] = excluded.get("inner attribute", 0) + 1
-            i = _group_end(toks, i + 2)
+            i = end
             continue
         start = i
+        attrs: list[list[str]] = []
         while i < n and (_is_doc(toks[i]) or toks[i] == "#" or (_is_comment(toks[i]) and i > start)):
-            i = _group_end(toks, i + 1) if toks[i] == "#" else i + 1
+            if toks[i] == "#":
+                end = _group_end(toks, i + 1)
+                attrs.append(toks[i:end])
+                i = end
+            else:
+                i += 1
         h = _head(toks, i)
         kw = toks[h] if h < n else ""
         semi = kw in SEMI_KINDS or (kw == "const" and h + 1 < n and toks[h + 1] != "fn")
@@ -298,34 +361,89 @@ def items_of(toks: list[str], path: str, excluded: dict[str, int] | None = None)
                 break
         if kw == "mod":
             excluded["mod declaration"] = excluded.get("mod declaration", 0) + 1
+            name = toks[h + 1]
+            excluded[MOD_TALLY + name] = excluded.get(MOD_TALLY + name, 0) + 1
+            inner = (*ctx, *(_attr_text(a) for a in attrs if _behavioural(a)))
             body = toks.index("{", h) if "{" in toks[h:j] else -1
-            if body >= 0 and body < j:
-                out += items_of(toks[body + 1 : j - 1], path, excluded)
+            if 0 <= body < j:
+                out += items_of(toks[body + 1 : j - 1], path, excluded, inner, name, decls, (*inline_dirs, name))
+            else:
+                path_attr = next(
+                    (a[4][1:-1] for a in attrs if a[2:4] == ["path", "="] and len(a) > 4 and a[4].startswith('"')),
+                    None,
+                )
+                decls.append(ModDecl(name, attrs, path_attr, inline_dirs, ctx))
         elif kw == "use":
             excluded["use"] = excluded.get("use", 0) + 1
         else:
-            out.append(Item(_key(toks, h), path, toks[start:j]))
+            out.append(Item(_key(toks, h), path, toks[start:j], ctx, leaf))
         i = j
     return out
+
+
+# Expression macros of std whose grammar accepts an optional trailing comma
+# and whose arguments rustfmt formats as Rust: their token trees get the
+# same reflow allowances as the code around them. Every other macro's
+# token tree (and every `macro_rules!` body) is compared exactly, since a
+# matcher can observe commas, braces and `pub`.
+STD_EXPRESSION_MACROS = {
+    "assert", "assert_eq", "assert_ne", "debug_assert", "debug_assert_eq", "debug_assert_ne",
+    "format", "format_args", "print", "println", "eprint", "eprintln", "write", "writeln",
+    "panic", "unreachable", "todo", "unimplemented", "vec", "dbg", "matches",
+}  # fmt: skip
 
 
 def _normalise(item: Item, keep_vis: bool) -> tuple[str, ...]:
     toks = item.toks
     out: list[str] = []
+    opaque: list[tuple[int, int]] = []  # [start, end) spans of `out` compared exactly
     i = 0
     while i < len(toks):
         t = toks[i]
-        if not keep_vis and t == "pub":
-            i = _skip_vis(toks, i)
-            continue
         if t in INCLUDES and toks[i + 1 : i + 3] == ["!", "("] and toks[i + 3].startswith('"'):
             lit = toks[i + 3][1:-1]
             out += [t, "!", "(", "@" + posixpath.normpath(posixpath.join(posixpath.dirname(item.path), lit))]
             i += 4
             continue
+        if t == "#" and i + 1 < len(toks) and toks[i + 1] in {"[", "!"}:
+            end = _group_end(toks, i + 1 if toks[i + 1] == "[" else i + 2)
+            opaque.append((len(out), len(out) + end - i))
+            out += toks[i:end]
+            i = end
+            continue
+        if t == "!" and i > 0 and _is_word(toks[i - 1]) and i + 1 < len(toks):
+            j = i + 1
+            if toks[i - 1] == "macro_rules" and j < len(toks) and _is_word(toks[j]):
+                j += 1
+            if j < len(toks) and toks[j] in PUNCT_OPEN and toks[i - 1] not in STD_EXPRESSION_MACROS:
+                end = _group_end(toks, j)
+                opaque.append((len(out), len(out) + end - i))
+                out += toks[i:end]
+                i = end
+                continue
+        if not keep_vis and t == "pub":
+            i = _skip_vis(toks, i)
+            continue
         out.append(t)
         i += 1
-    return tuple(_drop_trailing_commas(_unwrap_blocks(out)))
+    # reflow the item with each opaque span sealed into one placeholder
+    # token, so brackets stay balanced and nothing inside a span moves
+    sealed: list[str] = []
+    spans: dict[str, list[str]] = {}
+    at = 0
+    for lo, hi in opaque:
+        sealed += out[at:lo]
+        mark = f"\x00{len(spans)}"
+        spans[mark] = out[lo:hi]
+        sealed.append(mark)
+        at = hi
+    sealed += out[at:]
+    flowed = _drop_trailing_commas(_unwrap_blocks(sealed))
+    return tuple(t for tok in flowed for t in spans.get(tok, [tok]))
+
+
+def _is_word(t: str) -> bool:
+    return bool(t) and (t[0].isalpha() or t[0] == "_") and all(c in IDENT for c in t)
 
 
 def _is_closure_bar(toks: list[str], i: int) -> bool:
@@ -375,33 +493,54 @@ def _unwrap_blocks(toks: list[str]) -> list[str]:
     return out
 
 
-CALL_LIKE_BEFORE_KEYWORDS = {
-    "return",
-    "in",
-    "if",
-    "while",
-    "match",
-    "break",
-    "let",
-    "mut",
-    "ref",
-    "yield",
-    "else",
-    "move",
-}
+RUST_KEYWORDS = {
+    "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum",
+    "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move",
+    "mut", "pub", "ref", "return", "self", "static", "struct", "super", "trait", "true",
+    "type", "unsafe", "use", "where", "while", "yield", "box", "do", "final", "macro",
+    "override", "priv", "typeof", "unsized", "virtual", "abstract", "become", "try", "gen",
+}  # fmt: skip
 
 
 def _call_like(out: list[str], open_at: int) -> bool:
-    """Whether the `(` at open_at opens call arguments or parameters, not a tuple."""
+    """Whether the `(` at open_at opens call arguments or parameters, not a tuple.
+
+    Only after a plain identifier (a function, method, constructor or macro
+    name), `)` or `]`. Never after a keyword (`for (x,)`, `as (u8,)`,
+    `where (u8,):`) or `>`, which may be a comparison (`a > (b,)`).
+    """
     if open_at == 0:
         return False
     prev = out[open_at - 1]
-    if prev in {")", "]", "!"}:
+    if prev in {")", "]"}:
         return True
     if prev == ">":
-        return open_at > 1 and out[open_at - 2] not in {"=", "-"}
-    first = prev[:1]
-    return (first.isalpha() or first == "_") and prev not in CALL_LIKE_BEFORE_KEYWORDS
+        return _closes_fn_generics(out, open_at - 1)
+    if prev == "!" and open_at > 1 and out[open_at - 2] in STD_EXPRESSION_MACROS:
+        return True
+    return _is_word(prev) and prev not in RUST_KEYWORDS
+
+
+def _closes_fn_generics(out: list[str], gt: int) -> bool:
+    """Whether the `>` at gt closes `fn name<..>` or a turbofish `::<..>`.
+
+    Anything else (`a > (b,)`, `x < y && z > (w,)`) is a comparison.
+    """
+    depth = 0
+    k = gt
+    while k >= 0:
+        t = out[k]
+        if t == ">" and not (k > 0 and out[k - 1] in {"-", "="}):
+            depth += 1
+        elif t == "<":
+            depth -= 1
+            if depth == 0:
+                before = out[k - 2 : k]
+                return before == [":", ":"] or (len(before) == 2 and before[0] == "fn" and _is_word(before[1]))
+        elif t in {";", "{", "}"}:
+            return False
+        k -= 1
+    return False
 
 
 def _drop_trailing_commas(toks: list[str]) -> list[str]:
@@ -422,13 +561,63 @@ def _drop_trailing_commas(toks: list[str]) -> list[str]:
     return out
 
 
+def _module_name(path: str) -> str:
+    p = posixpath.splitext(path)[0]
+    base = posixpath.basename(p)
+    return posixpath.basename(posixpath.dirname(p)) if base == "mod" else base
+
+
+def _decl_target(file: str, d: ModDecl, tree: dict[str, str]) -> str | None:
+    """The file a `mod name;` declaration in `file` loads, if the tree holds it."""
+    here = posixpath.dirname(file)
+    base = posixpath.basename(posixpath.splitext(file)[0])
+    if d.path_attr is not None:
+        cands = [posixpath.normpath(posixpath.join(here, *d.inline_dirs, d.path_attr))]
+    else:
+        owner = here if base == "mod" else posixpath.join(here, base)
+        stem = posixpath.join(owner, *d.inline_dirs, d.name)
+        cands = [posixpath.normpath(stem + ".rs"), posixpath.normpath(posixpath.join(stem, "mod.rs"))]
+    return next((c for c in cands if c in tree), None)
+
+
 def collect(tree: dict[str, str]) -> tuple[list[Item], dict[str, int]]:
+    """Every item of the tree, with the context of the modules that load it.
+
+    A file another file declares (`mod x;`, `#[path]`) inherits the
+    declaring module's context plus the declaration's behavioural
+    attributes; every other file is a root with an empty context.
+    """
     excluded: dict[str, int] = {}
+    toks = {p: tokens(src) for p, src in tree.items()}
+    decls: dict[str, list[ModDecl]] = {}
+    for p in tree:
+        found: list[ModDecl] = []
+        items_of(toks[p], p, {}, (), "", found)
+        decls[p] = found
+    parent: dict[str, tuple[str, ModDecl]] = {}
+    for p, ds in decls.items():
+        for d in ds:
+            target = _decl_target(p, d, tree)
+            if target is not None:
+                parent[target] = (p, d)
+
+    def context(p: str, seen: frozenset[str] = frozenset()) -> tuple[tuple[str, ...], str]:
+        if p not in parent or p in seen:
+            return (), _module_name(p)
+        up, d = parent[p]
+        ctx, _ = context(up, seen | {p})
+        # the declaring file's context, the context where the declaration
+        # stands in it (inline modules, `#![..]`), then its own attributes
+        return (*ctx, *d.ctx, *(_attr_text(a) for a in d.attrs if _behavioural(a))), d.name
+
     items: list[Item] = []
     for path in sorted(tree):
-        for it in items_of(tokens(tree[path]), path, excluded):
-            it.norm = _normalise(it, keep_vis=False)
-            it.norm_vis = _normalise(it, keep_vis=True)
+        ctx, leaf = context(path)
+        for it in items_of(toks[path], path, excluded, ctx, leaf):
+            body_n = _normalise(it, keep_vis=False)
+            body_v = _normalise(it, keep_vis=True)
+            it.norm = (*it.ctx, "§", *body_n)
+            it.norm_vis = (*it.ctx, "§", *body_v)
             items.append(it)
     return items, excluded
 
@@ -436,24 +625,52 @@ def collect(tree: dict[str, str]) -> tuple[list[Item], dict[str, int]]:
 def compare(old: dict[str, str], new: dict[str, str]) -> Result:
     old_items, old_ex = collect(old)
     new_items, new_ex = collect(new)
-    r = Result(excluded={f"old {k}": v for k, v in old_ex.items()} | {f"new {k}": v for k, v in new_ex.items()})
-    pool: dict[tuple[str, tuple[str, ...]], list[Item]] = defaultdict(list)
-    for it in new_items:
-        pool[it.key, it.norm].append(it)
+    old_mods = {k: v for k, v in old_ex.items() if k.startswith(MOD_TALLY)}
+    new_mods = {k: v for k, v in new_ex.items() if k.startswith(MOD_TALLY)}
+    r = Result(
+        excluded={f"old {k}": v for k, v in old_ex.items() if k not in old_mods}
+        | {f"new {k}": v for k, v in new_ex.items() if k not in new_mods}
+    )
+    # a split keeps every module it had (an inline one becomes a file) and may add siblings
+    for tally, count in sorted(old_mods.items()):
+        name = tally[len(MOD_TALLY) :]
+        r.residue += [Unmatched("old", f"mod {name}", "", f"mod {name}")] * max(0, count - new_mods.get(tally, 0))
+    by_key: dict[str, tuple[list[Item], list[Item]]] = defaultdict(lambda: ([], []))
     for it in old_items:
-        cands = pool.get((it.key, it.norm))
-        if not cands:
-            r.residue.append(Unmatched("old", it.key, it.path, " ".join(it.toks), list(it.norm)))
-            continue
-        same = next((c for c in cands if c.norm_vis == it.norm_vis), None)
-        mate = same or cands[0]
-        cands.remove(mate)
+        by_key[it.key][0].append(it)
+    for it in new_items:
+        by_key[it.key][1].append(it)
+
+    def pair(o: Item, n: Item) -> None:
         r.matched += 1
-        if same is None:
+        if o.norm_vis != n.norm_vis:
             r.visibility_changed += 1
-    for left in pool.values():
-        for it in left:
-            r.residue.append(Unmatched("new", it.key, it.path, " ".join(it.toks), list(it.norm)))
+
+    for key, (olds, news) in by_key.items():
+        olds, news = list(olds), list(news)
+        duplicated = len(olds) > 1 or len(news) > 1
+        # same leaf module first; a key held once on each side may change module
+        for o in list(olds):
+            mate = next((n for n in news if n.norm == o.norm and (n.leaf == o.leaf or not duplicated)), None)
+            if mate is not None:
+                pair(o, mate)
+                olds.remove(o)
+                news.remove(mate)
+        # a leftover may still change module, but only when it truly moved:
+        # nothing of its key is left in its old module on the new side, and
+        # nothing of its key is left in its new module on the old side. Two
+        # same-named items that swapped bodies leave each module holding a
+        # mismatched one, so they stay residue.
+        for o in list(olds):
+            if any(n.leaf == o.leaf for n in news):
+                continue
+            mate = next((n for n in news if n.norm == o.norm and not any(x.leaf == n.leaf for x in olds)), None)
+            if mate is not None:
+                pair(o, mate)
+                olds.remove(o)
+                news.remove(mate)
+        r.residue += [Unmatched("old", key, o.path, " ".join(o.toks), list(o.norm)) for o in olds]
+        r.residue += [Unmatched("new", key, n.path, " ".join(n.toks), list(n.norm)) for n in news]
     return r
 
 
@@ -478,8 +695,8 @@ def render(r: Result) -> str:
         lines.append(f"  {key} ({where})")
         if o and n:
             lines.append("      " + first_difference(o.norm, n.norm))
-        else:
-            lines.append(f"      only {(o or n).side}: {(o or n).text[:300]}")
+        elif one := o or n:
+            lines.append(f"      only {one.side}: {one.text[:300]}")
     return "\n".join(lines)
 
 

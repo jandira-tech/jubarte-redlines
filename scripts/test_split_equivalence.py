@@ -153,7 +153,7 @@ class Residue(unittest.TestCase):
 
     def test_a_reindented_multiline_string_is_residue(self) -> None:
         old = {"m.rs": 'mod t {\n    fn s() -> &\'static str {\n        "a\n        b"\n    }\n}\n'}
-        new = {"m/t.rs": 'fn s() -> &\'static str {\n    "a\n    b"\n}\n'}
+        new = {"m/mod.rs": "mod t;\n", "m/t.rs": 'fn s() -> &\'static str {\n    "a\n    b"\n}\n'}
         res = se.compare(old, new).residue
         self.assertEqual({u.key for u in res}, {"fn s"})
 
@@ -225,6 +225,103 @@ class Items(unittest.TestCase):
         src = "macro_rules! m { () => {}; }\nimpl<T> Tr for S<T> { fn g() {} }\nthread_local! { static X: u8 = 0; }\n"
         keys = [i.key for i in se.items_of(se.tokens(src), "x.rs")]
         self.assertEqual(keys, ["macro_rules m", "impl < T > Tr for S < T >", "macro thread_local"])
+
+
+def residue(old: dict[str, str], new: dict[str, str]) -> list[se.Unmatched]:
+    return se.compare(old, new).residue
+
+
+class ReviewFindings(unittest.TestCase):
+    """False negatives the MiniMax-M3 review of #2457 found, each now residue."""
+
+    def test_pub_inside_a_macro_matcher_is_compared(self) -> None:
+        old = "macro_rules! kw {\n    (pub $x:ident) => { 1 };\n    ($x:ident) => { 2 };\n}\n"
+        new = "macro_rules! kw {\n    ($x:ident) => { 1 };\n    (pub $x:ident) => { 2 };\n}\n"
+        self.assertNotEqual(residue({"m.rs": old}, {"m/a.rs": new}), [])
+
+    def test_a_user_macro_invocation_keeps_its_trailing_comma(self) -> None:
+        self.assertNotEqual(one("let v = choose!(1,);", "let v = choose!(1);").residue, [])
+        old = "macro_rules! exact { [foo,] => { 1 } }\n"
+        new = "macro_rules! exact { [foo] => { 1 } }\n"
+        self.assertNotEqual(residue({"m.rs": old}, {"m/a.rs": new}), [])
+
+    def test_a_std_expression_macro_may_reflow_its_trailing_comma(self) -> None:
+        self.assertEqual(one("assert_eq!(a, b,);", "assert_eq!(a, b);").residue, [])
+        self.assertEqual(one('panic!("{}", x,);', 'panic!("{}", x);').residue, [])
+
+    def test_closure_braces_inside_a_user_macro_are_compared(self) -> None:
+        self.assertNotEqual(one("let v = choose!(|x| { foo });", "let v = choose!(|x| foo);").residue, [])
+
+    def test_closure_braces_inside_a_std_macro_may_reflow(self) -> None:
+        self.assertEqual(
+            one("assert!(v.iter().any(|g| { g.ok() }));", "assert!(v.iter().any(|g| g.ok()));").residue, []
+        )
+
+    def test_a_one_element_tuple_after_any_keyword_keeps_its_comma(self) -> None:
+        self.assertNotEqual(one("for (x,) in xs { g(x); }", "for (x) in xs { g(x); }").residue, [])
+        self.assertNotEqual(one("let v = t as (u8,);", "let v = t as (u8);").residue, [])
+        wh_old = {"m.rs": "fn s() -> u8 where (u8,): W { 0 }\n"}
+        wh_new = {"m/a.rs": "fn s() -> u8 where (u8): W { 0 }\n"}
+        self.assertNotEqual(residue(wh_old, wh_new), [])
+
+    def test_a_comparison_against_a_one_element_tuple_keeps_its_comma(self) -> None:
+        self.assertNotEqual(one("let c = a > (b,);", "let c = a > (b);").residue, [])
+
+    def test_generic_fn_parameters_and_turbofish_calls_may_reflow(self) -> None:
+        self.assertEqual(one("let v = parse::<u8>(s,);", "let v = parse::<u8>(s);").residue, [])
+        old = {"m.rs": "fn blank<'de, D: Into<u8>>(de: D,) -> u8 { 0 }\n"}
+        new = {"m/a.rs": "fn blank<'de, D: Into<u8>>(de: D) -> u8 { 0 }\n"}
+        self.assertEqual(residue(old, new), [])
+
+    def test_a_comparison_after_generics_keeps_its_tuple_comma(self) -> None:
+        self.assertNotEqual(one("let c = x < y && z > (w,);", "let c = x < y && z > (w);").residue, [])
+
+    def test_same_named_items_cannot_swap_bodies_across_modules(self) -> None:
+        old = {"m/a.rs": "fn value() -> u8 { 1 }\n", "m/b.rs": "fn value() -> u8 { 2 }\n"}
+        new = {"m/a.rs": "fn value() -> u8 { 2 }\n", "m/b.rs": "fn value() -> u8 { 1 }\n"}
+        self.assertNotEqual(residue(old, new), [])
+
+    def test_same_named_test_helpers_still_match_by_module(self) -> None:
+        old = {"m.rs": "mod a_tests {\n    fn exercise() {}\n}\nmod b_tests {\n    fn exercise() { g(); }\n}\n"}
+        new = {
+            "m/mod.rs": '#[path = "tests/a_tests.rs"]\nmod a_tests;\n#[path = "tests/b_tests.rs"]\nmod b_tests;\n',
+            "m/tests/a_tests.rs": "fn exercise() {}\n",
+            "m/tests/b_tests.rs": "fn exercise() { g(); }\n",
+        }
+        self.assertEqual(residue(old, new), [])
+
+    def test_a_renamed_module_is_residue(self) -> None:
+        res = residue({"m.rs": "mod old_name {\n    fn f() {}\n}\n"}, {"m.rs": "mod new_name {\n    fn f() {}\n}\n"})
+        self.assertEqual([u.key for u in res], ["mod old_name"])
+
+    def test_dropping_cfg_test_from_an_inline_module_is_residue(self) -> None:
+        old = {"m.rs": "#[cfg(test)]\nmod tests {\n    fn f() {}\n}\nfn g() {}\n"}
+        new = {"m.rs": "mod tests {\n    fn f() {}\n}\nfn g() {}\n"}
+        self.assertEqual([u.key for u in residue(old, new)], ["fn f", "fn f"])
+
+    def test_a_cfg_on_a_new_sibling_declaration_is_residue(self) -> None:
+        old = {"m.rs": "fn f() {}\n"}
+        new = {"m/mod.rs": '#[cfg(feature = "x")]\nmod a;\n', "m/a.rs": "fn f() {}\n"}
+        self.assertNotEqual(residue(old, new), [])
+
+    def test_a_test_module_moved_out_of_line_keeps_its_cfg_through_the_declaration(self) -> None:
+        old = {"m.rs": "#[cfg(test)]\nmod t {\n    fn f() {}\n}\n"}
+        new = {"m/mod.rs": '#[cfg(test)]\n#[path = "tests/t.rs"]\nmod t;\n', "m/tests/t.rs": "fn f() {}\n"}
+        self.assertEqual(residue(old, new), [])
+        lost = {"m/mod.rs": '#[path = "tests/t.rs"]\nmod t;\n', "m/tests/t.rs": "fn f() {}\n"}
+        self.assertNotEqual(residue(old, lost), [])
+
+    def test_a_declaration_inside_a_cfg_inline_module_carries_its_cfg(self) -> None:
+        old = {"m.rs": "#[cfg(test)]\nmod t {\n    mod x {\n        fn f() {}\n    }\n}\n"}
+        new = {"m/mod.rs": "#[cfg(test)]\nmod t {\n    mod x;\n}\n", "m/t/x.rs": "fn f() {}\n"}
+        self.assertEqual(residue(old, new), [])
+        lost = {"m/mod.rs": "mod t {\n    mod x;\n}\n", "m/t/x.rs": "fn f() {}\n"}
+        self.assertNotEqual(residue(old, lost), [])
+
+    def test_an_inner_cfg_attribute_counts_as_the_module_context(self) -> None:
+        old = {"m.rs": "#[cfg(test)]\nmod t {\n    fn f() {}\n}\n"}
+        new = {"m/mod.rs": "mod t;\n", "m/t.rs": "#![cfg(test)]\nfn f() {}\n"}
+        self.assertEqual(residue(old, new), [])
 
 
 if __name__ == "__main__":
