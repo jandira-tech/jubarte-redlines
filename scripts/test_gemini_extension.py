@@ -56,7 +56,7 @@ class GeminiExtension(unittest.TestCase):
         args = self.data["mcpServers"]["jubarte"]["args"]
         self.assertIn("jubarte-mcp", args)
         self.assertEqual(args[args.index("--root") + 1], "${workspacePath}")
-        self.assertIn("jubarte-redlines[mcp]", args)
+        self.assertIn("jubarte-docx[mcp]", args)
 
     def test_context_file_and_skill_exist(self) -> None:
         self.assertTrue((ROOT / self.data["contextFileName"]).is_file())

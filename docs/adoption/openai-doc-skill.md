@@ -33,7 +33,7 @@ and ask the user when those cannot be installed.
 
 ## 2. The replacement, step by step
 
-Commands as `jubarte`; `python -m jubarte_redlines` takes a subset of the
+Commands as `jubarte`; `python -m jubarte` takes a subset of the
 same subcommands (no `append`, `scrub` or `self-update`, and its `convert`
 has no `--timeout`, `--fail-on-substitution` or `-t md` yet). Exit codes: `0`
 done, `1` error, `2` usage error or `validate` findings (warnings
@@ -53,7 +53,7 @@ included), `3` edit plan refused (nothing written).
 | Comparing two versions | `jubarte a.docx b.docx -o redline.docx --author "Name"` | released |
 | Accept or reject | `jubarte accept FILE -o OUT` / `reject`, all at once or per change (`--id r12`, `--author`, `--kind`); `jubarte edit FILE -p r12 --accept` for one | released |
 | Legacy `.doc` (LibreOffice in the install section) | `jubarte convert old.doc` writes `old.docx`: text, headings, lists, bold, italic, tables ([plans.md](plans.md) §1 for the rest) | released |
-| Calling it as tools instead of a command line | `uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` serves `docx_text`, `docx_inspect`, `docx_edit`, `docx_render`, `docx_compare`, `docx_changes`, `docx_accept`, `docx_reject` and more as MCP tools, every path confined to `--root`; see [mcp.md](mcp.md). | released |
+| Calling it as tools instead of a command line | `uvx --from 'jubarte-docx[mcp]' jubarte-mcp --root .` serves `docx_text`, `docx_inspect`, `docx_edit`, `docx_render`, `docx_compare`, `docx_changes`, `docx_accept`, `docx_reject` and more as MCP tools, every path confined to `--root`; see [mcp.md](mcp.md). | released |
 
 ## 3. What you lose, or keep
 
@@ -77,9 +77,9 @@ included), `3` edit plan refused (nothing written).
 ## 4. Check it without trusting us
 
 ```bash
-uv run --no-project --with jubarte-redlines python -m jubarte_redlines convert your.docx -o your.png --dpi 100
+uv run --no-project --with jubarte-redlines python -m jubarte convert your.docx -o your.png --dpi 100
 # Compare the pages with your current soffice + pdftoppm output, side by side.
-uv run --no-project --with jubarte-redlines python -m jubarte_redlines read your.docx
+uv run --no-project --with jubarte-redlines python -m jubarte read your.docx
 ```
 
 Every row above has a side-by-side folder in

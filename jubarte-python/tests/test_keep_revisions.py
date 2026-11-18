@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from jubarte_redlines import Document, EditPlan
+from jubarte import Document, EditPlan
 from docx_fixture import docx, para
 
 OTHER = (
@@ -51,7 +51,7 @@ def test_keep_is_the_only_new_policy() -> None:
 
 def test_capabilities_do_not_claim_skip_failed() -> None:
     # The binding's apply takes no --skip-failed; only the CLI skips.
-    import jubarte_redlines as jubarte
+    import jubarte as jubarte
 
     caps = jubarte.capabilities()
     assert caps["runtime"] == "python"

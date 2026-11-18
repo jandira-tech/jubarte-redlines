@@ -308,7 +308,7 @@ and `jubarte self-update` skips that release until a signed one follows.
 V=x.y.z
 curl -sfA jubarte-release https://crates.io/api/v1/crates/jubarte/$V | jq -r .version.num
 npm view jubarte-wasm@$V version releaseNotes
-curl -sf https://pypi.org/pypi/jubarte-redlines/$V/json | jq -r '.urls[].filename'
+curl -sf https://pypi.org/pypi/jubarte-docx/$V/json | jq -r '.urls[].filename'
 gh release view v$V --json assets -q '.assets[].name'
 ```
 

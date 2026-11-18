@@ -174,7 +174,7 @@ before|you|stack: the release binary survives a 1 MiB main-thread stack (Windows
 5|auto|Python 3.12: the script tests run on the scripts' floor, Python 3.12 (ruff.toml targets py312 and reports newer syntax), not on the machine's python3|uv run -q --no-project --python 3.12 python scripts/test_release_sh.py
 before|you|unused: scan every manifest for dependencies nothing references — each workspace Cargo.toml, every package.json, pyproject (0.11.2 found js-sys in jubarte-wasm/Cargo.toml)|grep -rn <crate> src jubarte-wasm/src benches examples (empty output = removable)
 before|you|API snapshot: docs/api holds the previous release's rustdoc snapshot, the baseline step 6 logs the drift against; a release that skipped step 6 left none (0.13.0), so backfill it from its tag before the run, with this checkout's script (the tag's own may predate #1769 and fail under mbx), and commit it with the release pull request|git worktree add <dir> <previous tag>; cp scripts/api_snapshot.py <dir>/scripts/; (cd <dir> && python3 scripts/api_snapshot.py <previous version>); cp <dir>/docs/api/jubarte-<previous tag>.json.gz <dir>/docs/api/jubarte-<previous tag>.api.txt docs/api/
-before|you|hand-run Python proofs pin the interpreter to --python 3.12: uv's default on the release machine may be a free-threaded build (0.14.0: 3.15t) that no abi3 wheel serves, and an unpinned pip proof then builds the sdist and passes on nothing PyPI serves (0.13.0's PyPI PASS)|uv python find; uv run -q --isolated --no-project --python 3.12 --no-build-package jubarte-redlines --with jubarte-redlines==@V@ python -c 'import jubarte_redlines as j; print(j.capabilities()["engine_version"])'
+before|you|hand-run Python proofs pin the interpreter to --python 3.12: uv's default on the release machine may be a free-threaded build (0.14.0: 3.15t) that no abi3 wheel serves, and an unpinned pip proof then builds the sdist and passes on nothing PyPI serves (0.13.0's PyPI PASS)|uv python find; uv run -q --isolated --no-project --python 3.12 --no-build-package jubarte-docx --with jubarte-docx==@V@ python -c 'import jubarte as j; print(j.capabilities()["engine_version"])'
 before|you|the app's scripts are bash (release-engine.sh, build-release-app.sh, notarize-direct.sh, publish-mac-app-store.sh): run each by its path or with bash, never sh or zsh — the release machine's shell is zsh, which does not word-split a variable and indexes arrays from 1|for f in release-engine.sh build-release-app.sh notarize-direct.sh publish-mac-app-store.sh; do bash -n jubarte-app/scripts/$f; done
 7|auto|keywords: the crate's keywords and categories are inside crates.io's limits (at most 5 each, keywords ASCII, a letter first, at most 20 characters) — one more fails the publish after the point of no return|scripts/release.sh step 7 (crate_keywords_ok)
 0|auto|The bump kind docs/VERSIONING.md asks for, proven before step 1 writes anything: pre-1.0 a patch carries no new feature (a ### Added heading), no public API change cargo-semver-checks finds against the previous release's tag (0.10.1 shipped four breaking fields as a patch), and no public item path the previous release's listing does not have (cargo-semver-checks 0.51.0 has no lint for a new free function, trait, module, macro or type alias; the baseline is always a listing built from the previous tag in a throwaway worktree of the tag with this checkout's script, and a committed docs/api file is not that baseline); a minor or major may|cargo semver-checks check-release -p <each crate the previous tag holds> --baseline-rev <previous tag> --release-type patch --default-features; scripts/api_snapshot.py --added <listing from the worktree of the tag> <HEAD listing>
@@ -187,7 +187,7 @@ before|you|app lock: jubarte-app/src-tauri/Cargo.lock records jubarte-redlines @
 3|auto|the app compiles against the engine before the tag (#1816): a fresh engine-at-HEAD + app-at-main layout — the app checked out at jubarte-app/ inside a copy of this one, so src-tauri takes the engine by path "../..", never the release worktree mid-run — runs cargo test in src-tauri; a compile error or a failing test stops the release before anything is published (--skip-gates skips it with the gates; a stale app lock is normal — no --locked — and an existing tag is no skip)|scripts/release.sh (app_test_gate, between steps 3 and 4: git archive HEAD of both checkouts into mktemp -d)
 before|you|the app's checkout is in place: a clone of arthrod/jubarte-app at jubarte-app/ (this repository does not track it) or named by JUBARTE_APP_DIR, on main, in sync with its origin, clean, able to build the site (node_modules, public/fixtures) — step 13 deploys jubarte.pro from it|jubarte-app/scripts/release-engine.sh @V@ --engine-dir "$PWD" --preflight
 before|you|the App Store path is ready for the after-builds: the asc credentials exist (~/.appstoreconnect), the app's provisioning profiles are present and out of every commit (gitignored; if one ever reached a repository's history, accept it knowingly or rotate it), and App Store Connect holds no @V@ version record already used — Apple refuses a re-used number|ls jubarte-app/src-tauri/*.provisionprofile; (cd jubarte-app && ./scripts/asc-build-status.sh)
-before|you|Trusted publishers (#1642): crates.io jubarte-redlines, PyPI jubarte-redlines, npm jubarte-wasm and npm jubarte-redlines each trust owner jandira-tech, repository jubarte-redlines, workflow release.yml, environment release — release.yml publishes with no token. npm: each configuration must allow npm publish (one made after 2026-09-03 allows only npm stage publish unless that box is ticked, and a plain publish then fails E404), and a new configuration expires unless its first publish lands within two days — 0.13.0 never reached npm for this|npm trust list jubarte-wasm; npm trust list jubarte-redlines (both after npm login); npm trust github <package> --file release.yml --repo jandira-tech/jubarte-redlines --env release --allow-publish -y
+before|you|Trusted publishers (#1642): crates.io jubarte-redlines, PyPI jubarte-docx (new in 0.19.0: register it as a pending publisher at https://pypi.org/manage/account/publishing/ before the tag), PyPI jubarte-redlines, npm jubarte-wasm and npm jubarte-redlines each trust owner jandira-tech, repository jubarte-redlines, workflow release.yml, environment release — release.yml publishes with no token. npm: each configuration must allow npm publish (one made after 2026-09-03 allows only npm stage publish unless that box is ticked, and a plain publish then fails E404), and a new configuration expires unless its first publish lands within two days — 0.13.0 never reached npm for this|npm trust list jubarte-wasm; npm trust list jubarte-redlines (both after npm login); npm trust github <package> --file release.yml --repo jandira-tech/jubarte-redlines --env release --allow-publish -y
 before|you|Trusted publishers for the split's first release: crates.io registers a trusted publisher only on a crate that exists, so the first release of each new crate — crates.io jubarte, jubarte-dom, jubarte-opc, jubarte-render, jubarte-doc, jubarte-markdown, jubarte-edit and jubarte-cli — is published from here with a token (--local-publish; scripts/publish_crates.sh resumes past what is live). Then register owner jandira-tech, repository jubarte-redlines, workflow release.yml, environment release on each of the eight before the next release|scripts/release.sh @V@ <summaries> --local-publish; https://crates.io/crates/<crate>/settings (Trusted Publishing) for each of the eight
 before|you|Only with --local-publish: UV_PUBLISH_TOKEN is exported before the run (name only, never print it), crates.io and npm are logged in, and the owner is at the keyboard for npm's browser approval (2FA) — step 0 checks them only then|set -a; source <owner .env>; set +a; test -n "$UV_PUBLISH_TOKEN"; npm whoami
 before|you|Ring-2 validity ratchet: no NEW OpenXML validator keys vs tools/validity_baseline.tsv and no baselined stems not run; stage the legacy sources from corpus/word/pools/word_based_pairs.csv and verify renamed aliases via corpus/word/notices/RENAMED.csv (NEUROTIC_DOCX_BENCH, default ../neurotic_docx_bench); missing originals require recovery or maintainer-authorized re-blessing; an output the validator cannot even open needs a Word probe before it ships|python3 scripts/stage_ring2_sources.py .scratch/ring2_sources && scripts/redline-sweep.sh tests/corpus/neurotic_docx_bench/corpus/word_based/centralized_mapping.csv .scratch/ring2_sources .scratch/ring2_sweep --validate (the 207-pair mapping the baseline is keyed on; restore dangling bench links with uv run bench fixtures download from the bench root, then rerun staging; then the --probe sweep for refusals)
@@ -385,7 +385,10 @@ crates_has()  { scripts/publish_crates.sh "$VER" --pending 2>/dev/null | tail -1
 # The project listing, not /pypi/<name>/<version>/json: PyPI's CDN keeps a
 # 404 for that URL once anything asked before the upload (the v0.11.0 verify
 # failed on a live release), while the listing is purged on upload.
-pypi_has()    { curl -sf "https://pypi.org/pypi/jubarte-redlines/json" | python3 -c 'import json, sys; sys.exit(sys.argv[1] not in json.load(sys.stdin)["releases"])' "$VER"; }
+# jubarte-docx is the engine's distribution and jubarte-redlines its shim
+# (jubarte-python/compat); a release holds both.
+pypi_dist_has() { curl -sf "https://pypi.org/pypi/$1/json" | python3 -c 'import json, sys; sys.exit(sys.argv[1] not in json.load(sys.stdin)["releases"])' "$VER"; }
+pypi_has()    { pypi_dist_has jubarte-docx && pypi_dist_has jubarte-redlines; }
 npm_has()     { [ "$(npm view "jubarte-wasm@$VER" version 2>/dev/null)" = "$VER" ]; }
 npm_cli_has() { [ "$(npm view "jubarte-redlines@$VER" version 2>/dev/null)" = "$VER" ]; }
 ghrel_has()   { gh release view "$TAG" -R jandira-tech/jubarte-redlines >/dev/null 2>&1; }
@@ -402,7 +405,7 @@ ghrel_wheels() { gh release view "$TAG" --json assets -q '.assets[].name' -R jan
 # hand it over stops the run: a one-platform local wheel never stands in.
 download_ci_wheels() {
   local err=dist/pypi-download.err
-  if gh release download "$TAG" --pattern 'jubarte_redlines-*' \
+  if gh release download "$TAG" --pattern 'jubarte_docx-*' --pattern 'jubarte_redlines-*' \
       --dir dist/pypi --clobber -R jandira-tech/jubarte-redlines </dev/null >/dev/null 2>"$err" \
      && ls dist/pypi/*.whl >/dev/null 2>&1; then
     rm -f "$err"
@@ -982,6 +985,12 @@ for f in jubarte-wasm/Cargo.toml jubarte-rust-inproc/Cargo.toml; do
     && rm "$f.bak"
 done
 step "jubarte-python/Cargo.toml, jubarte-wasm/Cargo.toml, jubarte-rust-inproc/Cargo.toml → $VER"
+# The jubarte-redlines shim: its version and its two jubarte-docx pins
+# move together (any x.y.z, so a resumed run rewrites the same $VER).
+sed -i.bak -E -e "s/^version = \"[0-9]+\.[0-9]+\.[0-9]+\"$/version = \"$VER\"/" \
+  -e "s/(jubarte-docx(\[mcp\])?)==[0-9]+\.[0-9]+\.[0-9]+\"/\1==$VER\"/g" \
+  jubarte-python/compat/pyproject.toml && rm jubarte-python/compat/pyproject.toml.bak
+step "jubarte-python/compat/pyproject.toml (the jubarte-redlines shim) → $VER, pinning jubarte-docx==$VER"
 (cd jubarte-wasm/npm && npm pkg set "version=$VER" >/dev/null)
 # `npx jubarte-redlines` runs on the jubarte-wasm of its own release.
 (cd jubarte-wasm/cli && npm pkg set "version=$VER" "dependencies.jubarte-wasm=^$VER" >/dev/null)
@@ -1000,9 +1009,11 @@ half_bumped() {
   die "$1 is not on $VER after the version sync — a half-bumped tree from an interrupted step 1; fix $1 by hand, commit or reset, and rerun"
 }
 for f in Cargo.toml jubarte-python/Cargo.toml jubarte-wasm/Cargo.toml \
-         jubarte-rust-inproc/Cargo.toml; do
+         jubarte-rust-inproc/Cargo.toml jubarte-python/compat/pyproject.toml; do
   grep -q "^version = \"$VER\"$" "$f" || half_bumped "$f"
 done
+[ "$(grep -c "jubarte-docx\(\[mcp\]\)\?==$VER\"" jubarte-python/compat/pyproject.toml)" = 2 ] \
+  || half_bumped "jubarte-python/compat/pyproject.toml (its jubarte-docx pins)"
 for f in jubarte-wasm/npm/package.json jubarte-wasm/cli/package.json \
          gemini-extension.json; do
   grep -q "\"version\": \"$VER\"" "$f" || half_bumped "$f"
@@ -1536,7 +1547,7 @@ cat <<EOF
   About to push main + $TAG and publish:
     crates.io  jubarte $VER and its eight crates
     npm        jubarte-wasm $VER
-    PyPI       jubarte-redlines $VER
+    PyPI       jubarte-docx $VER and its jubarte-redlines shim
     GitHub     release $TAG (release.yml builds binaries + wheels)
   Summaries ride along on every channel — verify greps them afterwards.
   The bump kind was proven in step 0 (cargo-semver-checks, and for a patch the added public paths); the API drift is in the log above.
@@ -1703,7 +1714,7 @@ if [ "$NO_WAIT" = 0 ]; then
 fi
 
 if pypi_has; then
-  step "jubarte-redlines $VER already on PyPI — skipped"
+  step "jubarte-docx and jubarte-redlines $VER already on PyPI — skipped"
 elif [ "$LOCAL_PUBLISH" = 1 ]; then
   rm -rf dist/pypi; mkdir -p dist/pypi
   got_wheels=0
@@ -1721,7 +1732,7 @@ elif [ "$LOCAL_PUBLISH" = 1 ]; then
     # download above); the app's facts check would otherwise die on the
     # missing wheels only after the release is out.
     [ "$NO_WAIT" = 1 ] \
-      || die "the $TAG release carries no jubarte_redlines wheels — PyPI would get only the local wheel + sdist under a final version; fix the release jobs, or rerun with --local-publish --no-wait to consent to the partial set"
+      || die "the $TAG release carries no jubarte_docx wheels — PyPI would get only the local wheel + sdist under a final version; fix the release jobs, or rerun with --local-publish --no-wait to consent to the partial set"
     # The wheel's panic locations would name this home and checkout (#1480);
     # jubarte-python has no .cargo/config.toml recipe for RUSTFLAGS to replace.
     # As build-npm.sh does: the checkout by both its paths, and no whitespace,
@@ -1734,6 +1745,7 @@ elif [ "$LOCAL_PUBLISH" = 1 ]; then
     RUSTFLAGS="--remap-path-prefix=$HOME=~ --remap-path-prefix=$repo_logical=jubarte-redlines --remap-path-prefix=$repo_physical=jubarte-redlines" \
       uvx maturin build --release --manifest-path jubarte-python/Cargo.toml --out dist/pypi
     uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out dist/pypi
+    uv build jubarte-python/compat --out-dir dist/pypi
     echo "  ! only the local-platform wheel + sdist will reach PyPI (--no-wait given)" >&2
   fi
   if [ "$got_wheels" = 1 ]; then
@@ -1742,7 +1754,8 @@ elif [ "$LOCAL_PUBLISH" = 1 ]; then
     python3 scripts/check_release_artifacts.py dist/pypi --version "$VER" \
       || die "wheel set incomplete; see scripts/check_release_artifacts.py"
   fi
-  uv publish --token "$UV_PUBLISH_TOKEN" dist/pypi/*
+  # --check-url: a resumed run skips the files PyPI already holds.
+  uv publish --token "$UV_PUBLISH_TOKEN" --check-url https://pypi.org/simple/ dist/pypi/*
   step "uv publish done"
 else
   ci_published "PyPI" "publish PyPI" pypi_has
@@ -1820,9 +1833,12 @@ pip_installs() {
   # --python 3.12, a standard CPython: uv's default here may be a
   # free-threaded build, which no abi3 wheel serves (0.13.0's PASS was an
   # sdist build on 3.15t).
+  # The shim pulls jubarte-docx at the same version: one install proves
+  # both distributions and both import names.
   got=$(uv run -q --isolated --no-project --python 3.12 --refresh-package jubarte-redlines \
+          --refresh-package jubarte-docx --no-build-package jubarte-docx \
           --no-build-package jubarte-redlines --with "jubarte-redlines==$VER" \
-    python -c 'import jubarte_redlines as j; print(j.capabilities()["engine_version"])' 2>/dev/null) || return 1
+    python -c 'import jubarte, jubarte_redlines as j; assert j.Document is jubarte.Document; print(j.capabilities()["engine_version"])' 2>/dev/null) || return 1
   [ "$got" = "$VER" ]
 }
 # The npm CLI answers in the engine's words, named by its argv[0]. It runs
@@ -1863,11 +1879,11 @@ check "crates.io  all nine crates $VER" "eventually crates_has"
 check "npm        jubarte-wasm $VER" "eventually npm_has"
 check "npm        jubarte-redlines $VER" "eventually npm_cli_has"
 check "npm        releaseNotes.$VER shipped" npm_note
-check "PyPI       jubarte-redlines $VER" "eventually pypi_has"
+check "PyPI       jubarte-docx and jubarte-redlines $VER" "eventually pypi_has"
 check "GitHub     release $TAG" ghrel_has
 check "GitHub     notes carry --github-summary" gh_note
 check "GitHub     $(host_archive || echo "no archive for $(uname -sm)") matches SHA256SUMS.txt and answers jubarte $VER" archive_runs
-check "PyPI       pip install jubarte-redlines==$VER in a fresh environment: engine $VER" "eventually pip_installs"
+check "PyPI       pip install jubarte-redlines==$VER (the shim, so jubarte-docx too) in a fresh environment: engine $VER" "eventually pip_installs"
 check "npm        npx jubarte-redlines@$VER --version answers $VER" "eventually npx_runs"
 check "npm        npm i jubarte-wasm@$VER, then require()" "eventually npm_requires"
 if docsrs_built; then
@@ -1901,7 +1917,7 @@ check_now 13
 say "Released jubarte $VER"
 echo "  https://github.com/jandira-tech/jubarte-redlines/releases/tag/$TAG"
 echo "  https://crates.io/crates/jubarte-redlines/$VER"
-echo "  https://pypi.org/project/jubarte-redlines/$VER/"
+echo "  https://pypi.org/project/jubarte-docx/$VER/"
 echo "  https://www.npmjs.com/package/jubarte-wasm/v/$VER"
 
 # =============================================================================

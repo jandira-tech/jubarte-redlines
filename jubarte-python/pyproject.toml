@@ -7,7 +7,7 @@ requires = ["maturin>=1.14,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "jubarte-redlines"
+name = "jubarte-docx"
 description = "Word-faithful DOCX redline engine — compare two Word documents into a tracked-changes document that opens cleanly in Microsoft Word; list, accept, or reject revisions; render DOCX to PDF"
 # release-notes v0.18.0 — Hardened package open and bounded crafted input; apply_markdown_strict refuses a patch it cannot apply exactly; over a hundred compare, accept/reject, edit-plan and Markdown-view fixes.
 # release-notes v0.17.0 — Security hardening: element budget, DTDs refused, compare story-unit budget and UNSUPPORTED_CONTENT instead of panics, optional JUBARTE_TIMEOUT. Breaking: limits gain max_xml_elements and max_story_units; one-shot edit/add need an author; --in-place replaces -o INPUT; --keep-others guards other authors markup.
@@ -45,11 +45,16 @@ classifiers = [
 # Version comes from Cargo.toml (single source of truth).
 dynamic = ["version"]
 
-# `uvx jubarte-redlines redline a.docx b.docx -o redline.docx`
+# The import package and the command are `jubarte`; the distribution is
+# `jubarte-docx` because PyPI's `jubarte` belongs to a third party (as
+# python-dotenv ships `dotenv`). `uvx --from jubarte-docx jubarte redline
+# a.docx b.docx -o redline.docx`. The `jubarte-redlines` distribution is
+# now a shim over this one (compat/), which owns `jubarte_redlines/` and
+# the `jubarte-redlines` command.
 [project.scripts]
-jubarte-redlines = "jubarte_redlines.__main__:main"
-# `uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .`
-jubarte-mcp = "jubarte_redlines.mcp_server:main"
+jubarte = "jubarte.__main__:main"
+# `uvx --from 'jubarte-docx[mcp]' jubarte-mcp --root .`
+jubarte-mcp = "jubarte.mcp_server:main"
 
 [project.optional-dependencies]
 mcp = ["mcp>=2.2,<3"]
@@ -61,7 +66,7 @@ Changelog = "https://github.com/jandira-tech/jubarte-redlines/blob/main/CHANGELO
 Issues = "https://github.com/jandira-tech/jubarte-redlines/issues"
 
 [tool.maturin]
-module-name = "jubarte_redlines._native"
+module-name = "jubarte._native"
 python-source = "python"
 # Leave native extension symbols intact: macOS symbol stripping can
 # produce an invalid Mach-O LINKEDIT string pool and prevent import.
@@ -73,6 +78,8 @@ strip = false
 # build output, and app junk out of it.
 exclude = [
   { path = "wheels/**", format = "sdist" },
+  # The jubarte-redlines shim is its own distribution (compat/pyproject.toml).
+  { path = "compat/**", format = "sdist" },
   { path = "dist/**", format = "sdist" },
   { path = "jubarte-app/**", format = "sdist" },
   { path = "jubarte-wasm/**", format = "sdist" },

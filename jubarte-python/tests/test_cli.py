@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""``python -m jubarte_redlines``: the same commands, flags, file names and
+"""``python -m jubarte``: the same commands, flags, file names and
 exit codes as the ``jubarte`` binary, driven in-process."""
 
 from __future__ import annotations
@@ -21,10 +21,10 @@ from pathlib import Path
 
 import pytest
 
-import jubarte_redlines as jubarte
-import jubarte_redlines.__main__ as cli
-import jubarte_redlines.document as document
-from jubarte_redlines.__main__ import main
+import jubarte as jubarte
+import jubarte.__main__ as cli
+import jubarte.document as document
+from jubarte.__main__ import main
 
 from docx_fixture import docx, para
 
@@ -144,9 +144,9 @@ def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> N
 
 def test_the_module_runs_as_a_program(letter: Path) -> None:
     # The tests above call main() in-process; this runs the __main__ guard
-    # itself, the way `python -m jubarte_redlines` is used (PR #253).
+    # itself, the way `python -m jubarte` is used (PR #253).
     run = subprocess.run(
-        [sys.executable, "-m", "jubarte_redlines", "read", str(letter)], capture_output=True, text=True
+        [sys.executable, "-m", "jubarte", "read", str(letter)], capture_output=True, text=True
     )
     assert run.returncode == 0, run.stderr
     assert run.stdout.startswith("---\nsource: "), run.stdout
@@ -154,19 +154,19 @@ def test_the_module_runs_as_a_program(letter: Path) -> None:
 
 
 def test_the_console_script_redlines_two_documents(tmp_path: Path) -> None:
-    # `uvx jubarte-redlines redline a.docx b.docx -o redline.docx`: the wheel
-    # installs a `jubarte-redlines` script beside the interpreter, and
+    # `uvx --from jubarte-docx jubarte redline a.docx b.docx -o redline.docx`:
+    # the wheel installs a `jubarte` script beside the interpreter, and
     # `redline` is `compare` under the name the task has. The wheel's RECORD
     # names the script: `uv run --with` (uv 0.13) runs an overlay interpreter
     # whose directory is not the one the script went to.
-    record = importlib.metadata.distribution("jubarte-redlines").files or []
+    record = importlib.metadata.distribution("jubarte-docx").files or []
     found = [
         f.locate()
         for f in record
-        if f.name in ("jubarte-redlines", "jubarte-redlines.exe") and f.parent.name in ("bin", "Scripts")
+        if f.name in ("jubarte", "jubarte.exe") and f.parent.name in ("bin", "Scripts")
     ]
     script = shutil.which(str(found[0])) if found else None
-    assert script is not None, "the wheel installs no jubarte-redlines script"
+    assert script is not None, "the wheel installs no jubarte script"
     a, b, out = tmp_path / "a.docx", tmp_path / "b.docx", tmp_path / "redline.docx"
     a.write_bytes(docx(para("alpha beta")))
     b.write_bytes(docx(para("alpha gamma")))
@@ -178,7 +178,7 @@ def test_the_console_script_redlines_two_documents(tmp_path: Path) -> None:
     assert run.returncode == 0, run.stderr
     assert out.read_bytes()[:2] == b"PK"
     usage = subprocess.run([script, "--help"], capture_output=True, text=True)
-    assert "Usage: jubarte-redlines " in usage.stdout, usage.stdout
+    assert "Usage: jubarte " in usage.stdout, usage.stdout
 
 
 def test_redline_is_compare(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -1536,7 +1536,7 @@ def test_edit_keeps_its_files_when_the_view_cannot_be_read_back(
 ) -> None:
     """pi review r392b tests F6: the files are written and the report says
     so; a view that cannot be read back is a warning and exit 0."""
-    from jubarte_redlines import _native
+    from jubarte import _native
 
     def broken(*_args: object, **_kwargs: object) -> str:
         raise _native.JubarteError("read back failed")
@@ -1566,7 +1566,7 @@ def test_pr392_view_failure_preserves_bundle_and_quiet_skips_view(
     editing: bool,
     quiet: bool,
 ) -> None:
-    from jubarte_redlines import _native
+    from jubarte import _native
 
     calls: list[tuple[str, bool, str]] = []
 
@@ -2078,7 +2078,7 @@ def test_replace_never_writes_through_a_link_at_the_staging_name(tmp_path: Path)
     # The staged file is created fresh, under a name nobody can guess: a
     # link planted where the old pid-based name pointed is left alone, and
     # what it names keeps its bytes (CodeRabbit on #1698).
-    from jubarte_redlines.__main__ import _replace
+    from jubarte.__main__ import _replace
 
     victim = tmp_path / "victim.txt"
     victim.write_text("keep")
@@ -2093,7 +2093,7 @@ def test_replace_never_writes_through_a_link_at_the_staging_name(tmp_path: Path)
 def test_replace_creates_new_outputs_owner_only(tmp_path: Path) -> None:
     # A new output is created 0o600 whatever the umask: nobody else can
     # read or write it (CodeQL py/overly-permissive-file, #1805, #1807).
-    from jubarte_redlines.__main__ import _replace
+    from jubarte.__main__ import _replace
 
     for mask in (0, 0o022):
         out = tmp_path / f"new-{mask:o}.md"
@@ -2168,7 +2168,7 @@ def test_jubarte_timeout_bounds_a_task_as_the_binary_does(letter: Path, tmp_path
     view = tmp_path / "view.md"
     env = {**os.environ, "JUBARTE_TIMEOUT": "0.001"}
     run = subprocess.run(
-        [sys.executable, "-m", "jubarte_redlines", "read", str(letter), "-o", str(view)],
+        [sys.executable, "-m", "jubarte", "read", str(letter), "-o", str(view)],
         capture_output=True,
         text=True,
         env=env,
@@ -2179,14 +2179,14 @@ def test_jubarte_timeout_bounds_a_task_as_the_binary_does(letter: Path, tmp_path
     # A generous bound changes nothing.
     env["JUBARTE_TIMEOUT"] = "120"
     run = subprocess.run(
-        [sys.executable, "-m", "jubarte_redlines", "read", str(letter)], capture_output=True, text=True, env=env
+        [sys.executable, "-m", "jubarte", "read", str(letter)], capture_output=True, text=True, env=env
     )
     assert run.returncode == 0, run.stderr
     assert run.stdout.startswith("---\nsource: "), run.stdout
 
     def read(value: str, *extra: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [sys.executable, "-m", "jubarte_redlines", "read", *extra],
+            [sys.executable, "-m", "jubarte", "read", *extra],
             capture_output=True,
             text=True,
             env={**env, "JUBARTE_TIMEOUT": value},

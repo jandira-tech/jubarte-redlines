@@ -11,9 +11,9 @@ import json
 
 import pytest
 
-import jubarte_redlines as jubarte
-from jubarte_redlines import ContentControl, Document, EditPlan, EditPlanError, _native
-from jubarte_redlines.models import _decode_snapshot
+import jubarte as jubarte
+from jubarte import ContentControl, Document, EditPlan, EditPlanError, _native
+from jubarte.models import _decode_snapshot
 
 from docx_fixture import docx
 

@@ -353,7 +353,7 @@ jobs:
           out="$RUNNER_TEMP/sdist"
           uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out "$out"
           tar -xzf "$out"/*.tar.gz -C "$out"
-          cargo check --locked --manifest-path "$(ls -d "$out"/jubarte_redlines-*/)jubarte-python/Cargo.toml"
+          cargo check --locked --manifest-path "$(ls -d "$out"/jubarte_docx-*/)jubarte-python/Cargo.toml"
 
   convert-sweep-unit:
     name: convert-sweep unit

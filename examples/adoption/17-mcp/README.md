@@ -9,13 +9,13 @@ pandoc; see folders 01 and 05). The closest thing to "a tool call" in
 either skill is running one of those commands, which offers no
 protocol, no tool list, no typed results and no path confinement. This
 folder shows jubarte serving the same work as MCP tools over stdio:
-`uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --help`, then one
+`uvx --from 'jubarte-docx[mcp]' jubarte-mcp --help`, then one
 scripted session.
 
 ## The exact commands
 
 ```sh
-uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --help        # -> mcp_help.txt
+uvx --from 'jubarte-docx[mcp]' jubarte-mcp --help        # -> mcp_help.txt
 python3 mcp_session.py                                        # -> mcp_session.jsonl
 ```
 
@@ -35,8 +35,8 @@ sends newline-delimited JSON-RPC over its stdin:
 Every message sent and received is appended to `mcp_session.jsonl`,
 one JSON object per line with a `dir` of `send` or `recv`.
 
-`JUBARTE_MCP_FROM` picks the package: `jubarte-redlines[mcp]` (the PyPI
-release) by default, and `jubarte-redlines[mcp] @ <repo>/jubarte-python`
+`JUBARTE_MCP_FROM` picks the package: `jubarte-docx[mcp]` (the PyPI
+release) by default, and `jubarte-docx[mcp] @ <repo>/jubarte-python`
 to serve this checkout, as `.github/workflows/docs.yml` does. The
 committed session was made from the checkout.
 

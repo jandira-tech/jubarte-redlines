@@ -9,8 +9,8 @@ from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
-from jubarte_redlines import EditPlan, EditPlanError, Table, TableCell
-from jubarte_redlines.models import (
+from jubarte import EditPlan, EditPlanError, Table, TableCell
+from jubarte.models import (
     _decode_render_report,
     _decode_report,
     _decode_snapshot,

@@ -439,7 +439,7 @@ fn readme_documents_the_convert_cli_and_library_entry_point() {
 fn readme_advertises_python_and_npm_packages() {
     let readme = read("README.md");
     assert!(
-        readme.contains("pypi.org/project/jubarte-redlines"),
+        readme.contains("pypi.org/project/jubarte-docx"),
         "README.md is missing the PyPI package link"
     );
     assert!(

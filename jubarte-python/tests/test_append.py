@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 
-import jubarte_redlines as jubarte
+import jubarte as jubarte
 import pytest
 from docx_fixture import docx, para
-from jubarte_redlines import Appended, Document
+from jubarte import Appended, Document
 
 
 def texts(document: Document) -> list[str]:

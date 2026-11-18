@@ -7,7 +7,7 @@ code first, on every Document method."""
 
 import pytest
 
-import jubarte_redlines as jubarte
+import jubarte as jubarte
 from test_document import make_document
 
 OLE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + bytes(4088)

@@ -29,7 +29,7 @@ container, measured on 2026-10-04 in [`examples/adoption/00-install-size`](../..
 
 ## 2. The replacement, script by script
 
-Commands as `jubarte` (the binary); `python -m jubarte_redlines` takes a
+Commands as `jubarte` (the binary); `python -m jubarte` takes a
 subset of the same subcommands (its `convert` has no `--timeout`,
 `--fail-on-substitution` or `-t md` yet).
 Exit codes: `0` done, `1` error, `2` usage error or `validate` findings
@@ -49,7 +49,7 @@ Exit codes: `0` done, `1` error, `2` usage error or `validate` findings
 | docx-js for prose | `jubarte convert draft.md -o draft.docx [--reference-doc house.docx]`, with CriticMarkup becoming tracked changes and comments. `--page letter` (the default) or `--page a4` addresses docx-js's silent A4. | released |
 | Repeated anchors | an `occurrence` field (1-based) to pick the Nth match instead of a longer anchor; without it a repeated anchor is refused `AMBIGUOUS_ANCHOR` with the count. | released |
 | Legacy `.doc` | `jubarte convert old.doc` writes `old.docx`: text, Heading 1-9 and Title, bulleted and numbered lists, bold and italic, tables. Fonts, headers, footers, notes, pictures and page setup are not read yet ([plans.md](plans.md) §1). | released |
-| Calling it as tools instead of a command line | `uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` serves `docx_text`, `docx_inspect`, `docx_edit`, `docx_render`, `docx_compare`, `docx_changes`, `docx_accept`, `docx_reject` and more as MCP tools, every path confined to `--root`; see [mcp.md](mcp.md). | released |
+| Calling it as tools instead of a command line | `uvx --from 'jubarte-docx[mcp]' jubarte-mcp --root .` serves `docx_text`, `docx_inspect`, `docx_edit`, `docx_render`, `docx_compare`, `docx_changes`, `docx_accept`, `docx_reject` and more as MCP tools, every path confined to `--root`; see [mcp.md](mcp.md). | released |
 
 ## 3. What you lose, or keep
 
@@ -75,7 +75,7 @@ Exit codes: `0` done, `1` error, `2` usage error or `validate` findings
 ## 4. Check it without trusting us
 
 ```bash
-uv run --no-project --with jubarte-redlines python -m jubarte_redlines --help
+uv run --no-project --with jubarte-redlines python -m jubarte --help
 git clone https://github.com/jandira-tech/jubarte-redlines && cd jubarte-redlines
 
 # The accept case your skill warns about, against your own LibreOffice:

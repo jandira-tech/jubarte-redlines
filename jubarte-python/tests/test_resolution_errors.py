@@ -6,7 +6,7 @@
 
 The compiled ``_native`` extension is not required. When no extension file
 sits beside the package, this module installs a stub on ``sys.modules``
-before importing jubarte_redlines, enough for these two CLI paths. CI builds
+before importing jubarte, enough for these two CLI paths. CI builds
 the extension (``maturin develop``); these tests then use it, and still
 monkeypatch ``resolution_text``.
 """
@@ -53,13 +53,13 @@ _REPORT = {
 
 
 def _extension_present() -> bool:
-    package = _SRC / "jubarte_redlines"
+    package = _SRC / "jubarte"
     return any((package / f"_native{suffix}").is_file() for suffix in importlib.machinery.EXTENSION_SUFFIXES)
 
 
 def _stub_module() -> types.ModuleType:
     """The calls ``edit -p r0 --accept`` makes on the way to ``resolution_text``."""
-    module = types.ModuleType("jubarte_redlines._native")
+    module = types.ModuleType("jubarte._native")
 
     class JubarteError(Exception):
         """Engine refusal, standing in for the extension's exception."""
@@ -68,7 +68,7 @@ def _stub_module() -> types.ModuleType:
         return False
 
     def parse_cli_json(
-        arguments: list[str], program: str = "jubarte-redlines", supported: list[str] | None = None
+        arguments: list[str], program: str = "jubarte", supported: list[str] | None = None
     ) -> str:
         del program, supported
         if not arguments or arguments[0] != "edit":
@@ -173,7 +173,7 @@ def _stub_module() -> types.ModuleType:
     module.source_sha256 = source_sha256
     module.resolution_text = resolution_text
     module.changed_view = changed_view
-    # Imported by jubarte_redlines.__init__ even though these tests never call them.
+    # Imported by jubarte.__init__ even though these tests never call them.
     for name in ("accept_revisions", "compare_documents", "docx_to_pdf", "get_revisions_json", "reject_revisions"):
         setattr(module, name, lambda *args, **kwargs: (_ for _ in ()).throw(JubarteError("stub")))
     return module
@@ -183,14 +183,14 @@ def _install_import() -> bool:
     sys.path.insert(0, str(_SRC))
     if _extension_present():
         return False
-    sys.modules["jubarte_redlines._native"] = _stub_module()
+    sys.modules["jubarte._native"] = _stub_module()
     return True
 
 
 NATIVE_STUBBED = _install_import()
 
-from jubarte_redlines import _native
-from jubarte_redlines.__main__ import main
+from jubarte import _native
+from jubarte.__main__ import main
 
 
 def _argv(tmp_path: Path, bundle: bool) -> list[str]:

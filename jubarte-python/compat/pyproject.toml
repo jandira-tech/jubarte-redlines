@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# The former name of jubarte's Python package, kept as a shim. The engine
+# ships as `jubarte-docx` (import `jubarte`, command `jubarte`); this
+# distribution owns only `jubarte_redlines/`, which re-exports `jubarte`,
+# and the `jubarte-redlines` command, so `pip install -U jubarte-redlines`,
+# `import jubarte_redlines` and `uvx jubarte-redlines` keep working and no
+# file belongs to both distributions. scripts/release.sh step 1 moves the
+# version and the pin together.
+[build-system]
+requires = ["uv_build>=0.9,<0.14"]
+build-backend = "uv_build"
+
+[project]
+name = "jubarte-redlines"
+version = "0.18.0"
+description = "Former name of jubarte-docx, the Word-faithful DOCX redline engine: installs jubarte-docx and keeps import jubarte_redlines working"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "AGPL-3.0-only"
+authors = [{ name = "Jandira Technologies, LLC" }]
+dependencies = ["jubarte-docx==0.18.0"]
+
+[project.optional-dependencies]
+mcp = ["jubarte-docx[mcp]==0.18.0"]
+
+[project.scripts]
+jubarte-redlines = "jubarte.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/jandira-tech/jubarte-redlines"
+Repository = "https://github.com/jandira-tech/jubarte-redlines"
+
+[tool.uv.build-backend]
+module-name = "jubarte_redlines"
+module-root = ""

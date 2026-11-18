@@ -68,7 +68,7 @@ override was passed.
   direct `w:sectPr` in one story is `UNSUPPORTED_CONTENT`, where it was a
   panic (exit 101) that aborts a WASM instance.
 - **`JUBARTE_TIMEOUT=SECONDS`** (#2016) bounds any command of the binary,
-  `python -m jubarte_redlines` and the npm CLI. On expiry it exits 124
+  `python -m jubarte` and the npm CLI. On expiry it exits 124
   (`DEADLINE_EXCEEDED`). The output path is never half-written (outputs are
   published by rename), but a hidden staging file beside it can remain, and
   a command that prints its result may have printed part of it.

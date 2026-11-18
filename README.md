@@ -20,7 +20,7 @@ or PNG — from Rust, Python, Node/browser, or the CLI.
 [![codecov](https://codecov.io/gh/jandira-tech/jubarte-redlines/branch/main/graph/badge.svg)](https://codecov.io/gh/jandira-tech/jubarte-redlines)
 [![crates.io](https://img.shields.io/crates/v/jubarte.svg)](https://crates.io/crates/jubarte)
 [![docs.rs](https://docs.rs/jubarte/badge.svg)](https://docs.rs/jubarte)
-[![PyPI](https://img.shields.io/pypi/v/jubarte-redlines.svg)](https://pypi.org/project/jubarte-redlines/)
+[![PyPI](https://img.shields.io/pypi/v/jubarte-docx.svg)](https://pypi.org/project/jubarte-docx/)
 [![npm](https://img.shields.io/npm/v/jubarte-wasm.svg)](https://www.npmjs.com/package/jubarte-wasm)
 [![MSRV](https://img.shields.io/badge/MSRV-1.94-blue)](./Cargo.toml)
 [![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](./LICENSE)
@@ -183,7 +183,7 @@ From 0.11.0, the Python wheel and the npm package also run the CLI
 without an install:
 
 ```sh
-uvx jubarte-redlines redline a.docx b.docx -o redline.docx
+uvx --from jubarte-docx jubarte redline a.docx b.docx -o redline.docx
 npx jubarte-redlines redline a.docx b.docx -o redline.docx
 ```
 
@@ -200,7 +200,7 @@ For a GitHub-style text review of two Word documents:
 ```sh
 jubarte diff a.docx b.docx --format github
 jubarte diff a.docx b.docx --format github --context 5 -o changes.patch
-uvx jubarte-redlines diff a.docx b.docx --format github
+uvx --from jubarte-docx jubarte diff a.docx b.docx --format github
 npx jubarte-redlines diff a.docx b.docx --format github
 ```
 
@@ -248,7 +248,7 @@ workspace crates (`jubarte-dom`, `jubarte-opc`, `jubarte-redlines` for
 comparison, `jubarte-render`, `jubarte-doc`, `jubarte-markdown`,
 `jubarte-edit`), which can also be depended on alone.
 Since 0.19.0, `jubarte-redlines` on crates.io is the compare-only crate
-(library name `jubarte_redlines`); a 0.18 dependency on `jubarte-redlines`
+(library name `jubarte`); a 0.18 dependency on `jubarte-redlines`
 moves to `jubarte = "0.19"` and keeps its `use jubarte::…` paths (see the
 [changelog](CHANGELOG.md)).
 
@@ -281,14 +281,14 @@ MSRV: **Rust 1.94**.
 Python requires CPython 3.10 or later.
 
 ```sh
-pip install jubarte-redlines
+pip install jubarte-docx
 ```
 
 Low-level byte API:
 
 ```python
 from pathlib import Path
-from jubarte_redlines import (
+from jubarte import (
     compare_documents,
     get_revisions,
     docx_to_pdf,
@@ -357,8 +357,8 @@ stays under `--root`.
 
 | Host | Install |
 | --- | --- |
-| Claude Code | `claude mcp add --transport stdio jubarte --scope project -- uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` |
-| Codex | `codex mcp add jubarte -- uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` |
+| Claude Code | `claude mcp add --transport stdio jubarte --scope project -- uvx --from 'jubarte-docx[mcp]' jubarte-mcp --root .` |
+| Codex | `codex mcp add jubarte -- uvx --from 'jubarte-docx[mcp]' jubarte-mcp --root .` |
 | Gemini CLI | `gemini extensions install https://github.com/jandira-tech/jubarte-redlines` |
 
 Tools, security model and config files: [docs/adoption/mcp.md](docs/adoption/mcp.md).
@@ -1059,7 +1059,7 @@ jubarte convert redline.docx \
 ### Python `Document`
 
 ```python
-import jubarte_redlines as jubarte
+import jubarte
 
 doc = jubarte.read("contract.docx")
 
@@ -1243,7 +1243,7 @@ a product or network service.
 - [GitHub](https://github.com/jandira-tech/jubarte-redlines)
 - [crates.io](https://crates.io/crates/jubarte)
 - [docs.rs](https://docs.rs/jubarte)
-- [PyPI](https://pypi.org/project/jubarte-redlines/)
+- [PyPI](https://pypi.org/project/jubarte-docx/)
 - [npm](https://www.npmjs.com/package/jubarte-wasm)
 - [Releases](https://github.com/jandira-tech/jubarte-redlines/releases)
 - [npm CLI](https://www.npmjs.com/package/jubarte-redlines)

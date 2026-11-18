@@ -2,8 +2,8 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Markdown creation: ``_native.markdown_to_docx``, ``jubarte_redlines.from_markdown``
-and ``python -m jubarte_redlines convert draft.md``."""
+"""Markdown creation: ``_native.markdown_to_docx``, ``jubarte.from_markdown``
+and ``python -m jubarte convert draft.md``."""
 
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ from zipfile import ZipFile
 
 import pytest
 
-import jubarte_redlines as jubarte
-from jubarte_redlines import _native
-from jubarte_redlines.__main__ import main
+import jubarte as jubarte
+from jubarte import _native
+from jubarte.__main__ import main
 
 from docx_fixture import docx, para
 

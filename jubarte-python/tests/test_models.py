@@ -10,8 +10,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from jubarte_redlines import CompareOptions, FormatChange, PdfOptions, Revision
-from jubarte_redlines.models import _decode_revisions
+from jubarte import CompareOptions, FormatChange, PdfOptions, Revision
+from jubarte.models import _decode_revisions
 
 
 def test_compare_defaults_keep_engine_timestamp():
@@ -58,7 +58,7 @@ def test_native_date_rejects_a_non_string_when_asserts_are_stripped():
     # __post_init__ already normalizes a datetime. The leftover check in
     # native_date used to be an assert, which `python -O` deletes.
     script = (
-        "from jubarte_redlines import CompareOptions\n"
+        "from jubarte import CompareOptions\n"
         "options = CompareOptions()\n"
         "object.__setattr__(options, 'date', 123)\n"
         "try:\n"
@@ -173,8 +173,8 @@ def test_a_filter_kind_is_an_element_kind_never_replacement():
     from collections.abc import Sequence
     from typing import get_args, get_type_hints
 
-    from jubarte_redlines import Document
-    from jubarte_redlines.models import ChangeKind, FilterKind, change_filter
+    from jubarte import Document
+    from jubarte.models import ChangeKind, FilterKind, change_filter
 
     assert set(get_args(FilterKind)) == set(get_args(ChangeKind)) - {"replacement"}
     assert get_type_hints(change_filter)["kinds"] == Sequence[FilterKind] | None

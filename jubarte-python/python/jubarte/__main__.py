@@ -2,24 +2,24 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""``jubarte-redlines`` (or ``python -m jubarte_redlines``): the ``jubarte``
+"""``jubarte`` (or ``python -m jubarte``): the ``jubarte``
 binary's commands over the installed wheel, with the same names, flags, output
-files and exit codes. ``uvx jubarte-redlines`` runs it without installing.
+files and exit codes. ``uvx --from jubarte-docx jubarte`` runs it without installing.
 
-    uvx jubarte-redlines redline a.docx b.docx -o redline.docx
-    python -m jubarte_redlines read letter.docx --json
-    python -m jubarte_redlines read letter.docx
-    python -m jubarte_redlines edit letter.docx --plan plan.json --out-dir review --pdf --png
-    python -m jubarte_redlines convert letter.docx -t png --dpi 150 --report pages.json
-    python -m jubarte_redlines convert letter.docx -t png --pages 3-5
-    python -m jubarte_redlines visual-diff before.docx after.docx --out-dir diff
-    python -m jubarte_redlines convert draft.md --page a4 -o draft.docx
-    python -m jubarte_redlines compare a.docx b.docx -o redline.docx --author Legal
-    python -m jubarte_redlines accept redline.docx -o clean.docx
-    python -m jubarte_redlines changes redline.docx --json
-    python -m jubarte_redlines reject redline.docx -o out.docx --id r12
-    python -m jubarte_redlines capabilities --json
-    python -m jubarte_redlines validate redline.docx --original a.docx --author Legal
+    uvx --from jubarte-docx jubarte redline a.docx b.docx -o redline.docx
+    python -m jubarte read letter.docx --json
+    python -m jubarte read letter.docx
+    python -m jubarte edit letter.docx --plan plan.json --out-dir review --pdf --png
+    python -m jubarte convert letter.docx -t png --dpi 150 --report pages.json
+    python -m jubarte convert letter.docx -t png --pages 3-5
+    python -m jubarte visual-diff before.docx after.docx --out-dir diff
+    python -m jubarte convert draft.md --page a4 -o draft.docx
+    python -m jubarte compare a.docx b.docx -o redline.docx --author Legal
+    python -m jubarte accept redline.docx -o clean.docx
+    python -m jubarte changes redline.docx --json
+    python -m jubarte reject redline.docx -o out.docx --id r12
+    python -m jubarte capabilities --json
+    python -m jubarte validate redline.docx --original a.docx --author Legal
 
 Exit codes: 0 success, 1 error (I/O, engine, existing output), 2 usage, 3 edit
 plan refused (its per-operation report is on stdout; nothing was written), 5
@@ -134,7 +134,7 @@ def _named_kind(path: Path) -> str | None:
     from . import _native
 
     parsed = json.loads(
-        _native.parse_cli_json(["diff", "--", str(path), str(path)], program="jubarte-redlines", supported=["diff"])
+        _native.parse_cli_json(["diff", "--", str(path), str(path)], program="jubarte", supported=["diff"])
     )
     return parsed["args"]["old_format"]
 
@@ -1614,7 +1614,7 @@ class SharedParser:
         arguments = list(sys.argv[1:] if argv is None else argv)
         _JSON_ERRORS = _native.wants_json(arguments)
         parsed = json.loads(
-            _native.parse_cli_json(arguments, program="jubarte-redlines", supported=list(self.supported))
+            _native.parse_cli_json(arguments, program="jubarte", supported=list(self.supported))
         )
         if "text" in parsed:
             for note in parsed.get("notes", ()):
@@ -1732,7 +1732,7 @@ def _run_bounded(argv: Sequence[str], seconds: float) -> int:
     never outlives it.
     """
     env = {k: v for k, v in os.environ.items() if k != "JUBARTE_TIMEOUT"}
-    child = subprocess.Popen([sys.executable, "-m", "jubarte_redlines", *argv], env=env)
+    child = subprocess.Popen([sys.executable, "-m", "jubarte", *argv], env=env)
     forwarded = [sig for sig in ("SIGTERM", "SIGHUP") if hasattr(signal, sig)]
     previous = {}
     for name in forwarded:

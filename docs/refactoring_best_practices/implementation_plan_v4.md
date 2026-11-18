@@ -136,10 +136,7 @@ graph TD
 
 Publishing 3 separate native PyO3 C-extension distributions on PyPI is not advisable (it would triple the 7-wheel CI build matrix to 21 wheels, duplicate the compiled `.abi3.so`/`.pyd` binary in memory when both are installed, and break PyPI OIDC trusted publisher binding). Instead:
 
-- [ ] **Dual Top-Level Packages (`jubarte` and `jubarte_redlines`) + Product Submodules (`jubarte.redlines`, `jubarte.convert`)** — *pending (verified 2026-11-17 on pre-release): `jubarte-python/python/` still contains only `jubarte_redlines/`; `[project.scripts]` has no `jubarte` entry.*
-  - Add `jubarte-python/python/jubarte/` (`__init__.py`, `__main__.py`, `redlines.py`, `convert.py`, `py.typed`) alongside `jubarte-python/python/jubarte_redlines/`.
-  - In [jubarte-python/pyproject.toml](../../jubarte-python/pyproject.toml), set `python-packages = ["jubarte_redlines", "jubarte"]` under `[tool.maturin]` so `maturin` bundles both top-level packages into every wheel!
-  - Add `jubarte = "jubarte_redlines.__main__:main"` alongside `jubarte-redlines` and `jubarte-mcp` in `[project.scripts]`.
+- [x] **`jubarte` import package, `jubarte-docx` distribution** — *done 2026-11-17 (Arthur's call: "Call it jubarte, but package jubarte-docx (like python-dotenv does)").* The code moved to `jubarte-python/python/jubarte/` (native module `jubarte._native`); the commands are `jubarte` and `jubarte-mcp`. `jubarte-redlines` became a pure-Python shim (`jubarte-python/compat`) that owns `jubarte_redlines/` and the `jubarte-redlines` command and pins `jubarte-docx` at the same version, so no file belongs to two of our distributions. The `jubarte.redlines` / `jubarte.convert` product submodules were not added: the flat `jubarte` namespace already exports both.
 - [x] **Granular Cargo Features in [jubarte-python/Cargo.toml](../../jubarte-python/Cargo.toml)** — *done (verified 2026-11-17 on pre-release): `[features]` layers `redlines` → `doc` → `markdown` → `edit` → `cli` plus `render` over optional engine crates (T5.3). It still keeps its own `Cargo.lock`, and the `cfg(any())` `jubarte` entry stays until the root becomes a virtual manifest (after 0.19.0).*
 
 ---

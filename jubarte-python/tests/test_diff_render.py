@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """Visual page diff (``diff_render``) and page ranges (``pages=``), in the
-API and in ``python -m jubarte_redlines``."""
+API and in ``python -m jubarte``."""
 
 from __future__ import annotations
 
@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
-import jubarte_redlines
-from jubarte_redlines import Document, JubarteError, PageDiff, RenderDiff, diff_render
-from jubarte_redlines.__main__ import main
+import jubarte
+from jubarte import Document, JubarteError, PageDiff, RenderDiff, diff_render
+from jubarte.__main__ import main
 
 from docx_fixture import docx, para
 
@@ -95,7 +95,7 @@ def test_diff_render_refuses_markdown_text_and_bad_dpi() -> None:
 
 
 def test_capabilities_report_both() -> None:
-    ops = jubarte_redlines.capabilities()["operations"]
+    ops = jubarte.capabilities()["operations"]
     assert ops["diff_render"] is True  # type: ignore[index]
     assert ops["page_ranges"] is True  # type: ignore[index]
 

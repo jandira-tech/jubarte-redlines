@@ -51,7 +51,7 @@ and later releases arrive through `jubarte self-update`.
 
 A binary installed by `cargo install` can update this way too; the next
 `cargo install` will simply replace it again. The Python package
-(`pip install jubarte-redlines`) and the npm package (`jubarte-wasm`) are
+(`pip install jubarte-docx`) and the npm package (`jubarte-wasm`) are
 libraries: update them with their package managers.
 
 ## Signed releases

@@ -68,7 +68,7 @@ the full plan schema or add an agent bootstrap endpoint.
 Bindings expose the same table with their own runtime name:
 
 ```python
-import jubarte_redlines as jubarte
+import jubarte
 jubarte.capabilities(operation="reply_comment")
 jubarte.capabilities(operation="reply_comment", field="text")
 jubarte.capabilities(matrix=True)

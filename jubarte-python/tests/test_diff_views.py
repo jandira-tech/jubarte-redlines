@@ -4,8 +4,8 @@
 """Pure adapter contracts and explicitly marked host CLI integration."""
 import pytest
 
-import jubarte_redlines as jubarte
-from jubarte_redlines.__main__ import build_parser, main
+import jubarte as jubarte
+from jubarte.__main__ import build_parser, main
 
 VIEWS = ("github", "unified", "text", "word", "normal", "context", "side-by-side")
 

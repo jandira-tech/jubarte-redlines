@@ -19,8 +19,8 @@ import pytest
 
 pytest.importorskip("mcp")
 import anyio
-from jubarte_redlines import Document
-from jubarte_redlines.mcp_server import INSTRUCTIONS, build_server, main
+from jubarte import Document
+from jubarte.mcp_server import INSTRUCTIONS, build_server, main
 from mcp import Client
 from test_document import make_document
 
@@ -195,7 +195,7 @@ def test_missing_and_corrupt_inputs_are_tool_errors(tmp_path: Path) -> None:
 
 
 def test_a_read_failure_names_the_path_but_no_os_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from jubarte_redlines import _native
+    from jubarte import _native
 
     real = _native._OutputRoot
 
@@ -295,7 +295,7 @@ def test_the_plan_limit_counts_utf8_bytes_not_escaped_json(tmp_path: Path) -> No
 def test_resolve_accepts_only_accept_and_reject() -> None:
     from mcp.server.mcpserver.exceptions import ToolError
 
-    from jubarte_redlines.mcp_server import resolve_action
+    from jubarte.mcp_server import resolve_action
 
     assert resolve_action("accept") == "accept"
     assert resolve_action("reject") == "reject"
@@ -390,7 +390,7 @@ def test_compare_then_list_accept_and_reject(tmp_path: Path) -> None:
 def test_changes_and_comments_carry_short_refs(tmp_path: Path) -> None:
     """`Document.changes()`/`comments()` and MCP `docx_changes`/`docx_comments`
     carry `ref` (`r0`, `c0`) beside the long `id`, as the CLI's JSON does."""
-    import jubarte_redlines as jubarte
+    import jubarte as jubarte
 
     original, modified = write_pair(tmp_path)
     red = Document.read(original).compare(Document.read(modified), author="R")
@@ -543,7 +543,7 @@ def test_main_serves_stdio(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
         def run(self, transport: str = "stdio") -> None:
             seen["transport"] = transport
 
-    monkeypatch.setattr("jubarte_redlines.mcp_server.build_server", lambda *, root: seen.setdefault("root", root) and Fake())
+    monkeypatch.setattr("jubarte.mcp_server.build_server", lambda *, root: seen.setdefault("root", root) and Fake())
     assert main(["--root", str(tmp_path)]) == 0
     assert seen == {"root": tmp_path.resolve(), "transport": "stdio"}
 
@@ -564,7 +564,7 @@ def test_stdio_smoke_initialize_and_list_tools(tmp_path: Path) -> None:
     # does: closing it ends the stdio session, and a request still queued
     # then goes unanswered (about one run in ten when stdin closed at once).
     proc = subprocess.Popen(
-        [sys.executable, "-m", "jubarte_redlines.mcp_server", "--root", str(tmp_path)],
+        [sys.executable, "-m", "jubarte.mcp_server", "--root", str(tmp_path)],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -598,9 +598,9 @@ def test_stdio_smoke_initialize_and_list_tools(tmp_path: Path) -> None:
     assert listed is not None, f"no tools/list reply; stderr: {stderr}"
     assert {t["name"] for t in listed["result"]["tools"]} == TOOLS
     assert initialized is not None
-    import jubarte_redlines
+    import jubarte
 
-    assert initialized["result"]["serverInfo"] == {"name": "jubarte", "version": jubarte_redlines.__version__}
+    assert initialized["result"]["serverInfo"] == {"name": "jubarte", "version": jubarte.__version__}
     assert "Traceback" not in stderr
 
 
@@ -667,10 +667,10 @@ def test_running_the_module_calls_main(tmp_path: Path, monkeypatch: pytest.Monke
     import runpy
 
     # Run it fresh, as `python -m` does, instead of over the imported copy.
-    monkeypatch.delitem(sys.modules, "jubarte_redlines.mcp_server")
+    monkeypatch.delitem(sys.modules, "jubarte.mcp_server")
     monkeypatch.setattr(sys, "argv", ["jubarte-mcp", "--root", str(tmp_path / "missing")])
     with pytest.raises(SystemExit) as exc:
-        runpy.run_module("jubarte_redlines.mcp_server", run_name="__main__")
+        runpy.run_module("jubarte.mcp_server", run_name="__main__")
     assert exc.value.code == 2
 
 

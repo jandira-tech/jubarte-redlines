@@ -7,8 +7,8 @@
 Every path argument must resolve under ``--root`` (default: the current
 directory); outputs are files under it, and their paths are returned, never
 their bytes. No tool replaces an existing file unless ``overwrite`` is true.
-Install with ``pip install 'jubarte-redlines[mcp]'`` or run with
-``uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .``.
+Install with ``pip install 'jubarte-docx[mcp]'`` or run with
+``uvx --from 'jubarte-docx[mcp]' jubarte-mcp --root .``.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ try:
     from mcp.types import ToolAnnotations
 except ImportError as exc:  # pragma: no cover - exercised only without the extra
     raise ImportError(
-        "jubarte-mcp needs the MCP SDK: pip install 'jubarte-redlines[mcp]'"
+        "jubarte-mcp needs the MCP SDK: pip install 'jubarte-docx[mcp]'"
     ) from exc
 
 from ._native import JubarteError, __version__
@@ -137,7 +137,7 @@ def build_server(*, root: Path) -> MCPServer:
             raise ToolError(str(e)) from e
 
     def missing(feature: str) -> ToolError:
-        return ToolError(f"this engine build lacks {feature}; upgrade jubarte-redlines")
+        return ToolError(f"this engine build lacks {feature}; upgrade jubarte-docx")
 
     @mcp.tool(annotations=_READ)
     def docx_capabilities() -> dict[str, Any]:

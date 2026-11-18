@@ -7,7 +7,7 @@
 import warnings
 
 import pytest
-from jubarte_redlines import _native
+from jubarte import _native
 
 pytestmark = pytest.mark.integration
 

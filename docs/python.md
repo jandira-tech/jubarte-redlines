@@ -9,7 +9,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 Revision tags use the [settled Markdown dialect](MARKDOWN.md#tags): separate ids,
 same-author deletion-first substitutions, old-side `re` parents and inline `¶` marks.
 
-Using jubarte from Python and `uvx`: the `jubarte-redlines` wheel (PyO3 +
+Using jubarte from Python and `uvx`: the `jubarte-docx` wheel (import `jubarte`; PyO3 +
 maturin, in-process native extension — no Word, no LibreOffice, no network,
 no temp files, GIL released while the engine runs). For the other surfaces
 see [docs/rust.md](rust.md) and [docs/javascript.md](javascript.md).
@@ -17,7 +17,7 @@ see [docs/rust.md](rust.md) and [docs/javascript.md](javascript.md).
 ## Install
 
 ```sh
-pip install jubarte-redlines     # or: uv add jubarte-redlines
+pip install jubarte-docx     # or: uv add jubarte-docx
 ```
 
 CPython ≥ 3.10. One `abi3` wheel per platform; no runtime Python
@@ -25,10 +25,10 @@ dependencies. The package version is single-sourced from the Rust engine's
 version. Run the CLI without installing anything:
 
 ```sh
-uvx jubarte-redlines redline original.docx modified.docx -o redline.docx --author Legal
+uvx --from jubarte-docx jubarte redline original.docx modified.docx -o redline.docx --author Legal
 ```
 
-`redline` is an alias of `compare`; `python -m jubarte_redlines` runs the
+`redline` is an alias of `compare`; `python -m jubarte` runs the
 same commands. The wheel speaks the shared command set — `compare`/`redline`,
 `changes`, `accept`, `reject`, `convert`, `diff`, `read`, `edit`, `add`,
 `capabilities`, `visual-diff`, `comments`, `validate` — but not the whole
@@ -44,7 +44,7 @@ path spelled with `/` on every OS (#1692). Inputs are `.docx`; save a Word 97-20
 
 ## CLI reference
 
-Generated from the real `--help` output of the wheel's `jubarte-redlines`
+Generated from the real `--help` output of the wheel's `jubarte`
 entry point — flags and defaults cannot drift from the shipped code.
 
 The native `jubarte` binary offers `--keep-nested-comment` on `accept`,
@@ -53,15 +53,15 @@ yet dispatch that option or return its kept-thread receipts; use the native
 binary when retention is needed.
 
 <!-- gen:cli-python:start -->
-#### `jubarte-redlines`
+#### `jubarte`
 
 ```text
-$ jubarte-redlines --help
-jubarte-redlines 0.18.0
+$ jubarte --help
+jubarte 0.18.0
 Read, edit, compare and render Word documents
 
-Usage: jubarte-redlines [OPTIONS]
-       jubarte-redlines <COMMAND>
+Usage: jubarte [OPTIONS]
+       jubarte <COMMAND>
 
 Tasks:
   compare       Compare documents: print the redline as the agent view, or write it with
@@ -101,22 +101,22 @@ Options:
   -V, --version  Print version
 
 Examples:
-  jubarte-redlines compare old.docx new.docx -o redline.docx
-  jubarte-redlines contract.docx
-  jubarte-redlines read contract.docx --json
-  jubarte-redlines diff old.docx new.docx --format github
-  jubarte-redlines convert contract.docx -o contract.pdf
+  jubarte compare old.docx new.docx -o redline.docx
+  jubarte contract.docx
+  jubarte read contract.docx --json
+  jubarte diff old.docx new.docx --format github
+  jubarte convert contract.docx -o contract.pdf
 
-Run jubarte-redlines <task> --help for task options.
+Run jubarte <task> --help for task options.
 ```
 
-#### `jubarte-redlines compare`
+#### `jubarte compare`
 
 ```text
-$ jubarte-redlines compare --help
+$ jubarte compare --help
 Compare documents: print the redline as the agent view, or write it with -o
 
-Usage: jubarte-redlines compare [OPTIONS] [ORIGINAL] [MODIFIED]
+Usage: jubarte compare [OPTIONS] [ORIGINAL] [MODIFIED]
 
 Arguments:
   [ORIGINAL]
@@ -381,17 +381,17 @@ Examples:
   jubarte compare -b old.docx -m new.docx --author Legal -o r.docx
 ```
 
-#### `jubarte-redlines changes`
+#### `jubarte changes`
 
 ```text
-$ jubarte-redlines changes --help
+$ jubarte changes --help
 List tracked changes with IDs for accept, reject and edit plans.
 
 One line per logical change: the marks Word wrote for one edit are one change with a
 joined id (`r7+8+9+10`), its text followed by `(N elements)`. A revision inside a
 comment body is `comments.r9`.
 
-Usage: jubarte-redlines changes [OPTIONS] <FILE>
+Usage: jubarte changes [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
@@ -417,17 +417,17 @@ Options:
           Print help (see a summary with '-h')
 ```
 
-#### `jubarte-redlines accept`
+#### `jubarte accept`
 
 ```text
-$ jubarte-redlines accept --help
+$ jubarte accept --help
 Accept all tracked changes, or select by ID, author or kind.
 
 Every part counts: the body, headers, footers, notes and comment bodies. A comment-body
 revision is `comments.r9`, the id `changes` lists, and an id, author or kind selection
 settles it.
 
-Usage: jubarte-redlines accept [OPTIONS] <FILE>
+Usage: jubarte accept [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
@@ -515,17 +515,17 @@ Rendering (-o FILE.pdf or FILE.png):
           them (`STEM-page-03.png`)
 ```
 
-#### `jubarte-redlines reject`
+#### `jubarte reject`
 
 ```text
-$ jubarte-redlines reject --help
+$ jubarte reject --help
 Reject all tracked changes, or select by ID, author or kind.
 
 Every part counts: the body, headers, footers, notes and comment bodies. A comment-body
 revision is `comments.r9`, the id `changes` lists, and an id, author or kind selection
 settles it.
 
-Usage: jubarte-redlines reject [OPTIONS] <FILE>
+Usage: jubarte reject [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
@@ -613,13 +613,13 @@ Rendering (-o FILE.pdf or FILE.png):
           them (`STEM-page-03.png`)
 ```
 
-#### `jubarte-redlines convert`
+#### `jubarte convert`
 
 ```text
-$ jubarte-redlines convert --help
+$ jubarte convert --help
 Convert Word or Markdown to DOCX, PDF, PNG or Markdown
 
-Usage: jubarte-redlines convert [OPTIONS] <FILE>
+Usage: jubarte convert [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
@@ -825,13 +825,13 @@ Examples:
   jubarte convert notes.md --no-critic            {++ and the other delimiters as text
 ```
 
-#### `jubarte-redlines diff`
+#### `jubarte diff`
 
 ```text
-$ jubarte-redlines diff --help
+$ jubarte diff --help
 Review differences as GitHub, word, normal, context or side-by-side text
 
-Usage: jubarte-redlines diff [OPTIONS] <OLD> <NEW>
+Usage: jubarte diff [OPTIONS] <OLD> <NEW>
 
 Arguments:
   <OLD>
@@ -928,17 +928,17 @@ GIT:
   git difftool -t jubarte -y -- '*.md'
 ```
 
-#### `jubarte-redlines read`
+#### `jubarte read`
 
 ```text
-$ jubarte-redlines read --help
+$ jubarte read --help
 Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids
 
 A YAML header, then Markdown with an `<!-- pN -->` id line before every paragraph,
 tracked changes as CriticMarkup followed by their ids (`{++text++}{r12 @AC}`) and
 comments with theirs (`{>>c5 @AC: …<<}`).
 
-Usage: jubarte-redlines read [OPTIONS] <FILE>
+Usage: jubarte read [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
@@ -1108,16 +1108,16 @@ Read options:
           --for-edit: no presentation limits (admission limits still hold)
 ```
 
-#### `jubarte-redlines edit`
+#### `jubarte edit`
 
 ```text
-$ jubarte-redlines edit --help
+$ jubarte edit --help
 Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply,
 --accept, --reject, --strike, --restore or --style (several -p per command), or a JSON
 plan. Writes FILE_modified.docx (--in-place replaces FILE; --out-dir: the bundle), then
 prints SUCCESS and a fenced before/after diff of the full agent views (refusal: exit 3)
 
-Usage: jubarte-redlines edit [OPTIONS] <FILE>
+Usage: jubarte edit [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
@@ -1331,15 +1331,15 @@ Routing: valid legacy calls, including `edit replace -p p0 --content TEXT`,
   to explicitly name a legacy input whose name equals an action.
 ```
 
-#### `jubarte-redlines add`
+#### `jubarte add`
 
 ```text
-$ jubarte-redlines add --help
+$ jubarte add --help
 Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command).
 Writes FILE_modified.docx, as edit does (--in-place replaces FILE), and prints SUCCESS
 and a fenced before/after diff of the full agent views
 
-Usage: jubarte-redlines add [OPTIONS] <FILE>
+Usage: jubarte add [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
@@ -1463,13 +1463,13 @@ Examples:
   plan.json
 ```
 
-#### `jubarte-redlines capabilities`
+#### `jubarte capabilities`
 
 ```text
-$ jubarte-redlines capabilities --help
+$ jubarte capabilities --help
 What this binary can do, for agents choosing an operation
 
-Usage: jubarte-redlines capabilities [OPTIONS]
+Usage: jubarte capabilities [OPTIONS]
 
 Options:
       --json                   The manifest or focused answer as JSON instead of text
@@ -1489,13 +1489,13 @@ Options:
   -h, --help                   Print help
 ```
 
-#### `jubarte-redlines visual-diff`
+#### `jubarte visual-diff`
 
 ```text
-$ jubarte-redlines visual-diff --help
+$ jubarte visual-diff --help
 Compare rendered pages pixel by pixel (different pages: exit 5)
 
-Usage: jubarte-redlines visual-diff [OPTIONS] <A> <B>
+Usage: jubarte visual-diff [OPTIONS] <A> <B>
 
 Arguments:
   <A>  The document before
@@ -1533,13 +1533,13 @@ magenta and boxed); diff.json lists every page with its changed_ratio,
 bbox and, for a page only one side has, only_in.
 ```
 
-#### `jubarte-redlines comments`
+#### `jubarte comments`
 
 ```text
-$ jubarte-redlines comments --help
+$ jubarte comments --help
 List comments, threads and the text they annotate
 
-Usage: jubarte-redlines comments [OPTIONS] <FILE>
+Usage: jubarte comments [OPTIONS] <FILE>
 
 Arguments:
   <FILE>  The document (.docx)
@@ -1559,10 +1559,10 @@ Options:
   -h, --help           Print help
 ```
 
-#### `jubarte-redlines validate`
+#### `jubarte validate`
 
 ```text
-$ jubarte-redlines validate --help
+$ jubarte validate --help
 Check Word validity, tracked edits, accessibility, style and structure; or repair Word
 validity.
 
@@ -1570,7 +1570,7 @@ A word or edits finding fails the run (exit 2), and so does any error; --strict 
 warnings too. With --baseline, only the findings the baseline lacks count. An unreadable
 file exits 1.
 
-Usage: jubarte-redlines validate [OPTIONS] <FILE>
+Usage: jubarte validate [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
@@ -1646,7 +1646,7 @@ Audit codes (code, set, severity):
 
 ```python
 from pathlib import Path
-from jubarte_redlines import compare_documents, get_revisions, docx_to_pdf
+from jubarte import compare_documents, get_revisions, docx_to_pdf
 
 original = Path("original.docx").read_bytes()
 modified = Path("modified.docx").read_bytes()
@@ -1662,12 +1662,12 @@ Path("redline.pdf").write_bytes(docx_to_pdf(redline))
 
 `compare_documents(original, modified, author="Redline", date=None)` stamps a
 fixed epoch date by default so output is deterministic; pass ISO-8601 `date`
-to override. Errors raise `jubarte_redlines.JubarteError`.
+to override. Errors raise `jubarte.JubarteError`.
 
 ### `Document` — immutable snapshot, path I/O once
 
 ```python
-from jubarte_redlines import read
+from jubarte import read
 
 doc = read("contract.docx")
 doc.markdown()    # the body as Markdown, with <!-- pN --> id lines
@@ -1685,7 +1685,7 @@ result = doc.render(pdf=True, png_dpi=144)   # Rendered: pdf, pngs, page report
 ### `EditPlan` — the tracked-changes transaction
 
 ```python
-from jubarte_redlines import read, EditPlan
+from jubarte import read, EditPlan
 
 doc = read("contract.docx")
 plan = (
@@ -1713,7 +1713,7 @@ the comparer writes the changes, and a replacement inside a paragraph keeps
 Word Compare's order, the insertion first: `{+new+}[-old-]`.
 
 ```python
-from jubarte_redlines import diff, read
+from jubarte import diff, read
 print(diff(read("v1.docx"), read("v2.docx")))
 ```
 
@@ -1764,12 +1764,12 @@ redaction therefore refuses with `REDACTION_LEAK` instead of accepting an
 incomplete scan. Comparer settings continue to supply their own limits.
 
 <!-- gen:python-api:start -->
-Reflects the `jubarte_redlines` package built from this source tree (`__version__` reports `0.18.0`).
+Reflects the `jubarte` package built from this source tree (`__version__` reports `0.18.0`).
 
 ### `JubarteError`
 
 
-Raised when the jubarte-redlines engine cannot process a document.
+Raised when the jubarte engine cannot process a document.
 
 ### `__version__`
 
@@ -2014,7 +2014,7 @@ Document.diff(self, other: 'Document | str', *, author: 'str | None' = None, dat
 ```
 
 The changes from this document to ``other`` (a ``Document`` or
-Markdown text), as ``jubarte_redlines.diff`` gives them.
+Markdown text), as ``jubarte.diff`` gives them.
 
 #### `Document.preview`
 
