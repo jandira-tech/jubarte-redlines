@@ -1193,3 +1193,17 @@ a product or network service.
 - [npm](https://www.npmjs.com/package/jubarte-wasm)
 - [Releases](https://github.com/jandira-tech/jubarte-redlines/releases)
 - [npm CLI](https://www.npmjs.com/package/jubarte-redlines)
+
+## Workspace crates
+
+`jubarte` re-exports these crates, released together at one version; each can
+also be a dependency on its own.
+
+- [`jubarte-dom`](https://crates.io/crates/jubarte-dom) · [docs.rs](https://docs.rs/jubarte-dom) · [guide](https://jubarte.readthedocs.io/projects/jubarte-dom/en/latest/)
+- [`jubarte-opc`](https://crates.io/crates/jubarte-opc) · [docs.rs](https://docs.rs/jubarte-opc) · [guide](https://jubarte.readthedocs.io/projects/jubarte-opc/en/latest/)
+- [`jubarte-redlines`](https://crates.io/crates/jubarte-redlines) · [docs.rs](https://docs.rs/jubarte-redlines) · [guide](https://jubarte.readthedocs.io/projects/jubarte-redlines/en/latest/)
+- [`jubarte-render`](https://crates.io/crates/jubarte-render) · [docs.rs](https://docs.rs/jubarte-render) · [guide](https://jubarte.readthedocs.io/projects/jubarte-render/en/latest/)
+- [`jubarte-doc`](https://crates.io/crates/jubarte-doc) · [docs.rs](https://docs.rs/jubarte-doc) · [guide](https://jubarte.readthedocs.io/projects/jubarte-doc/en/latest/)
+- [`jubarte-markdown`](https://crates.io/crates/jubarte-markdown) · [docs.rs](https://docs.rs/jubarte-markdown) · [guide](https://jubarte.readthedocs.io/projects/jubarte-markdown/en/latest/)
+- [`jubarte-edit`](https://crates.io/crates/jubarte-edit) · [docs.rs](https://docs.rs/jubarte-edit) · [guide](https://jubarte.readthedocs.io/projects/jubarte-edit/en/latest/)
+- [`jubarte-cli`](https://crates.io/crates/jubarte-cli) · [docs.rs](https://docs.rs/jubarte-cli) · [guide](https://jubarte.readthedocs.io/projects/jubarte-cli/en/latest/)

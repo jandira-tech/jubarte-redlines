@@ -16,6 +16,27 @@
 //! Layout needs the renderer: with the `render` feature off, the public
 //! items that need layout (audit's `word_layout`, the fields update
 //! API, the debug render check) do not exist.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use jubarte_doc::{changes, comments, validate};
+//!
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let docx = std::fs::read("redline.docx")?;
+//!
+//!     for change in changes::list_changes(&docx)? {
+//!         println!("{} {:?} by {:?}: {}", change.id, change.kind, change.author, change.text);
+//!     }
+//!     for comment in comments::list_comments(&docx)? {
+//!         println!("c{} {}: {}", comment.id, comment.author, comment.text);
+//!     }
+//!     for finding in validate::validate(&docx)? {
+//!         println!("{} {}: {}", finding.severity, finding.code, finding.message);
+//!     }
+//!     Ok(())
+//! }
+//! ```
 
 #![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 #![forbid(unsafe_code)]

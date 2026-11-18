@@ -15,6 +15,26 @@
 //!
 //! Everything here speaks packages and parts; document comparison,
 //! rendering, editing and the CLI live in the higher jubarte crates.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use jubarte_opc::admission::{InputLimits, admit};
+//! use jubarte_opc::opc::PartFs;
+//!
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let bytes = std::fs::read("contract.docx")?;
+//!     // Bound the ZIP before anything inflates it.
+//!     admit(&bytes, InputLimits::default())?;
+//!     let package = PartFs::open(&bytes)?;
+//!     let main = package.main_document_part().ok_or("no main document part")?;
+//!     println!("main document: {main}");
+//!     for part in package.parts() {
+//!         println!("{part}");
+//!     }
+//!     Ok(())
+//! }
+//! ```
 
 #![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 #![forbid(unsafe_code)]

@@ -10,6 +10,20 @@
 //! (behind its feature). `build.rs` stamps `--version` with the source
 //! commit when the crate is built from this repository, and nothing when it
 //! is built from an unpacked package inside another repository.
+//!
+//! # Example
+//!
+//! ```rust
+//! use jubarte_cli::cli::top_level_command;
+//!
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let matches = top_level_command().try_get_matches_from([
+//!         "jubarte", "compare", "old.docx", "new.docx", "-o", "redline.docx",
+//!     ])?;
+//!     assert_eq!(matches.subcommand_name(), Some("compare"));
+//!     Ok(())
+//! }
+//! ```
 
 #![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 #![forbid(unsafe_code)]
