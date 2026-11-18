@@ -363,10 +363,10 @@ jobs:
       - run: python3 scripts/test_publish_crates.py
       - run: python3 scripts/test_glibc_floor.py
       - run: python3 scripts/test_gen_docs.py
-      - run: uv run --with pyyaml python3 scripts/test_release_workflow.py
-      - run: uv run --with pyyaml python3 scripts/test_docs_workflow.py
-      - run: uv run --with pyyaml python3 scripts/test_jules_workflow.py
-      - run: uv run --with pyyaml python3 scripts/test_codeql_config.py
+      - run: uv run --no-build --with pyyaml==6.0.3 python3 scripts/test_release_workflow.py
+      - run: uv run --no-build --with pyyaml==6.0.3 python3 scripts/test_docs_workflow.py
+      - run: uv run --no-build --with pyyaml==6.0.3 python3 scripts/test_jules_workflow.py
+      - run: uv run --no-build --with pyyaml==6.0.3 python3 scripts/test_codeql_config.py
       - run: python3 scripts/test_check_engine_commit.py
       - run: python3 scripts/test_check_npm_paths.py
       - run: python3 scripts/test_table_styles_asset.py
