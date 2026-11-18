@@ -1918,3 +1918,89 @@ mod ooxml_package_boundary_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod branch_tests {
+    use super::*;
+
+    #[test]
+    fn email_autolinks_are_commonmarks_addresses_only() {
+        for good in ["a@b.co", "first.last+tag@mail-1.example.org", "x@y"] {
+            assert!(email_autolink(good), "{good}");
+        }
+        for bad in [
+            "no-at-sign",
+            "@b.co",
+            "a b@c.co",
+            "a@",
+            "a@-b.co",
+            "a@b-.co",
+            "a@b..co",
+            "a@b_c.co",
+            &format!("a@{}.co", "x".repeat(64)),
+        ] {
+            assert!(!email_autolink(bad), "{bad}");
+        }
+        assert_eq!(link_destination("a b(c)"), "<a%20b(c)>");
+        assert_eq!(link_destination("x\\<y>)"), "<x\\\\\\<y\\>)>");
+        assert_eq!(link_destination("plain"), "plain");
+    }
+
+    #[test]
+    fn emphasis_delimiters_read_as_commonmark_reads_them() {
+        assert!(!opens_empty_emphasis("x**", ""));
+        assert!(!opens_empty_emphasis("x**", "<b>"));
+        assert!(opens_empty_emphasis("x_**", "**"));
+        assert!(!opens_empty_emphasis("x*", "**"));
+        assert!(!opens_empty_emphasis("x", "**"));
+        assert!(opens_empty_emphasis("__", "__"));
+        assert!(!delimiters_read(None, "", None, false));
+        assert!(delimiters_read(None, "word", None, true));
+        assert!(!delimiters_read(Some('a'), "word", None, true));
+        assert!(!delimiters_read(None, "word", Some('b'), true));
+        assert!(delimiters_read(Some('a'), "word", Some('b'), false));
+        assert!(!delimiters_read(Some('a'), ".x", None, false));
+        assert!(delimiters_read(Some(' '), ".x.", Some(','), false));
+        assert!(!delimiters_read(None, " x", None, false));
+        assert!(!delimiters_read(None, "x.", Some('b'), false));
+        assert_eq!(code_fence("a"), ("`".to_string(), "`".to_string()));
+        assert_eq!(code_fence("a``b"), ("```".to_string(), "```".to_string()));
+        assert_eq!(code_fence("`a"), ("`` ".to_string(), " ``".to_string()));
+        assert_eq!(code_fence("a`"), ("`` ".to_string(), " ``".to_string()));
+        assert_eq!(code_fence(" a"), ("` ".to_string(), " `".to_string()));
+        assert_eq!(code_fence("  "), ("`".to_string(), "`".to_string()));
+    }
+
+    #[test]
+    fn lines_tidy_by_view_and_edges_keep_marked_spaces() {
+        assert_eq!(finish_line("  code  ", false, true), "  code");
+        assert_eq!(finish_line("  x  ", false, false), "x");
+        assert_eq!(finish_line("  x  ", true, false), "&#32;&#32;x");
+        assert_eq!(finish_line("x  ", true, false), "x");
+        assert_eq!(finish_line("   ", true, false), "");
+        assert_eq!(tidy_inline("a   b `c   d`", false, false), "a b `c   d`");
+        assert_eq!(tidy_inline("\n  a  \n", false, false), "a");
+        let underline = Marks {
+            underline: true,
+            ..Marks::default()
+        };
+        let (lead, core, trail) = edges(underline, "  x ");
+        assert_eq!((lead, core.as_ref(), trail), ("", "&#32;&#32;x&#32;", ""));
+        let (lead, core, trail) = edges(underline, "\tx");
+        assert_eq!((lead, core.as_ref(), trail), ("\t", "x", ""));
+        let bold = Marks {
+            bold: true,
+            ..Marks::default()
+        };
+        let (lead, core, trail) = edges(bold, "\u{a0}x ");
+        assert_eq!((lead, core.as_ref(), trail), ("\u{a0}", "x", " "));
+        let code = Marks {
+            code: true,
+            ..Marks::default()
+        };
+        assert_eq!(edges(code, " x ").1.as_ref(), " x ");
+        assert_eq!(split_ws("\u{a0}x "), ("", "\u{a0}x", " "));
+        assert_eq!(split_by("   ", char::is_whitespace), ("   ", "", ""));
+    }
+}

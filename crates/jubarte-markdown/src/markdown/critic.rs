@@ -4369,3 +4369,425 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod branch_tests {
+    use super::*;
+
+    type Case = (
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static [&'static str],
+        Option<&'static str>,
+    );
+
+    /// Escapes, nesting, crossing spans, notes, fields, verbatim Markdown,
+    /// stand-in references, attributions and stray delimiters: what each
+    /// resolves to accepted and rejected, what `accept_clauses` keeps, the
+    /// warnings for delimiters left as text, and the refusal of an old
+    /// attribution (#1923).
+    #[test]
+    fn markup_resolves_warns_and_refuses_old_attributions() {
+        let cases: &[Case] = &[
+            (
+                "\\{++a++} b",
+                "\\{++a++} b",
+                "\\{++a++} b",
+                "\\{++a++} b",
+                &[],
+                None,
+            ),
+            ("\\\\{++a++} b", "\\\\a b", "\\\\ b", "\\\\a b", &[], None),
+            ("{==a {++b++}==}{>>note<<}", "a b", "a ", "a b", &[], None),
+            ("{~~a~>{==b==}{>>n<<}~~}", "b", "a", "b", &[], None),
+            (
+                "{++a{>>b++}c++}",
+                "a{>>bc++}",
+                "c++}",
+                "a{>>bc++}",
+                &[
+                    "'++}' with nothing open on line 1 is text",
+                    "'{>>' without its '<<}' on line 1 is text",
+                ],
+                None,
+            ),
+            ("{~~a{>>x ~> y<<} b~>c~~}", "c", "a b", "c", &[], None),
+            (
+                "{++a {==b++} c==}",
+                "{++a b++} c",
+                "{++a b++} c",
+                "{++a b++} c",
+                &["'{++' without its '++}' on line 1 is text"],
+                None,
+            ),
+            (
+                "{==a{>>b==}c<<}",
+                "{==a",
+                "{==a",
+                "{==a",
+                &["'{==' without its '==}' on line 1 is text"],
+                None,
+            ),
+            (
+                "{++[^2]: Added later.++}",
+                "[^2]: Added later.",
+                "",
+                "[^2]: Added later.",
+                &[],
+                None,
+            ),
+            (
+                "{++\n```\ncode\n```\n++}",
+                "\n```\ncode\n```\n",
+                "",
+                "\n```\ncode\n```\n",
+                &[],
+                None,
+            ),
+            (
+                "a&#x2E0E;b {++&#11790;++} {>>&#xF0000;<<} &#;x &#x1234567; &#12345678; &#xZZ; &#12a; &#65;",
+                "a&#x2E0E;b &#11790;  &#;x &#x1234567; &#12345678; &#xZZ; &#12a; &#65;",
+                "a&#x2E0E;b   &#;x &#x1234567; &#12345678; &#xZZ; &#12a; &#65;",
+                "a&#x2E0E;b &#11790;  &#;x &#x1234567; &#12345678; &#xZZ; &#12a; &#65;",
+                &[],
+                None,
+            ),
+            ("a{>>one\n\ntwo<<}", "a", "a", "a", &[], None),
+            (
+                "{DATE \\@ \"MMMM d\"}March{/} and {PAGE} and \\{PAGE} and {++{PAGE}1{/}++}",
+                "{DATE \\\\\\@ \\\"MMMM d\\\"}March{/} and {PAGE} and \\{PAGE} and {PAGE}1{/}",
+                "{DATE \\\\\\@ \\\"MMMM d\\\"}March{/} and {PAGE} and \\{PAGE} and ",
+                "{DATE \\\\\\@ \\\"MMMM d\\\"}March{/} and {PAGE} and \\{PAGE} and {PAGE}1{/}",
+                &[],
+                None,
+            ),
+            (
+                "<http://a{++b++}> [x](a{++b++}) <!-- {++x++} --> `{++x++}`",
+                "<http://a{++b++}> [x](a{++b++}) <!-- x --> `{++x++}`",
+                "<http://a{++b++}> [x](a{++b++}) <!--  --> `{++x++}`",
+                "<http://a{++b++}> [x](a{++b++}) <!-- x --> `{++x++}`",
+                &[],
+                None,
+            ),
+            (
+                "[l]: http://x{++y++}\n\ntext",
+                "[l]: http://x{++y++}\n\ntext",
+                "[l]: http://x{++y++}\n\ntext",
+                "[l]: http://x{++y++}\n\ntext",
+                &[],
+                None,
+            ),
+            (
+                "    {++x++}",
+                "    {++x++}",
+                "    {++x++}",
+                "    {++x++}",
+                &[],
+                None,
+            ),
+            (
+                "{++a++}{r1 @A} b ¶{r3 @A}\n\nnext",
+                "a b \n\nnext",
+                " b next",
+                "a b \n\nnext",
+                &[],
+                None,
+            ),
+            (
+                "{++a++}{r1 @A move m1} {--b--}{r2 @A move}",
+                "a ",
+                " b",
+                "a ",
+                &[],
+                None,
+            ),
+            (
+                "==x== {==y==} a == b === c ==d=",
+                "==x== y a == b === c ==d=",
+                "==x== y a == b === c ==d=",
+                "==x== y a == b === c ==d=",
+                &[],
+                None,
+            ),
+            (
+                "1. {--x--}\n10. y\n    1. z\n- {++w++}\n+ v",
+                "1. \n10. y\n    1. z\n- w\n+ v",
+                "1. x\n10. y\n    1. z\n- \n+ v",
+                "1. \n10. y\n    1. z\n- w\n+ v",
+                &[],
+                None,
+            ),
+            (
+                "# {--Old heading--}\n\n## {++New++}\n\ntext",
+                "# \n\n## New\n\ntext",
+                "# Old heading\n\n## \n\ntext",
+                "# \n\n## New\n\ntext",
+                &[],
+                None,
+            ),
+            (
+                "{~~old~>new~~} and {~~a~>~~} and {~~~>b~~}",
+                "new and  and b",
+                "old and a and ",
+                "new and  and b",
+                &[],
+                None,
+            ),
+            ("{++a\n\nb++}", "a\n\nb", "", "a\n\nb", &[], None),
+            ("A{++\n\nB++}", "A\n\nB", "A", "A\n\nB", &[], None),
+            (
+                "{--line one\n\nline two--}\n\nkeep",
+                "\n\nkeep",
+                "line one\n\nline two\n\nkeep",
+                "keep",
+                &[],
+                None,
+            ),
+            (
+                "{++unclosed and {--also",
+                "{++unclosed and {--also",
+                "{++unclosed and {--also",
+                "{++unclosed and {--also",
+                &[
+                    "'{++' without its '++}' on line 1 is text",
+                    "'{--' without its '--}' on line 1 is text",
+                ],
+                None,
+            ),
+            (
+                "closer only++} and --} and ~~} and ==} and <<}",
+                "closer only++} and --} and ~~} and ==} and <<}",
+                "closer only++} and --} and ~~} and ==} and <<}",
+                "closer only++} and --} and ~~} and ==} and <<}",
+                &[
+                    "'++}' with nothing open on line 1 is text",
+                    "'--}' with nothing open on line 1 is text",
+                    "'<<}' with nothing open on line 1 is text",
+                    "'==}' with nothing open on line 1 is text",
+                    "'~~}' with nothing open on line 1 is text",
+                ],
+                None,
+            ),
+            (
+                "{>>comment only<<} and {==scope==}{>>c<<}{>>reply<<}",
+                " and scope",
+                " and scope",
+                " and scope",
+                &[],
+                None,
+            ),
+            (
+                "{++x++}{>>r1 @ASR<<}",
+                "x",
+                "",
+                "x",
+                &[],
+                Some(
+                    "line 1: old attribution `{>>r1 @ASR<<}` is no longer supported; write `{r1 @ASR}`. A comment with that text is written `{>>c1 @X: r1 @ASR<<}`.",
+                ),
+            ),
+            (
+                "{++**bold**++}*{>>r1 Alice (2026-10-01T09:00:00Z)<<}",
+                "**bold***",
+                "\\*",
+                "**bold***",
+                &[],
+                Some(
+                    "line 1: old attribution `{>>r1 Alice (2026-10-01T09:00:00Z)<<}` is no longer supported; write `{r1 Alice (2026-10-01T09:00:00Z)}`. A comment with that text is written `{>>c1 @X: r1 @ASR<<}`.",
+                ),
+            ),
+            (
+                "{~~a~>b~~}{>>r1 @A on r0 @B<<}",
+                "b",
+                "a",
+                "b",
+                &[],
+                Some(
+                    "line 1: old attribution `{>>r1 @A on r0 @B<<}` is no longer supported; write `{r1 @A re r0 @B}`. A comment with that text is written `{>>c1 @X: r1 @ASR<<}`.",
+                ),
+            ),
+            (
+                "{~~a~>b~~}{>>r1 Al (2026-10-01T09:00:00Z); r2 Bo (2026-10-01T09:00:00Z)<<}",
+                "b",
+                "a",
+                "b",
+                &[],
+                Some(
+                    "line 1: old attribution `{>>r1 Al (2026-10-01T09:00:00Z); r2 Bo (2026-10-01T09:00:00Z)<<}` is no longer supported; write `{r1 Al (2026-10-01T09:00:00Z); r2 Bo (2026-10-01T09:00:00Z)}`. A comment with that text is written `{>>c1 @X: r1 @ASR<<}`.",
+                ),
+            ),
+            (
+                "{++a++}{>>header1.r3 @A<<}",
+                "a",
+                "",
+                "a",
+                &[],
+                Some(
+                    "line 1: old attribution `{>>header1.r3 @A<<}` is no longer supported; write `{header1.r3 @A}`. A comment with that text is written `{>>c1 @X: r1 @ASR<<}`.",
+                ),
+            ),
+            ("{++a++}{>>.r3 @A<<}", "a", "", "a", &[], None),
+            ("{++a++}{>>he$d.r3 @A<<}", "a", "", "a", &[], None),
+            ("{++a++}{>>r1+ @A<<}", "a", "", "a", &[], None),
+            (
+                "{++a++}{>>r1 @A",
+                "a{>>r1 @A",
+                "{>>r1 @A",
+                "a{>>r1 @A",
+                &["'{>>' without its '<<}' on line 1 is text"],
+                None,
+            ),
+            (
+                "| {++a++} | b |\n|---|---|\n| {--c--} | d |",
+                "| a | b |\n|---|---|\n|  | d |",
+                "|  | b |\n|---|---|\n| c | d |",
+                "| a | b |\n|---|---|\n|  | d |",
+                &[],
+                None,
+            ),
+            (
+                "> {++quoted++}\n> more",
+                "> quoted\n> more",
+                "> \n> more",
+                "> quoted\n> more",
+                &[],
+                None,
+            ),
+            ("*a{++*b*++}c*", "*abc*", "*ac*", "*a*b*c*", &[], None),
+            ("_a{--_b_--}c_", "_ac_", "_abc_", "_ac_", &[], None),
+            (
+                "**a{++b++}c** and __x{--y--}z__",
+                "**abc** and __xz__",
+                "**ac** and __xyz__",
+                "**abc** and __xz__",
+                &[],
+                None,
+            ),
+            (
+                "{++a~~b~~c++} and {--`code`--}",
+                "a~~b~~c and ",
+                " and `code`",
+                "a~~b~~c and ",
+                &[],
+                None,
+            ),
+            (
+                "text {++inserted++}{r5+6 @AC}¶{r5+6 @AC}\n\nnext para",
+                "text inserted\n\nnext para",
+                "text next para",
+                "text inserted\n\nnext para",
+                &[],
+                None,
+            ),
+            ("x{--y--}{r1 @A re r0 @B}z", "xz", "xz", "xz", &[], None),
+            (
+                "{++the ++}{r13 @RC}{--applicable--}{r16 @TL re r13 @RC}{++ law++}{r13 @RC}",
+                "the  law",
+                "",
+                "the  law",
+                &[],
+                None,
+            ),
+            (
+                "{--30 days--}{r50 @TL}{++45 days++}{r60 @RC}",
+                "45 days",
+                "30 days",
+                "45 days",
+                &[],
+                None,
+            ),
+            (
+                "{~~30 days~>45 days~~}{r50 @TL; r60 @RC}",
+                "45 days",
+                "30 days",
+                "45 days",
+                &[],
+                None,
+            ),
+        ];
+        for &(source, accepted, rejected, clauses, warnings, legacy) in cases {
+            assert_eq!(resolve(source, true), accepted, "accept {source:?}");
+            assert_eq!(resolve(source, false), rejected, "reject {source:?}");
+            assert_eq!(accept_clauses(source), clauses, "clauses {source:?}");
+            assert_eq!(encode_checked(source).1, warnings, "warnings {source:?}");
+            assert_eq!(
+                legacy_attribution_error(source).as_deref(),
+                legacy,
+                "legacy {source:?}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod scanner_branch_tests {
+    use super::*;
+
+    #[test]
+    fn comment_closers_count_nesting_and_skip_escapes() {
+        let s = "a{>>b<<}c<<}";
+        assert_eq!(comment_closer(s, "{>>", "<<}", 0, s.len()), Some(9));
+        let s = "\\<<}é<<}";
+        assert_eq!(comment_closer(s, "{>>", "<<}", 0, s.len()), Some(6));
+        let s = "\\{>>x<<}";
+        assert_eq!(comment_closer(s, "{>>", "<<}", 0, s.len()), Some(5));
+        assert_eq!(comment_closer("abc<<}", "{>>", "<<}", 0, 3), None);
+        assert_eq!(comment_closer("abc", "{>>", "<<}", 0, 3), None);
+    }
+
+    #[test]
+    fn separators_sit_at_depth_one_only() {
+        let s = "a~>b";
+        assert_eq!(
+            comment_separator(s, "{~~", "~~}", "~>", 0, s.len()),
+            Some(1)
+        );
+        let s = "{~~c~>d~~}é~>e";
+        assert_eq!(
+            comment_separator(s, "{~~", "~~}", "~>", 0, s.len()),
+            Some(12)
+        );
+        let s = "abc~~}~>";
+        assert_eq!(comment_separator(s, "{~~", "~~}", "~>", 0, s.len()), None);
+        let s = "a\\~>b\\~~}c~>";
+        assert_eq!(
+            comment_separator(s, "{~~", "~~}", "~>", 0, s.len()),
+            Some(10)
+        );
+        assert_eq!(comment_separator("abc", "{~~", "~~}", "~>", 0, 3), None);
+    }
+
+    #[test]
+    fn definitions_comments_autolinks_and_fence_escapes_read_their_shapes() {
+        assert_eq!(definition_destination("[a]: x"), Some(4));
+        assert_eq!(definition_destination("   [a\\]]: x"), Some(9));
+        assert_eq!(definition_destination("[]: x"), None);
+        assert_eq!(definition_destination("[a] x"), None);
+        assert_eq!(definition_destination("[a[b]: x"), None);
+        assert_eq!(definition_destination("    [a]: x"), None);
+        assert_eq!(definition_destination("[^1]: x"), None);
+        assert_eq!(definition_destination("[open"), None);
+        assert_eq!(comment_end("<!-- x --> y", 0), Some(10));
+        assert_eq!(comment_end("<!-- open", 0), None);
+        assert_eq!(comment_end("<b>", 0), None);
+        assert_eq!(autolink_end("<https://a.example> x", 0), Some(19));
+        assert_eq!(autolink_end("<https://a b>", 0), None);
+        assert_eq!(autolink_end("<https://a<b>", 0), None);
+        assert_eq!(autolink_end("<https://open", 0), None);
+        assert_eq!(autolink_end("<h:x>", 0), None);
+        assert_eq!(autolink_end("<mailto x>", 0), None);
+        assert_eq!(
+            fence_escape_at("\\{r1 @A}", 0),
+            Some(("{r1 @A}".to_string(), 8))
+        );
+        assert_eq!(
+            fence_escape_at("\\\\{r1 @A}", 0),
+            Some(("\\\\{r1 @A}".to_string(), 9))
+        );
+        assert_eq!(fence_escape_at("plain", 0), None);
+    }
+}

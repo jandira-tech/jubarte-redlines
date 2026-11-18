@@ -1916,3 +1916,271 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod branch_tests {
+    use super::*;
+
+    const W: &str = "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"";
+
+    fn mark(id: Option<u32>) -> FormatMark {
+        FormatMark {
+            id,
+            author: "Ana".to_string(),
+            date: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn style_changes_land_in_the_styles_own_properties() {
+        let styles = format!(
+            "<w:styles {W}><w:style w:styleId=\"A\"><w:pPr/><w:rPr><w:b/><w:rPrChange w:id=\"1\" w:author=\"Old\"><w:rPr/></w:rPrChange></w:rPr></w:style><w:style w:styleId=\"B\"><w:rPr><w:i/></w:rPr></w:style><w:style w:styleId=\"C\"><w:name w:val=\"C\"/></w:style><w:style w:styleId=\"Open\">"
+        );
+        let changes = vec![
+            (
+                "A".to_string(),
+                vec![
+                    (StyleChangeKind::Paragraph, mark(Some(2))),
+                    (StyleChangeKind::Run, mark(None)),
+                ],
+            ),
+            (
+                "B".to_string(),
+                vec![(StyleChangeKind::Paragraph, mark(Some(3)))],
+            ),
+            ("C".to_string(), vec![(StyleChangeKind::Run, mark(Some(4)))]),
+            ("D".to_string(), vec![(StyleChangeKind::Run, mark(Some(5)))]),
+            (
+                "B".to_string(),
+                vec![(StyleChangeKind::Other, mark(Some(6)))],
+            ),
+            (
+                "Open".to_string(),
+                vec![(StyleChangeKind::Run, mark(Some(7)))],
+            ),
+            (
+                "docDefaults".to_string(),
+                vec![(StyleChangeKind::Run, mark(Some(8)))],
+            ),
+        ];
+        let out = with_style_changes(&styles, &changes);
+        // A's empty pPr takes the change; its rPr's old change is replaced.
+        assert!(
+            out.contains(
+                "<w:style w:styleId=\"A\"><w:pPr><w:pPrChange w:id=\"2\" w:author=\"Ana\""
+            ),
+            "{out}"
+        );
+        assert!(!out.contains("Old"), "{out}");
+        // B gets a pPr before its rPr; C an rPr of its own.
+        assert!(
+            out.contains("<w:style w:styleId=\"B\"><w:pPr><w:pPrChange w:id=\"3\""),
+            "{out}"
+        );
+        assert!(
+            out.contains("<w:name w:val=\"C\"/><w:rPr><w:rPrChange w:id=\"4\""),
+            "{out}"
+        );
+        assert!(
+            !out.contains("w:id=\"5\"")
+                && !out.contains("w:id=\"6\"")
+                && !out.contains("w:id=\"7\"")
+        );
+        assert!(!out.contains("w:id=\"8\""));
+    }
+
+    #[test]
+    fn style_change_warnings_count_what_is_not_written() {
+        let changes = vec![
+            (
+                "docDefaults".to_string(),
+                vec![(StyleChangeKind::Run, mark(Some(1)))],
+            ),
+            (
+                "docDefaults".to_string(),
+                vec![
+                    (StyleChangeKind::Run, mark(Some(1))),
+                    (StyleChangeKind::Paragraph, mark(Some(2))),
+                ],
+            ),
+            ("docDefaults".to_string(), vec![]),
+            (
+                "A".to_string(),
+                vec![
+                    (StyleChangeKind::Paragraph, mark(Some(1))),
+                    (StyleChangeKind::Paragraph, mark(Some(2))),
+                    (StyleChangeKind::Run, mark(Some(3))),
+                    (StyleChangeKind::Run, mark(Some(4))),
+                    (StyleChangeKind::Other, mark(Some(5))),
+                ],
+            ),
+            (
+                "B".to_string(),
+                vec![
+                    (StyleChangeKind::Other, mark(Some(6))),
+                    (StyleChangeKind::Other, mark(Some(7))),
+                ],
+            ),
+        ];
+        let legacy = vec![
+            ("A".to_string(), vec!["r1 @A".to_string()]),
+            (
+                "B".to_string(),
+                vec!["r2 @A".to_string(), "r3 @A".to_string()],
+            ),
+            ("C".to_string(), vec![]),
+            ("docDefaults".to_string(), vec!["r4 @A".to_string()]),
+        ];
+        assert_eq!(
+            style_change_warnings(&changes, &legacy),
+            [
+                "style_changes: A: r1 @A has no kind; written as rPr",
+                "style_changes: B: r2 @A; r3 @A have no kind; written as rPr",
+                "style_changes: docDefaults: the document defaults have no change slot; 1 change is not written",
+                "style_changes: docDefaults: the document defaults have no change slot; 2 changes are not written",
+                "style_changes: A: 2 pPr changes for one slot; the rest are not written",
+                "style_changes: A: 2 rPr changes for one slot; the rest are not written",
+                "style_changes: A: 1 other change is not written",
+                "style_changes: B: 2 other changes are not written",
+            ]
+        );
+    }
+
+    #[test]
+    fn nested_property_elements_close_at_their_own_close() {
+        // The pPrChange's own pPr nests: the style's pPr closes after it.
+        let block = "<w:style><w:pPr><w:jc/><w:pPrChange><w:pPr><w:ind/></w:pPr></w:pPrChange></w:pPr><w:rPr><w:b/></w:rPr>";
+        let ppr = own_ppr(block).expect("pPr");
+        assert_eq!(
+            &block[ppr.start..ppr.end],
+            "<w:pPr><w:jc/><w:pPrChange><w:pPr><w:ind/></w:pPr></w:pPrChange></w:pPr>"
+        );
+        let span = direct_child_span(block, &ppr, "pPrChange").expect("change");
+        assert!(block[span].starts_with("<w:pPrChange>"));
+        assert!(direct_child_span(block, &ppr, "missing").is_none());
+        assert!(open_tag("<w:pPrX/><w:pPr\t/>", "pPr", 0..18).is_some_and(|t| t.empty));
+        assert!(open_tag("<w:pPr", "pPr", 0..6).is_none());
+        assert!(close_at("<w:pPr>", "pPr", 7).is_none());
+        assert!(own("<w:pPr><w:b/>", "pPr", 0).is_none());
+        let open = own("<w:rPr><w:b/></w:rPr>", "rPr", 0).expect("rPr");
+        assert!(direct_child_span("<w:rPr><w:b/></w:rPr>", &open, "x").is_none());
+        let text = "<w:rPr>text</w:rPr>";
+        let open = own(text, "rPr", 0).expect("rPr");
+        assert!(direct_child_span(text, &open, "x").is_none());
+    }
+
+    #[test]
+    fn legend_values_refuse_what_word_cannot_hold() {
+        assert_eq!(points("2000pt", 20.0), None);
+        assert_eq!(points("-1pt", 20.0), None);
+        assert_eq!(points("NaNpt", 20.0), None);
+        assert_eq!(twips_in("infin"), None);
+        assert_eq!(twips_in("30in"), None);
+        assert_eq!(twips_in("-0.5in"), Some(-720));
+        assert_eq!(font_clause(" bold 11pt"), None);
+        assert_eq!(
+            font_clause("Arial bold italic 11pt"),
+            Some(("Arial".to_string(), true, true, 22))
+        );
+        for bad in [
+            "Arial 11pt, line 200",
+            "Arial 11pt, line NaN",
+            "Arial 11pt, line 12pt sometimes",
+            "Arial 11pt, sideways",
+            "Arial 11pt, tilt 3",
+            "Arial 11pt, before 9999pt",
+        ] {
+            assert!(spec("S", None, false, bad).is_none(), "{bad}");
+        }
+        let good = spec("S", None, false, "character, Arial 11pt, line 12pt atLeast, right 0.5in, first-line 0.25in, hanging 0.1in, indent 1in, contextual spacing, keep-next, keep-lines, justify, named My S").expect("spec");
+        assert!(good.character && good.keep_next && good.keep_lines && good.contextual_spacing);
+        assert_eq!(good.align, Some("both"));
+        assert_eq!(good.name.as_deref(), Some("My S"));
+        assert_eq!(
+            without_comment("text: \"a  # b\\\" c\"  # note"),
+            "text: \"a  # b\\\" c\"  "
+        );
+        assert_eq!(unquote("\"bad"), None);
+    }
+
+    #[test]
+    fn table_legends_read_borders_names_and_stop_at_unknown_clauses() {
+        assert_eq!(
+            border_sides("borders top double 0.75pt #FF0000 space 4pt left single"),
+            Some(vec![
+                BorderSide {
+                    side: "top".into(),
+                    val: "double".into(),
+                    size: Some(6),
+                    color: Some("FF0000".into()),
+                    space: Some(4)
+                },
+                BorderSide {
+                    side: "left".into(),
+                    val: "single".into(),
+                    size: None,
+                    color: None,
+                    space: None
+                },
+            ])
+        );
+        for bad in [
+            "borders middle single",
+            "borders top single top double",
+            "borders top s!ngle",
+            "borders top",
+            "borders top single 300pt",
+            "borders top single #FF00",
+            "borders top single #GGGGGG",
+            "borders top single space x",
+            "borders top single space",
+            "borders top single 1pt 2pt",
+            "borders top single wavy",
+            "frames top single",
+        ] {
+            assert_eq!(border_sides(bad), None, "{bad}");
+        }
+        let yaml = "styles:\n  table: Grid, all borders 1.5pt, named \"My, Grid\", borders vary  # c\n  tables: A, all borders 9pt, B, borders top single, named Bee, C, D, extra\nother:\n  table: Ignored\n";
+        assert_eq!(
+            table_style(yaml),
+            Some((
+                "Grid".to_string(),
+                Some(TableBorders::All(12)),
+                Some("My, Grid".to_string())
+            ))
+        );
+        assert_eq!(
+            table_style("styles:\n  table: \"Q, named Z\"\n"),
+            Some(("Q".to_string(), None, Some("Z".to_string())))
+        );
+        let legend = table_legend(yaml);
+        let keys: Vec<&str> = legend.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["A", "B", "C", "D", "all borders 9pt", "extra"]);
+        assert!(table_legend("styles:\n  Normal: Arial 11pt\n").is_empty());
+        assert_eq!(table_style("styles:\n  table: \"\"\n"), None);
+        assert_eq!(
+            take_clause("\"a, \\\"b\", c"),
+            ("\"a, \\\"b\"".to_string(), "c")
+        );
+    }
+
+    #[test]
+    fn the_legend_skips_unreadable_keys_and_headings_out_of_range() {
+        let specs = legend(
+            "styles:\n  no separator\n  \"open: Arial 11pt\n  \"#######\": Heading7, Arial 11pt\n  \"#\": NoComma\n  \"##\": Heading2, Arial bold 13pt\n  changes: x\n  Normal: Arial 11pt\n  Body: Arial 10pt\nother:\n  Skip: Arial 9pt\n",
+        );
+        let ids: Vec<(&str, bool, Option<u32>)> = specs
+            .iter()
+            .map(|s| (s.id.as_str(), s.default, s.heading))
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                ("Heading2", false, Some(2)),
+                ("Normal", true, None),
+                ("Body", false, None)
+            ]
+        );
+    }
+}

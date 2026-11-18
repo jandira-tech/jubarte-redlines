@@ -2088,3 +2088,65 @@ mod tests {
         round_trip(&old, &new);
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod branch_tests {
+    use super::*;
+
+    #[test]
+    fn markers_end_where_the_block_marker_ends() {
+        assert_eq!(marker_len(">quote"), 1);
+        assert_eq!(marker_len("> > x"), 4);
+        assert_eq!(marker_len("[^n]: note"), 6);
+        assert_eq!(marker_len("[^a b]: note"), 0);
+        assert_eq!(marker_len("1234567890. x"), 0);
+        assert_eq!(marker_len("12) x"), 4);
+        assert_eq!(marker_len("12x"), 0);
+        assert_eq!(marker_len("###"), 3);
+        assert_eq!(marker_shape("12. 3"), "0. ");
+        assert_eq!(marker_shape("1.2. x"), "");
+    }
+
+    #[test]
+    fn similarity_and_dice_score_shared_words() {
+        assert_eq!(dice::<u32>(&[], &[]), 1.0);
+        assert_eq!(dice(&[1], &[]), 0.0);
+        assert_eq!(dice(&[1], &[1, 2, 3, 4, 5, 6, 7, 8]), 0.0);
+        assert_eq!(dice(&[1, 1, 2], &[1, 2, 2]), 2.0 * 2.0 / 6.0);
+        assert_eq!(dice(&[1, 2, 3], &[1, 2, 3]), 1.0);
+        assert_eq!(similarity("", "... --"), 1.0);
+        assert_eq!(similarity("one", ""), 0.0);
+        assert_eq!(similarity("one", "one two three four five six seven"), 0.0);
+        assert_eq!(similarity("the cat sat", "the cat sat"), 1.0);
+        assert!(weighted_pairs(&[], 3).is_empty());
+        assert_eq!(
+            weighted_pairs(&[(0, 1, 0.9), (1, 0, 0.8), (1, 2, 0.7), (0, 0, 0.6)], 3),
+            [(0, 1), (1, 2)]
+        );
+        assert!(weighted_pairs(&[(0, 0, 0.0)], 1).is_empty());
+    }
+
+    #[test]
+    fn opaque_spans_across_lines_join_into_one_unit() {
+        let units = opaque_units("a `code\nspan` b\nnext\n<div\nx>\n");
+        // The HTML block runs to the text's end, its last break included.
+        assert_eq!(units, ["a `code\nspan` b", "next", "<div\nx>\n"]);
+        assert_eq!(opaque_units("one\ntwo"), ["one", "two"]);
+    }
+
+    #[test]
+    fn diffs_mark_words_math_and_reflowed_paragraphs() {
+        let out = diff_markdown(
+            "Pay $x+1$ to the vendor now.\n\n$$\na=1\n$$\n\nOne two three four\nfive six.\n",
+            "Pay $x+2$ to the vendor now.\n\n$$\na=2\n$$\n\nOne two three\nfour five six seven.\n",
+        );
+        assert!(
+            out.contains("{--$x+1$--}") || out.contains("{~~$x+1$~>$x+2$~~}"),
+            "{out}"
+        );
+        assert!(out.contains("seven"), "{out}");
+        let same = diff_markdown("A.\n", "A.\n");
+        assert_eq!(same, "A.\n");
+    }
+}

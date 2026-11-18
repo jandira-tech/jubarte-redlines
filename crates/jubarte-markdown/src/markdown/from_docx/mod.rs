@@ -7197,6 +7197,392 @@ mod tests {
         let truncated = docx(&p("", &r("ok")), &[]);
         assert!(convert(&truncated[..truncated.len() / 2], &Options::default()).is_err());
     }
+
+    fn latex_back(latex: &str) -> String {
+        let xml = crate::markdown::math::omml(latex, false, None, &mut |_| String::new());
+        let element = super::ooxml::parse_xml(xml.as_bytes()).expect("math");
+        math(&element)
+    }
+
+    /// LaTeX written as Word's math and read back: every structure the
+    /// writer builds comes back as the LaTeX that builds it again, an
+    /// operator's operand bracketed, spaced or braced as it reads.
+    #[test]
+    fn written_math_reads_back_as_its_latex() {
+        for (latex, back) in [
+            ("\\genfrac{}{}{0pt}{}{a}{b}", "\\genfrac{}{}{0pt}{}{a}{b}"),
+            ("\\overset{a}{b}", "\\overset{a}{b}"),
+            ("\\underset{a}{b}", "\\underset{a}{b}"),
+            ("\\mathop{x}", "\\mathop{x}"),
+            ("\\mathord{x}", "\\mathord{x}"),
+            ("\\operatorname{argmax} x", "\\operatorname{argmax} x"),
+            ("\\sin(x)", "\\sin(x)"),
+            ("\\sin x", "\\sin x"),
+            ("\\sin {ab}", "\\sin{ab}"),
+            ("\\sum (a)", "\\sum(a)"),
+            ("\\sum_i [a]", "\\sum_i[a]"),
+            ("\\int \\{a\\}", "\\int\\{a\\}"),
+            ("\\lim_{n} a", "\\lim_n a"),
+            ("\\overbrace{x}^{n}", "\\overbrace{x}^n"),
+            ("\\underbrace{x}_{n}", "\\underbrace{x}_n"),
+            ("\\operatorname{f2} x", "f2 x"),
+            (
+                "\\begin{aligned} a &= b \\\\ c \\end{aligned}",
+                "\\begin{aligned}a &= b \\\\ c\\end{aligned}",
+            ),
+            (
+                "\\begin{matrix} a & b \\end{matrix}",
+                "\\begin{matrix}a & b\\end{matrix}",
+            ),
+            ("\\text{a&b}", "\\text{a&b}"),
+            ("\\mathbf{x}", "\\mathbf{x}"),
+            ("\\mathrm{d}", "\\mathrm{d}"),
+            (
+                "\\left( a \\middle| b \\right)",
+                "\\left(a\\middle|b\\right)",
+            ),
+            ("\\left\\{ a \\right\\}", "\\{a\\}"),
+            ("\\left\\| a \\right.", "\\left\\|a\\right."),
+            ("x'", "x'"),
+            ("x''", "x''"),
+            ("\\sqrt[3]{x}", "\\sqrt[3]{x}"),
+            ("\\prescript{a}{b}{X}", "\\prescript{a}{b}{X}"),
+            ("\\hat{x}", "\\hat{x}"),
+            ("\\overline{x}", "\\overline{x}"),
+            ("\\underline{x}", "\\underline{x}"),
+            ("\\sum", "\\sum{}"),
+            ("\\sin", "\\sin{}"),
+            ("\\sum_{i}^{n}", "\\sum_i^n{}"),
+            ("\\bmod", "\\mathrm{mod}"),
+            ("\\frac{a}{b}", "\\frac{a}{b}"),
+            ("x_i^2", "x_i^2"),
+        ] {
+            assert_eq!(latex_back(latex), back, "{latex}");
+        }
+    }
+
+    /// Math nested deeper than Word builds reads as nothing past the limit;
+    /// a box whose operator emulation is off is an ordinary box.
+    #[test]
+    fn deep_math_stops_and_an_operator_box_needs_its_switch_on() {
+        const M: &str = "xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\"";
+        let deep = format!(
+            "<m:oMath {M}>{}<m:r><m:t>x</m:t></m:r>{}<m:r><m:t>y</m:t></m:r></m:oMath>",
+            "<m:box><m:e>".repeat(70),
+            "</m:e></m:box>".repeat(70)
+        );
+        let element = super::ooxml::parse_xml(deep.as_bytes()).expect("deep math");
+        let latex = math(&element);
+        assert!(!latex.contains('x') && latex.ends_with('y'), "{latex}");
+        for (value, command) in [
+            ("off", "mathord"),
+            ("0", "mathord"),
+            ("1", "mathop"),
+            ("on", "mathop"),
+        ] {
+            let xml = format!(
+                "<m:oMath {M}><m:box><m:boxPr><m:opEmu m:val=\"{value}\"/></m:boxPr><m:e><m:r><m:t>z</m:t></m:r></m:e></m:box></m:oMath>"
+            );
+            let element = super::ooxml::parse_xml(xml.as_bytes()).expect("box");
+            assert_eq!(math(&element), format!("\\{command}{{z}}"), "{value}");
+        }
+    }
+
+    const NS: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" mc:Ignorable="w14""#;
+
+    const ODD_TYPES: &str = r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/><Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/><Override PartName="/word/endnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>"#;
+
+    const ODD_RELS: &str = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes" Target="endnotes.xml"/><Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>"#;
+
+    /// A package whose parts hold what Word seldom writes: elements with no
+    /// id or name, styles with no id or in a cycle, numbering with missing
+    /// levels, field codes holding text, a footnote and comment reference
+    /// with no id.
+    fn odd_package(body: &str) -> Vec<u8> {
+        let document = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?><w:document {NS}><w:body>{body}</w:body></w:document>"#
+        );
+        let comments = format!(
+            r#"<w:comments {NS}><w:comment w:author="Ann" w:date="2026-01-01T00:00:00Z"><w:p><w:r><w:t>no id</w:t></w:r></w:p></w:comment><w:comment w:id="x" w:author="Bo"><w:p/></w:comment><w:comment w:id="5" w:author="Ann" w:initials="A" w:date="2026-01-02T00:00:00Z"><w:p><w:r><w:t>note five</w:t></w:r></w:p></w:comment><w:comment w:id="6" w:author="Cy"><w:p><w:r><w:t>unplaced</w:t></w:r></w:p></w:comment><w:other/></w:comments>"#
+        );
+        let footnotes = format!(
+            r#"<w:footnotes {NS}><w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote><w:p><w:r><w:t>no id</w:t></w:r></w:p></w:footnote><w:footnote w:id="2"><w:p><w:r><w:t>Note two</w:t></w:r></w:p></w:footnote><w:footnote w:id="4"><w:p><w:r><w:t>Orphan</w:t></w:r></w:p></w:footnote></w:footnotes>"#
+        );
+        let endnotes = format!(
+            r#"<w:endnotes {NS}><w:endnote w:id="3"><w:p><w:r><w:t>End three</w:t></w:r></w:p></w:endnote></w:endnotes>"#
+        );
+        let styles = format!(
+            r#"<w:styles {NS}><w:style w:type="paragraph" w:default="true" w:styleId="Body"><w:name w:val="Body"/></w:style><w:style w:type="paragraph"><w:name w:val="No Id"/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="LoopA"><w:basedOn w:val="LoopB"/><w:pPr><w:framePr w:w="2000"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="LoopB"><w:basedOn w:val="LoopA"/></w:style><w:style w:type="character" w:styleId="Strong"><w:rPr><w:b/></w:rPr></w:style></w:styles>"#
+        );
+        let numbering = format!(
+            r#"<w:numbering {NS}><w:abstractNum><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/></w:lvl></w:abstractNum><w:abstractNum w:abstractNumId="1"><w:lvl><w:numFmt w:val="bullet"/></w:lvl><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl><w:lvl w:ilvl="1"><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="(%2)"/></w:lvl></w:abstractNum><w:num><w:abstractNumId w:val="1"/></w:num><w:num w:numId="8"/><w:num w:numId="7"><w:abstractNumId w:val="1"/><w:lvlOverride><w:startOverride w:val="3"/></w:lvlOverride><w:lvlOverride w:ilvl="1"><w:startOverride w:val="2"/></w:lvlOverride></w:num></w:numbering>"#
+        );
+        zip(&[
+            (
+                "_rels/.rels",
+                r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#,
+            ),
+            ("[Content_Types].xml", ODD_TYPES),
+            ("word/_rels/document.xml.rels", ODD_RELS),
+            ("word/document.xml", &document),
+            ("word/comments.xml", &comments),
+            ("word/footnotes.xml", &footnotes),
+            ("word/endnotes.xml", &endnotes),
+            ("word/styles.xml", &styles),
+            ("word/numbering.xml", &numbering),
+        ])
+    }
+
+    fn odd_body() -> String {
+        let fld = |kind: &str| format!(r#"<w:r><w:fldChar w:fldCharType="{kind}"/></w:r>"#);
+        [
+            r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="0"/><w:bookmarkStart w:id="1" w:name="intro"/><w:r><w:t>Intro</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#.to_string(),
+            r#"<w:p><w:commentRangeStart w:id="5"/><w:r><w:t>Commented</w:t></w:r><w:commentRangeEnd w:id="5"/><w:r><w:commentReference w:id="5"/></w:r><w:r><w:commentReference/></w:r><w:r><w:footnoteReference w:id="2"/></w:r><w:r><w:footnoteReference/></w:r><w:r><w:endnoteReference w:id="3"/></w:r><w:commentRangeStart/></w:p>"#.to_string(),
+            format!(
+                r#"<w:p>{}<w:r><w:instrText xml:space="preserve"> REF _Ref1 \h </w:instrText><w:t>hidden</w:t><w:tab/><w:br/><w:noBreakHyphen/><w:footnoteReference w:id="2"/><w:commentReference w:id="5"/><w:sym w:font="Symbol" w:char="F0B7"/><w:drawing/></w:r>{}<w:r><w:instrText>PAGE</w:instrText></w:r>{}<w:r><w:t>1</w:t></w:r>{}{}<w:r><w:t>Section</w:t></w:r>{}{}</w:p>"#,
+                fld("begin"), fld("begin"), fld("separate"), fld("end"), fld("separate"), fld("end"), fld("bogus")
+            ),
+            format!(
+                r#"<w:p>{}<w:r><w:instrText xml:space="preserve"> HYPERLINK "https://x.test" \l "frag" \o "tip" </w:instrText></w:r>{}<w:r><w:t>link</w:t></w:r>{}</w:p>"#,
+                fld("begin"), fld("separate"), fld("end")
+            ),
+            format!(
+                r#"<w:p>{}<w:r><w:instrText xml:space="preserve">DATE \@ "d"</w:instrText></w:r>{}<w:r><w:t>today</w:t></w:r>{}</w:p>"#,
+                fld("begin"), fld("separate"), fld("end")
+            ),
+            r#"<w:p><w:fldSimple w:instr="PAGEREF _Ref9"><w:r><w:t>3</w:t></w:r></w:fldSimple><w:bookmarkStart w:id="9" w:name="_Ref9"/><w:bookmarkEnd w:id="9"/></w:p>"#.to_string(),
+            r#"<w:sdt><w:sdtPr/></w:sdt><w:sdt><w:sdtContent><w:p><w:r><w:t>In sdt</w:t></w:r></w:p></w:sdtContent></w:sdt>"#.to_string(),
+            r#"<w:p><w:sdt><w:sdtContent><w:r><w:t>inline sdt</w:t></w:r></w:sdtContent></w:sdt><w:sdt><w:sdtPr/></w:sdt></w:p>"#.to_string(),
+            r#"<w:p><w:r><mc:AlternateContent><mc:Choice Requires="w14"><w:t>choice</w:t></mc:Choice><mc:Fallback><w:t>fallback</w:t></mc:Fallback></mc:AlternateContent></w:r></w:p>"#.to_string(),
+            r#"<w:p><m:oMath/><m:oMathPara/><w:r><w:t>after math</w:t></w:r></w:p>"#.to_string(),
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="7"/></w:numPr></w:pPr><w:r><w:t>Item</w:t></w:r></w:p>"#.to_string(),
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="8"/></w:numPr></w:pPr><w:r><w:t>Orphan item</w:t></w:r></w:p>"#.to_string(),
+            r#"<w:p><w:pPr><w:pStyle w:val="LoopA"/></w:pPr><w:r><w:lastRenderedPageBreak/><w:t>looped style</w:t></w:r></w:p>"#.to_string(),
+            r#"<w:p><w:pPr><w:sectPr/></w:pPr></w:p>"#.to_string(),
+            r#"<w:p><w:ins w:id="10" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins><w:del w:id="11" w:author="B"><w:r><w:delText>old</w:delText></w:r></w:del><w:ins w:id="12" w:author="A"><w:r><w:footnoteReference w:id="4"/></w:r></w:ins></w:p>"#.to_string(),
+            r#"<w:tbl><w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:tbl/>"#.to_string(),
+            r#"<w:p><w:r><w:rPr><w:rStyle w:val="Strong"/></w:rPr><w:t>strong</w:t></w:r><w:r><w:rPr><w:vanish/></w:rPr><w:t>hidden run</w:t></w:r></w:p>"#.to_string(),
+        ]
+        .concat()
+    }
+
+    fn odd_reads() -> Vec<(&'static str, String)> {
+        let bytes = odd_package(&odd_body());
+        let modes: [(&str, Options); 6] = [
+            ("plain", Options::default()),
+            (
+                "ids",
+                Options {
+                    ids: true,
+                    ..Options::default()
+                },
+            ),
+            (
+                "ids-hidden",
+                Options {
+                    ids: true,
+                    comments: false,
+                    dates: true,
+                    ..Options::default()
+                },
+            ),
+            (
+                "accept",
+                Options {
+                    revisions: Revisions::Accept,
+                    ..Options::default()
+                },
+            ),
+            (
+                "reject",
+                Options {
+                    revisions: Revisions::Reject,
+                    ids: true,
+                    ..Options::default()
+                },
+            ),
+            (
+                "stories",
+                Options {
+                    stories: true,
+                    ids: true,
+                    ..Options::default()
+                },
+            ),
+        ];
+        modes
+            .into_iter()
+            .map(|(name, options)| (name, convert(&bytes, &options).expect(name).markdown))
+            .collect()
+    }
+
+    /// A package with one rich header and a first-page footer: fields,
+    /// tracked runs, character marks, tabs, shading and indents.
+    fn story_package(header: &str, footer: &str, section_extra: &str) -> Vec<u8> {
+        let types = ODD_TYPES.replace(
+            "</Types>",
+            r#"<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>"#,
+        );
+        let rels = ODD_RELS.replace(
+            "</Relationships>",
+            r#"<Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/><Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/></Relationships>"#,
+        );
+        let document = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?><w:document {NS}><w:body><w:p><w:r><w:t>Body</w:t></w:r></w:p><w:sectPr><w:headerReference w:type="default" r:id="rId8"/><w:footerReference w:type="first" r:id="rId9"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>{section_extra}<w:titlePg/></w:sectPr></w:body></w:document>"#
+        );
+        let header = format!(r#"<w:hdr {NS}>{header}</w:hdr>"#);
+        let footer = format!(r#"<w:ftr {NS}>{footer}</w:ftr>"#);
+        let styles = format!(
+            r#"<w:styles {NS}><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Header"><w:name w:val="header, odd"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="character" w:styleId="VerbatimChar"><w:name w:val="Verbatim Char"/></w:style></w:styles>"#
+        );
+        zip(&[
+            (
+                "_rels/.rels",
+                r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#,
+            ),
+            ("[Content_Types].xml", &types),
+            ("word/_rels/document.xml.rels", &rels),
+            ("word/document.xml", &document),
+            ("word/header1.xml", &header),
+            ("word/footer1.xml", &footer),
+            ("word/styles.xml", &styles),
+            ("word/comments.xml", &format!("<w:comments {NS}/>")),
+            ("word/footnotes.xml", &format!("<w:footnotes {NS}/>")),
+            ("word/endnotes.xml", &format!("<w:endnotes {NS}/>")),
+            ("word/numbering.xml", &format!("<w:numbering {NS}/>")),
+        ])
+    }
+
+    fn story_reads(header: &str, footer: &str, section_extra: &str) -> Vec<String> {
+        let bytes = story_package(header, footer, section_extra);
+        [
+            Options::default(),
+            Options {
+                ids: true,
+                ..Options::default()
+            },
+            Options {
+                stories: true,
+                ids: true,
+                ..Options::default()
+            },
+            Options {
+                stories: true,
+                ids: true,
+                revisions: Revisions::Reject,
+                ..Options::default()
+            },
+        ]
+        .iter()
+        .map(|options| convert(&bytes, options).expect("reads").markdown)
+        .collect()
+    }
+
+    /// A header's paragraph formats, character marks, fields, changes,
+    /// content controls and AlternateContent read into its story entry;
+    /// a first-page footer sets the title page.
+    #[test]
+    fn header_stories_read_their_formats_fields_and_changes() {
+        let fld = |kind: &str| format!(r#"<w:r><w:fldChar w:fldCharType="{kind}"/></w:r>"#);
+        let header = format!(
+            r#"<w:p><w:pPr><w:pStyle w:val="Header"/><w:keepNext/><w:keepLines/><w:spacing w:before="120" w:after="0" w:line="360" w:lineRule="auto"/><w:ind w:left="720" w:hanging="360"/><w:contextualSpacing/><w:tabs><w:tab w:val="center" w:pos="4680"/><w:tab w:val="right" w:leader="dot" w:pos="9360"/><w:tab w:val="weird" w:pos="10"/><w:tab w:val="left" w:pos="999999"/></w:tabs><w:shd w:val="clear" w:color="auto" w:fill="FFFF00"/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:i/><w:u w:val="single"/><w:strike/><w:highlight w:val="cyan"/></w:rPr><w:t>Marked</w:t></w:r><w:r><w:rPr><w:rStyle w:val="VerbatimChar"/></w:rPr><w:t>code</w:t></w:r><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t>up</w:t></w:r><w:r><w:rPr><w:vertAlign w:val="subscript"/></w:rPr><w:t>down</w:t></w:r><w:r><w:tab/><w:t xml:space="preserve"> Page </w:t></w:r>{}<w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>{}<w:r><w:t>1</w:t></w:r>{}<w:r><w:t xml:space="preserve"> of </w:t></w:r><w:fldSimple w:instr=" NUMPAGES "><w:r><w:t>9</w:t></w:r></w:fldSimple><w:ins w:id="20" w:author="Ann" w:date="2026-01-01T00:00:00Z"><w:r><w:t>added</w:t></w:r></w:ins><w:del w:id="21" w:author="Bo" w:date="2026-01-02T00:00:00Z"><w:r><w:delText>gone</w:delText></w:r></w:del>{}<w:r><w:instrText>DATE</w:instrText></w:r>{}<w:r><w:instrText>TIME</w:instrText></w:r>{}<w:r><w:t>t</w:t></w:r>{}{}<w:r><w:t>d</w:t></w:r>{}<w:sdt><w:sdtContent><w:r><w:t>sdt text</w:t></w:r></w:sdtContent></w:sdt><w:r><mc:AlternateContent><mc:Choice Requires="w14"><w:t>pick</w:t></mc:Choice><mc:Fallback><w:t>other</w:t></mc:Fallback></mc:AlternateContent></w:r></w:p><w:p><w:pPr><w:ind w:firstLine="360" w:right="100"/><w:jc w:val="both"/></w:pPr><w:r><w:t>Second</w:t></w:r></w:p>"#,
+            fld("begin"),
+            fld("separate"),
+            fld("end"),
+            fld("begin"),
+            fld("begin"),
+            fld("separate"),
+            fld("end"),
+            fld("separate"),
+            fld("end")
+        );
+        let footer =
+            r#"<w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:t>Footer one</w:t></w:r></w:p>"#;
+        let grid = r#"<w:pgBorders><w:top w:val="single" w:sz="4" w:space="1" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="1" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="1" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="1" w:color="auto"/></w:pgBorders><w:cols w:space="720"/><w:docGrid w:type="lines" w:linePitch="360" w:charSpace="10"/>"#;
+        let views = story_reads(&header, footer, grid);
+        // The plain view prints the body alone.
+        assert_eq!(views[0].trim(), "Body");
+        let tracked = &views[1];
+        for part in [
+            "page: Letter portrait, margins 1in, header/footer 0.5in, line grid 18pt",
+            "  first: none                      # page 1 shows no header",
+            r#"p0: {text: "<b><i><u><mark class=\"hl-cyan\"><s>Marked</s></mark></u></i></b><code>code</code><sup>up</sup><sub>down</sub>\t Page {PAGE}1{/} of {NUMPAGES}9{/}{++added++}{header1.r20 @A}{--gone--}{header1.r21 @B}{DATE}sdt textpick", center, indent: {hanging: 0.25in, left: 0.5in}, tabs: [center 4680, right dot 9360], spacing: "before 6pt, after 0pt, line 1.5", shading: {val: clear, color: auto, fill: FFFF00}}"#,
+            "p1: {text: Second, justify, indent: {first-line: 0.25in, right: 0.0694in}}",
+            "styles: [Header, Normal]",
+            "first: {id: footer1, text: Footer one, right, style: Normal}",
+        ] {
+            assert!(tracked.contains(part), "{part}\n{tracked}");
+        }
+        // A tab stop Word does not list, or one past its limit, is left out.
+        assert!(
+            !tracked.contains("weird") && !tracked.contains("999999"),
+            "{tracked}"
+        );
+        // The stories view prints the header's text in the body as well.
+        assert!(
+            views[2].contains("\nSecond\n\nFooter one\n"),
+            "{}",
+            views[2]
+        );
+        // Rejecting keeps the deletion's text and drops the insertion's.
+        let rejected = views[3]
+            .lines()
+            .find(|line| line.trim_start().starts_with("p0: "))
+            .expect("p0");
+        assert!(rejected.contains("{NUMPAGES}9{/}gone{DATE}"), "{rejected}");
+        assert!(!rejected.contains("added"), "{rejected}");
+    }
+
+    /// Parts Word seldom writes still read: a comment or note with no id
+    /// is skipped, a reference with no id prints nothing, a field's code
+    /// keeps its text out of the view, a style cycle ends, numbering
+    /// without levels or an abstract numbers nothing.
+    #[test]
+    fn odd_parts_read_in_every_view() {
+        let reads: HashMap<&str, String> = odd_reads().into_iter().collect();
+        let plain = &reads["plain"];
+        assert!(
+            plain.contains("{==Commented==}{>>Ann (2026-01-02T00:00:00Z): note five<<}[^1][^2]"),
+            "{plain}"
+        );
+        assert!(
+            plain.contains("[link](https://x.test#frag \"tip\")"),
+            "{plain}"
+        );
+        assert!(plain.contains("2. Item"), "{plain}");
+        assert!(plain.contains("\nSection\n"), "{plain}");
+        assert!(plain.contains("{++[^3]: Orphan++}{r12 A}"), "{plain}");
+        for hidden in ["hidden", "no id", "fallback", "unplaced"] {
+            assert!(!plain.contains(hidden), "{hidden}: {plain}");
+        }
+        for name in ["ids", "ids-hidden", "reject", "stories"] {
+            let view = &reads[name];
+            for line in [
+                "<!-- p10 num \"(b)\", level 1 -->",
+                "{DATE \\@ \"d\"}today{/}",
+                "{PAGEREF _Ref9}3{/}<a id=\"_Ref9\"></a>",
+                "<!-- p12 LoopA -->",
+                "<!-- p13 section-break -->",
+                "c6 (unanchored: not in the body or a note, Word shows no balloon)",
+                "<!-- t1 0x0, width auto -->",
+                "|cell|",
+            ] {
+                assert!(view.contains(line), "{name}: {line}: {view}");
+            }
+        }
+        assert!(reads["ids"].contains("{++new++}{r10 @A 2026-01-01T00:00:00Z}{--old--}{r11 @B}"));
+        assert!(
+            reads["reject"].contains("view: reject-all"),
+            "{}",
+            reads["reject"]
+        );
+        let accepted = &reads["accept"];
+        assert!(
+            accepted.contains("new[^3]") && !accepted.contains("old"),
+            "{accepted}"
+        );
+        assert!(accepted.contains("[^3]: Orphan"), "{accepted}");
+    }
 }
 #[cfg(test)]
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]

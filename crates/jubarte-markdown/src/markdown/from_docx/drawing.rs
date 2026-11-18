@@ -2390,6 +2390,141 @@ mod tests {
         }
     }
 
+    /// Each edit keeps the XML well formed, so the check that rejects it
+    /// is the shape check, not the parse.
+    #[test]
+    fn well_formed_shapes_other_than_the_writers_are_not_regenerable() {
+        let base = written_picture();
+        assert!(regenerable(&base));
+        let a = "xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"";
+        let edits: Vec<(String, String)> = [
+            ("w:drawing", "w:pict"),
+            ("</wp:inline>", "</wp:inline><wp:inline/>"),
+            ("<wp:extent cx=\"19050\" ", "<wp:extent "),
+            (
+                "name=\"Picture 0\" descr=\"\"/><wp:cNvGraphicFramePr>",
+                "name=\"Logo\" descr=\"\"/><wp:cNvGraphicFramePr>",
+            ),
+            ("wp:cNvGraphicFramePr", "wp:cNvFramePr"),
+            (
+                "noChangeAspect=\"1\"/>",
+                "noChangeAspect=\"1\"><a:x/></a:graphicFrameLocks>",
+            ),
+            ("noChangeAspect=\"1\"", "noMove=\"1\""),
+            ("a:graphicData", "a:graphicDatum"),
+            ("pic:pic", "pic:pix"),
+            ("</pic:spPr></pic:pic>", "</pic:spPr><pic:x/></pic:pic>"),
+            ("pic:nvPicPr", "pic:nvX"),
+            ("pic:blipFill", "pic:fillX"),
+            ("pic:spPr", "pic:spX"),
+            (
+                "descr=\"\"/><pic:cNvPicPr/>",
+                "descr=\"\"><a:x/></pic:cNvPr><pic:cNvPicPr/>",
+            ),
+            (
+                "<pic:cNvPr id=\"0\" name=\"Picture 0\"",
+                "<pic:cNvPr id=\"0\" name=\"Other\"",
+            ),
+            ("<pic:cNvPicPr/>", "<pic:cNvPicPr><a:x/></pic:cNvPicPr>"),
+            ("<pic:cNvPicPr/>", "<pic:other/>"),
+            (
+                "<a:fillRect/></a:stretch>",
+                "<a:fillRect/></a:stretch><a:x/>",
+            ),
+            (
+                "</a:prstGeom></pic:spPr>",
+                "</a:prstGeom><a:ln/></pic:spPr>",
+            ),
+            ("a:xfrm", "a:xfrmX"),
+            ("cy=\"9525\"/></a:xfrm>", "cy=\"9525\"/><a:x/></a:xfrm>"),
+            ("y=\"0\"", "y=\"3\""),
+            (
+                "<a:off x=\"0\" y=\"0\"/>",
+                "<a:off x=\"0\" y=\"0\" z=\"1\"/>",
+            ),
+            (
+                "<a:ext cx=\"19050\" cy=\"9525\"/></a:xfrm>",
+                "<a:extX cx=\"19050\" cy=\"9525\"/></a:xfrm>",
+            ),
+            ("a:prstGeom", "a:custGeom"),
+            (
+                "<wp:extent cx=\"19050\" cy=\"9525\"/>",
+                "<wp:extent cx=\"19050\" cy=\"9526\"/>",
+            ),
+            ("<a:ext cx=\"19050\"", "<a:ext cx=\"19051\""),
+            (
+                "<a:ext cx=\"19050\" cy=\"9525\"/>",
+                "<a:ext cx=\"19050\" cy=\"9526\"/>",
+            ),
+        ]
+        .into_iter()
+        .map(|(from, to)| (from.to_string(), to.to_string()))
+        .chain([(
+            format!("<a:graphicFrameLocks {a} noChangeAspect=\"1\"/>"),
+            String::new(),
+        )])
+        .collect();
+        for (from, to) in &edits {
+            let xml = base.xml.replace(from.as_str(), to);
+            assert_ne!(xml, base.xml, "{from} not in the picture");
+            assert!(
+                parse_xml(xml.as_bytes()).is_ok(),
+                "{from} -> {to} broke the XML"
+            );
+            let drawing = Drawing {
+                xml,
+                ..base.clone()
+            };
+            assert!(!regenerable(&drawing), "{from} -> {to} stayed regenerable");
+        }
+        let other_part = Drawing {
+            rels: vec![PayRel {
+                part: Some(1),
+                ..base.rels[0].clone()
+            }],
+            ..base.clone()
+        };
+        assert!(!regenerable(&other_part));
+    }
+
+    #[test]
+    fn tokens_fences_and_data_uris_read_only_their_own_shapes() {
+        assert!(generated_name("Picture 12"));
+        assert!(!generated_name("Picture "));
+        assert!(!generated_name("Picture x"));
+        assert!(!generated_name("Logo"));
+        let out = "x\n![a][d1]\ny";
+        assert_eq!(standalone(out, 7, 10), Some((2, 10)));
+        assert_eq!(standalone("x ![a][d1]", 7, 10), None);
+        assert_eq!(standalone("![a][d1] y", 5, 8), None);
+        assert_eq!(standalone("![a][image1]", 5, 12), None);
+        assert_eq!(standalone("![a][d1]", 5, 7), None);
+        assert_eq!(standalone("no token", 3, 8), None);
+        assert_eq!(fenced("mermaid", "a ``` b"), "```` mermaid\na ``` b\n````");
+        assert_eq!(fenced("svg", "<svg/>"), "``` svg\n<svg/>\n```");
+        assert!(at("![a](drawing:)").is_none());
+        assert!(at("![a](drawing:a$b)").is_none());
+        assert!(at("![a](drawing:ab").is_none());
+        assert_eq!(at("![a](drawing:ab_-=)"), Some(("drawing:ab_-=", 19)));
+        assert!(at("![a][dx]").is_none());
+        assert!(at("![a][d]").is_none());
+        assert!(at("![a][x1]").is_none());
+        assert!(!cuts_token("plain text", 3));
+        assert!(cuts_token("see ![a][d1] here", 8));
+        assert!(!cuts_token("see ![a][d1] here", 14));
+        assert_eq!(data_uri("data:;base64,AAAA"), None);
+        assert_eq!(data_uri("data:image/png;base64,"), None);
+        assert_eq!(data_uri("data:image/png,AAAA"), None);
+        assert_eq!(
+            data_uri("data:image/png;base64,AAAA"),
+            Some(("image/png", "AAAA"))
+        );
+        assert!(decode("media/x.png").is_err());
+        assert!(decode("drawing:!!!").is_err());
+        // `e30` is `{}`: base64, but no drawing's JSON.
+        assert!(decode("drawing:e30").is_err_and(|e| e.contains("JSON")));
+    }
+
     #[test]
     fn doc_pr_ids_normalize_and_renumber() {
         let mut e = element(r#"<w:drawing><wp:inline><wp:docPr id="7"/></wp:inline></w:drawing>"#);

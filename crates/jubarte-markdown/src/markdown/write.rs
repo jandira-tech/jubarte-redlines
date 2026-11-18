@@ -7683,3 +7683,419 @@ mod html_tag_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod helper_branch_tests {
+    use super::*;
+
+    #[test]
+    fn front_matter_closes_on_dots_and_crlf_and_needs_a_closer() {
+        assert_eq!(
+            split_front_matter("---\r\ntitle: x\r\n...\r\nbody"),
+            Some(("title: x\r\n", "body"))
+        );
+        assert_eq!(split_front_matter("---\nunclosed: yes\n"), None);
+        assert_eq!(split_front_matter("no front matter"), None);
+    }
+
+    #[test]
+    fn page_commands_skip_front_matter_and_fences_and_end_without_a_newline() {
+        // Front matter closed by `...` keeps its lines; the command after
+        // it, last in the text without a newline, still gets one.
+        assert_eq!(
+            page_commands("---\na: \\newpage\n...\n\\newpage"),
+            format!("---\na: \\newpage\n...\n{PAGE_BREAK_LINE}\n")
+        );
+        // A `~~~` fence keeps the command as text until its closer.
+        assert_eq!(
+            page_commands("~~~\n\\pagebreak\n~~~ \n\\clearpage\r\n"),
+            format!("~~~\n\\pagebreak\n~~~ \n{PAGE_BREAK_LINE}\r\n")
+        );
+        // An indented command is code; a fence line with text after its
+        // closer marks does not close it.
+        assert_eq!(page_commands("    \\newpage\n"), "    \\newpage\n");
+        assert_eq!(
+            page_commands("```\n``` x\n\\newpage\n"),
+            "```\n``` x\n\\newpage\n"
+        );
+    }
+
+    #[test]
+    fn table_pipes_leave_front_matter_closed_by_dots() {
+        let source = "---\nrow: |\\\\|x\n...\n|\\\\|y|\n|-|-|\n";
+        assert_eq!(
+            table_pipes(source),
+            "---\nrow: |\\\\|x\n...\n|\\\\ |y|\n|-|-|\n"
+        );
+        // A tab before the pipe is no row; an indented next line is no
+        // delimiter.
+        assert_eq!(table_pipes("\t|\\\\|x\n|-|\n"), "\t|\\\\|x\n|-|\n");
+        assert_eq!(table_pipes("|\\\\|x\n    |-|-|\n"), "|\\\\|x\n    |-|-|\n");
+    }
+
+    #[test]
+    fn unshield_pipes_treat_escaped_openers_as_text() {
+        // An odd backslash run escapes the backtick, the dollar and the
+        // angle bracket: what follows is no span, and its pipe moves.
+        assert_eq!(unshield_pipes(r"\`a\\|b`"), r"\`a\\ |b`");
+        assert_eq!(unshield_pipes(r"\$a\\|b$"), r"\$a\\ |b$");
+        assert_eq!(unshield_pipes(r"\<b>\\|"), r"\<b>\\ |");
+        // A display equation closes on `$$` only, a single `$` inside it
+        // and an escaped one are its text.
+        assert_eq!(unshield_pipes(r"$$a$\$\\|b$$|"), r"$$a$\$\\|b$$|");
+        // An unclosed code span or equation is text.
+        assert_eq!(unshield_pipes(r"`a\\|"), r"`a\\ |");
+        assert_eq!(unshield_pipes(r"$a\\|"), r"$a\\ |");
+        // `<` not opening a tag is text; a `<x` that never closes too.
+        assert_eq!(unshield_pipes(r"<1\\|"), r"<1\\ |");
+        assert_eq!(unshield_pipes(r"<a\\|"), r"<a\\ |");
+        assert_eq!(unshield_pipes("é\\\\|"), "é\\\\ |");
+    }
+
+    #[test]
+    fn delimiter_rows_and_row_columns_follow_gfm() {
+        assert!(delimiter_row("|:-:|---:|"));
+        assert!(delimiter_row("--- | ---"));
+        assert!(!delimiter_row("|:|-|"));
+        assert!(!delimiter_row("||"));
+        assert!(!delimiter_row("|a-|"));
+        assert_eq!(row_columns("a|b"), 2);
+        assert_eq!(row_columns("a|b|"), 2);
+        assert_eq!(row_columns("|a|b"), 2);
+        assert_eq!(row_columns(r"|a\|b|"), 1);
+        assert_eq!(row_columns(r"|a\\|b|"), 2);
+        assert_eq!(row_columns("plain"), 1);
+    }
+
+    #[test]
+    fn item_columns_measure_tabs_numbers_and_wide_gaps() {
+        assert_eq!(item_columns("- x", 0), (0, 2));
+        assert_eq!(item_columns("\t- x", 0), (4, 6));
+        assert_eq!(item_columns("1) x", 0), (0, 3));
+        assert_eq!(item_columns("12. x", 0), (0, 4));
+        assert_eq!(item_columns("7 x", 0), (0, 2));
+        // Text five or more columns past the marker starts one past it.
+        assert_eq!(item_columns("-      x", 0), (0, 2));
+        assert_eq!(item_columns("-\tx", 0), (0, 4));
+        // A marker alone: its text column is one past it.
+        assert_eq!(item_columns("-", 0), (0, 2));
+        assert_eq!(item_columns("-  ", 0), (0, 2));
+        // A marker before `at` is not this item's; text with no marker
+        // gives its end column twice.
+        assert_eq!(item_columns("- - x", 2), (2, 4));
+        assert_eq!(item_columns("1. 2. x", 3), (3, 6));
+        assert_eq!(item_columns("ab", 0), (2, 2));
+        assert_eq!(item_columns("a\n- b", 2), (0, 2));
+    }
+
+    #[test]
+    fn html_attributes_read_quoted_bare_and_skip_lookalikes() {
+        assert_eq!(
+            html_attribute("<a xhref=\"no\" href=\"yes\">", "href"),
+            Some("yes".to_string())
+        );
+        assert_eq!(
+            html_attribute("<a href title=x>", "href"),
+            None,
+            "an attribute with no value"
+        );
+        assert_eq!(
+            html_attribute("<a href title=x>", "title"),
+            Some("x".to_string())
+        );
+        assert_eq!(
+            html_attribute("<a href=u&amp;v class=c>", "href"),
+            Some("u&v".to_string())
+        );
+        assert_eq!(
+            html_attribute("<a href='q'>", "href"),
+            Some("q".to_string())
+        );
+        assert_eq!(
+            html_attribute("<a href=\"open", "href"),
+            Some("open".into())
+        );
+        assert_eq!(html_attribute("<a>", "href"), None);
+    }
+
+    #[test]
+    fn symbol_tags_and_comment_blocks_are_recognised_exactly() {
+        assert!(is_symbol_tag("<sym font=\"Wingdings\" char=\"F0FC\"/>"));
+        assert!(!is_symbol_tag("<sym>"));
+        assert!(!is_symbol_tag("x<sym/>"));
+        assert!(!is_symbol_tag("<b/>"));
+        assert!(!is_symbol_tag("<sym/><sym/>"));
+        assert!(!is_symbol_tag("</sym/>"));
+        assert!(comments_only("<!-- p1 -->\n\n  <!-- p2 -->\n"));
+        assert!(!comments_only("<!-- p1 -->\n<div>"));
+        assert!(!comments_only("<!-- open"));
+    }
+
+    #[test]
+    fn html_block_text_drops_tags_comments_scripts_and_styles() {
+        let (first, paragraphs) = html_block_text(
+            "<!-- c --><div>One &amp; <b>two</b></div><p>three</p>\
+             <script>bad()</script><STYLE>x{}</style><style/>four</br>",
+        );
+        assert_eq!(first.as_deref(), Some("div"));
+        assert_eq!(paragraphs, ["One & two", "three", "four"]);
+        // An unclosed tag ends the scan and keeps its text, a nameless one
+        // is skipped, an unclosed comment and script swallow the rest.
+        assert_eq!(html_block_text("a < b").1, ["a < b"]);
+        assert_eq!(html_block_text("<>x<1>y").1, ["xy"]);
+        assert_eq!(html_block_text("a<!-- open").1, ["a"]);
+        assert_eq!(
+            html_block_text("<script>never closed").1,
+            Vec::<String>::new()
+        );
+        assert_eq!(html_block_text("</script>after").1, ["after"]);
+        assert_eq!(html_block_text("").0, None);
+    }
+
+    #[test]
+    fn html_tags_parse_names_and_reject_non_tags() {
+        let tag = html_tag("< / Code-X >").expect("a tag");
+        assert_eq!(
+            (tag.name.as_str(), tag.closing, tag.empty),
+            ("code-x", true, false)
+        );
+        assert!(html_tag("<br/>").is_some_and(|t| t.empty));
+        assert!(html_tag("<!-- c -->").is_none());
+        assert!(html_tag("<?pi?>").is_none());
+        assert!(html_tag("<1a>").is_none());
+        assert!(html_tag("<b").is_none());
+        assert!(html_tag("b>").is_none());
+        assert!(html_is_page_break("<br type = 'PAGE' />"));
+        assert!(!html_is_page_break("<br>"));
+    }
+
+    #[test]
+    fn highlight_classes_name_word_colours_only() {
+        assert_eq!(hl_color_class("HL-Cyan"), Some("cyan"));
+        assert_eq!(hl_color_class("hl-darkGray"), Some("darkGray"));
+        assert_eq!(hl_color_class("hl-none"), None);
+        assert_eq!(hl_color_class("hl-teal"), None);
+        assert_eq!(hl_color_class("hx-red"), None);
+        assert_eq!(hl_color_class("h"), None);
+    }
+
+    #[test]
+    fn move_clauses_peel_and_decode_their_names() {
+        assert_eq!(decode_move_name("a%20b%25c"), "a b%c");
+        assert_eq!(decode_move_name("100%"), "100%");
+        assert_eq!(decode_move_name("x%41y"), "x%41y");
+        assert_eq!(decode_move_name("%2"), "%2");
+        assert_eq!(
+            peel_move_part(" r1 @A move m%201 "),
+            ("r1 @A".to_string(), Some("m 1".to_string()))
+        );
+        assert_eq!(
+            peel_move_part("r1 @A move"),
+            ("r1 @A".to_string(), Some(String::new()))
+        );
+        assert_eq!(
+            peel_move_part("r1 @A move two words"),
+            ("r1 @A move two words".to_string(), None)
+        );
+        // A note with no move clause comes back as it was.
+        let (note, names) = peeled_note("r1 @A re r0 @B");
+        assert_eq!(note, "r1 @A re r0 @B");
+        assert_eq!(names, [None, None]);
+        // A revision note: the clause goes, its name stays.
+        let (note, names) = peeled_note("r1 @A move m1");
+        assert_eq!(note, "r1 @A");
+        assert_eq!(names, [Some("m1".to_string())]);
+        // Not a revision note once peeled: the original, no names.
+        let (note, names) = peeled_note("just words move m1");
+        assert_eq!(note, "just words move m1");
+        assert_eq!(names, [None]);
+    }
+
+    #[test]
+    fn scholar_fills_only_what_the_front_matter_leaves_out() {
+        // Its own default style keeps Normal out; a footer story with the
+        // page number keeps the footer out; comments after values are
+        // read as comments.
+        let out = scholar(
+            "---\nstyles:\n  Body: Arial 11pt  # mine\n  \"#\": Heading1, bold\n  odd\nfooters:\n  default: {id: footer1, text: \"{PAGE}\"}\n---\n\nText",
+            false,
+        );
+        assert!(!out.contains("Latin Modern Roman 10pt"), "{out}");
+        assert!(!out.contains("Heading1, Latin Modern"), "{out}");
+        assert!(out.contains("Heading2, Latin Modern"), "{out}");
+        assert_eq!(out.matches("footers:").count(), 1, "{out}");
+        // Styles naming only table keys still get Normal; headers of their
+        // own keep page 1's number.
+        let out = scholar(
+            "---\nstyles:\n  table: TableGrid\nheaders:\n  default: {id: header1, text: Firm}\n---\nText",
+            false,
+        );
+        assert!(out.contains("  Normal: Latin Modern Roman 10pt"), "{out}");
+        assert!(!out.contains("first: none"), "{out}");
+        assert!(out.contains("default: {id: footer1, text: \"{PAGE}\", center}"));
+        // A reference document with stories of its own gets no footer;
+        // every style named leaves nothing missing.
+        let out = scholar(
+            "---\nstyles:\n  Body: x\n  \"#\": a\n  \"##\": b\n  \"###\": c\n---\nText",
+            true,
+        );
+        assert!(!out.contains("Latin Modern"), "{out}");
+        assert!(!out.contains("footers:"), "{out}");
+        // No front matter: a styles legend of its own.
+        let out = scholar("Text", false);
+        assert!(out.starts_with("---\nstyles:\n  Normal:"), "{out}");
+        assert!(out.contains("  first: none"), "{out}");
+    }
+
+    #[test]
+    fn distribute_marks_quotes_headings_rows_and_refuses_bare_markers() {
+        assert_eq!(
+            distribute("> a\n> b\nc", "{++", "++}").as_deref(),
+            Some("> {++a\n> b++}\n{++c++}")
+        );
+        assert_eq!(
+            distribute("# H\nnext", "{--", "--}").as_deref(),
+            Some("# {--H--}\n{--next--}")
+        );
+        assert_eq!(distribute("#", "{++", "++}"), None);
+        assert_eq!(distribute("- ", "{++", "++}"), None);
+        assert_eq!(
+            distribute("\n- a", "{++", "++}").as_deref(),
+            Some("\n- {++a++}")
+        );
+        assert!(blocky("```\ncode\n```"));
+        assert!(blocky("| a | b |"));
+        assert!(!blocky("plain text"));
+        assert_eq!(substitution_blocks("a", "b", true), None);
+        assert_eq!(substitution_blocks("- a", "- b", false), None);
+        assert_eq!(
+            substitution_blocks("- a", "- b", true).as_deref(),
+            Some("- {--a--}\n- {++b++}")
+        );
+        assert_eq!(substitution_blocks("#", "- b", true), None);
+    }
+
+    #[test]
+    fn text_box_markers_refuse_duplicates_and_overlaps() {
+        let (boxes, error) =
+            text_box_sources("<!-- text-box d1.0 -->\n\nOne<br>two\n\n<!-- /text-box -->\n");
+        assert_eq!(boxes.get("d1.0").map(String::as_str), Some("One\ntwo"));
+        assert_eq!(error, None);
+        let (_, error) = text_box_sources(
+            "<!-- text-box d1.0 -->\n\n<!-- text-box d2.0 -->\n\nx\n\n<!-- /text-box -->\n",
+        );
+        assert_eq!(
+            error.as_deref(),
+            Some("text-box d2.0: duplicate or overlapping marker region")
+        );
+        let (_, error) = text_box_sources(
+            "<!-- text-box d1.0 -->\n\n<!-- /text-box -->\n\n<!-- text-box d1.0 -->\n\n<!-- /text-box -->\n",
+        );
+        assert!(error.is_some());
+        // A closer with nothing open is no region.
+        let (boxes, error) = text_box_sources("<!-- /text-box -->\n");
+        assert!(boxes.is_empty() && error.is_none());
+    }
+
+    #[test]
+    fn style_change_tags_name_their_property() {
+        assert!(matches!(
+            style_change_tag("pPr r1 @A"),
+            (StyleChangeKind::Paragraph, "r1 @A", false)
+        ));
+        assert!(matches!(
+            style_change_tag("other r1"),
+            (StyleChangeKind::Other, "r1", false)
+        ));
+        assert!(matches!(
+            style_change_tag("r1"),
+            (StyleChangeKind::Run, "r1", true)
+        ));
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod inline_branch_tests {
+    use super::*;
+
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+    /// The written package's `part`, from `markdown` with `critic` on or off.
+    fn part(markdown: &str, critic: bool, part: &str) -> String {
+        let options = DocxOptions {
+            critic,
+            ..DocxOptions::default()
+        };
+        let written = markdown_to_docx(markdown, &options).expect("writes");
+        crate::opc::PartFs::open(&written.docx)
+            .expect("opens")
+            .part_string(part)
+            .unwrap_or_default()
+    }
+
+    fn body(markdown: &str) -> String {
+        part(markdown, true, "/word/document.xml")
+    }
+
+    #[test]
+    fn math_where_no_equation_goes_stays_latex_text() {
+        let image = format!("![see $x^2$ and $$y$$](data:image/png;base64,{PNG})");
+        for critic in [true, false] {
+            let xml = part(&image, critic, "/word/document.xml");
+            assert!(
+                xml.contains("descr=\"see $x^2$ and $$y$$\""),
+                "{critic}: {xml}"
+            );
+        }
+        let comments = part("Text{>>has $x$ and $$y$$<<}", true, "/word/comments.xml");
+        assert!(comments.contains("has $x$ and $$y$$"), "{comments}");
+        assert!(!body("Text{>>has $x$<<}").contains("<m:oMath"));
+    }
+
+    #[test]
+    fn inline_html_writes_symbols_links_bookmarks_and_breaks() {
+        let xml = body(
+            "A<sym font=\"Symbol\" char=\"F0B7\"/>B<sym font=\"\" char=\"F0B7\"/>C<sym font=\"Symbol\" char=\"F0B7\">D",
+        );
+        assert_eq!(xml.matches("<w:sym ").count(), 1, "{xml}");
+        assert!(xml.contains("w:font=\"Symbol\" w:char=\"F0B7\""), "{xml}");
+        let xml = body(
+            "Go <a href=\"https://x.test\" title=\"tip\">there</a> or <a name=\"spot\">here</a><a id=\"\">x</a>.",
+        );
+        assert!(xml.contains("<w:hyperlink"), "{xml}");
+        assert!(xml.contains("w:name=\"spot\""), "{xml}");
+        assert_eq!(xml.matches("<w:bookmarkStart").count(), 1, "{xml}");
+        let xml = body("one<br>two</br>three<b/>four");
+        assert_eq!(xml.matches("<w:br/>").count(), 1, "{xml}");
+        assert!(!xml.contains("<w:b/>"), "{xml}");
+        let xml = body("Mail <a@b.co> now");
+        assert!(xml.contains("<w:hyperlink"), "{xml}");
+        assert!(xml.contains(">a@b.co</w:t>"), "{xml}");
+        let xml = body("<div>\nblock text\n</div>\n\nAfter");
+        assert!(xml.contains("After"), "{xml}");
+        let xml = body("Note{>>a <b>bold</b> word<<} after");
+        assert!(xml.contains(">after<") || xml.contains(" after<"), "{xml}");
+        assert!(!xml.contains("<w:b/>"), "{xml}");
+    }
+
+    #[test]
+    fn tables_and_lists_keep_their_cells_and_items() {
+        let xml = body(
+            "| a | b | c |\n|:--|:-:|--:|\n| 1 |   | 3 |\n| x |\n\n- one\n- two\n  - nested\n\n1. first\n2. second\n",
+        );
+        assert_eq!(
+            xml.matches("<w:tr>").count() + xml.matches("<w:tr ").count(),
+            3,
+            "{xml}"
+        );
+        assert!(
+            xml.contains("w:val=\"center\"") && xml.contains("w:val=\"right\""),
+            "{xml}"
+        );
+        for text in ["nested", "first", "second"] {
+            assert!(xml.contains(text), "{text}: {xml}");
+        }
+    }
+}

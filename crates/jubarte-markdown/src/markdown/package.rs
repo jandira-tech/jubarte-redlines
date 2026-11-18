@@ -2169,3 +2169,163 @@ mod literal_package_metadata_contract_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod branch_tests {
+    use super::*;
+    use crate::markdown::view_styles::BorderSide;
+
+    #[test]
+    fn tags_are_words_outside_comments_and_lists_join_with_and() {
+        assert_eq!(comment_spans("a {>>one<<} b {>>open"), [2..11, 14..21]);
+        let words: Vec<(usize, &str)> = tag_words("{--x--}{r1 @A}; é,b").collect();
+        assert_eq!(
+            words,
+            [(1, "--x--"), (8, "r1"), (11, "@A"), (16, "é"), (19, "b")]
+        );
+        assert_eq!(listed(&[]), "");
+        assert_eq!(listed(&["r1"]), "r1");
+        assert_eq!(listed(&["r1", "r2"]), "r1 and r2");
+        assert_eq!(listed(&["r1", "r2", "r3"]), "r1, r2 and r3");
+    }
+
+    #[test]
+    fn the_root_tag_follows_declarations_comments_and_doctypes() {
+        let source = "<?xml version=\"1.0\"?><!-- c --><!DOCTYPE x><w:document a=\"1\">";
+        let (start, end) = root_start_tag(source).expect("root");
+        assert_eq!(&source[start..=end], "<w:document a=\"1\">");
+        assert_eq!(root_start_tag("<!-- open"), None);
+        assert_eq!(root_start_tag("no tags"), None);
+        assert_eq!(root_start_tag("<w:document"), None);
+    }
+
+    #[test]
+    fn text_width_falls_back_for_pages_word_never_writes() {
+        assert_eq!(text_width("<w:sectPr/>"), 9360);
+        assert_eq!(
+            text_width(
+                "<w:sectPr><w:pgSz w:w=\"11906\"/><w:pgMar w:left=\"1in\" w:right=\"720\"/></w:sectPr>"
+            ),
+            9746
+        );
+        assert_eq!(
+            text_width("<w:sectPr><w:pgSz w:w=\"1e300\"/></w:sectPr>"),
+            9360
+        );
+        assert_eq!(
+            text_width("<w:sectPr><w:pgSz w:w=\"100\"/></w:sectPr>"),
+            1440
+        );
+    }
+
+    #[test]
+    fn table_styles_rename_and_draw_their_borders() {
+        assert_eq!(renamed("<w:style/>", "X"), "<w:style/>");
+        assert_eq!(renamed("<w:name w:val=\"open", "X"), "<w:name w:val=\"open");
+        assert!(
+            renamed("<w:style><w:name w:val=\"Old\"/></w:style>", "New").contains("w:val=\"New\"")
+        );
+        assert_eq!(
+            table_border_sides(&TableBorders::Sides(vec![
+                BorderSide {
+                    side: "bottom".into(),
+                    val: "double".into(),
+                    size: Some(6),
+                    color: None,
+                    space: None
+                },
+                BorderSide {
+                    side: "top".into(),
+                    val: "single".into(),
+                    size: None,
+                    color: None,
+                    space: None
+                },
+                BorderSide {
+                    side: "left".into(),
+                    val: "dotted".into(),
+                    size: None,
+                    color: Some("FF0000".into()),
+                    space: Some(2)
+                },
+            ])),
+            "<w:top w:val=\"single\"/><w:left w:val=\"dotted\" w:space=\"2\" w:color=\"FF0000\"/><w:bottom w:val=\"double\" w:sz=\"6\" w:space=\"0\" w:color=\"auto\"/>"
+        );
+        assert!(
+            table_border_sides(&TableBorders::All(4))
+                .starts_with("<w:top w:val=\"single\" w:sz=\"4\"")
+        );
+    }
+
+    #[test]
+    fn word_names_its_built_in_and_older_table_styles() {
+        assert_eq!(
+            word_table_style_name("GridTable1Light").as_deref(),
+            Some("Grid Table 1 Light")
+        );
+        assert_eq!(
+            word_table_style_name("GridTable4-Accent2").as_deref(),
+            Some("Grid Table 4 Accent 2")
+        );
+        assert_eq!(
+            word_table_style_name("TableNormal").as_deref(),
+            Some("Normal Table")
+        );
+        assert_eq!(
+            word_table_style_name("MediumShading1-Accent3").as_deref(),
+            Some("Medium Shading 1 Accent 3")
+        );
+        assert_eq!(
+            word_table_style_name("TableGrid").as_deref(),
+            Some("Table Grid")
+        );
+        assert_eq!(word_table_style_name("LightShading-Accent9"), None);
+        assert_eq!(word_table_style_name("MyTable"), None);
+        assert!(!is_built_in_table_style("GridTable4-Accent7"));
+        assert!(is_built_in_table_style("ListTable3-Accent6"));
+    }
+
+    #[test]
+    fn theme_colours_tint_and_shade_through_hls() {
+        let theme = "<a:theme><a:clrScheme><a:dk1><a:sysClr val=\"windowText\" lastClr=\"000000\"/></a:dk1><a:lt1><a:srgbClr val=\"FFFFFF\"/></a:lt1><a:accent1><a:srgbClr val=\"4472c4\"/></a:accent1><a:accent2><a:srgbClr val=\"C0504D\"/></a:accent2><a:accent3><a:srgbClr val=\"9BBB59\"/></a:accent3><a:accent4><a:srgbClr val=\"zzzzzz\"/></a:accent4></a:clrScheme></a:theme>";
+        assert_eq!(
+            theme_colour(theme, "accent1", None, None).as_deref(),
+            Some("4472C4")
+        );
+        assert_eq!(
+            theme_colour(theme, "text1", None, None).as_deref(),
+            Some("000000")
+        );
+        assert_eq!(theme_colour(theme, "accent4", None, None), None);
+        assert_eq!(theme_colour(theme, "accent6", None, None), None);
+        for (name, tint, shade) in [
+            ("accent1", Some("33"), None),
+            ("accent1", None, Some("BF")),
+            ("accent2", Some("99"), None),
+            ("accent3", None, Some("80")),
+            ("background1", Some("80"), Some("80")),
+            ("accent1", Some("zz"), None),
+        ] {
+            let colour = theme_colour(theme, name, tint, shade).expect("colour");
+            assert!(
+                colour.len() == 6 && colour.bytes().all(|b| b.is_ascii_hexdigit()),
+                "{colour}"
+            );
+        }
+        // Lightening and darkening move the colour the right way.
+        let light = theme_colour(theme, "accent1", Some("33"), None).expect("tint");
+        let dark = theme_colour(theme, "accent1", None, Some("40")).expect("shade");
+        assert!(
+            light.as_str() > "4472C4" && dark.as_str() < "4472C4",
+            "{light} {dark}"
+        );
+        let (h, l, s) = rgb_to_hls(0.2, 0.9, 0.4);
+        let (r, g, b) = hls_to_rgb(h, l, s);
+        assert!((r - 0.2).abs() < 1e-9 && (g - 0.9).abs() < 1e-9 && (b - 0.4).abs() < 1e-9);
+        let (h, l, s) = rgb_to_hls(0.3, 0.1, 0.8);
+        let (r, g, b) = hls_to_rgb(h, l, s);
+        assert!((r - 0.3).abs() < 1e-9 && (g - 0.1).abs() < 1e-9 && (b - 0.8).abs() < 1e-9);
+        assert_eq!(hls_to_rgb(0.0, 0.5, 0.0), (0.5, 0.5, 0.5));
+    }
+}
