@@ -546,8 +546,11 @@ jobs:
           # jubarte-docx (the engine) and jubarte-redlines (its shim).
           live=true
           for dist in jubarte-docx jubarte-redlines; do
-            if curl -sf "https://pypi.org/pypi/$dist/json" \
-                | python3 -c 'import json, sys; sys.exit(sys.argv[1] not in json.load(sys.stdin)["releases"])' "$VER"; then
+            # The listing is saved as data and read as JSON; nothing
+            # downloaded is executed.
+            listing="$RUNNER_TEMP/$dist.json"
+            if curl -sf -o "$listing" "https://pypi.org/pypi/$dist/json" \
+                && python3 -c 'import json, sys; sys.exit(sys.argv[1] not in json.load(open(sys.argv[2]))["releases"])' "$VER" "$listing"; then
               echo "$dist $VER is already on PyPI"
             else
               live=false
