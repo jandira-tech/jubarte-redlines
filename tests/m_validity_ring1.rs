@@ -1294,6 +1294,46 @@ fn probe_bookmark_in_a_plain_text_content_control_fails() {
     assert!(hits.iter().all(|e| e.contains("a text content control")));
 }
 
+/// #2479: an XML part with no root element is not well-formed XML, and
+/// Word refuses the package (`word/document.xml` holding only a prolog and
+/// a comment, or zero bytes: Word 16, 2026-11-18, twice each under fresh
+/// names). `read` and `comments` already refused both; `validate` passed.
+#[test]
+fn probe_xml_part_without_root_element_is_malformed() {
+    for (shape, body) in [
+        ("prolog and comment", r#"<?xml version="1.0"?><!--gone-->"#),
+        ("zero bytes", ""),
+        (
+            "prolog only",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+        ),
+    ] {
+        let bytes = zip_with_parts(&[("word/document.xml", body)]);
+        let report = check_word_valid_package(&bytes);
+        let hits: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| f.code == "MALFORMED_XML" && f.part == "word/document.xml")
+            .collect();
+        assert_eq!(
+            hits.len(),
+            1,
+            "{shape}: expected one MALFORMED_XML, got {:?}",
+            report.findings
+        );
+        assert!(
+            hits[0].message.contains("no root element"),
+            "{shape}: {}",
+            hits[0].message
+        );
+        let findings = jubarte::validate::validate(&bytes).expect("the package opens");
+        assert!(
+            findings.iter().any(|f| f.code == "MALFORMED_XML"),
+            "{shape}: validate() must report it too, got {findings:?}"
+        );
+    }
+}
+
 #[test]
 fn minimal_valid_package_passes() {
     let bytes = zip_with_parts(&[("word/document.xml", MINIMAL_DOC)]);

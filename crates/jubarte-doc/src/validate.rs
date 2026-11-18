@@ -2285,10 +2285,25 @@ fn check_content_types_and_xml(pkg: &PartFs, out: &mut Vec<Finding>) {
             let mut reader = quick_xml::NsReader::from_str(&xml);
             reader.config_mut().trim_text(false);
             let mut buf = Vec::new();
+            // A part with no element at all (empty, or only a prolog and
+            // comments) is not well-formed XML, and Word refuses the
+            // package (#2479).
+            let mut has_root = false;
             loop {
                 match reader.read_event_into(&mut buf) {
-                    Ok(Event::Eof) => break,
+                    Ok(Event::Eof) => {
+                        if !has_root {
+                            out.push(Finding::new(
+                                "MALFORMED_XML",
+                                &name,
+                                "",
+                                format!("part '{name}' is not well-formed XML: no root element"),
+                            ));
+                        }
+                        break;
+                    }
                     Ok(Event::Start(tag) | Event::Empty(tag)) => {
+                        has_root = true;
                         let mut expanded = HashSet::new();
                         for attr in tag.attributes().with_checks(false).flatten() {
                             if attr.key.as_ref() == "xmlns"
