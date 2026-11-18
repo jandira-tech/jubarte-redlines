@@ -186,7 +186,7 @@ pub enum Others {
 
 impl Others {
     /// The guard is on: do not erase another author's markup.
-    pub(crate) fn keeps(self) -> bool {
+    fn keeps(self) -> bool {
         self == Self::Keep
     }
 
@@ -206,7 +206,7 @@ pub enum RemovedAnchorComments {
     Keep,
 }
 impl RemovedAnchorComments {
-    pub(crate) fn is_remove(&self) -> bool {
+    fn is_remove(&self) -> bool {
         *self == Self::Remove
     }
 }
@@ -1215,7 +1215,7 @@ pub struct RevisionCounts {
 
 impl RevisionCounts {
     /// The counts of `changes`, one per listed change.
-    pub(crate) fn from_changes<'a>(changes: impl IntoIterator<Item = &'a Change>) -> Self {
+    fn from_changes<'a>(changes: impl IntoIterator<Item = &'a Change>) -> Self {
         let mut counts = Self::default();
         for change in changes {
             let slot = match change.kind {
@@ -1503,7 +1503,7 @@ const STYLES_STORY: &str = "styles.";
 
 /// What an `EXISTING_REVISIONS` refusal, and a guard that would erase
 /// every tracked change, tells the caller to write instead.
-pub(crate) const KEEP_REVISIONS: &str = concat!(
+const KEEP_REVISIONS: &str = concat!(
     r#"add "existing_revisions": "keep" to the plan "#,
     "(it keeps every tracked change, yours and theirs; accept and reject resolve them all first)"
 );
@@ -1513,7 +1513,7 @@ pub(crate) const KEEP_REVISIONS: &str = concat!(
 /// `plan`'s `resolve_revisions` has accepted and rejected what it selects.
 /// A selection that does not resolve is the plan's error, reported when it
 /// runs; here it leaves every change in place.
-pub(crate) fn revisions_left(source: &[u8], plan: &EditPlan) -> bool {
+fn revisions_left(source: &[u8], plan: &EditPlan) -> bool {
     let resolved = resolve_selected(
         source,
         plan.resolve_revisions.as_ref(),
@@ -1557,7 +1557,7 @@ pub fn replies_on_deleted_paragraphs(source: &[u8], plan: &EditPlan) -> Vec<(u32
 /// as `comments.rN` (#1706), so a comment-only file holds tracked changes.
 /// `settle_comment_bodies` still loads that part when a settlement resolves
 /// it and the listing has no other text change.
-pub(crate) fn guard_keep_others(
+fn guard_keep_others(
     source: &[u8],
     author: &str,
     selection: Option<&ResolveRevisions>,

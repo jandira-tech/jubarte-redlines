@@ -91,7 +91,7 @@ fn f2_unchanged_fldsimple_passes_through() {
     );
 }
 
-/// The FOOTER content-diff path (document_comparer.rs M4.H.x) parses the raw
+/// The FOOTER content-diff path (M4.H.x in `compare_documents_impl`, document_comparer/mod.rs) parses the raw
 /// w:ftr part and diffs it via compare_bodies_faithful with the ftr root as
 /// the body. `compare_bodies_faithful` always rebuilds into
 /// `<w:document><w:body>…</w:body></w:document>`; the writeback path then

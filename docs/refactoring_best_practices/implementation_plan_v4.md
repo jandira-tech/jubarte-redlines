@@ -194,9 +194,9 @@ Every upward or peer cross-crate reference across all 122 files in `src/` (inclu
   - `mod.rs`, `coalesce.rs`, `moves.rs`, `tables.rs`, `paragraph_marks.rs`, `formatting.rs`, `notes_comments.rs`, `ids_relationships.rs`, `sect_pr.rs`.
 - [x] **`crates/jubarte-redlines/src/comparer/lcs/` (from [src/comparer/lcs.rs](../../src/comparer/lcs.rs) — 21,290 LOC)** — *done in T7.2 (#2453): a directory module of 11 production files and 11 test files; see baseline-addenda.md.*
   - `mod.rs`, `myers.rs`, `hierarchical.rs`, `word_level.rs`, `table_align.rs`, `similarity.rs`.
-- [ ] **`crates/jubarte-redlines/src/document_comparer/` (from [src/document_comparer.rs](../../src/document_comparer.rs) — 14,961 LOC)** — *pending (verified 2026-11-16): still one 14,853-LOC file beside a small `document_comparer/` submodule dir.*
+- [x] **`crates/jubarte-redlines/src/document_comparer/` (from [src/document_comparer.rs](../../src/document_comparer.rs) — 14,961 LOC)** — *done in T7.3 (#2456): a directory module of 4 production files and 13 test files; see baseline-addenda.md.*
   - `mod.rs`, `pipeline.rs`, `headers_footers.rs`, `footnotes_endnotes.rs`, `comments_part.rs`, `revisions_list.rs`, `accept_reject.rs`.
-- [x] **`crates/jubarte-edit/src/edit/` (from [src/edit.rs](../../src/edit.rs) — 12,374 LOC)** — *done in T7.4 (#2458): `edit.rs` is now `edit/mod.rs` plus 7 production siblings (`transaction.rs` holds the whole `impl Transaction` block) and 2 test files under `edit/tests/`, beside the existing leaf modules; see baseline-addenda.md.*
+- [x] **`crates/jubarte-edit/src/edit/` (from [src/edit.rs](../../src/edit.rs) — 12,353 lines)** — *done in T7.4 (#2458): `edit.rs` is now `edit/mod.rs` plus 7 production siblings (`transaction.rs` holds the whole `impl Transaction` block) and 2 test files under `edit/tests/`, beside the existing leaf modules; see baseline-addenda.md.*
   - `lib.rs`, `plan.rs`, `anchor.rs`, `apply.rs`, `formatting.rs`, `tables_lists.rs`, `notes_images.rs`, plus existing submodules.
 
 ---

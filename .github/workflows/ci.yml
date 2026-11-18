@@ -390,6 +390,7 @@ jobs:
       - run: python3 scripts/test_bump_version.py
       - run: python3 scripts/test_gemini_extension.py
       - run: python3 scripts/test_api_snapshot.py
+      - run: python3 scripts/test_split_equivalence.py
       # `npx jubarte-redlines` over the checked-in jubarte-wasm build.
       # node:test and the ESM cli need node >= 18 (cli engines >= 18.3); the
       # self-hosted runner's system node is far older, so set one up.

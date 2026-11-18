@@ -223,7 +223,7 @@ impl<'p> Transaction<'p> {
     /// listed the comparer's normalizations as changes: a spacing's
     /// `lineRule` written out, the stylesheet merged, a paragraph written
     /// again (#1861).
-    pub(crate) fn edits_only_comments(&self) -> bool {
+    pub(super) fn edits_only_comments(&self) -> bool {
         !self.plan.operations.is_empty()
             && self.plan.operations.iter().all(|op| {
                 matches!(
@@ -618,7 +618,7 @@ impl<'p> Transaction<'p> {
     /// Record each thread operation among `resolved` (the operation whose
     /// outcome will be `outcomes[outcome]`) that changes a comment not the
     /// plan author's, for [`Self::rewrite_notes`]: v1 and v2 alike.
-    pub(crate) fn note_rewrites(&mut self, outcome: usize, resolved: &[Resolved]) {
+    pub(super) fn note_rewrites(&mut self, outcome: usize, resolved: &[Resolved]) {
         let Some(family) = &self.family else {
             return;
         };

@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Paragraph and run formatting: property order, merges, and the
-//! table-of-contents paragraphs.
+//! Paragraph and run formatting: property order, merges, the
+//! table-of-contents paragraphs, and the format checks (`check_format`).
 
 use super::*;
 
@@ -460,7 +460,7 @@ pub(super) fn apply_run_format(dom: &mut Dom, rpr: NodeId, format: &RunFormat) {
     }
 }
 
-pub(crate) use crate::ooxml::HIGHLIGHTS;
+use crate::ooxml::HIGHLIGHTS;
 
 /// A format must name a real highlight colour and apply to some text.
 pub(super) fn check_format(format: &RunFormat, text: &str) -> Result<(), String> {

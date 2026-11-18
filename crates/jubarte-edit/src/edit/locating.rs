@@ -3,7 +3,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Locating anchors and ranges in the paragraph projection: selectors,
-//! anchor readings, candidate excerpts and range markers.
+//! anchor readings, candidate excerpts and range markers; the plan's text
+//! checks (`check_text`, `check_run_text`, `check_comment`, and the
+//! `blank_is_none` serde helper); and the helpers that word a refusal
+//! (`redaction`, `context`, `excerpt`, `new_position`).
 
 use super::*;
 

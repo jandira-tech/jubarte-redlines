@@ -3,7 +3,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! `resolve_revisions` settlement: selecting, accepting and rejecting
-//! tracked changes before a plan runs, and the comments it would remove.
+//! tracked changes before a plan runs, and the comments it would remove;
+//! the stories the settled document is read from (`Loaded`,
+//! `load_stories`); and the mapping of an admission refusal to an edit
+//! error (`open_error`).
 
 use super::*;
 

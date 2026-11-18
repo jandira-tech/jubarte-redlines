@@ -125,7 +125,7 @@ const ALIASES: &[(&str, &str, &[&str])] = &[
 
 /// `json` without a leading byte order mark, which RFC 8259 (§8.1) lets a
 /// parser ignore: editors that save UTF-8 with one write it first.
-pub(crate) fn without_byte_order_mark(json: &str) -> &str {
+pub(super) fn without_byte_order_mark(json: &str) -> &str {
     json.strip_prefix('\u{feff}').unwrap_or(json)
 }
 
