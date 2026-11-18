@@ -7,6 +7,68 @@ Hand-maintained measurements appended after T0.1. `scripts/split_baseline.sh
 record` reproduces this file verbatim at the end of `baseline.md`, so a
 re-recording never loses these entries; add new ones below, newest first.
 
+## T7.5 (convert/mod.rs split into siblings) - 2026-11-17
+
+- crates/jubarte-render/src/convert/mod.rs (68,191 lines) is now mod.rs
+  (936: every `pub` item, every `use`, the test module declarations and
+  the conversion entry points) plus 24 production siblings and 30 test
+  files under convert/tests/. Moved code only. The existing leaf modules
+  (font.rs, pdf.rs, math_*, metafile.rs, ...) are untouched.
+
+  | File | Lines | File | Lines |
+  | :--- | ---: | :--- | ---: |
+  | mod.rs | 936 | runs.rs | 1,946 |
+  | model.rs | 2,213 | textbox.rs | 1,476 |
+  | styles.rs | 2,219 | chart.rs | 300 |
+  | lists.rs | 953 | drawing.rs | 1,713 |
+  | settings.rs | 557 | shape_paint.rs | 726 |
+  | comments.rs | 939 | chrome.rs | 1,279 |
+  | notes.rs | 472 | hf_lines.rs | 1,419 |
+  | walk.rs | 988 | layout.rs | 9,977 |
+  | table_widths.rs | 974 | wrap.rs | 1,267 |
+  | cell_measure.rs | 982 | layout_driver.rs | 720 |
+  | paragraph.rs | 726 | shape_points.rs | 2,002 |
+  | fields.rs | 616 | ops.rs | 322 |
+  | table.rs | 1,771 | tests/*.rs (30) | 31,163; largest 6,851 |
+
+- AC2 (item equivalence, scripts/split_equivalence.py from #2457, run
+  against pre-release 1f3e47b57): `items matched: 2670 (visibility
+  changed on 657)`, `residue: 0`, exit 0. Every `pub(super)` was added
+  because rustc refused the build without it (unresolved name, private
+  field, method or type).
+- AC3: one file is over 8,000 lines. layout.rs is 9,977, of which 9,734
+  are the single `impl<'a> Layout<'a>` block; splitting the block would
+  change an item, which AC2 allows no residue for. Every other file is
+  under 2,300; the largest test file is coverage_round_three_tests.rs
+  at 6,851.
+- AC1: counts identical before (pre-release) and after.
+  jubarte-render --all-features 1115 passed / 1115 (same test names);
+  it_render 21 / 21; it_cli 2488 / 2488; facade_surface 1 / 1;
+  convert_docx_to_pdf 1546 passed + 2 skipped / the same; tuning_audit
+  4, coverage_gates 5, crate_layering 9, repo_paths_fit_windows 1, all
+  passing before and after. fmt, workspace clippy -D warnings, doc
+  -D warnings exit 0; reuse lint compliant; `jubarte --help` runs; the
+  narrow builds (`-p jubarte-doc`, `-p jubarte-markdown`, `-p
+  jubarte-edit` with `--no-default-features --features render`, and
+  `-p jubarte-render --no-default-features`) check clean.
+  docs/TUNING_AUDIT.md rows follow their `mini` sites to the new files
+  (tests/tuning_audit.rs matches a site by file).
+- Listing: `scripts/split_baseline.sh verify` prints `goldens:
+  identical` (PDF hashes included) and exits 1 on the listing. Under
+  `jubarte::convert` the move removes 2,350 internal rows and adds 2,374
+  (the moved private items at their definer paths `convert::<sibling>::`
+  plus 24 module rows); no `api` row under convert changes. These await
+  the api_snapshot.py fix and re-record that follow T7.5;
+  api-baseline.txt is not re-recorded.
+- Output identity (release binaries, base jubarte 0.18.0+1f3e47b57
+  sha256 793b282e..., head 0.18.0+86642e5b3 sha256 0af9518c...):
+  scripts/identity.py on the 0.19.0 conversion sample: `860 jobs: 860
+  identical`. The 600-pair redline guard (vs_scored.py against the
+  bench's scored 0.19.0 redlines): `{'SAME': 600}`.
+- Coarse speed (the 860 conversions, each binary run against a copy of
+  itself, --jobs 6, load average 8 to 11): base 16.88 s and 16.37 s,
+  head 16.60 s and 16.64 s.
+
 ## T7.4 (edit.rs becomes a directory module) - 2026-11-17
 
 - crates/jubarte-edit/src/edit.rs (12,353 lines) is now edit/mod.rs
