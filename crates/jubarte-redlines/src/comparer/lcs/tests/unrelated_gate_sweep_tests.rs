@@ -495,8 +495,8 @@ fn run_pair(a: &str, b: &str, context: &str, failures: &mut Vec<String>) -> usiz
                 let case = format!("unrelated {ctx}");
                 match conserve(&dom, &out, &left, &right, &case) {
                     Err(e) => failures.push(e),
-                    Ok(()) if KNOWN_DEFECTS.contains(&case.as_str()) => failures.push(format!(
-                        "ratchet: {case} is listed in KNOWN_DEFECTS but now keeps both sources; remove it"
+                    Ok(()) if KNOWN_GATE_LOSSES.contains(&case.as_str()) => failures.push(format!(
+                        "ratchet: {case} is listed in KNOWN_GATE_LOSSES but now keeps both sources; remove it"
                     )),
                     Ok(()) => {}
                 }
@@ -603,11 +603,14 @@ fn every_shape_against_every_shape_keeps_both_sources() {
     check(&failures);
 }
 
-/// KNOWN DEFECTS, not expected behaviour: whole replacements that lose or
-/// reorder a source atom. The list is a ratchet: a new case fails the
-/// sweep, and so does a listed case that keeps both sources (remove its
-/// entry), so it can only shrink.
-const KNOWN_DEFECTS: &[&str] = &[
+/// KNOWN GATE LOSSES, not expected behaviour: whole replacements where
+/// this gate's output loses or reorders a source atom. They are findings
+/// about this stage alone; whether a later stage repairs them before the
+/// redline is written is not established, so they are not claimed as
+/// engine defects (those are tracked in #2488). The list is a ratchet and
+/// may only shrink: a new case fails the sweep, and so does a listed case
+/// that keeps both sources (remove its entry).
+const KNOWN_GATE_LOSSES: &[&str] = &[
     "unrelated 21000+239 shapes 15->16 [coarse/0]",
     "unrelated 21000+239 shapes 15->16 [faithful/0]",
     "unrelated 21000+239 shapes 15->16 [word/0]",
@@ -635,7 +638,7 @@ fn check(failures: &[String]) {
     let unknown: Vec<_> = failures
         .iter()
         .filter(|f| {
-            !KNOWN_DEFECTS
+            !KNOWN_GATE_LOSSES
                 .iter()
                 .any(|k| f.starts_with(&format!("{k}:")))
         })
