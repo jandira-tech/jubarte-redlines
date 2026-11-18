@@ -162,6 +162,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # 🥕 A checkout by SHA leaves no origin/<base> ref, so the base...HEAD
+      # diffs below failed ("Invalid symmetric difference expression",
+      # #2443). Fetch the base branch into its remote-tracking ref.
+      - name: 🥕 Fetch the base branch
+        env:
+          BASE_REF: ${{ steps.pr.outputs.base_ref }}
+        run: git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+
       # 🐇 The skills come from the workflow's own commit (main, or the PR merge
       # ref), not from the PR head: older PR branches do not have them.
       - name: 🐇 Check out the review skills
