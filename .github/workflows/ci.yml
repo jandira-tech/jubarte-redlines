@@ -201,16 +201,15 @@ jobs:
 
       - name: Production coverage floors (95% lines, 88% branches)
         run: |
-          cargo llvm-cov report --branch --json --output-path coverage.json
-          python3 - <<'PY'
-          import json
-          totals = json.load(open("coverage.json"))["data"][0]["totals"]
-          print(f"Coverage: {totals['lines']['percent']:.2f}% lines, {totals['branches']['percent']:.2f}% branches")
-          for metric, minimum in (("lines", 95), ("branches", 88)):
-              result = totals[metric]
-              if result["count"] == 0 or result["covered"] * 100 < minimum * result["count"]:
-                  raise SystemExit(f"{metric} coverage is below {minimum}%")
-          PY
+          # `report` takes no --workspace: name every member, or the report
+          # shrinks to the root package (src/bin/ only, as it did after the
+          # 0.19.0 split). The gate refuses a report missing any member.
+          cargo metadata --no-deps --format-version 1 > metadata.json
+          packages=()
+          while IFS= read -r name; do packages+=(-p "$name"); done \
+            < <(jq -r '.workspace_members as $m | .packages[] | select(.id as $i | $m | index($i)) | .name' metadata.json)
+          cargo llvm-cov report --branch --json "${packages[@]}" --output-path coverage.json
+          python3 scripts/coverage_gate.py coverage.json metadata.json
 
   msrv:
     name: MSRV (1.94)
@@ -385,6 +384,7 @@ jobs:
       - run: python3 scripts/test_jules_workflow.py
       - run: python3 scripts/test_codeql_config.py
       - run: python3 scripts/test_ci_runners.py
+      - run: python3 scripts/test_coverage_gate.py
       - run: python3 scripts/test_check_engine_commit.py
       - run: python3 scripts/test_check_npm_paths.py
       - run: python3 scripts/test_table_styles_asset.py
