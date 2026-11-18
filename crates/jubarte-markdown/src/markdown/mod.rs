@@ -1291,7 +1291,15 @@ mod corpus {
                 if path.is_dir() {
                     stack.push(path);
                 } else if path.extension().is_some_and(|e| e == ext) {
-                    let name = path.strip_prefix(&root).unwrap().display().to_string();
+                    // `/`-separated on every platform, so the skip lists
+                    // below match on Windows too.
+                    let name = path
+                        .strip_prefix(&root)
+                        .unwrap()
+                        .components()
+                        .map(|c| c.as_os_str().to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join("/");
                     out.push((name, std::fs::read(&path).unwrap()));
                 }
             }
