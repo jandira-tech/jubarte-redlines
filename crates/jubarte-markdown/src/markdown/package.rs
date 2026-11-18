@@ -1872,7 +1872,10 @@ fn default_template(page: PageSize) -> Result<Vec<u8>, std::io::Error> {
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
-        .last_modified_time(zip::DateTime::default());
+        .last_modified_time(zip::DateTime::default())
+        // The host would otherwise pick the "made by" system (DOS on
+        // Windows), and the same input would write different bytes there.
+        .system(zip::System::Unix);
     for (name, body) in &parts {
         zip.start_file(*name, options)?;
         zip.write_all(body.as_bytes())?;
