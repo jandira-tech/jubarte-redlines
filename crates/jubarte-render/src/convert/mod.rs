@@ -944,3 +944,8 @@ mod flow_picture_branch_tests;
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 #[path = "tests/layout_scenario_branch_tests.rs"]
 mod layout_scenario_branch_tests;
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[path = "tests/layout_object_branch_tests.rs"]
+mod layout_object_branch_tests;
