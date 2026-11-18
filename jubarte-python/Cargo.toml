@@ -75,18 +75,21 @@ jubarte-cli = { path = "../crates/jubarte-cli", optional = true, default-feature
 pyo3 = { version = "0.30", features = ["extension-module", "abi3-py310"] }
 serde_json = "1" # structured results cross the boundary as engine-produced JSON
 
-# Never compiled (`cfg(any())` matches no target), only resolved. The
-# vendored crates/* inherit `version.workspace`, `edition.workspace` and
-# `[lints] workspace` from the root manifest, and maturin puts that
-# manifest in the sdist only for a package in the resolve graph. Without
-# this entry the unpacked sdist has no workspace root, and both
-# `cargo metadata` and `cargo check` fail parsing the sub-crates ("error
-# inheriting `edition` from workspace root manifest's
-# `workspace.package.edition`"). The root manifest is also the `jubarte`
-# package, so cargo check then needs every target it declares: the root
-# `include` list carries them (a missing one fails as "can't find
-# `cli_flags` example at `examples/cli_flags.rs`"). CI compiles the
-# unpacked sdist to keep both true.
+# Never compiled (`cfg(any())` matches no target), only resolved. maturin
+# packs the root manifest into the sdist either way, since crates/* are its
+# workspace members. But the root manifest is also the `jubarte` package,
+# and Cargo parses it whole when it looks for the workspace of a
+# sub-crate, so every target it declares must exist in the sdist. Without
+# this entry maturin leaves the `jubarte` package's files out, and
+# `cargo metadata` and `cargo check` on the unpacked sdist fail. The top
+# error reads "error inheriting `edition` from workspace root manifest's
+# `workspace.package.edition`"; the cause underneath is "can't find
+# `jubarte` bin at `src/bin/jubarte.rs`". With the entry, maturin packs
+# the `jubarte` package and the root `include` list carries its targets
+# (a missing one fails as "can't find `cli_flags` example at
+# `examples/cli_flags.rs`"). Making the root a virtual manifest would
+# remove the need for this entry. CI compiles the unpacked sdist to keep
+# both true.
 [target.'cfg(any())'.dependencies]
 jubarte = { path = "..", default-features = false }
 
