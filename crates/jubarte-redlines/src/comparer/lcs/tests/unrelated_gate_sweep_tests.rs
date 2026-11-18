@@ -617,8 +617,13 @@ fn run_pair(a: &str, b: &str, context: &str, failures: &mut Vec<String>) -> usiz
             if let Some(out) =
                 detect_unrelated_sources_word_mode_inner(&mut dom, &cu1, &cu2, &settings)
             {
-                if let Err(e) = conserve(&dom, &out, &left, &right, &format!("unrelated {ctx}")) {
-                    failures.push(e);
+                let case = format!("unrelated {ctx}");
+                match conserve(&dom, &out, &left, &right, &case) {
+                    Err(e) => failures.push(e),
+                    Ok(()) if KNOWN_DEFECTS.contains(&case.as_str()) => failures.push(format!(
+                        "ratchet: {case} is listed in KNOWN_DEFECTS but now keeps both sources; remove it"
+                    )),
+                    Ok(()) => {}
                 }
                 replaced += 1;
             }
@@ -721,10 +726,11 @@ fn every_shape_against_every_shape_keeps_both_sources() {
     check(&failures);
 }
 
-/// Whole replacements that lose or reorder a source atom. Each is a
-/// finding for the gate that produced it; the list keeps the sweep a
-/// guard for every other pair.
-const KNOWN: &[&str] = &[
+/// KNOWN DEFECTS, not expected behaviour: whole replacements that lose or
+/// reorder a source atom. The list is a ratchet: a new case fails the
+/// sweep, and so does a listed case that keeps both sources (remove its
+/// entry), so it can only shrink.
+const KNOWN_DEFECTS: &[&str] = &[
     "unrelated 21000+239 shapes 15->16 [coarse/0]",
     "unrelated 21000+239 shapes 15->16 [faithful/0]",
     "unrelated 21000+239 shapes 15->16 [word/0]",
@@ -751,7 +757,11 @@ const KNOWN: &[&str] = &[
 fn check(failures: &[String]) {
     let unknown: Vec<_> = failures
         .iter()
-        .filter(|f| !KNOWN.iter().any(|k| f.starts_with(&format!("{k}:"))))
+        .filter(|f| {
+            !KNOWN_DEFECTS
+                .iter()
+                .any(|k| f.starts_with(&format!("{k}:")))
+        })
         .collect();
     assert!(
         unknown.is_empty(),
