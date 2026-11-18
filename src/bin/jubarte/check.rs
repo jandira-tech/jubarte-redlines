@@ -296,3 +296,77 @@ pub(super) fn run(file: &Path, expect: Option<&Path>, json: bool, quiet: bool) -
         quiet,
     )
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod finish_branch_tests {
+    use super::*;
+
+    fn docx(markdown: &str) -> Vec<u8> {
+        jubarte::markdown::markdown_to_docx(markdown, &jubarte::markdown::DocxOptions::default())
+            .unwrap()
+            .docx
+    }
+
+    fn expectations(bytes: &[u8], requirements: serde_json::Value) -> String {
+        let mut value = serde_json::json!({
+            "schema_version": 1,
+            "source": {"sha256": jubarte::inspect::source_sha256(bytes)},
+            "text_view": "final",
+        });
+        value["requirements"] = requirements;
+        value.to_string()
+    }
+
+    #[test]
+    fn human_runs_exit_with_the_envelope_code_quiet_or_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("in.docx");
+        let bytes = docx("One.\n");
+        std::fs::write(&file, &bytes).unwrap();
+        let expect = dir.path().join("x.json");
+        let check = |text: &str| {
+            serde_json::json!({
+                "kind": "text_equals",
+                "target": {"short_id": "p0", "long_id": "document.w:p.j:short.p0"},
+                "text": text,
+            })
+        };
+        // Two prose requirements: "2 requirements not assessed".
+        std::fs::write(
+            &expect,
+            expectations(
+                &bytes,
+                serde_json::json!([
+                    {"key": "a", "description": "d", "checks": [check("One.")]},
+                    {"key": "b", "description": "d", "checks": []},
+                    {"key": "c", "description": "d", "checks": []},
+                ]),
+            ),
+        )
+        .unwrap();
+        assert_eq!(run(&file, Some(&expect), false, false), ExitCode::from(0));
+        assert_eq!(run(&file, Some(&expect), false, true), ExitCode::from(0));
+        // A failing check prints its line even under --quiet.
+        std::fs::write(
+            &expect,
+            expectations(
+                &bytes,
+                serde_json::json!([{"key": "a", "description": "d", "checks": [check("Two.")]}]),
+            ),
+        )
+        .unwrap();
+        assert_eq!(run(&file, Some(&expect), false, true), ExitCode::from(2));
+        // Usage and read failures carry no scope line.
+        assert_eq!(run(&file, None, false, false), ExitCode::from(64));
+        let missing = dir.path().join("missing.docx");
+        assert_eq!(
+            run(&missing, Some(&expect), false, false),
+            ExitCode::from(1)
+        );
+        assert_eq!(
+            run(&file, Some(&dir.path().join("none.json")), false, false),
+            ExitCode::from(1)
+        );
+    }
+}

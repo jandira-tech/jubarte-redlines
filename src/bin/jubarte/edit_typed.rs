@@ -1122,3 +1122,259 @@ pub(super) fn usage(argv: &[String], error: &clap::Error) -> bool {
     }
     true
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod delivery_branch_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    struct Work {
+        dir: tempfile::TempDir,
+        file: PathBuf,
+    }
+
+    impl Work {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join("in.docx");
+            let docx = jubarte::markdown::markdown_to_docx(
+                "One two.\n",
+                &jubarte::markdown::DocxOptions::default(),
+            )
+            .unwrap()
+            .docx;
+            std::fs::write(&file, docx).unwrap();
+            Self { dir, file }
+        }
+
+        fn path(&self, name: &str) -> PathBuf {
+            self.dir.path().join(name)
+        }
+
+        fn s(&self, name: &str) -> String {
+            self.path(name).to_string_lossy().into_owned()
+        }
+
+        /// `jubarte edit replace FILE ARGS…`, run in process.
+        fn replace(&self, args: &[&str], quiet: bool) -> ExitCode {
+            let file = self.file.to_string_lossy().into_owned();
+            let argv = ["jubarte", "edit", "replace", file.as_str(), "-a", "Ed"]
+                .into_iter()
+                .chain(args.iter().copied());
+            let cli = Cli::try_parse_from(argv).unwrap_or_else(|e| panic!("{e}"));
+            let Some(Command::TypedEdit(typed)) = cli.command else {
+                panic!("not a typed edit");
+            };
+            run(&typed, quiet)
+        }
+    }
+
+    const OK: ExitCode = ExitCode::SUCCESS;
+
+    #[test]
+    fn bundles_write_the_roles_emit_names() {
+        let w = Work::new();
+        let only_doc = w.s("doc_only");
+        assert_eq!(
+            w.replace(
+                &[
+                    "--find",
+                    "One",
+                    "--text",
+                    "Uno",
+                    "--out-dir",
+                    &only_doc,
+                    "--emit",
+                    "document"
+                ],
+                false
+            ),
+            OK
+        );
+        assert!(w.path("doc_only/document.docx").exists());
+        assert!(!w.path("doc_only/report.json").exists());
+        assert!(!w.path("doc_only/changes.diff").exists());
+        let with_report = w.s("with_report");
+        assert_eq!(
+            w.replace(
+                &[
+                    "--find",
+                    "One",
+                    "--text",
+                    "Uno",
+                    "--out-dir",
+                    &with_report,
+                    "--emit",
+                    "document,report"
+                ],
+                true
+            ),
+            OK
+        );
+        assert!(w.path("with_report/report.json").exists());
+        assert!(!w.path("with_report/changes.diff").exists());
+        let out = w.s("out.docx");
+        assert_eq!(
+            w.replace(
+                &[
+                    "--find",
+                    "One",
+                    "--text",
+                    "Uno",
+                    "-o",
+                    &out,
+                    "--emit",
+                    "report,patch"
+                ],
+                false
+            ),
+            OK
+        );
+        assert!(w.path("out.report.json").exists());
+        assert!(w.path("out.diff").exists());
+    }
+
+    #[test]
+    fn a_report_on_the_document_path_is_an_alias() {
+        let w = Work::new();
+        let out = w.s("out.docx");
+        assert_ne!(
+            w.replace(
+                &[
+                    "--find", "One", "--text", "Uno", "-o", &out, "--report", &out
+                ],
+                false
+            ),
+            OK
+        );
+        assert!(!w.path("out.docx").exists());
+        let report = w.s("r.json");
+        assert_eq!(
+            w.replace(
+                &[
+                    "--find", "One", "--text", "Uno", "-o", &out, "--report", &report, "--json"
+                ],
+                false
+            ),
+            OK
+        );
+        let receipt: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(w.path("r.json")).unwrap()).unwrap();
+        assert_eq!(receipt["status"], "ok");
+    }
+
+    #[test]
+    fn in_place_unchanged_and_quiet_runs_succeed() {
+        let w = Work::new();
+        let before = std::fs::read(&w.file).unwrap();
+        assert_eq!(
+            w.replace(&["--find", "One", "--text", "Uno", "--in-place"], false),
+            OK
+        );
+        assert_ne!(std::fs::read(&w.file).unwrap(), before);
+        let out = w.s("same.docx");
+        assert_eq!(
+            w.replace(&["--find", "two", "--text", "two", "-o", &out], true),
+            OK
+        );
+        assert_eq!(
+            w.replace(&["--find", "two", "--text", "deux", "--dry-run"], false),
+            OK
+        );
+        assert_eq!(
+            w.replace(
+                &["--find", "two", "--text", "deux", "--dry-run", "--jsonl"],
+                true
+            ),
+            OK
+        );
+    }
+
+    #[test]
+    fn expectations_name_their_unassessed_requirements() {
+        let w = Work::new();
+        let source = std::fs::read(&w.file).unwrap();
+        for prose in [1, 2] {
+            let requirements: Vec<_> = (0..prose)
+                .map(|i| serde_json::json!({"key": format!("k{i}"), "description": "d", "checks": []}))
+                .collect();
+            let expect = w.path(&format!("x{prose}.json"));
+            std::fs::write(
+                &expect,
+                serde_json::json!({
+                    "schema_version": 1,
+                    "source": {"sha256": jubarte::inspect::source_sha256(&source)},
+                    "text_view": "final",
+                    "requirements": requirements,
+                })
+                .to_string(),
+            )
+            .unwrap();
+            let out = w.s(&format!("out{prose}.docx"));
+            let expect = expect.to_string_lossy().into_owned();
+            assert_eq!(
+                w.replace(
+                    &[
+                        "--find", "One", "--text", "Uno", "-o", &out, "--expect", &expect
+                    ],
+                    false
+                ),
+                OK,
+                "{prose}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bundle_refuses_a_separate_report_and_one_on_its_document() {
+        let w = Work::new();
+        let dir = w.s("bundle");
+        let inside = w.path("bundle").join("document.docx");
+        let inside = inside.to_string_lossy().into_owned();
+        let report = w.s("r.json");
+        for args in [
+            vec![
+                "--find",
+                "One",
+                "--text",
+                "Uno",
+                "--out-dir",
+                &dir,
+                "--report",
+                &inside,
+            ],
+            vec![
+                "--find",
+                "One",
+                "--text",
+                "Uno",
+                "--out-dir",
+                &dir,
+                "--report",
+                &report,
+            ],
+            vec![
+                "--find",
+                "One",
+                "--text",
+                "Uno",
+                "--out-dir",
+                &dir,
+                "--report",
+                &report,
+                "--json",
+            ],
+        ] {
+            assert_ne!(w.replace(&args, true), OK, "{args:?}");
+            assert!(!w.path("bundle").exists(), "{args:?}");
+        }
+        // A refused edit under --quiet still fails.
+        let out = w.s("o.docx");
+        assert_ne!(
+            w.replace(&["--find", "Absent", "--text", "x", "-o", &out], true),
+            OK
+        );
+        assert!(!w.path("o.docx").exists());
+    }
+}

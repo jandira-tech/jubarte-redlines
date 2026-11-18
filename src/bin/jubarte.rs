@@ -6453,3 +6453,96 @@ mod tests {
         assert!(refresh_fields(b"not a zip").is_err());
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod helper_branch_tests {
+    use super::*;
+
+    #[test]
+    fn schemes_start_with_a_letter_and_keep_to_their_set() {
+        assert!(url_scheme("https://x"));
+        assert!(url_scheme("svn+ssh://x"));
+        assert!(url_scheme("a-b.c:rest"));
+        assert!(!url_scheme("1http://x"));
+        assert!(!url_scheme("ht_tp://x"));
+        assert!(!url_scheme("no-colon"));
+        assert!(!url_scheme(":empty"));
+    }
+
+    #[test]
+    fn a_removed_thread_without_a_reason_names_the_decision() {
+        let source = jubarte::markdown::markdown_to_docx(
+            "One.\n",
+            &jubarte::markdown::DocxOptions::default(),
+        )
+        .unwrap()
+        .docx;
+        let removed = |why: &str, decision: Option<&str>, replies: Vec<String>| {
+            jubarte::edit::RemovedComment {
+                id: "c1".into(),
+                author: "Bo".into(),
+                replies,
+                why: why.into(),
+                decision: decision.map(str::to_string),
+            }
+        };
+        let lines = settlement_notes(
+            &[
+                removed("", None, Vec::new()),
+                removed("", Some("reject"), vec!["c2".into()]),
+                removed(
+                    "anchor removed by accepting r3",
+                    None,
+                    vec!["c2".into(), "c3".into()],
+                ),
+            ],
+            &[],
+            &source,
+            &source,
+            "settlement",
+        );
+        let all = lines.join("\n");
+        assert!(
+            all.contains("their anchor was text the settlement removed"),
+            "{all}"
+        );
+        assert!(
+            all.contains("their anchor was text the reject removed"),
+            "{all}"
+        );
+        assert!(all.contains("anchor removed by accepting r3"), "{all}");
+        assert!(all.contains("and its reply c2"), "{all}");
+        assert!(all.contains("and its replies c2, c3"), "{all}");
+    }
+
+    #[test]
+    fn image_refusals_skip_inline_payloads_and_a_missing_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let refusals: ImageRefusals = Default::default();
+        report_image_refusals(
+            dir.path(),
+            &[
+                "![a](drawing:1) ![b](data:image/png;base64,AA) ![c](../outside.png) ![d](https://x/y.png)",
+            ],
+            &refusals,
+        );
+        let refused: Vec<_> = refusals.borrow().iter().map(|(t, _)| t.clone()).collect();
+        assert!(
+            refused.contains(&"../outside.png".to_string()),
+            "{refused:?}"
+        );
+        assert!(
+            !refused
+                .iter()
+                .any(|t| t.starts_with("drawing:") || t.starts_with("data:"))
+        );
+        let none: ImageRefusals = Default::default();
+        report_image_refusals(
+            &dir.path().join("missing"),
+            &["![c](../outside.png)"],
+            &none,
+        );
+        assert!(none.borrow().is_empty());
+    }
+}

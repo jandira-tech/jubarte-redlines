@@ -2852,3 +2852,54 @@ mod public_adjacent_run_replacement_owner_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod writer_branch_tests {
+    use super::super::deeper_boundary_fixture::{docx, part_string};
+    use super::super::{EditPlan, apply_plan};
+
+    fn redline(body: &str, ops: serde_json::Value) -> String {
+        let mut value = serde_json::json!({
+            "schema_version": 1,
+            "author": "Ed",
+            "date": "2026-02-02T00:00:00Z",
+        });
+        value["operations"] = ops;
+        let plan = EditPlan::from_json(&value.to_string()).unwrap();
+        let result = apply_plan(&docx(body), &plan).unwrap_or_else(|e| panic!("{e:?}"));
+        part_string(&result.redline, "word/document.xml").unwrap()
+    }
+
+    #[test]
+    fn formatted_words_typed_into_an_empty_paragraph_are_an_insertion() {
+        let xml = redline(
+            r#"<w:p><w:pPr><w:rPr><w:i/></w:rPr></w:pPr></w:p>"#,
+            serde_json::json!([{"kind": "insert", "paragraph": "p0", "position": "end", "text": "New", "format": {"bold": true}}]),
+        );
+        let ins = &xml[xml.find("<w:ins ").unwrap()..xml.find("</w:ins>").unwrap()];
+        assert!(ins.contains("New") && ins.contains("<w:b />"), "{ins}");
+    }
+
+    #[test]
+    fn a_merge_separator_takes_the_head_runs_formatting() {
+        let xml = redline(
+            r#"<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Head</w:t></w:r></w:p><w:p><w:r><w:t>Tail</w:t></w:r></w:p>"#,
+            serde_json::json!([{"kind": "merge_paragraphs", "paragraph": "p0", "separator": " - "}]),
+        );
+        let ins = &xml[xml.find("<w:ins ").unwrap()..];
+        let ins = &ins[..ins.find("</w:ins>").unwrap()];
+        assert!(ins.contains(" - ") && ins.contains("<w:b />"), "{ins}");
+        assert!(xml.contains("<w:del "), "the head's mark is deleted: {xml}");
+    }
+
+    #[test]
+    fn a_formatted_replacement_carries_its_format_on_the_new_words() {
+        let xml = redline(
+            r#"<w:p><w:r><w:t>Alpha beta</w:t></w:r></w:p>"#,
+            serde_json::json!([{"kind": "replace", "paragraph": "p0", "find": "beta", "replacement": "gamma", "format": {"italic": true}}]),
+        );
+        let ins = &xml[xml.find("<w:ins ").unwrap()..xml.find("</w:ins>").unwrap()];
+        assert!(ins.contains("gamma") && ins.contains("<w:i />"), "{ins}");
+    }
+}
