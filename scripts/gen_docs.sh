@@ -30,7 +30,8 @@ fi
 
 GENERATED_DOCS=(docs/rust.md docs/python.md docs/javascript.md README.md
   README.crates.md jubarte-python/README.md jubarte-wasm/npm/README.md
-  jubarte-wasm/cli/README.md docs/flags_datetime.md docs/locations.md)
+  jubarte-wasm/cli/README.md crates/*/README.md docs/flags_datetime.md
+  docs/locations.md)
 
 # --- Rust CLI ----------------------------------------------------------------
 # Build the binary so the reference quotes the flags of this source tree. In

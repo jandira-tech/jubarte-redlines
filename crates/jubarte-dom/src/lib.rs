@@ -14,6 +14,23 @@
 //! Nothing here knows Word documents as packages; the OPC adapter and
 //! every product above it live in higher jubarte crates and reach this
 //! one downward only.
+//!
+//! # Example
+//!
+//! ```rust
+//! use jubarte_dom::namespaces::W;
+//! use jubarte_dom::xmllinq::Dom;
+//!
+//! let mut dom = Dom::new();
+//! let doc = dom.parse_xdocument(concat!(
+//!     r#"<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">"#,
+//!     "<w:r><w:t>Hello</w:t></w:r><w:r><w:t>, world</w:t></w:r></w:p>",
+//! ));
+//! let paragraph = dom.root(doc).expect("one root element");
+//! assert_eq!(dom.elements(paragraph, Some(&W::r())).len(), 2);
+//! assert_eq!(dom.value(paragraph), "Hello, world");
+//! println!("{}", dom.serialize_document(doc));
+//! ```
 
 #![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 #![forbid(unsafe_code)]

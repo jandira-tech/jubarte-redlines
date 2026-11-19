@@ -15,6 +15,29 @@
 //! The lower package and DOM floors are re-exported under their historical
 //! names (`admission`, `opc`, `strict_translation`, `xmllinq`,
 //! `namespaces`), so a standalone consumer needs this crate alone.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use jubarte_redlines::document_comparer::compare_documents;
+//! use jubarte_redlines::opc::PartFs;
+//! use jubarte_redlines::revision_processor::accept_revisions_package;
+//!
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let original = std::fs::read("original.docx")?;
+//!     let modified = std::fs::read("modified.docx")?;
+//!
+//!     // A tracked-changes redline that opens cleanly in Microsoft Word.
+//!     let redline = compare_documents(&original, &modified, "Reviewer")?;
+//!     std::fs::write("redline.docx", &redline)?;
+//!
+//!     // Accepting every revision gives the modified text back.
+//!     let mut package = PartFs::open(&redline)?;
+//!     accept_revisions_package(&mut package);
+//!     std::fs::write("accepted.docx", package.to_zip()?)?;
+//!     Ok(())
+//! }
+//! ```
 
 #![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 #![forbid(unsafe_code)]

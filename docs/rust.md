@@ -59,7 +59,7 @@ Depend on a single crate only when you want its part alone.
 | `jubarte-dom` (`jubarte_dom`) | arena XML DOM (`xmllinq`), `namespaces`, `ids`, `unid`, `util`, `limits` |
 | `jubarte-opc` (`jubarte_opc`) | `opc`, `admission`, `markup_simplifier`, `strict_translation`, `settings`, styles, numbering and the shared Word tables |
 | `jubarte-redlines` (`jubarte_redlines`) | `document_comparer`, `comparer`, `revision_processor`, `comparison_log` |
-| `jubarte-render` (`jubarte_render`) | `convert`: DOCX and Markdown to PDF and PNG |
+| `jubarte-render` (`jubarte_render`) | `convert`: DOCX to PDF and PNG |
 | `jubarte-doc` (`jubarte_doc`) | `changes`, `comments`, `validate`, `audit`, `scrub`, `append`, `fields`, `inspect`, `debug` |
 | `jubarte-markdown` (`jubarte_markdown`) | `markdown` reader and writer, `legacy_doc` |
 | `jubarte-edit` (`jubarte_edit`) | `edit`, `text_diff`, `expect`, `capabilities`, `publication` |

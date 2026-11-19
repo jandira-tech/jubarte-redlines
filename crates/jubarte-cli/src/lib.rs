@@ -5,11 +5,39 @@
 //! # jubarte-cli
 //!
 //! The jubarte engine's command line: every operation of the library behind
-//! one clap surface - compare, convert, changes, accept, reject, edit, read,
-//! validate, audit, scrub, append, comments, fields, debug and `self-update`
-//! (behind its feature). `build.rs` stamps `--version` with the source
-//! commit when the crate is built from this repository, and nothing when it
-//! is built from an unpacked package inside another repository.
+//! one clap surface - compare, changes, accept, reject, convert, diff, read,
+//! edit, add, comments, append, validate, check, scrub, visual-diff,
+//! capabilities, debug and `self-update` (behind its feature). This crate is
+//! a library with no binary: the `jubarte` executable is built by the
+//! facade crate `jubarte` (`cargo install jubarte`). `build.rs` stamps
+//! `--version` with the source commit when the crate is built from this
+//! repository, and nothing when it is built from an unpacked package inside
+//! another repository.
+//!
+//! # Example
+//!
+//! ```rust
+//! use jubarte_cli::cli::top_level_command;
+//!
+//! fn main() {
+//!     // The full command tree needs more stack than the 1 MiB Windows gives
+//!     // a main thread in a debug build; the `jubarte` binary also parses on
+//!     // an 8 MiB thread.
+//!     let parsed = std::thread::Builder::new()
+//!         .stack_size(8 * 1024 * 1024)
+//!         .spawn(|| {
+//!             top_level_command()
+//!                 .try_get_matches_from([
+//!                     "jubarte", "compare", "old.docx", "new.docx", "-o", "redline.docx",
+//!                 ])
+//!                 .map(|m| m.subcommand_name().map(str::to_owned))
+//!         })
+//!         .expect("spawn the parsing thread")
+//!         .join()
+//!         .expect("the parsing thread does not panic");
+//!     assert_eq!(parsed.expect("the arguments parse").as_deref(), Some("compare"));
+//! }
+//! ```
 
 #![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 #![forbid(unsafe_code)]

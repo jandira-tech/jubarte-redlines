@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -100,9 +101,7 @@ class Links(unittest.TestCase):
 
     def test_a_badge_link_target_is_rewritten(self) -> None:
         out = self.rewrite("[![license](https://img/l.svg)](./LICENSE)")
-        self.assertEqual(
-            out, f"[![license](https://img/l.svg)]({lr.REPO}/blob/v1.2.3/LICENSE)"
-        )
+        self.assertEqual(out, f"[![license](https://img/l.svg)]({lr.REPO}/blob/v1.2.3/LICENSE)")
 
     def test_code_text_link_is_rewritten_but_code_spans_are_not(self) -> None:
         out = self.rewrite("[`docs/M.md`](docs/M.md) and `[not](a/link.md)`")
@@ -122,6 +121,10 @@ class Links(unittest.TestCase):
         out = self.rewrite("[a](#kept) [b](#cut)", kept={"kept"})
         self.assertIn("[a](#kept)", out)
         self.assertIn(f"[b]({lr.REPO}/blob/v1.2.3/README.md#cut)", out)
+
+    def test_a_rewritten_link_must_name_a_file_in_the_checkout(self) -> None:
+        out = self.rewrite("[l](LICENSE) [c](assets/fonts/LICENSE-Carlit) ![i](assets/gone.png)")
+        self.assertEqual(lr.dead_links(out), ["assets/fonts/LICENSE-Carlit", "assets/gone.png"])
 
     def test_absolute_and_mail_links_are_kept(self) -> None:
         text = "[a](https://x.y/z) [m](mailto:a@b.c)"
@@ -231,13 +234,165 @@ class InstallNames(unittest.TestCase):
 
     def test_no_install_line_names_the_compare_only_crate(self) -> None:
         import re
+
         repo = HERE.parent
-        pages = [repo / "README.md", repo / "README.crates.md", repo / "docs/rust.md",
-                 *sorted((repo / "docs/adoption").glob("*.md"))]
+        pages = [
+            repo / "README.md",
+            repo / "README.crates.md",
+            repo / "docs/rust.md",
+            *sorted((repo / "docs/adoption").glob("*.md")),
+        ]
         bad = re.compile(r"cargo (?:install|add) jubarte-redlines\b")
-        found = [f"{p.relative_to(repo)}:{n}" for p in pages
-                 for n, line in enumerate(p.read_text().splitlines(), 1) if bad.search(line)]
+        found = [
+            f"{p.relative_to(repo)}:{n}"
+            for p in pages
+            for n, line in enumerate(p.read_text().splitlines(), 1)
+            if bad.search(line)
+        ]
         self.assertEqual(found, [])
+
+
+# REUSE-IgnoreStart
+LIB_RS = """//! # demo
+//!
+//! ```rust
+//! let x = 1;
+//! ```
+
+// A comment between items.
+pub use dep_a::{one, two as deux, nested::{three, self}};
+pub use dep_b::four;
+pub(crate) use dep_c::internal;
+#[doc(hidden)]
+pub use dep_d::hidden_use;
+/// Documented.
+#[cfg(feature = "x")]
+pub mod gated;
+/// Hidden.
+#[doc(hidden)]
+pub mod secret;
+pub mod plain;
+mod private;
+pub use dep_e::{
+    five,
+    six,
+};
+pub use wml::Thing;
+"""
+# REUSE-IgnoreEnd
+
+
+class Crates(unittest.TestCase):
+    """Workspace crate READMEs: surface, doctests, badges and repository."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="library_readmes_crate_"))
+        (self.tmp / "crates/demo/src").mkdir(parents=True)
+        (self.tmp / "crates/demo/src/lib.rs").write_text(LIB_RS, encoding="utf-8")
+        (self.tmp / "Cargo.toml").write_text(
+            '[workspace.package]\nversion = "1.2.3"\nlicense = "AGPL-3.0-only"\n'
+            'repository = "https://github.com/acme/widget.git"\n',
+            encoding="utf-8",
+        )
+        self.frag = self.tmp / "crates/demo/README.fragment.md"
+        self.frag.write_text(
+            'Install `demo = "{{version}}"` from [repo]({{repository}}).\n\n'
+            "```rust\nlet x = 1;\n```\n\n[license](LICENSE) and [cli](../../README.md#cli)\n",
+            encoding="utf-8",
+        )
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def lib(self) -> lr.Library:
+        return lr.Library(
+            name="t",
+            out="crates/demo/README.md",
+            title="demo",
+            badges=(),
+            keep=(),
+            fragment="crates/demo/README.fragment.md",
+            surface="crate",
+            crate="demo",
+        )
+
+    def test_use_trees_bind_their_last_names(self) -> None:
+        self.assertEqual(lr._use_names("a::{b, c as d, e::{f, self}}"), ["b", "d", "f", "e"])
+        self.assertEqual(lr._use_names("a::b as _"), [])
+        self.assertEqual(lr._use_names("a::*"), [])
+        self.assertEqual(lr._use_names("jubarte_render"), ["jubarte_render"])
+
+    def test_surface_skips_hidden_crate_private_and_private_items(self) -> None:
+        self.assertEqual(
+            lr.crate_surface("demo", self.tmp),
+            sorted(["one", "deux", "three", "nested", "four", "gated", "plain", "five", "six", "Thing"]),
+        )
+
+    def test_the_real_crates_parse(self) -> None:
+        dom = lr.crate_surface("jubarte-dom")
+        self.assertIn("xmllinq", dom)
+        self.assertNotIn("limits", dom)  # #[doc(hidden)]
+        self.assertIn("WmlDocument", lr.crate_surface("jubarte-redlines"))
+        self.assertNotIn("comment_settlement", lr.crate_surface("jubarte-doc"))
+
+    def test_a_module_counts_only_when_named_as_code(self) -> None:
+        lib = self.lib()
+        named = " ".join(f"`{n}`" for n in lr.crate_surface("demo", self.tmp))
+        self.assertEqual(lr.surface_gaps(lib, named, self.tmp), [])
+        self.assertIn("plain", lr.surface_gaps(lib, named.replace("`plain`", "plain"), self.tmp))
+        self.assertEqual(lr.surface_gaps(lib, named.replace("`plain`", "`plain::Item`"), self.tmp), [])
+
+    def test_a_readme_example_must_be_a_crate_doctest(self) -> None:
+        self.assertEqual(lr.doctest_gaps(self.lib(), self.tmp), [])
+        self.frag.write_text("```rust\nlet y = 2;\n```\n", encoding="utf-8")
+        self.assertEqual(lr.doctest_gaps(self.lib(), self.tmp), ["let y = 2;"])
+
+    def test_repository_comes_from_the_workspace_manifest(self) -> None:
+        self.assertEqual(lr.repository_url(self.tmp), "https://github.com/acme/widget")
+        cargo = tomllib.loads((HERE.parent / "Cargo.toml").read_text(encoding="utf-8"))
+        self.assertEqual(lr.REPO, cargo["workspace"]["package"]["repository"].removesuffix(".git"))
+        self.assertTrue(lr.RAW.startswith("https://raw.githubusercontent.com/"))
+
+    def test_crate_page_has_badges_filled_fragment_and_links(self) -> None:
+        out = lr.render(self.lib(), ROOT_README, "1.2.3", root=self.tmp)
+        self.assertTrue(out.startswith("<!--\nSPDX-FileCopyrightText"))
+        for badge in (
+            "(https://crates.io/crates/demo)",
+            "(https://docs.rs/demo)",
+            "/actions/workflows/ci.yml)",
+            "license-AGPL--3.0--only-blue.svg",
+            "(https://readthedocs.org/projects/demo/badge/?version=latest)",
+            "(https://jubarte.readthedocs.io/projects/demo/en/latest/)",
+        ):
+            self.assertIn(badge, out)
+        self.assertIn('`demo = "1.2.3"`', out)
+        self.assertIn(f"[repo]({lr.REPO})", out)
+        self.assertIn(f"[license]({lr.REPO}/blob/v1.2.3/crates/demo/LICENSE)", out)
+        self.assertIn(f"[cli]({lr.REPO}/blob/v1.2.3/README.md#cli)", out)
+        self.assertIn("## Links", out)
+        self.assertIn(f"{lr.REPO}/blob/v1.2.3/README.md#cli-reference", out)
+        self.assertNotIn("Tagline.", out)  # nothing is cut from the root
+
+    def test_an_unknown_placeholder_is_an_error(self) -> None:
+        self.frag.write_text("{{nope}}\n", encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            lr.render(self.lib(), ROOT_README, "1.2.3", root=self.tmp)
+
+    def test_every_workspace_crate_has_a_generated_readme(self) -> None:
+        repo = HERE.parent
+        members = sorted(p.parent.name for p in repo.glob("crates/*/Cargo.toml"))
+        self.assertEqual(sorted(lr.CRATES), members)
+        outs = {lib.out for lib in lr.LIBRARIES}
+        for name in lr.CRATES:
+            self.assertIn(f"crates/{name}/README.md", outs)
+            cargo = tomllib.loads((repo / f"crates/{name}/Cargo.toml").read_text(encoding="utf-8"))
+            self.assertEqual(cargo["package"]["readme"], "README.md")
+            self.assertIn("/README.md", cargo["package"]["include"])
+
+    def test_the_facade_lists_the_crates(self) -> None:
+        index = lr.crate_index("1.2.3")
+        for name in lr.CRATES:
+            self.assertIn(f"(https://crates.io/crates/{name})", index)
 
 
 if __name__ == "__main__":

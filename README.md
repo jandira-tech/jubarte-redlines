@@ -248,7 +248,7 @@ workspace crates (`jubarte-dom`, `jubarte-opc`, `jubarte-redlines` for
 comparison, `jubarte-render`, `jubarte-doc`, `jubarte-markdown`,
 `jubarte-edit`), which can also be depended on alone.
 Since 0.19.0, `jubarte-redlines` on crates.io is the compare-only crate
-(library name `jubarte`); a 0.18 dependency on `jubarte-redlines`
+(library name `jubarte_redlines`); a 0.18 dependency on `jubarte-redlines`
 moves to `jubarte = "0.19"` and keeps its `use jubarte::…` paths (see the
 [changelog](CHANGELOG.md)).
 

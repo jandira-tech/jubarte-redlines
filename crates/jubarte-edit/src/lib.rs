@@ -13,6 +13,32 @@
 //! the bindings expose, and `publication` stages host filesystem output.
 //! The composed `markdown` module adds the patch, redline and unified
 //! views to the markdown crate's reader and writer.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use jubarte_edit::edit::apply_plan_json;
+//!
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let source = std::fs::read("contract.docx")?;
+//!     // Paragraph ids (`p12`) are the ones `jubarte read contract.docx` prints.
+//!     let plan = r#"{
+//!         "schema_version": 1,
+//!         "author": "Reviewer",
+//!         "operations": [{
+//!             "id": "term",
+//!             "kind": "replace",
+//!             "paragraph": "p12",
+//!             "find": "two years",
+//!             "replacement": "three years"
+//!         }]
+//!     }"#;
+//!     let result = apply_plan_json(&source, plan)?;
+//!     std::fs::write("contract_redline.docx", &result.redline)?;
+//!     std::fs::write("contract_clean.docx", &result.clean)?;
+//!     Ok(())
+//! }
+//! ```
 
 #![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 #![forbid(unsafe_code)]
