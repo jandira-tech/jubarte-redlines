@@ -92,7 +92,8 @@ case "$repository" in
   *) die "no [workspace.package] repository URL in Cargo.toml" ;;
 esac
 export MDBOOK_OUTPUT__HTML__GIT_REPOSITORY_URL=$repository
-export MDBOOK_OUTPUT__HTML__EDIT_URL_TEMPLATE=$repository/edit/main/$book/{path}
+# {path} stays literal: mdBook fills it with each page's source path.
+export MDBOOK_OUTPUT__HTML__EDIT_URL_TEMPLATE="$repository/edit/main/$book/{path}"
 
 # --- Build ---------------------------------------------------------------------
 mkdir -p "$out"
