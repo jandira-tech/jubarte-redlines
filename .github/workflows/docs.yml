@@ -97,7 +97,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
       # Blacksmith runners cannot reach the self-hosted mbx cache server.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # scripts/library_readmes.py needs Python 3.11+ (tomllib); the
+      # self-hosted runner's system python3 is older.
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+          activate-environment: true
+          venv-path: ${{ runner.temp }}/drift-py
       # The generator runs jubarte-wasm/cli/bin/jubarte-redlines.mjs against
       # the checked-in jubarte-wasm build. That CLI is ESM and engines-declares
       # node >= 18.3 (jubarte-wasm/cli/package.json); the self-hosted runner's

@@ -40,9 +40,11 @@ out=${2:-$ROOT/.scratch/rtd/books/$project}
 
 # --- mdBook --------------------------------------------------------------------
 case "$(uname -s)-$(uname -m)" in
+  # Linux takes the static musl builds: the gnu build needs glibc 2.32 or
+  # newer, which the self-hosted runner's image does not have.
   Linux-x86_64)
-    target=x86_64-unknown-linux-gnu
-    sha256=3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7 ;;
+    target=x86_64-unknown-linux-musl
+    sha256=5222beabd3e37dc5be0d18ff99b79058469354db5c220153a1b92db5ba12be89 ;;
   Linux-aarch64 | Linux-arm64)
     target=aarch64-unknown-linux-musl
     sha256=753e5c5c363ee8a56972344dcf91466f005a51db84a7aeffe427ae3ef83d6d44 ;;
