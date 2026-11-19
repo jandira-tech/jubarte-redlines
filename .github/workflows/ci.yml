@@ -65,6 +65,18 @@ jobs:
       # The library without the `cli` feature (clap) must still build: a
       # library path once called into src/cli.rs and only --all-features ran.
       - run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+      # Each crate alone, on its own default features. `--workspace` cannot:
+      # the root enables `render` on the layers, and feature unification
+      # hides what only builds without it (#2450: the audit compiled out of
+      # jubarte-doc, so 0.19.0's slim npm build lost auditDocument). The
+      # library alone is what a registry user builds; `--all-targets` adds
+      # the dev-dependencies, which turn `render` back on below some crates
+      # (jubarte-markdown and jubarte-edit test against jubarte-doc/render).
+      - run: |
+          for p in jubarte-dom jubarte-opc jubarte-redlines jubarte-render jubarte-doc jubarte-markdown jubarte-edit jubarte-cli; do
+            cargo clippy -p "$p" -- -D warnings
+            cargo clippy -p "$p" --all-targets -- -D warnings
+          done
       # No network crate without self-update, and no network API outside
       # src/update (#2018): Word fetches remote templates on open; jubarte
       # must not. Here, not in the scripts job, because it runs cargo tree.
@@ -76,6 +88,11 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
       - run: cargo doc --workspace --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: -D warnings
+      # jubarte-doc's docs on its default features: a link to a render-only
+      # item breaks only there, and docs.rs builds all features.
+      - run: cargo doc -p jubarte-doc --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -102,13 +119,12 @@ jobs:
         run: cargo clippy --all-features --target wasm32-unknown-unknown -- -D warnings
       # The narrow npm builds (plan T5.2), with the features build-npm.sh
       # gives them: a helper only a wider layer uses is dead code there.
-      # The slim build is not linted yet: the engine crates warn without
-      # `render` (#2450).
       - name: clippy jubarte-wasm narrow builds (wasm32-unknown-unknown)
         working-directory: jubarte-wasm
         env:
           RUSTFLAGS: -D warnings
         run: |
+          cargo clippy --no-default-features --features slim,console-panic --target wasm32-unknown-unknown -- -D warnings
           cargo clippy --no-default-features --features redlines,console-panic --target wasm32-unknown-unknown -- -D warnings
           cargo clippy --no-default-features --features pdf,console-panic --target wasm32-unknown-unknown -- -D warnings
       # The desktop app is its own repository (arthrod/jubarte-app): its CI
@@ -144,6 +160,10 @@ jobs:
       - run: cargo nextest run --workspace --all-features --profile ci -E 'not test(markdown_and_docx_round_trip_exactly)'
       # nextest runs no doctests.
       - run: cargo test --workspace --all-features --doc
+      # jubarte-doc's own tests without `render`: the `--all-features` run
+      # above never takes the no-layout paths (no pass, `layout: false`).
+      # Default profile, so the JUnit report it wrote is not overwritten.
+      - run: cargo nextest run -p jubarte-doc
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3 # v1.2.1
@@ -154,7 +174,9 @@ jobs:
       # exports as Rust, natively. Left out, a stale one went unseen.
       - name: test jubarte-wasm
         working-directory: jubarte-wasm
-        run: cargo test --lib
+        run: |
+          cargo test --lib
+          cargo test --lib --no-default-features --features slim
 
   coverage:
     name: coverage

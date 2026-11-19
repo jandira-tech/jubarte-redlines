@@ -15,7 +15,7 @@
 //! resolutions, and `STALE_FIELD_CACHE` compares a cached `NUMPAGES` result
 //! with the laid-out page count. The pass runs only when one of them is
 //! selected and has something to read, and it lays out in
-//! [`RevisionStyle::Word`](jubarte_render::convert::RevisionStyle::Word) because the cached page count it is checked
+//! `jubarte_render::convert::RevisionStyle::Word` because the cached page count it is checked
 //! against is Word's. [`AuditReport::layout`](crate::audit::AuditReport::layout) says whether it ran.
 //! [`audit_report_with`](crate::audit::audit_report_with) takes the pass from the caller, or none, for builds
 //! that leave the renderer out.
@@ -168,8 +168,17 @@ pub fn is_rule(rule: &str) -> bool {
 /// A layout pass [`audit_report_with`] calls at most once.
 pub type LayoutPass<'a> = &'a mut dyn FnMut(&[u8]) -> Result<RenderReport, AuditError>;
 
-#[cfg(feature = "render")]
-/// [`audit_report`] with the layout pass supplied by the caller, so a build
+/// No value: without the `render` feature there is no layout pass, so the
+/// only [`LayoutPass`] option [`audit_report_with`] takes is `None`.
+#[cfg(not(feature = "render"))]
+#[derive(Debug)]
+pub enum NoLayout {}
+
+/// Without the `render` feature a layout pass cannot exist: pass `None`.
+#[cfg(not(feature = "render"))]
+pub type LayoutPass<'a> = &'a NoLayout;
+
+/// `audit_report` (with the `render` feature) with the layout pass supplied by the caller, so a build
 /// without the renderer (the slim WASM build) can audit without linking it.
 ///
 /// Without a pass (`None`), `FONT_SUBSTITUTED` is left out of the default
@@ -186,13 +195,14 @@ pub type LayoutPass<'a> = &'a mut dyn FnMut(&[u8]) -> Result<RenderReport, Audit
 pub fn audit_report_with(
     docx: &[u8],
     rules: &[&str],
-    mut layout: Option<LayoutPass<'_>>,
+    layout: Option<LayoutPass<'_>>,
 ) -> Result<AuditReport, AuditError> {
     let selected = select(rules, layout.is_some())?;
     let opened = Opened::open(docx)?;
     let package = Package::read(opened)?;
     let mut findings = Vec::new();
-    let mut laid_out = None;
+    #[cfg(feature = "render")]
+    let (mut layout, mut laid_out) = (layout, None);
     for &(code, _, _) in &selected {
         match code {
             "HEADING_SKIP" => package.heading_skip(&mut findings),
@@ -204,15 +214,25 @@ pub fn audit_report_with(
             "DIRECT_FORMATTING_OVERRIDES_STYLE" => package.direct_formatting(&mut findings),
             "STALE_FIELD_CACHE" => {
                 let fields = package.fields();
-                let numeric = fields
-                    .iter()
-                    .any(|field| field.keyword == "NUMPAGES" && field.number().is_some());
-                let pages = match layout.as_deref_mut() {
-                    Some(pass) if numeric => Some(lay_out(docx, pass, &mut laid_out)?.page_count),
-                    _ => None,
+                #[cfg(feature = "render")]
+                let pages = {
+                    let numeric = fields
+                        .iter()
+                        .any(|field| field.keyword == "NUMPAGES" && field.number().is_some());
+                    match layout.as_deref_mut() {
+                        Some(pass) if numeric => {
+                            Some(lay_out(docx, pass, &mut laid_out)?.page_count)
+                        }
+                        _ => None,
+                    }
                 };
+                #[cfg(not(feature = "render"))]
+                let pages = None;
                 stale_fields(&fields, pages, &mut findings);
             }
+            #[cfg(not(feature = "render"))]
+            _ => unreachable!("select keeps FONT_SUBSTITUTED only with a layout pass"),
+            #[cfg(feature = "render")]
             _ => {
                 let pass = layout
                     .as_deref_mut()
@@ -239,7 +259,10 @@ pub fn audit_report_with(
     Ok(AuditReport {
         findings,
         rules: selected.iter().map(|rule| rule.0.to_string()).collect(),
+        #[cfg(feature = "render")]
         layout: laid_out.is_some(),
+        #[cfg(not(feature = "render"))]
+        layout: false,
     })
 }
 
@@ -962,7 +985,8 @@ fn under_fallback(dom: &Dom, node: NodeId) -> bool {
     !dom.ancestors(node, Some(&MC::name("Fallback"))).is_empty()
 }
 
-#[cfg(test)]
+// Its one test reads the layout's page facts.
+#[cfg(all(test, feature = "render"))]
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod public_memory_spacer_ownership_tests {
     use super::*;

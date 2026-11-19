@@ -1891,11 +1891,12 @@ pub fn preview_plan_with(
     // and comments_added all come from the produced candidate. `fields`
     // keeps its v1 dry-run meaning: a preview never publishes the clean
     // copy the refreshes land in, so it reports none.
-    let mut report = prepared::prepare(source, plan, options)?.result.report;
+    let report = prepared::prepare(source, plan, options)?.result.report;
     #[cfg(feature = "render")]
-    {
-        report.fields = Vec::new();
-    }
+    let report = EditReport {
+        fields: Vec::new(),
+        ..report
+    };
     Ok(report)
 }
 

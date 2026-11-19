@@ -800,7 +800,11 @@ pub fn read(docx: &[u8], options: &ReadOptions) -> Result<ReadView, MarkdownErro
     // 70 MiB flood E4 of word_exp, 2026-10-31, #2013).
     let limits = MarkdownOptions::default().input_limits;
     bounded_open(docx, limits)?;
+    // Only the layout pass below warns.
+    #[cfg(feature = "render")]
     let mut warnings = Vec::new();
+    #[cfg(not(feature = "render"))]
+    let warnings = Vec::new();
     #[cfg(feature = "render")]
     let pages = if options.page_markers {
         page_texts(

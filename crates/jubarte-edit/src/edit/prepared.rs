@@ -1768,7 +1768,7 @@ fn produce(
     role: PrimaryRole,
 ) -> Result<EditResult, EditError> {
     let plan = tx.plan;
-    let (mut clean, mut marked) = tx.finish()?;
+    let (clean, marked) = tx.finish()?;
     check_serialized_stories(tx, &clean)?;
     // A reworded or deleted comment makes the comparer's base a copy; the
     // emitter writes those threads itself, as under keep.
@@ -1784,6 +1784,9 @@ fn produce(
         }
         return Ok(result);
     }
+    // Only the field refresh below rewrites the candidates.
+    #[cfg(feature = "render")]
+    let (mut clean, mut marked) = (clean, marked);
     #[cfg(feature = "render")]
     let mut fields = Vec::new();
     #[cfg(feature = "render")]
