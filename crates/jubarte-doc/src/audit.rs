@@ -15,7 +15,7 @@
 //! resolutions, and `STALE_FIELD_CACHE` compares a cached `NUMPAGES` result
 //! with the laid-out page count. The pass runs only when one of them is
 //! selected and has something to read, and it lays out in
-//! [`RevisionStyle::Word`](jubarte_render::convert::RevisionStyle::Word) because the cached page count it is checked
+//! `jubarte_render::convert::RevisionStyle::Word` because the cached page count it is checked
 //! against is Word's. [`AuditReport::layout`](crate::audit::AuditReport::layout) says whether it ran.
 //! [`audit_report_with`](crate::audit::audit_report_with) takes the pass from the caller, or none, for builds
 //! that leave the renderer out.
@@ -178,7 +178,7 @@ pub enum NoLayout {}
 #[cfg(not(feature = "render"))]
 pub type LayoutPass<'a> = &'a NoLayout;
 
-/// [`audit_report`] with the layout pass supplied by the caller, so a build
+/// `audit_report` (with the `render` feature) with the layout pass supplied by the caller, so a build
 /// without the renderer (the slim WASM build) can audit without linking it.
 ///
 /// Without a pass (`None`), `FONT_SUBSTITUTED` is left out of the default

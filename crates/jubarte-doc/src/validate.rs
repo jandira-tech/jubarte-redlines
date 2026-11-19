@@ -336,7 +336,7 @@ pub struct Repaired {
 /// `LITERAL_BULLET`, ...). `original` (the document before the edits and the
 /// author every change must carry) adds `edits`. `layout` is the pass the
 /// audit's `FONT_SUBSTITUTED` and `STALE_FIELD_CACHE` read
-/// ([`crate::audit::word_layout`] natively; `None` in a build without the
+/// (`crate::audit::word_layout` with the `render` feature; `None` in a build without the
 /// renderer). Findings come word first (by part, location, code and
 /// message), then edits, then the audit's in its rule order.
 ///

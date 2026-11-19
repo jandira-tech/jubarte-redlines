@@ -1925,7 +1925,6 @@ pub fn markdown_to_docx(
     markdown_docx(text, options_json, reference).map_err(js_err)
 }
 
-#[cfg(feature = "doc")]
 /// Audit findings as JSON `{findings, rules, layout}` (see `jubarte validate --rules`).
 /// `rules` is a comma-separated list of rule sets (`a11y`, `style`,
 /// `structure`) or codes; omitted or empty runs every rule. The slim build
