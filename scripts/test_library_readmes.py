@@ -101,9 +101,7 @@ class Links(unittest.TestCase):
 
     def test_a_badge_link_target_is_rewritten(self) -> None:
         out = self.rewrite("[![license](https://img/l.svg)](./LICENSE)")
-        self.assertEqual(
-            out, f"[![license](https://img/l.svg)]({lr.REPO}/blob/v1.2.3/LICENSE)"
-        )
+        self.assertEqual(out, f"[![license](https://img/l.svg)]({lr.REPO}/blob/v1.2.3/LICENSE)")
 
     def test_code_text_link_is_rewritten_but_code_spans_are_not(self) -> None:
         out = self.rewrite("[`docs/M.md`](docs/M.md) and `[not](a/link.md)`")
@@ -123,6 +121,10 @@ class Links(unittest.TestCase):
         out = self.rewrite("[a](#kept) [b](#cut)", kept={"kept"})
         self.assertIn("[a](#kept)", out)
         self.assertIn(f"[b]({lr.REPO}/blob/v1.2.3/README.md#cut)", out)
+
+    def test_a_rewritten_link_must_name_a_file_in_the_checkout(self) -> None:
+        out = self.rewrite("[l](LICENSE) [c](assets/fonts/LICENSE-Carlit) ![i](assets/gone.png)")
+        self.assertEqual(lr.dead_links(out), ["assets/fonts/LICENSE-Carlit", "assets/gone.png"])
 
     def test_absolute_and_mail_links_are_kept(self) -> None:
         text = "[a](https://x.y/z) [m](mailto:a@b.c)"
@@ -232,12 +234,21 @@ class InstallNames(unittest.TestCase):
 
     def test_no_install_line_names_the_compare_only_crate(self) -> None:
         import re
+
         repo = HERE.parent
-        pages = [repo / "README.md", repo / "README.crates.md", repo / "docs/rust.md",
-                 *sorted((repo / "docs/adoption").glob("*.md"))]
+        pages = [
+            repo / "README.md",
+            repo / "README.crates.md",
+            repo / "docs/rust.md",
+            *sorted((repo / "docs/adoption").glob("*.md")),
+        ]
         bad = re.compile(r"cargo (?:install|add) jubarte-redlines\b")
-        found = [f"{p.relative_to(repo)}:{n}" for p in pages
-                 for n, line in enumerate(p.read_text().splitlines(), 1) if bad.search(line)]
+        found = [
+            f"{p.relative_to(repo)}:{n}"
+            for p in pages
+            for n, line in enumerate(p.read_text().splitlines(), 1)
+            if bad.search(line)
+        ]
         self.assertEqual(found, [])
 
 
@@ -285,7 +296,7 @@ class Crates(unittest.TestCase):
         )
         self.frag = self.tmp / "crates/demo/README.fragment.md"
         self.frag.write_text(
-            "Install `demo = \"{{version}}\"` from [repo]({{repository}}).\n\n"
+            'Install `demo = "{{version}}"` from [repo]({{repository}}).\n\n'
             "```rust\nlet x = 1;\n```\n\n[license](LICENSE) and [cli](../../README.md#cli)\n",
             encoding="utf-8",
         )
@@ -295,8 +306,14 @@ class Crates(unittest.TestCase):
 
     def lib(self) -> lr.Library:
         return lr.Library(
-            name="t", out="crates/demo/README.md", title="demo", badges=(), keep=(),
-            fragment="crates/demo/README.fragment.md", surface="crate", crate="demo",
+            name="t",
+            out="crates/demo/README.md",
+            title="demo",
+            badges=(),
+            keep=(),
+            fragment="crates/demo/README.fragment.md",
+            surface="crate",
+            crate="demo",
         )
 
     def test_use_trees_bind_their_last_names(self) -> None:

@@ -290,6 +290,16 @@ def absolute(target: str, base_dir: str, image: bool, ref: str, kept: set[str]) 
     return f"{url}#{frag}" if frag else url
 
 
+def dead_links(markdown: str) -> list[str]:
+    """Paths the repository links in ``markdown`` name that this checkout lacks.
+
+    A relative link becomes ``{REPO}/blob/<ref>/<path>`` or
+    ``{RAW}/<ref>/<path>``; a typo there is a 404 on the registry page.
+    """
+    pattern = rf"(?:{re.escape(REPO)}/blob|{re.escape(RAW)})/[^/\s)]+/([^)#\s]+)"
+    return [path for path in re.findall(pattern, markdown) if not (ROOT / path).exists()]
+
+
 def rewrite_links(markdown: str, base_dir: str, ref: str, kept: set[str]) -> str:
     lines = markdown.split("\n")
     mask = fenced_mask(lines)
@@ -640,6 +650,9 @@ def main(argv: list[str] | None = None) -> int:
             failed = True
             src = lib.fragment or SOURCE
             print(f"error: {lib.out}: public API missing from {src}: {', '.join(gaps)}")
+        for dead in dead_links(text):
+            failed = True
+            print(f"error: {lib.out}: a link names {dead}, which is not in this checkout")
         for first_line in doctest_gaps(lib):
             failed = True
             print(

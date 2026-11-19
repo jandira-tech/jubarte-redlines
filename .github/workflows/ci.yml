@@ -401,6 +401,10 @@ jobs:
           uv run --with coverage coverage report --fail-under=90
       - run: python3 scripts/test_check_release_info.py
       - run: python3 scripts/test_library_readmes.py
+      # The README gate itself, on every PR: docs.yml runs it only when its
+      # paths change, and a new `pub mod` in crates/*/src/lib.rs or an
+      # edited //! example is not among them.
+      - run: python3 scripts/library_readmes.py --check
       - run: python3 scripts/test_cli_locations.py
       - run: python3 scripts/test_stack1m.py
       - run: python3 scripts/test_check_release_artifacts.py
