@@ -9,7 +9,7 @@ tracked-changes document that opens cleanly in Microsoft Word; list, accept,
 or reject revisions; render DOCX to PDF.
 
 Python bindings (PyO3 + maturin) for the Rust
-[`jubarte-redlines`](https://github.com/jandira-tech/jubarte-redlines) engine.
+[`jubarte-redlines`](https://github.com/jandira-tech/jubarte) engine.
 Pure compute, no Word/LibreOffice dependency, no network, no temp files —
 documents go in and come out as `bytes` (whole DOCX/PDF packages), revision
 metadata comes back as parsed records (`get_revisions` → `list[dict]`,
@@ -223,7 +223,7 @@ unchanged (`inspect()` decodes it). `scrub` takes `author_alias`, `rsids`,
 
 - **Rust crate**: [`jubarte`](https://crates.io/crates/jubarte) (this engine, plus a CLI)
 - **npm / WebAssembly**: [`jubarte-wasm`](https://www.npmjs.com/package/jubarte-wasm) (Node and browser builds)
-- **MCP server**: `pip install 'jubarte-docx[mcp]'` then `jubarte-mcp --root .` ([setup for Claude Code, Codex and Gemini CLI](https://github.com/jandira-tech/jubarte-redlines/blob/main/docs/adoption/mcp.md))
+- **MCP server**: `pip install 'jubarte-docx[mcp]'` then `jubarte-mcp --root .` ([setup for Claude Code, Codex and Gemini CLI](https://github.com/jandira-tech/jubarte/blob/main/docs/adoption/mcp.md))
 
 ## Text comparisons
 

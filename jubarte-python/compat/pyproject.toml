@@ -30,8 +30,8 @@ mcp = ["jubarte-docx[mcp]==0.18.0"]
 jubarte-redlines = "jubarte.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/jandira-tech/jubarte-redlines"
-Repository = "https://github.com/jandira-tech/jubarte-redlines"
+Homepage = "https://github.com/jandira-tech/jubarte"
+Repository = "https://github.com/jandira-tech/jubarte"
 
 [tool.uv.build-backend]
 module-name = "jubarte_redlines"

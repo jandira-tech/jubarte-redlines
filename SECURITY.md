@@ -12,7 +12,7 @@ CLI and the Python/WASM bindings in this repository.
 
 ## Report a vulnerability privately
 
-Use GitHub's [private vulnerability reporting form](https://github.com/jandira-tech/jubarte-redlines/security/advisories/new).
+Use GitHub's [private vulnerability reporting form](https://github.com/jandira-tech/jubarte/security/advisories/new).
 This repository has private vulnerability reporting enabled. Reports and
 attachments sent through that form are private to the reporting participants
 and maintainers until coordinated publication. Do not open a public issue for

@@ -29,7 +29,7 @@ mod zipsign;
 pub use zipsign::{ReleaseKey, verify_signature};
 
 const REPO_OWNER: &str = "jandira-tech";
-const REPO_NAME: &str = "jubarte-redlines";
+const REPO_NAME: &str = "jubarte";
 const SUMS_ASSET: &str = "SHA256SUMS.txt";
 
 /// The ed25519 public keys trusted to sign release archives (zipsign), any

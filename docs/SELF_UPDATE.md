@@ -19,7 +19,7 @@ jubarte self-update --version 0.10.0 # install that release (also a downgrade)
 
 ## What it does
 
-1. Reads the release list of `jandira-tech/jubarte-redlines` from the
+1. Reads the release list of `jandira-tech/jubarte` from the
    GitHub API. `GH_TOKEN` or `GITHUB_TOKEN`, when set, lifts GitHub's
    unauthenticated budget of 60 requests an hour.
 2. Picks the archive for this machine:
@@ -113,7 +113,7 @@ first signed one. `X.Y.Z` below is that release.
 
    ```bash
    base64 < ~/secure/jubarte-release-signing.key | tr -d '\n' \
-     | gh secret set ZIPSIGN_PRIVATE_KEY --repo jandira-tech/jubarte-redlines
+     | gh secret set ZIPSIGN_PRIVATE_KEY --repo jandira-tech/jubarte
    ```
 
    From now on `release.yml` signs every archive. A release with the

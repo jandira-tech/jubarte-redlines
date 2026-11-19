@@ -5,12 +5,12 @@
   "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jandira-tech/jubarte-redlines.git",
+    "url": "git+https://github.com/jandira-tech/jubarte.git",
     "directory": "jubarte-wasm/cli"
   },
-  "homepage": "https://github.com/jandira-tech/jubarte-redlines#readme",
+  "homepage": "https://github.com/jandira-tech/jubarte#readme",
   "bugs": {
-    "url": "https://github.com/jandira-tech/jubarte-redlines/issues"
+    "url": "https://github.com/jandira-tech/jubarte/issues"
   },
   "keywords": [
     "docx",

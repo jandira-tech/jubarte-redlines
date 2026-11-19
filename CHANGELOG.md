@@ -535,9 +535,9 @@ The bomb-hardening pass (#2019, #2025): every crafted-input finding below was re
 
 - **The 0.13.0 release audit, closed in the script** (#1742, #1744-#1790, #1792, #1793). Step 0 reads GitHub's security findings with an admin's token and stops on a report in triage or an unpatched draft above low, and the patch gate denies every cargo-semver-checks lint, including one the manifest would lower. Step 3 refuses evidence scored on another engine and a measured sentence its results do not hold. Step 6 builds its API snapshot under the mbx build cache again, and names a previous release that left no snapshot. Step 8 checks the tag's shape. Step 12 installs each channel the way a user does: this machine's archive against `SHA256SUMS.txt`, a PyPI wheel, `npx` and `npm i` with `require()`. 0.13.0 never reached npm, and no step said so; 0.14.0 is the first npm release since 0.12.0. Every checklist proof names a tool a repository holds: the parity check (`tools/parity`), the lane-validity check and the two-binary identity run are now committed.
 
-- **Build provenance for every release asset** (#1742). When release.yml's release job publishes the GitHub release, its archives, wheels and sdist carry a SLSA build-provenance attestation, Sigstore-signed by the release workflow: `gh attestation verify jubarte-X.Y.Z-linux-x86_64.tar.gz -R jandira-tech/jubarte-redlines` ties a download to the run that built it. A release made from a run's artifacts instead says in its notes that the release job did not publish it, and how to check whether an attestation covers it (#1749, #1768).
+- **Build provenance for every release asset** (#1742). When release.yml's release job publishes the GitHub release, its archives, wheels and sdist carry a SLSA build-provenance attestation, Sigstore-signed by the release workflow: `gh attestation verify jubarte-X.Y.Z-linux-x86_64.tar.gz -R jandira-tech/jubarte` ties a download to the run that built it. A release made from a run's artifacts instead says in its notes that the release job did not publish it, and how to check whether an attestation covers it (#1749, #1768).
 
-- **The audit's fixes, one by one.** The patch gate denies every lint cargo-semver-checks skips (#1744), and `scripts/semver_lints.py` refuses a missing cargo-semver-checks (#1771). Step 2 reads changelog completeness from PR titles and refuses a failed discovery (#1745). A prerelease tag is no previous release (#1746). Every engine `gh` call names `jandira-tech/jubarte-redlines` (#1747). Each matrix row builds what its label names (#1748), and provenance is bound to the tag and its commit (#1749). Step 0 stops on open security findings (#1750), refuses the canonical checkout and shows HEAD's red CI (#1751). Step 3 proves the evidence's engine (#1752) and holds the measured sentence to the evidence (#1753). Adoption rows and headerless files stop the release (#1754). Every tag step 8 keeps or writes has release.yml's shape (#1755). Step 12 installs each channel the way a user does (#1756). Step 6's API snapshot builds under the mbx build cache (#1769). The Ring-3 Word probe opens Word through the bench's `word_pdf.py` under its watchdog, opens each failure again alone, then opens Word's own redline of that pair (#1794). The WASM parity driver resolves `--module` to an absolute path (#1799).
+- **The audit's fixes, one by one.** The patch gate denies every lint cargo-semver-checks skips (#1744), and `scripts/semver_lints.py` refuses a missing cargo-semver-checks (#1771). Step 2 reads changelog completeness from PR titles and refuses a failed discovery (#1745). A prerelease tag is no previous release (#1746). Every engine `gh` call names `jandira-tech/jubarte` (#1747). Each matrix row builds what its label names (#1748), and provenance is bound to the tag and its commit (#1749). Step 0 stops on open security findings (#1750), refuses the canonical checkout and shows HEAD's red CI (#1751). Step 3 proves the evidence's engine (#1752) and holds the measured sentence to the evidence (#1753). Adoption rows and headerless files stop the release (#1754). Every tag step 8 keeps or writes has release.yml's shape (#1755). Step 12 installs each channel the way a user does (#1756). Step 6's API snapshot builds under the mbx build cache (#1769). The Ring-3 Word probe opens Word through the bench's `word_pdf.py` under its watchdog, opens each failure again alone, then opens Word's own redline of that pair (#1794). The WASM parity driver resolves `--module` to an absolute path (#1799).
 
 <!-- changelog-skip: #1804 test-only: CodeQL #54 in jubarte-wasm/cli/test/cli.test.mjs -->
 <!-- changelog-skip: #1812 #1811 test-only: npm-smoke.mjs takes the pair ref r1+2 -->
@@ -5238,27 +5238,27 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
-[0.18.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.18.0
-[0.17.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.17.0
-[0.16.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.16.0
-[0.15.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.15.0
-[0.14.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.14.0
-[0.13.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.13.0
-[0.12.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.12.0
-[0.11.3]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.3
-[0.11.2]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.2
-[0.11.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.0
-[0.10.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.10.1
-[0.10.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.10.0
-[0.9.3]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.3
-[0.9.2]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.2
-[0.9.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.1
-[0.9.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.0
-[0.8.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.8.0
-[0.7.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.7.1
-[0.7.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.7.0
-[0.6.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.6.0
-[0.5.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.5.1
-[0.5.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.5.0
-[0.2.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.2.0
-[0.1.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.1.0
+[0.18.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.18.0
+[0.17.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.17.0
+[0.16.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.16.0
+[0.15.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.15.0
+[0.14.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.14.0
+[0.13.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.13.0
+[0.12.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.12.0
+[0.11.3]: https://github.com/jandira-tech/jubarte/releases/tag/v0.11.3
+[0.11.2]: https://github.com/jandira-tech/jubarte/releases/tag/v0.11.2
+[0.11.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.11.0
+[0.10.1]: https://github.com/jandira-tech/jubarte/releases/tag/v0.10.1
+[0.10.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.10.0
+[0.9.3]: https://github.com/jandira-tech/jubarte/releases/tag/v0.9.3
+[0.9.2]: https://github.com/jandira-tech/jubarte/releases/tag/v0.9.2
+[0.9.1]: https://github.com/jandira-tech/jubarte/releases/tag/v0.9.1
+[0.9.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.9.0
+[0.8.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.8.0
+[0.7.1]: https://github.com/jandira-tech/jubarte/releases/tag/v0.7.1
+[0.7.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.7.0
+[0.6.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.6.0
+[0.5.1]: https://github.com/jandira-tech/jubarte/releases/tag/v0.5.1
+[0.5.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.5.0
+[0.2.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.2.0
+[0.1.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.1.0

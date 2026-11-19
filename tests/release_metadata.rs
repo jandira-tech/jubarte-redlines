@@ -392,7 +392,7 @@ fn root_changelog_has_a_dated_entry_and_release_link_for_the_version() {
         "CHANGELOG.md `{heading}` heading must carry a `- YYYY-MM-DD` release date"
     );
     let link = format!(
-        "[{EXPECTED_VERSION}]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v{EXPECTED_VERSION}"
+        "[{EXPECTED_VERSION}]: https://github.com/jandira-tech/jubarte/releases/tag/v{EXPECTED_VERSION}"
     );
     assert!(
         changelog.contains(&link),

@@ -10,11 +10,11 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 [![crates.io](https://img.shields.io/crates/v/jubarte-markdown.svg)](https://crates.io/crates/jubarte-markdown)
 [![docs.rs](https://docs.rs/jubarte-markdown/badge.svg)](https://docs.rs/jubarte-markdown)
-[![CI](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml)
-[![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](https://github.com/jandira-tech/jubarte-redlines/blob/v0.18.0/crates/jubarte-markdown/LICENSE)
+[![CI](https://github.com/jandira-tech/jubarte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jandira-tech/jubarte/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](https://github.com/jandira-tech/jubarte/blob/v0.18.0/crates/jubarte-markdown/LICENSE)
 [![docs](https://readthedocs.org/projects/jubarte-markdown/badge/?version=latest)](https://jubarte.readthedocs.io/projects/jubarte-markdown/en/latest/)
 
-Markdown in and out of Word documents for the [jubarte](https://github.com/jandira-tech/jubarte-redlines)
+Markdown in and out of Word documents for the [jubarte](https://github.com/jandira-tech/jubarte)
 DOCX engine. It writes CommonMark (with GitHub's tables, strikethrough, task
 lists and footnotes) as a `.docx`, turning CriticMarkup into Word tracked
 changes and comments; it reads a `.docx` back as the agent view's Markdown;
@@ -96,13 +96,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## License
 
-[AGPL-3.0-only](https://github.com/jandira-tech/jubarte-redlines/blob/v0.18.0/crates/jubarte-markdown/LICENSE). Review the license's requirements before you embed
+[AGPL-3.0-only](https://github.com/jandira-tech/jubarte/blob/v0.18.0/crates/jubarte-markdown/LICENSE). Review the license's requirements before you embed
 the crate in a product or a network service.
 
 ## Links
 
 - API reference: [docs.rs/jubarte-markdown](https://docs.rs/jubarte-markdown)
 - Guide: [jubarte-markdown on ReadTheDocs](https://jubarte.readthedocs.io/projects/jubarte-markdown/en/latest/), part of the [jubarte documentation](https://jubarte.readthedocs.io/en/latest/)
-- Repository: [github.com/jandira-tech/jubarte-redlines](https://github.com/jandira-tech/jubarte-redlines) ([this crate](https://github.com/jandira-tech/jubarte-redlines/tree/v0.18.0/crates/jubarte-markdown))
-- Command line: the [CLI reference](https://github.com/jandira-tech/jubarte-redlines/blob/v0.18.0/README.md#cli-reference) of the root README
-- Changes: [CHANGELOG.md](https://github.com/jandira-tech/jubarte-redlines/blob/v0.18.0/CHANGELOG.md)
+- Repository: [github.com/jandira-tech/jubarte](https://github.com/jandira-tech/jubarte) ([this crate](https://github.com/jandira-tech/jubarte/tree/v0.18.0/crates/jubarte-markdown))
+- Command line: the [CLI reference](https://github.com/jandira-tech/jubarte/blob/v0.18.0/README.md#cli-reference) of the root README
+- Changes: [CHANGELOG.md](https://github.com/jandira-tech/jubarte/blob/v0.18.0/CHANGELOG.md)

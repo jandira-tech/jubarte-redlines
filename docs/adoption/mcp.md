@@ -130,7 +130,7 @@ context file, and `skills/jubarte-documents/SKILL.md` is loaded as the
 `jubarte-documents` skill.
 
 ```sh
-gemini extensions install https://github.com/jandira-tech/jubarte-redlines
+gemini extensions install https://github.com/jandira-tech/jubarte
 # for a local checkout
 gemini extensions link .
 ```

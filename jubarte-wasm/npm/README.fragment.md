@@ -7,7 +7,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 Word-mode **DOCX redline** engine, compiled to WebAssembly.
 
 This package is the WASM binding of
-[**jubarte-redlines**](https://github.com/jandira-tech/jubarte-redlines) — a
+[**jubarte-redlines**](https://github.com/jandira-tech/jubarte) — a
 Word-faithful, Word-compatible tracked-changes engine written in Rust. It compares
 two `.docx` files and produces a redline `.docx` with native Word revisions
 (`w:ins` / `w:del`), the same output model Microsoft Word itself uses. It can
@@ -237,4 +237,4 @@ The exact engine commit each build was produced from is recorded in
 [AGPL-3.0-only](https://www.gnu.org/licenses/agpl-3.0.html) ©
 Jandira Technologies, LLC. If AGPL does not fit your use case, contact the
 authors about commercial licensing via the
-[GitHub repository](https://github.com/jandira-tech/jubarte-redlines).
+[GitHub repository](https://github.com/jandira-tech/jubarte).

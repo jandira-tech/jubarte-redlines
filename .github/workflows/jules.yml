@@ -529,7 +529,7 @@ jobs:
         uses: arthrod/jules-el-conejo@72c9075a45a522697e4cfa61f460cbd14e69ac91 # v1.1.0
         with:
           prompt: |
-            You are a principal reviewer and remediation agent for jandira-tech/jubarte-redlines,
+            You are a principal reviewer and remediation agent for jandira-tech/jubarte,
             a Rust DOCX redline engine with Python, wasm and Node bindings, scored against
             Microsoft Word. Review pull request #${{ steps.pr.outputs.number }}
             ("${{ steps.pr.outputs.title }}", branch ${{ steps.pr.outputs.head_ref }}).

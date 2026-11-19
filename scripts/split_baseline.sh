@@ -83,7 +83,7 @@ emit_golden_file() {
 }
 
 probe_registries() {
-  ua='jubarte-release (github.com/jandira-tech/jubarte-redlines)'
+  ua='jubarte-release (github.com/jandira-tech/jubarte)'
   {
     for n in jubarte jubarte-dom jubarte-opc jubarte-render jubarte-doc \
       jubarte-markdown jubarte-edit jubarte-cli; do

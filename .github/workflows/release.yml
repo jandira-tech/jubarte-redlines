@@ -409,7 +409,7 @@ jobs:
 
       # SLSA build provenance for every asset SHA256SUMS.txt names (the signed
       # archives, the wheels, the sdist), Sigstore-signed and stored with the
-      # repository: `gh attestation verify FILE -R jandira-tech/jubarte-redlines`
+      # repository: `gh attestation verify FILE -R jandira-tech/jubarte`
       # ties a download to this run. scripts/release.sh step 12 checks one.
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
@@ -467,7 +467,7 @@ jobs:
   # (`id-token: write`, granted to these three jobs only) and the registry
   # trades it for a short-lived upload token. crates.io, PyPI and npm each
   # trust exactly this pair: workflow `release.yml` in environment `release`
-  # of jandira-tech/jubarte-redlines. Renaming either breaks the trust;
+  # of jandira-tech/jubarte. Renaming either breaks the trust;
   # change the registry settings with it. Each job first asks its registry
   # for the version and skips one it already holds, so a rerun, or a
   # `scripts/release.sh --local-publish` that got there first, is not a
@@ -636,7 +636,7 @@ jobs:
           set -euo pipefail
           tag=(); case "$VER" in *-*) tag=(--tag next) ;; esac
           npm publish "${tag[@]}" || {
-            echo "::error::npm refused jubarte-wasm $VER. Under trusted publishing an E404 on PUT means npm's trusted publisher for jubarte-wasm does not allow npm publish (one made after 2026-09-03 allows only npm stage publish unless allow-publish is set), or it expired (a new one lapses unless its first publish lands within two days). The owner runs: npm trust github jubarte-wasm --file release.yml --repo jandira-tech/jubarte-redlines --env release --allow-publish -y; then rerun this job."
+            echo "::error::npm refused jubarte-wasm $VER. Under trusted publishing an E404 on PUT means npm's trusted publisher for jubarte-wasm does not allow npm publish (one made after 2026-09-03 allows only npm stage publish unless allow-publish is set), or it expired (a new one lapses unless its first publish lands within two days). The owner runs: npm trust github jubarte-wasm --file release.yml --repo jandira-tech/jubarte --env release --allow-publish -y; then rerun this job."
             exit 1
           }
       - if: steps.live.outputs.cli != 'true'
@@ -650,6 +650,6 @@ jobs:
           done
           tag=(); case "$VER" in *-*) tag=(--tag next) ;; esac
           npm publish "${tag[@]}" || {
-            echo "::error::npm refused jubarte-redlines $VER. Under trusted publishing an E404 on PUT means npm's trusted publisher for jubarte-redlines does not allow npm publish (one made after 2026-09-03 allows only npm stage publish unless allow-publish is set), or it expired (a new one lapses unless its first publish lands within two days). The owner runs: npm trust github jubarte-redlines --file release.yml --repo jandira-tech/jubarte-redlines --env release --allow-publish -y; then rerun this job."
+            echo "::error::npm refused jubarte-redlines $VER. Under trusted publishing an E404 on PUT means npm's trusted publisher for jubarte-redlines does not allow npm publish (one made after 2026-09-03 allows only npm stage publish unless allow-publish is set), or it expired (a new one lapses unless its first publish lands within two days). The owner runs: npm trust github jubarte-redlines --file release.yml --repo jandira-tech/jubarte --env release --allow-publish -y; then rerun this job."
             exit 1
           }

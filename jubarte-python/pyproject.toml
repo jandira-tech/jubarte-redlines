@@ -60,10 +60,10 @@ jubarte-mcp = "jubarte.mcp_server:main"
 mcp = ["mcp>=2.2,<3"]
 
 [project.urls]
-Homepage = "https://github.com/jandira-tech/jubarte-redlines"
-Repository = "https://github.com/jandira-tech/jubarte-redlines"
-Changelog = "https://github.com/jandira-tech/jubarte-redlines/blob/main/CHANGELOG.md"
-Issues = "https://github.com/jandira-tech/jubarte-redlines/issues"
+Homepage = "https://github.com/jandira-tech/jubarte"
+Repository = "https://github.com/jandira-tech/jubarte"
+Changelog = "https://github.com/jandira-tech/jubarte/blob/main/CHANGELOG.md"
+Issues = "https://github.com/jandira-tech/jubarte/issues"
 
 [tool.maturin]
 module-name = "jubarte._native"
