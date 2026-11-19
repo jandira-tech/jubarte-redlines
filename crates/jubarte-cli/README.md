@@ -71,12 +71,23 @@ None is on by default (the facade's binary turns on both).
 ```rust
 use jubarte_cli::cli::top_level_command;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let matches = top_level_command().try_get_matches_from([
-        "jubarte", "compare", "old.docx", "new.docx", "-o", "redline.docx",
-    ])?;
-    assert_eq!(matches.subcommand_name(), Some("compare"));
-    Ok(())
+fn main() {
+    // The full command tree needs more stack than the 1 MiB Windows gives
+    // a main thread in a debug build; the `jubarte` binary also parses on
+    // an 8 MiB thread.
+    let parsed = std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            top_level_command()
+                .try_get_matches_from([
+                    "jubarte", "compare", "old.docx", "new.docx", "-o", "redline.docx",
+                ])
+                .map(|m| m.subcommand_name().map(str::to_owned))
+        })
+        .expect("spawn the parsing thread")
+        .join()
+        .expect("the parsing thread does not panic");
+    assert_eq!(parsed.expect("the arguments parse").as_deref(), Some("compare"));
 }
 ```
 
