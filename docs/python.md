@@ -52,6 +52,7 @@ The native `jubarte` binary offers `--keep-nested-comment` on `accept`,
 yet dispatch that option or return its kept-thread receipts; use the native
 binary when retention is needed.
 
+<!-- ANCHOR: cli-python (docs/rtd books include this block) -->
 <!-- gen:cli-python:start -->
 #### `jubarte`
 
@@ -1639,6 +1640,7 @@ Audit codes (code, set, severity):
   STALE_FIELD_CACHE structure warning, FONT_SUBSTITUTED structure info
 ```
 <!-- gen:cli-python:end -->
+<!-- ANCHOR_END: cli-python -->
 
 ## Library — three tiers
 
@@ -1763,6 +1765,7 @@ that exceeds a budget or cannot read a part reports a finding; editing a
 redaction therefore refuses with `REDACTION_LEAK` instead of accepting an
 incomplete scan. Comparer settings continue to supply their own limits.
 
+<!-- ANCHOR: python-api (docs/rtd books include this block) -->
 <!-- gen:python-api:start -->
 Reflects the `jubarte` package built from this source tree (`__version__` reports `0.18.0`).
 
@@ -3236,6 +3239,7 @@ One ``Document.audit`` finding.
 (``p12``, ``footer1``, ``footer1.p2``...) an edit plan targets, or a part name
 for a document-wide finding.
 <!-- gen:python-api:end -->
+<!-- ANCHOR_END: python-api -->
 
 ## Development
 

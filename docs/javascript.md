@@ -104,6 +104,7 @@ cutover and retires the transitional spellings — `noid`, colon ids
 (`t0.row1.cell2.p1`), open ranges (`p17-`, `-p3`). It is not implemented:
 the fields the wire carries today are the ones named above.
 
+<!-- ANCHOR: wasm-api (docs/rtd books include this block) -->
 <!-- gen:wasm-api:start -->
 Reflects `jubarte-wasm/npm/node/jubarte_wasm.d.ts` (the full Node build; the slim entry points drop `docxToPdf` and `pdfPageCount`).
 
@@ -1048,6 +1049,7 @@ The line a writing task prints on stderr for the file it wrote:
 
 Mirrors `jubarte::cli::wrote_line`.
 <!-- gen:wasm-api:end -->
+<!-- ANCHOR_END: wasm-api -->
 
 ### Auditing existing revision history
 
@@ -1102,6 +1104,7 @@ The native `jubarte` binary offers `--keep-nested-comment` on `accept`,
 yet dispatch that option or return its kept-thread receipts; use the native
 binary when retention is needed.
 
+<!-- ANCHOR: cli-npm (docs/rtd books include this block) -->
 <!-- gen:cli-npm:start -->
 #### `jubarte-redlines`
 
@@ -2542,6 +2545,7 @@ Options:
   -h, --help                   Print help
 ```
 <!-- gen:cli-npm:end -->
+<!-- ANCHOR_END: cli-npm -->
 
 ## TypeScript
 

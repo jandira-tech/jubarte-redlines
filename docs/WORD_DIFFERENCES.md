@@ -17,6 +17,7 @@ neurotic_docx_bench `word_based` corpus, plus the 40-pair Word-redline guard
 
 ## Modes
 
+<!-- ANCHOR: modes (docs/rtd/jubarte-render includes this table) -->
 | Command | Mode | What it reproduces |
 |---|---|---|
 | `jubarte A B` | `--mode word` (default) | Word Compare's layout: word-level detail inside paragraphs, replaced paragraphs merged the way Word merges them, Word's alignment passes. |
@@ -28,6 +29,7 @@ neurotic_docx_bench `word_based` corpus, plus the 40-pair Word-redline guard
 The rule for the two Word modes is that they copy Word even where Word is
 wrong. Our improvements live only in the defaults (`conventional`), never in
 `word`.
+<!-- ANCHOR_END: modes -->
 
 ## Differences
 

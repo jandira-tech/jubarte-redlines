@@ -12,6 +12,10 @@ name: Docs and adoption
 # from the code. This job
 # regenerates them and fails when the committed pages differ.
 #
+# The ReadTheDocs books (docs/rtd/, one per workspace crate) must match the
+# workspace: `rtd` runs scripts/check_rtd.py and builds every book with the
+# mdBook docs/rtd/build.sh pins, failing on any mdBook warning.
+#
 # The adoption pages (docs/adoption/) make claims about jubarte beside the
 # tools it replaces: `claims` runs one test per row (tests/adoption.rs) and
 # the .doc reader, and `examples` reruns every examples/adoption/*/run.sh and
@@ -52,6 +56,17 @@ on:
       - tests/legacy_doc.rs
       - examples/adoption/**
       - docs/adoption/**
+      - docs/rtd/**
+      - docs/WORD_DIFFERENCES.md
+      - docs/SELF_UPDATE.md
+      - crates/*/examples/**
+      - crates/*/Cargo.toml
+      - crates/*/README.md
+      - crates/*/README.fragment.md
+      - examples/quickstart.rs
+      - scripts/check_rtd.py
+      - scripts/test_check_rtd.py
+      - scripts/ci-requirements.txt
   workflow_dispatch:
 
 # One run per PR (or branch): a new push cancels the PR's older run, and
@@ -93,6 +108,32 @@ jobs:
           node-version: "24"
       - name: Regenerate and compare
         run: scripts/gen_docs.sh --check
+
+  rtd:
+    name: ReadTheDocs books (check_rtd.py, pinned mdBook)
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+          activate-environment: true
+          venv-path: ${{ runner.temp }}/rtd-py
+      # pyyaml for the .readthedocs.yaml checks: hash-verified wheels only.
+      - run: uv pip install --no-build --require-hashes -r scripts/ci-requirements.txt
+      - name: every workspace member has a valid book
+        run: python3 scripts/check_rtd.py
+      - run: python3 scripts/test_check_rtd.py
+      # build.sh downloads the pinned mdBook release, checks its sha256 and
+      # fails on any mdBook warning (a missing include is only a warning).
+      - name: build every book with the pinned mdBook
+        run: |
+          for book in docs/rtd/*/book.toml; do
+            project=$(basename "$(dirname "$book")")
+            bash docs/rtd/build.sh "$project" "$RUNNER_TEMP/rtd/$project"
+          done
 
   claims:
     name: adoption claims (tests/adoption.rs)
