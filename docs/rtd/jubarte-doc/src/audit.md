@@ -6,7 +6,9 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Audit and fields
 
-Both need the layout pass: turn on the `render` feature.
+`fields` needs the `render` feature. The audit builds without it; only
+its layout rules (`FONT_SUBSTITUTED`, and the page-count check of
+`STALE_FIELD_CACHE`) need the layout pass that `render` provides.
 
 ## Audit
 

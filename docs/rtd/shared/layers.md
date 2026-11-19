@@ -13,7 +13,7 @@ downward:
 | 1 | [`jubarte-dom`](https://jubarte.readthedocs.io/projects/jubarte-dom/en/latest/) | the arena XML DOM (`xmllinq`), WordprocessingML names, ids, input limits | nothing in the workspace |
 | 2 | [`jubarte-opc`](https://jubarte.readthedocs.io/projects/jubarte-opc/en/latest/) | the OPC package (`PartFs`), input admission, settings, styles, numbering, the shared Word tables, the render option types | dom |
 | 3 | [`jubarte-redlines`](https://jubarte.readthedocs.io/projects/jubarte-redlines/en/latest/) | compare two documents; accept and reject revisions | dom, opc |
-| 3 | [`jubarte-render`](https://jubarte.readthedocs.io/projects/jubarte-render/en/latest/) | DOCX and Markdown to PDF and PNG | dom, opc |
+| 3 | [`jubarte-render`](https://jubarte.readthedocs.io/projects/jubarte-render/en/latest/) | DOCX to PDF and PNG | dom, opc |
 | 4 | [`jubarte-doc`](https://jubarte.readthedocs.io/projects/jubarte-doc/en/latest/) | changes, comments, validate, audit, scrub, append, fields, inspect, debug | dom, opc, redlines; render (feature `render`) |
 | 4 | [`jubarte-markdown`](https://jubarte.readthedocs.io/projects/jubarte-markdown/en/latest/) | Markdown in and out, CriticMarkup, Word 97-2003 `.doc` reading | dom, opc, redlines, doc; render (feature `render`) |
 | 4 | [`jubarte-edit`](https://jubarte.readthedocs.io/projects/jubarte-edit/en/latest/) | edit plans written as tracked changes, text diffs, capabilities, publication | dom, opc, redlines, doc, markdown; render (feature `render`) |

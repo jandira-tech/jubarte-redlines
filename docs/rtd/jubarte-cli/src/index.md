@@ -8,7 +8,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 The jubarte engine's command line as a library: every operation of the
 engine behind one clap surface (compare, convert, changes, accept, reject,
-edit, add, read, diff, validate, check, scrub, append, comments, fields,
+edit, add, read, diff, validate, check, scrub, append, comments,
 capabilities, visual-diff, debug) plus `self-update` behind its feature.
 
 - `cli` holds the parser (`cli::top_level_command`) and the shared pieces

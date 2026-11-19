@@ -87,6 +87,20 @@ class Broken(unittest.TestCase):
         rust.write_text(rust.read_text().replace("ANCHOR_END: cli-rust", "ANCHOR_END: gone"))
         self.assertIn("has no ANCHOR/ANCHOR_END 'cli-rust'", self.problems())
 
+    def test_a_page_link_without_its_page_fails(self) -> None:
+        page = self.tmp / "docs/rtd/jubarte-doc/src/validate.md"
+        page.write_text(page.read_text().replace("](audit.md)", "](audit2.md)"))
+        self.assertIn("link 'audit2.md' has no file", self.problems())
+
+    def test_an_anchor_end_before_its_anchor_fails(self) -> None:
+        rust = self.tmp / "docs/rust.md"
+        text = rust.read_text()
+        start, end = "ANCHOR: cli-rust", "ANCHOR_END: cli-rust"
+        self.assertEqual((text.count(start), text.count(end)), (1, 1))
+        swapped = text.replace(start, "\0").replace(end, start).replace("\0", end)
+        rust.write_text(swapped)
+        self.assertIn("has no ANCHOR/ANCHOR_END 'cli-rust'", self.problems())
+
     def test_a_hardcoded_repository_url_fails(self) -> None:
         owner = check_rtd.repository_owner(self.tmp)
         assert owner is not None

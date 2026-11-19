@@ -15,7 +15,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 | `revisions` | `Conventional` | how tracked changes are painted ([Revision styles](revision-styles.md)) |
 | `comments` | `Margin` | balloons beside the page, or a listing after the last page ([Comments](comments.md)) |
 | `comment_notes` | off | also attach each comment as a PDF note at its anchor; an explicit opt-in |
-| `changed_only` | off | lay out the whole document, then keep only the pages a change or a comment touches; page numbers stay the document's |
+| `changed_only` | off | lay out the whole document, then keep only the pages a tracked change touches, the pages a comment is anchored on, and the first page of each section where a revised header or footer paints; page numbers stay the document's |
 
 `docx_to_png(docx, options, dpi)` returns one PNG per page: 96 DPI is
 screen resolution, 150 reads comfortably, 300 is print, and `MAX_PNG_DPI`

@@ -17,7 +17,9 @@ when:
   [workspace.package] repository, the one place it is written);
 - a SUMMARY.md link has no file, or a page in src/ is missing from
   SUMMARY.md;
-- an {{#include}} target, or the anchor it names, does not exist;
+- a relative link in a book page has no file;
+- an {{#include}} target, or the anchor it names, does not exist, or the
+  anchor's ANCHOR_END comes before its ANCHOR;
 - a file under docs/rtd/ names the repository's GitHub owner path (a
   hardcoded copy of the repository URL).
 
@@ -146,9 +148,22 @@ def check_summary(src: Path) -> list[str]:
 
 
 def anchors_in(text: str) -> set[str]:
-    starts = set(re.findall(r"ANCHOR:\s*([\w-]+)", text))
-    ends = set(re.findall(r"ANCHOR_END:\s*([\w-]+)", text))
-    return starts & ends
+    """The anchors that open before they close (mdBook reads the lines between)."""
+    starts = {m.group(1): m.start() for m in reversed(list(re.finditer(r"ANCHOR:\s*([\w-]+)", text)))}
+    ends = {m.group(1): m.start() for m in re.finditer(r"ANCHOR_END:\s*([\w-]+)", text)}
+    return {name for name, at in starts.items() if name in ends and ends[name] > at}
+
+
+def check_page_links(page: Path) -> list[str]:
+    """Every relative link in a book page names a file (mdBook does not warn)."""
+    problems = []
+    for target in LINK.findall(page.read_text(encoding="utf-8")):
+        path = target.split("#", 1)[0]
+        if not path or re.match(r"[a-z]+:", path):
+            continue
+        if not (page.parent / path).exists():
+            problems.append(f"{page}: link {path!r} has no file")
+    return problems
 
 
 def check_includes(page: Path) -> list[str]:
@@ -186,6 +201,12 @@ def check(root: Path) -> list[str]:
         problems += check_readthedocs(name, book / ".readthedocs.yaml")
         problems += check_book_toml(name, book / "book.toml")
         problems += check_summary(book / "src")
+        problems += [
+            problem
+            for page in sorted((book / "src").rglob("*.md"))
+            if page.name != "SUMMARY.md"
+            for problem in check_page_links(page)
+        ]
     # The books' pages; docs/rtd/README.md is about them, not in one.
     for page in sorted(rtd.glob("*/**/*.md")):
         problems += check_includes(page)

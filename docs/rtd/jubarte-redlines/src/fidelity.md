@@ -13,6 +13,9 @@ comparer also normalizes some markup. The main cases:
 - Both inputs lose non-standard `w:`-namespace children of `w:sdtPr`, and
   have `mc:AlternateContent` resolved to a single branch.
 - ISO Strict inputs are rewritten to Transitional first.
+- A breaking and a non-breaking space compare equal
+  (`conflate_breaking_and_nonbreaking_spaces`, on by default in both
+  presets).
 
 In the default Word mode only:
 
@@ -20,9 +23,7 @@ In the default Word mode only:
 - internal anchor `w:hyperlink` wrappers (no `r:id`) become runs styled as
   hyperlinks;
 - content controls in a paragraph that carries a revision are unwrapped;
-- some redundant default spacing is stripped;
-- a breaking and a non-breaking space compare equal
-  (`conflate_breaking_and_nonbreaking_spaces`).
+- some redundant default spacing is stripped.
 
 `WmlComparerSettings::powertools_faithful()` skips the Word-mode passes.
 `docs/WORD_DIFFERENCES.md` in the repository lists where the redline still

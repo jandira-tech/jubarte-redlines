@@ -25,7 +25,10 @@ and returns package bytes; `apply_settings` works on an open `PartFs`.
 
 ## The shared tables
 
-The layers above read these instead of each keeping its own copy:
+The layers above read these instead of each keeping its own copy. All but
+`markup_simplifier` are hidden from the API docs (`#[doc(hidden)]`): they
+are public so the jubarte crates can share them, with no stability
+promise.
 
 | Module | Holds |
 |---|---|

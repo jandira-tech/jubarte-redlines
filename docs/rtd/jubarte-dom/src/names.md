@@ -29,7 +29,8 @@ give the same output.
 
 ## Limits
 
-`limits` holds the input budgets (`InputLimits`) and the typed refusals
+`limits` is hidden from the API docs (`#[doc(hidden)]`): it is public so
+the other jubarte crates can share it, with no stability promise. It holds the input budgets (`InputLimits`) and the typed refusals
 (`AdmissionError`) that XML parsing, package admission and the comparer
 share. Code above this crate reaches them as `admission::InputLimits`;
 the [jubarte-opc book](https://jubarte.readthedocs.io/projects/jubarte-opc/en/latest/admission.html)
