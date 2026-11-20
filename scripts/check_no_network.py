@@ -13,8 +13,8 @@ document path. This check keeps it so, in two parts:
    `cargo tree -e normal --target all --no-default-features` for the
    library, the CLI and the CLI with its allocator names none of
    NETWORK_CRATES. `--tree FILE` reads that output from a file instead.
-2. No Rust source outside the self-update code (`src/update.rs`,
-   `src/update/`) names a network API, a network crate, or a command that
+2. No Rust source outside the self-update code (`crates/jubarte-cli/src/update.rs`,
+   `crates/jubarte-cli/src/update/`) names a network API, a network crate, or a command that
    fetches (`Command::new("curl")`), comments aside.
 
 It is a tripwire, not a proof: a crate missing from NETWORK_CRATES, a

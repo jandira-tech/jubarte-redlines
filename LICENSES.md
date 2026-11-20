@@ -19,7 +19,7 @@ did not author:
 - `LICENSES/LicenseRef-Microsoft-MIT.txt` — Microsoft upstream attribution.
 - `LICENSES/LicenseRef-Docxodus-MIT.txt` — Docxodus upstream attribution.
 - `LICENSES/LicenseRef-anymd-MIT.txt` — anymd upstream attribution. The Word
-  to Markdown converter (`src/markdown/from_docx/`), its tests and the
+  to Markdown converter (`crates/jubarte-markdown/src/markdown/from_docx/`), its tests and the
   fixtures in `tests/fixtures/from-docx/` come from anymd's `anymd-formats`
   crate. `tests/fixtures/from-docx/equations.docx` came to anymd from
   Microsoft's markitdown tests (MIT, Copyright (c) Microsoft Corporation;
@@ -27,13 +27,13 @@ did not author:
 - `LICENSES/LicenseRef-markdown2pdf-MIT.txt` — the preserved MIT notice
   from [markdown2pdf](https://github.com/theiskaa/markdown2pdf), Copyright
   (c) 2023 Ismael Shakverdiev. The MATH font reader and layout arithmetic
-  in `src/convert/math_font.rs` and `src/convert/math_layout.rs` are adapted
+  in `crates/jubarte-render/src/convert/math_font.rs` and `math_layout.rs` are adapted
   from its `src/lib/render/math/` modules.
 - `LICENSES/LicenseRef-zipsign-MIT.txt` — the preserved MIT notice from
   [zipsign](https://github.com/Kijewski/zipsign), Copyright (c) 2023-2025
   René Kijewski (zipsign-api 0.2.2 is `MIT OR Apache-2.0 OR Apache-2.0 WITH
   LLVM-exception`; jubarte uses it under MIT). The release
-  archive signature check in `src/update/zipsign.rs` is adapted from its
+  archive signature check in `crates/jubarte-cli/src/update/zipsign.rs` is adapted from its
   `verify/`, `verify_unsign_tar.rs` and `constants.rs`.
 - `LICENSES/LicenseRef-docen-MIT.txt` — the MIT notice of
   [docen](https://github.com/DemoMacro/docen), Copyright (c) 2025 Demo Macro.

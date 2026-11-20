@@ -31,7 +31,7 @@ jubarte convert input.docx -t md > read_jubarte_convert.md
 
 ## Tool versions used here
 
-- jubarte 0.11.2 (binary at `/Users/arthrod/temp/T/jr-adopt-bin/jubarte`);
+- jubarte 0.11.2;
   `read_jubarte.md` regenerated with jubarte 0.12.0 + the 0.13 CLI changes
   (`read` replaced `text`, 2026-10-12)
 - pandoc 3.11

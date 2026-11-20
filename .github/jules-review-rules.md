@@ -27,7 +27,7 @@ for what they cannot see.
   memory and never written to disk, so file-system rules (Windows reserved
   names such as CON or AUX, path length) do not apply to it.
 - Every docx jubarte writes must open in Word without a repair prompt.
-  A new Word-invalid shape needs a check in `src/validate.rs` (`ring1`) and a
+  A new Word-invalid shape needs a check in `crates/jubarte-doc/src/validate.rs` (`ring1`) and a
   broken probe in `tests/m_validity_ring1.rs`.
 - Headers, footers, footnotes, endnotes and comments count as much as the
   body; check that a change reaches every part it should.

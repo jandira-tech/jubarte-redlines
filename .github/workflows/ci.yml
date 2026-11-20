@@ -64,7 +64,7 @@ jobs:
           done
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       # The library without the `cli` feature (clap) must still build: a
-      # library path once called into src/cli.rs and only --all-features ran.
+      # library path once called into the CLI module and only --all-features ran.
       - run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
       # Each crate alone, on its own default features. `--workspace` cannot:
       # the root enables `render` on the layers, and feature unification
@@ -79,7 +79,7 @@ jobs:
             cargo clippy -p "$p" --all-targets -- -D warnings
           done
       # No network crate without self-update, and no network API outside
-      # src/update (#2018): Word fetches remote templates on open; jubarte
+      # the self-update code (#2018): Word fetches remote templates on open; jubarte
       # must not. Here, not in the scripts job, because it runs cargo tree.
       - run: python3 scripts/test_check_no_network.py
       - run: python3 scripts/check_no_network.py
