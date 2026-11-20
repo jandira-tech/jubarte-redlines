@@ -113,5 +113,5 @@ test compares our changes with Word's.
   explains. Ids are invisible and valid either way; left as is. These are
   the `w:id` source keys inside the DOCX, not the agent-facing `cN`/`rN`
   labels; how a source key becomes a label is governed by the id contract
-  (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`), which
+  (`docs/ID_CONTRACT.md`), which
   leaves this renumbering question untouched.

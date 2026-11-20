@@ -2,8 +2,7 @@
 
 > **Pre-split paths.** This document cites the pre-0.19.0 monolith
 > `src/` layout; since 0.19.0 the engine is a Cargo workspace and
-> those files live under `crates/<crate>/src/` — the snapshot-to-crate
-> map is in [docs/SRC_MANIFEST.md](../../SRC_MANIFEST.md).
+> those files live under `crates/<crate>/src/`.
 
 **17 October 2026 · Interface design and implementation planning; no repository implementation**
 
@@ -303,7 +302,7 @@ Release when the received-redline workflow works with verified effects and prese
 [single]: https://github.com/jandira-tech/jubarte-redlines/blob/0ca2d3ea8191fec56d7bf0f0adb4fd492c8327b3/src/bin/jubarte.rs#L1199-L1311
 [bundle]: https://github.com/jandira-tech/jubarte-redlines/blob/0ca2d3ea8191fec56d7bf0f0adb4fd492c8327b3/src/bin/jubarte.rs#L946-L1135
 [font-fail]: https://github.com/jandira-tech/jubarte-redlines/blob/0ca2d3ea8191fec56d7bf0f0adb4fd492c8327b3/src/bin/jubarte.rs#L574-L625
-[id-contract]: https://github.com/jandira-tech/jubarte-redlines/blob/0ca2d3ea8191fec56d7bf0f0adb4fd492c8327b3/docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md
+[id-contract]: https://github.com/jandira-tech/jubarte-redlines/blob/0ca2d3ea8191fec56d7bf0f0adb4fd492c8327b3/docs/ID_CONTRACT.md
 [better-cli]: https://github.com/yogin16/better-cli
 [clig]: https://clig.dev/
 [posix]: https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/V1_chap12.html

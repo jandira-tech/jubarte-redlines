@@ -49,7 +49,7 @@ every operation's `outcomes`. Nothing is written in that case.
 > only as a fallback for values with no short spelling. That is the
 > transitional schema-1 wire shape. The 17 October 2026 short-and-long-ID
 > contract
-> ([`../superpowers/specs/2026-10-17-short-and-long-id-contract.md`](../superpowers/specs/2026-10-17-short-and-long-id-contract.md),
+> ([`../ID_CONTRACT.md`](../ID_CONTRACT.md),
 > unimplemented) replaces it with paired `short_id`/`long_id` references at
 > the schema-2 cutover. Until then, the table above is the current truth.
 

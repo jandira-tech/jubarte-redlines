@@ -17,7 +17,6 @@ planning/
 .crush/
 .cursor/
 docs/archive/
-#docs/superpowers/
 # Release signing (docs/SELF_UPDATE.md): only public keys are ever committed.
 /keys/*
 !/keys/*.pub

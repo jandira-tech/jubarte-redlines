@@ -11,7 +11,7 @@ ensure that docx to md to docx to md is as lossless as possible."
 
 > **Status (audited 2026-10-18, `main` @ `aba48bd5`).** This is a historical document now. The
 > short/long ID contract v3 —
-> [2026-10-17-short-and-long-id-contract.md](2026-10-17-short-and-long-id-contract.md) (added in
+> [ID_CONTRACT.md](ID_CONTRACT.md) (added in
 > `4612a155`, merged `b5bdccbd` / PR #570) — supersedes it wherever they disagree; v3 §8 lists the
 > deltas: a `ps` step for box and cell paragraphs split from body `p`, `u32` positions, no `+rawid`
 > change pairs, no synthetic/rekeyed/dependent long keys, `j:short` for keyless targets, short ids

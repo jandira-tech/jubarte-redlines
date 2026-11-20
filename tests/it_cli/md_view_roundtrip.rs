@@ -2,8 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The view (`jubarte read`) read back as Markdown: what the view writes,
-//! `convert X.md -o X.docx` reads (docs/superpowers/specs/
-//! 2026-10-13-ids-and-markdown-roundtrip.md).
+//! `convert X.md -o X.docx` reads (docs/IDS_AND_MARKDOWN_ROUNDTRIP.md).
 
 use std::path::Path;
 use std::process::Command;

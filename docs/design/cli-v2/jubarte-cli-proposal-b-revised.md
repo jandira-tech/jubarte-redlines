@@ -2,8 +2,7 @@
 
 > **Pre-split paths.** This document cites the pre-0.19.0 monolith
 > `src/` layout; since 0.19.0 the engine is a Cargo workspace and
-> those files live under `crates/<crate>/src/` — the snapshot-to-crate
-> map is in [docs/SRC_MANIFEST.md](../../SRC_MANIFEST.md).
+> those files live under `crates/<crate>/src/`.
 
 **17 October 2026 · Proposed contract, not implemented behavior**
 
@@ -874,7 +873,7 @@ Read `jubarte-cli-evidence-review.md` for the claim ledger and source citations;
 
 The evidence baseline is the published v0.12.0 binary (fourteen preserved probes), source at `0ca2d3ea8191fec56d7bf0f0adb4fd492c8327b3`, and the newly supplied reports. Their trace help identifies `d003d8e8d00ac50cb9782fd454f58efa4cf387e7`, a different build. The follow-up document references `aba48bd50e03584d99fbbcb2a6915e4d3b07ccf7`; its future-dated editorial audit heading is not proof of later runtime behavior.
 
-Primary code: [edit/settlement](https://github.com/jandira-tech/jubarte-redlines/blob/0ca2d3ea8191fec56d7bf0f0adb4fd492c8327b3/src/edit.rs), [CLI](https://github.com/jandira-tech/jubarte-redlines/blob/0ca2d3ea8191fec56d7bf0f0adb4fd492c8327b3/src/cli.rs), [executable dispatch/publication](https://github.com/jandira-tech/jubarte-redlines/blob/0ca2d3ea8191fec56d7bf0f0adb4fd492c8327b3/src/bin/jubarte.rs), [short/long ID contract](https://github.com/jandira-tech/jubarte-redlines/blob/0ca2d3ea8191fec56d7bf0f0adb4fd492c8327b3/docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md).
+Primary code: [edit/settlement](https://github.com/jandira-tech/jubarte-redlines/blob/0ca2d3ea8191fec56d7bf0f0adb4fd492c8327b3/src/edit.rs), [CLI](https://github.com/jandira-tech/jubarte-redlines/blob/0ca2d3ea8191fec56d7bf0f0adb4fd492c8327b3/src/cli.rs), [executable dispatch/publication](https://github.com/jandira-tech/jubarte-redlines/blob/0ca2d3ea8191fec56d7bf0f0adb4fd492c8327b3/src/bin/jubarte.rs), [short/long ID contract](https://github.com/jandira-tech/jubarte-redlines/blob/0ca2d3ea8191fec56d7bf0f0adb4fd492c8327b3/docs/ID_CONTRACT.md).
 
 Design guidance: supplied better-cli, [POSIX utility conventions](https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/V1_chap12.html), [CLIG](https://clig.dev/), [clap](https://docs.rs/clap/latest/clap/), and the [GNU Bash pipeline reference](https://www.gnu.org/software/bash/manual/html_node/Pipelines.html). These guide interfaces; they do not establish an experimental reduction in Jubarte task failures.
 

@@ -2,8 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Ring 1½ — schema-consistency oracle for hand order tables
-//! (SCHEMA_ORACLE_PLAN W1 / plan D2).
+//! Ring 1½ — schema-consistency oracle for hand order tables.
 //!
 //! Flattens schema `Particle` trees depth-first; Choice members are unordered
 //! groups. Asserts pairwise order agreement for every pair present in both the

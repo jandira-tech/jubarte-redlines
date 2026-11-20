@@ -16,7 +16,7 @@
 //! colon long ids (`body:rev:12`, `body:p:12`) are refused, naming the short
 //! id, whenever one exists. Until the contract's long ids land — the
 //! four-field `PART.ELEMENT.ATTRIBUTE.VALUE` family of
-//! `docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md` §3 —
+//! `docs/ID_CONTRACT.md` §3 —
 //! jubarte prints a colon id only for what has no short spelling (a part
 //! outside the settled stories, `Header_1.xml`; a `w:id` such as `007`),
 //! and exactly that id still parses: jubarte never prints an id it refuses.

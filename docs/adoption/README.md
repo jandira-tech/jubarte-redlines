@@ -39,12 +39,10 @@ Runnable evidence:
   GitHub release binaries).
 - **main**: merged, not yet released. Install from source or wait for the
   next release.
-- **pending**: open work in the provider-adoption plans
-  (`docs/superpowers/plans/2026-10-02-provider-adoption-*.md`).
+- **pending**: open work, not yet merged.
 
-No page states a benchmark number. The plans call for the six-task agent
-evaluation of
-[06-agent-adoption.md](../superpowers/plans/2026-09-26-jubarte-adoption/06-agent-adoption.md)
+No page states a benchmark number. A six-task agent
+evaluation must run
 on a tagged release, with pinned settings, before any number is quoted
 here. Fidelity scores elsewhere in this repository come from
 `neurotic_docx_bench`, which the jubarte author runs; treat them as

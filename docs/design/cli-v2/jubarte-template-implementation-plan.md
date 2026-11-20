@@ -2,8 +2,7 @@
 
 > **Pre-split paths.** This document cites the pre-0.19.0 monolith
 > `src/` layout; since 0.19.0 the engine is a Cargo workspace and
-> those files live under `crates/<crate>/src/` — the snapshot-to-crate
-> map is in [docs/SRC_MANIFEST.md](../../SRC_MANIFEST.md).
+> those files live under `crates/<crate>/src/`.
 
 **Status:** proposed implementation plan. It describes work to build and evaluate, not behavior demonstrated by the current binary. The executor changes come first; the template command is a generator over those shared capabilities.
 

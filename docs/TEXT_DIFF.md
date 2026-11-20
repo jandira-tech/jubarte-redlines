@@ -109,7 +109,7 @@ builds expose this API. `diffDocumentsUnified` remains the complete unified
 patch API; `diffDocuments` retains paragraph-patch JSON. Its `at` field is
 a short-id string today (`"p3"`, `"footnotes.p1"`); the id contract's
 schema-2 cutover replaces it with a paired `{"short_id","long_id"}`
-reference — `docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`
+reference — `docs/ID_CONTRACT.md`
 (v3, not yet implemented).
 
 Rust exposes `TextOptions`, `TextFormat`, `diff_text_view` and
