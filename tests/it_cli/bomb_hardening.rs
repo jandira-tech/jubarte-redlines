@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Hostile packages from the 2026-10-31 bomb review (#2019): an element
 //! flood under every byte limit (#2014) and a DOCTYPE, which Word refuses in

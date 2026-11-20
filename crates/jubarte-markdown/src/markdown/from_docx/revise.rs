@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 // SPDX-FileCopyrightText: 2024-2026 SylphxAI
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-anymd-MIT
 
 //! Accepts or rejects every Word tracked change in a parsed part, so it
 //! converts as the text Word shows after Accept All or Reject All.

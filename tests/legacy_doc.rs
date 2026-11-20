@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A Word 97-2003 `.doc` (or an encrypted document, the same OLE container)
 //! is `LEGACY_DOC` with a save-as hint on every entry point, and RTF is

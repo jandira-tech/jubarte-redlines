@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `CompareMode` names the two supported comparer configurations, and the
 //! `with_*` builders change only the scalars that are safe to tune.

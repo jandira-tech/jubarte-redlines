@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 """Comment threads from Python: ``Document.comments()``, the ``EditPlan``
 thread builders, and ``python -m jubarte comments``."""

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Comments: range markers, anchors and reply markers, and the comment
 //! references a deletion takes along.

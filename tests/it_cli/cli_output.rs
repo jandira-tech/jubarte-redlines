@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Tasks 12 and 13: one writer for `-o`. Compare, accept, reject, scrub,
 //! append, convert and read write what the output's extension names: a Word package, the agent

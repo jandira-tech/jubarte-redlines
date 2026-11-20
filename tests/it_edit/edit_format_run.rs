@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `format_run`: change the run formatting of one occurrence of existing
 //! text. The clean copy splits the run at the range's edges and formats only

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `jubarte self-update`: replace this binary with a GitHub release when the
 //! user runs `jubarte self-update` (docs/SELF_UPDATE.md).

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Every pair of small table cells, compared in both modes: the redline is
 //! Word-valid (no revision on a cell's final mark, #1669; no cell ending in

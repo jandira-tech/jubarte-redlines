@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only
+SPDX-License-Identifier: Apache-2.0
 -->
 
 # Contributing
@@ -22,8 +22,12 @@ Use a fork and a pull request against `main`. Explain the problem, resulting
 behavior and validation. Microsoft Word parity is the correctness target;
 reuse existing fixtures and upstream Docxodus/PowerTools behavior. Follow
 [AGENTS.md](AGENTS.md) for Word automation, provenance and coding rules.
-Contributions are distributed under the project's AGPL-3.0-only license;
-preserve upstream notices and add accurate SPDX headers.
+Contributions are accepted under the project's license, Apache-2.0, as its
+section 5 says: what you submit is licensed under the same terms, with no
+other agreement to sign. Sign each commit off (`git commit -s`) to state,
+by the [Developer Certificate of Origin](https://developercertificate.org/),
+that you have the right to submit it. Preserve upstream notices and add
+accurate SPDX headers.
 
 The repository is a Cargo workspace. The root package `jubarte` holds only
 the facade (`src/lib.rs`, which re-exports the suite under `jubarte::`) and

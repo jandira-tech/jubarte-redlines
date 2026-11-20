@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A glossary is not a story, so compare, accept and reject used to copy
 //! `word/glossary/document.xml` unchanged. The three shapes the schema

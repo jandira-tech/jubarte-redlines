@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! An `ANCHOR_NOT_FOUND` names the paragraphs the anchor does occur in
 //! (#1889): #1013's released message stays word for word as its prefix,

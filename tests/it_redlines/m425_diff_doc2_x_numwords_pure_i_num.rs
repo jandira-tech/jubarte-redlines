@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M425 — short table base × "Num words/chars/pages" next: pure-I Num* first.
 //!
@@ -16,8 +16,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn diff_doc2_x_numwords_pure_i_num_stats() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("doc_api_stories__diff_doc2_bc0da0ce.docx");
     let b = src.join("doc_api_stories__numwords_8be5f783.docx");
     if !a.exists() || !b.exists() {

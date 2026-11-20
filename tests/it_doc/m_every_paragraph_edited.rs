@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! An edit in every paragraph leaves no paragraph whole on either side, yet
 //! the two documents are one revision: Word marks each changed word in its

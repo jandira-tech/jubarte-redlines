@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 """Visual page diff (``diff_render``) and page ranges (``pages=``), in the
 API and in ``python -m jubarte``."""

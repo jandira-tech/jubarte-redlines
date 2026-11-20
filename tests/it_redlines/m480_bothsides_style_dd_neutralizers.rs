@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M480b — the both-sides declared-blocks merge writes B's block plus the
 //! docDefaults-delta DISABLING neutralizers: with A-dd kern=2 + ligatures
@@ -41,8 +41,8 @@ fn live_of(style: &str, block: &str, change: &str) -> String {
 #[test]
 fn merged_heading_gets_dd_neutralizers() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("evals__memorandum_258c774a.docx");
     let b = src.join("evals__nda_7f304918.docx");
     if !a.exists() || !b.exists() {

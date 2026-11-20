@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M85 — empty pure-ins before trailing pure-dels dropped; last pure-del mark-only pPr stripped.
 //! file_49: B ends empty after table; Word is `tbl DDD`, we had `tbl Ei DDD`.

@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 """Where the workflows run, and how they fall back when the self-hosted
 runners are down.

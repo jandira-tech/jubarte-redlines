@@ -11,6 +11,6 @@ replacing each resolved colour with a placeholder the writer resolves from
 the written document's theme.
 
 The style definitions are Microsoft's, not Jandira Technologies, LLC's,
-and are not covered by this repository's AGPL-3.0-only license. They are
+and are not covered by this repository's Apache-2.0 license. They are
 reproduced so a document that names one of these styles keeps the look
 Word gives it.

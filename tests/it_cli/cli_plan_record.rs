@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `edit --plan` and `add --plan` with operation flags record into the plan
 //! instead of editing; `--plan` alone applies it, and `--consume` deletes it

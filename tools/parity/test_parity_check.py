@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Unit tests for parity_check.py v2's pure comparison logic (audit F10-F12
 repairs). No binaries, no PyMuPDF, no corpus — compare_pdfs /
 compare_painted_characters / parse_bindings / pdf_coverage_failure are pure.

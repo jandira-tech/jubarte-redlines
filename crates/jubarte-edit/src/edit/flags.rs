@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! `edit` and `add` by flags: each `-p WHERE` with its `--anchor`,
 //! `--content`, `--delete`, `--resolve`, `--reply`, `--before`, `--comment`
 //! and `--style` becomes one operation of an [`EditPlan`]; a `-p r12` with

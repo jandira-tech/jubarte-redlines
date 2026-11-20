@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! The reader brings back the comment threads the agent view writes: a
 //! reply (`c6 @AS re c5`) hangs off its comment in `commentsExtended.xml`,

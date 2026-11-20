@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M112 — clean (no-revision) adjacent tables stay separate on accept/merge
 //! (file_130/131 metadata tables: Word keeps 1-col + 2-col, not one 2-col).

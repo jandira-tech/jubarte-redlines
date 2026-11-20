@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! #1880: a bookmark that starts in a paragraph with no text (a TOC
 //! heading's tab, a paragraph holding only a picture) starts there in the

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! MEM-PROFILE-01 (TODO item 1b) — peak-heap attribution for the alignment
 //! stage on run-fragmented inputs.

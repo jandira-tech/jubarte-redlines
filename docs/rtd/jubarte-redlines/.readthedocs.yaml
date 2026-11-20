@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 # ReadTheDocs project "jubarte-redlines": its Admin > Settings > "Build configuration
 # file" is docs/rtd/jubarte-redlines/.readthedocs.yaml (docs/rtd/README.md). Paths are

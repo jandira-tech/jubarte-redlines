@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 [package]
 name = "jubarte-markdown"
@@ -14,7 +14,7 @@ description = "Markdown in and out of Word documents for the jubarte engine: Cri
 readme = "README.md"
 keywords = ["docx", "markdown", "criticmarkup", "word", "diff"]
 categories = ["text-processing", "parser-implementations"]
-include = ["/src/**", "/README.md", "/LICENSE"]
+include = ["/src/**", "/README.md", "/LICENSE", "/NOTICE"]
 [lib]
 name = "jubarte_markdown"
 

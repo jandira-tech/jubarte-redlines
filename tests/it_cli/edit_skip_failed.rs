@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Plan 3 (#1253): `--skip-failed` lands every operation that passes and
 //! leaves the failed ones out, with a runnable plan of the failures beside

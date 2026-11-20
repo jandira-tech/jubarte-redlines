@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Word compares a run of changed paragraphs as one stream of words and
 //! paragraph marks. Original "This text is both centered and bold." keeps

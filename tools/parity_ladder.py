@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 """Word-parity ladder: tiny, named findings from (A, B, word_redline) triples.
 

@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
-<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
 > **Status: LIVING — maintained as of 2026-10-01 (bd262981); re-checked 2026-10-19 (`aba48bd5`).** Facts below were verified against this commit; the next editor re-verifies before trusting. The study is pinned against `b493cb58` (2026-10-01); the section 4 questions are undecided — pending decisions, not commitments — and no `src/markdown/projection/` module exists yet (re-verified at `aba48bd5`).
 >

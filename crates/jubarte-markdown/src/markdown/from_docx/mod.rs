@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 // SPDX-FileCopyrightText: 2024-2026 SylphxAI
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-anymd-MIT
 
 //! Word to Markdown: headings, emphasis, links, lists, tables, footnotes,
 //! equations, and tracked changes and comments as CriticMarkup.

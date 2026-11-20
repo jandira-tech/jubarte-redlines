@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M381 — file_54×file_55: short pure-I "b" free-meshes demo title pure-D.
 //!
@@ -17,8 +17,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn file54_x_55_short_b_mixes_with_line_spacing_demo() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
     let a = src.join("file_54.docx");
     let b = src.join("file_55.docx");
     if !a.exists() || !b.exists() {

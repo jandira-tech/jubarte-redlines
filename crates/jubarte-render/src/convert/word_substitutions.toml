@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 # Word-for-Mac Quartz substitutions when the requested family is not in the
 # catalogue and fontTable.xml has no altName. Keys match mapped_face

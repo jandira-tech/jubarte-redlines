@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! The ZIP32 boundary check every package write plans against (ZIP-10,
 //! #604). jubarte does not write ZIP64: Word parity for it is unproven,

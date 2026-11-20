@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M307 — demo-style short doc × catalog-style short doc must keep a MIX
 //! carrier on the body paragraph (Word oracle shape).

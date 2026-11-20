@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M145b skips the fold when the first deleted paragraph looks like a
 //! checklist cell (one or two short tokens). A styled Title/Heading is not a

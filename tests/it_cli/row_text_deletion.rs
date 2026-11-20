@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A deletion that fills a table cell stays a text deletion when the view
 //! is written back. A row the package marks deleted stays a row deletion.

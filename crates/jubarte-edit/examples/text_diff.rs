@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Diff two texts and two documents as the agent view prints them.
 //! Run: `cargo run -p jubarte-edit --example text_diff`

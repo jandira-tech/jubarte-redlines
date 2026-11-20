@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! A change inside a change (`w:ins` holding a `w:del`, and back): the view
 //! splits the outer change around the inner one, each piece keeping the
 //! outer change's id, author and date, so the writer nests the marks again

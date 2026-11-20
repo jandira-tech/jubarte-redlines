@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
-<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # For the maintainers of OpenAI's `doc` skill
 
@@ -71,8 +71,8 @@ included), `3` edit plan refused (nothing written).
 - **Legacy `.doc`, beyond the basics.** `jubarte convert old.doc` reads
   text, headings, lists, bold, italic and tables (released); keep LibreOffice
   for fonts, headers, footers, notes, pictures and page setup.
-- **License.** jubarte is AGPL-3.0-only and runs as a separate program your
-  skill calls.
+- **License.** jubarte is Apache-2.0 from 0.19.0 (earlier releases are
+  AGPL-3.0-only).
 
 ## 4. Check it without trusting us
 

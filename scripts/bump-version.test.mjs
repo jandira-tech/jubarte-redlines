@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 // The README pin rewrite of scripts/bump-version.mjs: a version string is
 // interpolated into a RegExp, so it must be escaped whole — a `$` in it

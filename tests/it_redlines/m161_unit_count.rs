@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 use jubarte::comparer::{WmlComparerSettings, compare_bodies_faithful};
 use jubarte::namespaces::W;
@@ -12,8 +12,8 @@ fn bench_docx(name: &str) -> Option<PathBuf> {
     let root = std::env::var_os("BENCH_DIR")
         .map(PathBuf::from)
         .or_else(|| {
-            let p =
-                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/bench/neurotic_docx_bench");
+            let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/corpus/bench/neurotic_docx_bench");
             p.is_dir().then_some(p)
         })?;
     let path = root.join("corpus/word_based/docx_source").join(name);

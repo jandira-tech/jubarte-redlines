@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 """Markdown creation: ``_native.markdown_to_docx``, ``jubarte.from_markdown``
 and ``python -m jubarte convert draft.md``."""

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A paragraph whose layout changes on both sides keeps the new pPr live and
 //! records the old one in `w:pPrChange`, as Word does. Only a bare new pPr

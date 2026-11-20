@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M426 — short table-free base × long table-bearing next: pure-I all next then
 //! pure-D base (Word order).
@@ -20,8 +20,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn text_color_x_nested_table_pure_i_all_next_then_d_base() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__text_color_highlight_36cb4c90.docx");
     let b = src.join("behavior__sd_2672_nested_table_dfac08bb.docx");
     if !a.exists() || !b.exists() {

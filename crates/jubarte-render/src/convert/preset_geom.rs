@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! DrawingML preset geometry evaluator (ECMA-376 Part 1 §20.1.9): guide
 //! formulas, `a:avLst` adjustments and the path list of a preset, flattened

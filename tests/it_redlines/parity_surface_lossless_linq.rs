@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Parity-surface regression for the AST report
 //! (`jubarte_family/LOSSLESS_LINQ_PARITY_REPORT.md`).

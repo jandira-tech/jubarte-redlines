@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! The view's own notes read back: the YAML `authors:` table
 //! (`AC: Ann Counsel  # 9 revisions, 2026-10-01T09:00:00Z`), a revision's

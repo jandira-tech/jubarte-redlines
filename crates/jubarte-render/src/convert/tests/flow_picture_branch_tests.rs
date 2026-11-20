@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Inline pictures spliced into the run stream (`emit_flow_pictures`):
 //! text beside them keeps its case, revisions, fields and breaks.

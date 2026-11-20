@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! S2 chain-awareness (file_198 × file_199, 97.08 → 91.51 bisected to
 //! 5360dd4): B is a LibreOffice document whose styles inherit their look
@@ -40,8 +40,8 @@ fn live_rpr(style: &str) -> String {
 #[test]
 fn bake_never_overrides_attrs_the_chain_provides() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
     let a = src.join("file_198.docx");
     let b = src.join("file_199.docx");
     if !a.exists() || !b.exists() {

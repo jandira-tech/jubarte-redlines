@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A plan addresses the document its author read. When `resolve_revisions`
 //! or `existing_revisions` settles tracked changes first, paragraphs merge

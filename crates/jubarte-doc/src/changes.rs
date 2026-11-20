@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Tracked changes one at a time: list each with an id, accept or reject a
 //! selection and keep the rest tracked, as Word's Accept/Reject This Change

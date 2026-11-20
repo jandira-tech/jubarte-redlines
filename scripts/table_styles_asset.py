@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 """Writes crates/jubarte-markdown/src/markdown/word_table_styles.tsv: Word's built-in table styles,
 the Grid and List Tables (1 to 7, plain and Accent 1 to 6) as Word wrote

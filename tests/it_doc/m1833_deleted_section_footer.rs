@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! #1833 — the revision drops a header or footer that only section breaks
 //! the redline deletes reference (the file_N family, 9 of the 23 of

@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 # Build jubarte inside a manylinux_2_28 image (glibc 2.28). release.yml
 # mounts the repo at /work and runs this there. The image's own glibc is

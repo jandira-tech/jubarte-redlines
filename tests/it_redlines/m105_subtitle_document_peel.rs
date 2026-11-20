@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M105 — short-into-long: peel trailing subtitle token ("document") into the
 //! short demo body as Equal (file_7 / file_5 / file_130 Word shape).

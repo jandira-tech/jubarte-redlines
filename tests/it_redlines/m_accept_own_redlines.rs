@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! jubarte's redlines, accepted, end where Word's redlines of the same pair
 //! end once Word accepts them (`_to_improve_accepted_changes`, 2026-09-28:

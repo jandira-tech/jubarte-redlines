@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A plain-view author that itself holds ` re ` and a revision id stays one
 //! author. A deletion nested in an insertion still names both people.

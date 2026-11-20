@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 [package]
 name = "jubarte-edit"
@@ -14,7 +14,7 @@ description = "The edit product of the jubarte engine: edit plans as tracked cha
 readme = "README.md"
 keywords = ["docx", "edit", "track-changes", "word", "criticmarkup"]
 categories = ["text-processing", "parser-implementations"]
-include = ["/src/**", "/schemas/**", "/README.md", "/LICENSE"]
+include = ["/src/**", "/schemas/**", "/README.md", "/LICENSE", "/NOTICE"]
 [lib]
 name = "jubarte_edit"
 

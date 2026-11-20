@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! HASH-STREAM-05 — simple-p stream allows empty run leaves (br/tab/…) with
 //! fragment expansion + adjacent-t merge, matching clone oracle.

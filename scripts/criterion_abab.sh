@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 #
 # criterion_abab.sh PREV_TAG STATE_DIR [CANDIDATE] — the release's
 # criterion gate (#1797), the shape jubarte-loop/release_0.14.0/gates/

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! #1826 — a paragraph between two deleted tables stays between them in Word
 //! mode. Both bases are `tbl, ¶, tbl, ¶` and both revisions replace all of

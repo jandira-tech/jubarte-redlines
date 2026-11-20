@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M345 — whitespace pure-I fold must not thrash pure-D list layout.
 //!
@@ -44,8 +44,8 @@ fn compare(a: &PathBuf, b: &PathBuf) -> String {
 #[test]
 fn basic_list_first_pure_del_keeps_list_ppr() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__basic_list_0fcfe705.docx");
     let b = src.join("super_editor__sd_1707_list_enter_track_changes_with_fd93fd8b.docx");
     if !a.exists() || !b.exists() {
@@ -74,8 +74,8 @@ fn basic_list_first_pure_del_keeps_list_ppr() {
 #[test]
 fn two_column_x_vrect_first_del_no_ins_spacing() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__two_column_two_page_0b8a37c5.docx");
     let b = src.join("super_editor__vrect_node_c8e51f22.docx");
     if !a.exists() || !b.exists() {

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 [package]
 name = "jubarte-redlines"
@@ -14,7 +14,7 @@ description = "The compare product of the jubarte engine: two Word documents in,
 readme = "README.md"
 keywords = ["docx", "redline", "track-changes", "compare", "word"]
 categories = ["text-processing", "parser-implementations"]
-include = ["/src/**", "/README.md", "/LICENSE"]
+include = ["/src/**", "/README.md", "/LICENSE", "/NOTICE"]
 [lib]
 name = "jubarte_redlines"
 

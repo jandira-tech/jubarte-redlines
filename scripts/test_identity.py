@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 """scripts/identity.py: two jubarte binaries write the same bytes on the
 release samples (#1752; checklist before#6, after#8).

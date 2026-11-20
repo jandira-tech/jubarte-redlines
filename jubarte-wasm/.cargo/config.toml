@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 # Build recipe pinned here (TODO §2) so it rides the engine pin and cannot be
 # forgotten. RUSTFLAGS passed via the environment REPLACE (not merge) these

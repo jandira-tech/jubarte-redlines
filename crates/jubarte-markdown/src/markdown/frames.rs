@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A paragraph's frame (`w:framePr`, CT_FramePr) in the view and back:
 //! a header or footer paragraph's `frame: {wrap: none, hAnchor: margin,

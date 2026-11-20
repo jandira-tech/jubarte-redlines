@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Pair 02 package path: table-bookmark-end vs table-vmerge-colspan from batch_to_fix.
 use jubarte::document_comparer::compare_documents;

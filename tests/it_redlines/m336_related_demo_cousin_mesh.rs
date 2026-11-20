@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M336 — bullet_list_bold × bullet_list: Word free-meshes last item into bold
 //! intro (DIMD MIX=1). Pure-I/D leaves Grapes separate (DID MIX=0).

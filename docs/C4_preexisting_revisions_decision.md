@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only
+SPDX-License-Identifier: Apache-2.0
 -->
 
 # C4 decision memo — pre-existing tracked changes (`suggesting_*`) — reviewed 2026-09-26

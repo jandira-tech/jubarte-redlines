@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A kept paragraph over a rewritten tail: Word inserts the revised tail,
 //! deletes the original's, and pairs the two stories' final marks, so the

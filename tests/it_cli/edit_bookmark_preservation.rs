@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Edits preserve boundary bookmarks through tracking and revision resolution,
 //! and a new insertion never takes in a range marker it did not create

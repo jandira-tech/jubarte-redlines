@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M419 — math delimiter next (OMML shells) × math eqarr base: MIX last shell
 //! into first pure-D title.
@@ -18,8 +18,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn math_delimiter_x_eqarr_mixes_title() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("behavior__math_delimiter_tests_c9d034dc.docx");
     let b = src.join("behavior__math_eqarr_tests_40a1adb0.docx");
     // Note: pair order in corpus is delimiter base × eqarr next in some maps;

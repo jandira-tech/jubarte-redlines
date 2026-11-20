@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `inspect` reads tables as grids: each cell's text and the paragraph ids an
 //! edit plan addresses, the header rows and the grid widths. The read side of

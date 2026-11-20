@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! What a settle removes, said before and after (#1159, plan 10): a change
 //! names the comment marks it holds, the view shows them inside the

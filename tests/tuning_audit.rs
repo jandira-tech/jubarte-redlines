@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Plan Step 8: every convert `mini` comment site (and the named Word-device
 //! / heading-gap helpers) must appear in `docs/TUNING_AUDIT.md` with class a|b|c

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 # Standalone workspace so this binding does not join the engine crate's
 # workspace (mirrors jubarte-wasm). Published to PyPI (as `jubarte-redlines`),
@@ -14,7 +14,7 @@ edition = "2024"
 rust-version = "1.94"
 publish = false
 description = "PyO3 bindings for jubarte-redlines: Word-mode DOCX redline compare, accept/reject/list revisions, DOCX→PDF"
-license = "AGPL-3.0-only"
+license = "Apache-2.0"
 repository = "https://github.com/jandira-tech/jubarte"
 
 

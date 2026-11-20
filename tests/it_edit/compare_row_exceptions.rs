@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! #1869: a table row's exceptions (`w:tblPrEx`, the table properties one
 //! row overrides) survive a redline. The comparer rebuilt each row from its

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Document settings an edit plan writes into `word/settings.xml`: Track
 //! Changes on or off, `updateFields` on open, and editing restrictions.

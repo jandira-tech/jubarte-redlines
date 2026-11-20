@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 # Long-lived stdin worker for neurotic_docx_bench speed harness.
 # Protocol matches docxodus-csharp-inproc (warm-vs-warm fair algorithm lane):
@@ -16,7 +16,7 @@ name = "jubarte-rust-inproc"
 version = "0.18.0"
 edition = "2024"
 publish = false
-license = "AGPL-3.0-only"
+license = "Apache-2.0"
 description = "Long-lived compare_documents worker for neurotic_docx_bench (warm algorithm timing)"
 
 [[bin]]

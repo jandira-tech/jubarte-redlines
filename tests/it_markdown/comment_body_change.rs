@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A tracked change inside a comment body stays a change when the view
 //! is written back. A brace sequence that is already text stays text.

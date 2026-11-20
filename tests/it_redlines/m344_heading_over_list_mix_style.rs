@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M344 — nda × report: MIX pure-I ListNumber ref + pure-D Heading1 title
 //! must adopt Deleted Heading1 (Word/e3). ListNumber MIX thrash pagefair ~56.
@@ -14,8 +14,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn nda_x_report_mix_adopts_heading1() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("evals__nda_7f304918.docx");
     let b = src.join("evals__report_with_formatting_03f385ed.docx");
     if !a.exists() || !b.exists() {

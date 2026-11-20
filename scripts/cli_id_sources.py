@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Where the Rust source accepts an id: for scripts/cli_locations.py.
 
 Reads the crate sources as text, with no build:

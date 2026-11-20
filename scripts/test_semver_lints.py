@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 """scripts/semver_lints.py: the patch gate denies every lint the installed
 cargo-semver-checks would otherwise skip (Allow) or only report (Warn).

@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 # cargo-deny policy for jubarte (plan A4).
-# Project is AGPL-3.0-only; allow common permissive deps and AGPL itself.
+# Project is Apache-2.0; only permissive dependency licenses are allowed.
 
 [graph]
 all-features = true
@@ -40,7 +40,6 @@ allow = [
     "ISC",
     "Zlib",
     "Unicode-3.0",
-    "AGPL-3.0-only",
     "0BSD",
     # webpki-roots (Mozilla's CA root list), pulled in by `self-update`'s
     # rustls client: a permissive data license.

@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only
+SPDX-License-Identifier: Apache-2.0
 -->
 
 > **See every page side by side: [jandira-tech.github.io/neurotic_docx_bench](https://jandira-tech.github.io/neurotic_docx_bench/)**  
@@ -23,7 +23,7 @@ or PNG — from Rust, Python, Node/browser, or the CLI.
 [![PyPI](https://img.shields.io/pypi/v/jubarte-docx.svg)](https://pypi.org/project/jubarte-docx/)
 [![npm](https://img.shields.io/npm/v/jubarte-wasm.svg)](https://www.npmjs.com/package/jubarte-wasm)
 [![MSRV](https://img.shields.io/badge/MSRV-1.94-blue)](./Cargo.toml)
-[![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](./LICENSE)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Socket Badge](https://badge.socket.dev/cargo/package/jubarte/0.18.0)](https://badge.socket.dev/cargo/package/jubarte/0.18.0)
 
 Jubarte is an in-process DOCX engine for applications that need Microsoft
@@ -1227,12 +1227,13 @@ scripts/                  installation, release and Word-probe scripts
 
 ## License
 
-`jubarte-redlines` is licensed under
-[GNU Affero General Public License v3.0 only](LICENSE)
-(`AGPL-3.0-only`).
+Jubarte is licensed under the [Apache License, Version 2.0](LICENSE)
+(`Apache-2.0`) from version 0.19.0. Versions 0.18.0 and earlier were
+released under `AGPL-3.0-only` and stay under it.
 
-Review the license requirements before embedding or deploying the software in
-a product or network service.
+[NOTICE](NOTICE) carries the attributions of the projects jubarte's code
+derives from, and [LICENSES.md](LICENSES.md) lists the licences of the
+bundled fonts and test documents.
 
 ## Links
 

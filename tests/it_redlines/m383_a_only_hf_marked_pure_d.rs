@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M383 — A has HF, B has none: original HF content is pure-D.
 //!
@@ -16,8 +16,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn h_f_x_basic_footnotes_a_headers_are_pure_d() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__h_f_normal_odd_even_firstpg_9b210d9a.docx");
     let b = src.join("super_editor__basic_footnotes_5be96945.docx");
     if !a.exists() || !b.exists() {

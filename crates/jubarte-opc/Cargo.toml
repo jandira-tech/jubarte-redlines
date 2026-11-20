@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 [package]
 name = "jubarte-opc"
@@ -14,7 +14,7 @@ description = "The OPC package floor of the jubarte redline engine: admission, p
 readme = "README.md"
 keywords = ["docx", "ooxml", "opc", "zip"]
 categories = ["text-processing", "parser-implementations"]
-include = ["/src/**", "/README.md", "/LICENSE"]
+include = ["/src/**", "/README.md", "/LICENSE", "/NOTICE"]
 [lib]
 name = "jubarte_opc"
 

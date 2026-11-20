@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `jubarte::markdown::patch_redline` and `patch_documents`: the patch of a
 //! Word redline, each hunk at the `pN` id `jubarte text` and edit plans

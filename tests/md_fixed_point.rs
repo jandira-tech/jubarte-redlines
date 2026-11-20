@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! The Markdown round trip, strict (docs/IDS_AND_MARKDOWN_ROUNDTRIP.md §0: nothing with a short id is
 //! lost). Every `.md` in `tests/fixtures/md-roundtrip` must come back
 //! exactly after md → docx → md, and every docx listed in its `docx.txt`

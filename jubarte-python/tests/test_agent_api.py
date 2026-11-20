@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 """The agent-facing Python surface: inspect, markdown, edit plans, PNG pages,
 render reports and the capability manifest. Every test runs against the

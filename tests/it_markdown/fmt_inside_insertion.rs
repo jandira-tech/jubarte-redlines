@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A formatting change on a run inside a tracked insertion names that
 //! insertion on the paragraph's fmt tag, and the tag still reads after

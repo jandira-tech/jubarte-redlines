@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `strike` and `restore` (plan 2): another author's change rejected
 //! visibly, as a tracked change of the plan's author that Word shows under

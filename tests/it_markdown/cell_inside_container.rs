@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A change inside an inserted cell, an inserted row, or a paragraph
 //! mark is placed by the location note that names that container, or

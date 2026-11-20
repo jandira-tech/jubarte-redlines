@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M392 — file_36×file_37: empty pure-I spacers before pure-D short title.
 //!
@@ -17,8 +17,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn file36_x_37_empty_pure_i_spacers_before_contract_review_del() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
     let a = src.join("file_36.docx");
     let b = src.join("file_37.docx");
     if !a.exists() || !b.exists() {

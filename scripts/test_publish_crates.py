@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Tests for scripts/publish_crates.sh (plan T6.2): the per-crate order, the
 resume over crates already live, the release-note gate, the pending probe
 and the dry run.

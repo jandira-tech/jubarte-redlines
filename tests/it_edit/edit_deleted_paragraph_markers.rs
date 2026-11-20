@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! #1676: deleting a paragraph must leave its bookmarks and range markers in
 //! Word's shape. Accept All of that redline and the clean copy hold the same

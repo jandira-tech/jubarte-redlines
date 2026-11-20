@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M466 — the trailing bare-period attach (old-M463 boiler-EQ fold) must skip
 //! a period run that carries a tracked format change. file_168 × file_169:
@@ -17,8 +17,8 @@ use jubarte::document_comparer::compare_documents;
 #[test]
 fn formatted_period_stays_live_with_rprchange() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
     let a = src.join("file_168.docx");
     let b = src.join("file_169.docx");
     if !a.exists() || !b.exists() {

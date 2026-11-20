@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M72 — after Normal spacing merge, live pPr is spacing (+ B ind only);
 //! A's widowControl/tabs/suppress go in pPrChange old (file_77 Word parity).

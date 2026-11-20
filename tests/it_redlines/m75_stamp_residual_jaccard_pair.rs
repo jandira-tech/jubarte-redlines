@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M75 — after stamp confetti, short base residual paragraphs that share
 //! body tokens with a next residual (Jaccard ≥ 0.25) must pair for word-level

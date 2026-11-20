@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Pure validation of operations shared by the native, Python and npm CLIs.
 use jubarte::edit::flags::{FlagOp, Verb, editing_mode_conflict, plan_from_flags};

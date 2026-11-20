@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `RenderRequest.pages`: one layout pass for the whole document; the PDF,
 //! the PNGs and the report hold only the document pages asked for.

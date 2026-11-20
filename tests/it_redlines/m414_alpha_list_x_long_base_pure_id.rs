@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M414 — short alpha-list next × long base: pure-I/D (not free-mesh last label).
 //!
@@ -55,8 +55,8 @@ fn body_paras(xml: &str) -> Vec<(bool, bool, String)> {
 #[test]
 fn pageref_x_restart_list_pure_i_c() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("behavior__pageref_standalone_uppercase_h_7701e07f.docx");
     let b = src.join("super_editor__restart_numbering_sub_list_85ddcb79.docx");
     if !a.exists() || !b.exists() {

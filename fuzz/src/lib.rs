@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Shared allocator configuration for native fuzz harnesses.
 //! C address-sanitizer instrumentation and mimalloc's ASan tracking must be

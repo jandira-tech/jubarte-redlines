@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! The attribution syntax settled on 2026-10-18 (#1135), and edits inside
 //! pending insertions (#1136), on Word-made files.

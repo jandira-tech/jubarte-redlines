@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M67 — pure-del Heading residual spacing (before≥360 + after + line, no
 //! pStyle): strip whole `w:spacing`. Keep bare before=800 (file_196) and

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Every tracked path must check out on Windows. Git for Windows stops at
 //! MAX_PATH (260) for the full path, and the Actions runner checks out under

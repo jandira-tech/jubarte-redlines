@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M448 — pure-I-dominant body drops trailing bare empty after pure-D residual.
 //!
@@ -16,8 +16,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn diff_after8_no_trailing_bare_empty_after_pure_d() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__diff_after8_58e5c288.docx");
     let b = src.join("super_editor__doc_with_spacing_e3d47bd7.docx");
     if !a.exists() || !b.exists() {

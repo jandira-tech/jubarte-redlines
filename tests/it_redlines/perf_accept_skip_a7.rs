@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! ACCEPT-SKIP-A7 — when no w:cellDel in the tree, accept_deleted_cells must
 //! transfer the root NodeId (no full-tree rebuild).

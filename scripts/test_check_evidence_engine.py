@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 """scripts/check_evidence_engine.py: the commit the release evidence names
 builds the same CLI engine as the release tree (#1752, checklist 3#2).

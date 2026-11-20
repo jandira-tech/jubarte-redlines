@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Anchors that differ from the paragraph only in characters a reader
 //! cannot tell apart: a non-breaking space typed as a space, a curly quote

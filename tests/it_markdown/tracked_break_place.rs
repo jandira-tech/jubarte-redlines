@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A page break between the runs of a tracked change stays between those
 //! runs when the view is written back, in the mark that held it.

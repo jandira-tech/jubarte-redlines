@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! #1873: a table row keeps Word's save marks (`w:rsidR`, `w:rsidTr`)
 //! through a redline, Accept All and Reject All, as Word keeps them. The

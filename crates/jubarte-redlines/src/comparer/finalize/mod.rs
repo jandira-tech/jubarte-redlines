@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M4.F — markup finalization: turn the `pt:Status`-tagged tree into real
 //! `w:ins` / `w:del` / `w:rPrChange` / move markup, conjoin paragraph

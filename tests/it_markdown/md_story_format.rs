@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A header's or footer's paragraph keeps its own text colour and border.
 //! Demo.docx's header is grey (`w:color 595959`) over a thin blue rule (its

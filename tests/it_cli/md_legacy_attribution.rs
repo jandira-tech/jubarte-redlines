@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! Old attribution wrappers fail with a migration message at both entry points.
 use crate::common;
 use jubarte::markdown::{DocxOptions, markdown_to_docx};

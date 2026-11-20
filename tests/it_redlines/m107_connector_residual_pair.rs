@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M107 — short residual titles that share only a connector ("and") still
 //! pair for word-LCS (file_160 "Italic and Underline…" ↔ "Module 3: Tools and Systems").

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! file_22: after stamp, long pure-D base then short pure-I next must reorder
 //! to I before D so Word's first pages show the new title (not deleted base).

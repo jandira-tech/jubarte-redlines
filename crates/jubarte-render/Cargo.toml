@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 [package]
 name = "jubarte-render"
@@ -14,7 +14,7 @@ description = "The render product of the jubarte engine: DOCX to PDF and PNG, wi
 readme = "README.md"
 keywords = ["docx", "pdf", "render", "word", "png"]
 categories = ["text-processing", "rendering"]
-include = ["/src/**", "/assets/**", "/README.md", "/LICENSE"]
+include = ["/src/**", "/assets/**", "/README.md", "/LICENSE", "/NOTICE"]
 [lib]
 name = "jubarte_render"
 

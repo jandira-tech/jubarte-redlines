@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A refused candidate (`CANDIDATE_INVALID`) names the operation that
 //! causes the refusal, and the operations it needs, when the plan's own

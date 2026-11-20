@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only
+SPDX-License-Identifier: Apache-2.0
 -->
 
 # Changelog
@@ -14,6 +14,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
+
+### License
+
+- **jubarte is licensed under Apache-2.0 from this release.** Versions
+  0.18.0 and earlier were released under AGPL-3.0-only and stay under it.
+  Every crate, wheel, npm package and release archive now carries
+  `LICENSE` (the Apache License 2.0) and `NOTICE`, which reproduces the
+  MIT notices of the projects jubarte's code derives from (Docxodus and
+  Open-Xml-PowerTools, anymd, markdown2pdf, zipsign). Earlier packages
+  other than the `jubarte` crate shipped without those notices.
+- The bundled fonts keep their own licenses (SIL Open Font License 1.1,
+  Apache-2.0); release archives now include the Open Font License text.
+
+### Repository
+
+- The repository is `jandira-tech/jubarte`. The old address redirects.
+- The bench test documents (third-party files, some AGPL-3.0) moved to
+  the `jandira-tech/jubarte-test-corpus` repository, a git submodule at
+  `tests/corpus/bench`. Clone with `--recurse-submodules` to run the
+  tests.
 
 ### Crate split
 

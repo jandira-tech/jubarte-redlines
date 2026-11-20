@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `DocxOptions::page`: the page a Markdown document is written on when no
 //! reference document gives one (US Letter by default, or A4).

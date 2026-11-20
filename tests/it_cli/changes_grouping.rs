@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Plan 11 (#1261): one notion of a change. One author's touching marks of
 //! one kind are one logical change, listed once with a composite id

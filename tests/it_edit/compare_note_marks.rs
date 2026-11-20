@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! #1871: a note's own mark (`w:footnoteRef`, `w:endnoteRef`) keeps its run
 //! properties through a redline. The comparer leaves the mark out of the

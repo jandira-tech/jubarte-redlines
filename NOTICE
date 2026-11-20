@@ -1,14 +1,160 @@
 Jubarte
-Copyright (c) 2026 Jandira Technologies, LLC, for its contributions.
+Copyright 2026 Jandira Technologies, LLC
 
-This repository is licensed under GNU Affero General Public License v3.0
-only (AGPL-3.0-only). See LICENSE for the complete repository license.
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+Versions 0.18.0 and earlier were released under AGPL-3.0-only.
 
-The texts in LICENSES/ preserve attribution notices for historical upstream
-sources. They do not alter the repository-wide AGPL-3.0-only license or grant
-a separate license for Jandira Technologies, LLC contributions.
+This product includes software derived from the projects below. Each notice
+is reproduced as its license requires. They are attribution records: they do
+not offer Jubarte under another license.
 
-The OpenType MATH reader and math layout arithmetic are adapted from
-markdown2pdf (https://github.com/theiskaa/markdown2pdf), Copyright (c) 2023
-Ismael Shakverdiev. Its MIT notice is preserved in
-LICENSES/LicenseRef-markdown2pdf-MIT.txt.
+------------------------------------------------------------------------
+Docxodus (https://github.com/JSv4/Docxodus), a fork of Microsoft's
+Open-Xml-PowerTools. The document comparer is a Rust port of its
+WmlComparer and DocumentComparer.
+
+The MIT License (MIT)
+
+Copyright (c) Microsoft Corporation
+Copyright (c) 2025-2026 John Scrudato IV
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+------------------------------------------------------------------------
+Open-Xml-PowerTools (https://github.com/OfficeDev/Open-Xml-PowerTools),
+the project Docxodus forks.
+
+The MIT License (MIT)
+
+Copyright (c) .NET Foundation and Contributors
+All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+------------------------------------------------------------------------
+anymd. The Word to Markdown converter is adapted from its anymd-formats
+crate.
+
+MIT License
+
+Copyright (c) 2024-2026 SylphxAI
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+------------------------------------------------------------------------
+markdown2pdf (https://github.com/theiskaa/markdown2pdf). The OpenType MATH
+reader and the math layout arithmetic are adapted from it.
+
+MIT License
+
+Copyright (c) 2023 Ismael Shakverdiev
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+------------------------------------------------------------------------
+zipsign (https://github.com/Kijewski/zipsign), used under its MIT option.
+The release archive signature check is adapted from it.
+
+Copyright (c) 2023-2025 René Kijewski <crates.io@k6i.de>
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+------------------------------------------------------------------------
+Fonts. The renderer embeds Carlito (Copyright 2010-2013 tyPoland Lukasz
+Dziedzic) and Liberation (Copyright 2010 Google Corporation, 2012 Red Hat,
+Inc.), both under the SIL Open Font License 1.1. Release archives also
+carry Selawik (Copyright 2015 Microsoft Corporation, SIL Open Font License
+1.1) and Roboto Condensed (Copyright 2011 Google Inc., Apache License 2.0).
+The font license texts ship beside the fonts.
+
+------------------------------------------------------------------------
+Word table styles. The definitions of Microsoft Word's built-in Grid Table
+and List Table styles are Microsoft's. They are reproduced so a document
+that names one of those styles keeps the look Word gives it, and are not
+licensed by Jandira Technologies, LLC.

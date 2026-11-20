@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Word's Compare keeps the body bookmarks of both documents in the redline,
 //! so a TOC's PAGEREF fields and REF cross-references still resolve (an

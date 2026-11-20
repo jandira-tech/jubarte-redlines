@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 # The former name of jubarte's Python package, kept as a shim. The engine
 # ships as `jubarte-docx` (import `jubarte`, command `jubarte`); this
@@ -19,7 +19,8 @@ version = "0.18.0"
 description = "Former name of jubarte-docx, the Word-faithful DOCX redline engine: installs jubarte-docx and keeps import jubarte_redlines working"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "AGPL-3.0-only"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Jandira Technologies, LLC" }]
 dependencies = ["jubarte-docx==0.18.0"]
 

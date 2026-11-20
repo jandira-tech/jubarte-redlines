@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M318 — related legal prose (memo×nda): Word meshes MIX; classic pure-I/D
 //! wholesale must not fire when both sides have large shared vocabulary.
@@ -44,8 +44,8 @@ fn body_para_classes(xml: &str) -> Vec<char> {
 #[test]
 fn memorandum_x_nda_meshes_not_pure_id_wholesale() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("evals__memorandum_258c774a.docx");
     let b = src.join("evals__nda_7f304918.docx");
     if !a.exists() || !b.exists() {

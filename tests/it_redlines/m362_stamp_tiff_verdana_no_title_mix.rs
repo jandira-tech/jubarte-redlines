@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M362 — stamp file_173×174: keep pure-I TIFF title separate from Verdana.
 //!
@@ -18,8 +18,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn file_173_x_174_tiff_title_pure_i() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
     let a = src.join("file_173.docx");
     let b = src.join("file_174.docx");
     if !a.exists() || !b.exists() {

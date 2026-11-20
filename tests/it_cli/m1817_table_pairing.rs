@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! #1817 — a table replaced in place pairs with the revision's table the way
 //! Word 16's Compare pairs it, in Word mode. Before, jubarte wrote the

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 cff-version: 1.2.0
 message: "If you use jubarte in research, please cite it as below."
@@ -10,7 +10,7 @@ authors:
   - name: "Jandira Technologies, LLC"
 repository-code: "https://github.com/jandira-tech/jubarte"
 url: "https://github.com/jandira-tech/jubarte"
-license: AGPL-3.0-only
+license: Apache-2.0
 keywords:
   - docx
   - redline

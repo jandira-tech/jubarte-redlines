@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M76 helpers — related stamped variant detection (file_175 keeps full LCS)
 //! and joined residual tokenization for confetti residual pairing (M75).

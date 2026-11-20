@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Page raster over the layout display list: the same [`Page`]/[`Op`] stream
 //! the PDF writer serializes is painted into a bitmap, so a PNG page shows

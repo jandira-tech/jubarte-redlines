@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Word Compare pairs equal-count pure-paragraph docs positionally
 //! (heading_2_style × heading_3_center_italic: 3 mixed paras, not 4

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M25 — non-standard `w:`-namespace children inside `<w:sdtPr>` must be stripped
 //! (Word recovers corrupt input by dropping them; we match to produce valid output).

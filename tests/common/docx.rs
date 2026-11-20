@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! In-memory DOCX builder for inspection/edit/render tests. Produces the
 //! smallest Word-openable package: `[Content_Types].xml`, package rels,

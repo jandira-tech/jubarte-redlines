@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M350 — OOXML property demo × short SD-2672 RTL table free-mesh.
 //!
@@ -46,8 +46,8 @@ fn body_para_seq(xml: &str) -> String {
 #[test]
 fn rfonts_x_rtl_table_has_mix() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__ooxml_rFonts_rstyle_linked_combos_dem_213298de.docx");
     let b = src.join("behavior__sd_2672_rtl_table_63bd9d10.docx");
     if !a.exists() || !b.exists() {

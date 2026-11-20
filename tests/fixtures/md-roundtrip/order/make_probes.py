@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Write the revision-order probes: small docx files where something sits
 between, inside or across the two marks of a substitution (a comment range,
 a bookmark, a hidden run, a soft hyphen), in the body, a table cell, a

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M77 — mid-document pure-I then pure-D with more content following must
 //! NOT fold into a mixed para when body texts are unrelated.

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M320 — support_tickets × table_bookmark_end: first tables cell-mesh
 //! (R1C1×Ticket ID). M319 — Heading2 pure-I "Test 1…" stays pure-I (no MIX

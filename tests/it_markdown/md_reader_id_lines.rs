@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! The reader brings back what the agent view's id lines say about a
 //! paragraph (`<!-- p2-p4 empty -->`, `<!-- p5 TitlePage center -->`), so a

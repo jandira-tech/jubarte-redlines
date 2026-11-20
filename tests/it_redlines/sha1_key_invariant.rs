@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A unit's cached LCS keys always equal the fingerprints of the hash they are
 //! cached for. The LCS consults them ahead of the string (`sha1_key128` alone

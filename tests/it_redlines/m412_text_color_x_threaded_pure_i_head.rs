@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M412 — short color base × short threaded next: pure-I first next title.
 //!
@@ -55,8 +55,8 @@ fn body_paras(xml: &str) -> Vec<(bool, bool, String)> {
 #[test]
 fn text_color_x_threaded_pure_i_text_title() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__text_color_highlight_36cb4c90.docx");
     let b = src.join("super_editor__threaded_comment_27bda0ba.docx");
     if !a.exists() || !b.exists() {

@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A table's geometry rides on its line (#1472): the grid's column widths
 //! (`widths 2.1424in 0.985in 1.049in`), the table's preferred width

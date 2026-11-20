@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 // SPDX-FileCopyrightText: 2024-2026 SylphxAI
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-anymd-MIT
 
 //! Pictures of a Word document written out beside the Markdown, as pandoc's
 //! `--extract-media` does. Each raster picture is named by the first 16 hex

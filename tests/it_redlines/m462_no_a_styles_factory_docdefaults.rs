@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M462 — when A has no styles part, Word does NOT adopt B's docDefaults
 //! wholesale. It synthesizes its FACTORY docDefaults (kern=2 sz=24 szCs=24
@@ -43,8 +43,8 @@ fn live(style: &str) -> String {
 #[test]
 fn factory_docdefaults_and_style_bake_when_a_has_no_styles() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("behavior__tiff_image_2d531f83.docx");
     let b = src.join("behavior__two_column_simple_e77be963.docx");
     if !a.exists() || !b.exists() {

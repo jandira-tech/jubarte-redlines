@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Tests for check_rtd.py: the ReadTheDocs books match the workspace.
 
 Run with PyYAML: `uv run --with pyyaml python3 scripts/test_check_rtd.py`.

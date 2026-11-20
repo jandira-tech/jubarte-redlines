@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! The revision-order probes (`tests/fixtures/md-roundtrip/order`, written
 //! by its `make_probes.py`): something between, inside or across the two
 //! marks of a substitution, in the body, a cell, a header and a footnote.

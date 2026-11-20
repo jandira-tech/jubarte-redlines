@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 """scripts/lane_validity.py: every validator error signature in the release's
 redlines already exists in one of their sources or in Word's own redline

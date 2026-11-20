@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `jubarte debug FILE --check render`: what each story part should put on
 //! the page, for diagnosing a low score against Word's PDF. Every story part

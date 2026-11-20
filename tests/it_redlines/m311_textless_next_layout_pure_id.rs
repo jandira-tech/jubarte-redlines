@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M311 — textless multi-para next layout vs content base.
 //! Word (image_inline×rtl_page_numpages): pure-I all empty next (~31) then
@@ -23,8 +23,8 @@ fn word_settings() -> WmlComparerSettings {
 #[test]
 fn image_x_rtl_keeps_wholesale_empty_pure_ins() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__image_inline_and_block_ad6109b3.docx");
     let b = src.join("behavior__rtl_page_numpages_54739e26.docx");
     if !a.exists() || !b.exists() {

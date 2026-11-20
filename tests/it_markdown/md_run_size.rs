@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A paragraph's own text size rides on its id line (#1474): `size 9pt`
 //! when every run of its text states one size its style does not give, or,

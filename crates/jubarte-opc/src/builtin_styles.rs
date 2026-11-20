@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Word's built-in style names: the 376 `w:lsdException` names Word 16 writes
 //! into every stylesheet it saves (395 of its redlines in the bench corpus

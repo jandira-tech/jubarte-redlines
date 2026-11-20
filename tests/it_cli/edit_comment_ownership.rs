@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A comment id is an identifier, and a comment speaks for its author
 //! (#1264). Settling revisions never renumbers the comments that stay, so

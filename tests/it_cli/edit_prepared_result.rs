@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `PreparedEdit` (V2-08): one preparation path shared by dry run and
 //! apply, the primary bytes chosen before final checks, and checks that run

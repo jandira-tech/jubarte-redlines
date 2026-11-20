@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only
+SPDX-License-Identifier: Apache-2.0
 -->
 
 # Jubarte Redlines Agent Guide
@@ -298,8 +298,11 @@ one they are format-checked only, and the release says so.
 
 ## Licensing and provenance
 
-The repository's only project license is AGPL-3.0-only (`LICENSE`), and
-Jandira Technologies, LLC owns its contributions. File-level licensing is
+The repository's only project license is Apache-2.0 (`LICENSE`) since
+0.19.0, and Jandira Technologies, LLC owns its contributions. `NOTICE`
+carries the upstream attributions; `scripts/sync_license_files.py` copies
+`LICENSE` and `NOTICE` into every package folder, so edit the root files
+only. File-level licensing is
 tracked with REUSE/SPDX: commentable project files carry SPDX headers, while
 `REUSE.toml` covers binary fixtures and records the preserved upstream MIT
 attribution texts under `LICENSES/`.

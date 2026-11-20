@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A note's paragraph style survives the round trip docx → view → docx:
 //! its id line names it after the id (`<!-- endnotes.p2 Endnote -->`) only

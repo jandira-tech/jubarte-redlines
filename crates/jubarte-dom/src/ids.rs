@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! The one grammar of the ids jubarte prints and reads: [`ShortId`]
 //! (`src/ids/short.rs`, spec 2026-10-13 §2 and §2.1). The functions here are

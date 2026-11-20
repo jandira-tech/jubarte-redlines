@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Reject All as Microsoft Word does it. Each rule was read off Word's own
 //! Reject All of Word's redlines (the bench's `rejected_tracking` corpus,

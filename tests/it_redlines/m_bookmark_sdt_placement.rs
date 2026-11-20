@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A carried bookmark stays out of a content control its source bookmark was
 //! not in. Placement follows the text, and the text at a bookmark's edge is

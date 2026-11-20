@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Parity check v2: the Rust CLI, the Python extension and the WASM build of
 jubarte must produce the SAME redline (and the same PDF of it) for the same
 inputs — from builds whose identity is recorded and, when --expect-commit /

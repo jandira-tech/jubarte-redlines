@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M440 — multi pure-I short list labels fold last label into empty pure-D.
 //!
@@ -17,8 +17,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn list_spacer_last_label_mixes_with_empty_pure_d() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__list_spacer1_06383c66.docx");
     let b = src.join("super_editor__list_with_break_exported_broken_45f7bd19.docx");
     if !a.exists() || !b.exists() {

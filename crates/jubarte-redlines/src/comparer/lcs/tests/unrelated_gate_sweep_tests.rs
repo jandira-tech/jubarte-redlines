@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Pairs of whole-document shapes through the unrelated-source gates, the
 //! paragraph-window step and the full LCS driver. The shapes are the ones

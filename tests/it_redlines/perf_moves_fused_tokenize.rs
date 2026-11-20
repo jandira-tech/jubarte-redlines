@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! MOVES-FUSE-01 — the fused word-count + tokenize pass must be
 //! byte-for-byte equivalent to calling `count_words` and `tokenize`
