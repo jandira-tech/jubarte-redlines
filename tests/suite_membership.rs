@@ -23,6 +23,7 @@ const STANDALONE: &[&str] = &[
     "bench_fixture_paths_resolve",
     "cli_version",
     "convert_docx_to_pdf",
+    "corpus_present",
     "coverage_gates",
     "crate_layering",
     "deny_build_scripts",

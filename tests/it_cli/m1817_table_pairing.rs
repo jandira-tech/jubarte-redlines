@@ -36,7 +36,7 @@ use jubarte::xmllinq::{Dom, NodeId};
 
 fn fixture(name: &str) -> Vec<u8> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/corpus/neurotic_docx_bench/corpus/word/clean/docx")
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx")
         .join(name);
     std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
@@ -112,7 +112,7 @@ fn tables(docx: &[u8]) -> Vec<(Vec<Row>, bool)> {
 
 fn superdoc(name: &str) -> Vec<u8> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source")
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source")
         .join(name);
     std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }

@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-MAPPING = ROOT / "tests/corpus/neurotic_docx_bench/corpus/word_based/centralized_mapping.csv"
+MAPPING = ROOT / "tests/corpus/bench/neurotic_docx_bench/corpus/word_based/centralized_mapping.csv"
 
 
 def read_rows(path: Path, required: set[str]) -> list[dict[str, str]]:

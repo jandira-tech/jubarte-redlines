@@ -241,7 +241,7 @@ fn an_empty_list_selects_nothing() {
 
 /// The bench fixtures copied into this repository.
 fn bench() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/neurotic_docx_bench")
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/bench/neurotic_docx_bench")
 }
 
 /// Owner, record type, id and payload (without id), in stylesheet order.
@@ -1066,7 +1066,7 @@ fn a_text_box_change_lists_once_and_resolves_in_both_copies() {
 fn a_word_redlines_text_box_twins_list_once() {
     let word = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/corpus/neurotic_docx_bench/corpus/word/tracking_without_comments/docx/4640e71ddd__vs__1424386e9b_redline_32d0abcfc9.docx"
+        "/tests/corpus/bench/neurotic_docx_bench/corpus/word/tracking_without_comments/docx/4640e71ddd__vs__1424386e9b_redline_32d0abcfc9.docx"
     ))
     .unwrap();
     let listed = ids(&word);

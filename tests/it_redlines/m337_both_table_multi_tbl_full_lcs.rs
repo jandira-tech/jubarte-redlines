@@ -46,7 +46,7 @@ fn body_para_classes(xml: &str) -> Vec<char> {
 fn pirates_x_table_left_not_wholesale_pure_id() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__sd_2766_pirates_tracked_changes_3285d875.docx");
     let b = src.join("super_editor__sd_1494_table_left_indent_11bb24c7.docx");
     if !a.exists() || !b.exists() {
@@ -93,7 +93,7 @@ fn hyperlink_x_rtl_pairs_the_tables_like_word() {
     // keeps every other paragraph pure.
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__superdoc_hyperlink_cases_1dde9cd3.docx");
     let b = src.join("behavior__sd_2672_rtl_table_63bd9d10.docx");
     if !a.exists() || !b.exists() {
@@ -166,7 +166,7 @@ fn m337_word_retains_observed_extra_empty_cell_while_faithful_restores_source_ce
     use jubarte::opc::PartFs;
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let source =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = source.join("super_editor__sd_2766_pirates_tracked_changes_3285d875.docx");
     let b = source.join("super_editor__sd_1494_table_left_indent_11bb24c7.docx");
     if !a.exists() || !b.exists() {
@@ -278,7 +278,7 @@ fn observed_word_table_mesh_families_keep_their_shape_and_faithful_source_geomet
     };
     for (folder, a, b, word_accepted, word_rejected) in cases {
         let source = root
-            .join("tests/corpus/neurotic_docx_bench/corpus")
+            .join("tests/corpus/bench/neurotic_docx_bench/corpus")
             .join(folder)
             .join("docx_source");
         if !source.join(a).exists() || !source.join(b).exists() {

@@ -52,7 +52,7 @@ fn text_of(p: &str) -> String {
 fn compare_pair(dir: &str, a: &str, b: &str) -> Option<String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src = root
-        .join("tests/corpus/neurotic_docx_bench/corpus")
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus")
         .join(dir);
     let ap = src.join(a);
     let bp = src.join(b);
@@ -199,7 +199,7 @@ fn full_demo_title_fold_restores_both_authored_paragraph_property_sets() {
         accept_revisions, compare_documents_with_settings, reject_revisions,
     };
     let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source");
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source");
     let a = source.join("double_spacing_bold_demo_id_paraid_overflow.docx");
     let b = source.join("eigenpal_docx_editor_suggesting_mixed_edits.docx");
     if !a.exists() || !b.exists() {

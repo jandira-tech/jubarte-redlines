@@ -20,7 +20,7 @@ use jubarte::document_comparer::accept_revisions;
 
 /// Word's accepted redlines, copied into this repository.
 fn corpus() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/_to_improve_accepted_changes")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/bench/_to_improve_accepted_changes")
 }
 
 #[test]

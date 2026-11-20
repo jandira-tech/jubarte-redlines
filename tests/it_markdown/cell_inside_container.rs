@@ -178,7 +178,7 @@ unplaced: [ins r1 @C in p0]        # changes no other line shows
 #[test]
 fn a_nested_row_names_its_later_paragraph() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(
-        "tests/corpus/neurotic_docx_bench/corpus/word/tracking_without_comments/docx/0b2a46481b_nested_table_rowspan__vs__bdd82b239b_numbered_list_demo_id_paraid_overflow_redline_c053ccd3b8.docx",
+        "tests/corpus/bench/neurotic_docx_bench/corpus/word/tracking_without_comments/docx/0b2a46481b_nested_table_rowspan__vs__bdd82b239b_numbered_list_demo_id_paraid_overflow_redline_c053ccd3b8.docx",
     );
     let source = std::fs::read(&path).expect("the nested row fixture");
     let markdown = view_of(&source);

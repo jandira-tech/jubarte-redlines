@@ -65,7 +65,7 @@ fn body_paras(xml: &str) -> Vec<(bool, bool, String)> {
 fn basic_list_x_sd1707_pure_i_next_then_pure_d_list() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__basic_list_0fcfe705.docx");
     let b = src.join("super_editor__sd_1707_list_enter_track_changes_with_fd93fd8b.docx");
     if !a.exists() || !b.exists() {

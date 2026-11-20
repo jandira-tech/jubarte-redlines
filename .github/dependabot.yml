@@ -26,3 +26,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+  # The bench test corpus (tests/corpus/bench).
+  - package-ecosystem: "gitsubmodule"
+    directory: "/"
+    schedule:
+      interval: "weekly"

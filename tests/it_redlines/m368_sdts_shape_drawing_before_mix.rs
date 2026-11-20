@@ -19,7 +19,7 @@ use jubarte::document_comparer::compare_documents_with_settings;
 fn sdts_x_shape_before_folds_into_drawing_mix() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__sdts_basic_45263ca5.docx");
     let b = src.join("super_editor__shape_group_ce60e1e6.docx");
     if !a.exists() || !b.exists() {

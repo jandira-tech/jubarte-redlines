@@ -447,7 +447,7 @@ fn stored_dates(bytes: &[u8]) -> Vec<String> {
 #[test]
 fn corpus_round_trip_preserves_all_361_stored_dates() {
     let bytes = std::fs::read(
-        "tests/corpus/_to_improve_accepted_changes/_original_unaccepted_docx/791ca61933.docx",
+        "tests/corpus/bench/_to_improve_accepted_changes/_original_unaccepted_docx/791ca61933.docx",
     )
     .unwrap();
     let original = stored_dates(&bytes);

@@ -65,7 +65,7 @@ fn body_paras(xml: &str) -> Vec<(bool, bool, String)> {
 fn features_x_fields_meshes_html_with_annotation() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__features_redlines_comments_annotation_769ed131.docx");
     let b = src.join("super_editor__fields_test_4a8ffd8c.docx");
     if !a.exists() || !b.exists() {

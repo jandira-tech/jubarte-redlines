@@ -35,7 +35,7 @@ fn text(p: &str) -> String {
 fn bookmark_x_broken_list_short_a_stays_pure_i() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__bookmark_use_cases_d20f31f6.docx");
     let b = src.join("super_editor__broken_complex_list_293fda86.docx");
     if !a.exists() || !b.exists() {

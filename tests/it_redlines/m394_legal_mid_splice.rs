@@ -67,7 +67,7 @@ fn body_paras(xml: &str) -> Vec<(bool, bool, String)> {
 fn employment_x_lease_mid_splice_employment_before_late_lease() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("evals__employment_offer_4cf5a872.docx");
     let b = src.join("evals__lease_agreement_7081191d.docx");
     if !a.exists() || !b.exists() {
@@ -117,7 +117,7 @@ fn employment_x_lease_mid_splice_employment_before_late_lease() {
 fn memo_x_nda_headers_pure_d_before_nda_body() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("evals__memorandum_258c774a.docx");
     let b = src.join("evals__nda_7f304918.docx");
     if !a.exists() || !b.exists() {

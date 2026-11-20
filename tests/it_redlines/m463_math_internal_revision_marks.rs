@@ -31,7 +31,7 @@ fn last_tag_before(hay: &str, i: usize) -> &str {
 fn math_revision_marks_go_inside_runs() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("behavior__math_func_tests_0434dd11.docx");
     let b = src.join("behavior__math_groupchr_tests_4a4970fc.docx");
     if !a.exists() || !b.exists() {

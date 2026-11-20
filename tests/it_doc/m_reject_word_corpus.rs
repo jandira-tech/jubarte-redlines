@@ -21,7 +21,7 @@ use jubarte::document_comparer::reject_revisions;
 
 /// The bench fixtures copied into this repository.
 fn bench() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/neurotic_docx_bench")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/bench/neurotic_docx_bench")
 }
 
 #[test]

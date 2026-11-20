@@ -5,7 +5,7 @@ List Table styles (1 to 7, plain and Accent 1 to 6): borders, shading,
 theme colours and tints, as Word writes them into a document that uses
 them. scripts/table_styles_asset.py extracted them on 2026-10-14 from a
 Word-written test fixture
-(tests/corpus/neurotic_docx_bench/grok_run/fixtures_500/
+(tests/corpus/bench/neurotic_docx_bench/grok_run/fixtures_500/
 00f45b1b7812db57f5a024f116de6c6f0cfab5b79c9bc33657a6be57657d181d.docx),
 replacing each resolved colour with a placeholder the writer resolves from
 the written document's theme.

@@ -2467,7 +2467,7 @@ fn split_move_ranges_are_a_ring1_warning_once() {
 /// The #1939 base: a package both tools validate clean. The probe splices
 /// markers over the first `</w:t></w:r></w:p>`, the audit builder's replace.
 const NAMELESS_MOVE_BASE: &[u8] = include_bytes!(
-    "corpus/neurotic_docx_bench/corpus/word_based/docx_source/blue_centered_title_demo_style_default_missing.docx"
+    "corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source/blue_centered_title_demo_style_default_missing.docx"
 );
 
 fn splice_first_paragraph_end(markers: &str) -> Vec<u8> {

@@ -767,7 +767,7 @@ fn a_comment_on_a_numbered_document_records_no_change() {
 /// A bench fixture under `tests/corpus`, by file name.
 fn bench_clean(name: &str) -> Vec<u8> {
     std::fs::read(format!(
-        "tests/corpus/neurotic_docx_bench/corpus/word/clean/docx/{name}"
+        "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/{name}"
     ))
     .unwrap()
 }

@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only AND Apache-2.0 AND OFL-1.1 AND LicenseRef-Microsoft-MIT AND LicenseRef-Docxodus-MIT AND LicenseRef-anymd-MIT AND LicenseRef-markdown2pdf-MIT AND LicenseRef-zipsign-MIT AND LicenseRef-docen-MIT AND LicenseRef-Bench-Fixtures AND MIT AND MPL-2.0
+SPDX-License-Identifier: AGPL-3.0-only AND Apache-2.0 AND OFL-1.1 AND LicenseRef-Microsoft-MIT AND LicenseRef-Docxodus-MIT AND LicenseRef-anymd-MIT AND LicenseRef-markdown2pdf-MIT AND LicenseRef-zipsign-MIT AND LicenseRef-docen-MIT AND MIT AND MPL-2.0
 -->
 
 # Third-party attribution texts
@@ -39,11 +39,6 @@ did not author:
   [docen](https://github.com/DemoMacro/docen), Copyright (c) 2025 Demo Macro.
   `tests/fixtures/md-roundtrip/demo.docx` is docen's feature showcase as
   Arthur supplied it (its `docProps/core.xml` dates it 2026-10-15).
-- `LICENSES/LicenseRef-Bench-Fixtures.txt` — provenance and the docx-corpus
-  ODC-By attribution for the test fixtures copied from neurotic_docx_bench
-  (`tests/corpus/neurotic_docx_bench/` and
-  `tests/corpus/_to_improve_accepted_changes/`): third-party documents and
-  Microsoft Word's own output, not licensed by Jandira.
 - `LICENSES/Apache-2.0.txt` — Apache License 2.0 text for the Roboto
   Condensed fonts (`assets/fonts/extra/RobotoCondensed-*.ttf`, (c) 2011
   Google Inc.), the exact files Word draws from its cloud-font cache.
@@ -67,3 +62,9 @@ entry here is attribution only, not a license for Jubarte code.
 The non-AGPL license identifiers in this file's REUSE header account for
 these preserved records only. They are not attached to Jubarte source
 files.
+
+The bench test corpus is not in this repository. It is the git submodule
+`tests/corpus/bench`
+([jandira-tech/jubarte-test-corpus](https://github.com/jandira-tech/jubarte-test-corpus)):
+third-party documents and Microsoft Word's own output, not licensed by
+Jandira. Its `PROVENANCE.txt` says where each group comes from.

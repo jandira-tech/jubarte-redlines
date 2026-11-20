@@ -45,7 +45,7 @@ fn body_para_classes(xml: &str) -> Vec<char> {
 fn memorandum_x_nda_meshes_not_pure_id_wholesale() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("evals__memorandum_258c774a.docx");
     let b = src.join("evals__nda_7f304918.docx");
     if !a.exists() || !b.exists() {

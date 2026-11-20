@@ -18,7 +18,7 @@ use jubarte::document_comparer::compare_documents_with_settings;
 fn missing_sectpr_x_fields_test_no_sdt_in_redline() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__missing_sectpr_967a402d.docx");
     let b = src.join("super_editor__fields_test_4a8ffd8c.docx");
     if !a.exists() || !b.exists() {
@@ -64,7 +64,7 @@ fn missing_sectpr_x_fields_test_no_sdt_in_redline() {
 fn powertools_faithful_keeps_sdts() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__missing_sectpr_967a402d.docx");
     let b = src.join("super_editor__fields_test_4a8ffd8c.docx");
     if !a.exists() || !b.exists() {
