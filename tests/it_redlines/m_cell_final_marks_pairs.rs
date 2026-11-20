@@ -79,8 +79,8 @@ fn document(cell: &str) -> Vec<u8> {
 
 /// The body's blocks as `[tbl [tr [tc [p text]]]]`: tables, rows, cells,
 /// paragraphs with their visible text, and content controls (`[sdt …]`),
-/// so a block control that ends up inside a paragraph shows (crush on
-/// #1680, round 10).
+/// so a block control that ends up inside a paragraph shows
+/// (#1680, round 10).
 fn shape(bytes: &[u8]) -> String {
     let xml = part_string(bytes, "word/document.xml").unwrap();
     // #1703: an emptied control's five-space placeholder run is Word's own

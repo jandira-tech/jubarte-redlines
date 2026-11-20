@@ -1057,7 +1057,7 @@ mod tests {
         );
     }
 
-    /// CodeRabbit on #1286: a recorded `--reject` is silent, and the plan's
+    /// #1286: a recorded `--reject` is silent, and the plan's
     /// reject list strikes and restores; merged, the recorded id would turn
     /// visible.
     #[test]

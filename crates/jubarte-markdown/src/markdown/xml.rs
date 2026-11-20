@@ -3554,7 +3554,7 @@ mod tests {
     use super::*;
 
     /// Whole character counts keep their zeros: `0ch` is a stated zero and
-    /// `10ch` is ten (#2133 review, Bugbot).
+    /// `10ch` is ten (#2133 review).
     #[test]
     fn char_units_keep_the_zeros_of_whole_counts() {
         for (hundredths, want) in [

@@ -73,7 +73,7 @@ fn a_formatting_change_inside_an_insertion_names_that_parent() {
     );
 }
 
-/// coderabbit review 5816561921: the table-cell `fmt … in pN` entry names
+/// the review 5816561921: the table-cell `fmt … in pN` entry names
 /// the insertion too, and keeps it through a round trip.
 #[test]
 fn a_cell_formatting_change_inside_an_insertion_names_that_parent() {

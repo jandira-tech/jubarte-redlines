@@ -562,7 +562,7 @@ fn a_last_paragraph_drawing_a_text_box_keeps_its_start() {
     }
 }
 
-/// Cursor Bugbot on #1921: a paragraph inserted between the last text and a
+/// #1921: a paragraph inserted between the last text and a
 /// trailing paragraph without text does not take that paragraph's start.
 #[test]
 fn a_paragraph_inserted_before_a_trailing_picture_leaves_its_start() {

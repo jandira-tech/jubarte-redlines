@@ -496,7 +496,7 @@ fn invalid_numbers_pages_palettes_and_render_combinations_are_usage_errors() {
             2
         );
     }
-    // Codex on #440 and #441: every task that draws revisions refuses a
+    // #440 and #441: every task that draws revisions refuses a
     // palette without `custom` before reading a document, as convert does.
     let palette = [
         "--revisions",
@@ -586,7 +586,7 @@ fn diff_has_no_rendering_flags() {
     }
 }
 
-/// Codex on #442: add draws no PDF or PNG, so its help names none; edit's
+/// #442: add draws no PDF or PNG, so its help names none; edit's
 /// does. Both say what another -o extension writes.
 #[test]
 fn add_help_names_only_what_add_writes() {
@@ -913,7 +913,7 @@ fn parse_json_resolves_a_bare_plan() {
     );
     assert_eq!(bare["args"]["plan"], "d/a_plan.json", "{bare}");
     assert_eq!(bare["args"]["plan_default"], true, "{bare}");
-    // Codex on #433: a path ending in a separator names a folder, so the
+    // #433: a path ending in a separator names a folder, so the
     // parser refuses it for every host alike.
     let folder = parse(&["add", "a.docx", "--plan", "new.json/"], &["add"]);
     assert_eq!(folder["exit_code"], 2, "{folder}");
@@ -1836,7 +1836,7 @@ fn quiet_is_global_before_or_after_the_task() {
     );
 }
 
-/// Codex on #437: help under a retired name still says it is retired, in
+/// #437: help under a retired name still says it is retired, in
 /// the binary and in the hosts (the parser's help object carries the notes).
 #[test]
 fn a_retired_names_help_carries_its_note() {

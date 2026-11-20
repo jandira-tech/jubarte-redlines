@@ -568,7 +568,7 @@ fn repair_tells_structure_from_history() {
     assert_eq!(code, 1, "{out}{err}");
     assert!(!out.contains("history"), "{out}");
     assert!(!dir.path().join("d.docx").exists());
-    // So does one that is no Word package (Codex on #1666).
+    // So does one that is no Word package (#1666).
     std::fs::write(dir.path().join("garbage.docx"), b"not a zip").unwrap();
     let (code, out, err) = run(
         dir.path(),
@@ -587,7 +587,7 @@ fn repair_tells_structure_from_history() {
     assert!(!out.contains("history"), "{out}");
     assert!(!dir.path().join("e.docx").exists());
     // And a ZIP that is no Word package: an empty one, or one holding no
-    // main document (codex and MiniMax on #1666, round 6).
+    // main document (#1666, round 6).
     let mut plain = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     plain
         .start_file("notes.txt", zip::write::SimpleFileOptions::default())

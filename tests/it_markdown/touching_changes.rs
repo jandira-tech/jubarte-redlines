@@ -77,7 +77,7 @@ fn ids_in_prose_are_not_tags() {
 }
 
 /// A comment's text is prose too, even when it cites tags with their
-/// handles (jules 4515602977).
+/// handles (review 4515602977).
 #[test]
 fn ids_in_a_comment_are_not_tags() {
     let out = written("pay {~~old~>new~~}{>>c1 @AC: as r1 @AC and r2 @AC say<<} now\n");

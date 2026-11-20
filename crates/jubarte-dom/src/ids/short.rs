@@ -196,7 +196,7 @@ impl fmt::Display for Step {
 /// names; headers and footers are `headerN` and `footerN`.
 const PARTS: &[&str] = &["footnotes", "endnotes", "comments", "styles", "numbering"];
 
-/// Whether `head` names a part (grok review of #24a: any lowercase word was
+/// Whether `head` names a part (#24a: any lowercase word was
 /// a part, so `row`, `page` or `body1` parsed).
 fn part_stem(head: &str) -> bool {
     PARTS.contains(&head)
@@ -537,7 +537,7 @@ mod tests {
             "p12 ",
             "p 12",
             "p4294967296999999999999",
-            // grok review of #24a
+            // #24a
             "row",
             "cell",
             "page",

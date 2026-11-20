@@ -2798,7 +2798,7 @@ fn add_content_controls_with_owners(
                 .unwrap_or_default();
             // The first of the joined paragraph's children that came from a
             // paragraph after the control: a run, or content without one
-            // (an equation, codex on #1714).
+            // (an equation, #1714).
             let from_after = |dom: &Dom, node: NodeId| {
                 dom.attribute(node, &unique_id)
                     .and_then(|id| {

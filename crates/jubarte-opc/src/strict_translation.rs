@@ -1224,7 +1224,7 @@ mod tests {
 
     /// Custom XML data holds the application's own XML: a Strict namespace
     /// it declares stays, however its name is spelled, in a Strict package
-    /// and in a Transitional one (crush on #1666, round 6).
+    /// and in a Transitional one (#1666, round 6).
     #[test]
     fn custom_xml_data_is_never_translated() {
         let data: &[u8] = br#"<inventory xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"><item w:id="1"/></inventory>"#;
@@ -1264,7 +1264,7 @@ mod tests {
     }
 
     /// A part typed as XML whose bytes are no UTF-8 is left as it is, never
-    /// written back through a lossy decoding (MiniMax on #1666, round 6).
+    /// written back through a lossy decoding (#1666, round 6).
     #[test]
     fn a_typed_part_that_is_no_utf8_keeps_its_bytes() {
         let types: &[u8] = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/blob.dat" ContentType="application/xml"/></Types>"#;

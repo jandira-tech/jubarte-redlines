@@ -2203,7 +2203,7 @@ mod tests {
     /// legacy local-name read.
     #[test]
     fn prefixed_or_non_utf8_metadata_is_not_relabelled() {
-        // #2080 review (Bugbot): a prefixed root in a foreign namespace has
+        // #2080 review: a prefixed root in a foreign namespace has
         // no default xmlns, and a UTF-16 or invalid UTF-8 document made the
         // gate's reader stop with an encoding error; both used to pass the
         // gate while the record reader still relabelled their children.

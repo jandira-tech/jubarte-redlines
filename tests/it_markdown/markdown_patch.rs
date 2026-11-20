@@ -736,7 +736,7 @@ fn a_header_or_footer_change_is_a_hunk_of_its_own() {
 
 /// Each header and footer starts clean: a comment whose range a header
 /// closes after its last paragraph does not open the footer's first
-/// paragraph (#2134 review, Bugbot).
+/// paragraph (#2134 review).
 #[test]
 fn a_story_s_trailing_comment_note_stays_out_of_the_next_story() {
     let (w, r) = (common::docx::W_NS, common::docx::R_NS);
@@ -782,7 +782,7 @@ fn a_story_s_trailing_comment_note_stays_out_of_the_next_story() {
 }
 
 /// A header numbers its own list: it repeats on every page, so it does not
-/// go on with the body's count (#2134 review, Bugbot).
+/// go on with the body's count (#2134 review).
 #[test]
 fn a_header_list_does_not_continue_the_body_s_numbering() {
     let (w, r) = (common::docx::W_NS, common::docx::R_NS);

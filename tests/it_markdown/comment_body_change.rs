@@ -84,7 +84,7 @@ fn a_comment_body_change_reads_back_as_a_change() {
     );
 }
 
-/// jules 4499023082: a comment that quotes the characters the writer uses
+/// Review 4499023082: a comment that quotes the characters the writer uses
 /// as change stand-ins (U+2E0E ⸎, U+2E0F ⸏, …) keeps them as text and
 /// opens no change.
 #[test]

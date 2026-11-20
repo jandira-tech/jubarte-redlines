@@ -45,7 +45,7 @@ class Timeout(unittest.TestCase):
                 cli_locations.run(Path("target/debug/jubarte"), ["read", "x.docx"], Path("."))
 
     def test_a_timeout_cancels_the_probes_still_queued(self):
-        # sourcery review of #471: pool.map submits every probe, and leaving
+        # #471: pool.map submits every probe, and leaving
         # the executor waited for all of them, each up to the timeout.
         calls = []
         lock = threading.Lock()

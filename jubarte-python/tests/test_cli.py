@@ -479,7 +479,7 @@ def test_convert_refuses_report_aliases_without_modifying_files(letter, tmp_path
 
 @pytest.mark.parametrize("flag", ["--report", "--font-report"])
 def test_convert_refuses_a_side_file_named_like_a_png_page(letter, tmp_path, capsys, flag):
-    # CodeRabbit on #438: it would replace the page it is named like.
+    # #438: it would replace the page it is named like.
     page = tmp_path / "result-page-01.png"
     assert main(["convert", str(letter), "-o", str(tmp_path / "result.png"), flag, str(page)]) == 1
     assert f"error: {flag} '{page}' is the same file as the PNG output" in capsys.readouterr().err.splitlines()
@@ -1502,7 +1502,7 @@ def test_plan_paths_as_typed_and_strict_utf8_as_the_binary(
     assert main(["edit", "./letter.docx", "--plan", "./plan.json", "-p", "p1", "--content", "X."]) == 0
     assert capsys.readouterr().out.strip().endswith("apply with: jubarte edit ./letter.docx --plan ./plan.json")
     # A plan path ending in a separator names a folder: the shared parser
-    # refuses it, whether the plan exists or not (Codex on #433).
+    # refuses it, whether the plan exists or not (#433).
     for spelled in ("plan.json/", "new.json/"):
         with pytest.raises(SystemExit) as error:
             main(["edit", "letter.docx", "--plan", spelled, "-p", "p2", "--content", "Y."])
@@ -1764,7 +1764,7 @@ def test_editing_mode_takes_a_plan_that_settles_every_change(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # Codex on #425: what -p rN --accept settles is not kept. The
+    # #425: what -p rN --accept settles is not kept. The
     # tracked fixture's substitution is one grouped change (r1+2); a member
     # id alone leaves the group unsettled, which --editing-mode refuses.
     assert main(["changes", str(tracked), "--json"]) == 0
@@ -2077,7 +2077,7 @@ def test_read_for_edit_usage_errors_as_the_binary(tmp_path: Path, capsys: pytest
 def test_replace_never_writes_through_a_link_at_the_staging_name(tmp_path: Path) -> None:
     # The staged file is created fresh, under a name nobody can guess: a
     # link planted where the old pid-based name pointed is left alone, and
-    # what it names keeps its bytes (CodeRabbit on #1698).
+    # what it names keeps its bytes (#1698).
     from jubarte.__main__ import _replace
 
     victim = tmp_path / "victim.txt"

@@ -750,7 +750,7 @@ class MeasuredSentence(SixFiles):
                 self.assertIn(named, r.stderr)
 
     def test_a_no_failed_before_the_sample_size_is_in_the_sentence(self) -> None:
-        # codex on #1743 (#1783): the match starts at "N-item samples", the
+        # #1743 (#1783): the match starts at "N-item samples", the
         # sentence before it
         r = self.numbers("--summary", self.SOUND.replace("On two 3-item samples",
                                                           "No failed documents occurred on two 3-item samples"))
@@ -760,7 +760,7 @@ class MeasuredSentence(SixFiles):
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_no_failed_omitted_says_the_failures_are_counted(self) -> None:
-        # codex on #1743 (#1783): "no failed redlines are omitted" in the
+        # #1743 (#1783): "no failed redlines are omitted" in the
         # sentence is the opposite of a claim that none failed
         for text in (self.SOUND.replace("On two 3-item samples", "No failed redlines are omitted from two 3-item samples"),
                      self.SOUND.replace("On two 3-item samples scored",
@@ -770,7 +770,7 @@ class MeasuredSentence(SixFiles):
                 self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_no_failed_omitted_reads_auxiliaries_and_adverbs(self) -> None:
-        # codex on #1743 (#1788): one auxiliary was all the exception allowed
+        # #1743 (#1788): one auxiliary was all the exception allowed
         for opening in ("No failed redlines have been omitted from two 3-item samples",
                         "With no failed redlines ever omitted from two 3-item samples",
                         "With no failed redlines permanently excluded from two 3-item samples",
@@ -786,7 +786,7 @@ class MeasuredSentence(SixFiles):
         self.assertIn('"no failed redlines are omitted"', r.stderr)
 
     def test_a_sentence_ends_inside_closing_quotes_and_at_a_block(self) -> None:
-        # codex on #1743 (#1789): another sentence's claim joined the
+        # #1743 (#1789): another sentence's claim joined the
         # measured one through a closing quote, a bracket or a blank line
         for before in ('The validation suite reported "no failed redlines." ',
                        "The validation suite reported “no failed redlines.” ",
@@ -811,7 +811,7 @@ class MeasuredSentence(SixFiles):
         self.assertIn('"no failed redline"', r.stderr)
 
     def test_many_measured_sentences_are_read_in_linear_time(self) -> None:
-        # codex on #1743 (#1790): every match rescanned the text before it
+        # #1743 (#1790): every match rescanned the text before it
         # (4,000 sentences took 9 s)
         changelog = self.tmp / "CHANGELOG.md"
         changelog.write_text(f"## [{VER}] - 2026-10-25\n\n" + (self.SOUND + "\n") * 6000)
@@ -821,7 +821,7 @@ class MeasuredSentence(SixFiles):
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_a_long_run_of_digits_in_the_preamble_is_read_in_linear_time(self) -> None:
-        # codex on #1743 (#1785): the size lookahead rescanned the run at
+        # #1743 (#1785): the size lookahead rescanned the run at
         # every digit (100,000 digits took 16 s)
         text = self.SOUND.replace("samples scored", "samples (" + "9" * 100_000 + ") scored")
         start = time.monotonic()
@@ -830,7 +830,7 @@ class MeasuredSentence(SixFiles):
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_a_no_failed_outside_the_measured_sentence_is_not_a_claim(self) -> None:
-        # codex on #1743 (#1776): the checker cannot tell what another
+        # #1743 (#1776): the checker cannot tell what another
         # sentence's "no failed" is about; the measured sentence still has
         # to count every failure
         for after in ("No failed redlines are omitted from these means.",
@@ -842,7 +842,7 @@ class MeasuredSentence(SixFiles):
                 self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_the_sample_size_nearest_the_means_is_held(self) -> None:
-        # codex on #1743 (#1775): the colon-tolerant preamble bound the first
+        # #1743 (#1775): the colon-tolerant preamble bound the first
         # of two sizes
         text = self.SOUND.replace("On two 3-item samples scored",
                                   "We drew two 3-item samples: after filtering, results on two 2-item samples scored")
@@ -864,7 +864,7 @@ class MeasuredSentence(SixFiles):
         self.assertIn('"counting as 0 the 1 redline pair" — a pair is the redline sample\'s', r.stderr)
 
     def test_a_noun_the_counted_phrase_excludes_does_not_name_its_sample(self) -> None:
-        # codex on #1743 (#1787): the phrase ends at "instead", "without",
+        # #1743 (#1787): the phrase ends at "instead", "without",
         # "the" …; its last sample noun before that word names the sample
         for phrase, named, noun in (("the 1 PDF instead of redlines", "the 1 PDF", "PDF"),
                                     ("the 1 PDF from non-redline runs", "the 1 PDF", "PDF"),
@@ -885,13 +885,13 @@ class MeasuredSentence(SixFiles):
                 self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_an_uppercase_plural_names_its_sample(self) -> None:
-        # codex on #1743 (#1792): "PDFS" lost its plural before lowercasing
+        # #1743 (#1792): "PDFS" lost its plural before lowercasing
         r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word", "the 1 PDFS Word"))
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn('"counting as 0 the 1 PDFS" — a PDF is the conversion sample\'s', r.stderr)
 
     def test_the_whole_counted_phrase_reaches_its_head_noun(self) -> None:
-        # codex on #1743 (#1793): four words cut a phrase before its head;
+        # #1743 (#1793): four words cut a phrase before its head;
         # an auxiliary, or a name after the head, opens the clause that
         # follows it
         for phrase in ("the 1 failed redline-producing Word document pair whose opening crashes Word",
@@ -913,7 +913,7 @@ class MeasuredSentence(SixFiles):
                 self.assertIn(f'"counting as 0 {named}" — a {noun} is the conversion sample\'s', r.stderr)
 
     def test_a_counted_phrase_holding_its_own_samples_noun_passes(self) -> None:
-        # codex on #1743 (#1777): document pairs are the redline sample's;
+        # #1743 (#1777): document pairs are the redline sample's;
         # an adjective does not push the noun out of reach (#1784)
         for phrase in ("the 1 document pair whose redline Word cannot open",
                        "the 1 failed document pair whose redline Word cannot open",
@@ -1013,11 +1013,11 @@ class ReleaseSh(unittest.TestCase):
         text = (HERE / "release.sh").read_text()
         row = next(line for line in text.splitlines() if line.startswith("3|auto|The measured NUMBERS sentence"))
         self.assertIn("a median or interval it states is not checked", row)
-        # codex on #1743 (#1776): a claim outside the sentence is not read
+        # #1743 (#1776): a claim outside the sentence is not read
         self.assertIn("another sentence's is not read", row)
         # empryo on #1743 (#1779): a counted phrase need not name a noun
         self.assertIn("their noun when the phrase names one", row)
-        # codex on #1743 (#1787, #1788): the grammar the writer follows
+        # #1743 (#1787, #1788): the grammar the writer follows
         self.assertIn('the last sample noun before a word like "of", "instead" or "whose"', row)
         self.assertIn('"no failed X are omitted" says they are counted', row)
 

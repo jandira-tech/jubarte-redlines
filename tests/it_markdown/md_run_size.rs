@@ -321,7 +321,7 @@ fn a_mark_that_inherits_its_style_keeps_no_size_of_its_own() {
 
 /// `mark style` reads in any clause position, as every other clause does:
 /// first on the id line it is not a paragraph style named `mark` (#2129
-/// review, Bugbot).
+/// review).
 #[test]
 fn mark_style_first_on_the_id_line_still_keeps_the_mark_off_the_size() {
     let source = docx(

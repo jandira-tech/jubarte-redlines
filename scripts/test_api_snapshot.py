@@ -221,7 +221,7 @@ class CrossCrate(unittest.TestCase):
 class Snapshot(unittest.TestCase):
     def test_the_gzip_is_the_same_bytes_at_any_time(self) -> None:
         # A resumed release rewrites the snapshot; a header timestamp would
-        # dirty docs/api and push another build commit (Codex on #247).
+        # dirty docs/api and push another build commit (#247).
         with tempfile.TemporaryDirectory() as tmp:
             first, second = Path(tmp) / "a.json.gz", Path(tmp) / "b.json.gz"
             with mock.patch.object(gzip.time, "time", return_value=1_000_000_000.0):

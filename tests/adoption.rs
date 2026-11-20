@@ -749,7 +749,7 @@ fn markdown_page_markers_count_the_pdf_pages() {
     assert!(!plain.contains("<!-- page"), "{plain}");
 }
 
-/// Codex #38313's other half: `--timeout` exits 124 once the deadline
+/// #38313's other half: `--timeout` exits 124 once the deadline
 /// passes, and does not get in the way of a conversion that finishes.
 #[test]
 fn convert_timeout_exits_124_past_the_deadline() {

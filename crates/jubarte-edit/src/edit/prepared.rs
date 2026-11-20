@@ -2242,7 +2242,7 @@ pub(crate) mod tests {
             )
             .is_ok()
         );
-        // Their ends repeat too, and come first by name (Codex on #1666).
+        // Their ends repeat too, and come first by name (#1666).
         refused_as_duplicate(
             gate(
                 &[("customXmlInsRangeStart", 5), ("customXmlInsRangeStart", 6)],
@@ -2304,7 +2304,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_strict_main_part_without_an_xml_extension_is_read_as_transitional() {
-        // Codex on #1666: its inherited duplicates stay inherited.
+        // #1666: its inherited duplicates stay inherited.
         let source = main_named(
             &strict(&revisions(&[("ins", 5), ("ins", 5)])),
             "word/main.dat",

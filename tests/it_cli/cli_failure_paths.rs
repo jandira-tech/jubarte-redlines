@@ -322,7 +322,7 @@ fn output_directories_produce_write_errors_without_replacing_input() {
 
 #[test]
 fn convert_update_fields_refuses_a_report_on_the_input_or_the_output() {
-    // CodeRabbit on #393: the report is written apart from the .docx, so a
+    // #393: the report is written apart from the .docx, so a
     // shared path would silently replace one with the other.
     let dir = tempfile::tempdir().unwrap();
     let original = docx(
@@ -430,7 +430,7 @@ fn convert_update_fields_refuses_a_report_that_names_the_input_another_way() {
     }
 }
 
-/// CodeRabbit on #398: an output that is a symlink to the report path, not
+/// #398: an output that is a symlink to the report path, not
 /// written yet, named the same file; the docx went through the link and the
 /// report then replaced it.
 #[cfg(unix)]
@@ -805,7 +805,7 @@ fn read_refuses_an_expired_selection_as_a_usage_error() {
     assert!(stderr.contains("the settled spelling is p12"), "{stderr}");
 }
 
-/// CodeRabbit on #438: a side file named like one of the PNG pages would
+/// #438: a side file named like one of the PNG pages would
 /// replace that page; it is refused before anything is written.
 #[test]
 fn a_report_named_like_a_png_page_is_refused() {
@@ -833,7 +833,7 @@ fn a_report_named_like_a_png_page_is_refused() {
     }
 }
 
-/// Codex on #442, decided in its thread: an -o extension jubarte does not
+/// #442, decided in its thread: an -o extension jubarte does not
 /// know is written as a .docx, as compare's writer does; only the known
 /// non-Word ones exit 2.
 #[test]

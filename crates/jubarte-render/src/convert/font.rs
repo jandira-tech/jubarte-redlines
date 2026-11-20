@@ -4721,7 +4721,7 @@ mod tests {
 
     #[test]
     fn installed_faces_are_read_once_per_process() {
-        // CodeRabbit #166: every conversion re-read the 10-20 MB collections.
+        // #166: every conversion re-read the 10-20 MB collections.
         let first = cached_faces("@test-cache-key", || {
             vec![((false, false), b"face".to_vec())]
         });
@@ -4967,7 +4967,7 @@ mod tests {
 
     #[test]
     fn a_cff_face_is_not_embedded() {
-        // CodeRabbit #166: the PDF writer emits FontFile2 (TrueType); a CFF
+        // #166: the PDF writer emits FontFile2 (TrueType); a CFF
         // .otf would be embedded as an unreadable program. It is refused.
         let otf = "/System/Library/Fonts/Supplemental/STIXSizOneSymBol.otf";
         let Ok(bytes) = fs::read(otf) else {
@@ -4982,7 +4982,7 @@ mod tests {
 
     #[test]
     fn a_family_name_match_outranks_a_typographic_one_per_style() {
-        // CodeRabbit #166: Roboto-Black.ttf (ID 1 "Roboto Black", ID 16
+        // #166: Roboto-Black.ttf (ID 1 "Roboto Black", ID 16
         // "Roboto") sorts before Roboto-Regular.ttf and took the regular
         // slot. Pass 0 (ID 1) beats pass 1 (ID 16) per style; path order
         // decides within a pass.

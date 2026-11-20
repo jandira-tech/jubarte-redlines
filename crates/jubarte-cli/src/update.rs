@@ -1467,7 +1467,7 @@ mod tests {
         );
     }
 
-    /// #2084 review (Bugbot): a zipsign-signed zip starts with its
+    /// #2084 review: a zipsign-signed zip starts with its
     /// signature block, not `PK`, and its offsets are not rewritten; zip and
     /// self_update still read it. The checks must run on it too.
     fn prefixed(prefix_len: usize, zip: &[u8]) -> Vec<u8> {
@@ -1514,7 +1514,7 @@ mod tests {
             .expect("a signed (prefixed) release zip with one member");
     }
 
-    /// #2084 review (Bugbot): zip names an entry by its adopted 0x7075
+    /// #2084 review: zip names an entry by its adopted 0x7075
     /// Unicode Path, so a second entry whose raw name differs but whose
     /// Unicode Path is the member is the same installed file.
     #[test]

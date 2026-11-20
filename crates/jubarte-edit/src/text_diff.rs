@@ -916,7 +916,7 @@ mod tests {
     }
 
     /// A clipped window is sized from its UTF-8 bytes and ellipses once
-    /// (Sourcery #4372659578, Jules #4372904367 on #1830).
+    /// (#4372659578, #4372904367 on #1830).
     #[test]
     fn a_clipped_window_is_allocated_once() {
         for (text, at, width) in [

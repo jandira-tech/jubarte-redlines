@@ -232,7 +232,7 @@ fn a_note_style_id_with_a_space_is_quoted() {
 
 #[test]
 fn a_note_keeps_each_paragraphs_style() {
-    // Codex on #495: the first paragraph's style overwrote the others'.
+    // #495: the first paragraph's style overwrote the others'.
     let docx = docx_paragraphs(
         "endnote",
         &[vec![Some("Endnote"), Some("EndnoteText"), None]],
@@ -272,7 +272,7 @@ fn a_note_whose_later_paragraph_has_a_style_names_words_own_first() {
 
 #[test]
 fn a_note_in_comment_text_keeps_its_definition() {
-    // Codex on #495: CommentText was left out of the legend for notes too.
+    // #495: CommentText was left out of the legend for notes too.
     let docx = docx("footnote", &[Some("CommentText")]);
     let (view, again, view_again) = round_trip(&docx);
     assert!(view.contains(" CommentText -->"), "{view}");

@@ -1543,7 +1543,7 @@ fn resolving_a_row_alone_takes_its_nested_cells_final_marks_along() {
 /// A cell of the resolved row that carries the row's revision itself
 /// (`w:cellIns`, `w:cellDel`) covers its own final mark, as a nested row
 /// does: resolving the row alone leaves that cell's revision, its final
-/// mark and its words tracked (CodeRabbit on #1680, round 11).
+/// mark and its words tracked (#1680, round 11).
 #[test]
 fn a_cell_revised_on_its_own_stays_when_its_row_resolves() {
     for (inserted, name, resolve) in [
@@ -1596,7 +1596,7 @@ fn a_cell_revised_on_its_own_stays_when_its_row_resolves() {
 
 /// A nested row that carries the outer row's revision itself covers its
 /// own cells: resolving the outer row alone leaves that row, its cell's
-/// final mark and its words tracked (CodeRabbit on #1680).
+/// final mark and its words tracked (#1680).
 #[test]
 fn a_nested_row_revised_on_its_own_stays_when_its_outer_row_resolves() {
     for (inserted, name, resolve) in [

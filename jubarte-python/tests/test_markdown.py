@@ -168,7 +168,7 @@ def test_cli_convert_takes_a_reference_doc_and_reports_its_warning(tmp_path: Pat
 def test_cli_convert_sniffs_markdown_whose_name_does_not_say_so(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], name: str, named_output: bool
 ) -> None:
-    # Codex on #381: the native rule is the name's format, else the bytes (a
+    # #381: the native rule is the name's format, else the bytes (a
     # ZIP is Word, anything else Markdown), as in the npm CLI.
     source = tmp_path / name
     source.write_text(DRAFT, encoding="utf-8")
@@ -194,7 +194,7 @@ def test_cli_convert_refuses_word_under_a_name_that_says_nothing(tmp_path: Path,
 
 
 def test_cli_compare_reports_the_bytes_a_markdown_redline_takes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    # Codex on #381: the count is UTF-8 bytes on disk, not characters.
+    # #381: the count is UTF-8 bytes on disk, not characters.
     old, new = tmp_path / "old.md", tmp_path / "new.md"
     old.write_text("Prazo de 30 días — ok.\n", encoding="utf-8")
     new.write_text("Prazo de 45 días — ok.\n", encoding="utf-8")

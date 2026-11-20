@@ -84,7 +84,7 @@ class Stack1m(unittest.TestCase):
         return str(binary)
 
     def test_a_job_past_its_timeout_fails(self):
-        # CodeRabbit on #391: the timeout branch had no test.
+        # #391: the timeout branch had no test.
         self.assertEqual(stack1m.run(self.fake("exec sleep 30\n"), 1024, 1, "s:0", ["compare"]),
                          ("s:0", "timed out after 1 s"))
 

@@ -1421,7 +1421,7 @@ pub(super) struct RawCell {
 
 #[derive(Clone)]
 pub(super) struct LaidImage {
-    /// A wrapping group's box already counts this member's width (codex on #1732).
+    /// A wrapping group's box already counts this member's width (#1732).
     pub(super) group_reserved: bool,
     pub(super) w: f32,
     pub(super) h: f32,

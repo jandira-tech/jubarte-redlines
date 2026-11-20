@@ -1075,7 +1075,7 @@ fn deleting_the_bodys_every_paragraph_empties_the_last() {
 
 /// What still fails, and fails whole, with the code it failed with before:
 /// a table or an image anchored on a deleted paragraph, each refusal naming
-/// what it anchors (MiniMax on #1670, round 7).
+/// what it anchors (#1670, round 7).
 #[test]
 fn a_table_on_a_deleted_paragraph_is_still_refused() {
     let table = |p: &str| {
@@ -1280,7 +1280,7 @@ fn wrapped(body: &str) -> [String; 2] {
 
 /// A paragraph in a block content control or a custom XML element is its
 /// container's: when it is the last, its mark stays, in the body and in a
-/// cell (codex, crush, glm-5.3 and MiniMax on #1670, round 7). The default
+/// cell (#1670, round 7). The default
 /// path unwraps `w:customXml` before compare (#1674).
 #[test]
 fn a_wrapped_final_paragraph_keeps_its_mark() {
@@ -1307,7 +1307,7 @@ fn a_wrapped_final_paragraph_keeps_its_mark() {
 
 /// A cell holding a paragraph and then a table (a shape other tools
 /// write, already without a closing paragraph) keeps that paragraph when
-/// the plan deletes it: emptied, never removed (glm-5.3 on #1670, round 7).
+/// the plan deletes it: emptied, never removed (#1670, round 7).
 /// The default comparer pairs that nested table across the emptied
 /// paragraph (#1675), the same way keep does. The source cell ends on a
 /// table, which Word asks to repair, so this row has no Word redline.
@@ -1335,7 +1335,7 @@ fn a_cells_last_paragraph_before_a_nested_table_is_emptied() {
 
 /// A paragraph deleted ahead of a table takes a deleted mark of its own,
 /// as Word's Compare writes it, in the body and in a cell; the paragraph
-/// after the table, the container's last, keeps its mark (crush on #1670,
+/// after the table, the container's last, keeps its mark (#1670,
 /// round 7; Word oracle in #1670's round-7 ledger). The default comparer
 /// pairs the two tables across that paragraph (#1675): the table is not
 /// marked deleted, and Accept All does not gain an empty paragraph.
@@ -1488,7 +1488,7 @@ fn compare_with(source: &[u8], revised: &[u8], settings: &WmlComparerSettings) -
     compare_documents_with_settings(source, revised, settings).expect("compare")
 }
 
-/// #2106 review (sourcery, codex): a table that empties one row and adds
+/// #2106 review: a table that empties one row and adds
 /// another keeps the emptied row. Only the added row is a row insertion.
 #[test]
 fn an_emptied_row_survives_a_row_added_elsewhere() {
@@ -1509,7 +1509,7 @@ fn an_emptied_row_survives_a_row_added_elsewhere() {
     );
 }
 
-/// #2106 review (codex): a seven-row table that empties one row and edits
+/// #2106 review: a seven-row table that empties one row and edits
 /// two others keeps every row; the edits stay inside the cells.
 #[test]
 fn an_emptied_row_survives_ordinary_row_edits() {
@@ -1548,8 +1548,8 @@ fn an_emptied_row_survives_ordinary_row_edits() {
 
 /// Under keep, a replacement joins a final mark whose formatting change is
 /// still tracked only when it keeps that formatting: otherwise the record
-/// would be lost, and the plan is refused as a format would be (codex,
-/// crush, glm-5.3 and MiniMax on #1670, round 7).
+/// would be lost, and the plan is refused as a format would be
+/// (#1670, round 7).
 #[test]
 fn a_final_mark_with_a_tracked_formatting_change_keeps_its_record() {
     let source = docx(&format!(
@@ -1577,8 +1577,8 @@ fn a_final_mark_with_a_tracked_formatting_change_keeps_its_record() {
 
 /// Under keep, a final paragraph replaced while the paragraph before it
 /// carries another author's deleted mark is no longer refused: the
-/// replacement takes the final mark and needs no carrier (crush and
-/// glm-5.3 on #1670, round 7). Deleted alone, it is emptied: no paragraph
+/// replacement takes the final mark and needs no carrier
+/// (#1670, round 7). Deleted alone, it is emptied: no paragraph
 /// before it can carry its mark away, so the mark stays, as Word keeps it.
 #[test]
 fn a_replacement_beside_a_deleted_mark_needs_no_carrier() {
@@ -1640,7 +1640,7 @@ fn a_final_paragraph_nothing_before_can_carry_is_emptied() {
 
 /// A replacement anchored on another deleted paragraph of the container
 /// still takes the final mark, with its own properties: Accept All formats
-/// it as the clean copy does (codex on #1670, round 7).
+/// it as the clean copy does (#1670, round 7).
 #[test]
 fn a_replacement_anchored_elsewhere_takes_the_final_mark() {
     let source = docx(&format!(
@@ -1738,7 +1738,7 @@ fn issue_1677_mark_formatting_change_matches_word() {
 
 /// A kept final mark's `w:rPr` stays in `CT_ParaRPr` order when its
 /// formatting changes: the mark's own revision first, the formatting, the
-/// `w:rPrChange` last (Jules on #1670 asked for the record before the
+/// `w:rPrChange` last (#1670 asked for the record before the
 /// revision, which the schema refuses).
 #[test]
 fn the_kept_final_marks_properties_stay_in_schema_order() {
@@ -1789,7 +1789,7 @@ fn the_kept_final_marks_properties_stay_in_schema_order() {
 
 /// Under keep, a paragraph whose content the replay cannot delete as a
 /// tracked change (an equation) is refused, not left in the redline while
-/// the clean copy drops it (codex on #1670, round 7).
+/// the clean copy drops it (#1670, round 7).
 #[test]
 fn a_deleted_equation_is_refused_under_keep() {
     let math = r#"<w:p><m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><m:t>x</m:t></m:r></m:oMath></w:p>"#;
@@ -1803,7 +1803,7 @@ fn a_deleted_equation_is_refused_under_keep() {
 
 /// A new paragraph placed after the last paragraph that stays takes the
 /// final mark, whatever deleted paragraphs stand between it and the final
-/// one, and whatever the operations' order (codex on #1670, round 8).
+/// one, and whatever the operations' order (#1670, round 8).
 #[test]
 fn a_replacement_before_a_run_of_deleted_paragraphs_takes_the_final_mark() {
     let source = docx(&format!(
@@ -1832,7 +1832,7 @@ fn a_replacement_before_a_run_of_deleted_paragraphs_takes_the_final_mark() {
 
 /// A paragraph deleted right before a block content control, a custom XML
 /// element or a range marker takes a deleted mark of its own, as before a
-/// paragraph: Accept All removes it (codex on #1670, round 8).
+/// paragraph: Accept All removes it (#1670, round 8).
 #[test]
 fn a_paragraph_deleted_before_a_wrapper_or_a_marker_takes_its_own_mark() {
     let [sdt, custom] = wrapped(&para("Keep."));
@@ -1852,8 +1852,8 @@ fn a_paragraph_deleted_before_a_wrapper_or_a_marker_takes_its_own_mark() {
                 &["Keep."],
                 &format!("{mode} body {rest}"),
             );
-            // With a paragraph before, that paragraph's mark stays (MiniMax
-            // on #1670, round 8).
+            // With a paragraph before, that paragraph's mark stays
+            // (#1670, round 8).
             let result = check_outputs(
                 &docx(&format!("{}{blocks}", para("Zero."))),
                 &plan_of(mode, &[delete("p1")]),
@@ -1879,8 +1879,8 @@ fn a_paragraph_deleted_before_a_wrapper_or_a_marker_takes_its_own_mark() {
 
 /// A table of contents replacing a final paragraph whose formatting change
 /// is still tracked keeps that change when the paragraph's own properties
-/// are none, as the field paragraph's are: nothing is replaced (codex on
-/// #1670, round 8). Other properties are still refused.
+/// are none, as the field paragraph's are: nothing is replaced
+/// (#1670, round 8). Other properties are still refused.
 #[test]
 fn a_toc_replacing_an_unformatted_final_paragraph_keeps_its_record() {
     let toc = r#"{"kind":"insert_toc","paragraph":"p0","position":"after","levels":3}"#;
@@ -1905,7 +1905,7 @@ fn a_toc_replacing_an_unformatted_final_paragraph_keeps_its_record() {
 /// plan keeps it and its mark is not deleted yet, past the paragraphs the
 /// plan deletes; never past another author's deleted mark, which would
 /// join two paragraphs the plan keeps: the final paragraph is emptied
-/// instead (MiniMax on #1670, round 8).
+/// instead (#1670, round 8).
 #[test]
 fn a_final_mark_is_carried_past_deleted_paragraphs_never_past_a_deleted_mark() {
     let source = docx(&format!(
@@ -1950,7 +1950,7 @@ fn a_final_mark_is_carried_past_deleted_paragraphs_never_past_a_deleted_mark() {
 
 /// A range marker between another author's deleted mark (or moved-away
 /// mark) and the final paragraph changes nothing: the mark is never carried
-/// past it (crush on #1670, round 8).
+/// past it (#1670, round 8).
 #[test]
 fn a_final_mark_is_not_carried_past_a_deleted_mark_behind_a_marker() {
     for kind in ["del", "moveFrom"] {
@@ -1979,7 +1979,7 @@ fn a_final_mark_is_not_carried_past_a_deleted_mark_behind_a_marker() {
 /// Under keep, a replacement anchored on the paragraph before the final one
 /// takes the final mark where the final paragraph stands: the range
 /// markers between stay before it, and Reject All restores them there
-/// (crush on #1670, round 8).
+/// (#1670, round 8).
 #[test]
 fn a_replacement_anchored_before_a_marker_leaves_the_marker_in_place() {
     let source = docx(&format!(
@@ -2014,7 +2014,7 @@ fn a_replacement_anchored_before_a_marker_leaves_the_marker_in_place() {
 
 /// Under keep, a paragraph holding a subdocument (`w:subDoc`), which the
 /// replay cannot delete as a tracked change, is refused, as an equation is
-/// (crush on #1670, round 8).
+/// (#1670, round 8).
 #[test]
 fn a_deleted_subdocument_is_refused_under_keep() {
     let source = docx(&format!(
@@ -2030,7 +2030,7 @@ fn a_deleted_subdocument_is_refused_under_keep() {
 
 /// A paragraph the plan deletes between a table it inserts and another
 /// table stays, emptied: it is the paragraph the clean copy puts between
-/// the two tables, so Accept All does not join them (glm-5.3 on #1670,
+/// the two tables, so Accept All does not join them (#1670,
 /// round 8). The default comparer pairs the original table across that
 /// paragraph (#1675) instead of deleting it and inserting it again.
 #[test]
@@ -2069,8 +2069,8 @@ fn a_paragraph_deleted_between_a_new_table_and_a_table_separates_them() {
 
 /// A block the plan places between the paragraph before a deleted final
 /// one and the final one leaves nothing to carry the final mark: the final
-/// paragraph is emptied, and Accept All keeps the new blocks apart (glm-5.3
-/// on #1670, round 8). The default comparer does the same (#1678): the
+/// paragraph is emptied, and Accept All keeps the new blocks apart
+/// (#1670, round 8). The default comparer does the same (#1678): the
 /// revised empty paragraph stays after the new table.
 #[test]
 fn a_block_placed_before_a_deleted_final_paragraph_empties_it() {
@@ -2229,8 +2229,8 @@ fn an_append_after_a_containers_last_paragraph_inserts_the_mark_before_it() {
 
 /// An append after a paragraph that closes a section leaves its mark
 /// where it is: the record a rotated mark leaves cannot hold the break
-/// (`CT_PPrBase` has no `w:sectPr`), so Reject All would drop it (codex on
-/// #1680). The body's final mark is not a cell's, so the inserted mark may
+/// (`CT_PPrBase` has no `w:sectPr`), so Reject All would drop it
+/// (#1680). The body's final mark is not a cell's, so the inserted mark may
 /// stay on the new paragraph. Both resolutions keep both sections.
 #[test]
 fn an_append_after_a_section_break_keeps_the_break_both_ways() {
@@ -2506,7 +2506,7 @@ fn a_table_after_a_deleted_middle_stays_unmoved() {
 /// A cell's final paragraph can be the one in the alternate-content branch
 /// Word shows: deleting it keeps that paragraph, emptied, and its mark, as
 /// for any cell's final paragraph, in the redline and the clean copy alike
-/// (#2128 review, Sourcery).
+/// (#2128 review).
 #[test]
 fn deleting_a_cells_final_paragraph_inside_alternate_content_keeps_its_mark() {
     let w14 = r#"xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml""#;

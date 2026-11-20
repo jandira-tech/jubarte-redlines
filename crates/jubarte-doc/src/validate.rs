@@ -1645,7 +1645,7 @@ pub(crate) use crate::validate_dom::{
 /// (2026-10-23). The body's final mark is not flagged: Word resolves it.
 /// Only the stories Accept and Reject All walk are read, the parts the
 /// comparer's settle pass sweeps: a glossary's building blocks or a
-/// custom XML data item is no story (codex on #1680).
+/// custom XML data item is no story (#1680).
 fn check_cell_final_marks(pkg: &PartFs, out: &mut Vec<Finding>) {
     for (part, styles) in crate::revision_processor::revision_bearing_parts(pkg) {
         if styles {
@@ -2174,7 +2174,7 @@ fn xml_parts(pkg: &PartFs) -> Vec<String> {
 /// data, which holds the application's own XML whatever its name
 /// ([`crate::opc::custom_xml_data`]: a part only `customXml` relationships
 /// reach, the package's own included). OpenXmlValidator checks no revision
-/// id there, and no paragraph id (codex on #1666).
+/// id there, and no paragraph id (#1666).
 fn wordml_parts(pkg: &PartFs) -> Vec<String> {
     let parts = pkg.parts();
     let data =
@@ -2748,7 +2748,7 @@ fn collect_ids(
             );
             // Repair renames an end only with a repeated start before it
             // ([`renumber_duplicate_revision_ids`]); an end with none stays
-            // as it was (CodeRabbit on #1666).
+            // as it was (#1666).
             if local.ends_with("RangeStart") {
                 *repeated_starts.entry(key).or_default() += 1;
             } else if let Some(start) = range_start_of(local) {
@@ -3909,9 +3909,9 @@ pub fn renumber_duplicate_revision_ids(dom: &mut Dom, root: NodeId) -> Vec<(Stri
         }
         // A range start's end shares its id: the first that follows with
         // it, by the rule the duplicate check reads (`ABC` closes `abc`
-        // where ids compare case-blind, MiniMax on #1666), and that no
+        // where ids compare case-blind, #1666), and that no
         // start before has taken, so three starts of one id before their
-        // three ends pair one to one (codex on #1666).
+        // three ends pair one to one (#1666).
         let end = range_end_of(name.local_name()).and_then(|end_local| {
             let blind = id_case_blind(end_local);
             all[i + 1..].iter().copied().find(|&e| {
@@ -5123,7 +5123,7 @@ fn comment_pairs(
     /// first unpaired comment of `after` with its key. Each key's
     /// candidates queue in document order and leave the queue once taken,
     /// so comments sharing an author and a date (or no date) cost no
-    /// rescan: the pass is linear (Sourcery #4374424613).
+    /// rescan: the pass is linear (#4374424613).
     fn pair_by<'a, K: Eq + std::hash::Hash>(
         before: &'a [crate::comments::CommentRecord],
         after: &'a [crate::comments::CommentRecord],
@@ -5980,7 +5980,7 @@ mod literal_revision_repair_contract_tests {
     #[test]
     fn three_starts_of_one_id_before_their_ends_pair_one_to_one() {
         // Each start takes the first end of its id that no earlier start
-        // has taken; the first start keeps its id (codex on #1666).
+        // has taken; the first start keeps its id (#1666).
         let range = |tag: &str, id: u32| format!(r#"<w:customXmlIns{tag} w:id="{id}"/>"#);
         let body = |ids: [u32; 3]| {
             let starts: String = ids.iter().map(|&id| range("RangeStart", id)).collect();

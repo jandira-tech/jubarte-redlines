@@ -3845,8 +3845,8 @@ mod tests {
     }
 
     /// A table in a text box inside a cell is listed under the cell
-    /// (codex #4372490724); a DrawingML `a:tbl` is no document table
-    /// (codex #4372490734).
+    /// (#4372490724); a DrawingML `a:tbl` is no document table
+    /// (#4372490734).
     #[test]
     fn tables_reach_text_boxes_in_cells_and_skip_drawing_tables() {
         let text_box = concat!(

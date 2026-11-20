@@ -919,7 +919,7 @@ fn edit_writes_the_patch_and_confirms_full_views_unless_quiet() {
     assert_eq!(quiet_patch, patch);
 }
 
-/// codex 4249037697: a comment whose range starts in p4 and spans p5 is
+/// Review 4249037697: a comment whose range starts in p4 and spans p5 is
 /// kept by `-p p5`, as the view marks p5 `in c0`.
 #[test]
 fn read_json_keeps_a_comment_spanning_a_kept_paragraph() {
@@ -944,7 +944,7 @@ fn read_json_keeps_a_comment_spanning_a_kept_paragraph() {
     assert_eq!(comment["last_paragraph"], "p12");
 }
 
-/// codex 4242942130: `--changed` keeps a header's changes: the view notes
+/// Review 4242942130: `--changed` keeps a header's changes: the view notes
 /// them on its headers: line, and the snapshot lists them.
 #[test]
 fn read_json_changed_keeps_a_headers_changes() {

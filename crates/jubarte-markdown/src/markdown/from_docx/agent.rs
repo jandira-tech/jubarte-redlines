@@ -3852,7 +3852,7 @@ mod tests {
     use super::*;
     use crate::markdown::from_docx::ooxml::parse_xml;
 
-    /// coderabbit 4504980747, 4504980748: a parent that prints as several
+    /// Review 4504980747, 4504980748: a parent that prints as several
     /// tags (two marks, or a spelled id) stays inside its one `fmt` entry,
     /// so the reader finds only the formatting change itself.
     #[test]
@@ -3920,7 +3920,7 @@ mod tests {
         }
     }
 
-    /// CodeRabbit #392: a note inserted or deleted with its reference
+    /// #392: a note inserted or deleted with its reference
     /// carries its label inside the mark.
     #[test]
     fn note_label_reads_through_the_mark_around_an_inserted_or_deleted_note() {
@@ -4518,7 +4518,7 @@ mod tests {
     }
 
     /// Whole line counts keep their zeros: `0` is no lines, `1000` is ten
-    /// (#2130 review, Bugbot).
+    /// (#2130 review).
     #[test]
     fn line_counts_keep_the_zeros_of_whole_counts() {
         for (raw, want) in [

@@ -117,7 +117,7 @@ def test_validate_repair_tells_structure_from_history(tmp_path: Path, capsys: py
     assert "history" not in captured.out and str(missing) in captured.err
     assert not unwritten.exists()
     # So does one that is no Word package: the binary admits the original
-    # whole before it writes (codex on #1666).
+    # whole before it writes (#1666).
     notes = tmp_path / "notes.docx"
     with zipfile.ZipFile(notes, "w") as z:
         z.writestr("notes.txt", "not a document")

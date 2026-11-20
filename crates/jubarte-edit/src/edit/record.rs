@@ -505,7 +505,7 @@ mod tests {
         );
     }
 
-    /// Codex on #433: a held plan's ids count as `record_into` joins them,
+    /// #433: a held plan's ids count as `record_into` joins them,
     /// so `r1+2` held is two ids and a duplicate spelling one.
     #[test]
     fn recorded_revisions_count_each_long_id_once() {
