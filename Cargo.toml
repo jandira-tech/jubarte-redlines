@@ -27,7 +27,7 @@ edition = "2024"
 rust-version = "1.94"
 authors = ["Jandira Technologies, LLC"]
 license = "AGPL-3.0-only"
-repository = "https://github.com/jandira-tech/jubarte-redlines"
+repository = "https://github.com/jandira-tech/jubarte"
 
 [package]
 name = "jubarte"

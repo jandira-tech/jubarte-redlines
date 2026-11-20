@@ -10,11 +10,11 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 [![crates.io](https://img.shields.io/crates/v/jubarte-cli.svg)](https://crates.io/crates/jubarte-cli)
 [![docs.rs](https://docs.rs/jubarte-cli/badge.svg)](https://docs.rs/jubarte-cli)
-[![CI](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml)
-[![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](https://github.com/jandira-tech/jubarte-redlines/blob/v0.18.0/crates/jubarte-cli/LICENSE)
+[![CI](https://github.com/jandira-tech/jubarte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jandira-tech/jubarte/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](https://github.com/jandira-tech/jubarte/blob/v0.18.0/crates/jubarte-cli/LICENSE)
 [![docs](https://readthedocs.org/projects/jubarte-cli/badge/?version=latest)](https://jubarte.readthedocs.io/projects/jubarte-cli/en/latest/)
 
-The command-line layer of the [jubarte](https://github.com/jandira-tech/jubarte-redlines) DOCX engine: the
+The command-line layer of the [jubarte](https://github.com/jandira-tech/jubarte) DOCX engine: the
 clap declarations of every `jubarte` command (compare, changes, accept,
 reject, convert, diff, read, edit, add, comments, append, validate, check,
 scrub, visual-diff, capabilities, debug, self-update), their argument
@@ -23,7 +23,7 @@ parsing, the typed inline edit actions, and the `self-update` installer.
 This crate is a library. It has no binary: the `jubarte` executable is built
 by the facade crate. To install the command line, run
 `cargo install jubarte`, or see the
-[install options](https://github.com/jandira-tech/jubarte-redlines/blob/v0.18.0/README.md#cli) for prebuilt binaries.
+[install options](https://github.com/jandira-tech/jubarte/blob/v0.18.0/README.md#cli) for prebuilt binaries.
 
 ## Where it sits
 
@@ -110,13 +110,13 @@ fn main() {
 
 ## License
 
-[AGPL-3.0-only](https://github.com/jandira-tech/jubarte-redlines/blob/v0.18.0/crates/jubarte-cli/LICENSE). Review the license's requirements before you embed
+[AGPL-3.0-only](https://github.com/jandira-tech/jubarte/blob/v0.18.0/crates/jubarte-cli/LICENSE). Review the license's requirements before you embed
 the crate in a product or a network service.
 
 ## Links
 
 - API reference: [docs.rs/jubarte-cli](https://docs.rs/jubarte-cli)
 - Guide: [jubarte-cli on ReadTheDocs](https://jubarte.readthedocs.io/projects/jubarte-cli/en/latest/), part of the [jubarte documentation](https://jubarte.readthedocs.io/en/latest/)
-- Repository: [github.com/jandira-tech/jubarte-redlines](https://github.com/jandira-tech/jubarte-redlines) ([this crate](https://github.com/jandira-tech/jubarte-redlines/tree/v0.18.0/crates/jubarte-cli))
-- Command line: the [CLI reference](https://github.com/jandira-tech/jubarte-redlines/blob/v0.18.0/README.md#cli-reference) of the root README
-- Changes: [CHANGELOG.md](https://github.com/jandira-tech/jubarte-redlines/blob/v0.18.0/CHANGELOG.md)
+- Repository: [github.com/jandira-tech/jubarte](https://github.com/jandira-tech/jubarte) ([this crate](https://github.com/jandira-tech/jubarte/tree/v0.18.0/crates/jubarte-cli))
+- Command line: the [CLI reference](https://github.com/jandira-tech/jubarte/blob/v0.18.0/README.md#cli-reference) of the root README
+- Changes: [CHANGELOG.md](https://github.com/jandira-tech/jubarte/blob/v0.18.0/CHANGELOG.md)

@@ -40,8 +40,8 @@ SUMMARIES = [
 # The first lines of every gh stub: an engine call names its repository
 # (#1747), so a stray GH_REPO in the releaser's shell cannot redirect it.
 GH_BOUND = """case " $* " in
-  *" -R jandira-tech/jubarte-redlines "*) ;;
-  *) echo "gh not bound to jandira-tech/jubarte-redlines: $*" >&2; exit 8 ;;
+  *" -R jandira-tech/jubarte "*) ;;
+  *) echo "gh not bound to jandira-tech/jubarte: $*" >&2; exit 8 ;;
 esac
 """
 
@@ -1073,7 +1073,7 @@ def shell_functions(*names: str) -> str:
 # stub gh for step 11: the release, its asset names and the release.yml run,
 # each driven by the environment; every asset listing is counted in $STATE.
 GH_RELEASE_STUB = "#!/bin/bash\n" + GH_BOUND + r"""case "$*" in
-  "release view v9.9.9 -R jandira-tech/jubarte-redlines")
+  "release view v9.9.9 -R jandira-tech/jubarte")
     [ -z "${NOREL:-}" ] ;;
   "release view v9.9.9 --json assets"*)
     [ -z "${NOREL:-}" ] || exit 1
@@ -2288,7 +2288,7 @@ class ChangelogDiscovery(unittest.TestCase):
         self.commit("feat(cli): a new thing (#41)")
         r = self.run_fn("unlisted_prs v0.1.0")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("-R jandira-tech/jubarte-redlines", self.calls.read_text())
+        self.assertIn("-R jandira-tech/jubarte", self.calls.read_text())
 
     def test_step_2_dies_when_discovery_fails(self) -> None:
         self.assertRegex(step(2), r'missing_prs=\$\(unlisted_prs "\$PREV_RELEASE"\) \\\n\s*\|\| die')
@@ -2385,8 +2385,8 @@ class BuildProvenance(unittest.TestCase):
         self.assertIn("release download v9.9.9 -p jubarte-9.9.9-linux-x86_64.tar.gz", calls)
         verify = [c for c in calls.splitlines() if c.startswith("attestation verify")]
         self.assertEqual(len(verify), 1, calls)
-        self.assertIn("-R jandira-tech/jubarte-redlines", verify[0])
-        self.assertIn("--signer-workflow jandira-tech/jubarte-redlines/.github/workflows/release.yml",
+        self.assertIn("-R jandira-tech/jubarte", verify[0])
+        self.assertIn("--signer-workflow jandira-tech/jubarte/.github/workflows/release.yml",
                       verify[0])
         self.assertIn("--deny-self-hosted-runners", verify[0])
         self.assertIn("--source-ref refs/tags/v9.9.9", verify[0])
@@ -2489,10 +2489,10 @@ class FallbackProvenance(unittest.TestCase):
 GH_SECURITY_STUB = r"""#!/bin/bash
 [ "$1" = api ] || { echo "unexpected gh $*" >&2; exit 9; }
 case "$2" in
-  repos/jandira-tech/jubarte-redlines) kind=repo ;;
-  repos/jandira-tech/jubarte-redlines/security-advisories*) kind=advisories ;;
-  repos/jandira-tech/jubarte-redlines/dependabot/alerts*) kind=dependabot ;;
-  repos/jandira-tech/jubarte-redlines/code-scanning/alerts*) kind=code-scanning ;;
+  repos/jandira-tech/jubarte) kind=repo ;;
+  repos/jandira-tech/jubarte/security-advisories*) kind=advisories ;;
+  repos/jandira-tech/jubarte/dependabot/alerts*) kind=dependabot ;;
+  repos/jandira-tech/jubarte/code-scanning/alerts*) kind=code-scanning ;;
   *) echo "unexpected gh $*" >&2; exit 9 ;;
 esac
 [ "${FAIL:-}" != "$kind" ] || { echo "HTTP 403: Resource not accessible" >&2; exit 1; }
@@ -2626,7 +2626,7 @@ class SecurityGate(unittest.TestCase):
 # the real jq, or an unreadable API when $FAIL is set.
 GH_CHECKS_STUB = r"""#!/bin/bash
 case "$1 $2" in
-  "api repos/jandira-tech/jubarte-redlines/commits/"*/check-runs*) ;;
+  "api repos/jandira-tech/jubarte/commits/"*/check-runs*) ;;
   *) echo "unexpected gh $*" >&2; exit 9 ;;
 esac
 [ -z "${FAIL:-}" ] || { echo "HTTP 502" >&2; exit 1; }
@@ -2834,7 +2834,7 @@ def shell_commands(path: Path) -> list[str]:
 class EngineRepoBinding(unittest.TestCase):
     """Codex review of #1743 (#1747): gh honours GH_REPO, so a stray one in
     the releaser's shell cancelled, listed or created things in another
-    repository. Every engine gh call names jandira-tech/jubarte-redlines;
+    repository. Every engine gh call names jandira-tech/jubarte;
     the app's step gets no GH_REPO at all."""
 
     def test_every_engine_gh_call_names_the_repository(self) -> None:
@@ -2844,7 +2844,7 @@ class EngineRepoBinding(unittest.TestCase):
                 starts = [m.end() for m in GH_REPO_CALL.finditer(cmd)]
                 for i, start in enumerate(starts):
                     seg = cmd[start:starts[i + 1] if i + 1 < len(starts) else len(cmd)]
-                    if "-R jandira-tech/jubarte-redlines" not in seg:
+                    if "-R jandira-tech/jubarte" not in seg:
                         unbound.append(f"{script.name}: {cmd.strip()}")
         self.assertEqual(unbound, [])
 

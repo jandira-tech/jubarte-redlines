@@ -8,9 +8,9 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 | You have | Go to |
 |---|---|
-| A question about using jubarte | [GitHub Discussions](https://github.com/jandira-tech/jubarte-redlines/discussions) |
-| A bug, or output that differs from Microsoft Word | [A new issue](https://github.com/jandira-tech/jubarte-redlines/issues/new/choose) |
-| A feature request | [A new issue](https://github.com/jandira-tech/jubarte-redlines/issues/new/choose) |
+| A question about using jubarte | [GitHub Discussions](https://github.com/jandira-tech/jubarte/discussions) |
+| A bug, or output that differs from Microsoft Word | [A new issue](https://github.com/jandira-tech/jubarte/issues/new/choose) |
+| A feature request | [A new issue](https://github.com/jandira-tech/jubarte/issues/new/choose) |
 | A vulnerability | The private form described in [SECURITY.md](SECURITY.md); never a public issue |
 
 Before opening an issue:

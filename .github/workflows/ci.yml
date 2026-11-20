@@ -415,7 +415,6 @@ jobs:
       - run: python3 scripts/test_codeql_config.py
       - run: python3 scripts/test_ci_runners.py
       - run: python3 scripts/test_coverage_gate.py
-      - run: python3 scripts/test_repo_move.py
       - run: python3 scripts/test_check_engine_commit.py
       - run: python3 scripts/test_check_npm_paths.py
       - run: python3 scripts/test_table_styles_asset.py

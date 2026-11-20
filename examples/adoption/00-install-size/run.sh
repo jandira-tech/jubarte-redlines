@@ -51,13 +51,13 @@ row "pandoc" "" "$apt pandoc >/dev/null"
 row "Node.js + npm + docx (docx-js)" "" "$apt nodejs npm >/dev/null && mkdir -p /opt/docxjs && cd /opt/docxjs && npm install -s docx >/dev/null"
 row "Python 3 + pip + python-docx (with lxml)" "" "$apt python3 python3-pip >/dev/null && $pip python-docx"
 row "python-docx (with lxml), Python already present" "python3 python3-pip" "$pip python-docx"
-row "jubarte $version release binary (linux-x86_64)" "" "curl -fsSL https://github.com/jandira-tech/jubarte-redlines/releases/download/v$version/jubarte-$version-linux-x86_64.tar.gz | tar -xz -C /usr/local/bin"
+row "jubarte $version release binary (linux-x86_64)" "" "curl -fsSL https://github.com/jandira-tech/jubarte/releases/download/v$version/jubarte-$version-linux-x86_64.tar.gz | tar -xz -C /usr/local/bin"
 row "jubarte $version wheel (pip), Python already present" "python3 python3-pip" "$pip jubarte-redlines==$version"
 mv "$out.new" "$out"
 
 # The release tarball's download size: the Content-Length of the asset the
 # binary row above installs, after GitHub's redirect.
-url="https://github.com/jandira-tech/jubarte-redlines/releases/download/v$version/jubarte-$version-linux-x86_64.tar.gz"
+url="https://github.com/jandira-tech/jubarte/releases/download/v$version/jubarte-$version-linux-x86_64.tar.gz"
 bytes=$(curl -fsSLI "$url" | awk 'tolower($1)=="content-length:"{n=$2} END{print n}' | tr -d '\r')
 printf 'what\tbytes\tsize\njubarte %s release tarball (linux-x86_64) download\t%s\t%s MB\n' \
   "$version" "$bytes" "$(( (bytes + 500000) / 1000000 ))" > download_jubarte.tsv

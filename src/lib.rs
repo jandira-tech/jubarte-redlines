@@ -30,7 +30,7 @@
 //! | Bound untrusted input before it is opened | [`admission::admit`] with [`admission::InputLimits`] (every entry point above admits its input too) |
 //! | Ask what this build supports | [`capabilities::capabilities_json`] |
 //!
-//! The [Rust guide](https://github.com/jandira-tech/jubarte-redlines/blob/main/docs/rust.md)
+//! The [Rust guide](https://github.com/jandira-tech/jubarte/blob/main/docs/rust.md)
 //! walks through each one; the same operations are in Python (`jubarte-redlines`
 //! on PyPI), JavaScript (`jubarte-wasm` on npm) and the `jubarte` CLI.
 //!
