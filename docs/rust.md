@@ -150,9 +150,7 @@ transitional spellings survive: `noid` for a change with no `w:id`, a colon
 id (`body:rev:007`) when no short spelling reads back, and nested `.pN`
 inside cells and text boxes (`t0.row1.cell2.p1`, `p14.box0.p0`). The
 short-and-long-ID contract
-([superpowers/specs/2026-10-17-short-and-long-id-contract.md](superpowers/specs/2026-10-17-short-and-long-id-contract.md),
-staged in
-[superpowers/plans/2026-10-16-id-contract-implementation.md](superpowers/plans/2026-10-16-id-contract-implementation.md))
+([ID_CONTRACT.md](ID_CONTRACT.md))
 is not implemented: it scopes cell and text-box paragraphs as `psN`,
 allocates labels for the fallback cases, moves JSON to paired
 `short_id`/`long_id` references under `schema_version: 2`, and retires the

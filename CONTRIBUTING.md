@@ -81,5 +81,5 @@ assertions and the fuzzer's sanitizers must remain enabled. Confirmed security f
 fixed or shown not exploitable with recorded evidence. Add CVE/GHSA/RustSec
 identifiers, affected/fixed versions and upgrade guidance to the changelog for
 publicly known runtime vulnerabilities fixed in the engine. Dependency updates
-should be distinguished from engine vulnerabilities. Follow [VERSIONING.md](VERSIONING.md)
+should be distinguished from engine vulnerabilities. Follow [VERSIONING.md](docs/VERSIONING.md)
 for unique SemVer releases, annotated tags and release notes.

@@ -29,7 +29,7 @@ first):
 On top, "Deprecated ids still in use": every place the CLI prints or accepts
 the retired colon long-id family (`body:p:12`, `header1:rev:3`) or a retired
 0.12 spelling (`#12`, `t0.r1.c2`). Under the 17 October 2026 short-and-long-ID
-contract (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`)
+contract (`docs/ID_CONTRACT.md`)
 none of those may be emitted or accepted after the schema-2 cutover: the only
 long ids are the four-field `PART.ELEMENT.ATTRIBUTE.VALUE` family, always
 paired with a `short_id`. Every run prints the rows on stderr until none is
@@ -450,7 +450,7 @@ def render(binary: Path) -> str:
         "The retired colon long-id family (`body:p:12`, `header1:rev:3`) and 0.12's retired "
         "spellings (`#12`, `#c5`, `t0.r1.c2`) that the CLI still prints or accepts. Every run "
         "of this script warns while this table has rows; `--strict` fails. The 17 October 2026 "
-        "contract (docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md) retires the "
+        "contract (docs/ID_CONTRACT.md) retires the "
         "whole family: after the schema-2 cutover the only long ids are the four-field "
         "`PART.ELEMENT.ATTRIBUTE.VALUE` family, always paired with a `short_id` — colon ids "
         "stay neither in JSON nor in machine hints and error payloads, so these rows go only "

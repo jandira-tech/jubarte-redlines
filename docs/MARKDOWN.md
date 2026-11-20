@@ -788,7 +788,7 @@ Three fallback spellings are transitional: two marks Word wrote with one
 `w:id` print the number twice (`r43+43`), a mark with no `w:id` prints
 `noid`, and one whose value no short spelling reads back prints its colon
 id (`body:rev:007`). The 17 October 2026 short-and-long-ID contract
-([superpowers/specs/2026-10-17-short-and-long-id-contract.md](superpowers/specs/2026-10-17-short-and-long-id-contract.md),
+([ID_CONTRACT.md](ID_CONTRACT.md),
 §4) retires all three — `rN` becomes an allocated label that keeps the
 source number only when it is canonical, inside Word's `int` range and
 unambiguous, so a pair sharing one `w:id` prints `r0+1` — but the change is
@@ -1025,7 +1025,7 @@ after a tagged one on the same anchor is a new comment, not a reply, and
 the applier (`jubarte compare contract.docx view.md`, `apply_markdown`)
 reads CriticMarkup as text. The contract that governs the missing mode is
 §7, "Anchored Markdown edits", of
-[superpowers/specs/2026-10-17-short-and-long-id-contract.md](superpowers/specs/2026-10-17-short-and-long-id-contract.md)
+[ID_CONTRACT.md](ID_CONTRACT.md)
 (moved there from the 13 October settlement's §5.3): when `source:` and
 `sha256:` name a file beside the Markdown and the digest matches,
 `convert` anchors on it (`--standalone` opts out, a mismatch is
@@ -1033,9 +1033,7 @@ reads CriticMarkup as text. The contract that governs the missing mode is
 inventory, a block without one is new, a source block the Markdown drops
 is deleted, and everything the view does not state comes from `source:`
 byte for byte — a tagged change is kept when unchanged, accepted or
-rejected when the agent removed its text. It is staged in
-docs/superpowers/plans/2026-10-16-id-contract-implementation.md, not
-implemented.
+rejected when the agent removed its text. It is not implemented yet.
 
 ### Literal marks and anchors
 

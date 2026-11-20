@@ -11,7 +11,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 > `part.pN`, `rN`, `story.rN`, `r1+2`, `cN`, `cN.text`, closed `pN-pM`
 > ranges — is the current short grammar and survives into the 17 October
 > 2026 short-and-long-ID contract v3
-> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
+> (`docs/ID_CONTRACT.md`,
 > documentation-only in `4612a155`, **not implemented**). Today's
 > divergences from that contract live outside this page's examples: `noid`
 > for an unnumbered change, `r43+43` for carriers sharing one `w:id`, a

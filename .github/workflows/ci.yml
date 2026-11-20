@@ -435,6 +435,7 @@ jobs:
       - run: python3 scripts/test_bump_version.py
       - run: python3 scripts/test_gemini_extension.py
       - run: python3 scripts/test_api_snapshot.py
+      - run: python3 scripts/check_links.py
       - run: python3 scripts/test_pulldown_cmark_lock.py
       - run: python3 scripts/test_gen_cli_docs_version.py
       # `npx jubarte-redlines` over the checked-in jubarte-wasm build.
@@ -451,7 +452,7 @@ jobs:
   # tests/fixtures/md-roundtrip/docx.txt must print the same Markdown after
   # docx -> md -> docx -> md (tests/md_fixed_point.rs). There is no list of
   # known failures: the job fails until the round trip is exact
-  # (docs/superpowers/specs/2026-10-13-ids-and-markdown-roundtrip.md §0).
+  # (docs/IDS_AND_MARKDOWN_ROUNDTRIP.md §0).
   roundtrip:
     name: md -> docx -> md, exact
     runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}

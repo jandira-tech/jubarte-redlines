@@ -14,8 +14,7 @@ exclude = ["jubarte-python", "jubarte-wasm", "jubarte-rust-inproc", "fuzz"]
 
 # D8 (plan T4.3b AC4): the workspace's own release and bench builds thin-LTO
 # the split crates back together; a crates.io consumer without LTO still
-# pays the cross-crate boundary, a measured gap recorded in
-# docs/refactoring_best_practices/baseline-addenda.md.
+# pays the cross-crate boundary.
 [profile.release]
 lto = "thin"
 

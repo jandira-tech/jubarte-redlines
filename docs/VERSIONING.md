@@ -75,7 +75,7 @@ shell needs a store build that embeds the new engine.
      Never use `/tmp` for Word probe paths (sandbox); use `.scratch/`.
    - **Criterion release gate:** `scripts/criterion_abab.sh <previous tag> .scratch/jubarte-loop/release_<ver>/gates [candidate dir-or-rev]` benches the previous release's tag and the candidate interleaved A B A B into one `CRITERION_HOME` under the release's state dir (never `/tmp`, never a saved baseline) and compares the saved runs offline with `--load-baseline` for context. The verdict reads each case's saved mean point estimates (`<group>/<bench>/<a1|a2|b1|b2>/estimates.json`): **delta = mean(b1,b2)/mean(a1,a2) − 1** is a regression only past both the **>5%** bar and that case's **self-noise this run** (max of |a2/a1−1|, |b2/b1−1|); a delta past 5% that a self-noise above 5% swallows is **UNDECIDABLE** — rerun on a quieter machine — and the gate fails on either, on a failed cargo call, on missing estimates, or on a case benched on one side only (#1797)
    - **Criterion local gate (perf-affecting PRs):** `cargo bench --bench redline -- --baseline m233_head` — a **>5%** regression on any case blocks merge.
-   - **Speed vs quality (B-fixes):** median generate time > **+10%** vs the M233 baseline (see `docs/SPEED_REVIEW.md`) triggers a perf review before merge.
+   - **Speed vs quality (B-fixes):** median generate time > **+10%** vs the M233 baseline triggers a perf review before merge.
 
 2. **Decide the bump**  
    - Perf banked-without-wall + package/notes validity → usually **patch** or **minor**  
@@ -170,7 +170,7 @@ shell needs a store build that embeds the new engine.
    surface rustdoc cannot show: the id contract's planned identity-schema cutover —
    paired `short_id`/`long_id` references replacing the `id`/`ref`/`at`
    strings every JSON output emits today
-   (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
+   (`docs/ID_CONTRACT.md`,
    not yet implemented) — breaks every JSON consumer and wants a minor
    bump with a CHANGELOG Removed section.
 

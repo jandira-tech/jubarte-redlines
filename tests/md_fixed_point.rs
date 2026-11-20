@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The Markdown round trip, strict (docs/superpowers/specs/
-//! 2026-10-13-ids-and-markdown-roundtrip.md §0: nothing with a short id is
+//! The Markdown round trip, strict (docs/IDS_AND_MARKDOWN_ROUNDTRIP.md §0: nothing with a short id is
 //! lost). Every `.md` in `tests/fixtures/md-roundtrip` must come back
 //! exactly after md → docx → md, and every docx listed in its `docx.txt`
 //! must print the same Markdown after docx → md → docx → md. A manuscript,
@@ -42,8 +41,7 @@ const HAND_WRITTEN: &[&str] = &["kitchen-sink.md"];
 
 /// Markdown as its authors wrote it, outside the view's dialect: no id
 /// lines, no YAML header, so the view of the docx it imports to can never
-/// be it. Each is gated as the idless plan's item 6 says
-/// (docs/superpowers/plans/2026-10-14-idless-fixed-point.md): it converts
+/// be it. Each is gated this way: it converts
 /// to B, B reads as C, C converts to D; C must equal read(D) (G1) and D
 /// must render as B (G2: `debug B D --check render`, page count included),
 /// as every docx case is gated (#532).

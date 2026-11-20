@@ -193,7 +193,7 @@ The other 3 of the 32 are not differences:
   the id contract — a canonical source id stays the label, while a
   duplicated, missing or noncanonical key gets a deterministically
   allocated label
-  (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`; the
+  (`docs/ID_CONTRACT.md`; the
   allocation half is not implemented yet — a keyless revision still prints
   `noid`).
 - **Status.** Not copied.

@@ -1745,9 +1745,7 @@ The identity fields the models carry retain their existing wire shape: `id` and
 fallback `body:rev:007` only when no short spelling reads back; `9872a374`,
 `52e96ced`), comment ids are numeric and `Snapshot.schema_version == 3` for logical changes over the table-tree shape.
 The 17 October 2026 short-and-long-ID contract
-([superpowers/specs/2026-10-17-short-and-long-id-contract.md](superpowers/specs/2026-10-17-short-and-long-id-contract.md),
-staged in
-[superpowers/plans/2026-10-16-id-contract-implementation.md](superpowers/plans/2026-10-16-id-contract-implementation.md))
+([ID_CONTRACT.md](ID_CONTRACT.md))
 replaces them with paired `short_id`/`long_id` references at the planned identity-schema
 cutover and retires the transitional spellings — `noid`, colon ids
 (`body:rev:12`), nested `.pN` inside cells and text boxes

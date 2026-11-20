@@ -11,7 +11,7 @@ release by [`scripts/api_snapshot.py`](../../scripts/api_snapshot.py) as
 part of the release process (see [VERSIONING.md](../VERSIONING.md)) and
 pinned to the tag named in each filename.
 
-HEAD is expected to drift ahead of the newest snapshot (v0.12.0); the next
+HEAD is expected to drift ahead of the newest snapshot; the next
 release's snapshot carries what was added since.
 
 ## Reading the drift between two releases

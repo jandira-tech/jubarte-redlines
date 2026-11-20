@@ -2,7 +2,7 @@
 > split of `convert/mod.rs` (#2459): each row's quoted line was found again
 > verbatim in the split files, one row per site.** This file is an audit
 > record, not a live plan: do not append to it. Current truth lives in
-> TODO.md (backlog) and CHANGELOG.md (shipped). Sections still binding: the
+> the issue tracker (backlog) and CHANGELOG.md (shipped). Sections still binding: the
 > dispositions below — parked items stay parked; this table does not
 > author engine edits. Sites whose code no longer exists are marked
 > "code removed" in the line column.

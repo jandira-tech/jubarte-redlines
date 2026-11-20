@@ -2,9 +2,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! The short ids as values (docs/superpowers/specs/
-//! 2026-10-13-ids-and-markdown-roundtrip.md §2 and §2.1; the conflicting
-//! clauses are superseded by 2026-10-17-short-and-long-id-contract.md).
+//! The short ids as values (docs/IDS_AND_MARKDOWN_ROUNDTRIP.md §2 and §2.1; the conflicting
+//! clauses are superseded by docs/ID_CONTRACT.md).
 //! [`ShortId`] is the
 //! one type every short id is: it parses only the settled spellings (Arthur,
 //! 2026-10-13: "We should strictly have the settled short IDs or long IDs.
@@ -27,8 +26,7 @@
 //! `t0.row1.cell2.p1` and `p14.box0.p0` are the pre-contract scoped
 //! spellings: the 17 October 2026 contract respells a cell's or a text box's
 //! own paragraphs `psN` (`t0.row1.cell2.ps1`, `p14.box0.ps0`), a change
-//! staged in docs/superpowers/plans/2026-10-16-id-contract-implementation.md
-//! and not implemented.
+//! not implemented yet.
 //!
 //! Numbers are ASCII digits without leading zeros, so each element has one
 //! spelling. Whether the element exists is the document's question.
