@@ -151,7 +151,7 @@ Tool: `tools/bench_classes.py` — every fixture with `overall_score < 90` is as
 Gate: every `<90` fixture on either corpus appears in **exactly one** class.
 
 ```bash
-python3 tools/bench_classes.py /Users/arthrod/temp/T/neurotic_docx_bench/results/bench.jsonl
+python3 tools/bench_classes.py ../neurotic_docx_bench/results/bench.jsonl
 ```
 
 Regenerate the raw dump into `_scratch/` when re-pinning; keep this ledger as the source of class → hypothesis → fix → delta.

@@ -128,11 +128,10 @@ fn main() {
     let (a_path, b_path) = if args.len() >= 3 {
         (args[1].clone(), args[2].clone())
     } else {
-        // Canonical tree is ~/T/jubarte-redlines (a symlink → temp/T); resolve
-        // HOME at runtime instead of hard-coding an absolute machine path.
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/arthrod".to_string());
-        let base =
-            format!("{home}/T/neurotic_docx_bench/docx-viewer/public/word_based/dissertacao");
+        // The bench checkout: NEUROTIC_DOCX_BENCH, or the sibling folder.
+        let bench = std::env::var("NEUROTIC_DOCX_BENCH")
+            .unwrap_or_else(|_| "../neurotic_docx_bench".to_string());
+        let base = format!("{bench}/docx-viewer/public/word_based/dissertacao");
         (
             format!("{base}/dissertacao-a.docx"),
             format!("{base}/dissertacao-b.docx"),

@@ -1,4 +1,4 @@
-Word's built-in table styles (src/markdown/word_table_styles.tsv)
+Word's built-in table styles (crates/jubarte-markdown/src/markdown/word_table_styles.tsv)
 
 The file holds the definitions of Microsoft Word's built-in Grid Table and
 List Table styles (1 to 7, plain and Accent 1 to 6): borders, shading,

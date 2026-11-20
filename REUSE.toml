@@ -48,7 +48,7 @@ SPDX-FileCopyrightText = "2023 Ismael Shakverdiev"
 SPDX-License-Identifier = "LicenseRef-markdown2pdf-MIT"
 
 # Preserved MIT notice for the adapted zipsign signature check
-# (src/update/zipsign.rs, from zipsign-api 0.2.2: MIT OR Apache-2.0 OR
+# (crates/jubarte-cli/src/update/zipsign.rs, from zipsign-api 0.2.2: MIT OR Apache-2.0 OR
 # Apache-2.0 WITH LLVM-exception, used under MIT).
 [[annotations]]
 path = "LICENSES/LicenseRef-zipsign-MIT.txt"

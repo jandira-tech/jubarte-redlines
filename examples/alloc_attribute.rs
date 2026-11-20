@@ -139,8 +139,10 @@ fn site_key(bt: &Backtrace) -> String {
 }
 
 fn main() {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/arthrod".to_string());
-    let base = format!("{home}/T/neurotic_docx_bench/docx-viewer/public/word_based/dissertacao");
+    // The bench checkout: NEUROTIC_DOCX_BENCH, or the sibling folder.
+    let bench = std::env::var("NEUROTIC_DOCX_BENCH")
+        .unwrap_or_else(|_| "../neurotic_docx_bench".to_string());
+    let base = format!("{bench}/docx-viewer/public/word_based/dissertacao");
     let a_path = format!("{base}/dissertacao-a.docx");
     let b_path = format!("{base}/dissertacao-b.docx");
     let a = std::fs::read(&a_path).unwrap_or_else(|e| panic!("read {a_path}: {e}"));
