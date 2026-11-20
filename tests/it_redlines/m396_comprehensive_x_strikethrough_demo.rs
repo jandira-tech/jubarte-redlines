@@ -48,7 +48,7 @@ fn body_classes(xml: &str) -> Vec<char> {
 fn file_34_x_35_multi_mix_titles_not_pure_i_short() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
     let a = src.join("file_34.docx");
     let b = src.join("file_35.docx");
     if !a.exists() || !b.exists() {

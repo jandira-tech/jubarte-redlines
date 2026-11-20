@@ -61,7 +61,7 @@ fn payload(bytes: &[u8]) -> Payload {
 #[test]
 fn established_word_midsplices_recover_every_source_payload_in_order() {
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     for (original, revised) in [
         (
             "evals__employment_offer_4cf5a872.docx",

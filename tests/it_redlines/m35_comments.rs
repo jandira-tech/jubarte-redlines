@@ -104,7 +104,7 @@ fn optional_bench_docx(name: &str) -> Option<Vec<u8>> {
         .map(std::path::PathBuf::from)
         .or_else(|| {
             let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/corpus/neurotic_docx_bench");
+                .join("tests/corpus/bench/neurotic_docx_bench");
             p.is_dir().then_some(p)
         })?;
     // The corpus copy moved; the fixtures folder keeps the originals.

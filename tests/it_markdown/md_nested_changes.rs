@@ -3047,7 +3047,7 @@ fn issue_1137_adjacent_hyperlink_pieces_merge() {
 
 // Existing Word-saved fixture: both EvidenceQuote and Decision have paired ids.
 const ISSUE_1137_WORD_STYLES: &[u8] = include_bytes!(
-    "../corpus/neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments_addition_redline_addition_v_removal.docx"
+    "../corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments_addition_redline_addition_v_removal.docx"
 );
 
 #[test]

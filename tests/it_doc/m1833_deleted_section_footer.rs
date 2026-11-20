@@ -57,7 +57,7 @@ use jubarte::xmllinq::{Dom, NodeId};
 /// A corpus document, by its path under `corpus/word`.
 fn fixture(path: &str) -> Vec<u8> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/corpus/neurotic_docx_bench/corpus/word")
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word")
         .join(path);
     std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }

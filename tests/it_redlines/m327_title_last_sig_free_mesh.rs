@@ -45,7 +45,7 @@ fn body_para_classes(xml: &str) -> Vec<char> {
 fn table_tester_x_tab_alignment_multi_mix() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__superdoc_table_tester_3b2de2e1.docx");
     let b = src.join("super_editor__tab_alignment_test_184edb5d.docx");
     if !a.exists() || !b.exists() {

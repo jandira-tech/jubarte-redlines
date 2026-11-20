@@ -47,7 +47,7 @@ fn body_para_seq(xml: &str) -> String {
 fn rfonts_x_rtl_table_has_mix() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__ooxml_rFonts_rstyle_linked_combos_dem_213298de.docx");
     let b = src.join("behavior__sd_2672_rtl_table_63bd9d10.docx");
     if !a.exists() || !b.exists() {

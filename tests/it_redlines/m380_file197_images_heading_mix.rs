@@ -15,7 +15,7 @@ use jubarte::document_comparer::compare_documents_with_settings;
 fn file197_x_198_images_heading_mixes_with_calibri_body() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
     let a = src.join("file_197.docx");
     let b = src.join("file_198.docx");
     if !a.exists() || !b.exists() {
@@ -76,7 +76,7 @@ fn file197_x_198_images_heading_mixes_with_calibri_body() {
 fn file83_x_84_title_mixes_with_center_bold_body() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
     let a = src.join("file_83.docx");
     let b = src.join("file_84.docx");
     if !a.exists() || !b.exists() {

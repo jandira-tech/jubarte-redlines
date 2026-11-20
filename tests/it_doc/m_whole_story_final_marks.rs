@@ -26,7 +26,7 @@ use jubarte::document_comparer::{accept_revisions, compare_documents, reject_rev
 
 const WORD: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/tests/corpus/neurotic_docx_bench/corpus/word"
+    "/tests/corpus/bench/neurotic_docx_bench/corpus/word"
 );
 
 /// The changes of a redline, in document order:

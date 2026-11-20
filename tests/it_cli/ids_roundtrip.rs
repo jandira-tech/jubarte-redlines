@@ -1185,7 +1185,7 @@ fn every_story_and_every_collision_round_trips() {
 /// commented, tracked documents and its 88 tracked ones without comments.
 #[test]
 fn word_redlines_round_trip() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/neurotic_docx_bench");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/bench/neurotic_docx_bench");
     let mut files = Vec::new();
     for dir in [
         "grok_run/wr0928/rejected_tracking/docx",
@@ -1323,7 +1323,7 @@ fn agree_on_groups(name: &str, docx: &[u8], fails: &mut Vec<String>) {
 
 #[test]
 fn read_and_changes_agree_on_every_group() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/neurotic_docx_bench");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/bench/neurotic_docx_bench");
     let mut fails = Vec::new();
     for (name, docx) in [
         ("long body", long_body()),

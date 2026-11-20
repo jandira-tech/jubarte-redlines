@@ -32,7 +32,7 @@ fn style_elem(xml: &str, sid: &str) -> Option<String> {
 fn s2_bonly_styles_bake_docdefaults_delta_with_change_records() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__image_inline_and_block_ad6109b3.docx");
     let b = src.join("behavior__rtl_page_numpages_54739e26.docx");
     if !a.exists() || !b.exists() {

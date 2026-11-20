@@ -193,7 +193,7 @@ fn a_removed_comment_fares_as_it_would_without_a_twin() {
 fn the_issues_document_keeps_its_six_comments_after_an_add() {
     let source = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/corpus/neurotic_docx_bench/corpus/word/with_comments_clean/docx/1672057675_485599b4e9_rejected_tracking.docx"
+        "/tests/corpus/bench/neurotic_docx_bench/corpus/word/with_comments_clean/docx/1672057675_485599b4e9_rejected_tracking.docx"
     ))
     .unwrap();
     let edited = apply_plan(

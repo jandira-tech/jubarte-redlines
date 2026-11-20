@@ -5,8 +5,8 @@
 //! Every copied fixture path a test names must exist.
 //!
 //! The neurotic_docx_bench documents the tests use are copied into
-//! `tests/corpus/neurotic_docx_bench` (same relative paths as in the bench)
-//! and Word's accepted redlines into `tests/corpus/_to_improve_accepted_changes`,
+//! `tests/corpus/bench/neurotic_docx_bench` (same relative paths as in the bench)
+//! and Word's accepted redlines into `tests/corpus/bench/_to_improve_accepted_changes`,
 //! so no test depends on a checkout beside this one. Many tests still skip
 //! when a fixture is missing; this check turns a missing copy into a failure
 //! instead of a silent pass (the 2026-09-27 bench reorganization left 170
@@ -15,8 +15,8 @@
 use std::path::{Path, PathBuf};
 
 const PREFIXES: [&str; 2] = [
-    "\"tests/corpus/neurotic_docx_bench/",
-    "\"tests/corpus/_to_improve_accepted_changes/",
+    "\"tests/corpus/bench/neurotic_docx_bench/",
+    "\"tests/corpus/bench/_to_improve_accepted_changes/",
 ];
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -50,14 +50,14 @@ fn fixture_literals(text: &str) -> Vec<&str> {
 
 #[test]
 fn fixture_literals_skip_templates_and_keep_plain_paths() {
-    let text = r#"let a = "tests/corpus/neurotic_docx_bench/corpus/x.docx";
-        let b = format!("tests/corpus/neurotic_docx_bench/corpus/{name}.docx");
-        let c = "tests/corpus/_to_improve_accepted_changes/y.docx""#;
+    let text = r#"let a = "tests/corpus/bench/neurotic_docx_bench/corpus/x.docx";
+        let b = format!("tests/corpus/bench/neurotic_docx_bench/corpus/{name}.docx");
+        let c = "tests/corpus/bench/_to_improve_accepted_changes/y.docx""#;
     assert_eq!(
         fixture_literals(text),
         [
-            "tests/corpus/neurotic_docx_bench/corpus/x.docx",
-            "tests/corpus/_to_improve_accepted_changes/y.docx"
+            "tests/corpus/bench/neurotic_docx_bench/corpus/x.docx",
+            "tests/corpus/bench/_to_improve_accepted_changes/y.docx"
         ]
     );
 }

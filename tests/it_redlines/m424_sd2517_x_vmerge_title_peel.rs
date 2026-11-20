@@ -17,7 +17,7 @@ use jubarte::document_comparer::compare_documents_with_settings;
 fn sd2517_x_vmerge_pure_i_title_first() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("behavior__sd_2517_localized_heading_styles_39c2e4a1.docx");
     let b = src.join("behavior__sd_2672_gridbefore_vmerge_7c895dff.docx");
     if !a.exists() || !b.exists() {

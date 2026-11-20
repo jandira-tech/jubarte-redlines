@@ -1758,7 +1758,7 @@ fn corpus_sweep_in(folder: &str, offsets: &[usize], part: usize, parts: usize, p
 #[test]
 fn superdoc_corpus_pairs_round_trip_0() {
     corpus_sweep(
-        "neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source",
+        "bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source",
         &[1, 17, 43],
         0,
         4,
@@ -1768,7 +1768,7 @@ fn superdoc_corpus_pairs_round_trip_0() {
 #[test]
 fn superdoc_corpus_pairs_round_trip_1() {
     corpus_sweep(
-        "neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source",
+        "bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source",
         &[1, 17, 43],
         1,
         4,
@@ -1778,7 +1778,7 @@ fn superdoc_corpus_pairs_round_trip_1() {
 #[test]
 fn superdoc_corpus_pairs_round_trip_2() {
     corpus_sweep(
-        "neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source",
+        "bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source",
         &[1, 17, 43],
         2,
         4,
@@ -1788,17 +1788,17 @@ fn superdoc_corpus_pairs_round_trip_2() {
 #[test]
 fn superdoc_corpus_pairs_round_trip_3() {
     corpus_sweep(
-        "neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source",
+        "bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source",
         &[1, 17, 43],
         3,
         4,
     );
 }
 
-const WORD_BASED: &str = "neurotic_docx_bench/corpus/word_based/docx_source";
-const WORD_CLEAN: &str = "neurotic_docx_bench/corpus/word/clean/docx";
-const RANDOMIZED: &str = "neurotic_docx_bench/corpus/word_based/docx_source_randomized";
-const COMMENTED: &str = "neurotic_docx_bench/corpus/word/with_comments_tracking/docx";
+const WORD_BASED: &str = "bench/neurotic_docx_bench/corpus/word_based/docx_source";
+const WORD_CLEAN: &str = "bench/neurotic_docx_bench/corpus/word/clean/docx";
+const RANDOMIZED: &str = "bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized";
+const COMMENTED: &str = "bench/neurotic_docx_bench/corpus/word/with_comments_tracking/docx";
 const STAMPED: &str = "broken_ones_two/sources";
 
 #[test]
@@ -1846,10 +1846,10 @@ fn stamped_corpus_pairs_round_trip_2() {
     corpus_sweep(STAMPED, &[1, 29], 2, 3);
 }
 
-const UNACCEPTED: &str = "_to_improve_accepted_changes/_original_unaccepted_docx";
-const REJECTED: &str = "neurotic_docx_bench/grok_run/wr0928/rejected_tracking/docx";
-const GROK_WORD_BASED: &str = "neurotic_docx_bench/grok_run/word_based/docx_source";
-const TRACKING: &str = "neurotic_docx_bench/corpus/word/tracking_without_comments/docx";
+const UNACCEPTED: &str = "bench/_to_improve_accepted_changes/_original_unaccepted_docx";
+const REJECTED: &str = "bench/neurotic_docx_bench/grok_run/wr0928/rejected_tracking/docx";
+const GROK_WORD_BASED: &str = "bench/neurotic_docx_bench/grok_run/word_based/docx_source";
+const TRACKING: &str = "bench/neurotic_docx_bench/corpus/word/tracking_without_comments/docx";
 
 #[test]
 fn unaccepted_corpus_pairs_round_trip_0() {
@@ -1896,7 +1896,7 @@ fn tracking_corpus_pairs_round_trip_2() {
     corpus_sweep(TRACKING, &[1], 2, 3);
 }
 
-const SUPERDOC: &str = "neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source";
+const SUPERDOC: &str = "bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source";
 
 #[test]
 fn superdoc_corpus_pairs_round_trip_powertools() {

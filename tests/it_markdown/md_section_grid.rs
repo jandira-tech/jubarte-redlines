@@ -323,7 +323,7 @@ fn rejecting_ids_sections_restores_the_recorded_page() {
     // and Reject of the docx the fixture writes must put it back (#1475).
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let corpus = std::fs::read(root.join(
-        "tests/corpus/neurotic_docx_bench/grok_run/wr0928/rejected_tracking/docx/3c920d5996_rejected_tracking.docx",
+        "tests/corpus/bench/neurotic_docx_bench/grok_run/wr0928/rejected_tracking/docx/3c920d5996_rejected_tracking.docx",
     ))
     .expect("corpus");
     let markdown = view(&corpus);

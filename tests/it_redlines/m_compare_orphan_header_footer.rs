@@ -25,7 +25,7 @@ use jubarte::document_comparer::compare_documents;
 
 const DIR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/tests/corpus/neurotic_docx_bench/reduced/orphan_header_footer"
+    "/tests/corpus/bench/neurotic_docx_bench/reduced/orphan_header_footer"
 );
 
 fn part(docx: &[u8], name: &str) -> String {

@@ -35,7 +35,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / (
-    "tests/corpus/neurotic_docx_bench/grok_run/fixtures_500/"
+    "tests/corpus/bench/neurotic_docx_bench/grok_run/fixtures_500/"
     "00f45b1b7812db57f5a024f116de6c6f0cfab5b79c9bc33657a6be57657d181d.docx"
 )
 OUT = ROOT / "crates/jubarte-markdown/src/markdown/word_table_styles.tsv"

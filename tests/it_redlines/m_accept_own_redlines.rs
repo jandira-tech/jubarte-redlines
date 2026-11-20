@@ -1194,7 +1194,7 @@ fn observed_m348_rewritten_cells_keep_revised_properties_and_complete_original_h
     use jubarte::comparer::WmlComparerSettings;
     use jubarte::document_comparer::compare_documents_with_settings;
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source");
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source");
     let a = source.join("eigenpal_docx_editor_suggesting_mixed_edits.docx");
     let b = source.join("employee_directory_table_2.docx");
     if !a.exists() || !b.exists() {

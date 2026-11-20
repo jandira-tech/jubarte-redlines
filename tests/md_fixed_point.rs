@@ -1044,7 +1044,7 @@ fn offset_namespace_declaration_preserves_opaque_drawing_bytes() {
     let case = docx_case(
         dir.path(),
         Path::new(
-            "tests/corpus/_to_improve_accepted_changes/_original_unaccepted_docx/ac6cd8d92f.docx",
+            "tests/corpus/bench/_to_improve_accepted_changes/_original_unaccepted_docx/ac6cd8d92f.docx",
         ),
     );
     assert_eq!(case.got.unwrap(), case.want);

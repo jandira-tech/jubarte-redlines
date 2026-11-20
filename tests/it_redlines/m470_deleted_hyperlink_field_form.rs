@@ -19,7 +19,7 @@ use jubarte::document_comparer::compare_documents;
 fn deleted_toc_hyperlink_keeps_field_form() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
     let a = src.join("file_22.docx");
     let b = src.join("file_23.docx");
     if !a.exists() || !b.exists() {

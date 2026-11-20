@@ -76,7 +76,7 @@ fn body_para_classes(xml: &str) -> Vec<(char, String, String)> {
 fn missing_sectpr_x_separator_iiim() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
-        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__missing_sectpr_967a402d.docx");
     let b = src.join("super_editor__missing_separator_41c823b9.docx");
     if !a.exists() || !b.exists() {

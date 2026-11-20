@@ -35,13 +35,13 @@ use jubarte::xmllinq::Dom;
 
 fn fixture(name: &str) -> Vec<u8> {
     read_corpus(
-        "tests/corpus/neurotic_docx_bench/corpus/word/clean/docx",
+        "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx",
         name,
     )
 }
 
 fn issue(name: &str) -> Vec<u8> {
-    read_corpus("tests/corpus/issue_1926", name)
+    read_corpus("tests/corpus/bench/issue_1926", name)
 }
 
 fn read_corpus(dir: &str, name: &str) -> Vec<u8> {

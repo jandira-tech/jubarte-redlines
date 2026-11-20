@@ -14,6 +14,10 @@ expected result, actual result and a minimal reproduction. Attach only documents
 you may publish; remove personal information. Report vulnerabilities privately
 as described in [SECURITY.md](SECURITY.md).
 
+Clone with `git clone --recurse-submodules`, or run `git submodule update
+--init` in an existing clone: the tests read third-party documents from the
+submodule `tests/corpus/bench`, and do not compile without it.
+
 Use a fork and a pull request against `main`. Explain the problem, resulting
 behavior and validation. Microsoft Word parity is the correctness target;
 reuse existing fixtures and upstream Docxodus/PowerTools behavior. Follow

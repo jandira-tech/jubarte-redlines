@@ -30,9 +30,9 @@ use common::validity::assert_word_valid_package;
 use jubarte::comparer::WmlComparerSettings;
 use jubarte::document_comparer::compare_documents_with_settings;
 
-const A: &str = "tests/corpus/neurotic_docx_bench/corpus/word/clean/docx/aeb0ace263_793bb9c35c342cd532221e60f7f70c0411de141b896a63b2.docx";
-const B: &str = "tests/corpus/neurotic_docx_bench/corpus/word/clean/docx/1000537d17_8d9cfd6b8768cf88164c1b8c735e97b737193f3e92fd18ee.docx";
-const WORD: &str = "tests/corpus/neurotic_docx_bench/corpus/word/tracking_without_comments/docx/aeb0ace263__vs__1000537d17_redline_3d4318d7e9.docx";
+const A: &str = "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/aeb0ace263_793bb9c35c342cd532221e60f7f70c0411de141b896a63b2.docx";
+const B: &str = "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/1000537d17_8d9cfd6b8768cf88164c1b8c735e97b737193f3e92fd18ee.docx";
+const WORD: &str = "tests/corpus/bench/neurotic_docx_bench/corpus/word/tracking_without_comments/docx/aeb0ace263__vs__1000537d17_redline_3d4318d7e9.docx";
 
 /// (live gridCol count, row count, TR-INS rows, TR-DEL rows) per table.
 type TableShape = (usize, usize, usize, usize);
