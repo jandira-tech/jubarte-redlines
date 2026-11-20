@@ -29,7 +29,7 @@ ships the `jubarte` CLI binary.
 | `jubarte-dom` (`jubarte_dom`) | the arena XML DOM (`xmllinq`), WordprocessingML namespaces, ids, shared utilities and input limits |
 | `jubarte-opc` (`jubarte_opc`) | the OPC package floor: admission and its budgets, packages, markup simplification, strict-to-transitional translation, settings, and the shared Word tables (theme, built-in styles, borders, numbering, table DOM, validity predicates, render option types) |
 | `jubarte-redlines` (`jubarte_redlines`) | the compare product: two Word documents in, a tracked-changes redline out (`document_comparer`, `comparer`, `revision_processor`, `comparison_log`) |
-| `jubarte-render` (`jubarte_render`) | the render product: DOCX and Markdown to PDF and PNG with Word-faithful layout (`convert`), with the embedded fonts |
+| `jubarte-render` (`jubarte_render`) | the render product: DOCX to PDF and PNG with Word-faithful layout (`convert`), with the embedded fonts |
 | `jubarte-doc` (`jubarte_doc`) | the document operations above compare: changes, comments, validate, audit, scrub, append, fields, inspect and debug |
 | `jubarte-markdown` (`jubarte_markdown`) | Markdown in and out of Word documents (CriticMarkup as tracked changes, the agent view) and `.doc` reading |
 | `jubarte-edit` (`jubarte_edit`) | edit plans as tracked changes, text diff views, capabilities and staged publication |

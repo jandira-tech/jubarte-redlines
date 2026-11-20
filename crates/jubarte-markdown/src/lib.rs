@@ -5,9 +5,9 @@
 //! # jubarte-markdown
 //!
 //! Markdown in and out of Word documents: `markdown::markdown_to_docx`
-//! writes CriticMarkup as tracked changes and comments, the readers
-//! (`view_notes`, `view_stories`, `view_styles`, `from_docx`) project a
-//! package to the agent view's Markdown, and `markdown::diff_markdown`
+//! writes CriticMarkup as tracked changes and comments,
+//! `markdown::docx_to_markdown` (with `markdown::MarkdownOptions`) projects
+//! a package to the agent view's Markdown, and `markdown::diff_markdown`
 //! diffs two documents as pandiff-style CriticMarkup. `legacy_doc` reads
 //! Word 97-2003 `.doc` files.
 //!
@@ -15,6 +15,25 @@
 //! the facade composes them back into `jubarte::markdown`. With the
 //! `render` feature off, the layout-dependent items (`page_texts`,
 //! `with_page_markers`, page markers in reads) do not exist.
+//!
+//! # Example
+//!
+//! ```rust
+//! use jubarte_markdown::changes::list_changes;
+//! use jubarte_markdown::markdown::{DocxOptions, diff_markdown, markdown_to_docx};
+//!
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // CriticMarkup becomes Word tracked changes.
+//!     let options = DocxOptions { author: "Reviewer".into(), ..DocxOptions::default() };
+//!     let written = markdown_to_docx("The term is {--two--}{++three++} years.\n", &options)?;
+//!     assert!(!list_changes(&written.docx)?.is_empty());
+//!
+//!     // Two Markdown texts diffed as CriticMarkup.
+//!     let diff = diff_markdown("The term is two years.\n", "The term is three years.\n");
+//!     assert!(diff.contains("three"));
+//!     Ok(())
+//! }
+//! ```
 
 #![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 #![forbid(unsafe_code)]

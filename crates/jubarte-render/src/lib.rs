@@ -11,6 +11,29 @@
 //! pure option types (`PdfOptions`, `RevisionStyle`, …) live in
 //! jubarte-opc's `render_options` and are re-exported here at their
 //! historical `convert::` paths.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use jubarte_render::convert::{PdfOptions, RevisionStyle, docx_to_pdf, docx_to_pdf_with, docx_to_png};
+//!
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let docx = std::fs::read("redline.docx")?;
+//!
+//!     // Default options: tracked changes in the conventional colours.
+//!     std::fs::write("redline.pdf", docx_to_pdf(&docx)?)?;
+//!
+//!     // Tracked changes drawn the way Microsoft Word prints them.
+//!     let word = PdfOptions { revisions: RevisionStyle::Word, ..PdfOptions::default() };
+//!     std::fs::write("redline-word.pdf", docx_to_pdf_with(&docx, word)?)?;
+//!
+//!     // One PNG per page, at 96 dpi.
+//!     for (n, png) in docx_to_png(&docx, PdfOptions::default(), 96.0)?.iter().enumerate() {
+//!         std::fs::write(format!("page-{}.png", n + 1), png)?;
+//!     }
+//!     Ok(())
+//! }
+//! ```
 
 #![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 #![forbid(unsafe_code)]
@@ -24,5 +47,5 @@ pub(crate) use jubarte_opc::{
     markup_simplifier, numbering, render_options, strict_translation, table_dom,
 };
 
-/// DOCX and Markdown to PDF and PNG, with Word-faithful layout.
+/// DOCX to PDF and PNG, with Word-faithful layout.
 pub mod convert;

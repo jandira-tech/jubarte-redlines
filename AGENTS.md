@@ -35,7 +35,7 @@ The names used at each boundary are intentional:
     styles, numbering, settings, the shared Word tables).
   - `crates/jubarte-redlines` (library `jubarte_redlines`): the compare
     product, alone; this is the crates.io `jubarte-redlines` from 0.19.0.
-  - `crates/jubarte-render`: DOCX and Markdown to PDF and PNG.
+  - `crates/jubarte-render`: DOCX to PDF and PNG.
   - `crates/jubarte-doc`: changes, comments, validate, audit, scrub,
     append, fields, inspect and debug.
   - `crates/jubarte-markdown`: Markdown in and out, and `.doc` reading.

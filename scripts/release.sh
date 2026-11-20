@@ -1046,11 +1046,12 @@ done
 step "Cargo.lock ×4 refreshed"
 
 # One README per published library, cut from README.md and the library's
-# README.fragment.md, links pinned to $TAG. It refuses when a public Python
-# or WASM name is missing from its README: document it in the fragment.
+# README.fragment.md (a workspace crate's from its fragment alone), links
+# pinned to $TAG. It refuses when a public Python or WASM name, or a public
+# module of a crate, is missing from its README: document it in the fragment.
 python3 scripts/library_readmes.py --version "$VER" >/dev/null \
   || die "library READMEs: a public API name is undocumented (see above); add it to the fragment"
-step "README.crates.md, jubarte-python/README.md, jubarte-wasm/{npm,cli}/README.md cut for v$VER"
+step "README.crates.md, crates/*/README.md, jubarte-python/README.md, jubarte-wasm/{npm,cli}/README.md cut for v$VER"
 
 # =============================================================================
 say "2. Changelog check"
@@ -1454,7 +1455,7 @@ else
     # fails and the dirty tree stops the wasm build below (0.18.0).
     git add Cargo.toml Cargo.lock CHANGELOG.md README.md docs/VERSIONING.md \
       README.crates.md jubarte-wasm/npm/README.md jubarte-wasm/cli/README.md \
-      jubarte-python/README.md \
+      jubarte-python/README.md crates/*/README.md \
       jubarte-python/Cargo.toml jubarte-python/Cargo.lock \
       jubarte-python/pyproject.toml jubarte-python/uv.lock \
       jubarte-wasm/Cargo.toml \
