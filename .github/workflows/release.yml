@@ -494,10 +494,11 @@ jobs:
         run: scripts/publish_crates.sh "$VER" --pending | tee /dev/stderr | grep -E '^(new|pending)=' >> "$GITHUB_OUTPUT"
       # A crate crates.io has never seen takes no trusted publisher, so its
       # first release is published with a token, from a checkout:
-      # scripts/release.sh --local-publish (which also publishes the rest).
+      # scripts/release.sh --local-publish-crates (crates.io only; npm and
+      # PyPI stay on this workflow), or --local-publish for all three.
       - if: steps.pending.outputs.new != '0'
         run: |
-          echo "::warning::${{ steps.pending.outputs.new }} crate(s) have never been published to crates.io; trusted publishing cannot create a crate. Publish $VER with scripts/release.sh $VER … --local-publish, then register this workflow as each new crate's trusted publisher."
+          echo "::warning::${{ steps.pending.outputs.new }} crate(s) have never been published to crates.io; trusted publishing cannot create a crate. Publish $VER with scripts/release.sh $VER … --local-publish-crates, then register this workflow as each new crate's trusted publisher."
       - if: steps.pending.outputs.pending != '0' && steps.pending.outputs.new == '0'
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
       # mbx's cache server is on the self-hosted network; on GitHub's runners

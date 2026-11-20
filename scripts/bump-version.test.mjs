@@ -122,3 +122,25 @@ for (const importer of ["eval", "script"]) {
     assert.match(fs.readFileSync(path.join(root, "Cargo.toml"), "utf8"), /^version = "0\.12\.0"$/m);
   });
 }
+
+test("the codemod bumps a version that carries a trailing comment", (t) => {
+  // The root Cargo.toml: `version = "0.18.0" # the release script bumps this…`.
+  const { root } = stageCodemod(t);
+  const manifest = [
+    "[workspace.package]",
+    'version = "0.12.0" # the release script bumps this and the "=" pins together',
+    "",
+    "[workspace.dependencies]",
+    'jubarte-dom = { path = "crates/jubarte-dom", version = "=0.12.0" }',
+    "",
+  ].join("\n");
+  fs.writeFileSync(path.join(root, "Cargo.toml"), manifest);
+  const result = spawnSync(process.execPath, [path.join(root, "scripts/bump-version.mjs"), "9.9.9"], {
+    encoding: "utf8", env: { ...process.env, JUBARTE_RELEASE_SH: "1" },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    fs.readFileSync(path.join(root, "Cargo.toml"), "utf8"),
+    manifest.replace('"0.12.0" #', '"9.9.9" #').replace("=0.12.0", "=9.9.9"),
+  );
+});

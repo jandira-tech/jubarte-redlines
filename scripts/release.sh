@@ -37,6 +37,11 @@
 #                               releaser's tokens (the old path) instead of
 #                               waiting for release.yml's OIDC publish jobs —
 #                               the fallback when a trusted publisher fails
+#                 --local-publish-crates
+#                               step 9 alone publishes from this machine
+#                               (crates.io has never seen a new crate, so
+#                               its first release needs a token); npm and
+#                               PyPI stay on release.yml's OIDC jobs
 #                 --no-wait     with --local-publish: PyPI gets sdist+local
 #                               wheel instead of CI wheels
 #                 --open-docs   step 6 also opens the rendered rustdoc in the
@@ -188,7 +193,7 @@ before|you|app lock: jubarte-app/src-tauri/Cargo.lock records jubarte-redlines @
 before|you|the app's checkout is in place: a clone of arthrod/jubarte-app at jubarte-app/ (this repository does not track it) or named by JUBARTE_APP_DIR, on main, in sync with its origin, clean, able to build the site (node_modules, public/fixtures) — step 13 deploys jubarte.pro from it|jubarte-app/scripts/release-engine.sh @V@ --engine-dir "$PWD" --preflight
 before|you|the App Store path is ready for the after-builds: the asc credentials exist (~/.appstoreconnect), the app's provisioning profiles are present and out of every commit (gitignored; if one ever reached a repository's history, accept it knowingly or rotate it), and App Store Connect holds no @V@ version record already used — Apple refuses a re-used number|ls jubarte-app/src-tauri/*.provisionprofile; (cd jubarte-app && ./scripts/asc-build-status.sh)
 before|you|Trusted publishers (#1642): crates.io jubarte-redlines, PyPI jubarte-docx (new in 0.19.0: register it as a pending publisher at https://pypi.org/manage/account/publishing/ before the tag), PyPI jubarte-redlines, npm jubarte-wasm and npm jubarte-redlines each trust owner jandira-tech, repository jubarte-redlines, workflow release.yml, environment release — release.yml publishes with no token. npm: each configuration must allow npm publish (one made after 2026-09-03 allows only npm stage publish unless that box is ticked, and a plain publish then fails E404), and a new configuration expires unless its first publish lands within two days — 0.13.0 never reached npm for this|npm trust list jubarte-wasm; npm trust list jubarte-redlines (both after npm login); npm trust github <package> --file release.yml --repo jandira-tech/jubarte-redlines --env release --allow-publish -y
-before|you|Trusted publishers for the split's first release: crates.io registers a trusted publisher only on a crate that exists, so the first release of each new crate — crates.io jubarte, jubarte-dom, jubarte-opc, jubarte-render, jubarte-doc, jubarte-markdown, jubarte-edit and jubarte-cli — is published from here with a token (--local-publish; scripts/publish_crates.sh resumes past what is live). Then register owner jandira-tech, repository jubarte-redlines, workflow release.yml, environment release on each of the eight before the next release|scripts/release.sh @V@ <summaries> --local-publish; https://crates.io/crates/<crate>/settings (Trusted Publishing) for each of the eight
+before|you|Trusted publishers for the split's first release: crates.io registers a trusted publisher only on a crate that exists, so the first release of each new crate — crates.io jubarte, jubarte-dom, jubarte-opc, jubarte-render, jubarte-doc, jubarte-markdown, jubarte-edit and jubarte-cli — is published from here with a token (--local-publish-crates; scripts/publish_crates.sh resumes past what is live). Then register owner jandira-tech, repository jubarte-redlines, workflow release.yml, environment release on each of the eight before the next release|scripts/release.sh @V@ <summaries> --local-publish; https://crates.io/crates/<crate>/settings (Trusted Publishing) for each of the eight
 before|you|Only with --local-publish: UV_PUBLISH_TOKEN is exported before the run (name only, never print it), crates.io and npm are logged in, and the owner is at the keyboard for npm's browser approval (2FA) — step 0 checks them only then|set -a; source <owner .env>; set +a; test -n "$UV_PUBLISH_TOKEN"; npm whoami
 before|you|Ring-2 validity ratchet: no NEW OpenXML validator keys vs tools/validity_baseline.tsv and no baselined stems not run; stage the legacy sources from corpus/word/pools/word_based_pairs.csv and verify renamed aliases via corpus/word/notices/RENAMED.csv (NEUROTIC_DOCX_BENCH, default ../neurotic_docx_bench); missing originals require recovery or maintainer-authorized re-blessing; an output the validator cannot even open needs a Word probe before it ships|python3 scripts/stage_ring2_sources.py .scratch/ring2_sources && scripts/redline-sweep.sh tests/corpus/bench/neurotic_docx_bench/corpus/word_based/centralized_mapping.csv .scratch/ring2_sources .scratch/ring2_sweep --validate (the 207-pair mapping the baseline is keyed on; restore dangling bench links with uv run bench fixtures download from the bench root, then rerun staging; then the --probe sweep for refusals)
 before|you|Ring-3 Word open probe, the macOS release gate before any crates.io publish: every redline the release ships opens in real Word — probe_fail=0; paths never under /tmp, stage them under .scratch/. A failure that Word's own redline of the pair shares (probe.log says which) is still a failure: only the owner waives it, and the summaries disclose it|NEUROTIC_DOCX_BENCH=../neurotic_docx_bench JUBARTE_BIN=<release binary> scripts/redline-sweep.sh release_info/sample_redline_@V@_*.csv ../neurotic_docx_bench .scratch/sweep_<date> --probe (Word only through the bench's word_pdf.py under its word_watchdog.sh, one Word job machine-wide; each failure is opened again alone, then Word's own redline of that pair; sweep.log names the binary; no pair generated is a failure)
@@ -284,7 +289,7 @@ check_now() {
 }
 
 VER=""
-DRY_RUN=0; YES=0; SKIP_GATES=0; NO_WAIT=0; CHECKLIST=0; LOCAL_PUBLISH=0; OPEN_DOCS=0
+DRY_RUN=0; YES=0; SKIP_GATES=0; NO_WAIT=0; CHECKLIST=0; LOCAL_PUBLISH=0; LOCAL_CRATES=0; OPEN_DOCS=0
 CHANGELOG_SUMMARY=""; CRATES_SUMMARY=""; NPM_SUMMARY=""
 PYPI_SUMMARY=""; GITHUB_SUMMARY=""; DOCS_UPDATED=""
 need() { [ -n "${2:-}" ] || { echo "missing value for $1" >&2; exit 2; }; }
@@ -295,6 +300,7 @@ while [ $# -gt 0 ]; do
     --skip-gates) SKIP_GATES=1 ;;
     --no-wait)    NO_WAIT=1 ;;
     --local-publish) LOCAL_PUBLISH=1 ;;
+    --local-publish-crates) LOCAL_CRATES=1 ;;
     --checklist)  CHECKLIST=1 ;;
     --open-docs)  OPEN_DOCS=1 ;;
     --changelog-summary|--changelog-comments) need "$@"; CHANGELOG_SUMMARY=$2; shift ;;
@@ -914,10 +920,12 @@ done
 gh auth status >/dev/null 2>&1 || die "gh not authenticated — run \`gh auth login\`"
 # release.yml publishes the registries through OIDC; tokens are asked for
 # only when this machine publishes instead.
-if [ "$LOCAL_PUBLISH" = 1 ]; then
+if [ "$LOCAL_PUBLISH" = 1 ] || [ "$LOCAL_CRATES" = 1 ]; then
   [ -s "$HOME/.cargo/credentials.toml" ] || [ -s "$HOME/.cargo/credentials" ] \
     || [ -n "${CARGO_REGISTRY_TOKEN:-}" ] \
     || die "no crates.io credentials — run \`cargo login\`"
+fi
+if [ "$LOCAL_PUBLISH" = 1 ]; then
   npm whoami >/dev/null 2>&1 || die "not logged in to npm — run \`npm login\`"
   [ -n "${UV_PUBLISH_TOKEN:-}" ] \
     || die "UV_PUBLISH_TOKEN not set — a pypi-… API token for \`uv publish\`"
@@ -971,7 +979,7 @@ else
 fi
 
 # bump-version.mjs also moved the README's Socket badge
-# (badge.socket.dev/cargo/package/jubarte-redlines/<version>) to $VER.
+# (badge.socket.dev/cargo/package/jubarte/<version>) to $VER.
 # Manifests bump-version.mjs does not own.
 sed -i.bak "s/^version = \"$CUR\"$/version = \"$VER\"/" jubarte-python/Cargo.toml \
   && rm jubarte-python/Cargo.toml.bak
@@ -1010,7 +1018,8 @@ half_bumped() {
 }
 for f in Cargo.toml jubarte-python/Cargo.toml jubarte-wasm/Cargo.toml \
          jubarte-rust-inproc/Cargo.toml jubarte-python/compat/pyproject.toml; do
-  grep -q "^version = \"$VER\"$" "$f" || half_bumped "$f"
+  # a comment may follow the version (the root Cargo.toml has one)
+  grep -Eq "^version = \"$VER\"[[:space:]]*(#.*)?$" "$f" || half_bumped "$f"
 done
 [ "$(grep -c "jubarte-docx\(\[mcp\]\)\?==$VER\"" jubarte-python/compat/pyproject.toml)" = 2 ] \
   || half_bumped "jubarte-python/compat/pyproject.toml (its jubarte-docx pins)"
@@ -1022,8 +1031,8 @@ done
 # 0.11.0 rewrite dropped it): a pin that is there must be this release's,
 # and a README without one has nothing to move.
 stale_readme_pin() {
-  grep -oE "badge\.socket\.dev/cargo/package/jubarte-redlines/[0-9]+\.[0-9]+\.[0-9]+" README.md \
-    | grep -vxF "badge.socket.dev/cargo/package/jubarte-redlines/$VER" >/dev/null
+  grep -oE "badge\.socket\.dev/cargo/package/jubarte/[0-9]+\.[0-9]+\.[0-9]+" README.md \
+    | grep -vxF "badge.socket.dev/cargo/package/jubarte/$VER" >/dev/null
 }
 stale_readme_pin && half_bumped "README.md (Socket badge)"
 step "every file step 1 touched is on $VER"
@@ -1457,6 +1466,7 @@ else
       jubarte-python/README.md crates/*/README.md \
       jubarte-python/Cargo.toml jubarte-python/Cargo.lock \
       jubarte-python/pyproject.toml jubarte-python/uv.lock \
+      jubarte-python/compat/pyproject.toml \
       jubarte-wasm/Cargo.toml \
       jubarte-wasm/Cargo.lock jubarte-wasm/npm/package.json jubarte-wasm/cli/package.json \
       jubarte-rust-inproc/Cargo.toml jubarte-rust-inproc/Cargo.lock \
@@ -1576,7 +1586,7 @@ say "9. crates.io"
 
 if crates_has; then
   step "all nine crates $VER already on crates.io — skipped"
-elif [ "$LOCAL_PUBLISH" = 1 ]; then
+elif [ "$LOCAL_PUBLISH" = 1 ] || [ "$LOCAL_CRATES" = 1 ]; then
   # Finder litter under an include glob is "uncommitted" to cargo and stops
   # the publish (gitignored, so the clean-tree preflight never sees it).
   find . -name .DS_Store -not -path './target/*' -not -path './.worktrees/*' -delete
