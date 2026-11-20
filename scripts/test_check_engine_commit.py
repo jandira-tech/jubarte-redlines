@@ -8,7 +8,7 @@
 
 Each case builds a throwaway repository: an engine source, a docs file, and
 the jubarte-wasm/npm/ENGINE_COMMIT.txt stamp that build-npm.sh writes. The
-checker must accept a build whose stamped commit is an ancestor of the
+stamp is not tracked, as the built files are not. The checker must accept a build whose stamped commit is an ancestor of the
 checked revision with the same engine sources, and refuse every other case.
 """
 
@@ -34,6 +34,8 @@ class CheckEngineCommit(unittest.TestCase):
         self.git("config", "user.email", "test@example.invalid")
         self.git("config", "user.name", "test")
         self.git("config", "commit.gpgsign", "false")
+        # the build is not tracked: .gitignore keeps the stamp out of commits
+        self.write(".gitignore", f"/{STAMP}\n")
         self.write("src/lib.rs", "pub fn engine() {}\n")
         self.write("docs/notes.md", "notes\n")
         self.engine = self.commit("engine")
@@ -60,9 +62,12 @@ class CheckEngineCommit(unittest.TestCase):
         return self.git("rev-parse", "HEAD")
 
     def stamp(self, rev: str) -> str:
-        """Commit the artifacts as build-npm.sh leaves them: stamped with rev."""
+        """Leave the build as build-npm.sh does, stamped with rev, and commit
+        what release.sh commits after it (the lock the build resolved, if it
+        changed; the snapshot of the typings)."""
         self.write(str(STAMP), rev + "\n")
-        return self.commit("build(npm): artifacts")
+        self.write("docs/api/snapshot.d.ts", f"// built from {rev}\n")
+        return self.commit("docs(wasm): record the npm API")
 
     def check(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -144,22 +149,10 @@ class CheckEngineCommit(unittest.TestCase):
         self.assertEqual(len(listed), 20, r.stderr[-400:])
         self.assertIn("… and 1980 more", r.stderr)
 
-    def test_a_lock_change_before_the_artifacts_commit_is_refused(self) -> None:
-        # Only the artifacts commit may carry the lock the build resolved; a
-        # lock committed between the stamped commit and the build is not it.
-        self.write("jubarte-wasm/Cargo.lock", "old\n")
-        base = self.commit("lock")
-        self.write("jubarte-wasm/Cargo.lock", "between\n")
-        self.commit("lock between")
-        self.stamp(base)
-        r = self.check()
-        self.assertEqual(r.returncode, 1, r.stdout)
-        self.assertIn("jubarte-wasm/Cargo.lock", r.stderr)
-
     def test_the_lock_the_build_resolved_ships_with_the_artifacts(self) -> None:
         # build-npm.sh re-resolves jubarte-wasm/Cargo.lock after its clean-tree
-        # check, and release.sh step 8 commits that lock with the artifacts:
-        # the lock the artifacts were built with is the artifacts commit's.
+        # check, and release.sh step 8 commits that lock right after the
+        # build: the first commit after the stamped one may carry it.
         self.write("jubarte-wasm/Cargo.lock", "old\n")
         base = self.commit("lock")
         self.write("jubarte-wasm/Cargo.lock", "re-resolved\n")
@@ -167,7 +160,7 @@ class CheckEngineCommit(unittest.TestCase):
         r = self.check()
         self.assertEqual(r.returncode, 0, r.stderr)
 
-    def test_a_lock_change_after_the_artifacts_commit_is_refused(self) -> None:
+    def test_a_lock_change_after_the_commit_that_follows_the_build_is_refused(self) -> None:
         self.write("jubarte-wasm/Cargo.lock", "old\n")
         base = self.commit("lock")
         self.write("jubarte-wasm/Cargo.lock", "re-resolved\n")
@@ -210,16 +203,21 @@ class CheckEngineCommit(unittest.TestCase):
                 self.assertEqual(r.returncode, 1, r.stdout)
                 self.assertIn("full commit hash", r.stderr)
 
-    def test_the_stamp_is_read_from_the_checked_revision(self) -> None:
-        # A release checks the tagged commit, not whatever the working tree
-        # holds: an uncommitted restamp must not vouch for the tag.
+    def test_the_stamp_is_the_one_on_disk(self) -> None:
+        # The build is not tracked, so the stamp beside the built files is
+        # the only one there is: a build made before an engine change does
+        # not vouch for the commit that holds the change.
         self.stamp(self.engine)
         self.write("src/lib.rs", "pub fn engine() { changed() }\n")
         tagged = self.commit("engine change")
-        self.write(str(STAMP), tagged + "\n")
         r = self.check(tagged)
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("src/lib.rs", r.stderr)
+        # rebuilt at the tagged commit, it does
+        self.write(str(STAMP), tagged + "\n")
+        r = self.check(tagged)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.git("status", "--porcelain"), "")
 
     def test_an_unknown_revision_is_a_usage_error(self) -> None:
         self.stamp(self.engine)

@@ -442,9 +442,9 @@ jobs:
       - run: python3 scripts/test_check_engine_commit.py
       - run: python3 scripts/test_check_npm_paths.py
       - run: python3 scripts/test_table_styles_asset.py
-      # The committed npm packages name no builder's home (#1480): the
-      # library's artifacts and the CLI package's modules.
-      - run: python3 scripts/check_npm_paths.py jubarte-wasm/npm jubarte-wasm/cli
+      # The CLI package's modules name no builder's home (#1480). The wasm
+      # job checks the library's built files.
+      - run: python3 scripts/check_npm_paths.py jubarte-wasm/cli
       - name: Oracle dependency and advisory record tests with coverage
         run: |
           uv run --with coverage coverage run --branch --include='scripts/test_oracle_dependency.py' scripts/test_oracle_dependency.py
@@ -470,14 +470,68 @@ jobs:
       - run: python3 scripts/sync_license_files.py --check
       - run: python3 scripts/test_pulldown_cmark_lock.py
       - run: python3 scripts/test_gen_cli_docs_version.py
-      # `npx jubarte-redlines` over the checked-in jubarte-wasm build.
-      # node:test and the ESM cli need node >= 18 (cli engines >= 18.3); the
-      # self-hosted runner's system node is far older, so set one up.
+      # node:test needs node >= 18; the self-hosted runner's system node is
+      # far older, so set one up.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
-      - run: node --test jubarte-wasm/cli/test/*.test.mjs
       - run: node --test scripts/bump-version.test.mjs
+
+  # The npm packages are not tracked: this job builds all eight targets as a
+  # release does, and runs everything that reads them.
+  wasm:
+    name: npm packages (build, smoke, CLI tests)
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: true
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # pinned 2026-10-01
+        with:
+          tool: wasm-pack@0.15.0
+          fallback: none
+      # Not mbx: its cache server is on the self-hosted network only, and
+      # jubarte-wasm is its own workspace.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: jubarte-wasm
+      # node:test and the ESM cli need node >= 18 (cli engines >= 18.3).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - name: build the eight targets
+        run: jubarte-wasm/build-npm.sh
+      # The stamp names this commit, and no built file names a home (#1480).
+      - run: scripts/check_engine_commit.sh
+      - run: python3 scripts/check_npm_paths.py jubarte-wasm/npm
+      - run: node jubarte-wasm/npm-smoke.mjs
+      # `npx jubarte-redlines` over the build.
+      - run: node --test jubarte-wasm/cli/test/*.test.mjs
+      - name: both packages pack with their built files, LICENSE and NOTICE
+        run: |
+          set -euo pipefail
+          for dir in jubarte-wasm/npm jubarte-wasm/cli; do
+            (cd "$dir" && npm pack --dry-run --json > "$RUNNER_TEMP/pack.json")
+            python3 - "$RUNNER_TEMP/pack.json" "$dir" <<'PY'
+          import json, sys
+          files = {f["path"] for f in json.load(open(sys.argv[1]))[0]["files"]}
+          want = {"LICENSE", "NOTICE", "README.md", "package.json"}
+          if sys.argv[2].endswith("/npm"):
+              want |= {"ENGINE_COMMIT.txt"} | {
+                  f"{kind}{flavour}/{name}"
+                  for kind in ("node", "web")
+                  for flavour in ("", "-slim", "-redlines", "-pdf")
+                  for name in ("jubarte_wasm.js", "jubarte_wasm.d.ts", "jubarte_wasm_bg.wasm")
+              }
+          missing = sorted(want - files)
+          sys.exit(f"{sys.argv[2]}: the package lacks {missing}" if missing else 0)
+          PY
+          done
 
   # Strict: every Markdown fixture in our dialect (tests/fixtures/md-roundtrip/*.md)
   # must come back exactly after md -> docx -> md, and every docx listed in

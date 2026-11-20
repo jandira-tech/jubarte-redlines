@@ -7,7 +7,7 @@ A wasm build keeps the source path of every panic location: the engine
 crate's, each registry crate's and the toolchain's. Built in a home
 directory, the npm package then names the builder's home in hundreds of
 strings (#1480). build-npm.sh remaps those prefixes away; this check holds
-the result, in build-npm.sh and in CI, on the committed artifacts.
+the result, in build-npm.sh and in CI's wasm job, on the built files.
 
 Paths default to jubarte-wasm/npm. A directory is searched for `.wasm`,
 `.js` and `.ts` files. The report gives each file, relative to the working

@@ -96,12 +96,24 @@ jobs:
         with:
           persist-credentials: false
           submodules: true
+      # The npm build is not tracked: the generator builds the Node target
+      # (jubarte-wasm/build-npm.sh --only node) to read its help and typings.
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # pinned 2026-10-01
+        with:
+          tool: wasm-pack@0.15.0
+          fallback: none
       # Blacksmith runners cannot reach the self-hosted mbx cache server.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: |
+            .
+            jubarte-wasm
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       # The generator runs jubarte-wasm/cli/bin/jubarte-redlines.mjs against
-      # the checked-in jubarte-wasm build. That CLI is ESM and engines-declares
+      # that build. That CLI is ESM and engines-declares
       # node >= 18.3 (jubarte-wasm/cli/package.json); the self-hosted runner's
       # system node predates ESM (`import` is a SyntaxError), so a real node is
       # set up here instead of trusting the image.

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-// `npx jubarte-redlines …` end to end: the bin over the checked-in
+// `npx jubarte-redlines …` end to end: the bin over the built
 // jubarte-wasm build (../npm), with the commands, flags, messages and exit
 // codes of `uvx --from jubarte-docx jubarte`. Run: node --test jubarte-wasm/cli/test/
 import { test, before } from "node:test";
@@ -23,7 +23,7 @@ const pair = path.join(repo, "tests/corpus/batch_to_fix/pairs/41_heading_1_bold_
 const tracked = path.join(repo, "tests/fixtures/from-docx/critic/tracked-changes.docx");
 const untracked = path.join(repo, "tests/fixtures/from-docx/critic/no-tracked-changes.docx");
 let tmp;
-// The checked-in binding has #1255's JSON errors and table picks once it is
+// The built binding has #1255's JSON errors and table picks once it is
 // rebuilt from a source that has them; until then their tests skip.
 const binding = createRequire(import.meta.url)(path.join(cliDir, "..", "npm"));
 const jsonErrors = typeof binding.runtimeJsonError === "function";
@@ -66,7 +66,7 @@ function runEnv(env, ...args) {
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
 
-// The checked-in binding's parser predates #1690 and refuses `--tables -o`
+// The built binding's parser predates #1690 and refuses `--tables -o`
 // ("--tables prints the grids; drop -o"). Until the binding is rebuilt from
 // a source that has the flag, the host's own behaviour is exercised through
 // a copy of the bin whose binding parses it: the parser's own result for
@@ -98,7 +98,7 @@ function tablesBin() {
   return path.join(host, "jubarte-redlines.mjs");
 }
 
-/** `read --tables` with the flag the checked-in parser may not know yet. */
+/** `read --tables` with the flag the built parser may not know yet. */
 function runTables(...args) {
   const target = tablesOutput ? bin : tablesBin();
   const r = spawnSync(process.execPath, [target, ...args], { encoding: "utf8", cwd: tmp });
@@ -663,7 +663,7 @@ const ownershipShipped = binding.planError(JSON.stringify({
   operations: [{ kind: "delete", paragraph: "p0", find: "x" }],
 })) === undefined;
 test("edit allows another author's comment unless JUBARTE_KEEP_OTHERS=1 (#1892)", {
-  skip: !ownershipShipped && "the checked-in engine predates #1264; it ships with the next release",
+  skip: !ownershipShipped && "the built engine predates #1264; it ships with the next release",
 }, () => {
   const para = JSON.parse(run("read", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
   const word = para.text.split(" ")[0];
@@ -734,7 +734,7 @@ test("edit and add write FILE_modified.docx, as the binary does (D15)", () => {
 
 const flagsSyntax = binding.applyEditPlan.length >= 4;
 test("a flags command quotes flags in a refusal, and a plan file quotes the plan", {
-  skip: !flagsSyntax && "the checked-in engine applies a plan as JSON; a rebuild ships the flags grammar",
+  skip: !flagsSyntax && "the built engine applies a plan as JSON; a rebuild ships the flags grammar",
 }, () => {
   const para = JSON.parse(run("read", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
   const word = para.text.split(" ")[0];
@@ -1659,11 +1659,11 @@ test("convert JSON, by format or extension, keeps the output when the source fai
   }
 });
 
-// The checked-in engine is rebuilt only at release (ENGINE_COMMIT.txt), so a
+// A local build can be older than this checkout (ENGINE_COMMIT.txt), so a
 // CLI feature that needs a newer export waits for the next release to run.
 const resolutionTextShipped = typeof createRequire(bin)("jubarte-wasm").resolutionText === "function";
 test("edit -p rN --accept/--reject prints the resolved changes, as the binary does", {
-  skip: !resolutionTextShipped && "the checked-in engine predates resolutionText; it ships with the next release",
+  skip: !resolutionTextShipped && "the built engine predates resolutionText; it ships with the next release",
 }, () => {
   const received = path.join(repo, "tests/fixtures/agent-view/received.docx");
   const src = copy(received, "resolve-received.docx");
@@ -1677,7 +1677,7 @@ test("edit -p rN --accept/--reject prints the resolved changes, as the binary do
   assert.equal(pair.out, 'accepted r1+2 in p3: "{~~weekly~>monthly~~}" > "monthly"\n');
 });
 
-test("read --json and --tables take the view's options; errors under --json are JSON (#1255)", { skip: !jsonErrors && "the checked-in binding predates #1255" }, () => {
+test("read --json and --tables take the view's options; errors under --json are JSON (#1255)", { skip: !jsonErrors && "the built binding predates #1255" }, () => {
   const plain = run("read", tracked, "--json");
   assert.equal(plain.code, 0, plain.err);
   for (const extra of [["--no-page-markers"], ["--comments", "none"], ["--dates"]]) {
@@ -1710,7 +1710,7 @@ test("read --json and --tables take the view's options; errors under --json are 
   assert.match(missing.err, /t9 is not a table of this document/);
 });
 
-test("JSON snapshots carry validity; JSON Lines send status to stderr (#1925)", { skip: !inputValidity && "the checked-in binding predates #1309" }, () => {
+test("JSON snapshots carry validity; JSON Lines send status to stderr (#1925)", { skip: !inputValidity && "the built binding predates #1309" }, () => {
   copy(path.join(repo, "tests/fixtures/agent-view/received.docx"), "received-1309.docx");
   const wanted = { errors: 0, warnings: 2, next: "jubarte validate received-1309.docx" };
   for (const quiet of [[], ["-q"]]) {
@@ -1740,7 +1740,7 @@ test("JSON snapshots carry validity; JSON Lines send status to stderr (#1925)", 
   assert.deepEqual(JSON.parse(run("read", untracked, "--json").out).summary.input_validity, { errors: 0, warnings: 0 });
 });
 
-test("read and changes name the input's validity findings once; -q drops it (#1256)", { skip: !inputNotices && "the checked-in binding predates #1256" }, () => {
+test("read and changes name the input's validity findings once; -q drops it (#1256)", { skip: !inputNotices && "the built binding predates #1256" }, () => {
   copy(path.join(repo, "tests/fixtures/agent-view/received.docx"), "received-1256.docx");
   const line = "input has 2 validity warnings; jubarte validate received-1256.docx lists them\n";
   // A JSON read carries the counts instead once the binding has them (#1309).
@@ -1826,7 +1826,7 @@ test("read --for-edit usage errors as the binary", () => {
   assert.equal(run("read", "received-for-edit-usage.docx", "--for-edit", "--json").code, 0);
 });
 
-test("changes --author keeps those authors' changes, as the binary (#1690)", { skip: !authorFilter && "the checked-in binding predates #1690" }, () => {
+test("changes --author keeps those authors' changes, as the binary (#1690)", { skip: !authorFilter && "the built binding predates #1690" }, () => {
   const bo = run("changes", tracked, "--author", "Bo Chen");
   assert.equal(bo.code, 0, bo.err);
   const lines = bo.out.trimEnd().split("\n");
@@ -1839,7 +1839,7 @@ test("changes --author keeps those authors' changes, as the binary (#1690)", { s
   assert.ok(rows.length === 2 && rows.every((c) => c.author === "Ana Lima"), JSON.stringify(rows));
 });
 
-test("read --tables -o writes the grids it prints, as the binary (#1690)", { skip: !tablesOutput && "the checked-in binding predates #1690" }, () => {
+test("read --tables -o writes the grids it prints, as the binary (#1690)", { skip: !tablesOutput && "the built binding predates #1690" }, () => {
   const grids = run("read", untracked, "--tables");
   assert.equal(grids.code, 0, grids.err);
   const out = path.join(tmp, "grids.md");
@@ -1957,7 +1957,7 @@ test("read --tables -o replaces a link, never writing through it (#1698)", () =>
   assert.deepEqual(fs.readFileSync(hard), before, "the hard link keeps the input's bytes");
 });
 
-// The checked-in npm wasm predates this checkout's parser, so `accept
+// The built npm wasm predates this checkout's parser, so `accept
 // FILE --in-place` is an unknown flag there. The runner still honours
 // `args.in_place` once the parser reports it. Until `jubarte-wasm/build-npm.sh`
 // rebuilds npm/ from a clean tree, these tests drive that runner through a
@@ -2029,7 +2029,7 @@ function editAnchor() {
   return { index: para.index, word: para.text.split(" ")[0] };
 }
 
-test("the checked-in parser refuses --in-place until npm/ is rebuilt", { skip: inPlaceParsed && "this npm build already parses --in-place" }, () => {
+test("the built parser refuses --in-place until npm/ is rebuilt", { skip: inPlaceParsed && "this npm build already parses --in-place" }, () => {
   const refused = run("accept", "a.docx", "--in-place");
   assert.equal(refused.code, 2, refused.err);
   assert.match(refused.err, /--in-place/);

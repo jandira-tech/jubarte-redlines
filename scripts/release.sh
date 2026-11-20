@@ -101,9 +101,9 @@
 #   7. publish dry-runs — cargo publish --dry-run, npm --dry-run, maturin sdist
 #      (with the pypi comment proven inside the sdist); the crate's
 #      keywords and categories inside crates.io's limits
-#   8. `chore(release): vX.Y.Z` commit, wasm npm rebuild (stamps the release
-#      commit into ENGINE_COMMIT.txt), npm smoke test, artifacts commit,
-#      annotated `vX.Y.Z` tag whose body is the github summary
+#   8. `chore(release): vX.Y.Z` commit, wasm npm build (not tracked; stamps
+#      the release commit into ENGINE_COMMIT.txt), npm smoke test, a commit
+#      of the typings and the guide cut from that build, annotated `vX.Y.Z` tag whose body is the github summary
 #      point of no return — type `vX.Y.Z` to confirm, then push (where main
 #      takes changes only through a pull request, scripts/push_main.sh opens
 #      one for the release commits and merges it at once), cancel the CI
@@ -214,7 +214,7 @@ before|you|bench hygiene while scoring: one scoring job at a time; Word only thr
 5|auto|Security scan: cargo-deny advisories across the five workspace manifests and gitleaks over the whole reachable history plus every publishable file — it runs even under --skip-gates|bash scripts/security-check.sh (unconditionally, just above the gates block)
 6|auto|API drift: the private rustdoc builds with warnings denied and its drift from the previous release's snapshot is logged; the sign-off is step 0's cargo-semver-checks gate (--open-docs also opens the rendered docs)|scripts/release.sh step 6; scripts/api_snapshot.py --drift <previous tag> v@V@
 7|auto|Dry-runs: cargo, npm x2, maturin sdist (folder wiped first) carrying the pypi comment; every registry ships the README cut for v@V@|scripts/release.sh step 7
-8|auto|Release commit, wasm artifacts rebuilt + smoke-tested with ENGINE_COMMIT.txt = the release commit, annotated tag with subject 'jubarte v@V@' and the github summary in its body (a local tag of another shape is re-created; a pushed one must be the local tag, and of another shape dies unless the GitHub notes carry the summary — 0.13.0's tag held it as its subject); a kept (resumed) build whose stamp does not vouch for the tagged engine dies|scripts/check_engine_commit.sh v@V@
+8|auto|Release commit, the npm packages built (they are not tracked) + smoke-tested with ENGINE_COMMIT.txt = the release commit, their typings and the JavaScript guide committed, annotated tag with subject 'jubarte v@V@' and the github summary in its body (a local tag of another shape is re-created; a pushed one must be the local tag, and of another shape dies unless the GitHub notes carry the summary — 0.13.0's tag held it as its subject); a kept (resumed) build whose stamp does not vouch for the tagged engine dies|scripts/check_engine_commit.sh v@V@
 8|you|The typed tag confirmation at the point of no return — after it main and the tag are pushed and release.yml publishes|type v@V@ at the prompt (--yes skips it in CI only)
 9|auto|crates.io: the packaged manifest carries the crates summary before the publish|tar -xzOf target/package/jubarte-@V@.crate jubarte-@V@/Cargo.toml
 10|auto|npm: jubarte-wasm first, then the jubarte-redlines CLI (it depends on jubarte-wasm ^@V@); a one-time password is passed when set|npm view jubarte-wasm@@V@ version
@@ -1401,6 +1401,9 @@ else
 fi
 if npm_has; then
   step "jubarte-wasm $VER already on npm — dry run skipped"
+elif [ ! -f jubarte-wasm/npm/node/jubarte_wasm_bg.wasm ]; then
+  # The package is not tracked; step 8 builds it and checks what it packs.
+  step "jubarte-wasm has no build in this checkout yet — dry run left to step 8"
 else
   (cd jubarte-wasm/npm && npm publish --dry-run >/dev/null)
 fi
@@ -1451,7 +1454,7 @@ fi
 say "8. Release commit → wasm artifacts → annotated tag"
 # =============================================================================
 
-# A resumed run finds the release commit under the wasm-artifact commit. Once
+# A resumed run finds the release commit under the npm API commit. Once
 # the tag exists everything below it was built, and npm may already ship that
 # build: rebuilding would stamp a later ENGINE_COMMIT than the one published
 # (the v0.10.1 resume did, on a tree the follow-up commits had moved on).
@@ -1481,8 +1484,9 @@ else
   fi
   step "release commit $(git rev-parse --short HEAD)"
 
-  if git log -2 --format=%s | grep -x "build(wasm): regenerate npm artifacts for v$VER" >/dev/null; then
-    step "npm artifacts for v$VER already committed (resume) — not rebuilt"
+  if git log -2 --format=%s | grep -x "docs(wasm): record the npm API for v$VER" >/dev/null \
+     && [ -f jubarte-wasm/npm/ENGINE_COMMIT.txt ]; then
+    step "npm packages for v$VER already built and their API committed (resume) — not rebuilt"
   else
     # Clean tree now, so build-npm.sh stamps ENGINE_COMMIT.txt with the release
     # commit — the commit the published artifacts can be rebuilt from.
@@ -1508,13 +1512,27 @@ else
     python3 scripts/gen_cli_docs.py \
       --runner=node "--runner=$PWD/jubarte-wasm/cli/bin/jubarte-redlines.mjs" \
       --display jubarte-redlines --file docs/javascript.md --marker cli-npm
-    # The build re-resolves jubarte-wasm/Cargo.lock too; it ships in this commit.
-    if [ -n "$(git status --porcelain -- jubarte-wasm/npm jubarte-wasm/Cargo.lock docs/api docs/javascript.md)" ]; then
-      git add jubarte-wasm/npm jubarte-wasm/Cargo.lock docs/api docs/javascript.md
-      git commit -m "build(wasm): regenerate npm artifacts for v$VER"
+    # What npm will pack: every target's module, typings and wasm, the
+    # stamp, and the license files.
+    packed=$(cd jubarte-wasm/npm && npm pack --dry-run --json 2>/dev/null) \
+      || die "npm pack --dry-run failed in jubarte-wasm/npm"
+    for t in node node-slim node-redlines node-pdf web web-slim web-redlines web-pdf; do
+      for n in jubarte_wasm.js jubarte_wasm.d.ts jubarte_wasm_bg.wasm; do
+        grep -qF "\"$t/$n\"" <<<"$packed" || die "the jubarte-wasm package would not ship $t/$n"
+      done
+    done
+    for n in ENGINE_COMMIT.txt LICENSE NOTICE; do
+      grep -qF "\"$n\"" <<<"$packed" || die "the jubarte-wasm package would not ship $n"
+    done
+    # The built files are not tracked. The build re-resolves
+    # jubarte-wasm/Cargo.lock; it ships in this commit with the typings and
+    # the guide.
+    if [ -n "$(git status --porcelain -- jubarte-wasm/Cargo.lock docs/api docs/javascript.md)" ]; then
+      git add jubarte-wasm/Cargo.lock docs/api docs/javascript.md
+      git commit -m "docs(wasm): record the npm API for v$VER"
     fi
   fi
-  step "npm artifacts rebuilt + smoke-tested (engine $(cut -c1-7 jubarte-wasm/npm/ENGINE_COMMIT.txt))"
+  step "npm packages built + smoke-tested (engine $(cut -c1-7 jubarte-wasm/npm/ENGINE_COMMIT.txt))"
 fi
 
 # The github summary is the tag annotation body; release.yml prepends it to
@@ -1548,9 +1566,14 @@ else
   tag_shape_ok || die "tag $TAG was not written as release.yml reads it (subject 'jubarte $TAG', the github summary in its body)"
   step "tag $TAG: subject 'jubarte $TAG', the github summary in its body"
 fi
-# A resumed run keeps the npm build it finds, so the stamp is checked on the
-# tag itself: npm ships only artifacts the tagged engine produces (#1088).
-scripts/check_engine_commit.sh "$TAG^{commit}" || die "scripts/check_engine_commit.sh refused $TAG (its reason is above)"
+# A resumed run keeps the npm build it finds, so its stamp is checked against
+# the tag itself: npm ships only artifacts the tagged engine produces (#1088).
+# A checkout with no build publishes none: release.yml builds from the tag.
+if [ "$LOCAL_PUBLISH" = 1 ] || [ -f jubarte-wasm/npm/ENGINE_COMMIT.txt ]; then
+  scripts/check_engine_commit.sh "$TAG^{commit}" || die "scripts/check_engine_commit.sh refused $TAG (its reason is above)"
+else
+  step "no npm build in this checkout — release.yml builds the packages from $TAG"
+fi
 check_now 8
 
 # =============================================================================

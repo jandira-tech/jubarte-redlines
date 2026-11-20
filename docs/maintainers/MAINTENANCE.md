@@ -16,7 +16,8 @@ A rule that depends on memory is forgotten. These run in CI:
 
 | Check | Refuses |
 |---|---|
-| `tests/repo_hygiene.rs` | A new top-level file or folder that is not on its list; a tracked file over 1 MB outside the listed folders; a tracked executable, log or empty file; a home-directory path or the retired project name in a tracked file; a `LICENSE` copy that differs from the root one; a file outside the listed few that still names the former licence |
+| `tests/repo_hygiene.rs` | A new top-level file or folder that is not on its list; a tracked file over 1 MB outside the listed folders; a tracked executable, WebAssembly module, log or empty file; a home-directory path or the retired project name in a tracked file; a `LICENSE` copy that differs from the root one; a file outside the listed few that still names the former licence |
+| CI's `wasm` job | An npm package that does not build, fails its smoke test or its CLI tests, names a builder's home directory, or would be packed without a target, `LICENSE` or `NOTICE` |
 | `tests/corpus_present.rs` | Running the tests without the corpus submodule, with the command that fetches it |
 | `scripts/check_links.py` | A relative link in tracked Markdown that names no tracked file |
 | `scripts/gen_docs.sh --check` | A generated guide or README edited by hand, or left stale |
@@ -48,7 +49,8 @@ description.
   document, or one whose rights are unclear, goes to the
   `jubarte-test-corpus` repository (the submodule `tests/corpus/bench`),
   never into this one.
-- **No built artifact is hand-edited**, and none is added outside a release.
+- **No built artifact is tracked.** The npm packages are built in CI and
+  at the release tag; nothing compiled is committed or edited by hand.
 - **A script earns its place.** A script that no workflow, no test, no other
   script and no document uses is deleted.
 - **Contributions are signed off** (`git commit -s`) and reviewed by a code
@@ -96,22 +98,17 @@ The first three are meant for 0.20.0.
    Make them members of the root workspace with one lockfile.
 3. **Triage the open issues.** Close duplicates and fixed ones, give the
    rest a milestone, and keep about ten labelled `good first issue`.
-4. **Stop tracking the built WebAssembly packages.** `jubarte-wasm/npm/`
-   holds about 100 MB of built files, rebuilt and committed at each
-   release. Building them in CI removes them from git, but the generated
-   JavaScript guide and the npm CLI tests read them today, so both must
-   build them first.
-5. **Sign release archives.** Add the zipsign public key under `keys/` and
+4. **Sign release archives.** Add the zipsign public key under `keys/` and
    the private key as a release secret, so `jubarte self-update` verifies
    what it downloads.
-6. **Split `tests/convert_docx_to_pdf.rs`** (2.4 MB in one file) and rename
+5. **Split `tests/convert_docx_to_pdf.rs`** (2.4 MB in one file) and rename
    the corpus folders whose names describe work in progress
    (`batch_to_fix`, `broken_ones_two`).
-7. **Decide where `jubarte-rust-inproc` lives.** It serves only the
+6. **Decide where `jubarte-rust-inproc` lives.** It serves only the
    benchmark; the benchmark's repository may be its home.
-8. **Move the review automation under the organization.** `jules.yml` uses
+7. **Move the review automation under the organization.** `jules.yml` uses
    actions from a personal account.
-9. **Make the semver check blocking** at 1.0. Until then the `semver`
+8. **Make the semver check blocking** at 1.0. Until then the `semver`
    job only reports.
 
 ## Growing adoption

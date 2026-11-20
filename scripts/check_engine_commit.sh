@@ -2,14 +2,14 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 # SPDX-License-Identifier: Apache-2.0
 #
-# check_engine_commit.sh [REV]: refuse an npm build that REV's
-# jubarte-wasm/npm/ENGINE_COMMIT.txt cannot vouch for.
+# check_engine_commit.sh [REV]: refuse the npm build in this checkout when
+# its jubarte-wasm/npm/ENGINE_COMMIT.txt cannot vouch for REV.
 #
 # build-npm.sh stamps the commit it built from. The stamp vouches for REV
 # (default HEAD) only when that commit is in REV's history and no engine
 # input changed between them; otherwise npm would ship artifacts that REV's
-# sources do not produce. The stamp is read from REV's tree, not the working
-# tree, so release.sh can check the tagged commit itself.
+# sources do not produce. The build is not tracked, so the stamp is the one
+# on disk, beside the built files it describes.
 #
 # Exit 0: the build matches REV's engine. 1: it does not. 2: usage error.
 set -euo pipefail
@@ -35,8 +35,9 @@ rev=${1:-HEAD}
 git rev-parse -q --verify "$rev^{commit}" >/dev/null \
   || { echo "check_engine_commit: $rev is not a revision of this repository" >&2; exit 2; }
 
-stamp=$(git show "$rev:$STAMP_FILE" 2>/dev/null | tr -d '[:space:]' || true)
-[ -n "$stamp" ] || refuse "$rev has no $STAMP_FILE: the npm build names no engine commit"
+stamp=""
+[ ! -f "$STAMP_FILE" ] || stamp=$(tr -d '[:space:]' < "$STAMP_FILE")
+[ -n "$stamp" ] || refuse "no $STAMP_FILE: there is no complete npm build here (run jubarte-wasm/build-npm.sh)"
 resolved=$(git rev-parse -q --verify "$stamp^{commit}" || true)
 [ -n "$resolved" ] \
   || refuse "$STAMP_FILE names $stamp, which is not a commit in this repository"
@@ -49,15 +50,14 @@ git merge-base --is-ancestor "$stamp" "$rev" \
 
 changed=$(git diff --name-only "$stamp" "$rev" -- "${ENGINE_PATHS[@]}")
 # build-npm.sh re-resolves the binding's lockfile after its clean-tree check,
-# and release.sh step 8 commits the result with the artifacts: the lock may
-# change in the artifacts commit (the last to write the stamp) and nowhere
-# else between the stamp and REV.
-artifacts=$(git log -1 --format=%H "$stamp..$rev" -- "$STAMP_FILE")
-if [ -n "$artifacts" ]; then
-  lock=$(git diff --name-only "$stamp" "$artifacts^" -- "$WASM_LOCK"
-         git diff --name-only "$artifacts" "$rev" -- "$WASM_LOCK")
+# and release.sh step 8 commits the result right after the build: the lock
+# may change in the first commit after the stamp and nowhere else between
+# the stamp and REV.
+first=$(git rev-list --reverse --ancestry-path "$stamp..$rev" | sed -n 1p)
+if [ -n "$first" ]; then
+  lock=$(git diff --name-only "$first" "$rev" -- "$WASM_LOCK")
 else
-  lock=$(git diff --name-only "$stamp" "$rev" -- "$WASM_LOCK")
+  lock=""
 fi
 changed=$(printf '%s\n%s\n' "$changed" "$lock" | sed '/^$/d' | sort -u)
 if [ -n "$changed" ]; then
