@@ -62,6 +62,7 @@ const TOP_LEVEL: &[&str] = &[
     "pyrefly.toml",
     "release_info",
     "ruff.toml",
+    "rust-toolchain.toml",
     "rustfmt.toml",
     "schemas",
     "scripts",
@@ -95,6 +96,24 @@ const NAMES_A_HOME: &[&str] = &[
 
 /// Files that name the engine's retired name to forbid it or as history.
 const NAMES_THE_RETIRED_NAME: &[&str] = &["AGENTS.md", "CHANGELOG.md", "tests/repo_hygiene.rs"];
+
+/// Files that may name the license the project left at 0.19.0: the
+/// history of the change, the notices that state it, another license's
+/// text, and tests and review rules about licenses.
+const NAMES_THE_FORMER_LICENSE: &[&str] = &[
+    "CHANGELOG.md",
+    "LICENSES/MPL-2.0.txt",
+    "README.crates.md",
+    "README.md",
+    "docs/adoption/README.md",
+    "docs/adoption/anthropic-docx-skill.md",
+    "docs/adoption/openai-doc-skill.md",
+    "docs/design/",
+    "jubarte-python/README.md",
+    "jubarte-wasm/cli/README.md",
+    "scripts/test_check_evidence_engine.py",
+    "skills/jules-el-conejo/pr-review-security-owasp.md",
+];
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -255,6 +274,34 @@ fn no_file_names_a_maintainers_machine_or_the_retired_name() {
         "tracked text that names a machine or the retired name",
         &found,
     );
+}
+
+/// The project is Apache-2.0 from 0.19.0. A file that still says AGPL is
+/// either one of the few that record the change or a leftover.
+#[test]
+fn no_file_names_the_former_license() {
+    let Some(files) = tracked_files() else { return };
+    let marks = [["AG", "PL"].concat(), ["Aff", "ero"].concat()];
+    let mut found = Vec::new();
+    for (name, path) in &files {
+        if name.starts_with("tests/")
+            || name.starts_with("docs/api/")
+            || name == "NOTICE"
+            || name.ends_with("/NOTICE")
+            || under(name, NAMES_THE_FORMER_LICENSE)
+        {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(path) else {
+            continue; // not UTF-8: a binary file
+        };
+        for (number, line) in text.lines().enumerate() {
+            if marks.iter().any(|mark| line.contains(mark.as_str())) {
+                found.push(format!("{name}:{}", number + 1));
+            }
+        }
+    }
+    report("tracked text that names the former license", &found);
 }
 
 #[test]

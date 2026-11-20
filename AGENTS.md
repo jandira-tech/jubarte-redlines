@@ -123,8 +123,9 @@ new semantics.
     run with `cargo nextest run -p <crate>` (for example `-p
     jubarte-redlines`); `--workspace` runs every crate.
 - Run the full suite rarely: before a release, or when a change reaches
-  across crates. The full run is `cargo miri nextest run --workspace`
-  (nightly with the `miri` component; `.config/nextest.toml` holds its
+  across crates. The full run is `cargo +nightly miri nextest run
+  --workspace` (nightly with the `miri` component; `rust-toolchain.toml`
+  names stable, so say `+nightly`; `.config/nextest.toml` holds its
   `default-miri` profile). Know its cost before starting it:
   - Under nextest, Miri compiles the test crate again for every test.
   - Miri cannot spawn processes, and this repository runs it with its

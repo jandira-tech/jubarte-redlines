@@ -16,13 +16,16 @@ A rule that depends on memory is forgotten. These run in CI:
 
 | Check | Refuses |
 |---|---|
-| `tests/repo_hygiene.rs` | A new top-level file or folder that is not on its list; a tracked file over 1 MB outside the listed folders; a tracked executable, log or empty file; a home-directory path or the retired project name in a tracked file; a `LICENSE` copy that differs from the root one |
+| `tests/repo_hygiene.rs` | A new top-level file or folder that is not on its list; a tracked file over 1 MB outside the listed folders; a tracked executable, log or empty file; a home-directory path or the retired project name in a tracked file; a `LICENSE` copy that differs from the root one; a file outside the listed few that still names the former licence |
 | `tests/corpus_present.rs` | Running the tests without the corpus submodule, with the command that fetches it |
 | `scripts/check_links.py` | A relative link in tracked Markdown that names no tracked file |
 | `scripts/gen_docs.sh --check` | A generated guide or README edited by hand, or left stale |
+| `scripts/sync_license_files.py --check` | A package folder whose `LICENSE` or `NOTICE` is missing or differs from the root file; an upstream notice missing from `NOTICE` |
 | `reuse lint` | A file with no licence and copyright record |
 | `cargo deny check` | A dependency with an advisory, or a licence that is not on the list |
 | gitleaks, CodeQL | A committed secret; a known vulnerable pattern |
+| OpenSSF Scorecard (`scorecard.yml`, weekly) | Nothing: it reports supply-chain weaknesses to the Security tab |
+| `cargo semver-checks` (the `semver` job) | Nothing until 1.0: it reports a public API change against the last release |
 | `tests/suite_membership.rs` | A test file that belongs to no suite |
 
 To add a top-level entry or a large file, change the list in
@@ -98,20 +101,18 @@ The first three are meant for 0.20.0.
    release. Building them in CI removes them from git, but the generated
    JavaScript guide and the npm CLI tests read them today, so both must
    build them first.
-5. **Check API compatibility in CI.** Run `cargo semver-checks` on every
-   pull request once each crate has a published baseline (after 0.19.0).
-6. **Sign release archives.** Add the zipsign public key under `keys/` and
+5. **Sign release archives.** Add the zipsign public key under `keys/` and
    the private key as a release secret, so `jubarte self-update` verifies
    what it downloads.
-7. **Split `tests/convert_docx_to_pdf.rs`** (2.4 MB in one file) and rename
+6. **Split `tests/convert_docx_to_pdf.rs`** (2.4 MB in one file) and rename
    the corpus folders whose names describe work in progress
    (`batch_to_fix`, `broken_ones_two`).
-8. **Decide where `jubarte-rust-inproc` lives.** It serves only the
+7. **Decide where `jubarte-rust-inproc` lives.** It serves only the
    benchmark; the benchmark's repository may be its home.
-9. **Move the review automation under the organization.** `jules.yml` uses
+8. **Move the review automation under the organization.** `jules.yml` uses
    actions from a personal account.
-10. **Add repository automation**: an OpenSSF Scorecard workflow, a stale
-    issue bot and a pull request labeler.
+9. **Make the semver check blocking** at 1.0. Until then the `semver`
+   job only reports.
 
 ## Growing adoption
 

@@ -12,6 +12,7 @@ updates:
       - "/jubarte-python"
       - "/jubarte-wasm"
       - "/jubarte-rust-inproc"
+      - "/fuzz"
     schedule:
       interval: "weekly"
     # Minor and patch bumps arrive as one pull request per directory per
