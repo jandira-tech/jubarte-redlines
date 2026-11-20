@@ -210,3 +210,11 @@ path = "crates/jubarte-markdown/src/markdown/word_table_styles.tsv"
 precedence = "override"
 SPDX-FileCopyrightText = "Microsoft Corporation"
 SPDX-License-Identifier = "LicenseRef-Word-Table-Styles"
+
+# The pull request template is copied into every pull request's body, so it
+# carries no header of its own.
+[[annotations]]
+path = ".github/PULL_REQUEST_TEMPLATE.md"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Jandira Technologies, LLC"
+SPDX-License-Identifier = "AGPL-3.0-only"

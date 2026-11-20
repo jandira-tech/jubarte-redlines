@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+cff-version: 1.2.0
+message: "If you use jubarte in research, please cite it as below."
+title: "Jubarte: Word .docx comparison, tracked changes and PDF rendering"
+type: software
+authors:
+  - name: "Jandira Technologies, LLC"
+repository-code: "https://github.com/jandira-tech/jubarte-redlines"
+url: "https://github.com/jandira-tech/jubarte-redlines"
+license: AGPL-3.0-only
+keywords:
+  - docx
+  - redline
+  - tracked changes
+  - Microsoft Word
+  - document comparison

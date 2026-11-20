@@ -38,6 +38,7 @@ const STANDALONE: &[&str] = &[
     "perf_serialize_prefix_allocs",
     "readme_coverage",
     "release_metadata",
+    "repo_hygiene",
     "repo_paths_fit_windows",
     "schema_consistency",
     "suite_membership",

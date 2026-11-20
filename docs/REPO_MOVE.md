@@ -20,7 +20,7 @@ create a new `jandira-tech/jubarte-redlines` afterwards.
 Only the repository is renamed. The packages keep their names: crates.io
 `jubarte-redlines` (the compare crate) and the other eight crates, PyPI
 `jubarte-docx` and `jubarte-redlines`, npm `jubarte-wasm` and
-`jubarte-redlines`. The local checkout folder `~/T/jubarte-redlines` keeps
+`jubarte-redlines`. The local checkout folder `jubarte-redlines` keeps
 its name as well, because the bench and the agents' instructions use that
 path.
 
@@ -127,5 +127,4 @@ after the rename the token says `jandira-tech/jubarte`.
   added later on the old name can be caught. It is not a CI gate before the
   move, because before the move the old name is still correct.
 - Update the agent instructions that name the repository: this
-  repository's `AGENTS.md` (rewritten by the script) and
-  `~/T/reconciliation_plan/GET_JUBARTE_RUST.md`.
+  repository's `AGENTS.md` (rewritten by the script).
