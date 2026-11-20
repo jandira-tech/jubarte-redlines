@@ -266,7 +266,7 @@ fn a_row_gaining_a_cell_resolves_both_ways() {
 
 /// A row added or removed whole keeps every final mark's revision, a
 /// cell in a row-level content control (`w:tr/w:sdt/…/w:tc`) included:
-/// the row's revision covers it (codex on #1680, round 9).
+/// the row's revision covers it (#1680, round 9).
 #[test]
 fn a_wrapped_cell_of_a_whole_row_keeps_its_revised_marks() {
     let rows = |second: Option<(&str, &str)>| {
@@ -446,8 +446,8 @@ fn blocks_of(bytes: &[u8], part: &str) -> String {
 /// after it. The redline is Word-valid, accepts to the revised story and
 /// rejects to the original (#1684: the pairing never ran in the notes,
 /// and missed headers, footers and text boxes; a header or footer under
-/// another name was missed too, codex on #1680, round 10, and one whose
-/// name starts `word/header` but does not end `.xml`, CodeRabbit, round 12).
+/// another name was missed too, #1680, round 10, and one whose
+/// name starts `word/header` but does not end `.xml`, round 12).
 #[test]
 fn a_cells_final_mark_settles_in_every_story() {
     use jubarte::comparer::{CompareMode, WmlComparerSettings};
@@ -546,8 +546,8 @@ fn styled(ppr: &str, runs: &[(&str, &str)]) -> String {
 /// A final mark's revision moves only where resolving it joins nothing the
 /// other version keeps apart: here the paragraphs after the mark before
 /// keep words of their own in B, so the final mark loses its deletion, as
-/// Word writes the first pair (Word 16 oracle o14, 2026-10-23). Codex and
-/// GLM on #1680, round 10: the move joined `Epsilon zeta eta theta.` and
+/// Word writes the first pair (Word 16 oracle o14, 2026-10-23).
+/// #1680, round 10: the move joined `Epsilon zeta eta theta.` and
 /// `One.`, two of B's paragraphs, and a join of the paragraphs around a
 /// formatting change merged B's last two.
 #[test]
@@ -584,7 +584,7 @@ fn a_final_mark_keeps_apart_the_paragraphs_b_keeps() {
 /// A cell losing an empty paragraph while it gains words. Accept All gives
 /// B and Reject All gives A, including the empty paragraph the cell lost
 /// (#1686). The deletion left on the final mark does not move onto `Ka.`'s,
-/// which would join `Ka.` and `Gb.`, two of B's paragraphs (GLM on #1680,
+/// which would join `Ka.` and `Gb.`, two of B's paragraphs (#1680,
 /// round 10).
 #[test]
 fn a_dropped_empty_paragraph_does_not_join_the_paragraphs_b_keeps() {
@@ -620,7 +620,7 @@ fn a_dropped_empty_paragraph_does_not_join_the_paragraphs_b_keeps() {
 
 /// The change records the settle pass writes take ids Word's schema
 /// accepts (a signed 32-bit number), whatever the part already holds: a
-/// comment id of 2147483647 sent them past it (codex on #1680, round 10;
+/// comment id of 2147483647 sent them past it (#1680, round 10;
 /// the OOXML validator refused 2147483648).
 #[test]
 fn a_settled_cells_records_take_ids_the_schema_accepts() {
@@ -734,7 +734,7 @@ fn a_cells_paragraphs_merged_or_split_resolve_both_ways() {
 /// whose final marks carry revisions, comes out as it went in: a custom
 /// XML data item (the data behind a bound content control) or the
 /// glossary's building blocks. Only stories, found by their relationship
-/// types, settle their final marks (minimax on #1680, round 11).
+/// types, settle their final marks (#1680, round 11).
 #[test]
 fn a_part_that_is_no_story_is_copied_as_it_was() {
     use common::docx::{Part, W_NS, docx_with};
@@ -760,7 +760,7 @@ fn a_part_that_is_no_story_is_copied_as_it_was() {
             data.as_str(),
         ),
         // Under a header's name it is custom data still, known by the
-        // relationship that reaches it (codex on #1680).
+        // relationship that reaches it (#1680).
         (
             "custom XML data under a header's name",
             "word/headerData.xml",
@@ -794,8 +794,8 @@ fn a_part_that_is_no_story_is_copied_as_it_was() {
 }
 
 /// A renamed header whose revised side alone carries Word 2010 paragraph
-/// ids keeps them declared and ignorable when its cells settle (CodeRabbit
-/// on #1680: the story sweep ran no namespace finalizer).
+/// ids keeps them declared and ignorable when its cells settle
+/// (#1680: the story sweep ran no namespace finalizer).
 #[test]
 fn a_renamed_headers_extension_ids_stay_declared_when_its_cells_settle() {
     use jubarte::comparer::{CompareMode, WmlComparerSettings};
@@ -823,7 +823,7 @@ fn a_renamed_headers_extension_ids_stay_declared_when_its_cells_settle() {
 /// A cell whose paragraph an author moved away compares Word-valid in
 /// PowerTools mode, which takes the sources as they are: the moves resolve
 /// before the cell's final marks settle, and no mark ends with two of
-/// `w:ins`, `w:del`, `w:moveFrom`, `w:moveTo` (codex on #1680).
+/// `w:ins`, `w:del`, `w:moveFrom`, `w:moveTo` (#1680).
 #[test]
 fn a_cell_with_an_authored_move_compares_valid_in_powertools_mode() {
     let stamp = r#"w:author="Ana" w:date="2026-10-01T00:00:00Z""#;

@@ -902,7 +902,7 @@ fn footer(ty: &str, id: &str) -> (String, String, String) {
     )
 }
 
-/// codex on #1842: one footer part in two slots of a deleted break,
+/// #1842: one footer part in two slots of a deleted break,
 /// one of them shadowed by an earlier section. Moving the free slot
 /// would take the shadowed slot's reference with it, and Reject All
 /// would show the earlier section's footer there. The part stays.
@@ -938,7 +938,7 @@ fn a_part_shared_with_a_slot_that_stays_does_not_move() {
     assert_eq!(last, [footer("default", &shared), footer("even", &shared)]);
 }
 
-/// codex on #1842: a first-page footer shows only where `w:titlePg` is
+/// #1842: a first-page footer shows only where `w:titlePg` is
 /// on. From a section that shows it to a final section that does not,
 /// the move would leave it on no page: it stays. A final section with
 /// `w:titlePg` takes it, and so does one whose source never showed it.
@@ -1028,7 +1028,7 @@ fn a_slot_another_part_sets_in_between_stays() {
     );
 }
 
-/// codex on #1842: the closing paragraph's PAGE code split across runs
+/// #1842: the closing paragraph's PAGE code split across runs
 /// still moves the footer.
 #[test]
 fn a_footer_with_a_split_page_code_moves() {

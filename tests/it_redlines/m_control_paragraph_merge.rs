@@ -334,7 +334,7 @@ fn an_emptied_control_stays_inline_where_both_paragraphs_bring_something() {
 
 /// An emptied control keeps its place at the join when the paragraph after
 /// it starts with an equation, not a run: before the equation, as before
-/// a run (the #1714 A/B, Word 16: m1–m4; codex on #1714).
+/// a run (the #1714 A/B, Word 16: m1–m4; #1714).
 #[test]
 fn an_emptied_control_stays_before_an_equation_it_joins() {
     let eq = r#"<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><m:t>x</m:t></m:r></m:oMath>"#;

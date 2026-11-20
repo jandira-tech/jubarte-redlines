@@ -2221,7 +2221,7 @@ fn scholar_keeps_what_the_front_matter_says() {
 }
 
 /// Only a header or footer story that holds `{PAGE}` is the page number
-/// (sourcery review of #472): the words elsewhere in the front matter are
+/// (#472): the words elsewhere in the front matter are
 /// not, and an empty `headers:` block is no header for page 1. A reference
 /// document's own headers and footers win, as the front matter's do.
 #[test]

@@ -3106,7 +3106,7 @@ fn a_note_a_comment_and_a_text_box_keep_their_own_spacing() {
 }
 
 /// Whole line counts round-trip with their zeros: ten lines is not one,
-/// and zero lines is a clause, not an empty word (#2130 review, Bugbot).
+/// and zero lines is a clause, not an empty word (#2130 review).
 #[test]
 fn whole_line_counts_round_trip_with_their_zeros() {
     let lines = common::docx::docx(
@@ -3224,7 +3224,7 @@ fn a_character_unit_indent_is_kept() {
 }
 
 /// Whole character counts round-trip with their zeros: `10ch` is not
-/// `1ch`, and a stated `0ch` stays stated (#2133 review, Bugbot).
+/// `1ch`, and a stated `0ch` stays stated (#2133 review).
 #[test]
 fn whole_character_indents_round_trip_with_their_zeros() {
     let body = common::docx::docx(

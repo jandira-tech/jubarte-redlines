@@ -616,7 +616,7 @@ fn record_id(dom: &Dom, record: NodeId) -> Option<u64> {
 /// earlier split of the transaction made of it: the id stays, as spelled,
 /// on what the record still covers (words, or an atom such as a tab, as
 /// `changes::run_characters` counts them), as one edit over the
-/// same words leaves it (Codex and MiniMax on #1664).
+/// same words leaves it (#1664).
 fn hand_on_ids(
     dom: &mut Dom,
     paragraph: NodeId,
@@ -659,7 +659,7 @@ fn hand_on_ids(
 /// without a character the history guard counts
 /// ([`crate::changes::run_has_characters`]): a record goes with the last
 /// of its words, and its id with it to a copy that still covers some
-/// (Codex on #1664).
+/// (#1664).
 pub(super) fn drop_emptied_records(
     dom: &mut Dom,
     paragraph: NodeId,

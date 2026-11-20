@@ -100,7 +100,7 @@ def test_convert_update_fields_writes_the_refreshed_docx_and_its_report(tmp_path
 
 
 def test_convert_update_fields_refuses_a_report_on_the_input_or_the_output(tmp_path, capsys):
-    # CodeRabbit on #393: the report is written apart from the .docx, so a
+    # #393: the report is written apart from the .docx, so a
     # shared path would silently replace one with the other.
     from jubarte.__main__ import main
 

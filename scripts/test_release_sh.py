@@ -634,7 +634,7 @@ class AppGate(unittest.TestCase):
                               text=True, timeout=60)
 
     def test_a_set_e_death_inside_the_gate_still_runs_the_previous_exit_trap(self) -> None:
-        # #2071 review (Bugbot): the gate's trap named its local "$gate"; a
+        # #2071 review: the gate's trap named its local "$gate"; a
         # set -e death unwinds the function's locals before EXIT runs, so
         # set -u aborted the trap before the chained mbx restore. Both the
         # system bash 3.2 and a current bash must run the previous trap.
@@ -2044,7 +2044,7 @@ class BumpGate(unittest.TestCase):
         self.assertRegex(step(0), r'PREV_RELEASE=\$\(last_release_tag "\$TAG"\)')
 
     def test_a_version_that_is_no_release_is_named_not_compared(self) -> None:
-        # Codex review of #1743: `[ "rc" -gt 0 ]` is bash's "integer
+        # #1743: `[ "rc" -gt 0 ]` is bash's "integer
         # expression expected", which names neither version.
         functions = shell_functions("bump_kind")
         for prev, ver in (("0.14.0-rc.1", "0.14.0"), ("0.13.0", "0.14"), ("0.13.x", "0.14.0")):
@@ -2057,7 +2057,7 @@ class BumpGate(unittest.TestCase):
 
 
 class PreviousRelease(unittest.TestCase):
-    """Codex review of #1743: the release the bump, the CHANGELOG and the API
+    """Review of #1743: the release the bump, the CHANGELOG and the API
     drift are measured from is the newest plain vX.Y.Z tag; a prerelease tag
     (v0.14.0-rc.1) is no release."""
 
@@ -2215,7 +2215,7 @@ esac
 
 
 class ChangelogDiscovery(unittest.TestCase):
-    """Codex review of #1743 (#1745): a section that cites no number is an
+    """Review of #1743 (#1745): a section that cites no number is an
     empty citation set, not a silent exit; a PR is owed by its branch or by
     its title (the merge commit's body), and a failed discovery is a named
     refusal, never an empty set."""
@@ -2393,7 +2393,7 @@ class BuildProvenance(unittest.TestCase):
         self.assertIn(f"--source-digest {self.sha}", verify[0])
 
     def test_an_older_releases_archive_under_this_name_fails(self) -> None:
-        # Codex review of #1743 (#1749): the repository, workflow and runner
+        # #1743 (#1749): the repository, workflow and runner
         # alone pass an archive another tag's run attested.
         r, _ = self.run_attested(0, ATTESTED_REF="refs/tags/v9.9.8")
         self.assertNotEqual(r.returncode, 0)
@@ -2445,7 +2445,7 @@ esac
 
 
 class FallbackProvenance(unittest.TestCase):
-    """Codex review of #1743 (#1749): a release made from run artifacts
+    """Review of #1743 (#1749): a release made from run artifacts
     (release.yml's release job did not run) has no attestation, and its
     notes say so instead of the CHANGELOG's claim standing alone."""
 
@@ -2832,7 +2832,7 @@ def shell_commands(path: Path) -> list[str]:
 
 
 class EngineRepoBinding(unittest.TestCase):
-    """Codex review of #1743 (#1747): gh honours GH_REPO, so a stray one in
+    """Review of #1743 (#1747): gh honours GH_REPO, so a stray one in
     the releaser's shell cancelled, listed or created things in another
     repository. Every engine gh call names jandira-tech/jubarte;
     the app's step gets no GH_REPO at all."""
@@ -3341,7 +3341,7 @@ class Lessons0140(unittest.TestCase):
         phase, mark, _item, proof = row.split("|")
         self.assertEqual((phase, mark), ("before", "you"))
         self.assertIn("git worktree add", proof)
-        # codex on #1743 (#1778): the tag's own script may be the one #1769
+        # #1743 (#1778): the tag's own script may be the one #1769
         # fixed, so this checkout's runs in the tag's worktree
         self.assertLess(proof.index("cp scripts/api_snapshot.py <dir>/scripts/"),
                         proof.index("python3 scripts/api_snapshot.py"))

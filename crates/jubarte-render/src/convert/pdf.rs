@@ -2484,7 +2484,7 @@ mod tests {
         assert_eq!(ps(&sub), ps(&full));
     }
 
-    /// CodeRabbit PR#4: two override faces whose PostScript names differ only
+    /// PR#4: two override faces whose PostScript names differ only
     /// in punctuation both sanitize to `Foo-Bar`, so the page resource
     /// dictionary held a duplicate key and a reader bound one of the faces to
     /// the wrong glyph mapping.
@@ -2502,7 +2502,7 @@ mod tests {
         assert_eq!(third, "Foo-Bar-3");
     }
 
-    /// CodeRabbit PR#4: annotation text went out as raw UTF-8 in a literal
+    /// PR#4: annotation text went out as raw UTF-8 in a literal
     /// string, which readers decode as PDFDocEncoding.
     #[test]
     fn non_ascii_annotation_text_is_utf16be_with_a_bom() {

@@ -4675,7 +4675,7 @@ fn a_header_text_box_after_the_title_stands_under_it() {
 
 #[test]
 fn a_header_inline_vml_box_beside_a_drawingml_box_keeps_the_drawingml_one() {
-    // PR #272 review (CodeRabbit): an inline VML text box takes no slot
+    // PR #272 review: an inline VML text box takes no slot
     // (0017dd5f), but counting it among the paragraph's flow boxes made
     // the pairing with DrawingML's effectExtents fail, and the DrawingML
     // box beside it vanished with it.
@@ -41215,7 +41215,7 @@ fn font_resource_keys(pdf: &[u8]) -> Vec<Vec<String>> {
     pages
 }
 
-/// CodeRabbit PR#4: `font_res` keyed each entry with `face.pdf_name()`, which
+/// PR#4: `font_res` keyed each entry with `face.pdf_name()`, which
 /// `sanitize_pdf_name` derives by mapping every non-alphanumeric byte to `-`.
 /// Two override faces whose PostScript names differ only in punctuation
 /// (`Foo_Bar` / `Foo.Bar`) collapse to one key, so the page resource dictionary
@@ -41267,7 +41267,7 @@ fn page_font_dict_covers_every_font_the_page_selects() {
     assert!(selected > 0, "no Tf operator found in the content stream");
 }
 
-/// CodeRabbit PR#4 asked for `/FlateDecode` on the content and image streams.
+/// PR#4 asked for `/FlateDecode` on the content and image streams.
 /// It is a caller's choice, not a default: an uncompressed stream is plain
 /// text, which is what this suite asserts on and what makes a page greppable
 /// when diffing against Word.
@@ -42727,7 +42727,7 @@ fn an_autofit_cell_without_tcw_fits_its_column_to_its_inline_picture() {
 #[test]
 fn a_page_aligned_picture_does_not_widen_a_fitted_column() {
     // Page alignment has no page_x offset, but its picture still belongs
-    // to the page rather than the fitted cell (codex on #1732).
+    // to the page rather than the fitted cell (#1732).
     let text = "<w:r><w:t>Value</w:t></w:r>";
     let picture = column_centred_picture_run()
         .replace("relativeFrom=\"column\"", "relativeFrom=\"page\"")
@@ -42753,7 +42753,7 @@ fn a_page_aligned_picture_does_not_widen_a_fitted_column() {
 #[test]
 fn a_wrapped_picture_group_takes_its_box_only_once_in_a_fitted_column() {
     // The wrapping reservation already holds the group's members; fitting
-    // them too doubles this full-box picture's width (codex on #1732).
+    // them too doubles this full-box picture's width (#1732).
     let group = CELL_PICTURE_GRAPHIC
         .replace(
             "http://schemas.openxmlformats.org/drawingml/2006/picture",
@@ -44884,7 +44884,7 @@ fn an_autofit_table_keeps_its_grid_when_a_column_has_a_width_in_every_row() {
     // a dxa tcW in every row and column 2 an auto one. Word keeps the
     // grid: VALUE starts 120pt after LABEL:. It honours a column every
     // row gives a width, which jubarte's fit does not model, so such a
-    // table keeps its grid (the corpus tables codex measured on #1716,
+    // table keeps its grid (the corpus tables measured on #1716,
     // 63ab7ab93d's first column auto beside four sized ones, are this
     // shape).
     let long = "AAAA ".repeat(25);
@@ -45608,7 +45608,7 @@ fn an_unsaved_table_holding_a_word_saved_nested_table_still_fits() {
 #[test]
 fn an_unsaved_table_holding_a_word_saved_text_box_still_fits() {
     // A copied text box's save mark says nothing of its host table
-    // (codex on #1732). Only the mark changes; the column must not.
+    // (#1732). Only the mark changes; the column must not.
     let pitch = |mark: &str| {
         let rows = format!(
             "<w:tr><w:tc><w:tcPr/><w:p><w:r><w:t>Label</w:t></w:r>\
@@ -45659,7 +45659,7 @@ fn a_fitted_column_holding_a_fitted_nested_table_takes_the_nested_fit() {
 #[test]
 fn a_percentage_nested_table_keeps_its_intrinsic_word_width_in_a_fitted_column() {
     // A percentage is no absolute preference, but its longest word still
-    // needs room in the outer column (codex on #1732).
+    // needs room in the outer column (#1732).
     let word = "MMMMMMMMMMMM";
     let expected = valid_grid_autofit_pitch(
         [2400, 6000],
@@ -45694,7 +45694,7 @@ fn a_percentage_nested_table_keeps_its_intrinsic_word_width_in_a_fitted_column()
 
 #[test]
 fn an_autofit_table_whose_rows_outrun_its_grid_fits_as_word_does() {
-    // #1732 probes g1 and g2 (Word 16, 2026-10-24), from CodeRabbit's
+    // #1732 probes g1 and g2 (Word 16, 2026-10-24), from the
     // review: a one-column 2400 grid under two-cell rows. The cue reads
     // only the grid's column. Word fits both tables, so a guard that kept
     // such a table on the grid split evenly (VALUE 60pt after LABEL:)
@@ -45787,7 +45787,7 @@ fn a_word_saved_table_with_auto_cell_widths_keeps_its_grid() {
     // statistics tables give every cell `tcW w:w="0" w:type="auto"` over
     // spans: Word draws b6dd0b6ae8 on 4 pages, on its grid. Re-fitting
     // those tables as a foreign tool's (#1716) moved 229 words and added a
-    // page (codex's corpus review of #1716: 16 of the 31 Word documents
+    // page (the corpus review of #1716: 16 of the 31 Word documents
     // the cue reached scored lower).
     let path = "tests/corpus/bench/neurotic_docx_bench/grok_run/wr0928/rejected_tracking/docx/71c08fc63c_rejected_tracking.docx";
     if !std::path::Path::new(path).is_file() {
@@ -45892,7 +45892,7 @@ fn an_autofit_table_with_gridcol_type_and_a_tcw_on_every_cell_keeps_its_grid() {
 
 #[test]
 fn a_gridcol_width_that_is_not_a_finite_number_is_no_width() {
-    // Jules on #1735: `w:w="NaN"`, `"inf"` and `"1e40"` parse as f32, so
+    // #1735: `w:w="NaN"`, `"inf"` and `"1e40"` parse as f32, so
     // they passed for widths and reached the layout, before #1720 too.
     // NaN set VALUE at x 1655, off the page; inf and 1e40 squeezed the
     // first column to its word (VALUE at 103.4). Such a width is no
@@ -46164,7 +46164,7 @@ fn a_scaled_vertical_run_squeezes_its_glyphs_with_its_advances() {
 fn a_keep_next_row_before_a_cell_holding_only_a_table_does_not_panic() {
     // A w:tc must end in a w:p, but a writer that leaves only a nested
     // table in it must not abort the conversion: the keepNext row's look at
-    // the next row's first paragraph found none (CodeRabbit on #173).
+    // the next row's first paragraph found none (#173).
     let filler: String = (0..44)
         .map(|i| format!("<w:p><w:r><w:t>Filler{i}</w:t></w:r></w:p>"))
         .collect();

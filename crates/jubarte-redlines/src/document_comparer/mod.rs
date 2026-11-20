@@ -2161,7 +2161,7 @@ fn sweep_part_validity(out: &mut PartFs, main: &str, comparison: Option<&Compari
     // ON PURPOSE — the Strict percent→per-thousand rewrite covers drawingml
     // namespaces; `word/media/*.xml` is vacuous for binary payloads.
     // Custom XML data holds the application's own XML whatever its name
-    // (`word/headerData.xml`), so no sweep below touches it (codex on #1680).
+    // (`word/headerData.xml`), so no sweep below touches it (#1680).
     let custom_data = {
         let parts = out.parts();
         crate::opc::custom_xml_data(std::iter::once(("", out.package_relationships())).chain(
@@ -2238,11 +2238,11 @@ fn sweep_part_validity(out: &mut PartFs, main: &str, comparison: Option<&Compari
         return;
     }
     // A story part under a name of its own (a header at `word/chrome.xml`)
-    // is not swept above, but its cells' final marks settle too (codex on
-    // #1680, round 10). Stories are known by the main document's
+    // is not swept above, but its cells' final marks settle too
+    // (#1680, round 10). Stories are known by the main document's
     // relationships to them: a custom XML data item or the glossary holds
     // cells too, but the comparison wrote neither and they stay as they
-    // were (minimax on #1680, round 11).
+    // were (#1680, round 11).
     let stories: Vec<String> = out
         .read_rels_for(main)
         .map(|rels| {
@@ -2260,7 +2260,7 @@ fn sweep_part_validity(out: &mut PartFs, main: &str, comparison: Option<&Compari
         .unwrap_or_default();
     for part in stories {
         // Settled above already. One predicate for both sweeps, so a story
-        // part cannot fall between them (`word/headerA.dat`, CodeRabbit on
+        // part cannot fall between them (`word/headerA.dat`,
         // #1680, round 12).
         if sweeps_final_marks(&part, main) {
             continue;
@@ -2281,8 +2281,8 @@ fn sweep_part_validity(out: &mut PartFs, main: &str, comparison: Option<&Compari
         if unsettled {
             crate::comparer::final_marks::settle_cell_final_marks(&mut vd, vr);
             // The finalizers the sweep above runs, so a renamed story keeps
-            // its extension namespaces declared and ignorable (CodeRabbit on
-            // #1680).
+            // its extension namespaces declared and ignorable
+            // (#1680).
             crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
             crate::comparer::finalize::declare_extension_namespaces_ignorable(&mut vd, vr);
             crate::comparer::finalize::bind_compatibility_prefixes(&mut vd, vr);

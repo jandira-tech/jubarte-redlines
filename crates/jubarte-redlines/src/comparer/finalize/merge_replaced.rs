@@ -1651,8 +1651,8 @@ pub(super) fn table_is_inserted(dom: &Dom, table: NodeId) -> bool {
     rows > 0 && rows == inserted
 }
 
-/// The revised close, copied with its properties and inert runs (codex on
-/// #2102). Reject All joins the replaced paragraph's words into this mark,
+/// The revised close, copied with its properties and inert runs
+/// (#2102). Reject All joins the replaced paragraph's words into this mark,
 /// so a close whose properties differ records the replaced paragraph's in
 /// a `w:pPrChange`. Its `w14` ids stay behind, as they could repeat one
 /// the redline already holds, and so does a paragraph-level `w:sectPr`,

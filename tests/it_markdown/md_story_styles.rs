@@ -324,7 +324,7 @@ fn a_header_in_the_footer_style_gets_its_definition() {
 
 #[test]
 fn a_trailing_paragraph_a_mark_brings_back_keeps_its_style() {
-    // Codex on #491: an empty last paragraph kept for its tracked mark is
+    // #491: an empty last paragraph kept for its tracked mark is
     // made again; the visible ones' `style: Normal` must not reach it.
     let mark = r#"<w:p><w:pPr><w:pStyle w:val="Header"/><w:rPr><w:ins w:id="7" w:author="A" w:date="2026-01-01T00:00:00Z"/></w:rPr></w:pPr></w:p>"#;
     let docx = docx(
@@ -343,7 +343,7 @@ fn a_trailing_paragraph_a_mark_brings_back_keeps_its_style() {
 
 #[test]
 fn a_style_only_a_header_uses_keeps_its_look() {
-    // Codex on #491: the legend describes the styles stories use too, so
+    // #491: the legend describes the styles stories use too, so
     // a header-only style is not rebuilt bare on Normal.
     let styles = styles_xml("Header", "Footer").replace(
         "</w:styles>",

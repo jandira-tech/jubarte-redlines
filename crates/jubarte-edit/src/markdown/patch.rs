@@ -560,8 +560,8 @@ fn operations(
         .collect();
     let stays = |p: &usize| !gone.contains(p);
     // A paragraph replaced whole still anchors: its new paragraph sits
-    // right after it, so what the Markdown adds after it follows (codex on
-    // #1670, round 8).
+    // right after it, so what the Markdown adds after it follows
+    // (#1670, round 8).
     let replaced: HashSet<usize> = edits
         .iter()
         .enumerate()

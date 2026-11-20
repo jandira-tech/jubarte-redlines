@@ -424,13 +424,13 @@ mod tests {
             ("a__b__c", "a__b__c"),
             ("__init__", "init"),
             ("__bold__ and snake__case", "bold and snake__case"),
-            // CodeRabbit #392: an intraword run cannot open, so the trailing
+            // #392: an intraword run cannot open, so the trailing
             // run closes nothing and both stay text (CommonMark).
             ("foo__bar__", "foo__bar__"),
             ("__x__y", "__x__y"),
             ("a _b_ c", "a b c"),
             ("_a_ and foo__bar__", "a and foo__bar__"),
-            // CodeRabbit #392 (2): runs of unequal length pair what they can
+            // #392 (2): runs of unequal length pair what they can
             // and keep the rest as text, as CommonMark does.
             ("_foo__", "foo_"),
             ("__foo_", "_foo"),
@@ -444,7 +444,7 @@ mod tests {
             ("&#32;- item", " - item"),
             ("a &#32;b", "a  b"),
             ("&#32", "&#32"),
-            // CodeRabbit #484: a `&#32;` is a space to the emphasis rules too.
+            // #484: a `&#32;` is a space to the emphasis rules too.
             ("2&#32;*&#32;3&#32;*&#32;4", "2 * 3 * 4"),
             ("a&#32;_b_&#32;c", "a b c"),
             // The view escapes a literal reference the document holds.

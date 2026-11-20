@@ -75,7 +75,7 @@ fn a_paragraph_of_only_a_symbol_round_trips() {
     ));
 }
 
-/// cursor 4499778454, jules 4499916208: a font name with quotes, markup or
+/// cursor 4499778454, review 4499916208: a font name with quotes, markup or
 /// CriticMarkup delimiters stays the font name. It ends neither the
 /// attribute nor the tag, and it forges no change.
 #[test]

@@ -428,7 +428,7 @@ fn a_replacement_is_struck_on_its_insertion_and_restored_on_its_deletion() {
 
 #[test]
 fn a_change_naming_one_mark_twice_is_refused() {
-    // r12+12 would restore r12's words twice (codex #4374535797).
+    // r12+12 would restore r12's words twice (#4374535797).
     let e = refused(&deleted_twice(), &plan(&restore("r12+12")));
     assert_eq!(e.code, "INVALID_EDIT");
     assert_eq!(e.message, "r12+12 names r12 twice");
@@ -440,7 +440,7 @@ fn a_change_naming_one_mark_twice_is_refused() {
 #[test]
 fn a_replacement_struck_again_still_names_its_deletion() {
     // Striking r4+5 a second time strikes nothing, but r4 still stands
-    // (codex #4374535802).
+    // (#4374535802).
     let once = applied(STEP2, &plan(&json!([{"kind":"strike","revision":"r4+5"}])));
     assert!(logical_ids(&once.redline).iter().any(|id| id == "r4+5"));
     let again = applied(
@@ -1525,7 +1525,7 @@ fn a_restore_inside_another_edit_is_refused_not_composed() {
     );
 }
 
-/// CodeRabbit on #1286: a deletion in an insertion is in a paragraph only
+/// #1286: a deletion in an insertion is in a paragraph only
 /// when that insertion is.
 #[test]
 fn restore_refuses_a_deletion_whose_insertion_sits_in_a_container() {

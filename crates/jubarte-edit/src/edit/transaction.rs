@@ -3435,10 +3435,10 @@ impl<'p> Transaction<'p> {
     /// and the paragraphs the plan deletes) that the plan keeps, when its
     /// mark is not already deleted: carrying the mark past another
     /// author's deleted mark would join two paragraphs the plan keeps
-    /// (MiniMax on #1670, round 8). `None` there, when a table, a content
+    /// (#1670, round 8). `None` there, when a table, a content
     /// control or the start of its parent comes first, and when the plan
-    /// places a block in between, which the carried mark would join (glm-5.3
-    /// on #1670, round 8): nothing can carry the mark.
+    /// places a block in between, which the carried mark would join
+    /// (#1670, round 8): nothing can carry the mark.
     pub(super) fn final_carrier(&self, para: usize) -> Option<NodeId> {
         let dom = &self.opened.dom;
         let gone: Vec<NodeId> = self
@@ -3449,7 +3449,7 @@ impl<'p> Transaction<'p> {
                 _ => None,
             })
             .collect();
-        // Deleted, or moved away (crush on #1670, round 8).
+        // Deleted, or moved away (#1670, round 8).
         let deleted_mark = |p: NodeId| {
             dom.element(p, &W::p_pr())
                 .and_then(|ppr| dom.element(ppr, &W::r_pr()))
@@ -3513,10 +3513,10 @@ impl<'p> Transaction<'p> {
 
     /// The operation whose new paragraph takes a deleted container-final
     /// paragraph's mark: the last new paragraph placed after it, else the
-    /// last placed before it (MiniMax on #1670, round 8); with nothing placed beside it, the last block
+    /// last placed before it (#1670, round 8); with nothing placed beside it, the last block
     /// placed after the paragraph before it, when that block is a paragraph
-    /// (codex on #1670), back through the paragraphs the plan deletes and
-    /// what is placed before them (codex on #1670, round 8). `None` for a
+    /// (#1670), back through the paragraphs the plan deletes and
+    /// what is placed before them (#1670, round 8). `None` for a
     /// paragraph that is not its container's final one, or that no new
     /// paragraph replaces.
     pub(super) fn final_replacement(&self, para: usize) -> Option<usize> {

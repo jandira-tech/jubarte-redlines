@@ -1083,7 +1083,7 @@ mod tests {
     }
 
     /// An id next to `u32::MAX` already in the part: the copies' ids wrap
-    /// past it to unused ones instead of overflowing (Codex on #1921).
+    /// past it to unused ones instead of overflowing (#1921).
     #[test]
     fn fresh_ids_past_u32_max_wrap_to_unused_ones() {
         let (a, b) = (names("TableNormal", "Grille"), names("Normal", "Racs"));

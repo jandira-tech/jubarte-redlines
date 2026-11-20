@@ -501,8 +501,8 @@ fn every_fixture_reconstructed_view_header_counts_its_changes() {
 #[test]
 fn the_oracle_reads_the_note_that_follows_the_closer() {
     // A point comment may follow a revision's tag directly: the change is
-    // still the one the tag names, and the comment adds none (CodeRabbit,
-    // #1138).
+    // still the one the tag names, and the comment adds none
+    // (#1138).
     assert_eq!(
         printed_counts("{++new++}{r1 @AL}{>>c0 @B: note<<}\n"),
         [1, 0, 0, 0, 0, 0]

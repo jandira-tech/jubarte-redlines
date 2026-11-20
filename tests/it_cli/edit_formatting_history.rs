@@ -1100,7 +1100,7 @@ fn two_adjacent_replacements_of_alices_first_words_leave_her_id_on_the_rest() {
     // Applied last to first: the second replacement leaves the id on
     // "alpha" and copies " gamma" off with a fresh one; the first then
     // takes "alpha" too, and the id moves on to Alice's words, as one
-    // replacement of "alpha beta" moves it (Codex on #1664).
+    // replacement of "alpha beta" moves it (#1664).
     let out = edit_v2(&outside(TEXT), |target| {
         json!([
             {"kind":"replace","target":target,"find":"alpha","text":"A"},
@@ -1136,7 +1136,7 @@ fn two_adjacent_replacements_of_alices_first_words_leave_her_id_on_the_rest() {
 #[test]
 fn a_typed_deletion_of_all_of_alices_words_takes_her_record_out_of_the_clean_copy() {
     // No words left, no record: an empty run keeps no formatting history
-    // (Codex on #1664).
+    // (#1664).
     let out = edit_v2(
         &outside(TEXT),
         |target| json!([{"kind":"delete","target":target,"find":TEXT}]),
@@ -1158,7 +1158,7 @@ fn a_typed_deletion_of_all_of_alices_words_takes_her_record_out_of_the_clean_cop
 fn a_deletion_of_alices_first_words_after_a_split_leaves_her_id_on_the_rest() {
     // The replacement, applied first, copies " gamma" off with a fresh id;
     // the deletion then empties "alpha": the id moves on to Alice's words
-    // (Codex on #1664, round 5).
+    // (#1664, round 5).
     let out = edit_v2(&outside(TEXT), |target| {
         json!([
             {"kind":"delete","target":target,"find":"alpha"},
@@ -1177,7 +1177,7 @@ fn a_deletion_of_alices_first_words_after_a_split_leaves_her_id_on_the_rest() {
 #[test]
 fn a_deletion_that_leaves_a_page_break_leaves_it_alices_record() {
     // A page break is content the record covers; deleting the words
-    // before it does not take the record off it (Codex on #1664, round 5).
+    // before it does not take the record off it (#1664, round 5).
     let source = docx(&format!(
         r#"<w:p><w:r><w:t>[</w:t></w:r><w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="{ALICE}" w:date="{OLD}"><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t>abc</w:t><w:br w:type="page"/></w:r><w:r><w:t>]</w:t></w:r></w:p>"#
     ));
@@ -1204,7 +1204,7 @@ fn a_deletion_that_leaves_a_page_break_leaves_it_alices_record() {
 #[test]
 fn a_handed_on_id_keeps_its_spelling() {
     // `w:id="005"`: the id that moves on to Alice's words is the source's,
-    // as it is spelled (Codex on #1664, round 5).
+    // as it is spelled (#1664, round 5).
     let source = docx(&format!(
         r#"<w:p><w:r><w:t>[</w:t></w:r><w:r><w:rPr><w:b/><w:rPrChange w:id="005" w:author="{ALICE}" w:date="{OLD}"><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t xml:space="preserve">{TEXT}</w:t></w:r><w:r><w:t>]</w:t></w:r></w:p>"#
     ));
@@ -1256,7 +1256,7 @@ fn commented(bytes: &[u8]) -> String {
 fn a_typed_replacement_inside_alices_insertion_leaves_her_record_on_the_words_it_keeps() {
     // The redline replays the replacement word by word inside Alice's
     // insertion: `alpha beta` stays her run, with her record. The clean
-    // copy keeps the same words, and so her record (MiniMax on #1664).
+    // copy keeps the same words, and so her record (#1664).
     let source = alices_two_runs();
     let out = edit_v2(
         &source,
@@ -1314,7 +1314,7 @@ fn typed_replacements_inside_one_insertion_that_overlap_still_conflict() {
 fn a_record_left_on_a_tab_keeps_its_id() {
     // Alice's record covers `a` and the tab after it. Bob's new words take
     // `a`; the tab is what the record still covers, and it keeps the id
-    // (MiniMax on #1664, round 5).
+    // (#1664, round 5).
     let source = docx(&format!(
         r#"<w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="{ALICE}" w:date="{OLD}"><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t>a</w:t><w:tab/></w:r></w:p>"#
     ));
@@ -1341,7 +1341,7 @@ fn a_record_left_on_a_tab_keeps_its_id() {
 fn a_paragraph_marks_record_with_the_same_id_does_not_hold_alices_id_back() {
     // The paragraph mark's record shares w:id 5 with the run's: only run
     // records hold the run's lineage, so the id still moves on to Alice's
-    // words (glm on #1664, round 5).
+    // words (#1664, round 5).
     let mark = format!(
         r#"<w:pPr><w:rPr><w:rPrChange w:id="5" w:author="{ALICE}" w:date="{OLD}"><w:rPr/></w:rPrChange></w:rPr></w:pPr>"#
     );
@@ -1374,7 +1374,7 @@ fn a_paragraph_marks_record_with_the_same_id_does_not_hold_alices_id_back() {
 fn a_typed_replacement_of_alices_first_words_inside_her_insertion_agrees_in_both_outputs() {
     // One formatted run inside Alice's insertion; the replacement keeps
     // `alpha `: the clean copy keeps her record where the accepted redline
-    // does (crush on #1664, round 5).
+    // does (#1664, round 5).
     let out = edit_v2(
         &inside(TEXT),
         |target| json!([{"kind":"replace","target":target,"find":"alpha beta","text":"alpha new"}]),
@@ -1441,8 +1441,8 @@ fn text_under(bytes: &[u8], ancestor: &str) -> String {
 #[test]
 fn a_typed_replacements_comment_holds_its_new_edge_words_in_both_outputs() {
     // The word diff leaves `new ` or ` new` as an insertion at the match's
-    // edge; the comment holds it in the redline as in the clean copy (codex,
-    // glm-5.3, MiniMax and crush on #1664, round 6).
+    // edge; the comment holds it in the redline as in the clean copy
+    // (#1664, round 6).
     for replacement in ["new alpha beta", "alpha beta new"] {
         let out = edit_v2(&alices_insertion_after(""), |target| {
             json!([{"kind":"replace","target":target,"find":"alpha beta","text":replacement,
@@ -1460,8 +1460,8 @@ fn a_typed_replacements_comment_holds_its_new_edge_words_in_both_outputs() {
 #[test]
 fn a_typed_replacements_new_first_words_stay_out_of_the_hyperlink_before_it() {
     // A hyperlink ends where the match starts: the new first words go
-    // inside Alice's insertion, as v1 puts them (codex, glm-5.3 and MiniMax
-    // on #1664, round 6).
+    // inside Alice's insertion, as v1 puts them
+    // (#1664, round 6).
     let source = alices_insertion_after(
         r#"<w:bookmarkStart w:id="0" w:name="dest"/><w:bookmarkEnd w:id="0"/><w:hyperlink w:anchor="dest"><w:r><w:t>L</w:t></w:r></w:hyperlink>"#,
     );
@@ -1482,7 +1482,7 @@ fn a_typed_replacements_new_first_words_stay_out_of_the_hyperlink_before_it() {
 #[test]
 fn a_typed_replacements_new_first_words_stay_out_of_the_move_before_it() {
     // Carol's moved text ends where the match starts: the new first words
-    // go inside Alice's insertion, not into Carol's move (glm-5.3 on #1664,
+    // go inside Alice's insertion, not into Carol's move (#1664,
     // round 6).
     let source = docx(&format!(
         r#"<w:p><w:moveToRangeStart w:id="1" w:author="Carol" w:date="{OLD}" w:name="move1"/><w:moveTo w:id="2" w:author="Carol" w:date="{OLD}"><w:r><w:t>M</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="1"/><w:ins w:id="7" w:author="{ALICE}" w:date="{OLD}"><w:r><w:t>alpha beta</w:t></w:r></w:ins></w:p><w:p><w:moveFromRangeStart w:id="3" w:author="Carol" w:date="{OLD}" w:name="move1"/><w:moveFrom w:id="4" w:author="Carol" w:date="{OLD}"><w:r><w:t>M</w:t></w:r></w:moveFrom><w:moveFromRangeEnd w:id="3"/><w:r><w:t>tail</w:t></w:r></w:p>"#
@@ -1505,7 +1505,7 @@ fn a_split_typed_replacement_claims_its_whole_match_at_a_boundary() {
     // The replacement keeps `alpha beta` and adds ` delta` at its end; a
     // second operation inserts at that end, on the other side. The whole
     // match is the first operation's claim, which the insertion only
-    // touches, as before the split (MiniMax on #1664, round 6).
+    // touches, as before the split (#1664, round 6).
     let source = docx(&format!(
         r#"<w:p><w:ins w:id="7" w:author="{ALICE}" w:date="{OLD}"><w:r><w:t>alpha beta</w:t></w:r></w:ins><w:r><w:t>gamma</w:t></w:r></w:p>"#
     ));

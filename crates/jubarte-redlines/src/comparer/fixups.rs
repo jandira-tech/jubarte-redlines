@@ -353,7 +353,7 @@ mod repeated_doc_pr_id_tests {
     }
 
     /// Repeats of the largest id each get their own, wrapping past
-    /// `u32::MAX` instead of saturating there (Jules #4395711592).
+    /// `u32::MAX` instead of saturating there (#4395711592).
     #[test]
     fn repeats_of_the_largest_id_get_distinct_ids() {
         let max = u32::MAX.to_string();

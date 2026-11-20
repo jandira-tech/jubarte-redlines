@@ -307,7 +307,7 @@ fn a_table_inside_a_table_cell_is_refused() {
     );
     assert_eq!(code, "UNSUPPORTED_STRUCTURE");
     // Keeping the existing revisions refuses it too, after the cell's
-    // final paragraph or before it (codex on #1680).
+    // final paragraph or before it (#1680).
     for position in ["after", "before"] {
         let keep = EditPlan::from_json(&format!(
             r#"{{"schema_version":1,"author":"A","date":"2026-10-02T12:00:00Z","existing_revisions":"keep","operations":[{{"kind":"insert_table","paragraph":"p0","position":"{position}","rows":[["a"]]}}]}}"#
@@ -391,8 +391,8 @@ fn cells_of_an_unstyled_anchor_have_no_paragraph_properties() {
 
 /// Under keep, a table placed after a container's last paragraph whose
 /// mark is already tracked lands: the paragraph after the new table takes
-/// the inserted mark, and the tracked one stays as it was (CodeRabbit on
-/// #1680). A paragraph placed there last is still refused: its inserted
+/// the inserted mark, and the tracked one stays as it was
+/// (#1680). A paragraph placed there last is still refused: its inserted
 /// mark would go on the tracked one.
 #[test]
 fn a_table_after_a_tracked_final_mark_lands_under_keep() {

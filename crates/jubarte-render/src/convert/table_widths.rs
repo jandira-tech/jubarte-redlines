@@ -511,13 +511,13 @@ fn para_content_extent(fonts: &Fonts, para: &CellPara) -> (f32, f32) {
 /// into ours (probes m1 and m2: a column holding a 200pt nested table is
 /// 201.6pt in Word); a nested table fitted to its own content spans that
 /// fit (#1732 probe t1). A picture placed on the page takes no room; a pct
-/// table contributes only its intrinsic minimum (codex on #1732).
+/// table contributes only its intrinsic minimum (#1732).
 fn cell_fit_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
     let (mut min, mut max) = (0.0_f32, 0.0_f32);
     for para in &cell.paras {
         let held = || {
             para.images.iter().filter(|image| {
-                // Page alignment need not have an offset (codex on #1732).
+                // Page alignment need not have an offset (#1732).
                 !image.group_reserved
                     && !matches!(
                         image.slot,

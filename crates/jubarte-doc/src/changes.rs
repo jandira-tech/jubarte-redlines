@@ -1583,8 +1583,8 @@ fn final_marks_of_row(dom: &Dom, carrier: NodeId) -> Vec<NodeId> {
     // The cells under `top`, nested tables' too, that no row or cell
     // between them and `top` covers by itself (#1684): `top`'s revision is
     // the one that covers them. A cell of `top` itself that carries the
-    // revision (`w:cellIns`, `w:cellDel`) covers its own mark (CodeRabbit
-    // on #1680, round 11).
+    // revision (`w:cellIns`, `w:cellDel`) covers its own mark
+    // (#1680, round 11).
     let cell_kind = if kind == "ins" {
         W::cell_ins()
     } else {

@@ -188,8 +188,8 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
                 }
             }
             // A table placed last leaves the final mark where it is: the
-            // paragraph after it takes the inserted mark (CodeRabbit on
-            // #1680).
+            // paragraph after it takes the inserted mark
+            // (#1680).
             Resolved::InsertParagraph { .. }
                 if appended_final(tx, resolved).is_some_and(|para| {
                     last_appended(tx, para) == Some(*op)
@@ -830,7 +830,7 @@ fn emit(
     // final mark hangs Word's Accept All and Reject All (#1669). In the
     // body, whose final mark Word resolves, a mark that closes a section
     // stays: the record cannot hold the break (`CT_PPrBase` has no
-    // `w:sectPr`), so Reject All would drop it (codex on #1680).
+    // `w:sectPr`), so Reject All would drop it (#1680).
     for para in appended {
         let Some(&last) = last_after.get(&para) else {
             continue;
@@ -965,7 +965,7 @@ fn emit(
         let carrier = if let Some(next) = next_block(dom, node) {
             // Between a table the plan inserts and another table, the
             // paragraph stays, emptied: it is the paragraph the clean copy
-            // puts between them (glm-5.3 on #1670, round 8).
+            // puts between them (#1670, round 8).
             let before = super::previous_block(dom, node).filter(|&b| dom.name_is(b, &W::tbl()));
             let separates = dom.name_is(next, &W::tbl())
                 && before.is_some_and(|b| tables.contains(&b) || tables.contains(&next));
@@ -1079,7 +1079,7 @@ fn keep_final_mark(dom: &mut Dom, old: NodeId, last: NodeId, stamp: &mut Stamp<'
     }
     // `old` takes `last`'s place when `last` follows it; placed before
     // paragraphs the plan deletes, `last` leaves `old` where it is, after
-    // them (codex on #1670, round 8).
+    // them (#1670, round 8).
     if precedes(dom, old, last) {
         dom.remove(old);
         dom.add_after_self(last, old);
@@ -2291,7 +2291,7 @@ fn record_replaced(tx: &Transaction<'_>, paragraph: NodeId, op: usize) -> Option
 /// The first element `paragraph` holds, at the levels `delete_runs` walks,
 /// that the replay cannot delete as a tracked change: one that is no
 /// WordprocessingML (an equation, `m:oMath`), or a subdocument (`w:subDoc`,
-/// crush on #1670, round 8).
+/// #1670, round 8).
 fn untrackable_content(dom: &Dom, container: NodeId) -> Option<NodeId> {
     dom.elements(container, None).into_iter().find_map(|child| {
         let name = dom.name(child)?;
@@ -2322,7 +2322,7 @@ fn moved_in(dom: &Dom, node: NodeId) -> Option<NodeId> {
 /// The block right after `node` among its siblings, past the range markers
 /// and proofing marks between: a paragraph, a table, a block content
 /// control or a custom XML element. Word's Compare deletes the mark of a
-/// paragraph deleted before any of them (codex on #1670, round 8).
+/// paragraph deleted before any of them (#1670, round 8).
 fn next_block(dom: &Dom, node: NodeId) -> Option<NodeId> {
     dom.nodes_after_self(node).into_iter().find(|&n| {
         dom.name(n).is_some_and(|name| {

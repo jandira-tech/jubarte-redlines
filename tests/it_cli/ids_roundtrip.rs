@@ -1216,7 +1216,7 @@ fn word_redlines_round_trip() {
     report(&fails);
 }
 
-/// codex 4244120691: a long id reads back only when its story is the
+/// Review 4244120691: a long id reads back only when its story is the
 /// document's and its index a number, as `edit -p` reads it.
 #[test]
 fn a_long_id_reads_back_only_when_its_story_and_index_do() {
@@ -1237,7 +1237,7 @@ fn a_long_id_reads_back_only_when_its_story_and_index_do() {
     assert_eq!(back[3], Ok("p0".to_string()));
 }
 
-/// codex 4242942149: a header part whose stem a shell would expand
+/// Review 4242942149: a header part whose stem a shell would expand
 /// (`hdr!old.xml`) gets a story id that is safe unquoted, and that id
 /// names its change and paragraph back.
 #[test]

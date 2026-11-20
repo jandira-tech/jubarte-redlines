@@ -697,7 +697,7 @@ pub(super) fn table_block(
     // does not model, so such a table keeps its grid (probe n4: Word
     // keeps 120pt). A table Word saved keeps its grid too: that grid is
     // Word's own fit, and re-fitting its auto cells only moved them
-    // (b6dd0b6ae8's statistics tables gained a page; codex's corpus
+    // (b6dd0b6ae8's statistics tables gained a page; the corpus
     // review of #1716). Word's marks on its rows and paragraphs tell such
     // a table; Word itself does not lay out by them (probe m3, q1 with
     // the marks, still fits). A nested table's marks are its own: Word
@@ -708,7 +708,7 @@ pub(super) fn table_block(
         .any(|row| dom.attribute(row, &rsid_r).is_some() || dom.attribute(row, &rsid_tr).is_some())
         || dom.descendants(table, Some(&W::p())).into_iter().any(|p| {
             dom.attribute(p, &para_id).is_some()
-                // A copied text box's marks belong to it (codex on #1732).
+                // A copied text box's marks belong to it (#1732).
                 && !inside_text_box(dom, p, table)
                 && std::iter::successors(dom.parent(p), |&n| dom.parent(n))
                     .find(|&n| dom.name_is(n, &tbl))
@@ -720,7 +720,7 @@ pub(super) fn table_block(
     // #1733). Rows with more cells than the grid has columns are judged
     // by the grid's columns: Word fits a one-column grid under two-cell
     // rows whether or not the second column has a tcW (#1732 probes
-    // g1-g3, CodeRabbit's review).
+    // g1-g3, the review).
     let cells_foreign = !word_saved
         && !widthless_cols.is_empty()
         && (0..widthless_cols.len())

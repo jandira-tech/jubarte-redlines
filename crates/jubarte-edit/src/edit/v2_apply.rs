@@ -2356,7 +2356,7 @@ fn resolve_operation(
 /// A replacement inside one insertion as the word-level edits the redline
 /// replays it as ([`tracked::insertion_pieces`]): the clean copy then keeps
 /// the words the redline keeps, in their runs and with their formatting
-/// history (MiniMax on #1664). Each piece is checked where it lands, as a
+/// history (#1664). Each piece is checked where it lands, as a
 /// v1 `replace`'s are; its comment covers the whole match, and its pieces
 /// conflict as the whole match does.
 fn replacement_pieces(
@@ -3779,7 +3779,7 @@ mod tests {
 
     /// A style's formatting record and a comment body's share `w:id` 3 but
     /// not a story: removing the comment leaves the style's record its own
-    /// (Jules, #1661, one parse for listing and records).
+    /// (#1661, one parse for listing and records).
     #[test]
     fn a_comment_bodys_formatting_record_stands_in_for_no_listed_change() {
         use crate::edit::deeper_boundary_fixture::{Part, docx_with};
@@ -4189,7 +4189,7 @@ mod tests {
     fn history_guard_refuses_a_record_left_on_no_words() {
         // Carol deleted every word of Alice's run: the record goes with
         // them, so a candidate that keeps it on an emptied run is refused
-        // (Codex on #1664).
+        // (#1664).
         let source = docx(&format!(
             "<w:p>{}</w:p>",
             alice_formatted(5, "alpha beta", false)

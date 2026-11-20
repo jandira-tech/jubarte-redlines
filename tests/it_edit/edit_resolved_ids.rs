@@ -210,7 +210,7 @@ fn a_whole_paragraph_edit_of_a_merged_or_removed_paragraph_is_refused_by_name() 
 
 #[test]
 fn a_control_id_names_the_source_control_after_settling() {
-    // CodeRabbit on #488: accepting the deletions before the controls moves
+    // #488: accepting the deletions before the controls moves
     // `p3.cc0` to `p1.cc0`; the plan's id still names the control its
     // author read.
     let control = |tag: &str, text: &str| {

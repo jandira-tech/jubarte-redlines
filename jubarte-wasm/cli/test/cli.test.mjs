@@ -1406,7 +1406,7 @@ test("convert to Word sniffs inputs whose name does not say Markdown (integratio
 });
 
 test("compare reports the bytes a Markdown redline takes (integration)", () => {
-  // Codex on #381: the count is UTF-8 bytes on disk, not UTF-16 code units.
+  // #381: the count is UTF-8 bytes on disk, not UTF-16 code units.
   const a = path.join(tmp, "bytes-a.md"), b = path.join(tmp, "bytes-b.md"), out = path.join(tmp, "bytes-redline.md");
   fs.writeFileSync(a, "Prazo de 30 días — ok.\n");
   fs.writeFileSync(b, "Prazo de 45 días — ok.\n");

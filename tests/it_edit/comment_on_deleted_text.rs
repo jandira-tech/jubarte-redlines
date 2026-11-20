@@ -287,7 +287,7 @@ fn a_comment_on_words_the_plan_deletes_is_refused() {
     );
 }
 
-/// cursor 4500964471, jules 4501073475: a comment around more than the
+/// cursor 4500964471, review 4501073475: a comment around more than the
 /// deleted words keeps the words that stay, so it is not refused. Only a
 /// comment wholly on deleted words has nowhere to sit.
 #[test]

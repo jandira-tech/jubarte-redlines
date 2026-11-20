@@ -2124,7 +2124,7 @@ mod shared_rows_tests {
     use super::shared_rows;
 
     /// Each row on either side pairs once: `[X, X, X]` shares one row with
-    /// `[X, Y]`, fewer than `[X, Y]` itself (Codex on #1921).
+    /// `[X, Y]`, fewer than `[X, Y]` itself (#1921).
     #[test]
     fn a_duplicate_row_is_shared_once() {
         let score = |a: &[&str], b: &[&str]| shared_rows(a.iter().copied(), b.iter().copied());

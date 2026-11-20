@@ -3144,7 +3144,7 @@ mod tests {
 
     /// An `_` seam's edges are read from its own paragraph, not the whole
     /// document: N paragraphs each holding one cost N paragraphs of
-    /// resolving, not N documents (CodeRabbit on #1564).
+    /// resolving, not N documents (#1564).
     #[test]
     fn underscore_seam_edges_resolve_only_their_own_paragraph() {
         let para = "word _a_{++_b_++} tail\n\n";

@@ -2834,7 +2834,7 @@ fn duplicate_revision_ids(bytes: &[u8]) -> usize {
 /// two `w:customXmlInsRangeEnd`, or two `w:moveFromRangeEnd`, that share
 /// one (`Sem_UniqueAttributeValue`), and lets two
 /// `w:customXmlMoveToRangeEnd` share one. Repair renames no end on its own:
-/// it cannot tell which start an end closes (Codex on #1666).
+/// it cannot tell which start an end closes (#1666).
 #[test]
 fn range_ends_of_one_kind_take_unique_ids() {
     let ends = |start: &str, end: &str| {
@@ -2852,7 +2852,7 @@ fn range_ends_of_one_kind_take_unique_ids() {
         let bytes = ends(&format!("{kind}RangeStart"), &format!("{kind}RangeEnd"));
         assert_eq!(duplicate_revision_ids(&bytes), 1, "{kind}");
         // So the finding is not one repair fixes, and the package comes back
-        // as it was (CodeRabbit on #1666).
+        // as it was (#1666).
         let findings = jubarte::validate::ring1(&PartFs::open(&bytes).unwrap());
         assert!(
             findings
@@ -2878,7 +2878,7 @@ fn range_ends_of_one_kind_take_unique_ids() {
 
 /// OpenXmlValidator compares `w:customXmlDelRangeStart` and
 /// `w:customXmlDelRangeEnd` ids case-blind: `ABC` and `abc` repeat
-/// (Codex on #1666).
+/// (#1666).
 #[test]
 fn custom_xml_deletion_ids_repeat_whatever_their_case() {
     let range = |id: &str| {
@@ -2892,7 +2892,7 @@ fn custom_xml_deletion_ids_repeat_whatever_their_case() {
 
 /// A custom XML data part holds the application's XML, not
 /// WordprocessingML: OpenXmlValidator checks no revision id in it, whatever
-/// its name, and repair leaves it alone (Codex on #1666).
+/// its name, and repair leaves it alone (#1666).
 #[test]
 fn custom_xml_data_holds_no_revision_ids() {
     const CUSTOM_XML: &str =
@@ -2914,7 +2914,7 @@ fn custom_xml_data_holds_no_revision_ids() {
 
 /// Nor paragraph ids: `PARA_ID_OUT_OF_RANGE` reads no custom XML data
 /// part, and the renumbering a document's own paraId sets off leaves the
-/// data's bytes alone (codex on #1666).
+/// data's bytes alone (#1666).
 #[test]
 fn custom_xml_data_holds_no_paragraph_ids() {
     const CUSTOM_XML: &str =
@@ -2943,8 +2943,8 @@ fn custom_xml_data_holds_no_paragraph_ids() {
 }
 
 /// Repair renames the end that closes a renumbered start, not an element
-/// of another namespace that shares its local name and id (Codex on
-/// #1666).
+/// of another namespace that shares its local name and id
+/// (#1666).
 #[test]
 fn repair_renames_the_range_end_in_wordprocessingml() {
     let range = |id: u32, extra: &str| {
@@ -2972,7 +2972,7 @@ const TWO_FIVES: &str = r#"<w:p><w:ins w:id="5" w:author="Alice" w:date="2026-10
 /// A Word story stays checked whatever `customXml` relationship also
 /// reaches it: only a part that nothing but `customXml` relationships
 /// reach is custom XML data, and a type that merely ends in `/customXml`
-/// is no `customXml` relationship (codex and crush on #1666, round 6).
+/// is no `customXml` relationship (#1666, round 6).
 #[test]
 fn a_word_story_stays_checked_whatever_custom_xml_relationship_reaches_it() {
     for rel_type in ["urn:application/customXml", CUSTOM_XML_REL] {
@@ -3001,7 +3001,7 @@ fn a_word_story_stays_checked_whatever_custom_xml_relationship_reaches_it() {
 }
 
 /// Custom XML data the package's own relationships reach is data too
-/// (glm-5.3 on #1666, round 6).
+/// (#1666, round 6).
 #[test]
 fn custom_xml_data_the_package_reaches_holds_no_revision_ids() {
     let data = r#"<root xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:ins w:id="5"/><w:ins w:id="5"/></root>"#;
@@ -3014,7 +3014,7 @@ fn custom_xml_data_the_package_reaches_holds_no_revision_ids() {
 
 /// Repair pairs a renumbered start with its end by the key the duplicate
 /// check reads: `customXmlDelRange` ids compare case-blind, so the end
-/// `ABC` that follows the start `abc` is its end (MiniMax on #1666,
+/// `ABC` that follows the start `abc` is its end (#1666,
 /// round 6).
 #[test]
 fn repair_pairs_a_case_blind_range_end_with_its_start() {
@@ -3132,7 +3132,7 @@ fn probe_a_revision_on_a_cells_final_mark_fails() {
 /// Only the stories Accept or Reject All walks count: the same cell in
 /// the glossary's building blocks is no story, and the comparer copies it
 /// as it was (`a_part_that_is_no_story_is_copied_as_it_was`); in a header
-/// it is one (codex on #1680).
+/// it is one (#1680).
 #[test]
 fn a_cells_final_mark_counts_only_in_a_story() {
     const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -3219,7 +3219,7 @@ fn word_shapes_of_a_cells_final_mark_pass() {
 }
 
 /// A part that writes WordprocessingML in the default namespace (`<tc>`,
-/// no prefix) is checked like any other (codex on #1680, round 9: the
+/// no prefix) is checked like any other (#1680, round 9: the
 /// check's byte prefilter looked for `:tc>` only).
 #[test]
 fn probe_a_revised_final_mark_in_an_unprefixed_part_fails() {
@@ -3242,7 +3242,7 @@ fn probe_a_revised_final_mark_in_an_unprefixed_part_fails() {
 }
 
 /// A cell that a row-level content control wraps (`w:tr/w:sdt/…/w:tc`)
-/// takes its row's revision like any other (codex on #1680, round 9: the
+/// takes its row's revision like any other (#1680, round 9: the
 /// check read the cell's parent as its row, a false positive).
 #[test]
 fn a_cell_in_a_row_level_content_control_takes_its_rows_revision() {
@@ -3276,7 +3276,7 @@ fn a_cell_in_a_row_level_content_control_takes_its_rows_revision() {
 }
 
 /// A cell's tags may carry whitespace before their `>` (`<w:tc >`,
-/// `</w:tc\n>`): the check still reads the part (codex on #1680: the
+/// `</w:tc\n>`): the check still reads the part (#1680: the
 /// byte prefilter wanted a literal `tc>`).
 #[test]
 fn probe_a_revised_final_mark_in_cells_with_spaced_tags_fails() {
@@ -3301,7 +3301,7 @@ fn probe_a_revised_final_mark_in_cells_with_spaced_tags_fails() {
 }
 
 /// A custom XML data part is application data, not a Word story: a cell
-/// shape in it is no cell of the document (codex on #1680).
+/// shape in it is no cell of the document (#1680).
 #[test]
 fn a_cell_shape_in_a_custom_xml_data_part_is_not_checked() {
     let w = common::docx::W_NS;

@@ -1699,7 +1699,7 @@ mod deterministic_note_boundary_tests {
     }
 
     /// An endnote that still holds its own mark, by element or by style,
-    /// gets no second one (Jules #4377843383): the check is the endnote's,
+    /// gets no second one (#4377843383): the check is the endnote's,
     /// not the footnote's.
     #[test]
     fn an_endnote_keeps_its_one_mark() {

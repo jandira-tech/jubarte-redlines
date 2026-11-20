@@ -5002,7 +5002,7 @@ fn the_range_line_names_kept_notes_and_points_only_at_changed_headers() {
     assert!(!changed_by(&bytes, Some("Zed Zimmer"), true).contains("[^1]:"));
 }
 
-/// CodeRabbit #392: a comment hidden with `--comments none` still names
+/// #392: a comment hidden with `--comments none` still names
 /// every paragraph its range runs through (`in c9`), so `--changed` keeps
 /// the middle paragraph the way the inline view does.
 #[test]
@@ -5027,7 +5027,7 @@ fn a_hidden_comment_names_every_paragraph_its_range_covers() {
     );
 }
 
-/// CodeRabbit #392: a hidden comment whose range runs through a table names
+/// #392: a hidden comment whose range runs through a table names
 /// it on the table line, as the inline view does.
 #[test]
 fn a_hidden_comment_running_through_a_table_names_it_on_the_table_line() {
@@ -5053,7 +5053,7 @@ fn a_hidden_comment_running_through_a_table_names_it_on_the_table_line() {
     }
 }
 
-/// CodeRabbit #392: a note inserted with its reference carries its label
+/// #392: a note inserted with its reference carries its label
 /// inside the mark (`{++[^1]: …++}`); a selection that keeps the citing
 /// paragraph keeps the definition, and `--changed` names it.
 #[test]
@@ -5094,7 +5094,7 @@ fn a_selection_keeps_the_definition_of_an_inserted_note() {
     );
 }
 
-/// CodeRabbit #392: an author whose only changes sit in a header has a
+/// #392: an author whose only changes sit in a header has a
 /// handle like any other, so `--by` takes the handle as well as the name.
 #[test]
 fn an_author_who_changed_only_a_header_has_a_handle() {
@@ -5852,7 +5852,7 @@ fn pr392_alternate_content_carries_one_payload_and_names_every_listed_author() {
         let listed = changes.len();
         // Handles name the authors of the listed changes: a Fallback
         // change the Choice does not twin prints on `unplaced:` with its
-        // author's handle (codex 4244120690). The only other entry is
+        // author's handle (review 4244120690). The only other entry is
         // document_owner.
         let authors: std::collections::BTreeSet<_> =
             changes.iter().filter_map(|c| c.author.as_deref()).collect();
@@ -6135,7 +6135,7 @@ fn an_empty_table_row_keeps_its_place_in_the_agent_view() {
     assert_eq!(body(&agent(&back)), view);
 }
 
-/// codex 4244120690: a change only a text box's `mc:Fallback` holds is
+/// Review 4244120690: a change only a text box's `mc:Fallback` holds is
 /// listed, so its author, with no change in the `mc:Choice`, gets a handle
 /// and a legend line, and the `unplaced:` entry names it.
 #[test]
@@ -6161,7 +6161,7 @@ fn a_fallback_only_author_gets_a_handle() {
     assert!(unplaced.contains("r21 @ZF"), "{out}");
 }
 
-/// codex 4244378287: free-text header fields (the title, the owner, an
+/// Review 4244378287: free-text header fields (the title, the owner, an
 /// author's name) that read like a tag do not count as printing it.
 #[test]
 fn a_title_or_name_that_reads_like_a_tag_prints_no_change() {
@@ -6191,7 +6191,7 @@ fn a_title_or_name_that_reads_like_a_tag_prints_no_change() {
     assert!(unplaced.contains("r3 @AC"), "{out}");
 }
 
-/// codex 4244378292: a story id outside the short grammar
+/// Review 4244378292: a story id outside the short grammar
 /// (`Header_1:p:0`) holds colons, so its flow-map value is quoted.
 #[test]
 fn a_long_story_id_is_quoted_in_the_header() {
@@ -6219,7 +6219,7 @@ fn a_long_story_id_is_quoted_in_the_header() {
     );
 }
 
-/// codex 4244378295: a default style whose id is `changes` keeps its
+/// Review 4244378295: a default style whose id is `changes` keeps its
 /// `styles:` entry; the style changes print under `style_changes:`.
 #[test]
 fn a_style_named_changes_does_not_collide_with_the_style_changes() {
@@ -6247,7 +6247,7 @@ fn a_style_named_changes_does_not_collide_with_the_style_changes() {
     assert!(!out.contains("unplaced:"), "{out}");
 }
 
-/// coderabbit 4269828968 (#427): a `w:id` that holds a `+` (`1+2`, only a
+/// Review 4269828968 (#427): a `w:id` that holds a `+` (`1+2`, only a
 /// malformed file has one) is one change. Its tag prints the long id
 /// `jubarte changes` lists, never `r1+2`, which names r1 and r2.
 #[test]

@@ -38,7 +38,7 @@ static EXPIRED: LazyLock<Regex> = LazyLock::new(|| {
 static ID_SHAPED: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9]*(?:[.+-][a-z]*[0-9]+)*$").unwrap());
 
-/// Every id-shaped token a view prints where ids live (grok review of
+/// Every id-shaped token a view prints where ids live (review of
 /// #24a: seven narrow patterns missed `cells t1.row0 p194-p208`, `in p195`,
 /// `r389 @??`, `body: p0-p172` and the comment lists): the words of each id
 /// line and of the YAML header outside quoted text, and the heads of notes

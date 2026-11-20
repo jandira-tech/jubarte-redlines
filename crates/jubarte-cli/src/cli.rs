@@ -577,7 +577,7 @@ pub fn flag_operations(matches: &clap::ArgMatches) -> Result<Vec<FlagOp>, String
 /// `--plan`'s parser: a path that may be empty, the value `--plan` takes
 /// when given bare (clap's `PathBuf` parser refuses an empty one). A path
 /// ending in a separator names a folder, never the plan file, so it is
-/// refused here, alike in the binary, Python and npm (Codex on #433: they
+/// refused here, alike in the binary, Python and npm (#433: they
 /// once wrote `new.json`, failed the rename, or refused).
 fn plan_path() -> impl clap::builder::TypedValueParser<Value = PathBuf> {
     use clap::builder::TypedValueParser as _;
@@ -3362,7 +3362,7 @@ fn read_output(output: &Path, given: &dyn Fn(&str) -> bool) -> Result<Format, St
 
 /// `--revision-palette` without `--revisions custom`, in any task that
 /// draws revisions (convert, edit, compare, accept, reject, append, scrub):
-/// a usage error before any document is read (Codex on #440 and #441).
+/// a usage error before any document is read (#440 and #441).
 fn palette_without_custom(args: &clap::ArgMatches) -> bool {
     args.try_get_one::<String>("revision_palette")
         .ok()

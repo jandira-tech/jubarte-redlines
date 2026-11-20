@@ -967,7 +967,7 @@ fn split_insertion_before_comment_keeps_new_words_outside() {
 fn split_insertion_after_comment_keeps_new_words_outside() {
     insertion_keeps_range("comment", false);
 }
-// Codex P2 on #1143: a permission range split like a bookmark, not left
+// #1143: a permission range split like a bookmark, not left
 // open in the head around the new words.
 #[test]
 fn split_keeps_permission_around_words_before_anchor() {
@@ -1005,7 +1005,7 @@ fn italic_text(bytes: &[u8]) -> String {
 
 #[test]
 fn a_formatted_replacement_formats_every_word_it_keeps() {
-    // Codex P2 on #1143: the word split kept "beta" as it was and set the
+    // #1143: the word split kept "beta" as it was and set the
     // format only on the words it inserted, so Accept All differed from the
     // clean copy.
     let out = apply_plan(
@@ -1025,7 +1025,7 @@ fn a_formatted_replacement_formats_every_word_it_keeps() {
 
 #[test]
 fn own_insertion_deleted_whole_leaves_no_empty_carrier_in_the_clean_copy() {
-    // Codex P2 on #1143: the direct path cleared the text but kept the
+    // #1143: the direct path cleared the text but kept the
     // `w:ins` around an empty run.
     let out = apply_plan(
         &source("Carol Diaz"),
@@ -1045,7 +1045,7 @@ fn own_insertion_deleted_whole_leaves_no_empty_carrier_in_the_clean_copy() {
 
 #[test]
 fn words_between_deleted_field_markers_stay_the_field_result() {
-    // Codex P2 on #1143 read these words as plain text, since the view
+    // #1143 read these words as plain text, since the view
     // skips the deleted markers. Word 16 does not: Accept All of this very
     // source drops "alpha beta gamma" with the field, so an edit there is
     // an edit of the field result, refused as one.

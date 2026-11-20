@@ -629,7 +629,7 @@ fn a_header_paragraph_keeps_its_tabs_spacing_and_shading() {
 
 /// Strict and bidirectional tab stops say `start` and `end`: they read as
 /// `left` and `right`, as a story's indent and alignment do, and come back
-/// (#2132 review, Bugbot).
+/// (#2132 review).
 #[test]
 fn a_header_tab_stop_at_start_or_end_reads_as_left_or_right() {
     let stops = r#"<w:p><w:pPr><w:tabs><w:tab w:val="start" w:pos="720"/><w:tab w:val="end" w:leader="dot" w:pos="9360"/></w:tabs></w:pPr><w:r><w:t>Edge</w:t></w:r></w:p>"#;

@@ -3479,7 +3479,7 @@ mod spans_fit_tests {
     use super::spans_fit;
 
     /// Spans whose sum passes `u32::MAX` never fit: the sum neither panics
-    /// nor wraps to a small number (Codex on #1921).
+    /// nor wraps to a small number (#1921).
     #[test]
     fn spans_past_u32_max_do_not_fit() {
         assert!(!spans_fit(&[u32::MAX, 1], 3));

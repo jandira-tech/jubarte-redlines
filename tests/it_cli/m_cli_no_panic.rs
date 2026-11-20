@@ -326,7 +326,7 @@ fn compare_unwraps_a_block_level_custom_xml_instead_of_refusing_it() {
 /// A `w:sectPr` inside a `w:customXml` lands beside the body's own
 /// `w:sectPr` once the wrapper is unwrapped: the gate must see the
 /// unwrapped parent and refuse with `UNSUPPORTED_CONTENT`, not let the
-/// atomizer panic on two sectPr (#2074 review, Bugbot).
+/// atomizer panic on two sectPr (#2074 review).
 #[test]
 fn compare_refuses_a_sect_pr_that_unwrapping_custom_xml_would_double() {
     let doc = |other: &str| {
@@ -346,7 +346,7 @@ fn compare_refuses_a_sect_pr_that_unwrapping_custom_xml_would_double() {
 }
 
 /// Nested `w:customXml` wrappers, as deep as admission allows (256), all
-/// unwrap and keep their content (#2074 review, Jules).
+/// unwrap and keep their content (#2074 review).
 #[test]
 fn compare_unwraps_deeply_nested_custom_xml() {
     let depth = 250;
@@ -587,8 +587,8 @@ fn compare_refuses_two_body_section_properties_without_a_panic() {
 }
 
 /// The CLI leads with the code, as it does for an admission refusal: the
-/// word_exp N4 rerun printed the Debug form `Io(Custom { … })` (grok
-/// review, 2026-10-31).
+/// word_exp N4 rerun printed the Debug form `Io(Custom { … })`
+/// (review, 2026-10-31).
 #[test]
 fn cli_compare_names_unsupported_content_by_its_code() {
     let dir = tempfile::tempdir().unwrap();

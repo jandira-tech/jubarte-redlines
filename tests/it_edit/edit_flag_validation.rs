@@ -132,7 +132,7 @@ fn editing_mode_conflicts_only_with_keep() {
     }
 }
 
-/// Codex on #425: the changes a plan accepts or rejects itself (`-p r12
+/// #425: the changes a plan accepts or rejects itself (`-p r12
 /// --accept`) are not kept, so editing mode conflicts only with what is left.
 #[test]
 fn editing_mode_counts_only_the_changes_the_plan_leaves() {

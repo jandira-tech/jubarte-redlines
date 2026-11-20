@@ -184,7 +184,7 @@ def _replace(path: Path, data: bytes | str) -> int:
     file keeps its mode. Returns the bytes written."""
     raw = data.encode("utf-8") if isinstance(data, str) else data
     # A name nobody can guess, created only if it is not there: a link
-    # planted beside the output is never followed (CodeRabbit on #1698).
+    # planted beside the output is never followed (#1698).
     # A new output is owner-only, 0o600, whatever the umask (#1805,
     # #1807): stricter than the binary's 0o666 before the umask.
     staged = path.with_name(f".{path.name}.jubarte-{uuid.uuid4().hex}.tmp")

@@ -134,7 +134,7 @@ fn a_row_whose_exceptions_change_records_the_original_ones() {
 
 /// Without format tracking the row still shows the revised exceptions; only
 /// their record waits on the setting, so Accept All keeps the revision's
-/// (codex #4377134044).
+/// (#4377134044).
 #[test]
 fn without_format_changes_a_row_still_takes_the_revised_exceptions() {
     let original = docx(&table(&[

@@ -151,7 +151,7 @@ fn mint_cell_insert_when_body_ends_in_table(dom: &mut Dom, root: NodeId) {
         return;
     };
     // Minting writes into cells only, so the body's children stay put:
-    // list them once, not once per cell (jules on #2101).
+    // list them once, not once per cell (#2101).
     let body_kids = dom.elements(body, None);
     let cells = dom.descendants(root, Some(&W::tc()));
     let mut ids: Option<RevisionIds> = None;
@@ -213,8 +213,8 @@ fn mint_cell_insert_when_body_ends_in_table(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// The nearest `w:tbl` above `cell`, walked parent by parent (jules on
-/// #2101).
+/// The nearest `w:tbl` above `cell`, walked parent by parent
+/// (#2101).
 fn nearest_table(dom: &Dom, cell: NodeId) -> Option<NodeId> {
     let mut node = dom.parent(cell);
     while let Some(current) = node {
@@ -257,7 +257,7 @@ fn body_tail_is_only_deletions(dom: &Dom, tail: &[NodeId]) -> bool {
 /// pairing gave it the cell's mark, which is why the cell's inserted mark
 /// was never written. Without that pairing the mark is deleted with its
 /// words and the cell's final paragraph is the original's own, filled
-/// (codex on #2101).
+/// (#2101).
 fn body_tail_holds_paired_mark(dom: &Dom, tail: &[NodeId]) -> bool {
     tail.iter()
         .any(|&child| dom.name_is(child, &W::p()) && mark_is_unrevised(dom, child))
@@ -312,7 +312,7 @@ fn content_is_only_insertions(dom: &Dom, paragraph: NodeId) -> bool {
 /// Whether `paragraph`'s mark is revised as `kind` (`"ins"` or `"del"`)
 /// says, a mark moved in (`w:moveTo`) or away (`w:moveFrom`) counting as
 /// its resolution does, as in [`keeps_words`]: a mark holds one of the
-/// four, so a moved one is no partner for a second (codex on #1680).
+/// four, so a moved one is no partner for a second (#1680).
 fn mark_revised_as(dom: &Dom, paragraph: NodeId, kind: &str) -> bool {
     let records = if kind == "del" {
         [W::del(), W::move_from()]
@@ -601,7 +601,7 @@ impl Stamp<'_> {
         children: &[NodeId],
     ) -> NodeId {
         // Clear of every id in the part, annotations' too, and within the
-        // schema's signed 32-bit range (codex on #1680, round 10).
+        // schema's signed 32-bit range (#1680, round 10).
         let next = self
             .ids
             .get_or_insert_with(|| {
@@ -676,7 +676,7 @@ mod tests {
 
     /// A paragraph that holds only an equation keeps it once resolved, as
     /// a paragraph of words does: the final mark loses its revision, and
-    /// no paragraph joins another (codex on #1680).
+    /// no paragraph joins another (#1680).
     #[test]
     fn an_equation_keeps_its_paragraph_as_words_do() {
         let mark = |id: u32| {
