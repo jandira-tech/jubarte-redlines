@@ -135,13 +135,11 @@ ttf-parser, tiny-skia and the fonts are absent.
 `jubarte-python` builds against the sub-crates instead of the `jubarte`
 facade (plan T5.3). Its Cargo features are `redlines`, `doc`, `markdown`,
 `edit`, `cli` (each building on the one before) and `render`, all on by
-default, so the published wheel is unchanged: the same `jubarte_redlines`
-package, one `_native` extension, the `jubarte-redlines` and `jubarte-mcp`
-commands. The native module can be compiled in layers
+default, so the published wheel holds one `_native` extension with the
+whole API. The native module can be compiled in layers
 (`cargo check --no-default-features --features redlines` builds compare,
 accept, reject and the revision listing alone), but the Python package still imports the full
-native surface, so a wheel needs the default features. The wheel adds no `jubarte` import package and no `jubarte`
-command: both names belong to another project on PyPI.
+native surface, so a wheel needs the default features.
 
 ## [0.18.0] - 2026-11-10
 

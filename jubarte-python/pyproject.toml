@@ -62,6 +62,7 @@ mcp = ["mcp>=2.2,<3"]
 
 [project.urls]
 Homepage = "https://github.com/jandira-tech/jubarte"
+Documentation = "https://github.com/jandira-tech/jubarte/blob/main/docs/python.md"
 Repository = "https://github.com/jandira-tech/jubarte"
 Changelog = "https://github.com/jandira-tech/jubarte/blob/main/CHANGELOG.md"
 Issues = "https://github.com/jandira-tech/jubarte/issues"

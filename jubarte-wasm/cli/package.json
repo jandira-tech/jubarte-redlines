@@ -3,6 +3,7 @@
   "version": "0.18.0",
   "description": "Command line for the jubarte DOCX redline engine (WebAssembly): `npx jubarte-redlines redline a.docx b.docx -o redline.docx` writes a tracked-changes document that opens cleanly in Microsoft Word; list, accept or reject changes, apply edit plans, render DOCX to PDF.",
   "license": "Apache-2.0",
+  "author": "Jandira Technologies, LLC",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/jandira-tech/jubarte.git",
