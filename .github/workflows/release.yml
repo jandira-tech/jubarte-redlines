@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 # Tag-driven release: push `vX.Y.Z` (see docs/VERSIONING.md) and this builds the
 # `jubarte` CLI for the desktop targets and attaches the archives to a
@@ -155,7 +155,9 @@ jobs:
           stage="jubarte-${VER}-${ART}"
           mkdir -p "$stage/fonts" dist
           cp "target/${TARGET}/release/jubarte" "$stage/"
-          cp LICENSE "$stage/"
+          cp LICENSE NOTICE "$stage/"
+          # The binary embeds Carlito and Liberation (SIL Open Font License).
+          cp LICENSES/OFL-1.1.txt "$stage/OFL-1.1.txt"
           # The faces Word draws that non-Windows hosts lack. The binary does
           # not embed them; it reads $JUBARTE_FONT_DIR or the per-user dir.
           cp assets/fonts/extra/*.ttf "$stage/fonts/"
@@ -182,7 +184,8 @@ jobs:
           $stage = "jubarte-$env:VER-$env:ART"
           New-Item -ItemType Directory -Force "$stage/fonts", dist | Out-Null
           Copy-Item "target/$env:TARGET/release/jubarte.exe" "$stage/"
-          Copy-Item LICENSE "$stage/"
+          Copy-Item LICENSE, NOTICE "$stage/"
+          Copy-Item LICENSES/OFL-1.1.txt "$stage/OFL-1.1.txt"
           Copy-Item assets/fonts/extra/*.ttf "$stage/fonts/"
           @"
           Copy these fonts into %JUBARTE_FONT_DIR%, or into the per-user

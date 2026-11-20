@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! #1872: every VML shape still names an existing shapetype after a
 //! redline. Word writes a shapetype once, beside the first shape that uses

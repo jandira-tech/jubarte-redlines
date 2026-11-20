@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A header or footer run keeps its character marks. Cyan and yellow
 //! highlights print as `<mark class="hl-cyan">` and `<mark>`, and bold,

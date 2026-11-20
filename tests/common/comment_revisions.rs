@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Synthetic packages for issue #1223: tracked changes inside comment bodies
 //! (`word/comments.xml`), which Word's Accept All / Reject All resolves.

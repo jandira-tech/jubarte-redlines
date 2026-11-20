@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Drive the shipped `docx_to_pdf` entry (library + `jubarte convert` CLI).
 
@@ -11726,7 +11726,8 @@ fn official_mcdoc_hello_does_not_stack_lins_on_firstline_after_mini_414() {
     // 81.020→79.192 (−1.83) / NR mean 59.425→59.399. 10.5 vs Word 10.56
     // Calibri letter-aligned scored worse than the 7pt offset. Keep
     // firstLine-only; default lIns stays gated to unindented boxes.
-    let path = "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/e4ccea1362_mcdoc.docx";
+    let path =
+        "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/e4ccea1362_mcdoc.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert mcdoc");
     assert_eq!(pdf_page_count(&pdf), 1, "mcdoc is one page");
     let (x, y) = pdf_literal_td_xy(&pdf, "hello").expect("hello Td");
@@ -11756,7 +11757,8 @@ fn official_image_out_subscribe_sits_at_the_default_left_inset() {
 fn official_mcdoc_hello_honors_textbox_spacing_before() {
     // mcdoc txbx1.xml: w:spacing before=156 twips (7.8pt). Word Quartz
     // hello yMin≈85; pad-only baseline Td y=755 (glyph top≈76).
-    let path = "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/e4ccea1362_mcdoc.docx";
+    let path =
+        "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/e4ccea1362_mcdoc.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert mcdoc");
     assert_eq!(pdf_page_count(&pdf), 1, "mcdoc is one page");
     let (x, y) = pdf_literal_td_xy(&pdf, "hello").expect("hello Td");
@@ -11771,7 +11773,8 @@ fn official_mcdoc_hello_honors_textbox_spacing_before() {
 fn official_mcdoc_hello_honors_textbox_first_line_indent() {
     // mcdoc txbx1.xml: w:ind left=105 firstLine=420 (26.25pt). Word Quartz
     // paints hello at x≈238. Flattening to pad=4pt parked it at x≈208.
-    let path = "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/e4ccea1362_mcdoc.docx";
+    let path =
+        "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/e4ccea1362_mcdoc.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert mcdoc");
     assert_eq!(pdf_page_count(&pdf), 1, "mcdoc is one page");
     let (x, _) = pdf_literal_td_xy(&pdf, "hello").expect("hello Td");
@@ -11787,7 +11790,8 @@ fn official_mcdoc_paints_the_hello_textbox() {
     // wrapNone wps:txbx inside mc:AlternateContent. Convert emits only
     // the paragraph end-mark. Its a:ln is 9525 EMU black: Word's own PDF
     // strokes the box 0.75pt (the tuned 0.60 hairline was not Word).
-    let path = "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/e4ccea1362_mcdoc.docx";
+    let path =
+        "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/e4ccea1362_mcdoc.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert mcdoc");
     assert_eq!(pdf_page_count(&pdf), 1, "mcdoc is one A4 page");
     let text = String::from_utf8_lossy(&pdf);
@@ -13942,7 +13946,8 @@ fn official_uipriority_lists_heading_stays_on_page_one() {
 fn official_file_34_summary_stays_on_page_two() {
     // Word is 2pp. Arial 12 size×1.15 lands 2pp but mini 86 ITT-wrong
     // (file_34 −0.86, heading_3_center 97→94). Keep typo; allow Word+1.
-    let path = "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/133e9207c0_file_34.docx";
+    let path =
+        "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/133e9207c0_file_34.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_34");
     let pages = pdf_content_streams(&pdf);
     assert!(
@@ -13960,7 +13965,8 @@ fn official_file_34_summary_stays_on_page_two() {
 fn official_file_34_matches_word_two_pages() {
     // Step 4 Arial typo×1.15 is taller than size×1.15, so file_34 is 3pp
     // (Word 2). The last summary bullet still paints.
-    let path = "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/133e9207c0_file_34.docx";
+    let path =
+        "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/133e9207c0_file_34.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_34");
     let pages = pdf_content_streams(&pdf);
     assert_eq!(pages.len(), 2, "Word file_34 is 2pp; got {}", pages.len());
@@ -14029,7 +14035,8 @@ fn table_cell_jc_center_centers_header_text() {
 
 #[test]
 fn official_file_34_table_header_feature_is_centered() {
-    let path = "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/133e9207c0_file_34.docx";
+    let path =
+        "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/133e9207c0_file_34.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_34");
     assert_eq!(pdf_page_count(&pdf), 2, "Word file_34 is 2pp");
     let pages = pdf_content_streams(&pdf);
@@ -14046,7 +14053,8 @@ fn official_file_34_heading1_to_body_uses_face_metrics_line_box() {
     // Heading1 omits w:line and inherits auto-276. plan Step 4 applies
     // Calibri typo × 1.15 (no heading exception). Gap is ~24pt vs the
     // old heading-only typo×1.0 (~21.8).
-    let path = "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/133e9207c0_file_34.docx";
+    let path =
+        "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/133e9207c0_file_34.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_34");
     let h1 = distinct_tf_ys(&pdf, "16.08 Tf");
     let body = distinct_tf_ys(&pdf, "12.00 Tf");
@@ -14123,7 +14131,8 @@ fn official_file_34_omits_factory_calibri_trailing_space() {
     // Word Quartz file_34 is Arial 12 + Calibri-Bold headings. convert
     // currently appends a synthetic 11.04 Calibri space after every
     // non-empty paragraph (~58 extra glyphs). Word has zero Calibri 11.
-    let path = "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/133e9207c0_file_34.docx";
+    let path =
+        "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/133e9207c0_file_34.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_34");
     let hay = String::from_utf8_lossy(&pdf);
     assert!(
@@ -31522,8 +31531,7 @@ fn numwords_field_paints_live_count() {
 
 #[test]
 fn official_header_no_rels_page_one_uses_first_header() {
-    let path =
-        "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/d560bc7296_header_no_rels.docx";
+    let path = "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/d560bc7296_header_no_rels.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert header_no_rels");
     assert_eq!(pdf_page_count(&pdf), 3, "Word header_no_rels is 3pp");
     let pages = pdf_content_streams(&pdf);
@@ -37439,7 +37447,8 @@ fn ppr_rpr_shd_is_not_a_paragraph_band() {
 fn official_file_71_has_no_green_paragraph_band() {
     // Control stem at 99. 92D050 is rPr shd (glyph box, size×1.2≈13.25).
     // A content-wide band (w>400) is ITT-wrong (mini 116: 99→76).
-    let path = "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/13ccf06a72_file_71.docx";
+    let path =
+        "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/13ccf06a72_file_71.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_71");
     let wide = pdf_fill_ws(&pdf, 0.573, 0.816, 0.314);
     assert!(
@@ -37476,7 +37485,8 @@ fn official_file_34_highlighted_style_paints_yellow_band() {
     // Word paints HighlightedStyle as a full-column yellow band. Run
     // highlight on "Yellow highlight" is glyph-wide (w<100) and must
     // not satisfy this. Paint-only — file_34 stays Word+1 pages.
-    let path = "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/133e9207c0_file_34.docx";
+    let path =
+        "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/133e9207c0_file_34.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_34");
     let hs = pdf_fill_hs(&pdf, 1.0, 1.0, 0.0);
     assert!(
@@ -39719,7 +39729,8 @@ fn wave_underline_stroke_stays_six_after_mini_523() {
 fn official_file_34_paints_wavy_underline() {
     // Word `w:u val="wave"` is a sine-like stroke. A straight Line under
     // "wavy underline" wipes file_34 edge_iou on the formatting line.
-    let path = "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/133e9207c0_file_34.docx";
+    let path =
+        "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/133e9207c0_file_34.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_34");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
@@ -39735,7 +39746,8 @@ fn official_file_34_single_underlines_are_filled_not_stroked() {
     // Word Quartz p1 single `w:u` is filled 0.48pt hairlines. Mini 0.6pt
     // `l S` (~68 strokes) fought that ink-union. Wave on the same page
     // stays stroked (official_file_34_paints_wavy_underline).
-    let path = "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/133e9207c0_file_34.docx";
+    let path =
+        "tests/corpus/bench/neurotic_docx_bench/corpus/word/clean/docx/133e9207c0_file_34.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_34");
     let hair: Vec<_> = pdf_fill_rects(&pdf, 0.0, 0.0, 0.0)
         .into_iter()

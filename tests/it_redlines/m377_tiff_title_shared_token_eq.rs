@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M377 — tiff×h_f short-title MIX free-meshes shared "document" as EQ.
 //!
@@ -16,8 +16,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn tiff_x_h_f_title_shares_document_as_eq() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("behavior__tiff_image_2d531f83.docx");
     let b = src.join("super_editor__h_f_normal_5d2a8d96.docx");
     if !a.exists() || !b.exists() {

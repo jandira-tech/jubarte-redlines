@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! The view (`jubarte read`) read back as Markdown: what the view writes,
 //! `convert X.md -o X.docx` reads (docs/IDS_AND_MARKDOWN_ROUNDTRIP.md).
 

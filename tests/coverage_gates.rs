@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! #1124: every `coverage(off)` sits behind the cfg that enables the
 //! `coverage_attribute` feature. Integration tests compile the library

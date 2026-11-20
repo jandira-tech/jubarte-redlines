@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 // SPDX-FileCopyrightText: 2023-2025 René Kijewski
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-zipsign-MIT
 
 //! zipsign signature check for downloaded release archives (#1705).
 //!

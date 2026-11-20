@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Comment ids compared by position: Word's Accept All and Reject All
 //! number the comments they keep afresh, and jubarte keeps their ids

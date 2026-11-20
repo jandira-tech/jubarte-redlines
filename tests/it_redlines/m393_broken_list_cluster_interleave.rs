@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M393 — broken_list_missing × broken_list: Word list-cluster interleave.
 //!
@@ -21,8 +21,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn broken_list_missing_x_broken_list_cluster_interleave() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__broken_list_missing_items_36b4199e.docx");
     let b = src.join("super_editor__broken_list_7e9b9bf7.docx");
     if !a.exists() || !b.exists() {

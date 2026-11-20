@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Build v1.docx and v2.docx: two drafts of one letter.
 
 v2 differs from v1 by:

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M349 — OOXML property demos with shared first title token (OOXML×OOXML):
 //! free-mesh first 2 contentful (title + section header), pure-I/D residual
@@ -63,8 +63,8 @@ fn body_para_classes(xml: &str) -> Vec<(char, String)> {
 #[test]
 fn italic_x_rfonts_title_mesh_body_pure_i() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__ooxml_italic_rstyle_combos_demo_90894ac1.docx");
     let b = src.join("super_editor__ooxml_rFonts_rstyle_linked_combos_dem_213298de.docx");
     if !a.exists() || !b.exists() {

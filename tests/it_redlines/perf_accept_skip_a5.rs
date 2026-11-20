@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! ACCEPT-SKIP-A5 — when no paragraph mark is deleted/moved-from
 //! (p/pPr/rPr/(del|moveFrom)), accept_deleted_and_move_from_paragraph_marks

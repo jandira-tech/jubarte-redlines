@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Table, cell and paragraph borders as a view prints them, read back, and
 //! as the writer writes them: the borders Word passes come back as they were

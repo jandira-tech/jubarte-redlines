@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 #
 # The workflow-review tests (ci.yml, convert-sweep unit) read YAML. Installed
 # with --require-hashes so CI runs only these verified files (SonarCloud S8544).

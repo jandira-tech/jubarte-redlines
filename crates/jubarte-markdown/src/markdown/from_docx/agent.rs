@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! The agent view: numbering that matches `inspect` and `edit`, revision
 //! tags, author handles and timestamps, comment threads, id lines, table
 //! lines and block selection.

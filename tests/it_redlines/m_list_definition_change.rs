@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Both documents write the same list under `numId` 1, but the original's
 //! definition draws a circle bullet and the revised one a disc. The text is

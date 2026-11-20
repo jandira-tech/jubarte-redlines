@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M113 — M109 reverse short-into-long only when peel token relatedness fires.
 //! file_59: long greek alphabet base × short Font Size 24 next — zero shared

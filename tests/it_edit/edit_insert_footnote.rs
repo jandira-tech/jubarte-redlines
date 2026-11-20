@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `insert_footnote`: a footnote reference right after one occurrence of an
 //! anchor, and the note itself in the footnotes part, which is created with

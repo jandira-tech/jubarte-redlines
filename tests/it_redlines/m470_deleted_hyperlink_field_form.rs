@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M470 — a fully deleted anchor `w:hyperlink` serializes as Word's FIELD
 //! form: `[fldChar begin][delInstrText HYPERLINK \l "<anchor>"]
@@ -18,8 +18,8 @@ use jubarte::document_comparer::compare_documents;
 #[test]
 fn deleted_toc_hyperlink_keeps_field_form() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
     let a = src.join("file_22.docx");
     let b = src.join("file_23.docx");
     if !a.exists() || !b.exists() {

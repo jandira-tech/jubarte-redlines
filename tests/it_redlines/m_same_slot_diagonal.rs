@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Same-slot residual pairing (file_111 × file_112). Every changed
 //! paragraph pairs with its counterpart in the same position, as in Word's

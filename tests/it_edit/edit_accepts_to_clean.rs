@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! #1868: on a clean file, Accept All of an edit's redline is the clean copy
 //! the plan asked for. The redline tracks the edit, as Word's Track Changes

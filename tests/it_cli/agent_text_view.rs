@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! The agent view of `jubarte text`: id lines, attribution notes, comment
 //! ids, the YAML header and block selection. Goldens in
 //! `tests/fixtures/agent-view/`.

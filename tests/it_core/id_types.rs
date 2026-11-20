@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! What jubarte prints is what it parses (docs/IDS_AND_MARKDOWN_ROUNDTRIP.md §2.1): every short id the
 //! committed views of `tests/fixtures/md-roundtrip` print parses as a
 //! `ShortId` and prints back unchanged. The views are the ones

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M62 — dangling-rel reconcile must keep footer/header/numbering under
 //! conventional `word/footerN.xml` paths, not `word/media/P*.xml`.

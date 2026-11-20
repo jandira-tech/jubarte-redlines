@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M338 — report×table_doc: short cell-only table next free-meshes (Word
 //! D…M×12…D MIX=12). Pure-I/D wholesale was MIX=0.
@@ -44,8 +44,8 @@ fn body_para_classes(xml: &str) -> Vec<char> {
 #[test]
 fn report_x_table_doc_meshes_cells() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("evals__report_with_formatting_03f385ed.docx");
     let b = src.join("evals__table_doc_4d728d83.docx");
     if !a.exists() || !b.exists() {

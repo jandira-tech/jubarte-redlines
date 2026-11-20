@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Build input.docx: a letter that asks for three fonts, none of the
 first two installed (the third is a fake name that only resembles one).
 

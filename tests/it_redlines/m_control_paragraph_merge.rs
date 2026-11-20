@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A paragraph whose mark goes on Accept All or Reject All joins the next
 //! one. When a block content control holds one of the two, Word keeps the

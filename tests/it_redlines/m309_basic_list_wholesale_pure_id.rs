@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M309 — basic_list × sd_1707-style short next (title + list heading)
 //! vs long short-item list base. Unpacked Word oracle is pure-I all next

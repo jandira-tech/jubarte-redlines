@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A shape B's header gates on `<mc:Choice Requires="wps">` is grafted into
 //! A's header part, whose root never bound `wps`. The 0.10.1 redline named the

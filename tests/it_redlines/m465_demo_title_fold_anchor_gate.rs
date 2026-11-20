@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M465 — the M143 mid-stream demo-title fold only matches Word when the two
 //! documents share NO leading anchor. When the first body paragraph is a MIX

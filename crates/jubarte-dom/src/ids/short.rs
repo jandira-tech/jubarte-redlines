@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! The short ids as values (docs/IDS_AND_MARKDOWN_ROUNDTRIP.md §2 and §2.1; the conflicting
 //! clauses are superseded by docs/ID_CONTRACT.md).

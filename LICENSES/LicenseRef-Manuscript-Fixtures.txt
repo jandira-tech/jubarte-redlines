@@ -4,7 +4,7 @@ dolphins.md, eLife.00047.md, git_manuscript.md and list_of_figures.md are
 third-party scholarly manuscripts in Pandoc Markdown, added on 2026-10-14
 as round-trip inputs at Arthur Souza Rodrigues's request. They are not
 licensed by Jandira Technologies, LLC and are not covered by this
-repository's AGPL-3.0-only license. Each stays under the license its
+repository's Apache-2.0 license. Each stays under the license its
 publisher states (checked 2026-10-14), kept unmodified, for testing only:
 
 - eLife.00047.md: Ferguson, Mansur, Peters, Ren and Smith, "DNA-PK is a

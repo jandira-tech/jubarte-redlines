@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Accept All against Word's own, on the `_to_improve_accepted_changes`
 //! corpus copied into `tests/corpus` (Word's redlines and Word's Accept All
@@ -20,7 +20,8 @@ use jubarte::document_comparer::accept_revisions;
 
 /// Word's accepted redlines, copied into this repository.
 fn corpus() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/bench/_to_improve_accepted_changes")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/corpus/bench/_to_improve_accepted_changes")
 }
 
 #[test]

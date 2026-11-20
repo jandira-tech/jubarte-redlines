@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Word pairs the two documents' final paragraph marks. The revised list ends
 //! at "Ωω Omega"; the original goes on with "Meeting Agenda" and a table.

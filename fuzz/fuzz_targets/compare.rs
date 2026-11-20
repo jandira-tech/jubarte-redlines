@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `compare_documents_with_settings` returns `Ok` or `Err` for any pair of
 //! byte strings. The input is split in two at a length prefix so the fuzzer

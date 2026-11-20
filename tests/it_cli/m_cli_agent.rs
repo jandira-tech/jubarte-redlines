@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! The agent-facing CLI surface: `inspect`, `text`, `edit`, `convert --png`,
 //! `capabilities`. Every command here has a Python twin with the same names

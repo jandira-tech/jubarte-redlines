@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M341 — missing_sectpr × missing_separator: Word IIIIM (pure-I "something"
 //! then MIX empty+del base title). Fold whitespace pure-I into pure-D must
@@ -75,8 +75,8 @@ fn body_para_classes(xml: &str) -> Vec<(char, String, String)> {
 #[test]
 fn missing_sectpr_x_separator_iiim() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__missing_sectpr_967a402d.docx");
     let b = src.join("super_editor__missing_separator_41c823b9.docx");
     if !a.exists() || !b.exists() {

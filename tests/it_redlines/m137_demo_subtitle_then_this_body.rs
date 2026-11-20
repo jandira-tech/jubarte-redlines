@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M137 — Demo next with non-This subtitle then This-body (file_151).
 //! Word pure-I title+subtitle, pure-D base title, then body word LCS.

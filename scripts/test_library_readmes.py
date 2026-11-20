@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 """scripts/library_readmes.py: cutting, link rewriting, stamps and gates."""
 
@@ -25,7 +25,7 @@ import library_readmes as lr
 ROOT_README = """<!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only
+SPDX-License-Identifier: Apache-2.0
 -->
 
 > banner line
@@ -59,7 +59,7 @@ Run the gates.
 
 ## License
 
-[AGPL](LICENSE)
+[Apache-2.0](LICENSE)
 """
 # REUSE-IgnoreEnd
 
@@ -141,7 +141,7 @@ class Render(unittest.TestCase):
         (self.tmp / "pkg").mkdir()
         (self.tmp / "pkg/README.fragment.md").write_text(
             # REUSE-IgnoreStart
-            "<!--\nSPDX-License-Identifier: AGPL-3.0-only\n-->\n\n## Usage\n\n[ex](examples/a.py)\n",
+            "<!--\nSPDX-License-Identifier: Apache-2.0\n-->\n\n## Usage\n\n[ex](examples/a.py)\n",
             # REUSE-IgnoreEnd
             encoding="utf-8",
         )
@@ -290,7 +290,7 @@ class Crates(unittest.TestCase):
         (self.tmp / "crates/demo/src").mkdir(parents=True)
         (self.tmp / "crates/demo/src/lib.rs").write_text(LIB_RS, encoding="utf-8")
         (self.tmp / "Cargo.toml").write_text(
-            '[workspace.package]\nversion = "1.2.3"\nlicense = "AGPL-3.0-only"\n'
+            '[workspace.package]\nversion = "1.2.3"\nlicense = "Apache-2.0"\n'
             'repository = "https://github.com/acme/widget.git"\n',
             encoding="utf-8",
         )
@@ -360,7 +360,7 @@ class Crates(unittest.TestCase):
             "(https://crates.io/crates/demo)",
             "(https://docs.rs/demo)",
             "/actions/workflows/ci.yml)",
-            "license-AGPL--3.0--only-blue.svg",
+            "license-Apache--2.0-blue.svg",
             "(https://readthedocs.org/projects/demo/badge/?version=latest)",
             "(https://jubarte.readthedocs.io/projects/demo/en/latest/)",
         ):

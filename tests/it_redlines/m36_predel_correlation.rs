@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M36 — pt:PreDelete-stamped content must never correlate Equal with
 //! unstamped content (M-MOVE S1, fresh-p4 forensics).

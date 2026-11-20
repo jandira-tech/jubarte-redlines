@@ -2,7 +2,7 @@
 # Backticks in single quotes are Markdown text, not command substitution.
 # shellcheck disable=SC2016
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Regenerate every output in out/ and the guide VISUALIZE.md: the ways an
 # agent driving the jubarte CLI can look at (1) a document, (2) the result of
 # editing a document that already carries tracked changes and comments, and
@@ -53,7 +53,7 @@ say() {
 
 cat > "$GUIDE" <<'EOF'
 <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
-<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # How an agent sees documents with the jubarte CLI
 

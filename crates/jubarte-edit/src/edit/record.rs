@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! `edit` and `add` with `--plan PLAN.json`: with operation flags they
 //! record the operations into the plan instead of editing; alone they apply
 //! it, and `--consume` deletes it once applied. The binary, the Python CLI

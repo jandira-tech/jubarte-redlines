@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! The conversion's document model: run and paragraph styles, page setup,
 //! blocks, tables, laid images and text boxes, and float anchoring.

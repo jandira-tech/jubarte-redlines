@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `jubarte validate --rules a11y,style,structure`: accessibility, style and
 //! structure findings with the paragraph id an agent can act on.

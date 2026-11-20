@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Write one README per published library from the repository README.
 
 The root ``README.md`` is the original. Each library's README is that
@@ -79,7 +79,7 @@ RTD = "https://jubarte.readthedocs.io"
 
 SPDX = (
     # REUSE-IgnoreStart
-    "<!--\nSPDX-FileCopyrightText: 2026 Jandira Technologies, LLC\n\nSPDX-License-Identifier: AGPL-3.0-only\n-->\n"
+    "<!--\nSPDX-FileCopyrightText: 2026 Jandira Technologies, LLC\n\nSPDX-License-Identifier: Apache-2.0\n-->\n"
     # REUSE-IgnoreEnd
 )
 
@@ -396,7 +396,7 @@ def rtd_url(name: str) -> str:
 
 
 def crate_badges(name: str, version: str, root: Path = ROOT) -> str:
-    license_id = str(workspace_package(root).get("license", "AGPL-3.0-only"))
+    license_id = str(workspace_package(root).get("license", "Apache-2.0"))
     shield = license_id.replace("-", "--")
     return "\n".join(
         [

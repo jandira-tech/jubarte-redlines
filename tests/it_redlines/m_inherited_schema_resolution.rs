@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! The three shapes #1712 keeps out of redlines must not survive the three
 //! paths that still carried them (#1717, option B): standalone accept,

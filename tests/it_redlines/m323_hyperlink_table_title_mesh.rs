@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M323 — hyperlink_cases × table_tester: Word meshes SuperDoc titles and
 //! cell-meshes first tables; pure-I/D wholesale must not fire.
@@ -44,8 +44,8 @@ fn body_para_classes(xml: &str) -> Vec<char> {
 #[test]
 fn hyperlink_x_table_tester_title_mesh_and_not_wholesale() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__superdoc_hyperlink_cases_1dde9cd3.docx");
     let b = src.join("super_editor__superdoc_table_tester_3b2de2e1.docx");
     if !a.exists() || !b.exists() {

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `resolve_revisions` settlement: selecting, accepting and rejecting
 //! tracked changes before a plan runs, and the comments it would remove;

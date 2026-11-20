@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M101: digits-only pure-I ("24") must not fold into multi pure-D demo body
 //! (1_5_line_spacing × 24).

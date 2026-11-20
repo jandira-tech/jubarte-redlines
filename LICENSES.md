@@ -1,13 +1,14 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only AND Apache-2.0 AND OFL-1.1 AND LicenseRef-Microsoft-MIT AND LicenseRef-Docxodus-MIT AND LicenseRef-anymd-MIT AND LicenseRef-markdown2pdf-MIT AND LicenseRef-zipsign-MIT AND LicenseRef-docen-MIT AND MIT AND MPL-2.0
+SPDX-License-Identifier: Apache-2.0 AND OFL-1.1 AND LicenseRef-Microsoft-MIT AND LicenseRef-Docxodus-MIT AND LicenseRef-anymd-MIT AND LicenseRef-markdown2pdf-MIT AND LicenseRef-zipsign-MIT AND LicenseRef-docen-MIT AND MIT AND MPL-2.0
 -->
 
 # Third-party attribution texts
 
-`LICENSE` is the only license for the Jubarte repository: GNU Affero
-General Public License v3.0 only (AGPL-3.0-only).
+`LICENSE` is the license of the Jubarte repository: the Apache License,
+Version 2.0 (Apache-2.0). `NOTICE` carries the attribution notices that
+ship with every package.
 
 This page is a human-readable summary of `LICENSES/`. `REUSE.toml` is the
 authoritative record: if this page and `REUSE.toml` disagree, `REUSE.toml`
@@ -54,12 +55,12 @@ did not author:
   stand-in for Segoe UI, under `assets/fonts/extra/`.
 
 These records are not a menu of licenses for this repository. They do not
-change its AGPL-3.0-only license or grant an MIT license for Jandira
+change its Apache-2.0 license or grant an MIT license for Jandira
 Technologies, LLC contributions. The font files keep the upstream
 Apache-2.0 / OFL-1.1 terms `REUSE.toml` records for them; every other
 entry here is attribution only, not a license for Jubarte code.
 
-The non-AGPL license identifiers in this file's REUSE header account for
+The other license identifiers in this file's REUSE header account for
 these preserved records only. They are not attached to Jubarte source
 files.
 

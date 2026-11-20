@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 // SPDX-FileCopyrightText: 2024-2026 SylphxAI
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-anymd-MIT
 
 //! Shared plumbing for the Office Open XML converters: a bounded zip reader,
 //! a tiny XML tree, relationship resolution, core properties, and the inline

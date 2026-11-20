@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M78 — when a mixed paragraph carries both Deleted and Inserted pPr
 //! (residual end-zip: A spacing + B ListParagraph), conjoin must keep the

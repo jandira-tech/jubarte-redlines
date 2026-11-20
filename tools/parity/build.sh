@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 # Build the two bindings tools/parity/parity_check.py compares with the CLI,
 # from this checkout: the Python extension (maturin develop --release, into

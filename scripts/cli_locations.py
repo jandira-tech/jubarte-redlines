@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Write every id the `jubarte` CLI prints or takes to docs/locations.md.
 
 Four sections:
@@ -376,7 +376,7 @@ def render(binary: Path) -> str:
         "<!--",
         "SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC",
         "",
-        "SPDX-License-Identifier: AGPL-3.0-only",
+        "SPDX-License-Identifier: Apache-2.0",
         "-->",
         # REUSE-IgnoreEnd
         "",

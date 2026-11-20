@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! What this build can do. Agents read it before choosing an operation:
 //! `jubarte capabilities --json`, `jubarte_redlines.capabilities()`.

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! `replace` keeps what it keeps (plan 12): only the words its diff
 //! changes are written, so kept words keep their formatting and the
 //! document's characters, and an anchor typed with plain look-alikes

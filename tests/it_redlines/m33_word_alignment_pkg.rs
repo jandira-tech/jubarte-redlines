@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Word-alignment, package level: Word's Compare presents the REVISED
 //! document's headers/footers (evidence: comments_complex-style-attr — the

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 #
 # Disk each replaced tool adds to a fresh Ubuntu 24.04 (linux/amd64)
 # container, the usual agent sandbox, against jubarte's release binary and

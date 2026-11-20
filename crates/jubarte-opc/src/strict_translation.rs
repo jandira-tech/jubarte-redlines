@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 // Untrusted bytes reach this module: an out-of-range index or an integer overflow
 // is an abort in the Python and WASM consumers, so both are refused here

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! Probes from the adversarial reviews of the Markdown round trip
 //! (`tests/fixtures/md-roundtrip/review`): table rows wider than their grid,
 //! an author's date range, the document owner; and the author and date a

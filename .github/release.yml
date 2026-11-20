@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 # Categories for GitHub's generated release notes. scripts/release.sh writes
 # the release notes from CHANGELOG.md; this shapes the "What's changed" list

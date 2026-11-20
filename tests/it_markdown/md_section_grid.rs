@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A section's column line (`w:cols w:sep`) and line grid (`w:docGrid`)
 //! come back. Demo.docx's second section draws a line between its two

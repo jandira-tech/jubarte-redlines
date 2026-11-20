@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A run's spaces keep the marks that show on a space: underline,
 //! highlight and strike. file_170.docx's "yellow-highlighted, " is

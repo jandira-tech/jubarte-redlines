@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M70 — when rewriting Normal spacing, drop A's `w:ind` if B has none
 //! (file_197); keep copying B's ind when present (file_196 firstLine=432).

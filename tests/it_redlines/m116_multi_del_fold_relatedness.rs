@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M116 — stamped short demo with table vs long unrelated base short-circuits
 //! to confetti insert-all/delete-all (file_78). Was: short_n=3+table blocked

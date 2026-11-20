@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M95 — short residual titles with 2 shared significant tokens pair for
 //! nested word-LCS (file_96 Open Sans/Verdana Bold … Demo).

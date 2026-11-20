@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M80 — Title/ListParagraph/HighlightedStyle get Normal's rFonts; Heading*
 //! drops ascii/hAnsi when they differ so Latin inherits Normal (file_33).

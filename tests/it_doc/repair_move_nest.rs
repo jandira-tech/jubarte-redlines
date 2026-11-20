@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A move source inside an insertion inside a deletion keeps deleted text.
 //! Repairing that package twice must settle, with nothing left to report.

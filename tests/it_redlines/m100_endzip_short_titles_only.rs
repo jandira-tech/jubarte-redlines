@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M100 — stamp residual end-zip only for short title leftovers (≤4 tokens).
 //! file_32: after Demo-title pair, do not end-zip "Main Title Section" with

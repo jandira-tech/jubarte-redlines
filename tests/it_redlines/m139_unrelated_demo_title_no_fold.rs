@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M139 — multi pure-D after long pure-I: skip fold when first pure-D is an
 //! unrelated short Demo title (file_82 contract × Title Style Centered Demo).

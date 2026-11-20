@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """check_npm_paths.py [FILE|DIR ...]: refuse built artifacts that name a home.
 
 A wasm build keeps the source path of every panic location: the engine

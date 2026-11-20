@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! What signs and dates the changes a command makes (Arthur, 2026-10-14):
 //! changing a file (`compare`, `edit`, `add`) signs them by the flags, else
 //! Jubarte and now, never by the files' own `dc:creator` and

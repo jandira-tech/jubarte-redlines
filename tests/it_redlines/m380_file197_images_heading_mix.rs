@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M380 — file_197×file_198: short Heading pure-D "Images" free-meshes with
 //! last pure-I Calibri body (Word MIX). M371 skip was over-broad (−55 thrash).
@@ -14,8 +14,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn file197_x_198_images_heading_mixes_with_calibri_body() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
     let a = src.join("file_197.docx");
     let b = src.join("file_198.docx");
     if !a.exists() || !b.exists() {
@@ -75,8 +75,8 @@ fn file197_x_198_images_heading_mixes_with_calibri_body() {
 #[test]
 fn file83_x_84_title_mixes_with_center_bold_body() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
     let a = src.join("file_83.docx");
     let b = src.join("file_84.docx");
     if !a.exists() || !b.exists() {

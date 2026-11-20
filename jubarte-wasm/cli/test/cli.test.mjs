@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 // `npx jubarte-redlines …` end to end: the bin over the checked-in
 // jubarte-wasm build (../npm), with the commands, flags, messages and exit

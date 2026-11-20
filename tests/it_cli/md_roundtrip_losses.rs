@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! What the Markdown round trip lost (tests/md_fixed_point.rs, run of
 //! 2026-10-14), one shape each: the view written to Word and read back
 //! prints the same line.

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Focused syntax discovery and executable edit support. V2 parsing does
 //! not imply dispatch: a runtime without a PlanV2 adapter keeps all its V2

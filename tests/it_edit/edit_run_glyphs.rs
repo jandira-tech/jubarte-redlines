@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Tabs, line breaks and non-breaking hyphens in edited text. A `\t` or
 //! `\n` in new text writes a `w:tab` or a `w:br`, as the agent view prints

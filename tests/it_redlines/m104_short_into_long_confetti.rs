@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M104 — short stamped demo into long next doc: nest short title after next's
 //! main title (file_130 Large Font Size Demo into Word vs Google Docs).

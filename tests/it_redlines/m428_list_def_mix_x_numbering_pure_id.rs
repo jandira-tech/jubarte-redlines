@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M428 — mixed-label list base × short uniform-token list next: pure-I next
 //! then pure-D base (Word order).
@@ -19,8 +19,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn list_def_mix_x_numbering_reimport_pure_i_then_d() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__list_def_mix_d7cec092.docx");
     let b = src.join("super_editor__list_numbering_reimport_d788d573.docx");
     if !a.exists() || !b.exists() {

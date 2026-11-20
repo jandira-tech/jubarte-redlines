@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 use jubarte::edit::v2::{PlanV2, before_sha256, logical_text};
 use jubarte::namespaces::W;

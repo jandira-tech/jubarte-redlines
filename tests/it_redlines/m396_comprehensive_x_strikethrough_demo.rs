@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M396 — file_34 comprehensive × file_35 strikethrough short Demo.
 //!
@@ -47,8 +47,8 @@ fn body_classes(xml: &str) -> Vec<char> {
 #[test]
 fn file_34_x_35_multi_mix_titles_not_pure_i_short() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
     let a = src.join("file_34.docx");
     let b = src.join("file_35.docx");
     if !a.exists() || !b.exists() {

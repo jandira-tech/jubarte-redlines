@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! #1870: a Word-mode compare first accepts the revisions its inputs
 //! already hold, and the accept ends in the Word-save tidy, which joins

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A paragraph's inserted words move past the deleted tables after it
 //! (#1851). Word's own Compare leaves them in a paragraph whose mark is

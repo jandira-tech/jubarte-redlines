@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! The bench test corpus is a git submodule (`tests/corpus/bench`,
 //! jandira-tech/jubarte-test-corpus): third-party Word documents that are

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `validate OUT --baseline IN`: the findings IN already had print as not
 //! the editor's, and only new ones fail the run; a finding is new by

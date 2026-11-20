@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M371 — word_mixed × word_simple: pure-D Heading title stays separate.
 //!
@@ -17,8 +17,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn mixed_x_simple_heading_title_stays_pure_d() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__sd_1919_word_mixed_33e049ca.docx");
     let b = src.join("super_editor__sd_1919_word_simple_e3a4a818.docx");
     if !a.exists() || !b.exists() {

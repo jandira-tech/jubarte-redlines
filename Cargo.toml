@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 # Workspace root (plan A3): the facade package sits at `.`, the split crates
 # join under `crates/*` as T4.1+ extract them. The standalone binding
@@ -26,7 +26,7 @@ version = "0.18.0" # the release script bumps this and the "=" pins together
 edition = "2024"
 rust-version = "1.94"
 authors = ["Jandira Technologies, LLC"]
-license = "AGPL-3.0-only"
+license = "Apache-2.0"
 repository = "https://github.com/jandira-tech/jubarte"
 
 [package]

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Integration tests for the `redline` binary — drives the compiled CLI to cover
 //! the file-I/O `run` path (default output naming, --force, --quiet, errors) and

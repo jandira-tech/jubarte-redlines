@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Word Compare's anchors for a two-word swap and for a word inserted
 //! before a hyperlink (#2002). Measured with POST /v1/compare, Word 16.

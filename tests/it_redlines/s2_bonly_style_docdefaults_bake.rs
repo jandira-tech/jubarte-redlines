@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Workstream S phase 2 — styles copied from B (absent in A) must bake B's
 //! docDefaults-level run metrics and carry style-level change records.
@@ -31,8 +31,8 @@ fn style_elem(xml: &str, sid: &str) -> Option<String> {
 #[test]
 fn s2_bonly_styles_bake_docdefaults_delta_with_change_records() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__image_inline_and_block_ad6109b3.docx");
     let b = src.join("behavior__rtl_page_numpages_54739e26.docx");
     if !a.exists() || !b.exists() {

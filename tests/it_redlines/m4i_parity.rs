@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M4.I — golden CONTENT-parity regression guard. Asserts the redlined *text*
 //! (deleted `w:delText` + inserted `w:t` under `w:ins`) matches the TS golden

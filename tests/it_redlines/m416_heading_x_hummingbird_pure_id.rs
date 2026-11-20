@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M416 — heading_font × hummingbird: pure-I long wrap then pure-D base.
 //!
@@ -55,8 +55,8 @@ fn body_paras(xml: &str) -> Vec<(bool, bool, String)> {
 #[test]
 fn heading_x_hummingbird_pure_i_wrap() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__heading_font_46041620.docx");
     let b = src.join("super_editor__hummingbird_c5e5ac81.docx");
     if !a.exists() || !b.exists() {

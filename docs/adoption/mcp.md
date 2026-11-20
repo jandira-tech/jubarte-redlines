@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only
+SPDX-License-Identifier: Apache-2.0
 -->
 
 # MCP server: Claude Code, Codex and Gemini CLI
@@ -153,7 +153,7 @@ read on 2026-10-02 describes it:
 
 | | jubarte-mcp | safe-docx |
 | --- | --- | --- |
-| License | AGPL-3.0-only | Apache-2.0 |
+| License | Apache-2.0 (from 0.19.0) | Apache-2.0 |
 | Tracked-changes output | yes | yes ("clean or tracked-changes output") |
 | Rendering to PDF or PNG | yes, its own layout engine | no ("not a visual editor or layout engine") |
 | Gemini CLI extension | yes | yes (`gemini-extension.json` in the repository) |

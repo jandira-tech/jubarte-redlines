@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
-<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # For the maintainers of Anthropic's `docx` skill
 
@@ -69,8 +69,8 @@ Exit codes: `0` done, `1` error, `2` usage error or `validate` findings
   `insert_footnote`, `page_setup`) builds one without Node; a plan cannot
   yet address paragraphs it inserted itself, so a build takes chained
   plans ([plans.md](plans.md) §3).
-- **License.** jubarte is AGPL-3.0-only. It runs as a separate program your
-  skill calls, not a library it links.
+- **License.** jubarte is Apache-2.0 from 0.19.0 (earlier releases are
+  AGPL-3.0-only).
 
 ## 4. Check it without trusting us
 

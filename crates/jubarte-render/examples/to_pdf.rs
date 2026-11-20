@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Render a redline to PDF in each revision style, and to PNG pages.
 //! Run: `cargo run -p jubarte-render --example to_pdf [OUT_DIR]`

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 [build-system]
 requires = ["maturin>=1.14,<2.0"]
@@ -25,7 +25,8 @@ description = "Word-faithful DOCX redline engine — compare two Word documents 
 # release-notes v0.9.2 — docx_to_pdf gains revisions= and revision_palette=; PDFs follow Word's layout more closely and are smaller. Redline output unchanged.
 readme = "README.md"
 requires-python = ">=3.10"
-license = "AGPL-3.0-only"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Jandira Technologies, LLC" }]
 keywords = ["docx", "redline", "track-changes", "tracked-changes", "word", "microsoft-word", "openxml", "ooxml", "compare", "diff", "pdf", "docx-to-pdf", "markdown", "criticmarkup", "ai-agents"]
 classifiers = [

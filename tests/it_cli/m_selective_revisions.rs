@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Accepting or rejecting some tracked changes and leaving the rest tracked,
 //! as Word's Accept/Reject This Change does.
@@ -241,7 +241,8 @@ fn an_empty_list_selects_nothing() {
 
 /// The bench fixtures copied into this repository.
 fn bench() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/bench/neurotic_docx_bench")
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/corpus/bench/neurotic_docx_bench")
 }
 
 /// Owner, record type, id and payload (without id), in stylesheet order.

@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only
+SPDX-License-Identifier: Apache-2.0
 -->
 
 The render product of the [jubarte]({{repository}}) DOCX engine: it lays
@@ -96,8 +96,8 @@ fonts your documents name for output closest to Word's. `JUBARTE_FONT_DIR` adds 
 the persistent font index (`off` disables it).
 
 The crate bundles 16 font programs under `assets/fonts/`: Carlito and the
-Liberation Sans, Serif and Mono families, each in four styles. They are not
-covered by the AGPL: both families are under the SIL Open Font License 1.1,
+Liberation Sans, Serif and Mono families, each in four styles. They keep
+their own licence: both families are under the SIL Open Font License 1.1,
 with their copyright notices in
 [`LICENSE-Carlito`](assets/fonts/LICENSE-Carlito) and
 [`LICENSE-Liberation`](assets/fonts/LICENSE-Liberation), which ship in the
@@ -105,6 +105,6 @@ crate beside the fonts.
 
 ## License
 
-The code is [AGPL-3.0-only](LICENSE); the bundled fonts keep the licenses
-named above. Review the AGPL's requirements before you embed the crate in a
-product or a network service.
+The code is [Apache-2.0](LICENSE); the bundled fonts keep the licenses
+named above. [NOTICE](NOTICE) carries the attributions of the projects this
+code derives from.

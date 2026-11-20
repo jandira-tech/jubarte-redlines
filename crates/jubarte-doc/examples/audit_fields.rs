@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Audit a document for accessibility, style and structure, and refresh its
 //! fields. Both need the layout pass, so both need the `render` feature.

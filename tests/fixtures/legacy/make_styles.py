@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """styles.docx: a Title, Heading 1, Heading 8 and Heading 9 paragraph, and
 an IF field whose code holds a nested PAGE field. LibreOffice's "MS Word
 97" export of it is styles.doc:

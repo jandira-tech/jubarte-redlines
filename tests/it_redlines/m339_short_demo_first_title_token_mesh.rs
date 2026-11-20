@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M339 — short demos sharing first title token (Tab Alignment × Tab Tests):
 //! Word free-meshes (MMMMM… MIX≥5). Pure-I/D was MIX≈1.
@@ -44,8 +44,8 @@ fn body_para_classes(xml: &str) -> Vec<char> {
 #[test]
 fn tab_alignment_x_tab_test_multi_mix() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__tab_alignment_test_184edb5d.docx");
     let b = src.join("super_editor__tab_test_576c8317.docx");
     if !a.exists() || !b.exists() {

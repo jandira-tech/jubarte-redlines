@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 # Installs the jubarte CLI and its fonts on Windows. The fonts are not
 # embedded in the binary: they go to %APPDATA%\jubarte\fonts (or

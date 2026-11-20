@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! REJECT-LOSSLESS-01 — reject must restore/remove tracked content that is
 //! nested inside a *transparent run container* (`w:fldSimple`, `mc:Choice` /

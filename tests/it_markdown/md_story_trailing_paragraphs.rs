@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A header's or footer's empty paragraphs after its text are lines Word
 //! lays out (the header grows by each), so the view keeps them:

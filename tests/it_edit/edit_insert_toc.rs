@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! The `insert_toc` operation and a plan's `"update_fields": true`: the
 //! clean copy carries a TOC filled from jubarte's layout, the redline

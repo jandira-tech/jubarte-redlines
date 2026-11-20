@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A deleted text box keeps its own story: the `w:del` around the anchor run
 //! does not reach into `w:txbxContent`. Word's Compare wraps the text box's

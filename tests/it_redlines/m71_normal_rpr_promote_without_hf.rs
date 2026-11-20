@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M71 — promote B's effective Normal rPr (fonts/sz) even without
 //! header/footer parts (file_197: A Ubuntu rPr → Word Calibri from B dd).

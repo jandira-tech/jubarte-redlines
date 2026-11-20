@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! LaTeX to Office Math (OMML), the inverse of the reader's `math_inner`
 //! (`from_docx/mod.rs`). Every structure the reader prints comes back as

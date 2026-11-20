@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Check the ReadTheDocs books under docs/rtd/ against the workspace.
 
 One ReadTheDocs project documents each workspace member: docs/rtd/<crate>/

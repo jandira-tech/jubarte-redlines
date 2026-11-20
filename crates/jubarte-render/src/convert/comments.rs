@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Comments: balloons, anchors, the end-of-document listing and their
 //! painting. Also the document walk's entry point, `collect_blocks` (the

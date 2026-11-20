@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Write the round-trip edge documents: small, hand-made docx files, one per
 behaviour the Markdown view must carry both ways (docx -> md -> docx -> md and
 md -> docx -> md). Run from anywhere: `python3 make_edges.py`; it rewrites the

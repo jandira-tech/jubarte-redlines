@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Fields: bookmarks, word counts, STYLEREF, REF and PAGEREF, and date and
 //! time pictures, with the document's core dates (`CoreDates`,

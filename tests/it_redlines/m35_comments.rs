@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M35 — comments carryover (word mode). Word's Compare carries comments
 //! through the redline (comments_carryover_forensics.md): union of both

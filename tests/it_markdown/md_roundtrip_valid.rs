@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Every Markdown round-trip fixture reads into a Word-valid docx. The
 //! round trip (`md_fixed_point.rs`) counts ids; this gate keeps the ids the

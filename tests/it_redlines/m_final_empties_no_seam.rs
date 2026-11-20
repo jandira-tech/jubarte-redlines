@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Unrelated short documents that both end on an empty paragraph (a titled
 //! table against a short item list): Word inserts the revised document whole,

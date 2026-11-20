@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `insert_image`: a new paragraph holding an inline picture next to the
 //! anchor paragraph. The picture's bytes come base64-encoded in the plan;

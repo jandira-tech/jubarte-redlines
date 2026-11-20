@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M330 — demo×demo cousins share last-sig "Demo" / "overflow" but Word pure-I/D
 //! wholesale (score 100). Free-mesh on any last-sig thrash (0ab0e1c −30..−54).

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `w:altChunk` import. Word merges an HTML (or MHT) chunk into the body
 //! when it opens the file; the converter rewrites each chunk into

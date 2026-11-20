@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M468 — when trailing EMPTY pure-I paragraphs separate a LONG content
 //! pure-I from a short unrelated pure-D title, Word folds nothing: the
@@ -22,8 +22,8 @@ use jubarte::document_comparer::compare_documents;
 #[test]
 fn deleted_title_stays_separate_across_empty_ins() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__h_f_normal_odd_even_unchecked_first_p_817ad6e9.docx");
     let b = src.join("super_editor__sd_1495_auto_page_break_854a2dd9.docx");
     if !a.exists() || !b.exists() {

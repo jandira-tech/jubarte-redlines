@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """The substituted-tool side: python-docx adds a 3x3 table with a header
 row and turns the checklist lines into a bulleted and a numbered list.
 

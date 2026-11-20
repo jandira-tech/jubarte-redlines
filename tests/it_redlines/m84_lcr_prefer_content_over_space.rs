@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M84 — LCR prefers content words over pure-space when lengths tie (file_81).
 //! Word: …Title [paragraph ]style with center alignment.

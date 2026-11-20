@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A single shared word that opens a paragraph on both sides stays an anchor
 //! in a long unrelated window, as in Word's redline: "Second" opens both the

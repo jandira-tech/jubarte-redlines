@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 #
 # Seed every target's corpus with the repository's .docx fixtures (files under
 # 2 MiB, de-duplicated by content). `compare` gets pairs: a 4-byte little

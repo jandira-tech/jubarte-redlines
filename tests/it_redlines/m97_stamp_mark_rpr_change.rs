@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M97 — FormatChanged pilcrow with differing mark `pPr/rPr` emits
 //! `w:rPrChange` under live mark rPr (file_30 stamp Aptos/b/sz20 → sz32).

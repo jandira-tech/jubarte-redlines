@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Read-only views of a DOCX for agents and tools: body paragraphs an edit can
 //! address, package facts, and a Markdown projection that carries paragraph

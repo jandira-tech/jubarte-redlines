@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! The words Word Compare works in: a run of letters, digits and apostrophes
 //! is one word (`R1C1`, `abc123`, `Q3FY26`, `Ä1`, `don't`); every other

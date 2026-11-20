@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only
+SPDX-License-Identifier: Apache-2.0
 -->
 
 Word-mode **DOCX redline** engine, compiled to WebAssembly.
@@ -234,7 +234,6 @@ The exact engine commit each build was produced from is recorded in
 
 ## License
 
-[AGPL-3.0-only](https://www.gnu.org/licenses/agpl-3.0.html) ©
-Jandira Technologies, LLC. If AGPL does not fit your use case, contact the
-authors about commercial licensing via the
-[GitHub repository](https://github.com/jandira-tech/jubarte).
+[Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) ©
+Jandira Technologies, LLC. The package's `NOTICE` file carries the
+attributions of the projects the engine derives from.

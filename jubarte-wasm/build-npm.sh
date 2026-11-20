@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 #
 # Rebuild every wasm-pack target and assemble the publishable npm package
 # under npm/. Build from a CLEAN tree (the engine commit is stamped into the
@@ -81,6 +81,7 @@ for pair in pkg:node pkg-web:web pkg-slim:node-slim pkg-web-slim:web-slim \
   done
 done
 cp ../LICENSE npm/LICENSE
+cp ../NOTICE npm/NOTICE
 python3 ../scripts/check_npm_paths.py npm
 git rev-parse HEAD > npm/ENGINE_COMMIT.txt
 

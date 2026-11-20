@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 // SPDX-FileCopyrightText: 2025-2026 John Scrudato IV
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-Docxodus-MIT
 
 //! Word's flat word-and-pilcrow stream over a run of changed paragraphs.
 //!

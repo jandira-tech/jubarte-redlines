@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 [package]
 name = "jubarte-cli"
@@ -14,7 +14,7 @@ description = "The jubarte engine's command line: every operation of the library
 readme = "README.md"
 keywords = ["docx", "cli", "redline", "word", "convert"]
 categories = ["command-line-utilities", "text-processing"]
-include = ["/src/**", "/build.rs", "/README.md", "/LICENSE"]
+include = ["/src/**", "/build.rs", "/README.md", "/LICENSE", "/NOTICE"]
 [lib]
 name = "jubarte_cli"
 

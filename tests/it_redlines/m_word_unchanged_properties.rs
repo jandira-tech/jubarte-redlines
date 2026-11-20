@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! What did not change stays unmarked in a Word-mode redline. Word's own
 //! redline of fixtures_500 00b81efae883 ("Overall purpose of the post" →

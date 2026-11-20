@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A plan error teaches: it names the operation, its kind, the field, the
 //! fields the kind takes and the nearest one. Three slips apply with a

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `page_setup`: page size, orientation and margins of the last section or
 //! of every section. Each section's `w:pgSz` and `w:pgMar` are rewritten in

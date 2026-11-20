@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A story paragraph's style (headers and footers) survives the round trip
 //! docx → view → docx: the view names it only when it is not the story's

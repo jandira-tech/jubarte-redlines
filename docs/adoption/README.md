@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
-<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # jubarte for the people who maintain a DOCX agent skill
 
@@ -50,10 +50,9 @@ affiliated, and use the runnable folders above instead.
 
 ## License
 
-jubarte is AGPL-3.0-only. Every capability on these pages is reachable as a
-separately installed command-line tool (`jubarte`, `python -m
-jubarte_redlines`), so a skill can call it as an external program without
-linking it. Whether that satisfies your counsel is your counsel's call.
+jubarte is Apache-2.0 from 0.19.0; releases up to 0.18.0 are AGPL-3.0-only.
+Every capability on these pages is reachable as a library and as a
+separately installed command-line tool (`jubarte`, `python -m jubarte`).
 
 ## Still to come in this folder
 

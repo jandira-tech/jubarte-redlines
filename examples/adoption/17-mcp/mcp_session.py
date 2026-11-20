@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """One scripted MCP session over stdio with jubarte-mcp.
 
 Speaks JSON-RPC (newline-delimited, MCP stdio transport) to

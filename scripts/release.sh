@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 #
 # One-stop release for the whole jubarte family:
 #
@@ -1327,6 +1327,8 @@ if [ "$SKIP_GATES" = 0 ]; then
     && uv run --with maturin maturin develop --release >/dev/null \
     && uv run --with pytest pytest -q)
   uv tool run --from 'reuse[charset-normalizer]' reuse lint >/dev/null
+  # every package folder carries the root LICENSE and NOTICE
+  python3 scripts/sync_license_files.py --check >/dev/null
   step "fmt / clippy / tests / docs / sweep-units / pytest / REUSE all green"
 else
   say "5. Gates — SKIPPED (--skip-gates)"

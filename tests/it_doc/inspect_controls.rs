@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! `jubarte::inspect` lists the body's content controls (`w:sdt`) with their
 //! tag, alias, kind, text, paragraphs, lock, choices, checkbox state and

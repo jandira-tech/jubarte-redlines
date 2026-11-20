@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! ACCEPT-SKIP-A8 — when no mergeable adjacent revision-bearing tables exist,
 //! merge_adjacent_tables must transfer the root NodeId.

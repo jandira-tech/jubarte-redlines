@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Build input.docx with python-docx's own default template.
 
 Why python-docx and not `jubarte convert input.md`: this folder's

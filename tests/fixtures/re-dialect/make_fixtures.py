@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Make the #1135 fixtures from Word-made files, keeping Word's XML.
 
     python3 -I make_fixtures.py OUT_DIR NAME=SOURCE.docx [NAME=SOURCE.docx ...]

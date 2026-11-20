@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //
 // Builds create_docxjs.docx with the docx npm package (docx-js), the way
 // Anthropic's docx skill creates documents: a Node script assembling the

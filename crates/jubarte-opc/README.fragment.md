@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only
+SPDX-License-Identifier: Apache-2.0
 -->
 
 The package layer of the [jubarte]({{repository}}) DOCX engine: it opens
@@ -92,5 +92,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## License
 
-[AGPL-3.0-only](LICENSE). Review the license's requirements before you embed
-the crate in a product or a network service.
+[Apache-2.0](LICENSE). [NOTICE](NOTICE) carries the attributions of the
+projects this code derives from.

@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! A header's or footer's fields through docx → view → docx: a bare
 //! `{PAGE}` (a field with no result) must not take literal text that

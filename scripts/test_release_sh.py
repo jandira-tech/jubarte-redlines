@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 """Argument contract of scripts/release.sh.
 
@@ -2879,8 +2879,8 @@ class AdoptionAndHeaders(unittest.TestCase):
     because REUSE.toml's `path = "**"` covers every file."""
 
     # REUSE-IgnoreStart (headers these tests write, not this file's)
-    HEADER = "# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC\n#\n# SPDX-License-Identifier: AGPL-3.0-only\n"
-    LATE = "//! docs\n" + "// filler\n" * 600 + "// SPDX-License-Identifier: AGPL-3.0-only\n"
+    HEADER = "# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC\n#\n# SPDX-License-Identifier: Apache-2.0\n"
+    LATE = "//! docs\n" + "// filler\n" * 600 + "// SPDX-License-Identifier: Apache-2.0\n"
     # REUSE-IgnoreEnd
 
     def setUp(self) -> None:

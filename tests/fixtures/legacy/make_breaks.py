@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """breaks.docx: a page break inside a paragraph, a page break in a
 paragraph of its own, and a second section. LibreOffice's "MS Word 97"
 export of it is breaks.doc:

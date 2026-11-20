@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M308 — unrelated list wholesale (broken_list × multiple_nodes_in_list):
 //! Word pure-I all B list items then pure-D all A list items. B closes on

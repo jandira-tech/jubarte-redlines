@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M359 — list_with_indents × shape_group: Word pure-I/D, no shape+list MIX.
 //!
@@ -19,8 +19,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn list_with_indents_x_shape_group_no_shape_list_mix() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__list_with_indents_efc7d4f5.docx");
     let b = src.join("super_editor__shape_group_ce60e1e6.docx");
     if !a.exists() || !b.exists() {

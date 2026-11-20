@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! Short paragraph ids (`p3`, `header1.p1`, `t0.row1.cell2`) in edit selectors.
 
 use crate::common;

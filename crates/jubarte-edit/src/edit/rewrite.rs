@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! The smallest text edits that make a paragraph read as new text, for the
 //! `rewrite` operation, and that make a `replace`'s matched text read as its

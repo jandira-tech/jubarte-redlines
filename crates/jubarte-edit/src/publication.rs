@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Stage complete bytes before replacing outputs. A set has one commit per
 //! file; errors name any files already committed. No rollback or delete-old

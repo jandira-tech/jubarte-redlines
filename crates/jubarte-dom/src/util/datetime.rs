@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Revision timestamps, W3CDTF parsing and UTC civil-time arithmetic. Not
 //! behind the `cli` feature: edit recordings check the bindings' date too.

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 #
 # tests/m_cell_final_marks_pairs.rs: the pairs whose Accept All (or Reject
 # All) matches B (or A) block for block but not in its content controls,

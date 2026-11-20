@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 use super::*;
 
-const COMMENTS: &str =
-    "tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments.docx";
+const COMMENTS: &str = "tests/corpus/bench/neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments.docx";
 
 /// Sibling `neurotic_docx_bench` fixtures exist locally, not in GitHub Actions.
 /// Only an absent file skips; any other read error fails the test.

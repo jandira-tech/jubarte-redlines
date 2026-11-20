@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 # Build a static jubarte inside a rust:alpine image. release.yml mounts the
 # repo at /work and runs this there. Alpine's own gcc is a musl compiler, so

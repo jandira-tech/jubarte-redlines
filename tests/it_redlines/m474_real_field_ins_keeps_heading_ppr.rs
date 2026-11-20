@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M474 — repair the M470×M360 interaction. M360's "TOC field residue" gate
 //! (pure-I with fldChar × Heading pure-D ⇒ bare pPr) was written for EMPTY
@@ -22,8 +22,8 @@ use jubarte::document_comparer::compare_documents;
 #[test]
 fn content_bearing_field_ins_keeps_heading_ppr_and_mark() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("behavior__sd_2672_plain_3x3_87943d5d.docx");
     let b = src.join("super_editor__hyperlink_node_internal_1c0232f9.docx");
     if !a.exists() || !b.exists() {

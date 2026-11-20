@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! M463 — inserted/deleted OMML math carries Word's INTERNAL revision marks:
 //! each `m:r` wraps its (m:rPr?, w:rPr?, m:t*) in `w:ins`/`w:del` (m:t stays
@@ -30,8 +30,8 @@ fn last_tag_before(hay: &str, i: usize) -> &str {
 #[test]
 fn math_revision_marks_go_inside_runs() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src =
-        root.join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src = root
+        .join("tests/corpus/bench/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("behavior__math_func_tests_0434dd11.docx");
     let b = src.join("behavior__math_groupchr_tests_4a4970fc.docx");
     if !a.exists() || !b.exists() {
