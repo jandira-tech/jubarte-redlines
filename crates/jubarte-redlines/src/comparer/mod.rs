@@ -33,7 +33,7 @@ pub mod bookmarks;
 pub mod comments;
 pub mod cross_para;
 // Word-parity passes, public for the tests that run one at a time; outside
-// the version promise (docs/VERSIONING.md).
+// the version promise (docs/maintainers/VERSIONING.md).
 #[doc(hidden)]
 pub mod deleted_tables;
 pub(crate) mod final_marks;
@@ -55,7 +55,7 @@ pub mod revisions;
 // Word-parity pass on the finished body; outside the version promise.
 pub(crate) mod table_split;
 // Constant tables ported from the C# `WmlComparer`; outside the version
-// promise (docs/VERSIONING.md).
+// promise (docs/maintainers/VERSIONING.md).
 #[doc(hidden)]
 pub mod tables;
 pub mod textbox;

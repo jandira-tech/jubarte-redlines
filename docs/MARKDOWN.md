@@ -1647,6 +1647,6 @@ them accepted.
   radicals, matrices and limits are not laid out yet.
 - Changes have one author and date; CriticMarkup has no syntax for more.
 
-Related: [CSHARP_MARKDOWN_PROJECTION_MAPPING.md](CSHARP_MARKDOWN_PROJECTION_MAPPING.md)
+Related: [CSHARP_MARKDOWN_PROJECTION_MAPPING.md](maintainers/CSHARP_MARKDOWN_PROJECTION_MAPPING.md)
 maps Docxodus's C# Markdown projection onto this crate — a study with open
 questions, not a shipped feature.

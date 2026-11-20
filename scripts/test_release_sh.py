@@ -1748,7 +1748,7 @@ exit 9
 
 
 class BumpGate(unittest.TestCase):
-    """#1742: docs/VERSIONING.md's bump rule is proven before step 1 writes
+    """#1742: docs/maintainers/VERSIONING.md's bump rule is proven before step 1 writes
     anything. Pre-1.0, a patch carries no new feature (`### Added`) and no
     change cargo-semver-checks reports; a minor or major may. #1758: a patch
     also carries no public item path the previous release's listing does not
@@ -1829,7 +1829,7 @@ class BumpGate(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("### Added", r.stderr)
         self.assertIn("0.14.0", r.stderr)
-        self.assertIn("docs/VERSIONING.md", r.stderr)
+        self.assertIn("docs/maintainers/VERSIONING.md", r.stderr)
         self.assertEqual(self.cargo_calls(), "", "the heading alone decides; no build")
 
     def test_a_patch_semver_checks_refuses_stops_the_release(self) -> None:
@@ -1903,7 +1903,7 @@ class BumpGate(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("jubarte::something", r.stderr)
         self.assertIn("0.14.0", r.stderr)
-        self.assertIn("docs/VERSIONING.md", r.stderr)
+        self.assertIn("docs/maintainers/VERSIONING.md", r.stderr)
         self.assertNotIn("jubarte::keep", r.stderr)
         self.assertIn("git worktree add", self.cargo_calls())
 

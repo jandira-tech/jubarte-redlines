@@ -141,7 +141,7 @@ or enable weak suites. The strength comparison uses the criterion's
 release. Ed25519 verification support therefore does **not** establish that
 published releases are currently signed. The active updater trust mechanism
 uses HTTPS; checksum-only delivery retains the risks documented in
-[SELF_UPDATE.md](SELF_UPDATE.md).
+[SELF_UPDATE.md](../SELF_UPDATE.md).
 
 ### Public API vulnerability, fixed on 2026-10-08
 

@@ -24,7 +24,7 @@ in this review; a CPE is optional, and none is invented.
 |---|---|
 | description_good | Evidence: README introduction describes comparison, tracked changes and rendering. |
 | interact | Fixed: README links installation, issues, CONTRIBUTING and SECURITY. |
-| contribution_requirements | Fixed: [CONTRIBUTING](../CONTRIBUTING.md) describes PRs, licensing, Word parity, rustfmt, strict Clippy and tests. Public URL after merge: https://github.com/jandira-tech/jubarte/blob/main/CONTRIBUTING.md |
+| contribution_requirements | Fixed: [CONTRIBUTING](../../CONTRIBUTING.md) describes PRs, licensing, Word parity, rustfmt, strict Clippy and tests. Public URL after merge: https://github.com/jandira-tech/jubarte/blob/main/CONTRIBUTING.md |
 | documentation_interface | Evidence: README CLI examples and `--help`; Rust input/output types at https://docs.rs/jubarte ; binding references in jubarte-python/README.md and jubarte-wasm/README.md. |
 | english | Evidence: English documentation; contribution policy explicitly accepts English reports/comments. |
 | maintained | Evidence: active interim commits and releases; review the public history at certification time. |

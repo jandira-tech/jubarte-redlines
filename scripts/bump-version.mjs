@@ -15,7 +15,7 @@
 // ##   push or publish. A version bumped here alone is a half release.     ##
 // ##                                                                       ##
 // ##   Release with:  scripts/release.sh x.y.z --changelog-summary "…" …   ##
-// ##                  (docs/VERSIONING.md step 8; --dry-run rehearses it)  ##
+// ##                  (docs/maintainers/VERSIONING.md step 8; --dry-run rehearses it)  ##
 // ##                                                                       ##
 // ###########################################################################
 //
@@ -28,7 +28,7 @@
 // and gemini-extension.json's version.
 // CHANGELOG.md is NOT auto-written — add the Keep-a-Changelog section
 // yourself, then let scripts/release.sh commit, tag and publish.
-// See docs/VERSIONING.md.
+// See docs/maintainers/VERSIONING.md.
 
 import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -105,7 +105,7 @@ function main() {
     "##  the required release notes, run the gates, tag, push or publish.",
     "##",
     "##  Release with:  scripts/release.sh x.y.z --changelog-summary \"…\" …",
-    "##                 (docs/VERSIONING.md step 8; --dry-run rehearses it)",
+    "##                 (docs/maintainers/VERSIONING.md step 8; --dry-run rehearses it)",
     "#".repeat(75),
     "",
   ].join("\n");
