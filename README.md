@@ -179,8 +179,8 @@ cargo install jubarte
 
 The installed binary is named `jubarte`.
 
-From 0.11.0, the Python wheel and the npm package also run the CLI
-without an install:
+The Python wheel and the npm package also run the CLI without an
+install:
 
 ```sh
 uvx --from jubarte-docx jubarte redline a.docx b.docx -o redline.docx
@@ -1165,9 +1165,9 @@ Before opening a PR:
 
 ```sh
 cargo fmt --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features --no-fail-fast
-cargo publish --dry-run
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo nextest run --workspace
+scripts/gen_docs.sh --check
 ```
 
 If you change any CLI flag, subcommand or public API, also run

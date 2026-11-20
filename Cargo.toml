@@ -28,6 +28,7 @@ rust-version = "1.94"
 authors = ["Jandira Technologies, LLC"]
 license = "Apache-2.0"
 repository = "https://github.com/jandira-tech/jubarte"
+homepage = "https://github.com/jandira-tech/jubarte"
 
 [package]
 name = "jubarte"
@@ -37,6 +38,7 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "Word-faithful DOCX redline engine — compare two Word documents into a tracked-changes document that opens cleanly in Microsoft Word; list, accept, or reject revisions"
 documentation = "https://docs.rs/jubarte"
 readme = "README.crates.md"
