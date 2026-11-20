@@ -10,8 +10,6 @@
 //! insertion, `{~~old~>new~~}{rD+I @X}` for a deletion followed directly by
 //! an insertion from the same author, and `¶{rN @X}` for a revised paragraph
 //! mark. `edits/NAME.md` is the body after one `jubarte edit` as Carol Diaz.
-//! `scripts/re-dialect-read.sh` and `scripts/re-dialect-edit.sh` run the
-//! same commands and print the diffs.
 
 use crate::common;
 

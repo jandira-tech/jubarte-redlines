@@ -12,8 +12,7 @@ which side we think is better, and names the mode that picks each behavior.
 
 The evidence is the parity ladder (`tools/parity_ladder.py sweep`, baseline
 `tools/parity_baseline.tsv`, 146 findings on 2026-09-28) over the
-neurotic_docx_bench `word_based` corpus, plus the 40-pair Word-redline guard
-(`tools/redline40`).
+neurotic_docx_bench `word_based` corpus.
 
 ## Modes
 
@@ -593,7 +592,6 @@ different revision states, or crossed fields. jubarte never emits either.
 
 ```text
 python3 tools/parity_ladder.py sweep      # compare against tools/parity_baseline.tsv
-uv run --project ../neurotic_docx_bench python tools/redline40/redline40.py run --label NAME --against baseline-0.9.3
 ```
 
 ### Word keeps one cell count when a row's cells are repartitioned (#1817)

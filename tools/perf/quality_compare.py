@@ -6,7 +6,7 @@
 
 """P0-LAB-01 — paired quality ledger comparator.
 
-Compares two score ledgers (baseline vs candidate) from tools/parity_ledger.sh
+Compares two score ledgers (baseline vs candidate) from a parity sweep
 or equivalent TSV/CSV with at least: pair_id, score columns.
 
 Accepted input formats (auto-detected):
