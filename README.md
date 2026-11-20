@@ -1238,9 +1238,10 @@ bundled fonts and test documents.
 ## Links
 
 [Engine comparison site](https://jandira-tech.github.io/neurotic_docx_bench/) ·
-[jandira.tech](https://www.jandira.tech) · [arthur.law](https://arthur.law) ·
-[Cicero](https://www.cicero.im) · [LinkedIn](https://linkedin.com/in/arthrod) ·
-`contact@arthur.law`
+[jandira.tech](https://www.jandira.tech) ·
+[Discussions](https://github.com/jandira-tech/jubarte/discussions) ·
+[Support](SUPPORT.md) · [Security](SECURITY.md)
+
 - [GitHub](https://github.com/jandira-tech/jubarte)
 - [crates.io](https://crates.io/crates/jubarte)
 - [docs.rs](https://docs.rs/jubarte)

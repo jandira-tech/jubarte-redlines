@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# The toolchain a plain `cargo` uses in this checkout. The minimum supported
+# version is `rust-version` in Cargo.toml, which CI tests in its own job;
+# jobs that need another toolchain set RUSTUP_TOOLCHAIN.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

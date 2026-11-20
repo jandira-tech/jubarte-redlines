@@ -12,7 +12,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, pre-release]
   pull_request:
 
 # Every job only reads the repo; anything not listed here is `none`.
@@ -183,6 +183,9 @@ jobs:
   coverage:
     name: coverage
     runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
+    # rust-toolchain.toml names stable; this job needs nightly.
+    env:
+      RUSTUP_TOOLCHAIN: nightly
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -239,6 +242,10 @@ jobs:
   msrv:
     name: MSRV (1.94)
     runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
+    # rust-toolchain.toml names stable; without this the job would test
+    # stable and call it the MSRV.
+    env:
+      RUSTUP_TOOLCHAIN: "1.94"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -271,6 +278,9 @@ jobs:
   fuzz-smoke:
     name: fuzz smoke (60 s per target)
     runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
+    # rust-toolchain.toml names stable; the sanitizers need nightly.
+    env:
+      RUSTUP_TOOLCHAIN: nightly
     # Four ordinary runs, two native runs, and a cold instrumented C build.
     # A cold sanitizer build of jubarte takes 13 min on a free M-series Mac
     # and over 25 min on the shared self-hosted runners: under the old
@@ -348,6 +358,20 @@ jobs:
           ver=$(cargo metadata --no-deps --format-version 1 \
             | python3 -c 'import json, sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "jubarte"))')
           scripts/publish_crates.sh "$ver" --dry-run
+
+  # The public API of each published crate against its last release.
+  # It reports and does not block until 1.0: a 0.x minor may break, and a
+  # crate with no release yet has nothing to compare with.
+  semver:
+    name: semver check (report only)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      - uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
 
   python:
     name: python bindings
