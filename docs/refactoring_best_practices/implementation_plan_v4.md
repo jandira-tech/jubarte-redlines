@@ -16,11 +16,26 @@
 > stragglers are fixed: `crates/jubarte-cli/src/update.rs:1823` now reads
 > `../../../tests/...`, and `crates/jubarte-cli/build.rs` resolves the repo
 > root via `CARGO_MANIFEST_DIR/../..` so `JUBARTE_BUILD_VERSION` keeps its
-> `+<sha>` suffix. Remaining open work: §2.3 WASM feature split, §2.4
-> Python dual packaging, `oxml-opc`/`quick-xml-041` retirement (§4), all
-> five mega-file decompositions (§5), §7 workspace unification for the
-> binding crates (still `exclude`d), per-crate `cargo publish`, and the
-> root `ISSUE_TRIAGE_REPORT.md` move.
+> `+<sha>` suffix.
+>
+> **Status audit 2026-11-19**: §2.3 is done — `jubarte-wasm` has the
+> `compare`/`doc`/`markdown`/`edit`/`cli`/`pdf`/`slim`/`full`/`redlines`
+> features (112 `cfg(feature)` gates in `lib.rs`), the npm package ships
+> `node-redlines`/`web-redlines`/`node-pdf`/`web-pdf` subpath exports, and
+> `cli/package.json` exposes both `jubarte` and `jubarte-redlines` bins.
+> §5 mega-file decomposition is complete through T7.5 (#2459). Per-crate
+> publish is done: `release.yml`'s `publish-crates` job runs
+> `scripts/publish_crates.sh` — nine crates, one at a time in dependency
+> order, with idempotent resume — under OIDC trusted publishing.
+> `jubarte-python` gained layered `[features]` (`redlines` → `cli`, plus
+> `render`), and §2.4 landed as the `jubarte-docx` distribution + `jubarte`
+> import package with a `jubarte-redlines` compat shim (differently than
+> sketched below — see §2.4). `ISSUE_TRIAGE_REPORT.md` is untracked and
+> `docs/archive/` is gitignored. Remaining open work:
+> `oxml-opc`/`quick-xml-041` retirement (§4) and §7 workspace
+> unification — the binding crates are still `exclude`d with their own
+> lockfiles, there is no root `.cargo/config.toml`, and
+> `[profile.release]` still lacks `strip = "none"`.
 
 ## 1. Executive Summary & Architectural Goals
 
@@ -117,19 +132,19 @@ graph TD
 
 ### 2.3 WebAssembly (`jubarte-wasm`) Product Split & Subpath Exports (Shrinking `slim` from 23 MB to ~4 MB)
 
-- [x] **Granular Feature Flags on [jubarte-wasm/Cargo.toml](../../jubarte-wasm/Cargo.toml) & [jubarte-wasm/src/lib.rs](../../jubarte-wasm/src/lib.rs)** — *done (verified 2026-11-17 on pre-release): `default = ["full", "console-panic"]`, with layered `compare` → `doc` → `markdown` → `edit` → `cli` features and a separate `pdf` (T5.1).*
+- [x] **Granular Feature Flags on [jubarte-wasm/Cargo.toml](../../jubarte-wasm/Cargo.toml) & [jubarte-wasm/src/lib.rs](../../jubarte-wasm/src/lib.rs)** — *done (verified 2026-11-19): layered features exist — `compare` → `doc` → `markdown` → `edit` → `cli`, plus `pdf` (pulls `dep:jubarte-render` and forwards `?/render`), `slim`, `full`, `default = ["full", "console-panic"]`, and a `redlines` compatibility alias for `compare`; `lib.rs` carries 112 `cfg(feature)` gates.*
   - `default = ["full", "console-panic"]`
   - `full = ["compare", "pdf", "doc", "markdown", "edit", "cli"]`
   - `slim = ["compare", "doc", "markdown", "edit", "cli"]` (compiles `jubarte-doc`, `jubarte-markdown`, `jubarte-edit` with `default-features = false` so `jubarte-render` and the 17 MB of uncompressed fonts are completely omitted, shrinking `node-slim`/`web-slim` from **23 MB to ~4 MB**!)
   - `redlines = ["compare"]` (pure compare/redlines product: `compareDocuments`, `acceptRevisions`, `rejectRevisions`, `getRevisions`)
   - `pdf` (standalone DOCX-to-PDF/PNG product: `docxToPdf`, `docxToPng`, `renderPdf`, `pdfPageCount`, `diffRender`)
   - Every `#[wasm_bindgen]` entrypoint and `#[cfg(test)]` test in [jubarte-wasm/src/lib.rs](../../jubarte-wasm/src/lib.rs) is gated by its corresponding feature (`compare`, `pdf`, `doc`, `markdown`, `edit`, `cli`; with `convert_markdown` gated by `#[cfg(all(feature = "pdf", feature = "markdown"))]`).
-- [x] **Subpath Exports & Module `package.json` Files in [jubarte-wasm/npm/](../../jubarte-wasm/npm/package.json)** — *done (verified 2026-11-17 on pre-release): `npm/` ships `node`, `web`, `*-slim`, `*-redlines` and `*-pdf`; `exports` names `./redlines`, `./pdf`, `./convert` and each build (T5.2).*
+- [x] **Subpath Exports & Module `package.json` Files in [jubarte-wasm/npm/](../../jubarte-wasm/npm/package.json)** — *done (verified 2026-11-19): `npm/` ships `node`, `node-slim`, `node-redlines`, `node-pdf`, `web`, `web-slim`, `web-redlines`, `web-pdf`; `package.json` `exports` maps `./node-redlines`, `./web-redlines`, `./node-pdf`, `./web-pdf` (plus the `.wasm` subpaths and `redlines`/`pdf` aliases).*
   - `jubarte-wasm` (`.` / `./node` / `./web`): Full `jubarte` WASM facade.
   - `jubarte-wasm/redlines` (`./node-redlines`, `./web-redlines`) and `jubarte-wasm/slim` (`./node-slim`, `./web-slim`): Redlines & document operations without PDF/fonts.
   - `jubarte-wasm/pdf` and `jubarte-wasm/convert` (`./node-pdf`, `./web-pdf`): Standalone DOCX-to-PDF/PNG converter without compare/edit.
   - Track `package.json` files inside `npm/node-redlines/`, `npm/node-pdf/` (`{"type": "commonjs"}`) and `npm/web-redlines/`, `npm/web-pdf/` (`{"type": "module", "sideEffects": ["./snippets/*"]}`) so Node ESM/CJS resolution in [jubarte-wasm/npm-smoke.mjs](../../jubarte-wasm/npm-smoke.mjs) succeeds.
-- [x] **Dual CLI Binaries in [jubarte-wasm/cli/package.json](../../jubarte-wasm/cli/package.json)** — *done (verified 2026-11-17 on pre-release): `"bin"` exposes `"jubarte"` and `"jubarte-redlines"`, both on `bin/jubarte-redlines.mjs`.*
+- [x] **Dual CLI Binaries in [jubarte-wasm/cli/package.json](../../jubarte-wasm/cli/package.json)** — *done (verified 2026-11-19): `"bin"` maps both `"jubarte"` and `"jubarte-redlines"` to `bin/jubarte-redlines.mjs`.*
   - Expose both `"jubarte": "bin/jubarte-redlines.mjs"` and `"jubarte-redlines": "bin/jubarte-redlines.mjs"` in `"bin"`.
 
 ### 2.4 Python (`jubarte-python`) Dual-Namespace & Product Submodules
@@ -172,7 +187,7 @@ Every upward or peer cross-crate reference across all 122 files in `src/` (inclu
 
 ## 4. Dependency & Asset Optimization (Phase 2)
 
-- [ ] **Retire `oxml-opc` and `quick-xml-041`** — *pending (verified 2026-11-17 on pre-release): `oxml-opc = 0.15.0` and `quick-xml-041` still in root `Cargo.toml`; `crates/jubarte-opc/src/opc/mod.rs` still wraps `oxml_opc::{OpcPackage, ContentTypes, Relationships, OpcError, Relationship}`.*
+- [ ] **Retire `oxml-opc` and `quick-xml-041`** — *pending (verified 2026-11-19): `oxml-opc = 0.15.0` and `quick-xml-041` still in root `Cargo.toml`; `crates/jubarte-opc/src/opc/mod.rs` still wraps `oxml_opc::{OpcPackage, ContentTypes, Relationships, OpcError, Relationship}`.*
   - Replace the 4 types imported from `oxml-opc` in [src/opc/mod.rs](../../src/opc/mod.rs#L35) (`Part`, `PartURI`, `Relationships`, `OpcError`) with native types in `jubarte-opc` built on `zip 9.0.5` and `quick-xml 0.42` ([docs/ZIP9_OXML_OPC_MIGRATION.md](../../docs/ZIP9_OXML_OPC_MIGRATION.md)).
   - Removes `oxml-opc`, `quick-xml 0.41`, and transitive `chrono` from `Cargo.lock` and [deny.toml](../../deny.toml).
 - [x] **Remove `uuid`** — *done 2026-11-16 (commit `684352f3c`): no `uuid` dependency in any `Cargo.toml`; `crates/jubarte-edit/src/publication.rs` uses a hashed staging suffix.*
@@ -234,17 +249,17 @@ Classified deterministically by actual symbol/feature usage:
 
 ## 7. Unified Workspace Configuration, CI, Scripts & Hygiene (Phase 6)
 
-- [~] **Unified Root Cargo Workspace ([Cargo.toml](../../Cargo.toml), `.cargo/config.toml`, `crates/jubarte-cli/build.rs`)** — *partial, with deviation (verified 2026-11-16):*
+- [~] **Unified Root Cargo Workspace ([Cargo.toml](../../Cargo.toml), `.cargo/config.toml`, `crates/jubarte-cli/build.rs`)** — *partial, with deviation (verified 2026-11-19, unchanged since 2026-11-16):*
   - Root `[workspace]` exists with `resolver = "3"`, `[workspace.package]`, `[workspace.lints]`, `[workspace.dependencies]` — but `members = [".", "crates/*"]` and `jubarte-python`, `jubarte-wasm`, `jubarte-rust-inproc`, `fuzz` are in `exclude`, each keeping its own workspace + `Cargo.lock` (deviation: plan wanted them as members).
-  - No root `strip = "none"` `[profile.release]`; no root `.cargo/config.toml` — the `wasm32` rustflags still live in `jubarte-wasm/.cargo/config.toml`.
+  - Root `[profile.release]` exists (`lto = "thin"`) but still no `strip = "none"`; no root `.cargo/config.toml` — the `wasm32` rustflags still live in `jubarte-wasm/.cargo/config.toml`.
   - `crates/jubarte-cli/build.rs` now resolves the repo root at `CARGO_MANIFEST_DIR/../..` and reruns on `HEAD`/ref changes, so `JUBARTE_BUILD_VERSION` keeps its `+<sha>` suffix (fixed with T4.8).
   - `members = ["crates/*", ".", "jubarte-python", "jubarte-wasm", "jubarte-rust-inproc"]` and `exclude = ["fuzz"]`.
   - Root `[profile.release]` sets `strip = "none"` (protecting `jubarte-python` macOS Mach-O `LINKEDIT`).
   - Move `jubarte-wasm/.cargo/config.toml` `[target.wasm32-unknown-unknown]` `rustflags` into root `.cargo/config.toml`.
   - In `crates/jubarte-cli/build.rs`, resolve the `.git` directory across both `CARGO_MANIFEST_DIR` and `CARGO_MANIFEST_DIR/../..` so `JUBARTE_BUILD_VERSION` always includes `+<sha>`.
-- [~] **Gate Tests, Scripts & Workflows Updated** — *partial (verified 2026-11-16):*
+- [~] **Gate Tests, Scripts & Workflows Updated** — *mostly done (verified 2026-11-19):*
   - Done: `tests/coverage_gates.rs` walks `crates/`; `tests/tuning_audit.rs` scans `crates/jubarte-render/src/convert/**`; `scripts/check_evidence_engine.py` `INPUTS` includes `"crates"`; `scripts/check_engine_commit.sh` `ENGINE_PATHS` includes `crates`; `scripts/check_no_network.py` handles crates.
-  - Pending: per-crate topological `cargo publish --workspace` — [release.yml](../../.github/workflows/release.yml) still runs a single `cargo publish --locked` for `jubarte-redlines-$VER` (line ~515).*
+  - Done: per-crate topological publish — [release.yml](../../.github/workflows/release.yml) `publish-crates` runs `scripts/publish_crates.sh "$VER"`, which publishes the nine crates one at a time in dependency order, skips versions crates.io already holds (idempotent resume), and goes through OIDC trusted publishing (`crates-io-auth-action`); brand-new crates still require a one-time `--local-publish` token upload + trusted-publisher registration.*
   - [tests/coverage_gates.rs](../../tests/coverage_gates.rs): Allow `relative.starts_with("src") || relative.starts_with("crates")`, check `crates/*/src/lib.rs`, and walk `tests/**/*.rs` recursively.
   - [tests/tuning_audit.rs](../../tests/tuning_audit.rs) & [docs/TUNING_AUDIT.md](../../docs/TUNING_AUDIT.md): Scan `crates/jubarte-render/src/**/*.rs`.
   - [tests/bench_fixture_paths_resolve.rs](../../tests/bench_fixture_paths_resolve.rs): Scan `root.join("crates")` in addition to `src` and `tests`.
