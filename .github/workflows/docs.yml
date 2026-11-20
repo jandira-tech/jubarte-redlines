@@ -28,6 +28,7 @@ on:
     paths:
       - .github/workflows/docs.yml
       - src/**
+      - crates/**
       - jubarte-python/**
       - jubarte-wasm/**
       - docs/rust.md

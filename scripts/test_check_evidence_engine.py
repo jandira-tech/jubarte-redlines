@@ -251,8 +251,11 @@ class EvidenceEngine(unittest.TestCase):
         return engine
 
     def test_a_comment_only_change_in_a_workspace_crate_is_no_engine_change(self) -> None:
-        self.workspace("// SPDX-License-Identifier: AGPL-3.0-only\npub fn f() -> u8 { 1 }\n")
-        self.write("crates/jubarte-dom/src/lib.rs", "// SPDX-License-Identifier: Apache-2.0\npub fn f() -> u8 { 1 }\n")
+        # the tag is spelled in two pieces so REUSE does not read this test
+        # as carrying two licences
+        tag = "SPDX-License" + "-Identifier"
+        self.workspace(f"// {tag}: AGPL-3.0-only\npub fn f() -> u8 {{ 1 }}\n")
+        self.write("crates/jubarte-dom/src/lib.rs", f"// {tag}: Apache-2.0\npub fn f() -> u8 {{ 1 }}\n")
         self.commit("relicensed header")
         r = self.check()
         self.assertEqual(r.returncode, 0, r.stderr)

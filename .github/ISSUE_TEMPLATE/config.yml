@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/jandira-tech/jubarte-redlines/discussions
+    about: Ask how to do something, or discuss an idea before it is a request.
+  - name: Security vulnerability
+    url: https://github.com/jandira-tech/jubarte-redlines/security/advisories/new
+    about: Report a vulnerability privately. Do not open a public issue.

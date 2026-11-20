@@ -6,15 +6,19 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Jubarte Redlines Agent Guide
 
-Before changing this repository, read
-`~/T/reconciliation_plan/GET_JUBARTE_RUST.md`. It defines the source, native,
-WASM, and benchmark ownership map.
-
 ## Canonical checkout
 
-`~/T/jubarte-redlines` is the only canonical local source checkout. Older
-copies under `ooxmlsdk`, `ooxmlsdk-redline`, and `jubarte_family` are historical
-and must not be edited, built, benchmarked, or treated as current evidence.
+This repository is the only source of the engine. A maintainer keeps one
+canonical local checkout of it (`scripts/release.sh` reads its path from
+`JUBARTE_CANONICAL_CHECKOUT`). Older copies under `ooxmlsdk`,
+`ooxmlsdk-redline`, and `jubarte_family` are historical and must not be
+edited, built, benchmarked, or treated as current evidence.
+
+Clone with `git clone --recurse-submodules`. The bench test corpus is the
+submodule `tests/corpus/bench` (jandira-tech/jubarte-test-corpus):
+third-party documents that are not licensed with this repository. Tests that
+read it do not compile without it; `tests/corpus_present.rs` says how to
+fetch it. A new third-party test document goes there, not here.
 
 The names used at each boundary are intentional:
 
@@ -136,18 +140,18 @@ new semantics.
 ## Microsoft Word automation (benchmarks)
 
 Word is the source of truth for every PDF and redline reference; soffice never
-is. Drive Word only through the neurotic_docx_bench scripts, run from that
-repository's root:
+is. Drive Word only through the scripts in neurotic_docx_bench's `scripts/`
+folder (they are not in this repository), run from that repository's root:
 
-- `scripts/word_pdf.py` converts docx to PDF, `scripts/word_redline.py`
-  compares pairs, and `scripts/check_redline_identity.py` rejects any redline
+- `word_pdf.py` converts docx to PDF, `word_redline.py`
+  compares pairs, and `check_redline_identity.py` rejects any redline
   that is not the pair its filename names. Always use these scripts. Never
   hand-roll osascript or a converter, not even to diagnose.
 - Run `word_redline.py` in its default one-redline batch mode first. For the
   pairs the batch drops, run it again with `--no-one-redline-osascript`; it
   skips outputs that already exist. Run `check_redline_identity.py` on every
   set of redlines before scoring them.
-- Keep the watchdog (the bench's `scripts/word_watchdog.sh`) pointed at the paths the
+- Keep the watchdog (the bench's `word_watchdog.sh`) pointed at the paths the
   current job actually grows. Batch mode reports progress only in its `--log`,
   not in its output folder. A watchdog on the wrong folder kills a busy Word.
   A Word freeze is normal; the watchdog clears it.

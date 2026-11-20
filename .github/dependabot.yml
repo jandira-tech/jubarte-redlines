@@ -26,6 +26,15 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+  # The npm CLI's dependencies and the Python bindings' development tools.
+  - package-ecosystem: "npm"
+    directory: "/jubarte-wasm/cli"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "uv"
+    directory: "/jubarte-python"
+    schedule:
+      interval: "weekly"
   # The bench test corpus (tests/corpus/bench).
   - package-ecosystem: "gitsubmodule"
     directory: "/"

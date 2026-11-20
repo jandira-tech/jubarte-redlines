@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: Feature request
+description: Something jubarte cannot do yet.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+      description: The task, not the solution. An example document or command helps.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: The command, flag or API you imagine, if you have one in mind.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today
+      description: A workaround, another tool, or nothing.
