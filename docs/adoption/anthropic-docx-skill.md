@@ -76,7 +76,7 @@ Exit codes: `0` done, `1` error, `2` usage error or `validate` findings
 
 ```bash
 uv run --no-project --with jubarte-redlines python -m jubarte --help
-git clone https://github.com/jandira-tech/jubarte-redlines && cd jubarte-redlines
+git clone https://github.com/jandira-tech/jubarte && cd jubarte-redlines
 
 # The accept case your skill warns about, against your own LibreOffice:
 cd examples/agents/accept-spacer-paragraph

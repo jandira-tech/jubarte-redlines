@@ -162,7 +162,7 @@ usage() { sed -n '/^# One-stop release/,/^set -euo pipefail$/p' "$0" | sed '$d' 
 # [you] lines inside a real run at the moment they matter; the closing
 # summary prints every [you] line still owed after the script ends.
 checklist_items() { cat <<'ITEMS'
-0|auto|Security findings on GitHub, read with an admin's token (GitHub shows unpublished advisories to no other, #1761): no repository advisory in triage (a private report), no draft above low that this release does not patch (its patched versions name @V@), no open medium-or-higher Dependabot or code-scanning alert; low drafts and lower alerts are listed (#1750)|scripts/release.sh step 0 (security_gate: gh api repos/jandira-tech/jubarte-redlines/{security-advisories,dependabot/alerts,code-scanning/alerts})
+0|auto|Security findings on GitHub, read with an admin's token (GitHub shows unpublished advisories to no other, #1761): no repository advisory in triage (a private report), no draft above low that this release does not patch (its patched versions name @V@), no open medium-or-higher Dependabot or code-scanning alert; low drafts and lower alerts are listed (#1750)|scripts/release.sh step 0 (security_gate: gh api repos/jandira-tech/jubarte/{security-advisories,dependabot/alerts,code-scanning/alerts})
 before|you|Security review, the half a script cannot do: record known CVE/GHSA fixes in the changelog, and run all four sanitizer fuzz targets plus native allocator runs (step 0 reads the advisories and alerts itself); confirmed exploitable medium/higher findings block release|SECURITY.md; fuzz/README.md; cargo +nightly fuzz run <target> -- -max_total_time=60 (admit, strict_to_transitional, compare, relationships); bash scripts/fuzz-native.sh <target> -max_total_time=60 (compare, relationships)
 before|you|Full suite once before the release: cargo miri nextest run over the whole crate — nightly with the miri component (.config/nextest.toml holds its default-miri profile); know its cost first, and read its CARGO_BIN_EXE and disk-fixture failures as Miri's isolation rule, not engine bugs; when the owner skips it (0.14.0: miri not installed), the release notes say the full suite did not run|cargo +nightly miri nextest run (AGENTS.md; Miri cannot spawn processes and refuses the host's file system under its default isolation)
 before|you|The quality gate of docs/VERSIONING.md on the release binary, measured against the previous release's tag — never a stored baseline file (#1797): the parity ladder sweep of the previous release's binary on the staged ladder corpus shows no finding the candidate adds, and the criterion bench saves A = previous tag and B = candidate (the release's own tag when resuming, HEAD before the tag) runs interleaved A B A B into one CRITERION_HOME under the release's state dir (.scratch/jubarte-loop/release_@V@/gates, never /tmp); the verdict reads each case's saved mean point estimates — delta = mean(b1,b2)/mean(a1,a2) - 1 is a REGRESSION past both the >5% bar and that case's self-noise in this run, UNDECIDABLE when a self-noise above 5% swallows it (rerun on a quieter machine), and either fails the gate; a median generate-time regression past +10 percent triggers the speed review before the release|bash scripts/criterion_abab.sh $(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' $(git rev-parse -q --verify refs/tags/v@V@ >/dev/null && echo 'v@V@^' || echo HEAD)) .scratch/jubarte-loop/release_@V@/gates $(git rev-parse -q --verify refs/tags/v@V@ >/dev/null && echo v@V@ || echo HEAD); python3 tools/parity_ladder.py sweep --bin target/release/jubarte --against .scratch/jubarte-loop/release_@V@/gates/prev/target/release/jubarte --corpus .scratch/jubarte-loop/release_@V@/gates/ladder_corpus (the corpus is the bench's word-based set staged the way release_0.14.0/gates/ladder_corpus keeps it: centralized_mapping.csv + docx_source + docx_redlines_word from corpus/word — restored by `uv run bench fixtures download` in the bench checkout — keyed on corpus/word/pools/word_based_pairs.csv, or the previous release's own gates/ladder_corpus; corpus/word_based is gone)
@@ -170,9 +170,9 @@ before|you|Decide where the release runs: a clean worktree on main, release PR m
 before|you|release_info: the bench wrote the six evidence files for @V@ BEFORE this script runs (its step 3 refuses without them); with a bench checkout at hand the sha256 columns are verified against the real files. An interrupted flow resumes with --only and the stages still owed (install, sample, generate, export, measure, convert, score, write; the order never changes). LibreOffice renders the fixtures it lacks only as 26.8.0.3, the build its work folder names, and the flow refuses another — when the soffice on PATH is newer, install 26.8.0.3 beside it and export SOFFICE=<that LibreOffice.app>/Contents/MacOS/soffice|cd ../neurotic_docx_bench && uv run python -m neurotic_docx_bench.jubarte_release_info @V@ --engine-dir <engine> --binary <candidate>
 before|you|identity: the candidate that produced the scored outputs is byte-identical in output to the release commit's binary on the release samples (the two-binary identity run, exit 0 and its identity.log kept), or the assumption is stated in the release notes when skipped|python3 scripts/identity.py <candidate> <release-commit binary> <out dir> release_info/sample_*_@V@_*.csv --root ../neurotic_docx_bench (outputs named by row index; keeps only differences)
 before|you|parity: the CLI, PyO3 and WASM bindings agree on the samples, build identity proven (--expect-commit HEAD), stale artifacts refused|bash tools/parity/build.sh tools/parity/parity-work; uv run --python 3.12 --script tools/parity/parity_check.py --cli target/release/jubarte --py-python jubarte-python/.venv/bin/python --wasm tools/parity/parity-work/wasm-pkg --expect-commit "$(git rev-parse HEAD)" --engine-dir . --pairs release_info/sample_redline_@V@_*.csv
-0|auto|release.yml reviewed before the tag, by scripts/test_release_workflow.py on Python 3.12: the wheel matrix (7 jobs) equals the README's supported-environments row and scripts/check_release_artifacts.py REQUIRED_WHEEL_TAGS, the binary matrix (5 jobs) equals step 11's list, the three publish jobs (crates.io, PyPI, npm) run in the release environment the trusted publishers name (#1642) and alone with the GitHub-release attestation may mint an id-token, every action is SHA-pinned; GitHub holds the release environment and, whenever keys/ holds a public key, the ZIPSIGN_PRIVATE_KEY secret — the signed era refuses unsigned archives|uv run --no-project --python 3.12 --with pyyaml python scripts/test_release_workflow.py; gh api repos/jandira-tech/jubarte-redlines/environments/release (docs/SELF_UPDATE.md, Signed releases)
+0|auto|release.yml reviewed before the tag, by scripts/test_release_workflow.py on Python 3.12: the wheel matrix (7 jobs) equals the README's supported-environments row and scripts/check_release_artifacts.py REQUIRED_WHEEL_TAGS, the binary matrix (5 jobs) equals step 11's list, the three publish jobs (crates.io, PyPI, npm) run in the release environment the trusted publishers name (#1642) and alone with the GitHub-release attestation may mint an id-token, every action is SHA-pinned; GitHub holds the release environment and, whenever keys/ holds a public key, the ZIPSIGN_PRIVATE_KEY secret — the signed era refuses unsigned archives|uv run --no-project --python 3.12 --with pyyaml python scripts/test_release_workflow.py; gh api repos/jandira-tech/jubarte/environments/release (docs/SELF_UPDATE.md, Signed releases)
 before|you|CI of the release PR: read each red check's log — fix only genuine test or coverage failures; billing, quota, paused-bot and runner-offline reds are reported and left; pushes that start hosted runners are batched into ONE|gh run view <run-id> --log-failed (one batched push per review round)
-8|auto|main takes the release: scripts/push_main.sh pushes, or opens a pull request for the release commits and merges it at once; a refusal (a "Restrict updates" rule with an empty bypass list refuses even an admin merge, and only the owner changes rulesets) stops the run with nothing published|gh api repos/jandira-tech/jubarte-redlines/rulesets
+8|auto|main takes the release: scripts/push_main.sh pushes, or opens a pull request for the release commits and merges it at once; a refusal (a "Restrict updates" rule with an empty bypass list refuses even an admin merge, and only the owner changes rulesets) stops the run with nothing published|gh api repos/jandira-tech/jubarte/rulesets
 before|you|a run in flight owns its worktree: the version bump stays uncommitted from step 1 to step 8 by design — nobody commits, pushes, edits or tidies there until the script ends (0.11.2: the bump was committed mid-run with a .gitignore line that made step 8 unable to stage the vendored app); and only release.sh pushes main and the tag — a hand-pushed tag starts release.yml while steps 9 to 13 never run here (0.13.0: step 13 never ran, so jubarte.pro and the app's facts stayed on 0.12.0); an interrupted run resumes by running release.sh again with the same summaries|git -C <release worktree> status --short (changes there during a run are the release, not dirt)
 8|auto|Queued CI is cancelled right before the tag goes up, after the push to main started CI and Docs again, so release.yml gets the runners first; release.yml's own run is kept|scripts/release.sh (cancel_queued_ci, between push_main and the tag push)
 before|you|stack: the release binary survives a 1 MiB main-thread stack (Windows' default) on the release samples — every job exits zero|python3 scripts/stack1m.py <release binary> ../neurotic_docx_bench <out dir> release_info/sample_*_@V@_*.csv
@@ -192,8 +192,8 @@ before|you|app lock: jubarte-app/src-tauri/Cargo.lock records jubarte-redlines @
 3|auto|the app compiles against the engine before the tag (#1816): a fresh engine-at-HEAD + app-at-main layout — the app checked out at jubarte-app/ inside a copy of this one, so src-tauri takes the engine by path "../..", never the release worktree mid-run — runs cargo test in src-tauri; a compile error or a failing test stops the release before anything is published (--skip-gates skips it with the gates; a stale app lock is normal — no --locked — and an existing tag is no skip)|scripts/release.sh (app_test_gate, between steps 3 and 4: git archive HEAD of both checkouts into mktemp -d)
 before|you|the app's checkout is in place: a clone of arthrod/jubarte-app at jubarte-app/ (this repository does not track it) or named by JUBARTE_APP_DIR, on main, in sync with its origin, clean, able to build the site (node_modules, public/fixtures) — step 13 deploys jubarte.pro from it|jubarte-app/scripts/release-engine.sh @V@ --engine-dir "$PWD" --preflight
 before|you|the App Store path is ready for the after-builds: the asc credentials exist (~/.appstoreconnect), the app's provisioning profiles are present and out of every commit (gitignored; if one ever reached a repository's history, accept it knowingly or rotate it), and App Store Connect holds no @V@ version record already used — Apple refuses a re-used number|ls jubarte-app/src-tauri/*.provisionprofile; (cd jubarte-app && ./scripts/asc-build-status.sh)
-before|you|Trusted publishers (#1642): crates.io jubarte-redlines, PyPI jubarte-docx (new in 0.19.0: register it as a pending publisher at https://pypi.org/manage/account/publishing/ before the tag), PyPI jubarte-redlines, npm jubarte-wasm and npm jubarte-redlines each trust owner jandira-tech, repository jubarte-redlines, workflow release.yml, environment release — release.yml publishes with no token. npm: each configuration must allow npm publish (one made after 2026-09-03 allows only npm stage publish unless that box is ticked, and a plain publish then fails E404), and a new configuration expires unless its first publish lands within two days — 0.13.0 never reached npm for this|npm trust list jubarte-wasm; npm trust list jubarte-redlines (both after npm login); npm trust github <package> --file release.yml --repo jandira-tech/jubarte-redlines --env release --allow-publish -y
-before|you|Trusted publishers for the split's first release: crates.io registers a trusted publisher only on a crate that exists, so the first release of each new crate — crates.io jubarte, jubarte-dom, jubarte-opc, jubarte-render, jubarte-doc, jubarte-markdown, jubarte-edit and jubarte-cli — is published from here with a token (--local-publish-crates; scripts/publish_crates.sh resumes past what is live). Then register owner jandira-tech, repository jubarte-redlines, workflow release.yml, environment release on each of the eight before the next release|scripts/release.sh @V@ <summaries> --local-publish; https://crates.io/crates/<crate>/settings (Trusted Publishing) for each of the eight
+before|you|Trusted publishers (#1642): crates.io jubarte-redlines, PyPI jubarte-docx (new in 0.19.0: register it as a pending publisher at https://pypi.org/manage/account/publishing/ before the tag), PyPI jubarte-redlines, npm jubarte-wasm and npm jubarte-redlines each trust owner jandira-tech, repository jubarte, workflow release.yml, environment release — release.yml publishes with no token. npm: each configuration must allow npm publish (one made after 2026-09-03 allows only npm stage publish unless that box is ticked, and a plain publish then fails E404), and a new configuration expires unless its first publish lands within two days — 0.13.0 never reached npm for this|npm trust list jubarte-wasm; npm trust list jubarte-redlines (both after npm login); npm trust github <package> --file release.yml --repo jandira-tech/jubarte --env release --allow-publish -y
+before|you|Trusted publishers for the split's first release: crates.io registers a trusted publisher only on a crate that exists, so the first release of each new crate — crates.io jubarte, jubarte-dom, jubarte-opc, jubarte-render, jubarte-doc, jubarte-markdown, jubarte-edit and jubarte-cli — is published from here with a token (--local-publish-crates; scripts/publish_crates.sh resumes past what is live). Then register owner jandira-tech, repository jubarte, workflow release.yml, environment release on each of the eight before the next release|scripts/release.sh @V@ <summaries> --local-publish; https://crates.io/crates/<crate>/settings (Trusted Publishing) for each of the eight
 before|you|Only with --local-publish: UV_PUBLISH_TOKEN is exported before the run (name only, never print it), crates.io and npm are logged in, and the owner is at the keyboard for npm's browser approval (2FA) — step 0 checks them only then|set -a; source <owner .env>; set +a; test -n "$UV_PUBLISH_TOKEN"; npm whoami
 before|you|Ring-2 validity ratchet: no NEW OpenXML validator keys vs tools/validity_baseline.tsv and no baselined stems not run; stage the legacy sources from corpus/word/pools/word_based_pairs.csv and verify renamed aliases via corpus/word/notices/RENAMED.csv (NEUROTIC_DOCX_BENCH, default ../neurotic_docx_bench); missing originals require recovery or maintainer-authorized re-blessing; an output the validator cannot even open needs a Word probe before it ships|python3 scripts/stage_ring2_sources.py .scratch/ring2_sources && scripts/redline-sweep.sh tests/corpus/bench/neurotic_docx_bench/corpus/word_based/centralized_mapping.csv .scratch/ring2_sources .scratch/ring2_sweep --validate (the 207-pair mapping the baseline is keyed on; restore dangling bench links with uv run bench fixtures download from the bench root, then rerun staging; then the --probe sweep for refusals)
 before|you|Ring-3 Word open probe, the macOS release gate before any crates.io publish: every redline the release ships opens in real Word — probe_fail=0; paths never under /tmp, stage them under .scratch/. A failure that Word's own redline of the pair shares (probe.log says which) is still a failure: only the owner waives it, and the summaries disclose it|NEUROTIC_DOCX_BENCH=../neurotic_docx_bench JUBARTE_BIN=<release binary> scripts/redline-sweep.sh release_info/sample_redline_@V@_*.csv ../neurotic_docx_bench .scratch/sweep_<date> --probe (Word only through the bench's word_pdf.py under its word_watchdog.sh, one Word job machine-wide; each failure is opened again alone, then Word's own redline of that pair; sweep.log names the binary; no pair generated is a failure)
@@ -397,11 +397,11 @@ pypi_dist_has() { curl -sf "https://pypi.org/pypi/$1/json" | python3 -c 'import 
 pypi_has()    { pypi_dist_has jubarte-docx && pypi_dist_has jubarte-redlines; }
 npm_has()     { [ "$(npm view "jubarte-wasm@$VER" version 2>/dev/null)" = "$VER" ]; }
 npm_cli_has() { [ "$(npm view "jubarte-redlines@$VER" version 2>/dev/null)" = "$VER" ]; }
-ghrel_has()   { gh release view "$TAG" -R jandira-tech/jubarte-redlines >/dev/null 2>&1; }
+ghrel_has()   { gh release view "$TAG" -R jandira-tech/jubarte >/dev/null 2>&1; }
 # The release carries every advertised wheel and the sdist. release.yml
 # creates the release first and attaches its assets after (0.11.2: step 11
 # found the release, then no wheel, and died minutes before they arrived).
-ghrel_wheels() { gh release view "$TAG" --json assets -q '.assets[].name' -R jandira-tech/jubarte-redlines </dev/null 2>/dev/null \
+ghrel_wheels() { gh release view "$TAG" --json assets -q '.assets[].name' -R jandira-tech/jubarte </dev/null 2>/dev/null \
                    | python3 scripts/check_release_artifacts.py - --version "$VER" --sdist >/dev/null 2>&1; }
 # The CI wheels and sdist of $TAG into dist/pypi. gh gets no terminal: under
 # one (0.11.3 ran inside `script` for its log) the download's progress
@@ -412,7 +412,7 @@ ghrel_wheels() { gh release view "$TAG" --json assets -q '.assets[].name' -R jan
 download_ci_wheels() {
   local err=dist/pypi-download.err
   if gh release download "$TAG" --pattern 'jubarte_docx-*' --pattern 'jubarte_redlines-*' \
-      --dir dist/pypi --clobber -R jandira-tech/jubarte-redlines </dev/null >/dev/null 2>"$err" \
+      --dir dist/pypi --clobber -R jandira-tech/jubarte </dev/null >/dev/null 2>"$err" \
      && ls dist/pypi/*.whl >/dev/null 2>&1; then
     rm -f "$err"
     return 0
@@ -426,7 +426,7 @@ download_ci_wheels() {
 # The release.yml run of $TAG: "<id> <status>", empty before it is listed.
 release_run() {
   gh run list -w Release --branch "$TAG" -L 1 --json databaseId,status \
-    -q '.[0] | "\(.databaseId) \(.status)"' -R jandira-tech/jubarte-redlines 2>/dev/null || true
+    -q '.[0] | "\(.databaseId) \(.status)"' -R jandira-tech/jubarte 2>/dev/null || true
 }
 # The conclusion of release.yml's job named $1 on $TAG: empty while it runs
 # or before the run is listed.
@@ -435,7 +435,7 @@ ci_job_state() {
   read -r run_id _ <<<"$(release_run)"
   [ -n "${run_id:-}" ] || return 0
   gh run view "$run_id" --json jobs \
-    -q ".jobs[] | select(.name == \"$1\") | .conclusion" -R jandira-tech/jubarte-redlines </dev/null 2>/dev/null || true
+    -q ".jobs[] | select(.name == \"$1\") | .conclusion" -R jandira-tech/jubarte </dev/null 2>/dev/null || true
 }
 # Waits for release.yml's publish job $2 to put $VER on registry $1, which
 # the probe "${@:3}" proves (#1642). A job that ended without the registry
@@ -454,7 +454,7 @@ ci_published() {
         eventually "$@" && { step "$what $VER published by release.yml ($job)"; return 0; }
         die "release.yml's \"$job\" job succeeded but $what does not list $VER after two minutes — check the registry by hand, then rerun this command (every registry that holds $VER is skipped)" ;;
       failure|cancelled|skipped|timed_out|startup_failure)
-        die "release.yml's \"$job\" job ended $state and $what does not hold $VER. Read it: gh run view --log-failed (run $(release_run)). A refused token means the registry's trusted publisher does not match: owner jandira-tech, repository jubarte-redlines, workflow release.yml, environment release. Fix it and rerun the job (gh run rerun <id> --failed), or rerun this command with --local-publish to publish from here" ;;
+        die "release.yml's \"$job\" job ended $state and $what does not hold $VER. Read it: gh run view --log-failed (run $(release_run)). A refused token means the registry's trusted publisher does not match: owner jandira-tech, repository jubarte, workflow release.yml, environment release. Fix it and rerun the job (gh run rerun <id> --failed), or rerun this command with --local-publish to publish from here" ;;
     esac
     sleep 30
   done
@@ -658,9 +658,9 @@ unlisted_prs() {
     # merged inside another's atomic stack merge (#1670 in 0.14.0) has no
     # merge commit, so the issue its commits fix is all that shows it. Any
     # other failure is a refusal: it would hide a PR the notes owe.
-    if ! refs=$(gh pr view "$n" -R jandira-tech/jubarte-redlines --json closingIssuesReferences,title \
+    if ! refs=$(gh pr view "$n" -R jandira-tech/jubarte --json closingIssuesReferences,title \
                   -q '(.closingIssuesReferences[].number), .title' </dev/null 2>/dev/null); then
-      why=$(gh pr view "$n" -R jandira-tech/jubarte-redlines --json number </dev/null 2>&1 >/dev/null || true)
+      why=$(gh pr view "$n" -R jandira-tech/jubarte --json number </dev/null 2>&1 >/dev/null || true)
       case "$why" in
         *"Could not resolve to a PullRequest"*) refs="" ;;
         *) echo "  ! gh cannot read #$n: $why" >&2; return 1 ;;
@@ -680,7 +680,7 @@ unlisted_prs() {
 # draft, and open Dependabot and code-scanning alerts. An API gh cannot read
 # is a refusal, never an empty list.
 security_findings() {
-  local api=repos/jandira-tech/jubarte-redlines out admin ver_re
+  local api=repos/jandira-tech/jubarte out admin ver_re
   # GitHub lists a repository's unpublished advisories (private reports,
   # drafts) only to its admins and security managers. Any other token gets
   # the published ones, successfully, and an empty list proves nothing
@@ -725,7 +725,7 @@ security_gate() {
 # The GitHub release notes carry the github summary (step 12; step 8 asks
 # it of a tag already on origin).
 gh_note() {
-  gh release view "$TAG" --json body -q .body -R jandira-tech/jubarte-redlines 2>/dev/null \
+  gh release view "$TAG" --json body -q .body -R jandira-tech/jubarte 2>/dev/null \
     | grep -F -e "$GITHUB_SUMMARY" >/dev/null
 }
 # The annotated tag release.yml reads: subject `jubarte $TAG`, the github
@@ -771,9 +771,9 @@ canonical_checkout() {
 head_ci_report() {
   local sha runs reds total passed
   sha=$(git rev-parse HEAD)
-  if ! runs=$(gh api "repos/jandira-tech/jubarte-redlines/commits/$sha/check-runs?per_page=100" --paginate \
+  if ! runs=$(gh api "repos/jandira-tech/jubarte/commits/$sha/check-runs?per_page=100" --paginate \
                 -q '.check_runs[] | if .conclusion == "success" then "ok" elif .conclusion == "skipped" or .conclusion == "neutral" then "skip" else "red \(.name) \(.conclusion // .status)" end' </dev/null); then
-    echo "  CHECK NOW  gh cannot read HEAD's check runs — read them: gh run list -R jandira-tech/jubarte-redlines --commit $sha"
+    echo "  CHECK NOW  gh cannot read HEAD's check runs — read them: gh run list -R jandira-tech/jubarte --commit $sha"
     return 0
   fi
   reds=$(printf '%s\n' "$runs" | sed -n 's/^red //p')
@@ -784,9 +784,9 @@ head_ci_report() {
     printf '%s\n' "$reds" | sed 's/^/             /'
   elif [ "$total" = 0 ]; then
     # no run at all is no evidence, not green (#1763)
-    echo "  CHECK NOW  HEAD has no check run: its workflows never ran — read gh run list -R jandira-tech/jubarte-redlines --commit $sha"
+    echo "  CHECK NOW  HEAD has no check run: its workflows never ran — read gh run list -R jandira-tech/jubarte --commit $sha"
   elif [ "$passed" = 0 ]; then
-    echo "  CHECK NOW  none of HEAD's $total check runs succeeded (each was skipped or neutral), so nothing passed — read gh run list -R jandira-tech/jubarte-redlines --commit $sha"
+    echo "  CHECK NOW  none of HEAD's $total check runs succeeded (each was skipped or neutral), so nothing passed — read gh run list -R jandira-tech/jubarte --commit $sha"
   else
     step "every check run of HEAD passed ($passed passed, $((total - passed)) skipped or neutral)"
   fi
@@ -798,9 +798,9 @@ cancel_queued_ci() {
   local id name n=0
   while read -r id name; do
     if [ -z "$id" ] || [ "$name" = Release ]; then continue; fi
-    gh run cancel "$id" -R jandira-tech/jubarte-redlines >/dev/null 2>&1 && n=$((n + 1))
+    gh run cancel "$id" -R jandira-tech/jubarte >/dev/null 2>&1 && n=$((n + 1))
   done < <(gh run list -L 100 --json databaseId,name,status \
-             -q '.[] | select(.status != "completed") | "\(.databaseId) \(.name)"' -R jandira-tech/jubarte-redlines </dev/null 2>/dev/null)
+             -q '.[] | select(.status != "completed") | "\(.databaseId) \(.name)"' -R jandira-tech/jubarte </dev/null 2>/dev/null)
   step "cancelled $n CI run(s) in flight so release.yml gets the runners"
 }
 # crates.io takes at most five keywords (ASCII, a letter first, then letters,
@@ -948,10 +948,10 @@ app_release --preflight
 # on the scripts' floor. What it cannot read lives in GitHub's settings.
 uv run -q --no-project --python 3.12 --with pyyaml python scripts/test_release_workflow.py >/dev/null 2>&1 \
   || die "release.yml fails its review — run: uv run --no-project --python 3.12 --with pyyaml python scripts/test_release_workflow.py"
-gh api repos/jandira-tech/jubarte-redlines/environments/release >/dev/null 2>&1 \
+gh api repos/jandira-tech/jubarte/environments/release >/dev/null 2>&1 \
   || die "no \`release\` environment on GitHub — the registries trust release.yml in that environment (#1642)"
 if compgen -G 'keys/*.pub' >/dev/null; then
-  gh secret list -R jandira-tech/jubarte-redlines --json name -q '.[].name' </dev/null 2>/dev/null \
+  gh secret list -R jandira-tech/jubarte --json name -q '.[].name' </dev/null 2>/dev/null \
     | grep -x ZIPSIGN_PRIVATE_KEY >/dev/null \
     || die "keys/ holds a release public key but the ZIPSIGN_PRIVATE_KEY secret is not set — signed-era binaries would refuse this release"
 fi
@@ -1068,7 +1068,7 @@ say "2. Changelog check"
 
 grep -q "^## \[$VER\] - [0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}" CHANGELOG.md \
   || die "CHANGELOG.md has no dated \`## [$VER] - YYYY-MM-DD\` section — write it first"
-grep -q "^\[$VER\]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v$VER" CHANGELOG.md \
+grep -q "^\[$VER\]: https://github.com/jandira-tech/jubarte/releases/tag/v$VER" CHANGELOG.md \
   || die "CHANGELOG.md is missing the \`[$VER]: …/tag/$TAG\` release-link footer"
 step "$VER section + link footer present"
 # release.yml cuts the section verbatim into the GitHub release notes.
@@ -1530,9 +1530,9 @@ if [ -n "$remote_tag" ]; then
   else
     gh_note || {
       # notes can be edited only on a release that exists (#1766)
-      gh release view "$TAG" -R jandira-tech/jubarte-redlines >/dev/null 2>&1 \
-        || die "$TAG on origin is not subject 'jubarte $TAG' with the github summary in its body, and no GitHub release exists for it — read its release.yml run (gh run list -R jandira-tech/jubarte-redlines --workflow release.yml --branch $TAG): if it published nothing, replace the tag (git push origin :refs/tags/$TAG && git tag -d $TAG) and rerun, which writes it in shape; if it published, let it finish and put the summary into the notes it makes"
-      die "$TAG on origin is not subject 'jubarte $TAG' with the github summary in its body, so release.yml's notes lack the summary — put it into the notes (gh release edit $TAG -R jandira-tech/jubarte-redlines --notes-file <file>), then rerun"
+      gh release view "$TAG" -R jandira-tech/jubarte >/dev/null 2>&1 \
+        || die "$TAG on origin is not subject 'jubarte $TAG' with the github summary in its body, and no GitHub release exists for it — read its release.yml run (gh run list -R jandira-tech/jubarte --workflow release.yml --branch $TAG): if it published nothing, replace the tag (git push origin :refs/tags/$TAG && git tag -d $TAG) and rerun, which writes it in shape; if it published, let it finish and put the summary into the notes it makes"
+      die "$TAG on origin is not subject 'jubarte $TAG' with the github summary in its body, so release.yml's notes lack the summary — put it into the notes (gh release edit $TAG -R jandira-tech/jubarte --notes-file <file>), then rerun"
     }
     echo "  ! $TAG on origin lacks the summary in its body; its GitHub notes carry it" >&2
   fi
@@ -1665,7 +1665,7 @@ release_from_artifacts() {
   mkdir -p dist/release
   # The run's sdist artifact is the one publish-pypi uploads: the release
   # takes it as is, never a second maturin build with other bytes.
-  gh run download "$run_id" -D dist/release-art -R jandira-tech/jubarte-redlines
+  gh run download "$run_id" -D dist/release-art -R jandira-tech/jubarte
   find dist/release-art -type f -exec mv {} dist/release/ \;
   rm -rf dist/release-art
   # A run that lost a wheel job (or the sdist) never becomes a public
@@ -1685,17 +1685,17 @@ release_from_artifacts() {
     fi
     # Only release.yml's release job attests, and it may have attested these
     # bytes before it died, so the note says only what is known (#1768).
-    printf '> These assets were not published by release.yml'"'"'s release job: they come from run %s'"'"'s artifacts. Whether a build-provenance attestation covers one, gh attestation verify FILE -R jandira-tech/jubarte-redlines says.\n\n' "$run_id"
+    printf '> These assets were not published by release.yml'"'"'s release job: they come from run %s'"'"'s artifacts. Whether a build-provenance attestation covers one, gh attestation verify FILE -R jandira-tech/jubarte says.\n\n' "$run_id"
     awk -v ver="$VER" '
       index($0, "## [" ver "] - ") == 1 { on=1; next }
       on && /^## \[/ { exit }
       on { print }
     ' CHANGELOG.md
     [ -n "$PREV_TAG" ] && [ "$PREV_TAG" != "$TAG" ] && printf \
-      '\n**Full Changelog**: https://github.com/jandira-tech/jubarte-redlines/compare/%s...%s\n' \
+      '\n**Full Changelog**: https://github.com/jandira-tech/jubarte/compare/%s...%s\n' \
       "$PREV_TAG" "$TAG"
   } > dist/release-notes.md
-  gh release create "$TAG" --title "jubarte $TAG" --notes-file dist/release-notes.md -R jandira-tech/jubarte-redlines dist/release/*
+  gh release create "$TAG" --title "jubarte $TAG" --notes-file dist/release-notes.md -R jandira-tech/jubarte dist/release/*
   step "GitHub release $TAG created from run $run_id${missing:+ — missing:$missing}"
 }
 
@@ -1794,10 +1794,10 @@ gh_attested() {
   # alone pass an archive another release's run attested (#1749)
   sha=$(git rev-parse "$TAG^{commit}") || return 1
   rm -rf dist/attest
-  gh release download "$TAG" -p "$f" -D dist/attest -R jandira-tech/jubarte-redlines >/dev/null 2>&1 \
+  gh release download "$TAG" -p "$f" -D dist/attest -R jandira-tech/jubarte >/dev/null 2>&1 \
     || { rm -rf dist/attest; return 1; }
-  gh attestation verify "dist/attest/$f" -R jandira-tech/jubarte-redlines \
-    --signer-workflow jandira-tech/jubarte-redlines/.github/workflows/release.yml \
+  gh attestation verify "dist/attest/$f" -R jandira-tech/jubarte \
+    --signer-workflow jandira-tech/jubarte/.github/workflows/release.yml \
     --source-ref "refs/tags/$TAG" --source-digest "$sha" \
     --deny-self-hosted-runners >/dev/null 2>&1 || rc=1
   rm -rf dist/attest
@@ -1826,7 +1826,7 @@ archive_runs() {
   local f dir=dist/install-proof/archive rc=0
   f=$(host_archive) || return 1
   rm -rf "$dir" && mkdir -p "$dir"
-  gh release download "$TAG" -p "$f" -p SHA256SUMS.txt -D "$dir" -R jandira-tech/jubarte-redlines >/dev/null 2>&1 || rc=1
+  gh release download "$TAG" -p "$f" -p SHA256SUMS.txt -D "$dir" -R jandira-tech/jubarte >/dev/null 2>&1 || rc=1
   [ "$rc" = 0 ] && (cd "$dir" \
     && awk -v f="$f" '$2 == f' SHA256SUMS.txt | grep . | shasum -a 256 -c - >/dev/null 2>&1 \
     && tar xzf "$f" \
@@ -1925,7 +1925,7 @@ app_release \
 check_now 13
 
 say "Released jubarte $VER"
-echo "  https://github.com/jandira-tech/jubarte-redlines/releases/tag/$TAG"
+echo "  https://github.com/jandira-tech/jubarte/releases/tag/$TAG"
 echo "  https://crates.io/crates/jubarte-redlines/$VER"
 echo "  https://pypi.org/project/jubarte-docx/$VER/"
 echo "  https://www.npmjs.com/package/jubarte-wasm/v/$VER"

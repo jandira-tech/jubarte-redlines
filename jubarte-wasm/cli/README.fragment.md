@@ -7,7 +7,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 Compare two Word documents into a tracked-changes document that opens cleanly
 in Microsoft Word; list, accept or reject the changes; apply edit plans;
 render DOCX to PDF. Runs on the [`jubarte-wasm`](https://www.npmjs.com/package/jubarte-wasm)
-WebAssembly build of the [jubarte](https://github.com/jandira-tech/jubarte-redlines)
+WebAssembly build of the [jubarte](https://github.com/jandira-tech/jubarte)
 engine: no Word, no LibreOffice, no network.
 
 ```sh

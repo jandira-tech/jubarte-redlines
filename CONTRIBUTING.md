@@ -7,7 +7,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 # Contributing
 
 Submit bugs and enhancement requests in the searchable public
-[issue tracker](https://github.com/jandira-tech/jubarte-redlines/issues).
+[issue tracker](https://github.com/jandira-tech/jubarte/issues).
 English reports, code comments and documentation are welcome. Search existing
 issues first. Include the engine version, platform, command or API call,
 expected result, actual result and a minimal reproduction. Attach only documents

@@ -5,8 +5,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Question or discussion
-    url: https://github.com/jandira-tech/jubarte-redlines/discussions
+    url: https://github.com/jandira-tech/jubarte/discussions
     about: Ask how to do something, or discuss an idea before it is a request.
   - name: Security vulnerability
-    url: https://github.com/jandira-tech/jubarte-redlines/security/advisories/new
+    url: https://github.com/jandira-tech/jubarte/security/advisories/new
     about: Report a vulnerability privately. Do not open a public issue.

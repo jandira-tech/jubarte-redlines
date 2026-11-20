@@ -23,7 +23,7 @@ fetch it. A new third-party test document goes there, not here.
 The names used at each boundary are intentional:
 
 - local source folder: `jubarte-redlines`
-- GitHub repository: `jandira-tech/jubarte-redlines` (npm keeps
+- GitHub repository: `jandira-tech/jubarte` (npm keeps
   `jubarte-redlines`; Rust path: `jubarte::`)
 - PyPI (since 0.19.0): `jubarte-docx`, imported as `jubarte`, with the
   `jubarte` command; `jubarte-redlines` is its pure-Python compatibility

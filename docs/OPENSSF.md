@@ -24,7 +24,7 @@ in this review; a CPE is optional, and none is invented.
 |---|---|
 | description_good | Evidence: README introduction describes comparison, tracked changes and rendering. |
 | interact | Fixed: README links installation, issues, CONTRIBUTING and SECURITY. |
-| contribution_requirements | Fixed: [CONTRIBUTING](../CONTRIBUTING.md) describes PRs, licensing, Word parity, rustfmt, strict Clippy and tests. Public URL after merge: https://github.com/jandira-tech/jubarte-redlines/blob/main/CONTRIBUTING.md |
+| contribution_requirements | Fixed: [CONTRIBUTING](../CONTRIBUTING.md) describes PRs, licensing, Word parity, rustfmt, strict Clippy and tests. Public URL after merge: https://github.com/jandira-tech/jubarte/blob/main/CONTRIBUTING.md |
 | documentation_interface | Evidence: README CLI examples and `--help`; Rust input/output types at https://docs.rs/jubarte ; binding references in jubarte-python/README.md and jubarte-wasm/README.md. |
 | english | Evidence: English documentation; contribution policy explicitly accepts English reports/comments. |
 | maintained | Evidence: active interim commits and releases; review the public history at certification time. |
@@ -33,23 +33,23 @@ in this review; a CPE is optional, and none is invented.
 
 | Criterion | Disposition and evidence |
 |---|---|
-| repo_interim | Evidence: public git history and reviewed PRs between releases, https://github.com/jandira-tech/jubarte-redlines/commits/main/ |
+| repo_interim | Evidence: public git history and reviewed PRs between releases, https://github.com/jandira-tech/jubarte/commits/main/ |
 | version_unique | Evidence: Cargo.toml version, VERSIONING.md and release.sh registry/version checks. |
 | version_semver | Evidence: VERSIONING.md explicitly specifies SemVer, including pre-1.0 rules. |
-| version_tags | Evidence: release.sh creates annotated `vX.Y.Z` tags; public tags at https://github.com/jandira-tech/jubarte-redlines/tags |
+| version_tags | Evidence: release.sh creates annotated `vX.Y.Z` tags; public tags at https://github.com/jandira-tech/jubarte/tags |
 | release_notes_vulns | Fixed policy: CONTRIBUTING requires public vulnerability identifiers and upgrade guidance. Unreleased Security entry records RUSTSEC-2026-0194 dependency mitigation. Review past engine CVE/GHSA assignments before claiming compliance or N/A; a dependency advisory alone is not an engine CVE. |
 
 ## Reporting
 
 | Criterion | Disposition and evidence |
 |---|---|
-| report_process / osps_do_02_01 | Fixed discoverability and required URL: https://github.com/jandira-tech/jubarte-redlines/issues ; CONTRIBUTING requests version, platform and a minimal reproduction. |
+| report_process / osps_do_02_01 | Fixed discoverability and required URL: https://github.com/jandira-tech/jubarte/issues ; CONTRIBUTING requests version, platform and a minimal reproduction. |
 | report_tracker | Evidence: GitHub Issues enabled (verified via API). |
 | report_responses | Review: API returned no public issues in this repository; no response percentage can be computed. Check other reporting channels and the required 2–12 month window before answering. |
 | enhancement_responses | Review: same empty tracker history; do not invent an acknowledgement rate. |
-| report_archive | Evidence and required URL: https://github.com/jandira-tech/jubarte-redlines/issues?q=is%3Aissue ; includes closed reports/responses. |
-| vulnerability_report_process | Fixed: https://github.com/jandira-tech/jubarte-redlines/blob/main/SECURITY.md after merge. |
-| vulnerability_report_private | Evidence: GitHub private vulnerability reporting enabled; SECURITY links https://github.com/jandira-tech/jubarte-redlines/security/advisories/new and explains privacy. |
+| report_archive | Evidence and required URL: https://github.com/jandira-tech/jubarte/issues?q=is%3Aissue ; includes closed reports/responses. |
+| vulnerability_report_process | Fixed: https://github.com/jandira-tech/jubarte/blob/main/SECURITY.md after merge. |
+| vulnerability_report_private | Evidence: GitHub private vulnerability reporting enabled; SECURITY links https://github.com/jandira-tech/jubarte/security/advisories/new and explains privacy. |
 | vulnerability_report_response | N/A supported: authenticated published/triage/draft/closed advisory queries are empty, and on 2026-10-08 the maintainer confirmed no reports outside GitHub. See OPENSSF_VERIFICATION.md. |
 
 ## Quality

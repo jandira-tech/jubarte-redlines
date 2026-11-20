@@ -45,7 +45,7 @@ CRATES=(jubarte-dom jubarte-opc jubarte-redlines jubarte-render jubarte-doc
 
 CARGO=${CARGO:-cargo}
 API=${CRATES_IO_API:-https://crates.io/api/v1}
-AGENT="jubarte-release (github.com/jandira-tech/jubarte-redlines)"
+AGENT="jubarte-release (github.com/jandira-tech/jubarte)"
 
 die() { echo "publish_crates: $*" >&2; exit 1; }
 

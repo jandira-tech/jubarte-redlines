@@ -10,7 +10,7 @@ body:
     attributes:
       value: |
         Microsoft Word is the reference. Check
-        [docs/WORD_DIFFERENCES.md](https://github.com/jandira-tech/jubarte-redlines/blob/main/docs/WORD_DIFFERENCES.md)
+        [docs/WORD_DIFFERENCES.md](https://github.com/jandira-tech/jubarte/blob/main/docs/WORD_DIFFERENCES.md)
         first: some differences are recorded choices.
   - type: input
     id: version

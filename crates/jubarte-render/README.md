@@ -10,11 +10,11 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 [![crates.io](https://img.shields.io/crates/v/jubarte-render.svg)](https://crates.io/crates/jubarte-render)
 [![docs.rs](https://docs.rs/jubarte-render/badge.svg)](https://docs.rs/jubarte-render)
-[![CI](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml)
-[![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](https://github.com/jandira-tech/jubarte-redlines/blob/v0.18.0/crates/jubarte-render/LICENSE)
+[![CI](https://github.com/jandira-tech/jubarte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jandira-tech/jubarte/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](https://github.com/jandira-tech/jubarte/blob/v0.18.0/crates/jubarte-render/LICENSE)
 [![docs](https://readthedocs.org/projects/jubarte-render/badge/?version=latest)](https://jubarte.readthedocs.io/projects/jubarte-render/en/latest/)
 
-The render product of the [jubarte](https://github.com/jandira-tech/jubarte-redlines) DOCX engine: it lays
+The render product of the [jubarte](https://github.com/jandira-tech/jubarte) DOCX engine: it lays
 a Word document out page by page and writes a PDF, or one PNG per page. The
 layout engine is its own and aims at Microsoft Word's output; it does not
 call Word or LibreOffice. Tracked changes and comments are drawn in one of
@@ -109,13 +109,13 @@ The crate bundles 16 font programs under `assets/fonts/`: Carlito and the
 Liberation Sans, Serif and Mono families, each in four styles. They are not
 covered by the AGPL: both families are under the SIL Open Font License 1.1,
 with their copyright notices in
-[`LICENSE-Carlito`](https://github.com/jandira-tech/jubarte-redlines/blob/v0.18.0/crates/jubarte-render/assets/fonts/LICENSE-Carlito) and
-[`LICENSE-Liberation`](https://github.com/jandira-tech/jubarte-redlines/blob/v0.18.0/crates/jubarte-render/assets/fonts/LICENSE-Liberation), which ship in the
+[`LICENSE-Carlito`](https://github.com/jandira-tech/jubarte/blob/v0.18.0/crates/jubarte-render/assets/fonts/LICENSE-Carlito) and
+[`LICENSE-Liberation`](https://github.com/jandira-tech/jubarte/blob/v0.18.0/crates/jubarte-render/assets/fonts/LICENSE-Liberation), which ship in the
 crate beside the fonts.
 
 ## License
 
-The code is [AGPL-3.0-only](https://github.com/jandira-tech/jubarte-redlines/blob/v0.18.0/crates/jubarte-render/LICENSE); the bundled fonts keep the licenses
+The code is [AGPL-3.0-only](https://github.com/jandira-tech/jubarte/blob/v0.18.0/crates/jubarte-render/LICENSE); the bundled fonts keep the licenses
 named above. Review the AGPL's requirements before you embed the crate in a
 product or a network service.
 
@@ -123,6 +123,6 @@ product or a network service.
 
 - API reference: [docs.rs/jubarte-render](https://docs.rs/jubarte-render)
 - Guide: [jubarte-render on ReadTheDocs](https://jubarte.readthedocs.io/projects/jubarte-render/en/latest/), part of the [jubarte documentation](https://jubarte.readthedocs.io/en/latest/)
-- Repository: [github.com/jandira-tech/jubarte-redlines](https://github.com/jandira-tech/jubarte-redlines) ([this crate](https://github.com/jandira-tech/jubarte-redlines/tree/v0.18.0/crates/jubarte-render))
-- Command line: the [CLI reference](https://github.com/jandira-tech/jubarte-redlines/blob/v0.18.0/README.md#cli-reference) of the root README
-- Changes: [CHANGELOG.md](https://github.com/jandira-tech/jubarte-redlines/blob/v0.18.0/CHANGELOG.md)
+- Repository: [github.com/jandira-tech/jubarte](https://github.com/jandira-tech/jubarte) ([this crate](https://github.com/jandira-tech/jubarte/tree/v0.18.0/crates/jubarte-render))
+- Command line: the [CLI reference](https://github.com/jandira-tech/jubarte/blob/v0.18.0/README.md#cli-reference) of the root README
+- Changes: [CHANGELOG.md](https://github.com/jandira-tech/jubarte/blob/v0.18.0/CHANGELOG.md)

@@ -10,11 +10,11 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 [![crates.io](https://img.shields.io/crates/v/jubarte-redlines.svg)](https://crates.io/crates/jubarte-redlines)
 [![docs.rs](https://docs.rs/jubarte-redlines/badge.svg)](https://docs.rs/jubarte-redlines)
-[![CI](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml)
-[![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](https://github.com/jandira-tech/jubarte-redlines/blob/v0.18.0/crates/jubarte-redlines/LICENSE)
+[![CI](https://github.com/jandira-tech/jubarte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jandira-tech/jubarte/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](https://github.com/jandira-tech/jubarte/blob/v0.18.0/crates/jubarte-redlines/LICENSE)
 [![docs](https://readthedocs.org/projects/jubarte-redlines/badge/?version=latest)](https://jubarte.readthedocs.io/projects/jubarte-redlines/en/latest/)
 
-The compare product of the [jubarte](https://github.com/jandira-tech/jubarte-redlines) DOCX engine: two
+The compare product of the [jubarte](https://github.com/jandira-tech/jubarte) DOCX engine: two
 Word documents in, one tracked-changes redline out, with native insertions,
 deletions, moves and formatting changes that open cleanly in Microsoft Word.
 It also accepts or rejects the revisions in a package.
@@ -106,13 +106,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## License
 
-[AGPL-3.0-only](https://github.com/jandira-tech/jubarte-redlines/blob/v0.18.0/crates/jubarte-redlines/LICENSE). Review the license's requirements before you embed
+[AGPL-3.0-only](https://github.com/jandira-tech/jubarte/blob/v0.18.0/crates/jubarte-redlines/LICENSE). Review the license's requirements before you embed
 the crate in a product or a network service.
 
 ## Links
 
 - API reference: [docs.rs/jubarte-redlines](https://docs.rs/jubarte-redlines)
 - Guide: [jubarte-redlines on ReadTheDocs](https://jubarte.readthedocs.io/projects/jubarte-redlines/en/latest/), part of the [jubarte documentation](https://jubarte.readthedocs.io/en/latest/)
-- Repository: [github.com/jandira-tech/jubarte-redlines](https://github.com/jandira-tech/jubarte-redlines) ([this crate](https://github.com/jandira-tech/jubarte-redlines/tree/v0.18.0/crates/jubarte-redlines))
-- Command line: the [CLI reference](https://github.com/jandira-tech/jubarte-redlines/blob/v0.18.0/README.md#cli-reference) of the root README
-- Changes: [CHANGELOG.md](https://github.com/jandira-tech/jubarte-redlines/blob/v0.18.0/CHANGELOG.md)
+- Repository: [github.com/jandira-tech/jubarte](https://github.com/jandira-tech/jubarte) ([this crate](https://github.com/jandira-tech/jubarte/tree/v0.18.0/crates/jubarte-redlines))
+- Command line: the [CLI reference](https://github.com/jandira-tech/jubarte/blob/v0.18.0/README.md#cli-reference) of the root README
+- Changes: [CHANGELOG.md](https://github.com/jandira-tech/jubarte/blob/v0.18.0/CHANGELOG.md)

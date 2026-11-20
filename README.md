@@ -16,8 +16,8 @@ changes programmatically, apply validated edit plans, and render DOCX to PDF
 or PNG — from Rust, Python, Node/browser, or the CLI.
 
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15267/badge)](https://www.bestpractices.dev/projects/15267)
-[![CI](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/jandira-tech/jubarte-redlines/branch/main/graph/badge.svg)](https://codecov.io/gh/jandira-tech/jubarte-redlines)
+[![CI](https://github.com/jandira-tech/jubarte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jandira-tech/jubarte/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/jandira-tech/jubarte/branch/main/graph/badge.svg)](https://codecov.io/gh/jandira-tech/jubarte)
 [![crates.io](https://img.shields.io/crates/v/jubarte.svg)](https://crates.io/crates/jubarte)
 [![docs.rs](https://docs.rs/jubarte/badge.svg)](https://docs.rs/jubarte)
 [![PyPI](https://img.shields.io/pypi/v/jubarte-docx.svg)](https://pypi.org/project/jubarte-docx/)
@@ -52,7 +52,7 @@ Word-style review workflows without automating Microsoft Word or LibreOffice.
 ## Feedback and contributions
 
 Report bugs and request enhancements in the public
-[issue tracker](https://github.com/jandira-tech/jubarte-redlines/issues), which
+[issue tracker](https://github.com/jandira-tech/jubarte/issues), which
 also archives reports and responses. English reports are welcome. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for pull requests, coding requirements,
 building and tests, and [SECURITY.md](SECURITY.md) for private vulnerability
@@ -69,7 +69,7 @@ jubarte --version
 ```
 
 Prebuilt archives are also published on
-[GitHub Releases](https://github.com/jandira-tech/jubarte-redlines/releases).
+[GitHub Releases](https://github.com/jandira-tech/jubarte/releases).
 Check the assets attached to the release you intend to install.
 
 ### Compare two Word documents
@@ -359,7 +359,7 @@ stays under `--root`.
 | --- | --- |
 | Claude Code | `claude mcp add --transport stdio jubarte --scope project -- uvx --from 'jubarte-docx[mcp]' jubarte-mcp --root .` |
 | Codex | `codex mcp add jubarte -- uvx --from 'jubarte-docx[mcp]' jubarte-mcp --root .` |
-| Gemini CLI | `gemini extensions install https://github.com/jandira-tech/jubarte-redlines` |
+| Gemini CLI | `gemini extensions install https://github.com/jandira-tech/jubarte` |
 
 Tools, security model and config files: [docs/adoption/mcp.md](docs/adoption/mcp.md).
 
@@ -1131,7 +1131,7 @@ your own environment before choosing an engine.
 | CLI release workflow | Linux x86_64/arm64, macOS x86_64/arm64, Windows x86_64 targets |
 
 Release assets can vary by tag. Check the
-[release page](https://github.com/jandira-tech/jubarte-redlines/releases)
+[release page](https://github.com/jandira-tech/jubarte/releases)
 before scripting a binary download.
 
 A Word 97-2003 `.doc` converts to `.docx` with the native binary's
@@ -1240,10 +1240,10 @@ a product or network service.
 [jandira.tech](https://www.jandira.tech) · [arthur.law](https://arthur.law) ·
 [Cicero](https://www.cicero.im) · [LinkedIn](https://linkedin.com/in/arthrod) ·
 `contact@arthur.law`
-- [GitHub](https://github.com/jandira-tech/jubarte-redlines)
+- [GitHub](https://github.com/jandira-tech/jubarte)
 - [crates.io](https://crates.io/crates/jubarte)
 - [docs.rs](https://docs.rs/jubarte)
 - [PyPI](https://pypi.org/project/jubarte-docx/)
 - [npm](https://www.npmjs.com/package/jubarte-wasm)
-- [Releases](https://github.com/jandira-tech/jubarte-redlines/releases)
+- [Releases](https://github.com/jandira-tech/jubarte/releases)
 - [npm CLI](https://www.npmjs.com/package/jubarte-redlines)
