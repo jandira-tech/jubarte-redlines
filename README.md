@@ -56,7 +56,7 @@ Report bugs and request enhancements in the public
 also archives reports and responses. English reports are welcome. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for pull requests, coding requirements,
 building and tests, and [SECURITY.md](SECURITY.md) for private vulnerability
-reports. The [OpenSSF evidence review](docs/OPENSSF.md) tracks the criteria
+reports. The [OpenSSF evidence review](docs/maintainers/OPENSSF.md) tracks the criteria
 and outstanding maintainer attestations.
 
 ## Quick start
@@ -165,7 +165,7 @@ Topical documents: [Markdown pipeline](docs/MARKDOWN.md) ·
 [Word layout rules](docs/WORD_LAYOUT_RULES.md) ·
 [comment balloons](docs/WORD_COMMENT_BALLOONS.md) ·
 [self-update](docs/SELF_UPDATE.md) ·
-[benchmark classes](docs/bench_classes.md) ·
+[benchmark classes](docs/maintainers/bench_classes.md) ·
 [bomb prevention](docs/bomb_prevention.md) ·
 [per-release API snapshots](docs/api/README.md).
 
@@ -1098,8 +1098,8 @@ and still trigger Word repair behavior.
 See:
 
 - [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md)
-- [`docs/VERSIONING.md`](docs/VERSIONING.md)
-- [`docs/bench_classes.md`](docs/bench_classes.md)
+- [`docs/maintainers/VERSIONING.md`](docs/maintainers/VERSIONING.md)
+- [`docs/maintainers/bench_classes.md`](docs/maintainers/bench_classes.md)
 
 ## Benchmarks
 

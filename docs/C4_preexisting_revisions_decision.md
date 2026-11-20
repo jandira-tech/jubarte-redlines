@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 **Status:** **DEFERRED — waiting on Arthur** (re-checked 2026-10-01 and
 2026-10-19 at `aba48bd5`/0.12.0: still no option pick, still deferred;
 `accept(redline) ≡ B` remains the shipped contract, so the C4 fixtures are
-still the open residual in `docs/bench_classes.md`)
+still the open residual in `docs/maintainers/bench_classes.md`)
 **Date:** 2026-07-16
 **Class:** C4-preexisting-revisions (`suggesting_*` fixtures)
 **Plan task:** B4
@@ -38,7 +38,7 @@ oracle shape); not measured re-scores of implemented options.
 ## Recommendation until decision
 
 - **Do not implement B or C** in this plan.
-- Leave C4 members in `docs/bench_classes.md` with status **open / deferred**.
+- Leave C4 members in `docs/maintainers/bench_classes.md` with status **open / deferred**.
 - Ratchet-1 and ship bar must be met **without** treating C4 as fixed.
 
 ## Decision needed

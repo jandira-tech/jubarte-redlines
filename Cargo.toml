@@ -62,7 +62,7 @@ include = [
   "/README.crates.md",
   "/CHANGELOG.md",
   "/KNOWN_ISSUES.md",
-  "/docs/TUNING_AUDIT.md",
+  "/docs/maintainers/TUNING_AUDIT.md",
   "/LICENSE",
   "/LICENSES.md",
   "/NOTICE",

@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Tag-driven release: push `vX.Y.Z` (see docs/VERSIONING.md) and this builds the
+# Tag-driven release: push `vX.Y.Z` (see docs/maintainers/VERSIONING.md) and this builds the
 # `jubarte` CLI for the desktop targets and attaches the archives to a
 # GitHub release named `jubarte vX.Y.Z`, with the matching CHANGELOG.md
 # section as the release notes. The publish-* jobs put the same release on

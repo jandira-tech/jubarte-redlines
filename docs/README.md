@@ -52,11 +52,11 @@ Word is the reference for every redline and every PDF.
 | Page | Covers |
 |---|---|
 | [maintainers/MAINTENANCE.md](maintainers/MAINTENANCE.md) | How the repository is kept tidy, and the backlog |
-| [VERSIONING.md](VERSIONING.md) | Versioning and the release process |
-| [OPENSSF.md](OPENSSF.md), [OPENSSF_VERIFICATION.md](OPENSSF_VERIFICATION.md) | OpenSSF best-practice evidence |
-| [TUNING_AUDIT.md](TUNING_AUDIT.md) | The renderer's tuning constants |
-| [bench_classes.md](bench_classes.md) | Benchmark defect classes |
-| [CSHARP_MARKDOWN_PROJECTION_MAPPING.md](CSHARP_MARKDOWN_PROJECTION_MAPPING.md) | The C# Markdown projection mapped to Rust |
+| [VERSIONING.md](maintainers/VERSIONING.md) | Versioning and the release process |
+| [OPENSSF.md](maintainers/OPENSSF.md), [OPENSSF_VERIFICATION.md](maintainers/OPENSSF_VERIFICATION.md) | OpenSSF best-practice evidence |
+| [TUNING_AUDIT.md](maintainers/TUNING_AUDIT.md) | The renderer's tuning constants |
+| [bench_classes.md](maintainers/bench_classes.md) | Benchmark defect classes |
+| [CSHARP_MARKDOWN_PROJECTION_MAPPING.md](maintainers/CSHARP_MARKDOWN_PROJECTION_MAPPING.md) | The C# Markdown projection mapped to Rust |
 | [design/cli-v2/](design/cli-v2/README.md) | The command-line redesign and its evidence |
 | [rtd/](rtd/README.md) | The ReadTheDocs projects, one per crate |
 

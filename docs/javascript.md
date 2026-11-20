@@ -2558,7 +2558,7 @@ node-redlines, web-redlines, node-pdf and web-pdf).
 them into `npm/` and stamps `ENGINE_COMMIT.txt`; `node jubarte-wasm/npm-smoke.mjs`
 smoke-tests the assembly. Publishing happens through `scripts/release.sh`
 (`jubarte-wasm` first, then `jubarte-redlines`); the package version tracks
-the embedded engine version. Details: [VERSIONING](VERSIONING.md).
+the embedded engine version. Details: [VERSIONING](maintainers/VERSIONING.md).
 
 ## Keeping this page current
 

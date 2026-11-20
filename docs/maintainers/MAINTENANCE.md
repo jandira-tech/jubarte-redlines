@@ -78,7 +78,7 @@ description.
 - Prune merged and stale branches and local worktrees.
 - Delete scripts and documents that lost their last user.
 - Re-run the OpenSSF best-practice self-assessment
-  ([OPENSSF.md](../OPENSSF.md)).
+  ([OPENSSF.md](OPENSSF.md)).
 - Read this page and correct it.
 
 ## Backlog

@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 
 The files here (`*.api.txt`, `*.json.gz`, `*.d.ts`) are generated per
 release by [`scripts/api_snapshot.py`](../../scripts/api_snapshot.py) as
-part of the release process (see [VERSIONING.md](../VERSIONING.md)) and
+part of the release process (see [VERSIONING.md](../maintainers/VERSIONING.md)) and
 pinned to the tag named in each filename.
 
 HEAD is expected to drift ahead of the newest snapshot; the next

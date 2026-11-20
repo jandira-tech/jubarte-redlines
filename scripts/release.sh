@@ -59,7 +59,7 @@
 #
 # What it does, in order:
 #   0. preflight — tools, registry credentials, main branch, clean tree;
-#      the bump kind docs/VERSIONING.md asks for (a patch has no ### Added,
+#      the bump kind docs/maintainers/VERSIONING.md asks for (a patch has no ### Added,
 #      passes cargo-semver-checks against the previous release, and adds no
 #      public item path); the
 #      release.yml review (scripts/test_release_workflow.py) and the
@@ -165,7 +165,7 @@ checklist_items() { cat <<'ITEMS'
 0|auto|Security findings on GitHub, read with an admin's token (GitHub shows unpublished advisories to no other, #1761): no repository advisory in triage (a private report), no draft above low that this release does not patch (its patched versions name @V@), no open medium-or-higher Dependabot or code-scanning alert; low drafts and lower alerts are listed (#1750)|scripts/release.sh step 0 (security_gate: gh api repos/jandira-tech/jubarte/{security-advisories,dependabot/alerts,code-scanning/alerts})
 before|you|Security review, the half a script cannot do: record known CVE/GHSA fixes in the changelog, and run all four sanitizer fuzz targets plus native allocator runs (step 0 reads the advisories and alerts itself); confirmed exploitable medium/higher findings block release|SECURITY.md; fuzz/README.md; cargo +nightly fuzz run <target> -- -max_total_time=60 (admit, strict_to_transitional, compare, relationships); bash scripts/fuzz-native.sh <target> -max_total_time=60 (compare, relationships)
 before|you|Full suite once before the release: cargo miri nextest run over the whole crate — nightly with the miri component (.config/nextest.toml holds its default-miri profile); know its cost first, and read its CARGO_BIN_EXE and disk-fixture failures as Miri's isolation rule, not engine bugs; when the owner skips it (0.14.0: miri not installed), the release notes say the full suite did not run|cargo +nightly miri nextest run (AGENTS.md; Miri cannot spawn processes and refuses the host's file system under its default isolation)
-before|you|The quality gate of docs/VERSIONING.md on the release binary, measured against the previous release's tag — never a stored baseline file (#1797): the parity ladder sweep of the previous release's binary on the staged ladder corpus shows no finding the candidate adds, and the criterion bench saves A = previous tag and B = candidate (the release's own tag when resuming, HEAD before the tag) runs interleaved A B A B into one CRITERION_HOME under the release's state dir (.scratch/jubarte-loop/release_@V@/gates, never /tmp); the verdict reads each case's saved mean point estimates — delta = mean(b1,b2)/mean(a1,a2) - 1 is a REGRESSION past both the >5% bar and that case's self-noise in this run, UNDECIDABLE when a self-noise above 5% swallows it (rerun on a quieter machine), and either fails the gate; a median generate-time regression past +10 percent triggers the speed review before the release|bash scripts/criterion_abab.sh $(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' $(git rev-parse -q --verify refs/tags/v@V@ >/dev/null && echo 'v@V@^' || echo HEAD)) .scratch/jubarte-loop/release_@V@/gates $(git rev-parse -q --verify refs/tags/v@V@ >/dev/null && echo v@V@ || echo HEAD); python3 tools/parity_ladder.py sweep --bin target/release/jubarte --against .scratch/jubarte-loop/release_@V@/gates/prev/target/release/jubarte --corpus .scratch/jubarte-loop/release_@V@/gates/ladder_corpus (the corpus is the bench's word-based set staged the way release_0.14.0/gates/ladder_corpus keeps it: centralized_mapping.csv + docx_source + docx_redlines_word from corpus/word — restored by `uv run bench fixtures download` in the bench checkout — keyed on corpus/word/pools/word_based_pairs.csv, or the previous release's own gates/ladder_corpus; corpus/word_based is gone)
+before|you|The quality gate of docs/maintainers/VERSIONING.md on the release binary, measured against the previous release's tag — never a stored baseline file (#1797): the parity ladder sweep of the previous release's binary on the staged ladder corpus shows no finding the candidate adds, and the criterion bench saves A = previous tag and B = candidate (the release's own tag when resuming, HEAD before the tag) runs interleaved A B A B into one CRITERION_HOME under the release's state dir (.scratch/jubarte-loop/release_@V@/gates, never /tmp); the verdict reads each case's saved mean point estimates — delta = mean(b1,b2)/mean(a1,a2) - 1 is a REGRESSION past both the >5% bar and that case's self-noise in this run, UNDECIDABLE when a self-noise above 5% swallows it (rerun on a quieter machine), and either fails the gate; a median generate-time regression past +10 percent triggers the speed review before the release|bash scripts/criterion_abab.sh $(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' $(git rev-parse -q --verify refs/tags/v@V@ >/dev/null && echo 'v@V@^' || echo HEAD)) .scratch/jubarte-loop/release_@V@/gates $(git rev-parse -q --verify refs/tags/v@V@ >/dev/null && echo v@V@ || echo HEAD); python3 tools/parity_ladder.py sweep --bin target/release/jubarte --against .scratch/jubarte-loop/release_@V@/gates/prev/target/release/jubarte --corpus .scratch/jubarte-loop/release_@V@/gates/ladder_corpus (the corpus is the bench's word-based set staged the way release_0.14.0/gates/ladder_corpus keeps it: centralized_mapping.csv + docx_source + docx_redlines_word from corpus/word — restored by `uv run bench fixtures download` in the bench checkout — keyed on corpus/word/pools/word_based_pairs.csv, or the previous release's own gates/ladder_corpus; corpus/word_based is gone)
 before|you|Decide where the release runs: a clean worktree on main, release PR merged, main in sync with origin/main — the canonical checkout is the owner's and is never the release tree|git worktree add <dir> main; git -C <dir> status --porcelain (empty); git -C <dir> rev-parse HEAD == origin/main
 before|you|release_info: the bench wrote the six evidence files for @V@ BEFORE this script runs (its step 3 refuses without them); with a bench checkout at hand the sha256 columns are verified against the real files. An interrupted flow resumes with --only and the stages still owed (install, sample, generate, export, measure, convert, score, write; the order never changes). LibreOffice renders the fixtures it lacks only as 26.8.0.3, the build its work folder names, and the flow refuses another — when the soffice on PATH is newer, install 26.8.0.3 beside it and export SOFFICE=<that LibreOffice.app>/Contents/MacOS/soffice|cd ../neurotic_docx_bench && uv run python -m neurotic_docx_bench.jubarte_release_info @V@ --engine-dir <engine> --binary <candidate>
 before|you|identity: the candidate that produced the scored outputs is byte-identical in output to the release commit's binary on the release samples (the two-binary identity run, exit 0 and its identity.log kept), or the assumption is stated in the release notes when skipped|python3 scripts/identity.py <candidate> <release-commit binary> <out dir> release_info/sample_*_@V@_*.csv --root ../neurotic_docx_bench (outputs named by row index; keeps only differences)
@@ -182,7 +182,7 @@ before|you|API snapshot: docs/api holds the previous release's rustdoc snapshot,
 before|you|hand-run Python proofs pin the interpreter to --python 3.12: uv's default on the release machine may be a free-threaded build (0.14.0: 3.15t) that no abi3 wheel serves, and an unpinned pip proof then builds the sdist and passes on nothing PyPI serves (0.13.0's PyPI PASS)|uv python find; uv run -q --isolated --no-project --python 3.12 --no-build-package jubarte-docx --with jubarte-docx==@V@ python -c 'import jubarte as j; print(j.capabilities()["engine_version"])'
 before|you|the app's scripts are bash (release-engine.sh, build-release-app.sh, notarize-direct.sh, publish-mac-app-store.sh): run each by its path or with bash, never sh or zsh — the release machine's shell is zsh, which does not word-split a variable and indexes arrays from 1|for f in release-engine.sh build-release-app.sh notarize-direct.sh publish-mac-app-store.sh; do bash -n jubarte-app/scripts/$f; done
 7|auto|keywords: the crate's keywords and categories are inside crates.io's limits (at most 5 each, keywords ASCII, a letter first, at most 20 characters) — one more fails the publish after the point of no return|scripts/release.sh step 7 (crate_keywords_ok)
-0|auto|The bump kind docs/VERSIONING.md asks for, proven before step 1 writes anything: pre-1.0 a patch carries no new feature (a ### Added heading), no public API change cargo-semver-checks finds against the previous release's tag (0.10.1 shipped four breaking fields as a patch), and no public item path the previous release's listing does not have (cargo-semver-checks 0.51.0 has no lint for a new free function, trait, module, macro or type alias; the baseline is always a listing built from the previous tag in a throwaway worktree of the tag with this checkout's script, and a committed docs/api file is not that baseline); a minor or major may|cargo semver-checks check-release -p <each crate the previous tag holds> --baseline-rev <previous tag> --release-type patch --default-features; scripts/api_snapshot.py --added <listing from the worktree of the tag> <HEAD listing>
+0|auto|The bump kind docs/maintainers/VERSIONING.md asks for, proven before step 1 writes anything: pre-1.0 a patch carries no new feature (a ### Added heading), no public API change cargo-semver-checks finds against the previous release's tag (0.10.1 shipped four breaking fields as a patch), and no public item path the previous release's listing does not have (cargo-semver-checks 0.51.0 has no lint for a new free function, trait, module, macro or type alias; the baseline is always a listing built from the previous tag in a throwaway worktree of the tag with this checkout's script, and a committed docs/api file is not that baseline); a minor or major may|cargo semver-checks check-release -p <each crate the previous tag holds> --baseline-rev <previous tag> --release-type patch --default-features; scripts/api_snapshot.py --added <listing from the worktree of the tag> <HEAD listing>
 2|auto|The engine CHANGELOG section is complete: release.yml cuts it verbatim into the GitHub release notes, so it cites every fix/feat/perf/security PR merged since the previous release (by its number, an issue it closes, or a <!-- changelog-skip: #N --> line) and holds no TODO, TBD, FIXME or XXX|scripts/release.sh step 2 (unlisted_prs, changelog_placeholders)
 before|you|The six one-line notes are drafted before the run — the changelog, crates, npm, pypi and github summaries and the docs statement are mandatory flags; the github note leads the release notes from the tag body, the other four are grepped back out of their registries at verify|scripts/release.sh --help (the five --*-summary flags and --how-readme-and-other-docs-were-updated)
 before|you|CHANGELOG: engine section dated with the ASCII heading, link footer present; the app repository's own CHANGELOG carries its ## [@V@] section naming jubarte-redlines @V@ on its main (step 0 checks it)|grep -n '^## \[@V@\]' CHANGELOG.md jubarte-app/CHANGELOG.md (both sections are written by hand; step 3 holds their measured sentence to the results)
@@ -472,7 +472,7 @@ eventually() {
   return 1
 }
 
-# --- the bump kind (docs/VERSIONING.md) and the CHANGELOG section ---------------
+# --- the bump kind (docs/maintainers/VERSIONING.md) and the CHANGELOG section ---------------
 # The newest release tag reachable from HEAD, other than $1: a plain vX.Y.Z,
 # since a prerelease tag (v0.14.0-rc.1) is no release. Every step measures
 # the bump, the CHANGELOG and the API drift from it.
@@ -553,7 +553,7 @@ patch_public_additions() {
   if [ "$rc" -eq 1 ] && [ -n "$added" ]; then
     die "$VER is a patch, but it adds public API paths a patch cannot carry:
 $(printf '%s\n' "$added" | sed 's/^/  /')
-new public items take a minor bump (docs/VERSIONING.md) — release $minor instead"
+new public items take a minor bump (docs/maintainers/VERSIONING.md) — release $minor instead"
   fi
   [ "$rc" -eq 0 ] || die "the public API listing comparison failed (scripts/api_snapshot.py --added, exit $rc) — release $minor instead, or fix the listings above"
   rm -f "$_JUBARTE_API_LISTING"
@@ -569,7 +569,7 @@ new public items take a minor bump (docs/VERSIONING.md) — release $minor inste
     trap - EXIT
   fi
 }
-# Pre-1.0 (docs/VERSIONING.md) a patch carries no new feature and no public
+# Pre-1.0 (docs/maintainers/VERSIONING.md) a patch carries no new feature and no public
 # API change; a minor or a major may. Proven before step 1 writes anything
 # (#1742): a patch whose section has `### Added` ships features, and
 # cargo-semver-checks compares the public API with the previous release's
@@ -585,7 +585,7 @@ bump_gate() {
   fi
   minor="${prev%%.*}.$(( $(echo "$prev" | cut -d. -f2) + 1 )).0"
   if changelog_section | grep -E '^### Added' >/dev/null; then
-    die "$VER is a patch, but its CHANGELOG section has ### Added: new features take a minor bump (docs/VERSIONING.md) — release $minor instead"
+    die "$VER is a patch, but its CHANGELOG section has ### Added: new features take a minor bump (docs/maintainers/VERSIONING.md) — release $minor instead"
   fi
   semver_lints_ok \
     || die "the cargo-semver-checks lint audit failed (above): a lint left below deny, or set below it by Cargo.toml's [package.metadata.cargo-semver-checks.lints], lets a patch pass it — deny each; no lint definitions found means the installed tool's sources are missing (scripts/semver_lints.py)"
@@ -593,11 +593,11 @@ bump_gate() {
   # one a user depends on directly may not reach the facade's API.
   local crates crate
   crates=$(semver_crates "v$prev") || die "cannot read the crates of v$prev"
-  [ -n "$crates" ] || die "no crate of $VER is in v$prev to compare with: a patch needs that baseline (docs/VERSIONING.md)"
+  [ -n "$crates" ] || die "no crate of $VER is in v$prev to compare with: a patch needs that baseline (docs/maintainers/VERSIONING.md)"
   for crate in $crates; do
     cargo semver-checks check-release -p "$crate" --baseline-rev "v$prev" \
         --release-type patch --default-features \
-      || die "cargo-semver-checks finds public API changes in $crate a patch cannot carry (above; docs/VERSIONING.md) — release $minor instead, or take the changes out"
+      || die "cargo-semver-checks finds public API changes in $crate a patch cannot carry (above; docs/maintainers/VERSIONING.md) — release $minor instead, or take the changes out"
   done
   patch_public_additions "$prev" "$minor"
   step "$prev -> $VER is a patch: no ### Added, cargo-semver-checks finds no API change in $(echo "$crates" | wc -w | tr -d ' ') crates, and no public item path was added"
@@ -1463,7 +1463,7 @@ else
     # docs/locations.md are regenerated by scripts/gen_docs.sh in step 6;
     # they ship in this commit beside docs/api, or the post-push docs CI
     # fails and the dirty tree stops the wasm build below (0.18.0).
-    git add Cargo.toml Cargo.lock CHANGELOG.md README.md docs/VERSIONING.md \
+    git add Cargo.toml Cargo.lock CHANGELOG.md README.md docs/maintainers/VERSIONING.md \
       README.crates.md jubarte-wasm/npm/README.md jubarte-wasm/cli/README.md \
       jubarte-python/README.md crates/*/README.md \
       jubarte-python/Cargo.toml jubarte-python/Cargo.lock \

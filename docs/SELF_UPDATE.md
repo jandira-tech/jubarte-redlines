@@ -135,7 +135,7 @@ first signed one. `X.Y.Z` below is that release.
    ships: later builds would then accept unsigned archives for the
    releases in between.
 
-5. Cut release `X.Y.Z` as usual (`scripts/release.sh`, VERSIONING.md).
+5. Cut release `X.Y.Z` as usual (`scripts/release.sh`, maintainers/VERSIONING.md).
    With a key committed, `release.yml` refuses to publish when the secret
    is missing, and it checks every signed archive against every committed
    `keys/*.pub`, so a secret that does not match the committed key stops
@@ -151,7 +151,7 @@ first signed one. `X.Y.Z` below is that release.
    signed.
 
 If `release.yml` skips the GitHub release and `scripts/release.sh`
-publishes it from the workflow artifacts (VERSIONING.md, "When release.yml
+publishes it from the workflow artifacts (maintainers/VERSIONING.md, "When release.yml
 skips the GitHub release"), those archives were never signed. Signed-era
 binaries refuse them, so that release does not reach them through
 `self-update`. Ship a signed patch release instead.
