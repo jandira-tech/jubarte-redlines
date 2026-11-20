@@ -59,8 +59,7 @@ MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 WPS = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
 HERE = os.path.dirname(os.path.abspath(__file__))
 CRATE = os.path.dirname(HERE)
-# BENCH_DIR is the neurotic_docx_bench checkout root (same as parity_ledger.sh /
-# run_abba_matrix.sh). The bench's own corpus/word_based is gone (the corpus
+# BENCH_DIR is the neurotic_docx_bench checkout root. The bench's own corpus/word_based is gone (the corpus
 # moved to the hub): load_pairs wants a staged corpus — mapping CSV, docx_source,
 # docx_redlines_word — the shape jubarte-loop/release_0.14.0/gates/ladder_corpus
 # keeps; the release row names one with --corpus (CR #3642348727, #1797).

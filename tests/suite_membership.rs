@@ -5,8 +5,7 @@
 //! The integration-test suite layout the workspace split depends on.
 //!
 //! Integration tests live in seven suite binaries, `tests/it_<suite>/`, one
-//! per layer of the split (plan A8 in
-//! docs/refactoring_best_practices/implementation_plan.md): a test moves
+//! per layer of the split: a test moves
 //! into the suite of the highest layer it references, and only the tests
 //! named by [`STANDALONE`] stay their own binary. This guard keeps that
 //! layout true: a test file dropped at `tests/` fails here until it moves
@@ -18,9 +17,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Integration tests that stay standalone binaries (A8). `facade_surface`
-/// joins this list when T4.0 creates it; until then the listing test below
-/// counts 21. Keep in sync with `STANDALONE` in scripts/classify_tests.py.
+/// Integration tests that stay standalone binaries.
 const STANDALONE: &[&str] = &[
     "adoption",
     "bench_fixture_paths_resolve",
