@@ -26,7 +26,7 @@ override was passed.
 
 ## The limits
 
-`InputLimits::default` (`src/admission.rs`) bounds `read`, `validate`,
+`InputLimits::default` (`crates/jubarte-opc/src/admission.rs`) bounds `read`, `validate`,
 `edit`, `accept` and `reject`:
 
 | limit | default | `InputLimits::compare()` |
@@ -41,7 +41,7 @@ override was passed.
 | attributes on one element | 1,024 | 1,024 |
 
 - **Bytes are capped while inflating, not trusted from the header.**
-  `read_package` (`src/opc/mod.rs`) reads each member through `take(cap + 1)`.
+  `read_package` (`crates/jubarte-opc/src/opc/mod.rs`) reads each member through `take(cap + 1)`.
   A member that lies about its size still stops at the cap.
 - **Elements are counted as each part inflates** (#2014), before any part is
   parsed. Comments and media do not count. The largest of 2,434 real
@@ -76,14 +76,14 @@ override was passed.
 ## What the code guarantees
 
 - **No part name becomes a path.** `read --extract-media` names each file
-  `<sha256 prefix>.<ext>` (`src/markdown/from_docx/media.rs`). A zip entry
+  `<sha256 prefix>.<ext>` (`crates/jubarte-markdown/src/markdown/from_docx/media.rs`). A zip entry
   such as `../escaped/x.xml` is reported (`check_part_name`) and never written
   anywhere. jubarte has no extraction path that uses an entry name.
 - **No document path touches the network.** The only HTTP code is
   `jubarte self-update`, behind the `self-update` feature
-  (`src/update.rs`). `scripts/check_no_network.py`, run in CI (#2018), fails
+  (`crates/jubarte-cli/src/update.rs`). `scripts/check_no_network.py`, run in CI (#2018), fails
   if a network crate enters the build without that feature, or if Rust source
-  outside `src/update` names a network API. A remote template, a linked
+  outside `crates/jubarte-cli/src/update` names a network API. A remote template, a linked
   picture, an `INCLUDEPICTURE` field and a subdocument are text to jubarte.
   Word fetched three of them on open (below).
 - **Entities are never expanded**, and now a DTD is refused before parsing.

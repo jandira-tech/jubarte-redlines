@@ -1,5 +1,10 @@
 # Symbol manifest for `src/`
 
+> **Pre-split paths.** This document cites the pre-0.19.0 monolith
+> `src/` layout; since 0.19.0 the engine is a Cargo workspace and
+> those files live under `crates/<crate>/src/` — the snapshot-to-crate
+> map is in [docs/SRC_MANIFEST.md](../SRC_MANIFEST.md).
+
 Every function, method, struct, enum, trait, impl block, constant, static, type alias, macro and module under `src/`, extracted statically with tree-sitter (Rust grammar). No LLM agents and no compiler were involved. Regenerate with `scripts/gen_symbol_manifest.py` (see the top of that file).
 
 ## What is in here

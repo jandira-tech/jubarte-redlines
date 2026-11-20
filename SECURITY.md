@@ -39,7 +39,7 @@ DOCX, legacy DOC, XML, embedded fonts and images are untrusted inputs. Risks
 include ZIP decompression bombs, excessive nesting, malformed parser inputs,
 algorithmic complexity, memory exhaustion, path traversal and accidental
 network/file access through external relationships. Admission bounds archive
-size, entries, inflated bytes and XML depth (`src/admission.rs`). Package
+size, entries, inflated bytes and XML depth (`crates/jubarte-opc/src/admission.rs`). Package
 admission and the checked XML APIs enforce tag policy with the active
 `InputLimits` before DOM construction (#650). `InputLimits` defaults
 are `max_element_attributes = 1024` (namespace declarations included),
@@ -78,7 +78,7 @@ SHA-1/FNV content keys preserve the comparison algorithm's upstream behavior;
 they are **not authentication, signatures or collision-resistant security
 identities**. SHA-256 guards edit snapshots and release checksums. The CLI's
 self-update uses the `self_update` crate with rustls HTTPS and supports zipsign
-Ed25519 verification (jubarte's own check, `src/update/zipsign.rs`, on
+Ed25519 verification (jubarte's own check, `crates/jubarte-cli/src/update/zipsign.rs`, on
 ed25519-dalek 3). See [SELF_UPDATE.md](docs/SELF_UPDATE.md) for whether a
 release requires signatures and the risks of checksum-only releases. Download
 archives and their checksums only over HTTPS; a checksum fetched over HTTP
@@ -111,7 +111,7 @@ floor and every committed lockfile hold 9.0.5.
 
 Call paths here: the engine reads packages in memory through `ZipArchive`
 and writes them with `ZipWriter`. Every production package open goes
-through `crate::opc::open_archive` (`src/opc/archive.rs`), which reads
+through `crate::opc::open_archive` (`crates/jubarte-opc/src/opc/archive.rs`), which reads
 each entry's raw name from its central record and from its local file
 header: a local header that names the entry differently, or is missing,
 fails the open and every caller reports `ZIP_HEADER_MISMATCH`. zip
@@ -139,7 +139,7 @@ instead of refusing, so a file every reader rejects can still be inspected.
 The Windows updater delegates unpacking to `self_update::Extract::extract_file`;
 its ZIP arm opens a `ZipArchive`, selects the binary with `by_name`, checks
 `enclosed_name`, and copies that entry. It uses neither archive-wide
-`ZipArchive::extract` nor the streaming reader. Our code in `src/update.rs`
+`ZipArchive::extract` nor the streaming reader. Our code in `crates/jubarte-cli/src/update.rs`
 configures the updater and its signature policy; it does not unpack ZIPs.
 
 The version bump alone does **not** reject conflicting headers:
@@ -163,7 +163,7 @@ fields itself because zip's `is_symlink` is a bit-mask test that reads a
 mode only for the Unix host. For the updater, `self_update`'s single-file
 zip path already refuses a symlink entry (`extract_file`), but its tar
 path delegates to `tar`'s `unpack_in`, which restores a symlink whose
-target is not confined to the staging directory; `src/update.rs`
+target is not confined to the staging directory; `crates/jubarte-cli/src/update.rs`
 registers a `verify_binary` hook that lstats the extracted binary and
 refuses anything that is not a regular file before the swap.
 
@@ -174,7 +174,7 @@ nothing until the version was checked by hand.
 
 **RUSTSEC-2025-0168** — `self_update` extraction APIs. Affected
 `self_update >=1.3, <2.3`. This tree depends on 1.3.1, which is inside
-that range. `src/update.rs` registers `verify_archive` and refuses a zip
+that range. `crates/jubarte-cli/src/update.rs` registers `verify_archive` and refuses a zip
 member that repeats or inflates past the download budget, and a tar member
 that is a link, carries setuid, setgid or sticky bits, or escapes the
 extract directory, before that crate unpacks the archive.

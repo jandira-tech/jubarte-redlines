@@ -1,5 +1,10 @@
 # Reassessment: skeptical audit of the newly supplied Jubarte reports
 
+> **Pre-split paths.** This document cites the pre-0.19.0 monolith
+> `src/` layout; since 0.19.0 the engine is a Cargo workspace and
+> those files live under `crates/<crate>/src/` — the snapshot-to-crate
+> map is in [docs/SRC_MANIFEST.md](../../../SRC_MANIFEST.md).
+
 ## Scope and principal finding
 
 I read all four new files in full, including the historical implementation plan's status banner and unimplemented tests, and compared them with the prior evidence review, revised proposal, core schema, and example documentation. This is an audit of the supplied **reports and their embedded excerpts**. The 114 MB source corpus, its analysis code, the three raw trajectory files, the OpenRouter CSV, the input/output DOCX files, and the judge artifacts named by those reports were not supplied in these four files and were not independently reprocessed here. No repository or previous deliverable was modified.

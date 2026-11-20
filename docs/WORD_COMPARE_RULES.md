@@ -15,7 +15,7 @@ test compares our changes with Word's.
 ## Words
 
 - **A word is a maximal run of one character class**, c885710a
-  (`src/comparer/units.rs` `word_class`; fixtures `tokens/classes_*`,
+  (`crates/jubarte-redlines/src/comparer/units.rs` `word_class`; fixtures `tokens/classes_*`,
   where 154 sentences give Word's 308 revisions).
   - Letters form one class. The apostrophe and ª, µ, º join them.
   - Signs form another: ASCII punctuation, U+2010–205E, currency, arrows,
@@ -86,7 +86,7 @@ test compares our changes with Word's.
 ## Styles
 
 - **Built-in style names pair in any case, custom names only exactly**
-  (`src/builtin_styles.rs`; `tests/m_styles_matched_by_name.rs`
+  (`crates/jubarte-opc/src/builtin_styles.rs`; `tests/m_styles_matched_by_name.rs`
   `case_twin_styles_stay_apart`). Across Word's own redlines in the bench
   corpus, a revision's `normal`, `Caption` or `Footnote Reference` merged
   with the original's `Normal`, `caption` or `footnote reference` (54 of

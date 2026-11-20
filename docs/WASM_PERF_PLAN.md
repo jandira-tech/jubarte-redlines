@@ -16,6 +16,11 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # WASM performance plan — close the jubarte-wasm gap without losing parity
 
+> **Pre-split paths.** This document cites the pre-0.19.0 monolith
+> `src/` layout; since 0.19.0 the engine is a Cargo workspace and
+> those files live under `crates/<crate>/src/` — the snapshot-to-crate
+> map is in [docs/SRC_MANIFEST.md](../SRC_MANIFEST.md).
+
 > Living document, drafted iteratively as findings land. Companion to
 > `LCS_PERF_PLAN.md` (engine-level wall-time program). Scope here: why the
 > WASM lane trails the native CLI on the 5,000-pair speed bench, and the

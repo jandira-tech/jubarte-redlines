@@ -7,7 +7,7 @@
 Four sections:
 
 1. Where the Rust source accepts an id (`scripts/cli_id_sources.py`, read
-   from `src/`, not from `--help`): the clap fields whose value is an id and
+   from the crate sources, not from `--help`): the clap fields whose value is an id and
    the functions that read them, every id parser with its doc and refusals,
    every function that calls a parser, and the call chains from each flag
    to its parsers.

@@ -27,7 +27,7 @@ a unit-bearing auto value like twips (`×20`): `12pt` → 240 and `12.95pt` →
 259, the integers the Transitional twin carries. This reproduces the only
 observed producer (Word) and needs no baseline assumption, but it is a
 producer convention, not a normative rule. The renderer keeps its own
-11pt-per-line heuristic (`src/convert/mod.rs`), as before.
+11pt-per-line heuristic (`crates/jubarte-render/src/convert/mod.rs`), as before.
 
 **Open:** the maintained Word workflow has not confirmed the values on a
 layout-level comparison.
@@ -40,7 +40,7 @@ no identical table row. Word still pairs rows by shared words, splits the
 deleted runs into their own tables and inserts the 47-row table whole: 8
 tables, four `tblPrChange` and four `tblGridChange`. jubarte writes 3.
 
-**Done so far (#497):** `src/comparer/lcs_table.rs` pairs single rows across
+**Done so far (#497):** `crates/jubarte-redlines/src/comparer/lcs_table.rs` pairs single rows across
 different horizontal partitions when they share a word, and row words split
 at cell, paragraph and tab boundaries.
 
@@ -184,7 +184,7 @@ in it calls `VariantStrIter`.
 control's `w:sdtContent` and keeps `w:sdtPr` in the clean copy. The redline
 is produced by comparing the source with that clean copy, and the comparer
 follows Word Compare: `unwrap_content_controls_in_pure_revisions`
-(`src/comparer/finalize.rs`, M390) drops the `w:sdt` wrapper and its
+(`crates/jubarte-redlines/src/comparer/finalize/mod.rs`, M390) drops the `w:sdt` wrapper and its
 properties in every paragraph that carries `w:ins` or `w:del`. A filled
 control's paragraph always does, so the redline shows the fill as plain
 tracked runs (`Name: <ins>Ada</ins><del>Click here</del>`) with no tag,

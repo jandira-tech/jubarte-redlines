@@ -1,5 +1,10 @@
 # Jubarte edit implementation plan
 
+> **Pre-split paths.** This document cites the pre-0.19.0 monolith
+> `src/` layout; since 0.19.0 the engine is a Cargo workspace and
+> those files live under `crates/<crate>/src/` — the snapshot-to-crate
+> map is in [docs/SRC_MANIFEST.md](../../SRC_MANIFEST.md).
+
 ## Outcome and scope
 
 Build one editing pipeline that accepts a typed inline action or a versioned plan, prepares the actual DOCX result, verifies the requested effects and required preservation rules, and publishes an explicit output. `jubarte edit template` generates a convenient authoring form for that same plan model.

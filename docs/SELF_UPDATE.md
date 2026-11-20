@@ -67,9 +67,9 @@ change.
 Signing is staged so that no existing release or installed binary breaks:
 
 - Until a public key is committed, the trusted key list
-  (`RELEASE_KEYS` in `src/update.rs`) is empty and the updater checks
+  (`RELEASE_KEYS` in `crates/jubarte-cli/src/update.rs`) is empty and the updater checks
   `SHA256SUMS.txt` only, exactly as before.
-- `FIRST_SIGNED_RELEASE` in `src/update.rs` names the first signed
+- `FIRST_SIGNED_RELEASE` in `crates/jubarte-cli/src/update.rs` names the first signed
   release. A binary that trusts a key requires a valid signature on that
   release and every later one.
 - Binaries released before signing began carry no key. They update to the
@@ -121,7 +121,7 @@ first signed one. `X.Y.Z` below is that release.
    anyone, which is a harmless dry run.
 
 4. Commit the public key and turn the check on, in one commit. In
-   `src/update.rs`:
+   `crates/jubarte-cli/src/update.rs`:
 
    ```rust
    const RELEASE_KEYS: &[ReleaseKey] =
@@ -183,8 +183,8 @@ the command then reports that it was not built in.
 
 The implementation is the [`self_update`](https://crates.io/crates/self_update)
 crate (release lookup, checksum verification, archive extraction, binary
-replacement) in `src/update.rs`. The signature check is jubarte's own
-(`src/update/zipsign.rs`, adapted from zipsign-api): `self_update` runs it on
+replacement) in `crates/jubarte-cli/src/update.rs`. The signature check is jubarte's own
+(`crates/jubarte-cli/src/update/zipsign.rs`, adapted from zipsign-api): `self_update` runs it on
 the downloaded archive before extracting it. It does not use `self_update`'s
 `signatures` feature, whose zipsign-api 0.2 pins ed25519-dalek 2 and with it
 `block-buffer` 0.10.4 ([GHSA-qwgh-2vcv-g2f7](https://github.com/advisories/GHSA-qwgh-2vcv-g2f7), #1705).

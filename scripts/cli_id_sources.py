@@ -3,17 +3,19 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Where the Rust source accepts an id: for scripts/cli_locations.py.
 
-Reads `src/` as text, with no build:
+Reads the crate sources as text, with no build:
 
-- the clap fields of `src/cli.rs` whose doc or value name speaks of an id,
-  with their `value_parser` (none: the value reaches a parser after clap);
-- the id parsers: every function of `src/ids.rs` that reads a token
-  (`&str` in, `Result`/`Option`/`bool` out, or a serde `_de`), and every
-  function elsewhere that refuses a token with an id message
-  (`expected pN…`, `expected a change id…`), with its doc and messages;
+- the clap fields of `crates/jubarte-cli/src/cli.rs` whose doc or value
+  name speaks of an id, with their `value_parser` (none: the value
+  reaches a parser after clap);
+- the id parsers: every function of `crates/jubarte-dom/src/ids.rs` that
+  reads a token (`&str` in, `Result`/`Option`/`bool` out, or a serde
+  `_de`), and every function elsewhere that refuses a token with an id
+  message (`expected pN…`, `expected a change id…`), with its doc and
+  messages;
 - a call graph of the non-test source, walked up from each parser to the
-  CLI layer (`src/cli.rs`, `src/bin/`), so each flag is linked to the
-  parsers that read its value.
+  CLI layer (`crates/jubarte-cli/src/`, `src/bin/`), so each flag is
+  linked to the parsers that read its value.
 
 Functions are named, never numbered by line, so an unrelated edit does
 not move the output.
@@ -377,10 +379,10 @@ def section(root: Path, cell) -> list[str]:
     lines = [
         "## Where the source accepts an id",
         "",
-        "Read from `src/` (`scripts/cli_id_sources.py`), not from `--help`. A flag with no "
+        "Read from the crate sources (`scripts/cli_id_sources.py`), not from `--help`. A flag with no "
         "`value_parser` reaches its parser after clap; the chains below show which.",
         "",
-        "### Id flags (src/cli.rs)",
+        "### Id flags (crates/jubarte-cli/src/cli.rs)",
         "",
         "| Owner | Field | Flag | Value | value_parser | Read by (CLI layer) | Doc |",
         "|-|-|-|-|-|-|-|",
@@ -410,7 +412,7 @@ def section(root: Path, cell) -> list[str]:
         "",
         "### Id parsers",
         "",
-        "Every public function that reads an id token: in `src/ids.rs` a `&str` in and a `Result`, "
+        "Every public function that reads an id token: in `crates/jubarte-dom/src/ids.rs` a `&str` in and a `Result`, "
         "`Option` or `bool` out (or a serde `_de`); elsewhere, any function that refuses a token "
         "with an id message. Doc and refusals come from the source.",
         "",

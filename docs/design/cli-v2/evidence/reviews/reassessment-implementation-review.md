@@ -1,5 +1,10 @@
 # Reassessment: implement the editing contract before expanding the template
 
+> **Pre-split paths.** This document cites the pre-0.19.0 monolith
+> `src/` layout; since 0.19.0 the engine is a Cargo workspace and
+> those files live under `crates/<crate>/src/` — the snapshot-to-crate
+> map is in [docs/SRC_MANIFEST.md](../../../SRC_MANIFEST.md).
+
 ## Scope and conclusion
 
 This is an implementation and experimental-design review of four newly supplied reports, read in full. It revises the earlier recommendation where the new evidence or existing code contradicts it. It does not reproduce the underlying agent runs, modify the repository, or treat report quotations as independently verified raw traces.

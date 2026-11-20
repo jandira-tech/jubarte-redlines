@@ -6,6 +6,11 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # zip 9 and oxml-opc migration (#524)
 
+> **Pre-split paths.** This document cites the pre-0.19.0 monolith
+> `src/` layout; since 0.19.0 the engine is a Cargo workspace and
+> those files live under `crates/<crate>/src/` — the snapshot-to-crate
+> map is in [docs/SRC_MANIFEST.md](../SRC_MANIFEST.md).
+
 Source baseline: `4329bd2c490f006239c187b0254deb5480e960cc`.
 Read issue [#524](https://github.com/jandira-tech/jubarte-redlines/issues/524),
 especially the 2026-10-17 update, and

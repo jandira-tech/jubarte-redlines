@@ -18,9 +18,9 @@ The retired colon long-id family (`body:p:12`, `header1:rev:3`) and 0.12's retir
 
 ## Where the source accepts an id
 
-Read from `src/` (`scripts/cli_id_sources.py`), not from `--help`. A flag with no `value_parser` reaches its parser after clap; the chains below show which.
+Read from the crate sources (`scripts/cli_id_sources.py`), not from `--help`. A flag with no `value_parser` reaches its parser after clap; the chains below show which.
 
-### Id flags (src/cli.rs)
+### Id flags (crates/jubarte-cli/src/cli.rs)
 
 | Owner | Field | Flag | Value | value_parser | Read by (CLI layer) | Doc |
 |-|-|-|-|-|-|-|
@@ -32,7 +32,7 @@ Read from `src/` (`scripts/cli_id_sources.py`), not from `--help`. A flag with n
 
 ### Id parsers
 
-Every public function that reads an id token: in `src/ids.rs` a `&str` in and a `Result`, `Option` or `bool` out (or a serde `_de`); elsewhere, any function that refuses a token with an id message. Doc and refusals come from the source.
+Every public function that reads an id token: in `crates/jubarte-dom/src/ids.rs` a `&str` in and a `Result`, `Option` or `bool` out (or a serde `_de`); elsewhere, any function that refuses a token with an id message. Doc and refusals come from the source.
 
 | Parser | Signature | Doc | Refusals | Reached from an id flag |
 |-|-|-|-|-|

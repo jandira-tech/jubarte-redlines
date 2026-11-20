@@ -23,6 +23,11 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # LCS and comparison performance implementation plan — bank every second without changing the winner
 
+> **Pre-split paths.** This document cites the pre-0.19.0 monolith
+> `src/` layout; since 0.19.0 the engine is a Cargo workspace and
+> those files live under `crates/<crate>/src/` — the snapshot-to-crate
+> map is in [docs/SRC_MANIFEST.md](../SRC_MANIFEST.md).
+
 > **For agentic workers:** execute one measured increment at a time. Use the
 > repository's red/green, coverage, parity-ledger, and performance gates; stop
 > after each accepted increment so the user can review and commit it. Never hide

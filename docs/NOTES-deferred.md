@@ -14,7 +14,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 # Deferred notes — workstream S (style-chain resolution)
 
 Findings surfaced while implementing `merge_revised_style_definitions`
-(`src/document_comparer.rs`) that are **noted, not implemented**, per the
+(`crates/jubarte-redlines/src/document_comparer/mod.rs`) that are **noted, not implemented**, per the
 scope policy: go for the general rule, not the per-fixture special case.
 
 All corpus figures below are measured against
@@ -91,7 +91,7 @@ addressable population, not the predicted lift.
 ## S-D3 — Word normalizes the value it records; we record it verbatim
 
 > 2026-10-01: still open — the merge still writes each side's declared
-> `w:pPr`/`w:rPr` blocks verbatim (grep `src/document_comparer.rs`).
+> `w:pPr`/`w:rPr` blocks verbatim (grep `crates/jubarte-redlines/src/document_comparer/mod.rs`).
 
 Oracle `two_column_two_page × vrect_node`, `Title`: A declares
 `<w:spacing w:after="300" w:line="240" w:lineRule="auto"/>` and Word's
@@ -106,7 +106,7 @@ the recorded history differs. Per-fixture polish.
 ## S-D4 — table-style properties are not compared
 
 > 2026-10-01: still open — `merge_revised_style_definitions`
-> (`src/document_comparer.rs`) still handles `w:pPr`/`w:rPr` only;
+> (`crates/jubarte-redlines/src/document_comparer/mod.rs`) still handles `w:pPr`/`w:rPr` only;
 > `tblPrChange`/`trPrChange`/`tcPrChange` appear only in
 > `REVISION_CHANGE_ELEMENTS` (recognition), not in style merging.
 
@@ -123,7 +123,7 @@ the visible weight.
 ## S-D5 — per-attribute inheritance is limited to `w:rFonts` and `w:lang`
 
 > 2026-10-01: still open — `ATTR_MERGED_PROPS` in
-> `src/document_comparer.rs` is still `["rFonts", "lang"]`; `w:spacing` /
+> `crates/jubarte-redlines/src/document_comparer/mod.rs` is still `["rFonts", "lang"]`; `w:spacing` /
 > `w:ind` remain whole-element comparisons.
 
 `ATTR_MERGED_PROPS` covers the two elements whose per-attribute inheritance the
@@ -158,7 +158,7 @@ Revisit if a corpus ever shows a non-zero count.
 ## S-D7 — we now mark more styles than Word does
 
 > 2026-10-01: still open — `cascade_normal_change_to_based_styles` (M111)
-> still fires unconditionally in `src/document_comparer.rs`, and
+> still fires unconditionally in `crates/jubarte-redlines/src/document_comparer/mod.rs`, and
 > `tests/m111_cascade_normal_style_change.rs` still pins it.
 
 On the 828 colliding styles measured across 135 pairs, style-level change
@@ -246,7 +246,7 @@ that isolates us, and it is the one to track.
 ## V-D2 — residual classes after this branch's two fixes
 
 > 2026-10-01: the `w:style` child-order residue landed as predicted —
-> `STYLE_CHILD_ORDER` now exists in `src/document_comparer.rs`.
+> `STYLE_CHILD_ORDER` now exists in `crates/jubarte-redlines/src/document_comparer/mod.rs`.
 
 Measured base-vs-fixed on the same commit, 197 cluster documents:
 invalid 103 → 93; `w:author`/`w:date` 55 → 0; ordering 287 → 244; every other

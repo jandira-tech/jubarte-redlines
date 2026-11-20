@@ -3,6 +3,11 @@
 
 # What the adoption pages say jubarte cannot do, checked three times
 
+> **Pre-split paths.** This document cites the pre-0.19.0 monolith
+> `src/` layout; since 0.19.0 the engine is a Cargo workspace and
+> those files live under `crates/<crate>/src/` — the snapshot-to-crate
+> map is in [docs/SRC_MANIFEST.md](../SRC_MANIFEST.md).
+
 Each item below was a "you lose" or "pending" line on
 [anthropic-docx-skill.md](anthropic-docx-skill.md),
 [openai-doc-skill.md](openai-doc-skill.md) or

@@ -6,6 +6,11 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Bench defect classes (Ratchet-1 ledger) — reviewed 2026-09-26
 
+> **Pre-split paths.** This document cites the pre-0.19.0 monolith
+> `src/` layout; since 0.19.0 the engine is a Cargo workspace and
+> those files live under `crates/<crate>/src/` — the snapshot-to-crate
+> map is in [docs/SRC_MANIFEST.md](../SRC_MANIFEST.md).
+
 **Baseline pin:** `jubarte-rust@9fcc4289e375` (2026-07-16)
 **Corpora:** word_based `n=164` (mean 90.04, `<50`=8) · randomized `n=196` (mean 83.19, `<50`=16)
 **Aggregate:** 360 docs · mean **86.31** · `<50`=**24**

@@ -1,5 +1,10 @@
 # Consolidated review: `docs/superpowers/plans/2026-10-09-agent-text-view.md`
 
+> **Pre-split paths.** This document cites the pre-0.19.0 monolith
+> `src/` layout; since 0.19.0 the engine is a Cargo workspace and
+> those files live under `crates/<crate>/src/` — the snapshot-to-crate
+> map is in [docs/SRC_MANIFEST.md](../SRC_MANIFEST.md).
+
 > **Status (2026-10-18, corrected 2026-10-19 at `aba48bd5`).** Review
 > evidence — the `body:rev:N`/`body:p:N`/`[body:p:N]` spellings cited below
 > describe the transitional ids as they were on 2026-10-09. They are no

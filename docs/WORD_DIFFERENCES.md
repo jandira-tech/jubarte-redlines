@@ -127,7 +127,7 @@ The other 3 of the 32 are not differences:
   (`comment_balloons_0929` in neurotic_docx_bench,
   [WORD_COMMENT_BALLOONS.md](WORD_COMMENT_BALLOONS.md)).
 - **What we do.** Only `--revisions word` copies this
-  (`word_balloon_comments` in `src/convert/mod.rs`). The other styles draw
+  (`word_balloon_comments` in `crates/jubarte-render/src/convert/mod.rs`). The other styles draw
   every comment the body references.
 - **Which is better.** Ours; Word's version hides the comment.
 
@@ -147,7 +147,7 @@ The other 3 of the 32 are not differences:
   page. The page parts, styles and compatibility mode (12 or 15) do not
   matter. Word 16 probes 33c, 33d and 33e, 2026-10-02.
 - **What we do.** Only `--revisions word` copies it
-  (`old_layout_still_fixed` in `src/convert/mod.rs`). Our own styles keep
+  (`old_layout_still_fixed` in `crates/jubarte-render/src/convert/mod.rs`). Our own styles keep
   the table's live autofit, inside the margins.
 - **Which is better.** Ours. Word's output loses text off the page.
 
@@ -225,7 +225,7 @@ The other 3 of the 32 are not differences:
   range, the range itself tinted) and writes no PDF annotation for it.
   The geometry is measured on 466 balloons of 152 corpus documents
   (`neurotic_docx_bench/scripts/word_balloon_spec.py`, 2026-10-03) and
-  recorded on `paint_comment_balloons` in `src/convert/mod.rs`.
+  recorded on `paint_comment_balloons` in `crates/jubarte-render/src/convert/mod.rs`.
 - **What we do.** Every style paints the balloon the same way and, as
   Word does, writes no PDF annotation. `PdfOptions::comment_notes` (the
   hidden `--comment-notes` flag) adds a `/Text` annotation at each

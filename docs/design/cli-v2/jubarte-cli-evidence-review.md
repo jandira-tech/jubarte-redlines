@@ -1,5 +1,10 @@
 # Jubarte CLI: final evidence review and critical reassessment
 
+> **Pre-split paths.** This document cites the pre-0.19.0 monolith
+> `src/` layout; since 0.19.0 the engine is a Cargo workspace and
+> those files live under `crates/<crate>/src/` — the snapshot-to-crate
+> map is in [docs/SRC_MANIFEST.md](../../SRC_MANIFEST.md).
+
 **17 October 2026 · Interface design and implementation planning; no repository implementation**
 
 ## 1. Verdict: retain the direction, change the execution contract

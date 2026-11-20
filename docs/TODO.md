@@ -82,7 +82,7 @@ Shipped (each TDD, byte-identical, full suite green):
   per-rPr normalization throwaways: **10,722.7 → 10,141.5 MiB (−581 MiB)**.
 - [x] **FMT-SCRATCH-02** (`0ea960b`) — dedicated scratch arena for the
   canonical `w:rPr`; capacity-invariant guard in
-  `src/comparer/formatchg.rs` (`detect_format_changes_never_grows_production_arena_capacity`).
+  `crates/jubarte-redlines/src/comparer/formatchg.rs` (`detect_format_changes_never_grows_production_arena_capacity`).
 - [x] **ALLOC-LEAN-01** (`84e1903`) — **547.3M → 467.1M allocations
   (−14.6%)** via `serialize::Scope::ensure_prefix` and borrowed-key sorts;
   durable guard `tests/perf_serialize_prefix_allocs.rs`.
@@ -109,7 +109,7 @@ Remaining allocation-count clusters (post-ALLOC-LEAN-01, 467M total):
 Open levers (deep-structural — HIGH blast radius, need supervision):
 
 - [ ] **PARSE-ALLOC-01** (deferred, HIGH blast radius) — parsing is ~41% of the
-  allocation count: `src/xmllinq/parse.rs::read_name` still allocates a
+  allocation count: `crates/jubarte-dom/src/xmllinq/parse.rs::read_name` still allocates a
   `String` per name even though `XName` interns storage (the temp is only
   for the intern lookup); `set_attribute_value` grows the per-node `attrs`
   `Vec`. Candidate: intern-lookup by `&str` (no temp String) and pre-size
@@ -154,7 +154,7 @@ close to 95" goal targets.
 this machine): engine lens **191/196 = 97.4%** (before REJECT-LOSSLESS-01:
 189/196 = 96.4%). Native == wasm on the rebuilt adapter.
 
-**Shipped — REJECT-LOSSLESS-01** (`src/revision_processor.rs`, `094a10ce`):
+**Shipped — REJECT-LOSSLESS-01** (`crates/jubarte-redlines/src/revision_processor.rs`, `094a10ce`):
 `reverse_revisions_transform` now also flips content del/ins nested in
 transparent run containers (`w:fldSimple`, `mc:Choice`/`mc:Fallback`) —
 silent field-result/AlternateContent loss on reject. Reject-only; compare
@@ -295,10 +295,10 @@ print or parse today:
   `ps0`);
 - a story's first paragraph printed as the bare story name: `header1`
   today names both the story and its paragraph 0
-  (`paragraph_id("header1", 0)` prints `header1`, `src/ids.rs`); under v3
+  (`paragraph_id("header1", 0)` prints `header1`, `crates/jubarte-dom/src/ids.rs`); under v3
   the paragraph is `header1.p0` and the bare name is the story only;
 - open ranges `p17-` and `-p1`, which `Select::parse`
-  (`src/markdown/mod.rs`) still accepts — closed ranges only after
+  (`crates/jubarte-markdown/src/markdown/mod.rs`) still accepts — closed ranges only after
   cutover;
 - `r43+43` as a *printed* form (`1bf166f7` emits it when two revisions
   share one `w:id`): it stays valid input — a group selector that
@@ -316,13 +316,13 @@ print or parse today:
 
 - [ ] Remove the aliases, their notes and their tests in 0.14, and say so in
   the CHANGELOG's Removed section.
-- [x] Remove the `sha1_fingerprint*` aliases (`src/util/sha1.rs`),
+- [x] Remove the `sha1_fingerprint*` aliases (`crates/jubarte-dom/src/util/sha1.rs`),
   deprecated since 0.10.2: removed for the next release (CHANGELOG,
   Unreleased, Removed).
 
 ## 8. `existing_revisions: "keep"` follow-ups (S19)
 
-Status: OPEN. Keep shipped in #287 (2026-10-02): `src/edit/tracked.rs`
+Status: OPEN. Keep shipped in #287 (2026-10-02): `crates/jubarte-edit/src/edit/tracked.rs`
 emits a plan's edits as new revisions beside another party's, for text
 edits, paragraph insertions, deletions and merges, `format_paragraph`,
 `insert_table`, `list`, comments and comment threads. What is left, most
@@ -363,7 +363,7 @@ important first:
   the CLI and Python do. Also check the TypeScript types accept `"keep"`.
 - [ ] **MCP**: `docx_edit` passes the plan through, so keep already works;
   mention `existing_revisions` (and `keep`) in its tool description.
-- [ ] **Coverage**: measure `src/edit/tracked.rs` with `cargo llvm-cov`
+- [ ] **Coverage**: measure `crates/jubarte-edit/src/edit/tracked.rs` with `cargo llvm-cov`
   (not run yet) and raise it to the 90% line / 85% branch bar for
   critical logic.
 - [ ] **CI fonts (not keep-specific)**: four `tests/convert_docx_to_pdf.rs`
@@ -375,7 +375,7 @@ important first:
 
 ## 9. Append (S13) follow-ups
 
-Status: OPEN. Append shipped in #285 (2026-10-02, `d24e2f6`): `src/append.rs`,
+Status: OPEN. Append shipped in #285 (2026-10-02, `d24e2f6`): `crates/jubarte-doc/src/append.rs`,
 `jubarte append`, Python `Document.append`, WASM `appendDocuments`. A
 validator sweep the same day found one defect (first item). The OOXML
 validator runs in the cloud container: `apt-get install dotnet-sdk-8.0`
@@ -442,7 +442,7 @@ repeatable-sweep item below is what makes these numbers reproducible.
   `w:abstractNum` and `w16cid:durableId` on `w:num`. Checked on clones: with
   `w15` and `w16cid` declared on the root the findings stay; with both also
   listed in `mc:Ignorable` they go. The document, notes and styles roots
-  already go through `merge_namespace_declarations` (`src/append.rs`, at the
+  already go through `merge_namespace_declarations` (`crates/jubarte-doc/src/append.rs`, at the
   body, in `carry_notes` and in the styles pass); the numbering splice
   (`markdown::package::append_numbering`) and its DOM fallback
   (`insert_lists`) do not. Fix: merge B's numbering root into A's after the
@@ -471,7 +471,7 @@ repeatable-sweep item below is what makes these numbers reproducible.
   Word (the Word item above): if it keeps a note-anchored comment, widen
   `validate`'s comment graph to every story and carry them. The design as
   planned:
-  - Build on `comments::CommentFamily` (`src/comments.rs`), not the
+  - Build on `comments::CommentFamily` (`crates/jubarte-doc/src/comments.rs`), not the
     comparer's `union_comments_xml`: that one treats an A comment and a B
     comment with the same id and text as one comment ("B's copy wins"),
     right for two versions of one document, wrong for two documents (two
@@ -536,7 +536,7 @@ Status: OPEN. `fill_control` and `read`'s `controls` list shipped in
 
 - [ ] **The redline drops the control around a fill** (KNOWN_ISSUES.md #7).
   The clean copy keeps the `w:sdt`, but the comparer's M390 step
-  (`unwrap_content_controls_in_pure_revisions`, `src/comparer/finalize.rs`)
+  (`unwrap_content_controls_in_pure_revisions`, `crates/jubarte-redlines/src/comparer/finalize/mod.rs`)
   unwraps every control in a paragraph that carries `w:ins` or `w:del`, as
   Word Compare does. A fill always revises its paragraph, so the redline
   shows the fill as plain tracked text without the tag, alias or lock.
@@ -548,7 +548,7 @@ Status: OPEN. `fill_control` and `read`'s `controls` list shipped in
   `decision_redline_keeps_the_control_wrapper` in
   `tests/edit_fill_control.rs` passes and loses its `#[ignore]`.
 - [ ] **Fills are refused under `existing_revisions: "keep"`.** The tracked
-  emitter (`src/edit/tracked.rs`) has no arm for `Resolved::FillControl`,
+  emitter (`crates/jubarte-edit/src/edit/tracked.rs`) has no arm for `Resolved::FillControl`,
   so before the refusal a fill reached the clean copy and the redline
   showed nothing. `resolve_fill_control` now refuses it with
   `UNSUPPORTED_STRUCTURE` (test

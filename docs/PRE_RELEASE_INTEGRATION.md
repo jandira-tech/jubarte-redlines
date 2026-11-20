@@ -3,6 +3,11 @@
 
 # Pre-release integration, 2026-10-08
 
+> **Pre-split paths.** This document cites the pre-0.19.0 monolith
+> `src/` layout; since 0.19.0 the engine is a Cargo workspace and
+> those files live under `crates/<crate>/src/` — the snapshot-to-crate
+> map is in [docs/SRC_MANIFEST.md](../SRC_MANIFEST.md).
+
 Branch: `c/pre-release`, based on `origin/main` at `344fd848`.
 The user requested consolidation without waiting for CodeRabbit.
 
