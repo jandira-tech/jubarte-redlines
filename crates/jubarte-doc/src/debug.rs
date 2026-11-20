@@ -176,7 +176,8 @@ struct Entry {
 /// A package's zip entries, in archive order.
 struct Package {
     entries: Vec<Entry>,
-    /// The package's bytes, for a layout pass.
+    /// The package's bytes, for the render check's layout pass.
+    #[cfg(feature = "render")]
     raw: Vec<u8>,
     /// The package's structural zip defects: a package every reader
     /// refuses is still a package a maintainer must triage, so `debug`
@@ -325,6 +326,7 @@ impl Package {
         }
         Ok(Package {
             entries,
+            #[cfg(feature = "render")]
             raw: bytes.to_vec(),
             defects,
         })
@@ -2889,15 +2891,15 @@ fn finding_code(kind: &str) -> String {
 
 /// Whether this part line is the render check's whole-package layout
 /// summary (the feature-gated variant names it).
+#[cfg(feature = "render")]
 fn is_render_layout(check: &Check, part: &str) -> bool {
-    #[cfg(feature = "render")]
-    {
-        *check == Check::Render && part == "(layout)"
-    }
-    #[cfg(not(feature = "render"))]
-    {
-        false
-    }
+    *check == Check::Render && part == "(layout)"
+}
+
+/// Without the renderer there is no render check, so no layout summary.
+#[cfg(not(feature = "render"))]
+fn is_render_layout(_: &Check, _: &str) -> bool {
+    false
 }
 
 /// Whether a check lists the package part by part (render reads it whole).
@@ -4061,6 +4063,7 @@ mod tests {
     /// A header with a PAGE field in a shaded table cell, and a body with a
     /// styled floating table, shaded and highlighted text, a hidden run and
     /// a replacement laid out as the deletion first.
+    #[cfg(feature = "render")]
     fn docx_for_render() -> Vec<u8> {
         let w = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
         let body = r#"<w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t>Heading</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblStyle w:val="GridTable4"/><w:tblpPr w:vertAnchor="text" w:tblpX="100" w:tblpY="200"/><w:shd w:val="clear" w:color="auto" w:fill="FFFF00"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="D9E2F3"/></w:tcPr><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B1</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p/></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="FFC000"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:highlight w:val="yellow"/></w:rPr><w:t>marked</w:t></w:r><w:r><w:rPr><w:color w:val="FF0000"/></w:rPr><w:t>red</w:t></w:r><w:r><w:rPr><w:vanish/></w:rPr><w:t>hidden</w:t></w:r><w:r><w:rPr><w:rStyle w:val="Hidden"/></w:rPr><w:t>styled</w:t></w:r></w:p><w:p><w:del w:id="1" w:author="A"><w:r><w:delText>old</w:delText></w:r></w:del><w:ins w:id="2" w:author="A"><w:r><w:t>new</w:t></w:r></w:ins></w:p><w:sectPr><w:headerReference w:type="default" r:id="rId7"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1800" w:bottom="1440" w:left="1800" w:header="720" w:footer="720" w:gutter="0"/><w:titlePg/></w:sectPr>"#;
@@ -4209,6 +4212,7 @@ mod tests {
         report(&pkg, None, &opts_for(Check::Render)).unwrap()
     }
 
+    #[cfg(feature = "render")]
     const ONE_CELL: &str = r#"<w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc></w:tr>"#;
 
     #[cfg(feature = "render")]
@@ -4803,6 +4807,7 @@ mod residual_byte_diagnostic_contract_tests {
         assert_eq!(pkg.xml_parts(Some("document"), &mut filtered).len(), 1);
         assert!(filtered.by_kind.is_empty());
         assert_eq!(bytes, before);
+        #[cfg(feature = "render")]
         assert_eq!(pkg.raw, before);
         assert!(
             Package::open(b"not a ZIP")

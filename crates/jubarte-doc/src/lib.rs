@@ -49,8 +49,11 @@ pub(crate) use jubarte_dom::ooxml;
 pub use jubarte_dom::{ids, namespaces, util, xmllinq};
 pub use jubarte_opc::{admission, opc, strict_translation};
 pub(crate) use jubarte_opc::{
-    borders, builtin_styles, data_stores, markup_simplifier, numbering, table_dom, validate_dom,
+    builtin_styles, data_stores, markup_simplifier, numbering, validate_dom,
 };
+// The debug render check's table and border views; nothing else reads them.
+#[cfg(feature = "render")]
+pub(crate) use jubarte_opc::{borders, table_dom};
 pub use jubarte_redlines::{comparer, document_comparer, revision_processor};
 
 /// Append one document after another.
@@ -198,7 +201,13 @@ pub(crate) mod corpus {
                 "{name}"
             );
             assert_eq!(crate::inspect::snapshot(&bytes).is_ok(), readable, "{name}");
+            #[cfg(feature = "render")]
             assert_eq!(crate::audit::audit(&bytes, &[]).is_ok(), readable, "{name}");
+            assert_eq!(
+                crate::audit::audit_report_with(&bytes, &[], None).is_ok(),
+                readable,
+                "{name}"
+            );
             assert_eq!(
                 crate::validate::validate(&bytes).is_ok(),
                 readable,
@@ -273,6 +282,7 @@ pub(crate) mod corpus {
             let readable = crate::changes::list_changes(&bytes).is_ok();
             let report = crate::audit::audit_report_with(&bytes, &[], None);
             assert_eq!(report.is_ok(), readable, "{name}");
+            #[cfg(feature = "render")]
             if let Ok(updated) = crate::fields::update_fields(&bytes) {
                 assert!(
                     crate::changes::list_changes(&updated.docx).is_ok(),
@@ -384,8 +394,11 @@ pub(crate) mod corpus {
                     .is_empty(),
                 "{name}"
             );
-            let fields = |b: &[u8]| crate::fields::update_fields(b).unwrap().fields.len();
-            assert_eq!(fields(&noisy), fields(&bytes), "{name}");
+            #[cfg(feature = "render")]
+            {
+                let fields = |b: &[u8]| crate::fields::update_fields(b).unwrap().fields.len();
+                assert_eq!(fields(&noisy), fields(&bytes), "{name}");
+            }
             let appended =
                 crate::append::append_documents(&noisy, &noisy, &Default::default()).unwrap();
             let before = crate::changes::list_changes(&bytes).unwrap().len();

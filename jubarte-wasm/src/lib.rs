@@ -1925,14 +1925,13 @@ pub fn markdown_to_docx(
     markdown_docx(text, options_json, reference).map_err(js_err)
 }
 
-#[cfg(feature = "doc")]
 /// Audit findings as JSON `{findings, rules, layout}` (see `jubarte validate --rules`).
 /// `rules` is a comma-separated list of rule sets (`a11y`, `style`,
 /// `structure`) or codes; omitted or empty runs every rule. The slim build
 /// has no layout pass: it leaves `FONT_SUBSTITUTED` out (naming it is an
 /// error) and does not compare `NUMPAGES` caches with a page count.
 #[wasm_bindgen(js_name = auditDocument)]
-#[cfg(all(feature = "doc", feature = "pdf"))]
+#[cfg(feature = "doc")]
 pub fn audit_document(docx: &[u8], rules: Option<String>) -> Result<String, JsValue> {
     let rules = rules.unwrap_or_default();
     let rules: Vec<&str> = rules
