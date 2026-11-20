@@ -227,6 +227,73 @@ class EvidenceEngine(unittest.TestCase):
         r = self.check()
         self.assertEqual(r.returncode, 0, r.stderr)
 
+    # The workspace split (0.19.0): the engine lives under crates/, and the
+    # root manifest carries the version and licence in [workspace.package].
+    WORKSPACE = (
+        '[workspace]\nmembers = [".", "crates/*"]\n\n'
+        '[workspace.package]\nversion = "0.1.0"\nedition = "2024"\nlicense = "AGPL-3.0-only"\n\n'
+        '[workspace.dependencies]\njubarte-dom = { path = "crates/jubarte-dom", version = "=0.1.0" }\n'
+        'zip = "8"\n\n'
+        '[package]\nname = "jubarte"\nversion.workspace = true\n'
+    )
+    CRATE = (
+        '[package]\nname = "jubarte-dom"\nversion.workspace = true\n'
+        'include = ["/src/**", "/README.md", "/LICENSE"]\n\n[dependencies]\nzip = { workspace = true }\n'
+    )
+
+    def workspace(self, source: str) -> str:
+        self.write("Cargo.toml", self.WORKSPACE)
+        self.write("crates/jubarte-dom/Cargo.toml", self.CRATE)
+        self.write("crates/jubarte-dom/src/lib.rs", source)
+        self.write("crates/jubarte-dom/LICENSE", "AGPL\n")
+        engine = self.commit("a workspace engine")
+        self.results(engine)
+        return engine
+
+    def test_a_comment_only_change_in_a_workspace_crate_is_no_engine_change(self) -> None:
+        self.workspace("// SPDX-License-Identifier: AGPL-3.0-only\npub fn f() -> u8 { 1 }\n")
+        self.write("crates/jubarte-dom/src/lib.rs", "// SPDX-License-Identifier: Apache-2.0\npub fn f() -> u8 { 1 }\n")
+        self.commit("relicensed header")
+        r = self.check()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("comment-only", r.stdout)
+
+    def test_a_code_change_in_a_workspace_crate_is_named(self) -> None:
+        self.workspace("pub fn f() -> u8 { 1 }\n")
+        self.write("crates/jubarte-dom/src/lib.rs", "pub fn f() -> u8 { 2 }\n")
+        self.commit("behaviour")
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("crates/jubarte-dom/src/lib.rs", r.stderr)
+
+    def test_the_workspace_version_licence_and_pins_are_no_engine_change(self) -> None:
+        self.workspace("pub fn f() {}\n")
+        self.write("Cargo.toml", self.WORKSPACE.replace("0.1.0", "0.2.0").replace("AGPL-3.0-only", "Apache-2.0"))
+        self.write("crates/jubarte-dom/Cargo.toml",
+                   self.CRATE.replace('"/LICENSE"]', '"/LICENSE", "/NOTICE"]'))
+        self.write("crates/jubarte-dom/LICENSE", "Apache\n")
+        self.write("crates/jubarte-dom/NOTICE", "notice\n")
+        self.write("crates/jubarte-dom/README.md", "readme\n")
+        self.commit("release 0.2.0 under Apache-2.0")
+        r = self.check()
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_workspace_dependency_change_is_named(self) -> None:
+        self.workspace("pub fn f() {}\n")
+        self.write("Cargo.toml", self.WORKSPACE.replace('zip = "8"', 'zip = "9"'))
+        self.commit("zip 9")
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("Cargo.toml", r.stderr)
+
+    def test_a_crate_dependency_change_is_named(self) -> None:
+        self.workspace("pub fn f() {}\n")
+        self.write("crates/jubarte-dom/Cargo.toml", self.CRATE + 'sha2 = "0.10"\n')
+        self.commit("a new dependency")
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("crates/jubarte-dom/Cargo.toml", r.stderr)
+
     def test_a_package_field_cargo_builds_from_is_named(self) -> None:
         self.write("Cargo.toml", CARGO_TOML.replace('edition = "2021"', 'edition = "2024"'))
         self.results(self.engine)

@@ -118,7 +118,8 @@ function main() {
 
   const cargoPath = join(root, "Cargo.toml");
   const cargo = readFileSync(cargoPath, "utf8");
-  const m = cargo.match(/^version = "(\d+\.\d+\.\d+)"$/m);
+  // A trailing comment may follow the version (Cargo.toml has one).
+  const m = cargo.match(/^version = "(\d+\.\d+\.\d+)"[ \t]*(?:#.*)?$/m);
   if (!m) {
     console.error(`could not find [package] version in ${cargoPath}`);
     process.exit(1);

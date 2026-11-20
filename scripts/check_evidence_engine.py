@@ -59,6 +59,11 @@ LISTING = frozenset(
         "publish",
     }
 )
+# the Rust sources read as text: the root crate's and each workspace crate's
+RUST_SOURCE = re.compile(r"(?:src|crates/[^/]+/src)/.*\.rs\Z")
+CRATE_MANIFEST = re.compile(r"crates/[^/]+/Cargo\.toml\Z")
+# files a crate packages for crates.io that no build reads
+CRATE_LISTING = re.compile(r"crates/[^/]+/(?:README(?:\.fragment)?\.md|LICENSE|NOTICE|LICENSES/.*)\Z")
 RAW_STRING = re.compile(r'[bc]?r(#*)"')
 CHAR = re.compile(r"'(?:\\(?:u\{[0-9A-Fa-f_]+\}|x[0-9A-Fa-f]{2}|.)|[^\\'\n])'")
 
@@ -149,12 +154,34 @@ def toml_at(rev: str, path: str) -> dict | None:
     return tomllib.loads(shown.stdout) if shown.returncode == 0 else None
 
 
+def unpinned(deps: dict) -> dict:
+    """A dependency table without the versions of the workspace's own crates
+    (the entries with a `path`): step 1 bumps those pins with the version."""
+    return {
+        name: ({k: v for k, v in dep.items() if k != "version"} if isinstance(dep, dict) and "path" in dep else dep)
+        for name, dep in deps.items()
+    }
+
+
 def manifest(doc: dict | None) -> dict | None:
-    """Cargo.toml without the [package] fields cargo builds nothing from."""
+    """Cargo.toml without the fields cargo builds nothing from: the listing
+    fields of [package] and [workspace.package], and the version pins on the
+    workspace's own crates."""
     if doc is None:
         return None
-    package = {k: v for k, v in doc.get("package", {}).items() if k not in LISTING}
-    return {**doc, "package": package}
+    out = dict(doc)
+    out["package"] = {k: v for k, v in doc.get("package", {}).items() if k not in LISTING}
+    for table in ("dependencies", "dev-dependencies", "build-dependencies"):
+        if table in doc:
+            out[table] = unpinned(doc[table])
+    if "workspace" in doc:
+        workspace = dict(doc["workspace"])
+        if "package" in workspace:
+            workspace["package"] = {k: v for k, v in workspace["package"].items() if k not in LISTING}
+        if "dependencies" in workspace:
+            workspace["dependencies"] = unpinned(workspace["dependencies"])
+        out["workspace"] = workspace
+    return out
 
 
 def text_at(rev: str, path: str) -> str | None:
@@ -210,11 +237,19 @@ def main() -> int:
         # only the Rust sources under src/ are read as text: any other
         # changed input (the fonts under assets/ are binary, an .rs there is
         # data) is a change as it stands (#1772, #1781)
-        if path.startswith("src/") and path.endswith(".rs"):
+        if RUST_SOURCE.match(path):
             before, after = text_at(commit, path), text_at(args.rev, path)
             if before is not None and after is not None and rust_tokens(before) == rust_tokens(after):
                 comments.append(path)
                 continue
+        # a crate's own manifest is read as the root one is: its listing
+        # fields and the pins on its sibling crates build nothing
+        if CRATE_MANIFEST.match(path):
+            if manifest(toml_at(commit, path)) == manifest(toml_at(args.rev, path)):
+                continue
+        # what a crate packages beside its sources (README, licence texts)
+        if CRATE_LISTING.match(path):
+            continue
         changed.append(path)
     if manifest(toml_at(commit, "Cargo.toml")) != manifest(toml_at(args.rev, "Cargo.toml")):
         changed.append("Cargo.toml (beyond its version, metadata and crates.io listing)")

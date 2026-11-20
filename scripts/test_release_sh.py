@@ -431,7 +431,22 @@ class Repairs0112(unittest.TestCase):
 
     def test_step1_dies_on_a_half_bumped_tree(self) -> None:
         s1 = step(1)
-        self.assertIn('grep -q "^version = \\"$VER\\"$"', s1)
+        # The root Cargo.toml's version carries a trailing comment; the
+        # check that anchored on the closing quote called a bumped tree
+        # half-bumped, so no 0.19.0 could get past step 1.
+        check = next(l.strip() for l in s1.splitlines() if "|| half_bumped \"$f\"" in l and "^version" in l)
+        grep = check.split(" \"$f\"")[0]
+
+        def on_version(manifest: str) -> bool:
+            with tempfile.TemporaryDirectory() as d:
+                (Path(d) / "Cargo.toml").write_text(manifest)
+                run = subprocess.run(["bash", "-c", f"VER=0.19.0\n{grep} Cargo.toml"], cwd=d)
+            return run.returncode == 0
+
+        self.assertTrue(on_version('[workspace.package]\nversion = "0.19.0" # bumped by the release script\n'))
+        self.assertTrue(on_version('[package]\nversion = "0.19.0"\n'))
+        self.assertFalse(on_version('[workspace.package]\nversion = "0.18.0" # bumped by the release script\n'))
+        self.assertFalse(on_version('[package]\nversion = "0.19.01"\n'))
         self.assertIn("half-bumped", s1)
         for f in ("jubarte-python/Cargo.toml", "jubarte-wasm/npm/package.json",
                   "gemini-extension.json", "README.md"):
@@ -441,6 +456,9 @@ class Repairs0112(unittest.TestCase):
         add = next(l for l in s8.splitlines() if "jubarte-rust-inproc/Cargo.lock" in l)
         self.assertIn("jubarte-rust-inproc/Cargo.toml", add)
         self.assertIn("jubarte-wasm/Cargo.toml", s8)
+        # and the shim's manifest, which step 1 bumps too: left unstaged it
+        # shipped the shim at the old version with the old jubarte-docx pin
+        self.assertIn("jubarte-python/compat/pyproject.toml", s8.split("git commit -m \"chore(release)")[0].split("git add Cargo.toml")[1])
 
     def test_the_readme_pin_is_checked_only_where_the_readme_has_one(self) -> None:
         # The 0.11.0 README rewrite dropped the Socket badge; step 1 then died
@@ -456,7 +474,8 @@ class Repairs0112(unittest.TestCase):
                                      cwd=d, capture_output=True, text=True)
             return run.returncode == 0
 
-        pin = "https://badge.socket.dev/cargo/package/jubarte-redlines/"
+        # the badge names the facade crate since the split
+        pin = "https://badge.socket.dev/cargo/package/jubarte/"
         self.assertFalse(stale("# jubarte\n\nno badge here\n"))
         self.assertFalse(stale(f"[![s]({pin}0.11.2)](x)\n"))
         self.assertTrue(stale(f"[![s]({pin}0.11.0)](x)\n"))
