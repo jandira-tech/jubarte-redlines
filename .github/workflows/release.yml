@@ -611,6 +611,33 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
+      # The npm build is not tracked: it is built here, from the tagged
+      # commit, so ENGINE_COMMIT.txt names the tag's own commit. No build
+      # cache: what npm ships is compiled from nothing but this checkout.
+      - id: built
+        run: |
+          if [ "$(npm view "jubarte-wasm@$VER" version 2>/dev/null)" = "$VER" ]; then
+            echo "jubarte-wasm $VER is already on npm: not rebuilt"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.built.outputs.skip != 'true'
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+        with:
+          targets: wasm32-unknown-unknown
+      - if: steps.built.outputs.skip != 'true'
+        uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # pinned 2026-10-01
+        with:
+          tool: wasm-pack@0.15.0
+          fallback: none
+      - name: build and smoke-test the eight targets
+        if: steps.built.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          jubarte-wasm/build-npm.sh
+          scripts/check_engine_commit.sh
+          [ "$(cat jubarte-wasm/npm/ENGINE_COMMIT.txt)" = "$(git rev-parse HEAD)" ] \
+            || { echo "::error::ENGINE_COMMIT.txt does not name the tagged commit"; exit 1; }
+          node jubarte-wasm/npm-smoke.mjs
       - name: npm speaks OIDC
         run: |
           set -euo pipefail

@@ -75,9 +75,9 @@ const TOP_LEVEL: &[&str] = &[
 /// A tracked file may be larger than this only under [`LARGE_FILES`].
 const SIZE_LIMIT: u64 = 1024 * 1024;
 
-/// Folders whose files may exceed [`SIZE_LIMIT`]: test inputs, the release
-/// evidence and API listings each release adds, and the built npm packages.
-const LARGE_FILES: &[&str] = &["docs/api/", "jubarte-wasm/npm/", "release_info/", "tests/"];
+/// Folders whose files may exceed [`SIZE_LIMIT`]: test inputs, and the
+/// release evidence and API listings each release adds.
+const LARGE_FILES: &[&str] = &["docs/api/", "release_info/", "tests/"];
 
 /// Folders whose files are captured command output, kept as evidence: a
 /// log or an empty file there is the record of a run.
@@ -232,6 +232,13 @@ fn no_built_program_log_or_scratch_file_is_tracked() {
         // Test data may hold a program on purpose (a signed archive's payload).
         if is_native_binary(&bytes) && !name.starts_with("tests/") {
             found.push(format!("{name} (a native executable)"));
+        }
+        // The npm packages are built in CI, never committed.
+        if bytes.starts_with(b"\0asm") && !name.starts_with("tests/") {
+            found.push(format!("{name} (a WebAssembly module)"));
+        }
+        if name.starts_with("jubarte-wasm/npm/") && name.contains("/jubarte_wasm") {
+            found.push(format!("{name} (wasm-bindgen output)"));
         }
     }
     report("tracked files that are build output or scratch", &found);

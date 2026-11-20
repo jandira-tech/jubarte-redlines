@@ -166,7 +166,9 @@ class WasmTypingsSnapshot(unittest.TestCase):
         m = re.search(r'for t in ([^;]+); do\n\s+cp "jubarte-wasm/npm/\$t/jubarte_wasm\.d\.ts"', text)
         self.assertIsNotNone(m)
         listed = set(m.group(1).split())
-        builds = {p.parent.name for p in (RELEASE_SH.parent.parent / "jubarte-wasm/npm").glob("*/jubarte_wasm.d.ts")}
+        # the built files are not tracked; each build's folder holds a
+        # tracked package.json
+        builds = {p.parent.name for p in (RELEASE_SH.parent.parent / "jubarte-wasm/npm").glob("*/package.json")}
         self.assertEqual(listed, builds)
 
 
@@ -289,12 +291,33 @@ class Lessons0101(unittest.TestCase):
         self.assertIn("app_release --preflight", step(0))
         self.assertIn("app_release", step(13))
 
-    def test_a_resume_keeps_the_wasm_build_it_already_committed(self) -> None:
+    def test_a_resume_keeps_the_wasm_build_it_already_made(self) -> None:
         # A resumed run rebuilt the package with a later ENGINE_COMMIT than
-        # the one npm already shipped.
+        # the one npm already shipped. The build is not tracked, so a resume
+        # keeps it only when it is still on disk.
         s8 = step(8)
-        guard = s8.index("regenerate npm artifacts for v$VER")
+        guard = s8.index("record the npm API for v$VER")
         self.assertLess(guard, s8.index("jubarte-wasm/build-npm.sh"))
+        kept = s8[guard:s8.index("jubarte-wasm/build-npm.sh")]
+        self.assertIn("[ -f jubarte-wasm/npm/ENGINE_COMMIT.txt ]", kept)
+
+    def test_the_built_packages_are_never_committed(self) -> None:
+        # jubarte-wasm/npm's built files are ignored; release.yml builds them
+        # from the tag. Step 8 commits only what is cut from the build.
+        s8 = step(8)
+        self.assertNotIn("git add jubarte-wasm/npm ", s8)
+        ignore = (RELEASE_SH.parent.parent / "jubarte-wasm/.gitignore").read_text()
+        for line in ("/npm/*/jubarte_wasm_bg.wasm", "/npm/*/jubarte_wasm.js", "/npm/ENGINE_COMMIT.txt"):
+            self.assertIn(line, ignore)
+
+    def test_step8_checks_what_npm_would_pack(self) -> None:
+        # With nothing tracked, a build that left a target out would publish
+        # a package missing it.
+        s8 = step(8)
+        pack = s8.index("npm pack --dry-run --json")
+        self.assertLess(s8.index("jubarte-wasm/build-npm.sh"), pack)
+        self.assertLess(pack, s8.index('git tag -a "$TAG"'))
+        self.assertIn("would not ship $t/$n", s8)
 
     def test_step8_refuses_an_npm_build_the_tag_does_not_vouch_for(self) -> None:
         # A resumed run keeps the npm build it finds; nothing checked that its
@@ -303,7 +326,7 @@ class Lessons0101(unittest.TestCase):
         s8 = step(8)
         call = s8.index('scripts/check_engine_commit.sh "$TAG^{commit}"')
         self.assertGreater(call, s8.rindex('git tag -a "$TAG"'))
-        self.assertGreater(call, s8.index("npm artifacts rebuilt + smoke-tested"))
+        self.assertGreater(call, s8.index("npm packages built + smoke-tested"))
         self.assertLess(call, s8.index("check_now 8"))
         line = next(l for l in s8.splitlines() if "scripts/check_engine_commit.sh" in l)
         self.assertIn("|| die", line)
@@ -317,8 +340,8 @@ class Lessons0101(unittest.TestCase):
 
     def test_the_artifacts_commit_takes_the_wasm_lock(self) -> None:
         s8 = step(8)
-        add = next(l for l in s8.splitlines() if "git add jubarte-wasm/npm" in l)
-        self.assertIn("jubarte-wasm/Cargo.lock", add)
+        add = next(l for l in s8.splitlines() if "git add jubarte-wasm/Cargo.lock" in l)
+        self.assertIn("docs/api", add)
 
     def test_the_artifacts_commit_regenerates_the_js_reference(self) -> None:
         # docs/javascript.md quotes jubarte-wasm/npm/node/jubarte_wasm.d.ts.
@@ -327,7 +350,7 @@ class Lessons0101(unittest.TestCase):
         s8 = step(8)
         regen = s8.index("scripts/gen_wasm_api.py")
         self.assertLess(s8.index("jubarte-wasm/build-npm.sh"), regen)
-        add = next(l for l in s8.splitlines() if "git add jubarte-wasm/npm" in l)
+        add = next(l for l in s8.splitlines() if "git add jubarte-wasm/Cargo.lock" in l)
         self.assertIn("docs/javascript.md", add)
 
     def test_the_artifacts_commit_regenerates_the_npm_cli_reference(self) -> None:
@@ -338,7 +361,7 @@ class Lessons0101(unittest.TestCase):
         s8 = step(8)
         regen = s8.index("--marker cli-npm")
         self.assertLess(s8.index("jubarte-wasm/build-npm.sh"), regen)
-        self.assertLess(regen, s8.index("git add jubarte-wasm/npm"))
+        self.assertLess(regen, s8.index("git add jubarte-wasm/Cargo.lock docs/api"))
 
     def test_pypi_is_checked_on_the_project_listing(self) -> None:
         # PyPI's CDN keeps a 404 for /pypi/<name>/<version>/json once asked

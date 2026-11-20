@@ -272,7 +272,7 @@ the same commit. Every step checks what already exists:
 |---|---|
 | before the tag | redoes the version sync and the release commit |
 | after the tag | keeps the release commit and the tag; never re-tags |
-| after the wasm artifacts commit | keeps that commit (`build(wasm): regenerate npm artifacts for vX.Y.Z`) instead of rebuilding: a rebuild stamps a newer `ENGINE_COMMIT` than the package npm may already hold |
+| after the npm API commit | keeps that commit (`docs(wasm): record the npm API for vX.Y.Z`) and the build on disk instead of rebuilding. The built packages are not tracked: `release.yml` builds them from the tag and publishes that build, so a checkout with no build still resumes |
 | any publish | skips every registry that already has the version |
 
 Do not hand-edit a tracked file between the tag and the re-run: the clean

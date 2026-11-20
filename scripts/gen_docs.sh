@@ -96,6 +96,14 @@ case "${node_major:-}${node_minor:-}" in
     fi
     ;;
 esac
+# The npm build is not tracked. A complete build that still matches the
+# engine is used as it is (scripts/check_engine_commit.sh); otherwise the
+# Node target is built, which is all the CLI help and the typings need.
+if [ ! -f jubarte-wasm/npm/node/jubarte_wasm.js ] || ! scripts/check_engine_commit.sh >/dev/null 2>&1; then
+  command -v wasm-pack >/dev/null \
+    || { echo "error: wasm-pack not found; docs/javascript.md is cut from a build of jubarte-wasm (cargo install --locked wasm-pack)" >&2; exit 1; }
+  jubarte-wasm/build-npm.sh --only node
+fi
 mkdir -p jubarte-wasm/cli/node_modules
 # Remove any real directory first: if the target ever exists as one (a real
 # install), `ln -sfn` would nest the symlink inside it instead of replacing.

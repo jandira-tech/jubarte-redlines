@@ -30,6 +30,10 @@ See [docs/maintainers/VERSIONING.md](docs/maintainers/VERSIONING.md) for the rel
 ### Repository
 
 - The repository is `jandira-tech/jubarte`. The old address redirects.
+- The built npm packages are no longer in git. CI builds all eight
+  WebAssembly targets for its tests, and the release workflow builds them
+  from the release tag, so `ENGINE_COMMIT.txt` in the package names the
+  tagged commit itself.
 - The bench test documents (third-party files, some AGPL-3.0) moved to
   the `jandira-tech/jubarte-test-corpus` repository, a git submodule at
   `tests/corpus/bench`. Clone with `--recurse-submodules` to run the

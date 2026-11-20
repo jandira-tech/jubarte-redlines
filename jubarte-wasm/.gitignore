@@ -1,2 +1,9 @@
 /target
 # Keep pkg/ for local speed benches (regenerate with wasm-pack if missing).
+# Built by build-npm.sh; CI builds them for its tests and for npm.
+/pkg*/
+/npm/*/jubarte_wasm.js
+/npm/*/jubarte_wasm.d.ts
+/npm/*/jubarte_wasm_bg.wasm
+/npm/*/jubarte_wasm_bg.wasm.d.ts
+/npm/ENGINE_COMMIT.txt
