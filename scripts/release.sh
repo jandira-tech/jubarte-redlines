@@ -223,7 +223,7 @@ before|you|bench hygiene while scoring: one scoring job at a time; Word only thr
 11|you|When a wheel job fails: fix the release jobs and rerun the workflow on the tag (a run that lost a wheel never becomes a public release), or consent explicitly with --local-publish --no-wait to the partial set|gh run rerun <run-id> --failed; scripts/release.sh @V@ <summaries> --local-publish --no-wait
 12|auto|Verify: every registry answers with the new version AND its summary|scripts/release.sh step 12 checks (crates.io, npm x2, PyPI, GitHub)
 12|auto|Each channel installs the way a user installs it: this machine's archive matches SHA256SUMS.txt and answers jubarte @V@; pip install jubarte-redlines==@V@ in a fresh uv environment reports engine @V@; npx -y jubarte-redlines@@V@ --version answers @V@; npm i jubarte-wasm@@V@ then require() loads — 0.13.0 never reached npm and no step said so; docs.rs only warns, since it lags|scripts/release.sh step 12 (archive_runs, pip_installs, npx_runs, npm_requires, docsrs_built)
-12|you|Read the v@V@ GitHub release page once, human eyes: five CLI archives (each signed once keys/ holds a public key), seven wheels, the sdist and SHA256SUMS.txt attached; the notes lead with the github summary, carry the CHANGELOG section and the Full Changelog link (none on the first release after the history cut) — a binary that missed the workflow run cannot join this tag, the next patch ships it|gh release view v@V@ --web
+12|you|Read the v@V@ GitHub release page once, human eyes: five CLI archives (each signed once keys/ holds a public key), seven wheels, the sdist and SHA256SUMS.txt attached; the notes lead with the github summary, carry the CHANGELOG section and the Full Changelog link — a binary that missed the workflow run cannot join this tag, the next patch ships it|gh release view v@V@ --web
 13|auto|The app's part, in its checkout: the download page and demo engine move to @V@, the app's version files go on release/v@V@ with a pull request; the App Store upload and the benchmark flow are printed, never run|jubarte-app/scripts/release-engine.sh @V@ --engine-dir "$PWD"
 13|auto|The site's own release ladder runs inside it: sync-release.ts moves the download page's Engine line, the archive and wheel tables and the release history off the GitHub release, the demo engine is repinned to jubarte-wasm@@V@, sync-bench.ts lands the sample figures proved against the results JSONs, and the built pages pass pnpm test, lint and typecheck before anything deploys|jubarte-app/jubarte-site/scripts/release.sh release @V@ --no-deploy (inside step 13's app script)
 13|auto|jubarte.pro figures: the bench.* records of release_info/website_data go into the app's data/facts.jsonl once, are proved against release_info, tested, linted, typechecked, committed to the app's main (a push, else a pull request merged at once), deployed, and the live benchmark page is read against the results JSONs — a failed check stops before the deploy|python3 jubarte-app/scripts/check_site_live.py @V@
@@ -476,30 +476,9 @@ eventually() {
 # The newest release tag reachable from HEAD, other than $1: a plain vX.Y.Z,
 # since a prerelease tag (v0.14.0-rc.1) is no release. Every step measures
 # the bump, the CHANGELOG and the API drift from it.
-#
-# This repository's history starts at 0.19.0; the releases before it are in
-# jandira-tech/jubarte-history. scripts/history_cut.txt names the last of
-# them, and it is the answer only while this repository holds no release tag
-# of its own other than $1: the first release here is measured from it.
 last_release_tag() {
   git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' \
-    --exclude "${1:-v*-*}" 2>/dev/null && return 0
-  local own cut
-  own=$(git tag -l 'v[0-9]*' | grep -v -e '-' | grep -vxF -e "${1:-}" || true)
-  [ -z "$own" ] || return 1
-  own=${1:-}
-  # A clone that lost its tags has none either. The CHANGELOG tells the two
-  # apart: a release made here left its link footer to this repository.
-  if grep -E '^\[[0-9]+\.[0-9]+\.[0-9]+\]: https://github\.com/jandira-tech/jubarte/releases/tag/v' \
-       CHANGELOG.md 2>/dev/null \
-     | grep -vxF -e "[${own#v}]: https://github.com/jandira-tech/jubarte/releases/tag/$own" \
-                 -e "[${VER:-}]: https://github.com/jandira-tech/jubarte/releases/tag/v${VER:-}" \
-     | grep -q .; then
-    return 1
-  fi
-  cut=$(grep -m1 -E '^v[0-9]+\.[0-9]+\.[0-9]+$' scripts/history_cut.txt 2>/dev/null) || return 1
-  [ "$cut" != "${1:-}" ] || return 1
-  printf '%s\n' "$cut"
+    --exclude "${1:-v*-*}" 2>/dev/null
 }
 # patch, minor or major from the previous release's version $1 to $2; fails
 # when $2 is not above $1, or when either is no X.Y.Z.
@@ -647,15 +626,7 @@ changelog_placeholders() { changelog_section | grep -nwE '(TODO|TBD|FIXME|XXX)';
 # history git cannot read is a refusal, never an empty set.
 user_facing_prs() {
   local log
-  # The release scripts/history_cut.txt names is in the archive, not here:
-  # every commit of this repository is since it. Any other tag git cannot
-  # read stays a refusal.
-  local range="$1..HEAD"
-  if ! git rev-parse -q --verify "refs/tags/$1^{commit}" >/dev/null \
-     && grep -qxF -e "$1" scripts/history_cut.txt 2>/dev/null; then
-    range=HEAD
-  fi
-  log=$(git log --format='%s%x1f%b%x1e' "$range") \
+  log=$(git log --format='%s%x1f%b%x1e' "$1..HEAD") \
     || { echo "  ! git cannot read the history since $1" >&2; return 1; }
   printf '%s' "$log" | awk -v RS='\036' -F'\037' '
     { sub(/^\n+/, "", $1); title = $2; sub(/^\n+/, "", title); sub(/\n.*/, "", title) }
@@ -1195,8 +1166,7 @@ EOF
 # What the docs statement is about: README/docs files touched since the last
 # release tag (the version sync above already moved the README badge).
 PREV_TAG=$(last_release_tag || true)
-# (a previous release that is in the archive is no commit to diff from)
-if [ -n "$PREV_TAG" ] && git rev-parse -q --verify "refs/tags/$PREV_TAG^{commit}" >/dev/null; then
+if [ -n "$PREV_TAG" ]; then
   step "docs changed since $PREV_TAG:"
   { git diff --name-only "$PREV_TAG" -- '*.md' 'docs/' 'skills/'; \
     git ls-files --others --exclude-standard -- '*.md' 'docs/' 'skills/'; } \
@@ -1754,8 +1724,7 @@ release_from_artifacts() {
       on && /^## \[/ { exit }
       on { print }
     ' CHANGELOG.md
-    [ -n "$PREV_TAG" ] && [ "$PREV_TAG" != "$TAG" ] \
-      && git rev-parse -q --verify "refs/tags/$PREV_TAG^{commit}" >/dev/null && printf \
+    [ -n "$PREV_TAG" ] && [ "$PREV_TAG" != "$TAG" ] && printf \
       '\n**Full Changelog**: https://github.com/jandira-tech/jubarte/compare/%s...%s\n' \
       "$PREV_TAG" "$TAG"
   } > dist/release-notes.md

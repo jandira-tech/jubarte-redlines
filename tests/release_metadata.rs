@@ -391,19 +391,8 @@ fn root_changelog_has_a_dated_entry_and_release_link_for_the_version() {
         dated,
         "CHANGELOG.md `{heading}` heading must carry a `- YYYY-MM-DD` release date"
     );
-    // The release scripts/history_cut.txt names is the last one in the
-    // archive repository; every later release is in this one.
-    let cut = read("scripts/history_cut.txt");
-    let archived = cut
-        .lines()
-        .any(|line| line == format!("v{EXPECTED_VERSION}"));
-    let repository = if archived {
-        "jubarte-history"
-    } else {
-        "jubarte"
-    };
     let link = format!(
-        "[{EXPECTED_VERSION}]: https://github.com/jandira-tech/{repository}/releases/tag/v{EXPECTED_VERSION}"
+        "[{EXPECTED_VERSION}]: https://github.com/jandira-tech/jubarte/releases/tag/v{EXPECTED_VERSION}"
     );
     assert!(
         changelog.contains(&link),

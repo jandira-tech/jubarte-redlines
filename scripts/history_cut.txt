@@ -1,8 +1,0 @@
-# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
-#
-# SPDX-License-Identifier: Apache-2.0
-#
-# The last release before this repository's first commit. Its tag, and every
-# release from 0.9.2 to it, are in https://github.com/jandira-tech/jubarte-history
-# scripts/release.sh measures the first release made here from this version.
-v0.18.0

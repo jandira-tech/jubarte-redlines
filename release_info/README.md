@@ -213,10 +213,8 @@ Two: the previous release's six files and those of the release being made.
 Delete an older set when a release adds its own; that release's tag still
 holds it. `tests/repo_hygiene.rs` holds the size budget.
 
-This repository's history starts at 0.19.0. The evidence of 0.11.2 to
-0.17.0, and the commits every result up to 0.18.0 names
-(`tools.jubarte.commit`), are in
-[jandira-tech/jubarte-history](https://github.com/jandira-tech/jubarte-history),
-with those releases' tags and downloads. `scripts/history_cut.txt` names
-the last of them; `scripts/release.sh` measures the first release made
-here from it.
+The evidence of 0.11.2 to 0.17.0, and the commits every result up to
+0.18.0 names (`tools.jubarte.commit`), are in
+[jandira-tech/jubarte-history](https://github.com/jandira-tech/jubarte-history).
+In this repository a tag up to `v0.18.0` is a reduced source snapshot of
+that release, and its commit message names the original commit.
