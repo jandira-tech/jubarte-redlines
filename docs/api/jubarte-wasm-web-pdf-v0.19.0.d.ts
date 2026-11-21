@@ -1,0 +1,108 @@
+/* tslint:disable */
+/* eslint-disable */
+
+/**
+ * What [`renderPdf`](render_pdf) returns.
+ */
+export class RenderOutput {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * `{"page_count", "page_starts"}`: the pages written and each one's
+     * first line (60 characters at most), as an edit bundle's `render`
+     * line lists them.
+     */
+    readonly json: string;
+    /**
+     * The PDF.
+     */
+    readonly pdf: Uint8Array;
+}
+
+/**
+ * Render a DOCX package (bytes) → PDF bytes (Word-style layout).
+ *
+ * Mirrors `jubarte::convert::docx_to_pdf`. Fonts come from the embedded
+ * Carlito / Liberation set; the native system/cloud font overrides are
+ * no-ops under wasm (no filesystem), which only changes glyph sourcing,
+ * never layout metrics.
+ * `compress` (optional, default `false`) deflates the PDF's streams
+ * (`/FlateDecode`): much smaller output, no longer plain text.
+ * `revisions` (optional, default `"conventional"`) paints tracked changes:
+ * `"conventional"`, `"word"` (Microsoft Word's markup) or `"custom"` with
+ * `revisionPalette` (`"deleted=#AA0000:strike,..."`).
+ * `moveComments` (optional, default `false`) lists the comments after the
+ * last page instead of in balloons beside the text; `changedOnly`
+ * (optional, default `false`) keeps only the pages a tracked change
+ * touches, the pages a comment is anchored on and each section's first
+ * page on which a revised header or footer paints (else the first page).
+ */
+export function docxToPdf(docx: Uint8Array | number[], compress?: boolean | null, revisions?: string | null, revision_palette?: string | null, move_comments?: boolean | null, changed_only?: boolean | null): Uint8Array;
+
+/**
+ * One-shot init: panic hook → `console.error`. Safe to call multiple times.
+ */
+export function initPanicHook(): void;
+
+/**
+ * Number of pages in a PDF (cheap object scan; `0` if the bytes are not a
+ * readable PDF).
+ *
+ * Mirrors `jubarte::convert::pdf_page_count`.
+ */
+export function pdfPageCount(pdf: Uint8Array | number[]): number;
+
+/**
+ * An edited document's PDF, compressed, its changes painted as
+ * `revisions` (`conventional`, `word` or `custom` with
+ * `revisionPalette`), with the page facts `edit --pdf` reports. Full build
+ * only.
+ *
+ * Mirrors `jubarte::convert::render`.
+ */
+export function renderPdf(docx: Uint8Array | number[], revisions?: string | null, revision_palette?: string | null): RenderOutput;
+
+export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
+
+export interface InitOutput {
+    readonly memory: WebAssembly.Memory;
+    readonly __wbg_renderoutput_free: (a: number, b: number) => void;
+    readonly docxToPdf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
+    readonly initPanicHook: () => void;
+    readonly pdfPageCount: (a: number, b: number) => number;
+    readonly renderPdf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly renderoutput_json: (a: number, b: number) => void;
+    readonly renderoutput_pdf: (a: number, b: number) => void;
+    readonly __wbindgen_export: (a: number, b: number, c: number) => void;
+    readonly __wbindgen_export2: (a: number) => void;
+    readonly __wbindgen_export3: () => number;
+    readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly __wbindgen_export4: (a: number, b: number) => number;
+    readonly __wbindgen_export5: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
+    readonly __wbindgen_export6: (a: number) => void;
+    readonly __wbindgen_start: () => void;
+}
+
+export type SyncInitInput = BufferSource | WebAssembly.Module;
+
+/**
+ * Instantiates the given `module`, which can either be bytes or
+ * a precompiled `WebAssembly.Module`.
+ *
+ * @param {{ module: SyncInitInput }} module - Passing `SyncInitInput` directly is deprecated.
+ *
+ * @returns {InitOutput}
+ */
+export function initSync(module: { module: SyncInitInput } | SyncInitInput): InitOutput;
+
+/**
+ * If `module_or_path` is {RequestInfo} or {URL}, makes a request and
+ * for everything else, calls `WebAssembly.instantiate` directly.
+ *
+ * @param {{ module_or_path: InitInput | Promise<InitInput> }} module_or_path - Passing `InitInput` directly is deprecated.
+ *
+ * @returns {Promise<InitOutput>}
+ */
+export default function __wbg_init (module_or_path?: { module_or_path: InitInput | Promise<InitInput> } | InitInput | Promise<InitInput>): Promise<InitOutput>;
