@@ -118,9 +118,12 @@ class FetchFixtures(unittest.TestCase):
         self.write_manifest({"a/absent.docx": digest(b"x")})
         code, text = self.run_script()
         self.assertEqual(code, 1, text)
+        self.assertIn("404", text)
+        # the temporary file is closed and removed, also when the request fails
+        self.assertEqual(list((self.dest / "a").glob(".fetch-*")), [])
 
     def test_a_path_that_leaves_the_folder_is_refused(self) -> None:
-        for name in ("../escape.docx", "/abs.docx", "a\\b.docx"):
+        for name in ("../escape.docx", "/abs.docx", "a\\b.docx", "C:drive.docx"):
             with self.subTest(name=name):
                 self.write_manifest({name: digest(b"x")})
                 code, text = self.run_script()

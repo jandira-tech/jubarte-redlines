@@ -60,7 +60,8 @@ def read_manifest(path: Path) -> tuple[str, str, list[tuple[str, str]]]:
         if not sep or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
             raise ManifestError(f"{path.name}:{number}: expected '<sha256>  <path>'")
         parts = Path(name).parts
-        if not name or Path(name).is_absolute() or ".." in parts or "\\" in name:
+        # ":" too: on Windows "C:x.docx" is not absolute, yet joins outside the folder.
+        if not name or Path(name).is_absolute() or ".." in parts or "\\" in name or ":" in name:
             raise ManifestError(f"{path.name}:{number}: unsafe path {name!r}")
         files.append((digest, name))
     for key in ("dataset", "revision"):
@@ -99,7 +100,9 @@ def download(url: str, target: Path, digest: str) -> None:
         handle, temp = tempfile.mkstemp(dir=target.parent, prefix=".fetch-")
         try:
             request = urllib.request.Request(url, headers={"User-Agent": "jubarte-fetch-fixtures"})
-            with urllib.request.urlopen(request, timeout=60) as response, os.fdopen(handle, "wb") as out:
+            # Open the temporary file first: a failed request must still close
+            # it, or Windows cannot remove it and the real error is lost.
+            with os.fdopen(handle, "wb") as out, urllib.request.urlopen(request, timeout=60) as response:
                 for block in iter(lambda: response.read(1 << 20), b""):
                     out.write(block)
             got = sha256_of(Path(temp))
