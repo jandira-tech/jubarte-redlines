@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
-//! Python bindings for the canonical **jubarte-redlines** engine.
+//! Python bindings for the canonical **jubarte** engine (PyPI `jubarte-docx`).
 //!
-//! Built with **PyO3** + **maturin** as the `jubarte_redlines._native`
+//! Built with **PyO3** + **maturin** as the `jubarte._native`
 //! extension module; the public Python surface (typed `Document`, edit plans,
-//! the `python -m jubarte_redlines` CLI) lives in `python/jubarte_redlines/`.
+//! the `python -m jubarte` CLI) lives in `python/jubarte/`.
 //!
 //! Every entry point detaches from the interpreter for the whole pure-Rust
 //! compute, so long operations don't block other Python threads. Structured
@@ -14,16 +14,42 @@
 //! serializers; the Python layer turns them into frozen dataclasses and never
 //! interprets OOXML itself.
 
+/// The `jubarte::…` paths this binding calls, each re-exported from the
+/// sub-crate its Cargo feature brings in (the facade's A6 paths, so the
+/// bodies below keep the names they had against the `jubarte` crate).
+/// Only the modules this binding reaches are listed.
+mod jubarte {
+    #[cfg(feature = "cli")]
+    pub use jubarte_cli::cli;
+    #[cfg(feature = "doc")]
+    pub use jubarte_doc::{append, changes, comments, inspect, scrub, validate};
+    #[cfg(all(feature = "doc", feature = "render"))]
+    pub use jubarte_doc::{audit, fields};
+    #[cfg(feature = "edit")]
+    pub use jubarte_edit::markdown;
+    #[cfg(feature = "edit")]
+    pub use jubarte_edit::{capabilities, edit, publication, text_diff};
+    #[cfg(all(feature = "markdown", not(feature = "edit")))]
+    pub use jubarte_markdown::markdown;
+    pub use jubarte_opc::admission;
+    #[cfg(feature = "redlines")]
+    pub use jubarte_redlines::{comparer, document_comparer};
+    #[cfg(feature = "render")]
+    pub use jubarte_render::convert;
+}
+
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyBytes, PyInt};
+use pyo3::types::PyBytes;
+#[cfg(feature = "edit")]
+use pyo3::types::{PyBool, PyInt};
 
 create_exception!(
-    jubarte_redlines,
+    jubarte,
     JubarteError,
     PyException,
-    "Raised when the jubarte-redlines engine cannot process a document."
+    "Raised when the jubarte engine cannot process a document."
 );
 
 /// An engine error as `JubarteError`; an admission refusal reads code
@@ -33,6 +59,7 @@ fn err(e: impl std::fmt::Display) -> PyErr {
     JubarteError::new_err(jubarte::admission::code_first(&message).unwrap_or(message))
 }
 
+#[cfg(feature = "markdown")]
 /// A selection refusal as `JubarteError` with `USAGE: ` before its
 /// message, the category the CLI exits 2 for; the hosts map that prefix
 /// to the binary's usage exit and code.
@@ -40,6 +67,7 @@ fn usage_err(message: String) -> PyErr {
     JubarteError::new_err(format!("USAGE: {message}"))
 }
 
+#[cfg(feature = "render")]
 /// Where a PDF's comments go and which pages it keeps: the binary's
 /// `--move-comments` and `--changed-only`.
 #[derive(Clone, Copy, Default)]
@@ -48,6 +76,7 @@ struct PageChoice {
     changed_only: bool,
 }
 
+#[cfg(feature = "render")]
 fn pdf_options(
     compress: bool,
     revisions: &str,
@@ -69,6 +98,7 @@ fn pdf_options(
     })
 }
 
+#[cfg(feature = "redlines")]
 /// `WmlComparerSettings::default()` with `input_limits` (a dict such as
 /// `{"max_part_bytes": 67108864}`) laid over its compare budget. Unknown
 /// keys are refused.
@@ -86,6 +116,7 @@ fn settings_with_limits(
     Ok(settings.with_input_limits(overrides.apply(base)))
 }
 
+#[cfg(feature = "redlines")]
 /// Compare two DOCX packages (bytes) → redline DOCX bytes (`w:ins`/`w:del`).
 ///
 /// Mirrors `jubarte::document_comparer::compare_documents`; `date` (ISO-8601
@@ -119,6 +150,7 @@ fn compare_documents(
     Ok(PyBytes::new(py, &out).unbind())
 }
 
+#[cfg(feature = "markdown")]
 /// Accept every tracked revision (package-wide) → clean DOCX bytes.
 /// The author and timestamp a Markdown document gives the changes and
 /// comments that name none: its front matter, else the reference `.docx`'s
@@ -130,6 +162,7 @@ fn markdown_stamp(text: &str, reference: Option<&[u8]>) -> (Option<String>, Opti
     jubarte::markdown::markdown_stamp(text, reference)
 }
 
+#[cfg(feature = "redlines")]
 #[pyfunction]
 fn accept_revisions(py: Python<'_>, docx: &[u8]) -> PyResult<Py<PyBytes>> {
     let out = py
@@ -138,6 +171,7 @@ fn accept_revisions(py: Python<'_>, docx: &[u8]) -> PyResult<Py<PyBytes>> {
     Ok(PyBytes::new(py, &out).unbind())
 }
 
+#[cfg(feature = "redlines")]
 /// Reject every tracked revision (package-wide) → base DOCX bytes.
 #[pyfunction]
 fn reject_revisions(py: Python<'_>, docx: &[u8]) -> PyResult<Py<PyBytes>> {
@@ -147,6 +181,7 @@ fn reject_revisions(py: Python<'_>, docx: &[u8]) -> PyResult<Py<PyBytes>> {
     Ok(PyBytes::new(py, &out).unbind())
 }
 
+#[cfg(feature = "doc")]
 /// List the tracked changes as a JSON array string, one object per
 /// logical change, each with the id `accept_changes` / `reject_changes`
 /// select by (the same objects as `jubarte changes --json`): a change Word wrote as several marks is one
@@ -167,6 +202,7 @@ fn list_changes_json(
     .map_err(|e: String| err(e))
 }
 
+#[cfg(feature = "doc")]
 /// Every comment as a JSON array (the objects `jubarte comments --json`
 /// prints): thread (`parent`, `done`) and anchored text with its
 /// surroundings. `author` keeps one author's comments; `latest` keeps the
@@ -187,6 +223,7 @@ fn list_comments_json(
     .map_err(|e: String| err(e))
 }
 
+#[cfg(feature = "doc")]
 /// The listing `jubarte changes` prints: a line per tracked change with its
 /// short id (`r12`), kind, target, author, paragraph (`p3`) and text, then
 /// `N change(s)`. `authors` filters as in [`list_changes_json`].
@@ -202,6 +239,7 @@ fn changes_text(py: Python<'_>, docx: &[u8], authors: Option<Vec<String>>) -> Py
     .map_err(|e: String| err(e))
 }
 
+#[cfg(feature = "doc")]
 /// The listing `jubarte comments` prints: a line per comment with its short
 /// id (`c5`), paragraph, author, text and anchor, then `N comment(s)`.
 /// `author` and `latest` filter as in [`list_comments_json`].
@@ -221,6 +259,7 @@ fn comments_text(
     .map_err(|e: String| err(e))
 }
 
+#[cfg(feature = "markdown")]
 /// The grids `jubarte read --tables` prints: a `table N: RxC …` line per
 /// body table, then a line per row of `ids=text` cells; `no tables` when
 /// there are none. `track_changes` `reject` reads the rejected text.
@@ -253,6 +292,7 @@ fn tables_text(py: Python<'_>, docx: &[u8], track_changes: Option<&str>) -> PyRe
     paragraphs = None,
     source = None,
 ))]
+#[cfg(feature = "markdown")]
 #[expect(
     clippy::too_many_arguments,
     reason = "a Python signature of keyword arguments with defaults, as the binary's flags"
@@ -287,6 +327,7 @@ fn tables_view(
     Ok((view.markdown, view.warnings))
 }
 
+#[cfg(feature = "markdown")]
 /// `track_changes` as the view reads it: `all` (the default), `accept` or
 /// `reject`, with their `accepted` and `rejected` spellings.
 fn track_changes_of(track_changes: Option<&str>) -> PyResult<jubarte::markdown::TrackChanges> {
@@ -317,6 +358,7 @@ fn track_changes_of(track_changes: Option<&str>) -> PyResult<jubarte::markdown::
     source = None,
     validity_file = None,
 ))]
+#[cfg(feature = "markdown")]
 #[expect(
     clippy::too_many_arguments,
     reason = "a Python signature of keyword arguments with defaults, as the binary's flags"
@@ -386,6 +428,7 @@ fn read_json(
     track = None,
     validity_file = None,
 ))]
+#[cfg(feature = "cli")]
 #[expect(
     clippy::too_many_arguments,
     reason = "a Python signature of keyword arguments with defaults, as the binary's flags"
@@ -462,6 +505,7 @@ fn for_edit_json(
     .map_err(err)
 }
 
+#[cfg(feature = "cli")]
 /// The line a writing task prints on stderr for a file it wrote:
 /// `wrote r.pdf (pdf, 48213 bytes, 3 pages)`. `format` is `docx`, `md`,
 /// `pdf`, `png` or `json`; `pages` is a PDF's page count.
@@ -485,6 +529,7 @@ fn wrote_line(
     Ok(jubarte::cli::wrote_line(&path, format, size, pages))
 }
 
+#[cfg(feature = "cli")]
 /// The error line for an input no task reads, as the binary prints it:
 /// `LEGACY_DOC: a.docx is a Word 97-2003 …`, or (`word`) `INVALID_PACKAGE:
 /// a.docx is not a ZIP file: …`; `None` when the bytes may be read.
@@ -493,6 +538,7 @@ fn refused_input(path: std::path::PathBuf, data: &[u8], word: bool) -> Option<St
     jubarte::cli::refused_input(&path, data, word)
 }
 
+#[cfg(feature = "cli")]
 /// [`refused_input`] for a package read whole (`validate --original`): it
 /// must also pass admission, as the binary's does; `None` when admitted.
 #[pyfunction]
@@ -500,6 +546,7 @@ fn refused_package(path: std::path::PathBuf, data: &[u8]) -> Option<String> {
     jubarte::cli::refused_package(&path, data)
 }
 
+#[cfg(feature = "cli")]
 /// The line for PNG pages: `wrote out/r-page-NN.png (png, 3 pages, 96 dpi)`,
 /// `pattern` naming them all.
 #[pyfunction]
@@ -507,6 +554,7 @@ fn wrote_png_line(pattern: std::path::PathBuf, pages: usize, dpi: f32) -> String
     jubarte::cli::wrote_png_line(&pattern, pages, dpi)
 }
 
+#[cfg(feature = "doc")]
 /// A resolution's error: an id that is no change id, names two changes, or
 /// names part of one, is a bad argument (`ValueError`, the binary's exit
 /// 2); the rest are `JubarteError`.
@@ -522,11 +570,13 @@ fn change_err(e: jubarte::changes::ChangeError) -> PyErr {
     }
 }
 
+#[cfg(feature = "doc")]
 fn change_filter(filter_json: &str) -> PyResult<jubarte::changes::ChangeFilter> {
     serde_json::from_str(filter_json)
         .map_err(|e| JubarteError::new_err(format!("invalid change filter: {e}")))
 }
 
+#[cfg(feature = "doc")]
 /// Accept the changes `filter_json` selects (`{"ids": [...], "authors":
 /// [...], "kinds": [...]}`, every list given must match; `{}` selects every
 /// change, an empty list none) and keep the rest tracked → DOCX bytes.
@@ -539,6 +589,7 @@ fn accept_changes(py: Python<'_>, docx: &[u8], filter_json: &str) -> PyResult<Py
     Ok(PyBytes::new(py, &out).unbind())
 }
 
+#[cfg(feature = "doc")]
 /// Reject the changes `filter_json` selects (as in `accept_changes`) and
 /// keep the rest tracked → DOCX bytes.
 #[pyfunction]
@@ -550,6 +601,7 @@ fn reject_changes(py: Python<'_>, docx: &[u8], filter_json: &str) -> PyResult<Py
     Ok(PyBytes::new(py, &out).unbind())
 }
 
+#[cfg(feature = "redlines")]
 /// List the tracked revisions in a DOCX as a JSON array string, grouped as
 /// Docxodus's `GetRevisions` groups them; each object has
 /// (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
@@ -570,6 +622,7 @@ fn get_revisions_json(
     .map_err(|e: String| err(e))
 }
 
+#[cfg(feature = "render")]
 /// Render a DOCX package (bytes) → PDF bytes (Word-style layout).
 ///
 /// `compress=True` deflates the PDF's streams (`/FlateDecode`), which is much
@@ -604,6 +657,7 @@ fn docx_to_pdf(
     Ok(PyBytes::new(py, &out).unbind())
 }
 
+#[cfg(feature = "render")]
 /// Rasterize every page to PNG at `dpi` → list of PNG bytes, page order.
 /// `move_comments` and `changed_only` as in `docx_to_pdf`.
 #[pyfunction]
@@ -631,14 +685,17 @@ fn docx_to_png(
         .collect())
 }
 
+#[cfg(feature = "render")]
 /// `render`'s result: the PDF (when asked for), one PNG per page, and the
 /// layout report as JSON.
 type Rendered = (Option<Py<PyBytes>>, Vec<Py<PyBytes>>, String);
 
+#[cfg(feature = "edit")]
 /// `edit_json`'s result: ok, the clean copy and the tracked redline (both
 /// `None` on refusal), and the report or the structured refusal as JSON.
 type EditOutcome = (bool, Option<Py<PyBytes>>, Option<Py<PyBytes>>, String);
 
+#[cfg(feature = "render")]
 /// One layout pass → `(pdf_bytes | None, [png_bytes, ...], report_json)`.
 ///
 /// `report_json` is `{"page_count", "document_pages", "pages": [{"index",
@@ -690,6 +747,7 @@ fn render(
     ))
 }
 
+#[cfg(feature = "render")]
 /// `diff_render_json`'s result: the page diffs as JSON, both sides' PNG
 /// pages, one overlay (or `None`) per page diff, and both page reports as
 /// JSON.
@@ -702,6 +760,7 @@ type RenderDiffOut = (
     String,
 );
 
+#[cfg(feature = "render")]
 /// Which pages of `a` and `b` differ, pixel for pixel, from one layout pass
 /// each at `dpi` → `(pages_json, a_pngs, b_pngs, overlays, a_report_json,
 /// b_report_json)`. `pages_json` is `[{"index", "changed_ratio", "bbox",
@@ -744,6 +803,7 @@ fn diff_render_json(
     ))
 }
 
+#[cfg(feature = "edit")]
 /// One side of a diff: a Word document's bytes, or Markdown text.
 #[derive(FromPyObject)]
 enum Side<'py> {
@@ -751,6 +811,7 @@ enum Side<'py> {
     Markdown(String),
 }
 
+#[cfg(feature = "edit")]
 impl Side<'_> {
     fn source(&self) -> jubarte::markdown::Source<'_> {
         match self {
@@ -760,13 +821,16 @@ impl Side<'_> {
     }
 }
 
+#[cfg(feature = "edit")]
 /// `diff_json`'s and `redline_diff_json`'s result: the text, and the hunks
 /// as JSON (`[{"at", "removed", "text"}]`, empty for CriticMarkup).
 type Diffed = (String, String);
 
+#[cfg(feature = "edit")]
 /// Python integers only: PyO3's u32 extraction otherwise accepts bool.
 struct Context(u32);
 
+#[cfg(feature = "edit")]
 impl FromPyObject<'_, '_> for Context {
     type Error = PyErr;
 
@@ -783,6 +847,7 @@ impl FromPyObject<'_, '_> for Context {
     }
 }
 
+#[cfg(feature = "edit")]
 /// Complete document text as a Git unified patch; no redline is constructed.
 #[pyfunction]
 #[pyo3(signature = (old, new, *, old_name = "old.docx", new_name = "new.docx", context = Context(3)))]
@@ -804,6 +869,7 @@ fn diff_unified(
         .map_err(err)
 }
 
+#[cfg(feature = "edit")]
 /// A document review view, with the core display window by default.
 #[pyfunction]
 #[pyo3(signature = (old, new, *, format = "github", context = Context(3), **view))]
@@ -864,13 +930,15 @@ fn diff_view(
         .map_err(err)
 }
 
+#[cfg(feature = "cli")]
 /// Pure shared clap parser. Arguments exclude argv0; no host I/O is done.
 #[pyfunction]
-#[pyo3(signature = (arguments, program = "jubarte-redlines", supported = None))]
+#[pyo3(signature = (arguments, program = "jubarte", supported = None))]
 fn parse_cli_json(arguments: Vec<String>, program: &str, supported: Option<Vec<String>>) -> String {
     jubarte::cli::parse_json(&arguments, program, &supported.unwrap_or_default())
 }
 
+#[cfg(feature = "cli")]
 /// Whether a command line (arguments exclude argv0) asks for JSON: a real
 /// `--json` flag before any `--`, read as the binary reads it (the `--json`
 /// in `--text --json` is a value). An error then prints its
@@ -880,6 +948,7 @@ fn wants_json(arguments: Vec<String>) -> bool {
     jubarte::cli::wants_json(&arguments)
 }
 
+#[cfg(feature = "cli")]
 /// The line an error prints on stdout under `--json`:
 /// `{"error":{"code":…,"message":…}}`, its code the message's leading
 /// `CODE:`, else `USAGE` for an exit 2 and `ERROR` for any other.
@@ -888,6 +957,7 @@ fn runtime_json_error(message: &str, exit: u8) -> String {
     jubarte::cli::runtime_json_error(message, exit)
 }
 
+#[cfg(feature = "edit")]
 /// Word or Markdown sides as a Word tracked-changes document.
 #[pyfunction]
 #[pyo3(signature = (old, new, *, author, date))]
@@ -919,6 +989,7 @@ fn redline_documents(
     Ok(PyBytes::new(py, &bytes).unbind())
 }
 
+#[cfg(feature = "edit")]
 fn diffed(patch: &jubarte::markdown::Patch, columns: usize) -> PyResult<Diffed> {
     let hunks: Vec<serde_json::Value> = patch
         .hunks
@@ -931,6 +1002,7 @@ fn diffed(patch: &jubarte::markdown::Patch, columns: usize) -> PyResult<Diffed> 
     ))
 }
 
+#[cfg(feature = "edit")]
 fn patch_options(
     old_name: &str,
     new_name: &str,
@@ -947,6 +1019,7 @@ fn patch_options(
     }
 }
 
+#[cfg(feature = "edit")]
 /// The changes from `old` to `new` (each Word bytes or Markdown text) →
 /// `(text, hunks_json)`: the patch of the changed paragraphs at `columns`
 /// (0: not wrapped), or with `critic=True` the whole document as
@@ -1008,6 +1081,7 @@ fn diff_json(
     Ok((text, "[]".to_string()))
 }
 
+#[cfg(feature = "edit")]
 /// The changes a Word redline tracks, as `diff_json`'s patch of the
 /// document named `name` → `(text, hunks_json)`. `own_only` keeps only the
 /// changes by `author` on `date` (an edit plan under `keep`).
@@ -1035,12 +1109,14 @@ fn redline_diff_json(
     diffed(&patch, columns)
 }
 
+#[cfg(feature = "doc")]
 /// SHA-256 (lowercase hex) of the bytes: the snapshot guard of edit plans.
 #[pyfunction]
 fn source_sha256(docx: &[u8]) -> String {
     jubarte::inspect::source_sha256(docx)
 }
 
+#[cfg(feature = "doc")]
 /// The inspection snapshot as JSON (`schema_version`, `source_sha256`,
 /// `summary`, `paragraphs`).
 #[pyfunction]
@@ -1049,6 +1125,7 @@ fn inspect_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
         .map_err(err)
 }
 
+#[cfg(feature = "markdown")]
 /// Body paragraphs with ids, or Markdown with a tracked-change selection.
 #[pyfunction]
 #[pyo3(signature = (docx, track_changes = None))]
@@ -1092,6 +1169,7 @@ fn markdown(py: Python<'_>, docx: &[u8], track_changes: Option<&str>) -> PyResul
     by = None,
     source = None,
 ))]
+#[cfg(feature = "markdown")]
 #[expect(
     clippy::too_many_arguments,
     reason = "a Python signature of keyword arguments with defaults, as the binary's flags"
@@ -1127,6 +1205,7 @@ fn read_view(
     Ok((view.markdown, view.warnings))
 }
 
+#[cfg(feature = "edit")]
 /// Why `--editing-mode` cannot apply `plan_json` to `docx`: the tracked
 /// changes it keeps and does not itself accept or reject, or a reply to a
 /// comment on a paragraph it deletes; `None` when neither.
@@ -1135,6 +1214,7 @@ fn editing_mode_conflict(py: Python<'_>, plan_json: &str, docx: &[u8]) -> Option
     py.detach(|| jubarte::edit::flags::editing_mode_conflict_json(plan_json, docx))
 }
 
+#[cfg(feature = "edit")]
 /// The plan the `edit`/`add` operation flags describe → `(plan_json,
 /// notes)`; `operations` is the parsed command's `operations` array as JSON.
 /// A `ValueError` is a usage error.
@@ -1155,6 +1235,7 @@ fn flag_plan(
     .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
+#[cfg(feature = "edit")]
 /// `edit`/`add --plan PLAN.json` with operation flags: the operations
 /// recorded into `held` (PLAN.json's text, `None` before the first
 /// recording). `options` is JSON: `author`, `date`, `existingRevisions`,
@@ -1180,6 +1261,7 @@ fn record_plan(
         })
 }
 
+#[cfg(feature = "markdown")]
 /// The blocks of `docx` (a redline) carrying `author`'s marks, as the agent
 /// view `edit` and `add` print; `accepted` reads its accepted text.
 #[pyfunction]
@@ -1195,6 +1277,7 @@ fn changed_view(
         .map_err(err)
 }
 
+#[cfg(feature = "edit")]
 /// The lines `edit -p rN --accept/--reject` prints for a pure resolution:
 /// one per resolved change from `source` (the bytes before resolution) and
 /// `resolved_json` (`{"accepted": [...], "rejected": [...]}` short ids).
@@ -1209,6 +1292,7 @@ fn resolution_text(py: Python<'_>, source: &[u8], resolved_json: &str) -> PyResu
     .map_err(err)
 }
 
+#[cfg(feature = "edit")]
 /// `v1`, `flags`, `v2` or `typed`: the grammar a refusal quotes.
 fn quoting(syntax: Option<&str>) -> PyResult<jubarte::edit::PrepareOptions> {
     Ok(jubarte::edit::PrepareOptions {
@@ -1227,6 +1311,7 @@ fn quoting(syntax: Option<&str>) -> PyResult<jubarte::edit::PrepareOptions> {
     })
 }
 
+#[cfg(feature = "edit")]
 /// Apply an edit plan (JSON) → `(ok, clean | None, redline | None, json)`.
 ///
 /// On success `json` is the report; on refusal it is the structured error
@@ -1256,6 +1341,7 @@ fn edit_json(
     })
 }
 
+#[cfg(feature = "edit")]
 /// Resolve an edit plan without producing documents → `(ok, json)`; `json`
 /// is the report or the structured error.
 #[pyfunction]
@@ -1280,6 +1366,7 @@ fn preview_json(
     })
 }
 
+#[cfg(feature = "edit")]
 /// The JSON-lines form of a report JSON (`load`, `op`..., `summary`).
 #[pyfunction]
 fn report_jsonl(report_json: &str) -> PyResult<String> {
@@ -1287,6 +1374,7 @@ fn report_jsonl(report_json: &str) -> PyResult<String> {
     Ok(report.to_jsonl())
 }
 
+#[cfg(feature = "doc")]
 /// Append B after A (`options_json` as `jubarte::append::AppendOptions`)
 /// → `(docx_bytes, warnings_json)`.
 #[pyfunction]
@@ -1305,6 +1393,7 @@ fn append_json(
     Ok((PyBytes::new(py, &out.docx).unbind(), warnings))
 }
 
+#[cfg(feature = "doc")]
 /// Word-validity findings beyond the schema as a JSON array (`code`, `set`,
 /// `severity`, `part`, `location`, `message`, `word_fatal`, `repairable`);
 /// `[]` is a pass.
@@ -1319,10 +1408,12 @@ fn validate_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
     .map_err(|e: String| err(e))
 }
 
+#[cfg(all(feature = "doc", feature = "render"))]
 /// `validate_run`'s result: the findings as JSON Lines, as the CLI's text,
 /// and whether they fail the run.
 type ValidateRun = (String, String, bool);
 
+#[cfg(all(feature = "doc", feature = "render"))]
 /// `jubarte validate` on bytes: `rules` are rule sets or audit codes
 /// (`None`: `word`, plus `edits` with `original`), `original` and `author`
 /// check tracked edits, `strict` fails on warnings too. With `baseline`
@@ -1383,6 +1474,7 @@ fn validate_run(
     .map_err(|e: String| err(e))
 }
 
+#[cfg(feature = "doc")]
 /// The one stderr line `read`, `changes` and `comments` give an input with
 /// validity findings (`input has 2 validity warnings; jubarte validate FILE
 /// lists them`), or `None`; `file` is the path as the command line spells
@@ -1397,6 +1489,7 @@ fn input_notice(py: Python<'_>, docx: &[u8], file: &str) -> Option<String> {
     })
 }
 
+#[cfg(feature = "doc")]
 /// The JSON status `changes --json` and `comments --json` print on stderr
 /// unless quiet, with the input's validity findings counted (`{"input_validity":{"errors":0,"warnings":2,
 /// "next":"jubarte validate FILE"}}`); `file` is the path as the command
@@ -1409,10 +1502,12 @@ fn input_validity_line(py: Python<'_>, docx: &[u8], file: &str) -> PyResult<Stri
     .map_err(|e| err(e.to_string()))
 }
 
+#[cfg(feature = "doc")]
 /// `repair_json`'s result: the repaired package and `{"repaired": [...],
 /// "remaining": [...]}` as JSON.
 type RepairOutcome = (Py<PyBytes>, String);
 
+#[cfg(feature = "doc")]
 /// The package with every repairable finding fixed, and the findings it
 /// fixed and could not fix. Mirrors `jubarte::validate::repair`.
 #[pyfunction]
@@ -1428,6 +1523,7 @@ fn repair_json(py: Python<'_>, docx: &[u8]) -> PyResult<RepairOutcome> {
     ))
 }
 
+#[cfg(feature = "doc")]
 /// Every text change from `original` to `edited` must be a revision by
 /// `author`: the residue after rejecting that author's changes is an
 /// `UNTRACKED_EDIT` finding per paragraph, another author's change a
@@ -1451,6 +1547,7 @@ fn audit_tracked_json(
     .map_err(|e: String| err(e))
 }
 
+#[cfg(all(feature = "doc", feature = "render"))]
 /// Refresh field results from jubarte's layout → `(docx, json)`; `json` is
 /// `{"page_count", "fields": [...]}`.
 #[pyfunction]
@@ -1465,6 +1562,7 @@ fn update_fields(py: Python<'_>, docx: &[u8]) -> PyResult<(Py<PyBytes>, String)>
     Ok((PyBytes::new(py, &updated.docx).unbind(), report.to_string()))
 }
 
+#[cfg(feature = "doc")]
 /// Remove the identifying data `options_json` names (`{"author_alias":
 /// "Author", "rsids": true, "docprops": true, "comments": true}`; a field
 /// left out is off) → DOCX bytes.
@@ -1478,18 +1576,21 @@ fn scrub_json(py: Python<'_>, docx: &[u8], options_json: &str) -> PyResult<Py<Py
     Ok(PyBytes::new(py, &out).unbind())
 }
 
+#[cfg(feature = "edit")]
 /// This build's manifest (`runtime: "python"`): an edit plan here takes
 /// no `--skip-failed`, as the shared manifest says.
 fn manifest() -> jubarte::capabilities::Capabilities {
     jubarte::capabilities::capabilities("python")
 }
 
+#[cfg(feature = "edit")]
 /// What this build can do (`runtime: "python"`).
 #[pyfunction]
 fn capabilities_json() -> String {
     serde_json::to_string_pretty(&manifest()).expect("manifest serializes")
 }
 
+#[cfg(feature = "edit")]
 /// Focused edit discovery, or the edit support matrix when both filters are absent.
 #[pyfunction]
 #[pyo3(signature = (operation=None, field=None))]
@@ -1497,6 +1598,7 @@ fn capability_query(operation: Option<&str>, field: Option<&str>) -> String {
     jubarte::capabilities::discovery("python", operation, field).to_string()
 }
 
+#[cfg(feature = "edit")]
 /// [`capabilities_json`] as the text summary `jubarte capabilities` prints.
 #[pyfunction]
 #[pyo3(signature = (operation=None, field=None, matrix=false))]
@@ -1510,6 +1612,7 @@ fn capabilities_text(operation: Option<&str>, field: Option<&str>, matrix: bool)
     }
 }
 
+#[cfg(feature = "markdown")]
 /// Markdown (with CriticMarkup) → DOCX bytes, as `jubarte convert draft.md`.
 ///
 /// `options_json` holds [`jubarte::markdown::docx_options_from_json`]'s
@@ -1547,6 +1650,7 @@ fn markdown_to_docx(
     Ok(PyBytes::new(py, &written.docx).unbind())
 }
 
+#[cfg(all(feature = "doc", feature = "render"))]
 /// `{findings, rules, layout}` from `jubarte::audit` as JSON; `rules`
 /// names rule sets or codes (`None`: every rule).
 #[pyfunction]
@@ -1562,6 +1666,7 @@ fn audit_json(py: Python<'_>, docx: &[u8], rules: Option<Vec<String>>) -> PyResu
     serde_json::to_string(&report).map_err(err)
 }
 
+#[cfg(feature = "edit")]
 /// Persistent filesystem authority for the hosted MCP adapter. The root is
 /// opened once, not re-resolved by pathname for every write.
 #[pyclass(name = "_OutputRoot")]
@@ -1569,6 +1674,7 @@ struct PyOutputRoot {
     root: jubarte::publication::OutputRoot,
 }
 
+#[cfg(feature = "edit")]
 #[pymethods]
 impl PyOutputRoot {
     #[new]
@@ -1600,6 +1706,7 @@ impl PyOutputRoot {
     }
 }
 
+#[cfg(feature = "edit")]
 fn publish_result(
     py: Python<'_>,
     result: Result<jubarte::publication::PublishReport, jubarte::publication::PublishError>,
@@ -1636,68 +1743,127 @@ fn publish_result(
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    #[cfg(feature = "edit")]
     m.add_class::<PyOutputRoot>()?;
     m.add("JubarteError", m.py().get_type::<JubarteError>())?;
+    #[cfg(feature = "redlines")]
     m.add_function(wrap_pyfunction!(compare_documents, m)?)?;
+    #[cfg(feature = "markdown")]
     m.add_function(wrap_pyfunction!(read_view, m)?)?;
+    #[cfg(feature = "edit")]
     m.add_function(wrap_pyfunction!(flag_plan, m)?)?;
+    #[cfg(feature = "edit")]
     m.add_function(wrap_pyfunction!(editing_mode_conflict, m)?)?;
+    #[cfg(feature = "edit")]
     m.add_function(wrap_pyfunction!(record_plan, m)?)?;
+    #[cfg(feature = "markdown")]
     m.add_function(wrap_pyfunction!(changed_view, m)?)?;
+    #[cfg(feature = "edit")]
     m.add_function(wrap_pyfunction!(resolution_text, m)?)?;
+    #[cfg(feature = "redlines")]
     m.add_function(wrap_pyfunction!(accept_revisions, m)?)?;
+    #[cfg(feature = "redlines")]
     m.add_function(wrap_pyfunction!(reject_revisions, m)?)?;
+    #[cfg(feature = "redlines")]
     m.add_function(wrap_pyfunction!(get_revisions_json, m)?)?;
+    #[cfg(feature = "doc")]
     m.add_function(wrap_pyfunction!(list_changes_json, m)?)?;
+    #[cfg(feature = "doc")]
     m.add_function(wrap_pyfunction!(accept_changes, m)?)?;
+    #[cfg(feature = "doc")]
     m.add_function(wrap_pyfunction!(reject_changes, m)?)?;
+    #[cfg(feature = "render")]
     m.add_function(wrap_pyfunction!(docx_to_pdf, m)?)?;
+    #[cfg(feature = "render")]
     m.add_function(wrap_pyfunction!(docx_to_png, m)?)?;
+    #[cfg(feature = "render")]
     m.add_function(wrap_pyfunction!(render, m)?)?;
+    #[cfg(feature = "render")]
     m.add_function(wrap_pyfunction!(diff_render_json, m)?)?;
+    #[cfg(feature = "doc")]
     m.add_function(wrap_pyfunction!(source_sha256, m)?)?;
+    #[cfg(feature = "doc")]
     m.add_function(wrap_pyfunction!(inspect_json, m)?)?;
+    #[cfg(feature = "markdown")]
     m.add_function(wrap_pyfunction!(markdown, m)?)?;
+    #[cfg(feature = "edit")]
     m.add_function(wrap_pyfunction!(edit_json, m)?)?;
+    #[cfg(feature = "edit")]
     m.add_function(wrap_pyfunction!(preview_json, m)?)?;
+    #[cfg(feature = "edit")]
     m.add_function(wrap_pyfunction!(report_jsonl, m)?)?;
+    #[cfg(feature = "edit")]
     m.add_function(wrap_pyfunction!(capabilities_json, m)?)?;
+    #[cfg(feature = "edit")]
     m.add_function(wrap_pyfunction!(capability_query, m)?)?;
+    #[cfg(feature = "edit")]
     m.add_function(wrap_pyfunction!(capabilities_text, m)?)?;
+    #[cfg(feature = "edit")]
     m.add_function(wrap_pyfunction!(diff_json, m)?)?;
+    #[cfg(feature = "edit")]
     m.add_function(wrap_pyfunction!(diff_unified, m)?)?;
+    #[cfg(feature = "edit")]
     m.add_function(wrap_pyfunction!(diff_view, m)?)?;
+    #[cfg(feature = "cli")]
     m.add_function(wrap_pyfunction!(parse_cli_json, m)?)?;
+    #[cfg(feature = "cli")]
     m.add_function(wrap_pyfunction!(wants_json, m)?)?;
+    #[cfg(feature = "cli")]
     m.add_function(wrap_pyfunction!(runtime_json_error, m)?)?;
+    #[cfg(feature = "edit")]
     m.add_function(wrap_pyfunction!(redline_documents, m)?)?;
+    #[cfg(feature = "edit")]
     m.add_function(wrap_pyfunction!(redline_diff_json, m)?)?;
+    #[cfg(feature = "doc")]
     m.add_function(wrap_pyfunction!(list_comments_json, m)?)?;
+    #[cfg(feature = "doc")]
     m.add_function(wrap_pyfunction!(changes_text, m)?)?;
+    #[cfg(feature = "doc")]
     m.add_function(wrap_pyfunction!(comments_text, m)?)?;
+    #[cfg(feature = "markdown")]
     m.add_function(wrap_pyfunction!(tables_text, m)?)?;
+    #[cfg(feature = "markdown")]
     m.add_function(wrap_pyfunction!(tables_view, m)?)?;
+    #[cfg(feature = "markdown")]
     m.add_function(wrap_pyfunction!(read_json, m)?)?;
+    #[cfg(feature = "cli")]
     m.add_function(wrap_pyfunction!(for_edit_json, m)?)?;
+    #[cfg(feature = "cli")]
     m.add_function(wrap_pyfunction!(wrote_line, m)?)?;
+    #[cfg(feature = "cli")]
     m.add_function(wrap_pyfunction!(wrote_png_line, m)?)?;
+    #[cfg(feature = "cli")]
     m.add_function(wrap_pyfunction!(refused_input, m)?)?;
+    #[cfg(feature = "cli")]
     m.add_function(wrap_pyfunction!(refused_package, m)?)?;
+    #[cfg(feature = "doc")]
     m.add_function(wrap_pyfunction!(append_json, m)?)?;
+    #[cfg(feature = "doc")]
     m.add_function(wrap_pyfunction!(validate_json, m)?)?;
+    #[cfg(all(feature = "doc", feature = "render"))]
     m.add_function(wrap_pyfunction!(validate_run, m)?)?;
+    #[cfg(feature = "doc")]
     m.add_function(wrap_pyfunction!(input_notice, m)?)?;
+    #[cfg(feature = "doc")]
     m.add_function(wrap_pyfunction!(input_validity_line, m)?)?;
+    #[cfg(feature = "doc")]
     m.add_function(wrap_pyfunction!(repair_json, m)?)?;
+    #[cfg(feature = "doc")]
     m.add_function(wrap_pyfunction!(audit_tracked_json, m)?)?;
+    #[cfg(feature = "markdown")]
     m.add_function(wrap_pyfunction!(markdown_to_docx, m)?)?;
+    #[cfg(feature = "markdown")]
     m.add_function(wrap_pyfunction!(markdown_stamp, m)?)?;
+    #[cfg(all(feature = "doc", feature = "render"))]
     m.add_function(wrap_pyfunction!(update_fields, m)?)?;
+    #[cfg(feature = "doc")]
     m.add_function(wrap_pyfunction!(scrub_json, m)?)?;
+    #[cfg(all(feature = "doc", feature = "render"))]
     m.add_function(wrap_pyfunction!(audit_json, m)?)?;
     Ok(())
 }
 
+#[cfg(feature = "edit")]
 #[cfg(test)]
 mod publication_tests {
     use super::*;

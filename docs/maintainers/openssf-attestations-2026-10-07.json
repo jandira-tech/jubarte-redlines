@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "project_id": 15267,
+  "attested_by": "Arthur Souza Rodrigues",
+  "review_date": "2026-10-07",
+  "answers": {
+    "know_secure_design": {
+      "status": "met",
+      "justification": "A primary developer confirms knowledge of the secure-design principles required by OpenSSF. See SECURITY.md for the project's threat model."
+    },
+    "know_common_errors": {
+      "status": "met",
+      "justification": "A primary developer confirms knowledge of relevant vulnerability classes and their mitigations, documented in SECURITY.md."
+    },
+    "report_responses": {
+      "status": "met",
+      "justification": "No reports."
+    },
+    "enhancement_responses": {
+      "status": "met",
+      "justification": "Answered."
+    },
+    "vulnerability_report_response": {
+      "status": "?",
+      "justification": ""
+    },
+    "release_notes_vulns": {
+      "status": "?",
+      "justification": ""
+    },
+    "vulnerabilities_fixed_60_days": {
+      "status": "?",
+      "justification": ""
+    },
+    "vulnerabilities_critical_fixed": {
+      "status": "met",
+      "justification": "Critical findings are prioritized."
+    },
+    "static_analysis_fixed": {
+      "status": "met",
+      "justification": "Fixed on time."
+    },
+    "dynamic_analysis_fixed": {
+      "status": "?",
+      "justification": ""
+    },
+    "test_most": {
+      "status": "unmet",
+      "justification": "Unmet"
+    },
+    "dynamic_analysis": {
+      "status": "?",
+      "justification": ""
+    },
+    "dynamic_analysis_unsafe": {
+      "status": "met",
+      "justification": "Limited to memory-error detection only."
+    },
+    "crypto_keylength": {
+      "status": "?",
+      "justification": ""
+    },
+    "crypto_pfs": {
+      "status": "met",
+      "justification": "Provided."
+    },
+    "crypto_password_storage": {
+      "status": "met",
+      "justification": "We do not store passwords."
+    },
+    "crypto_random": {
+      "status": "n/a",
+      "justification": "N/a"
+    }
+  }
+}

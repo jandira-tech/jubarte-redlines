@@ -1,0 +1,10 @@
+--- a/clean.docx
++++ b/clean.docx	Ben Vendor	2026-10-04T15:00:00Z
+@@ [body:p:9] @@
+Recipient may disclose Confidential Information to its employees {==who
+need it for the Permitted Purpose==}{>>Ann Counsel
+(2026-10-04T09:00:00Z): Cap the number of employees, or add a
+named-individuals annex?<<}{>>Ben Vendor (2026-10-04T15:00:00Z):
+Named-individuals annex is fine; a cap is not needed at this volume.<<},
+provided each employee signs a confidentiality agreement at least as
+protective as this Agreement.

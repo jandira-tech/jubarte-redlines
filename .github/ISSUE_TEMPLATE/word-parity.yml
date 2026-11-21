@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Difference from Microsoft Word
+description: A redline, accept, reject or PDF that differs from what Word produces.
+labels: ["word-parity"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Microsoft Word is the reference. Check
+        [docs/WORD_DIFFERENCES.md](https://github.com/jandira-tech/jubarte/blob/main/docs/WORD_DIFFERENCES.md)
+        first: some differences are recorded choices.
+  - type: input
+    id: version
+    attributes:
+      label: jubarte version
+      placeholder: jubarte 0.19.0
+    validations:
+      required: true
+  - type: input
+    id: word
+    attributes:
+      label: Word version
+      placeholder: Word for Mac 16.90, Word for Microsoft 365 (Windows)
+    validations:
+      required: true
+  - type: dropdown
+    id: operation
+    attributes:
+      label: Operation
+      options:
+        - Compare two documents (redline)
+        - Accept or reject tracked changes
+        - Convert to PDF or PNG
+        - Convert to or from Markdown
+        - Edit
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      description: For a PDF compared with Word's, render with `--revisions word`.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: difference
+    attributes:
+      label: The difference
+      description: What Word shows and what jubarte shows, with the page and paragraph.
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Documents
+      description: The input documents, Word's output and jubarte's output.
+    validations:
+      required: true

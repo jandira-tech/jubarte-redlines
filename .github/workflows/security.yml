@@ -1,0 +1,56 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+name: Security
+
+# Supply chain and secrets: cargo-deny over every manifest (advisories, nightly
+# too, so a new advisory surfaces without a commit), the full cargo-deny check
+# and REUSE on the root crate, and gitleaks over history and the tree.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '23 6 * * *'
+  workflow_dispatch:
+# One run per PR (or branch): a new push cancels the PR's older run, and
+# on main a newer commit replaces any run still waiting. The self-hosted
+# runners are few, so superseded runs must not hold the queue.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+jobs:
+  security:
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable, pinned 2026-10-01
+      - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # pinned 2026-10-01
+        with:
+          tool: cargo-deny@0.20.2
+          fallback: none
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.x'
+          cache: false
+      - run: go install github.com/zricethezav/gitleaks/v8@v8.30.1
+      - run: bash scripts/security-check.sh
+
+  deny:
+    name: cargo-deny + REUSE
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      # Per-file SPDX licensing/provenance (REUSE.toml, LICENSES/).
+      - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
+        if: ${{ !cancelled() }}

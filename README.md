@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only
+SPDX-License-Identifier: Apache-2.0
 -->
 
 > **See every page side by side: [jandira-tech.github.io/neurotic_docx_bench](https://jandira-tech.github.io/neurotic_docx_bench/)**  
@@ -16,15 +16,15 @@ changes programmatically, apply validated edit plans, and render DOCX to PDF
 or PNG — from Rust, Python, Node/browser, or the CLI.
 
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15267/badge)](https://www.bestpractices.dev/projects/15267)
-[![CI](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/jandira-tech/jubarte-redlines/branch/main/graph/badge.svg)](https://codecov.io/gh/jandira-tech/jubarte-redlines)
-[![crates.io](https://img.shields.io/crates/v/jubarte-redlines.svg)](https://crates.io/crates/jubarte-redlines)
-[![docs.rs](https://docs.rs/jubarte-redlines/badge.svg)](https://docs.rs/jubarte-redlines)
-[![PyPI](https://img.shields.io/pypi/v/jubarte-redlines.svg)](https://pypi.org/project/jubarte-redlines/)
+[![CI](https://github.com/jandira-tech/jubarte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jandira-tech/jubarte/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/jandira-tech/jubarte/branch/main/graph/badge.svg)](https://codecov.io/gh/jandira-tech/jubarte)
+[![crates.io](https://img.shields.io/crates/v/jubarte.svg)](https://crates.io/crates/jubarte)
+[![docs.rs](https://docs.rs/jubarte/badge.svg)](https://docs.rs/jubarte)
+[![PyPI](https://img.shields.io/pypi/v/jubarte-docx.svg)](https://pypi.org/project/jubarte-docx/)
 [![npm](https://img.shields.io/npm/v/jubarte-wasm.svg)](https://www.npmjs.com/package/jubarte-wasm)
 [![MSRV](https://img.shields.io/badge/MSRV-1.94-blue)](./Cargo.toml)
-[![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](./LICENSE)
-[![Socket Badge](https://badge.socket.dev/cargo/package/jubarte-redlines/0.18.0)](https://badge.socket.dev/cargo/package/jubarte-redlines/0.18.0)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
+[![Socket Badge](https://badge.socket.dev/cargo/package/jubarte/0.18.0)](https://badge.socket.dev/cargo/package/jubarte/0.18.0)
 
 Jubarte is an in-process DOCX engine for applications that need Microsoft
 Word-style review workflows without automating Microsoft Word or LibreOffice.
@@ -52,11 +52,11 @@ Word-style review workflows without automating Microsoft Word or LibreOffice.
 ## Feedback and contributions
 
 Report bugs and request enhancements in the public
-[issue tracker](https://github.com/jandira-tech/jubarte-redlines/issues), which
+[issue tracker](https://github.com/jandira-tech/jubarte/issues), which
 also archives reports and responses. English reports are welcome. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for pull requests, coding requirements,
 building and tests, and [SECURITY.md](SECURITY.md) for private vulnerability
-reports. The [OpenSSF evidence review](docs/OPENSSF.md) tracks the criteria
+reports. The [OpenSSF evidence review](docs/maintainers/OPENSSF.md) tracks the criteria
 and outstanding maintainer attestations.
 
 ## Quick start
@@ -64,12 +64,12 @@ and outstanding maintainer attestations.
 Install the CLI:
 
 ```sh
-cargo install jubarte-redlines
+cargo install jubarte
 jubarte --version
 ```
 
 Prebuilt archives are also published on
-[GitHub Releases](https://github.com/jandira-tech/jubarte-redlines/releases).
+[GitHub Releases](https://github.com/jandira-tech/jubarte/releases).
 Check the assets attached to the release you intend to install.
 
 ### Compare two Word documents
@@ -165,7 +165,7 @@ Topical documents: [Markdown pipeline](docs/MARKDOWN.md) ·
 [Word layout rules](docs/WORD_LAYOUT_RULES.md) ·
 [comment balloons](docs/WORD_COMMENT_BALLOONS.md) ·
 [self-update](docs/SELF_UPDATE.md) ·
-[benchmark classes](docs/bench_classes.md) ·
+[benchmark classes](docs/maintainers/bench_classes.md) ·
 [bomb prevention](docs/bomb_prevention.md) ·
 [per-release API snapshots](docs/api/README.md).
 
@@ -174,16 +174,16 @@ Topical documents: [Markdown pipeline](docs/MARKDOWN.md) ·
 ### CLI
 
 ```sh
-cargo install jubarte-redlines
+cargo install jubarte
 ```
 
 The installed binary is named `jubarte`.
 
-From 0.11.0, the Python wheel and the npm package also run the CLI
-without an install:
+The Python wheel and the npm package also run the CLI without an
+install:
 
 ```sh
-uvx jubarte-redlines redline a.docx b.docx -o redline.docx
+uvx --from jubarte-docx jubarte redline a.docx b.docx -o redline.docx
 npx jubarte-redlines redline a.docx b.docx -o redline.docx
 ```
 
@@ -200,7 +200,7 @@ For a GitHub-style text review of two Word documents:
 ```sh
 jubarte diff a.docx b.docx --format github
 jubarte diff a.docx b.docx --format github --context 5 -o changes.patch
-uvx jubarte-redlines diff a.docx b.docx --format github
+uvx --from jubarte-docx jubarte diff a.docx b.docx --format github
 npx jubarte-redlines diff a.docx b.docx --format github
 ```
 
@@ -240,11 +240,17 @@ On Windows, see `scripts/install.ps1`.
 ### Rust library
 
 ```sh
-cargo add jubarte-redlines --no-default-features
+cargo add jubarte --no-default-features
 ```
 
-The package is called `jubarte-redlines`; the Rust library import path is
-`jubarte`.
+The crate is `jubarte`, the import path `jubarte`. It re-exports the
+workspace crates (`jubarte-dom`, `jubarte-opc`, `jubarte-redlines` for
+comparison, `jubarte-render`, `jubarte-doc`, `jubarte-markdown`,
+`jubarte-edit`), which can also be depended on alone.
+Since 0.19.0, `jubarte-redlines` on crates.io is the compare-only crate
+(library name `jubarte_redlines`); a 0.18 dependency on `jubarte-redlines`
+moves to `jubarte = "0.19"` and keeps its `use jubarte::…` paths (see the
+[changelog](CHANGELOG.md)).
 
 ```rust
 use jubarte::{convert, document_comparer};
@@ -275,14 +281,14 @@ MSRV: **Rust 1.94**.
 Python requires CPython 3.10 or later.
 
 ```sh
-pip install jubarte-redlines
+pip install jubarte-docx
 ```
 
 Low-level byte API:
 
 ```python
 from pathlib import Path
-from jubarte_redlines import (
+from jubarte import (
     compare_documents,
     get_revisions,
     docx_to_pdf,
@@ -351,9 +357,9 @@ stays under `--root`.
 
 | Host | Install |
 | --- | --- |
-| Claude Code | `claude mcp add --transport stdio jubarte --scope project -- uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` |
-| Codex | `codex mcp add jubarte -- uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` |
-| Gemini CLI | `gemini extensions install https://github.com/jandira-tech/jubarte-redlines` |
+| Claude Code | `claude mcp add --transport stdio jubarte --scope project -- uvx --from 'jubarte-docx[mcp]' jubarte-mcp --root .` |
+| Codex | `codex mcp add jubarte -- uvx --from 'jubarte-docx[mcp]' jubarte-mcp --root .` |
+| Gemini CLI | `gemini extensions install https://github.com/jandira-tech/jubarte` |
 
 Tools, security model and config files: [docs/adoption/mcp.md](docs/adoption/mcp.md).
 
@@ -1053,7 +1059,7 @@ jubarte convert redline.docx \
 ### Python `Document`
 
 ```python
-import jubarte_redlines as jubarte
+import jubarte
 
 doc = jubarte.read("contract.docx")
 
@@ -1075,7 +1081,7 @@ an edit plan, generated report and rendered redline page.
 CI currently includes:
 
 - `cargo fmt --check`
-- Clippy with `-D warnings` on the crate and on the Python, WASM
+- Clippy with `-D warnings` on the workspace crates and on the Python, WASM
   (`wasm32-unknown-unknown`) and in-process bench bindings
 - all-feature Rust tests on Linux, macOS and Windows
 - source-based code coverage with a line-coverage floor
@@ -1092,8 +1098,8 @@ and still trigger Word repair behavior.
 See:
 
 - [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md)
-- [`docs/VERSIONING.md`](docs/VERSIONING.md)
-- [`docs/bench_classes.md`](docs/bench_classes.md)
+- [`docs/maintainers/VERSIONING.md`](docs/maintainers/VERSIONING.md)
+- [`docs/maintainers/bench_classes.md`](docs/maintainers/bench_classes.md)
 
 ## Benchmarks
 
@@ -1125,7 +1131,7 @@ your own environment before choosing an engine.
 | CLI release workflow | Linux x86_64/arm64, macOS x86_64/arm64, Windows x86_64 targets |
 
 Release assets can vary by tag. Check the
-[release page](https://github.com/jandira-tech/jubarte-redlines/releases)
+[release page](https://github.com/jandira-tech/jubarte/releases)
 before scripting a binary download.
 
 A Word 97-2003 `.doc` converts to `.docx` with the native binary's
@@ -1159,9 +1165,9 @@ Before opening a PR:
 
 ```sh
 cargo fmt --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features --no-fail-fast
-cargo publish --dry-run
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo nextest run --workspace
+scripts/gen_docs.sh --check
 ```
 
 If you change any CLI flag, subcommand or public API, also run
@@ -1196,17 +1202,18 @@ Roadmap items are goals, not compatibility guarantees.
 
 ```text
 src/
-  lib.rs                 public Rust crate
-  document_comparer.rs   compare / revisions
-  comparer/              comparison engine
-  changes.rs             tracked-change listing / resolution
-  inspect.rs             document inspection, edit-plan anchors
-  edit.rs + edit/        validated JSON edit plans
-  markdown/              Markdown in and out: convert, diff, patch
-  convert/               DOCX → PDF/PNG layout engine
-  opc/                   DOCX package layer
-  xmllinq/               shared XML model
-  bin/jubarte.rs         CLI (compare, edit, convert, diff, debug, …)
+  lib.rs                 the `jubarte` facade: re-exports every crate below
+  bin/jubarte.rs         the `jubarte` CLI binary
+
+crates/
+  jubarte-dom/           shared XML model (xmllinq), namespaces, ids
+  jubarte-opc/           DOCX package layer, admission, styles, numbering
+  jubarte-redlines/      compare / revisions / accept and reject
+  jubarte-render/        DOCX → PDF/PNG layout engine and embedded fonts
+  jubarte-doc/           changes, comments, validate, audit, scrub, inspect, debug
+  jubarte-markdown/      Markdown in and out, .doc reading
+  jubarte-edit/          validated JSON edit plans, text diffs
+  jubarte-cli/           CLI commands (compare, edit, convert, diff, debug, …)
 
 jubarte-python/           PyO3 / maturin Python package
 jubarte-wasm/             wasm-bindgen / npm package
@@ -1220,23 +1227,25 @@ scripts/                  installation, release and Word-probe scripts
 
 ## License
 
-`jubarte-redlines` is licensed under
-[GNU Affero General Public License v3.0 only](LICENSE)
-(`AGPL-3.0-only`).
+Jubarte is licensed under the [Apache License, Version 2.0](LICENSE)
+(`Apache-2.0`) from version 0.19.0. Versions 0.18.0 and earlier were
+released under `AGPL-3.0-only` and stay under it.
 
-Review the license requirements before embedding or deploying the software in
-a product or network service.
+[NOTICE](NOTICE) carries the attributions of the projects jubarte's code
+derives from, and [LICENSES.md](LICENSES.md) lists the licences of the
+bundled fonts and test documents.
 
 ## Links
 
 [Engine comparison site](https://jandira-tech.github.io/neurotic_docx_bench/) ·
-[jandira.tech](https://www.jandira.tech) · [arthur.law](https://arthur.law) ·
-[Cicero](https://www.cicero.im) · [LinkedIn](https://linkedin.com/in/arthrod) ·
-`contact@arthur.law`
-- [GitHub](https://github.com/jandira-tech/jubarte-redlines)
-- [crates.io](https://crates.io/crates/jubarte-redlines)
-- [docs.rs](https://docs.rs/jubarte-redlines)
-- [PyPI](https://pypi.org/project/jubarte-redlines/)
+[jandira.tech](https://www.jandira.tech) ·
+[Discussions](https://github.com/jandira-tech/jubarte/discussions) ·
+[Support](SUPPORT.md) · [Security](SECURITY.md)
+
+- [GitHub](https://github.com/jandira-tech/jubarte)
+- [crates.io](https://crates.io/crates/jubarte)
+- [docs.rs](https://docs.rs/jubarte)
+- [PyPI](https://pypi.org/project/jubarte-docx/)
 - [npm](https://www.npmjs.com/package/jubarte-wasm)
-- [Releases](https://github.com/jandira-tech/jubarte-redlines/releases)
+- [Releases](https://github.com/jandira-tech/jubarte/releases)
 - [npm CLI](https://www.npmjs.com/package/jubarte-redlines)

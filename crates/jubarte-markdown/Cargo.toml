@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "jubarte-markdown"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/jubarte-markdown"
+description = "Markdown in and out of Word documents for the jubarte engine: CriticMarkup as tracked changes, the agent view, and .doc reading"
+readme = "README.md"
+keywords = ["docx", "markdown", "criticmarkup", "word", "diff"]
+categories = ["text-processing", "parser-implementations"]
+include = ["/src/**", "/README.md", "/LICENSE", "/NOTICE"]
+[lib]
+name = "jubarte_markdown"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Layout needs the renderer (plan A4): page_texts, with_page_markers and
+# page markers in reads.
+render = ["dep:jubarte-render", "jubarte-doc/render"]
+# Cross-crate test helpers (A4), forwarded down.
+test-support = ["jubarte-doc/test-support"]
+
+[dependencies]
+jubarte-dom = { workspace = true }
+jubarte-opc = { workspace = true }
+jubarte-doc = { workspace = true }
+jubarte-redlines = { workspace = true }
+base64 = { workspace = true }
+pulldown-cmark = { workspace = true }
+regex = { workspace = true }
+quick-xml = { workspace = true }
+zip = { workspace = true }
+image = { workspace = true }
+serde = { workspace = true }
+unicode-properties = { workspace = true }
+unicode-segmentation = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+similar = { workspace = true }
+# The renderer is optional: without it no layout runs, and the public
+# items that need it do not exist (A4).
+jubarte-render = { workspace = true, optional = true }
+
+[dev-dependencies]
+jubarte-dom = { workspace = true, features = ["test-support"] }
+jubarte-opc = { workspace = true, features = ["schema", "test-support"] }
+jubarte-doc = { workspace = true, features = ["render", "test-support"] }
+jubarte-redlines = { workspace = true, features = ["test-support"] }
+tempfile = { workspace = true }

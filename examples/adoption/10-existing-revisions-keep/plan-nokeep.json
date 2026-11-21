@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "source_sha256": "c4dfd8c7133ac85f6a4bc544a7be9004d8a286268cc4485c4bb26dff5868094b",
+  "author": "Us",
+  "date": "2026-10-04T12:00:00Z",
+  "operations": [
+    {
+      "id": "notice-period",
+      "kind": "replace",
+      "paragraph": { "starts_with": "This Agreement begins on February 1, 2026" },
+      "find": "ninety days",
+      "replacement": "sixty days"
+    },
+    {
+      "id": "interest",
+      "kind": "insert",
+      "paragraph": { "starts_with": "Client shall pay Contractor the fees" },
+      "after": "percent per month",
+      "text": ", compounded daily"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "source_sha256": "5b410cbef91fac9524e670213fc9fe372f13e8d8c53c81afdd20f9e9d37a7e1f",
+  "author": "Ben Vendor",
+  "date": "2026-10-04T15:00:00Z",
+  "rewrite_others_comments": true,
+  "operations": [
+    {
+      "id": "reply-ask",
+      "kind": "reply_comment",
+      "comment_id": 0,
+      "text": "Named-individuals annex is fine; a cap is not needed at this volume."
+    },
+    {
+      "id": "resolve-ask",
+      "kind": "resolve_comment",
+      "comment_id": 0
+    }
+  ]
+}

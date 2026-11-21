@@ -1,0 +1,763 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: Apache-2.0
+
+//! Word-validity normalization (OpenXmlValidator-driven, real-Word-arbitrated).
+//!
+//! The 166-pair sweep with DocumentFormat.OpenXml's validator showed 146/166
+//! of our outputs carrying schema errors while Word's own redlines validate
+//! clean (sans one math quirk) — and the strict01 family actually trips
+//! Word's "unreadable content" repair dialog. Classes fixed here:
+//!   1. pPr/rPr/tblPr/tcPr children out of schema order — C# runs
+//!      `WmlOrderElementsPerStandard` in the produce path (WmlComparer.cs:1893);
+//!      the port was MISSING it (faithfulness gap, ungated).
+//!   2. Strict-conversion artifacts: cnfStyle without the required `val`
+//!      bitmask, wp14 percentage element values ("20%" vs per-thousand ints).
+//!   3. w14:paraId/textId values ≥ 0x80000000 (the `id-paraid-overflow`
+//!      corpus passthrough) — Word regenerates its own; strip out-of-range.
+
+use jubarte::comparer::finalize::{fix_strict_validity_artifacts, wml_order_elements_per_standard};
+use jubarte::namespaces::{W, W14};
+use jubarte::xmllinq::{Dom, NodeId};
+
+const W14_URI: &str = "http://schemas.microsoft.com/office/word/2010/wordml";
+const WP14_URI: &str = "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing";
+
+fn parse(dom: &mut Dom, xml: &str) -> NodeId {
+    let d = dom.parse_xdocument(xml);
+    dom.root(d).unwrap()
+}
+
+fn child_locals(dom: &Dom, el: NodeId) -> Vec<String> {
+    dom.elements(el, None)
+        .into_iter()
+        .filter_map(|c| dom.name(c).map(|n| n.local_name().to_string()))
+        .collect()
+}
+
+#[test]
+fn t1_ppr_children_ordered_per_standard() {
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:p xmlns:w=\"{w}\"><w:r><w:t>x</w:t></w:r><w:pPr>\
+             <w:numPr><w:ilvl w:val=\"1\"/></w:numPr>\
+             <w:jc w:val=\"center\"/>\
+             <w:pStyle w:val=\"ListParagraph\"/>\
+             <w:rPr><w:b/><w:ins w:id=\"1\"/></w:rPr>\
+             <w:spacing w:after=\"0\"/>\
+             </w:pPr></w:p>",
+            w = W::URI
+        ),
+    );
+    wml_order_elements_per_standard(&mut dom, root);
+    // w:p puts pPr FIRST; pPr children per Order_pPr; rPr children per Order_rPr
+    assert_eq!(child_locals(&dom, root), vec!["pPr", "r"]);
+    let ppr = dom.element(root, &W::p_pr()).unwrap();
+    assert_eq!(
+        child_locals(&dom, ppr),
+        vec!["pStyle", "numPr", "spacing", "jc", "rPr"],
+        "{}",
+        dom.serialize_element(root)
+    );
+    let rpr = dom.element(ppr, &W::r_pr()).unwrap();
+    assert_eq!(child_locals(&dom, rpr), vec!["ins", "b"]);
+}
+
+#[test]
+fn t2_tcpr_and_tblpr_ordered() {
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:tbl xmlns:w=\"{w}\"><w:tblPr>\
+             <w:tblLook w:val=\"04A0\"/><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblStyle w:val=\"T\"/>\
+             </w:tblPr><w:tr><w:tc><w:tcPr>\
+             <w:vAlign w:val=\"center\"/><w:tcW w:w=\"100\" w:type=\"dxa\"/><w:gridSpan w:val=\"2\"/>\
+             </w:tcPr><w:p/></w:tc></w:tr></w:tbl>",
+            w = W::URI
+        ),
+    );
+    wml_order_elements_per_standard(&mut dom, root);
+    let tblpr = dom.element(root, &W::name("tblPr")).unwrap();
+    assert_eq!(
+        child_locals(&dom, tblpr),
+        vec!["tblStyle", "tblW", "tblLook"]
+    );
+    let tcpr = dom
+        .descendants(root, Some(&W::name("tcPr")))
+        .first()
+        .copied()
+        .unwrap();
+    assert_eq!(child_locals(&dom, tcpr), vec!["tcW", "gridSpan", "vAlign"]);
+}
+
+#[test]
+fn t3_cnfstyle_gains_val_bitmask() {
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:tr xmlns:w=\"{w}\"><w:trPr>\
+             <w:cnfStyle w:firstRow=\"1\" w:lastRow=\"0\" w:firstColumn=\"true\" w:oddHBand=\"1\"/>\
+             </w:trPr></w:tr>",
+            w = W::URI
+        ),
+    );
+    fix_strict_validity_artifacts(&mut dom, root);
+    let cnf = dom
+        .descendants(root, Some(&W::name("cnfStyle")))
+        .first()
+        .copied()
+        .unwrap();
+    // bit order: firstRow lastRow firstColumn lastColumn oddVBand evenVBand
+    //            oddHBand evenHBand frFc frLc lrFc lrLc
+    assert_eq!(
+        dom.attribute(cnf, &W::val()),
+        Some("101000100000"),
+        "{}",
+        dom.serialize_element(cnf)
+    );
+}
+
+#[test]
+fn t3b_cnfstyle_with_val_untouched() {
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:tr xmlns:w=\"{w}\"><w:trPr><w:cnfStyle w:val=\"100000000000\"/></w:trPr></w:tr>",
+            w = W::URI
+        ),
+    );
+    fix_strict_validity_artifacts(&mut dom, root);
+    let cnf = dom
+        .descendants(root, Some(&W::name("cnfStyle")))
+        .first()
+        .copied()
+        .unwrap();
+    assert_eq!(dom.attribute(cnf, &W::val()), Some("100000000000"));
+}
+
+#[test]
+fn t4_wp14_percentages_to_per_thousand() {
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<wp:anchor xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" xmlns:wp14=\"{WP14_URI}\">\
+             <wp14:sizeRelH relativeFrom=\"page\"><wp14:pctWidth>40%</wp14:pctWidth></wp14:sizeRelH>\
+             <wp14:sizeRelV relativeFrom=\"page\"><wp14:pctHeight>20.5%</wp14:pctHeight></wp14:sizeRelV>\
+             </wp:anchor>"
+        ),
+    );
+    fix_strict_validity_artifacts(&mut dom, root);
+    let x = dom.serialize_element(root);
+    assert!(x.contains("<wp14:pctWidth>40000</wp14:pctWidth>"), "{x}");
+    assert!(x.contains("<wp14:pctHeight>20500</wp14:pctHeight>"), "{x}");
+}
+
+#[test]
+fn t5_out_of_range_paraid_stripped_in_range_kept() {
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:body xmlns:w=\"{w}\" xmlns:w14=\"{w14}\">\
+             <w:p w14:paraId=\"FD679369\" w14:textId=\"FD679369\"><w:r><w:t>bad</w:t></w:r></w:p>\
+             <w:p w14:paraId=\"1D679369\" w14:textId=\"77777777\"><w:r><w:t>good</w:t></w:r></w:p>\
+             </w:body>",
+            w = W::URI,
+            w14 = W14_URI
+        ),
+    );
+    fix_strict_validity_artifacts(&mut dom, root);
+    let ps = dom.descendants(root, Some(&W::p()));
+    assert_eq!(dom.attribute(ps[0], &W14::name("paraId")), None);
+    assert_eq!(dom.attribute(ps[0], &W14::name("textId")), None);
+    assert_eq!(dom.attribute(ps[1], &W14::name("paraId")), Some("1D679369"));
+    assert_eq!(dom.attribute(ps[1], &W14::name("textId")), Some("77777777"));
+}
+
+#[test]
+fn t6_tab_pos_and_cell_margin_measures_normalized() {
+    use jubarte::comparer::finalize::normalize_universal_measures;
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:body xmlns:w=\"{w}\">\
+             <w:p><w:pPr><w:tabs><w:tab w:val=\"right\" w:pos=\"467.50pt\"/></w:tabs></w:pPr></w:p>\
+             <w:tbl><w:tblPr><w:tblCellMar>\
+             <w:top w:w=\"100.0\" w:type=\"dxa\"/><w:right w:w=\"7.09pt\" w:type=\"dxa\"/>\
+             </w:tblCellMar></w:tblPr></w:tbl>\
+             </w:body>",
+            w = W::URI
+        ),
+    );
+    normalize_universal_measures(&mut dom, root);
+    let x = dom.serialize_element(root);
+    assert!(x.contains("w:pos=\"9350\""), "467.50pt → 9350 twips: {x}");
+    assert!(x.contains("w:w=\"100\""), "fractional dxa rounded: {x}");
+    assert!(x.contains("w:w=\"142\""), "7.09pt → 142 twips: {x}");
+}
+
+#[test]
+fn t6b_section_column_and_float_geometry_measures_normalized() {
+    use jubarte::comparer::finalize::normalize_universal_measures;
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:body xmlns:w=\"{w}\">\
+             <w:p><w:pPr><w:sectPr><w:cols w:space=\"36pt\"/></w:sectPr></w:pPr></w:p>\
+             <w:p><w:pPr><w:framePr w:w=\"2in\" w:h=\"1in\" w:x=\"36pt\" w:y=\"36pt\"/></w:pPr></w:p>\
+             <w:tbl><w:tblPr><w:tblpPr w:leftFromText=\"9pt\" w:tblpX=\"1in\" w:tblpY=\"72pt\"/></w:tblPr></w:tbl>\
+             </w:body>",
+            w = W::URI
+        ),
+    );
+    normalize_universal_measures(&mut dom, root);
+    let x = dom.serialize_element(root);
+    assert!(x.contains("w:space=\"720\""), "36pt → 720 twips: {x}");
+    assert!(x.contains("w:w=\"2880\""), "2in → 2880 twips: {x}");
+    assert!(x.contains("w:h=\"1440\""), "1in → 1440 twips: {x}");
+    assert!(x.contains("w:x=\"720\""), "36pt → 720 twips: {x}");
+    assert!(x.contains("w:leftFromText=\"180\""), "9pt → 180 twips: {x}");
+    assert!(x.contains("w:tblpX=\"1440\""), "1in → 1440 twips: {x}");
+    assert!(x.contains("w:tblpY=\"1440\""), "72pt → 1440 twips: {x}");
+}
+
+#[test]
+fn t6c_fractional_plain_float_geometry_rounds_as_a_validity_repair() {
+    // A fractional plain value on an integer-typed attribute is
+    // schema-invalid wherever the Strict whitelist now reads it
+    // (OpenXmlValidator on `w:tblpX="100.5"`: not a valid Int32 — same
+    // for `w:ind/@w:left`, a union member fail), so the output sweep
+    // rounds it: a validity repair, kept and recorded in CHANGELOG.md.
+    // The render diagnostic keeps the literal (normalize_unit_measures).
+    use jubarte::comparer::finalize::normalize_universal_measures;
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:body xmlns:w=\"{w}\">\
+             <w:tbl><w:tblPr><w:tblpPr w:tblpX=\"100.5\" w:tblpY=\"50.25\"/></w:tblPr></w:tbl>\
+             <w:p><w:pPr><w:framePr w:x=\"33.5\"/></w:pPr></w:p>\
+             </w:body>",
+            w = W::URI
+        ),
+    );
+    normalize_universal_measures(&mut dom, root);
+    let x = dom.serialize_element(root);
+    assert!(x.contains("w:tblpX=\"101\""), "100.5 → 101: {x}");
+    assert!(x.contains("w:tblpY=\"50\""), "50.25 → 50: {x}");
+    assert!(x.contains("w:x=\"34\""), "33.5 → 34: {x}");
+}
+
+#[test]
+fn t7_drawingml_percent_attrs_to_per_thousand() {
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        "<dsp:sp xmlns:dsp=\"http://schemas.microsoft.com/office/drawing/2008/diagram\" \
+         xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+         <dsp:style><a:fillRef idx=\"1\"><a:scrgbClr r=\"0%\" g=\"12.5%\" b=\"100%\"/></a:fillRef></dsp:style>\
+         </dsp:sp>",
+    );
+    fix_strict_validity_artifacts(&mut dom, root);
+    let clr = dom
+        .descendants(root, None)
+        .into_iter()
+        .find(|&e| dom.name(e).is_some_and(|n| n.local_name() == "scrgbClr"))
+        .unwrap();
+    let x = dom.serialize_element(clr);
+    assert!(x.contains("r=\"0\""), "{x}");
+    assert!(x.contains("g=\"12500\""), "{x}");
+    assert!(x.contains("b=\"100000\""), "{x}");
+}
+
+/// The actual repair-dialog trigger (bisected in real Word): Strict inputs
+/// bind wsp/spPr/txbx in the STRICT wordprocessingDrawing namespace inside
+/// `a:graphicData uri=".../2010/wordprocessingShape"`; URI translation makes
+/// them Transitional wp: — a namespace with no such elements. They must be
+/// remapped into the uri's namespace (wps:), without touching the outer
+/// anchor's legitimate wp: elements or nested w:drawing contexts.
+#[test]
+fn t8_wps_elements_remapped_from_wp() {
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        "<w:drawing xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+         xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+         xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+         <wp:anchor simplePos=\"0\"><wp:extent cx=\"100\" cy=\"100\"/>\
+         <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+         <wp:wsp><wp:cNvSpPr txBox=\"1\"/><wp:spPr/><wp:txbx><w:txbxContent><w:p/></w:txbxContent></wp:txbx><wp:bodyPr/></wp:wsp>\
+         </a:graphicData></a:graphic></wp:anchor></w:drawing>",
+    );
+    fix_strict_validity_artifacts(&mut dom, root);
+    let x = dom.serialize_element(root);
+    assert!(!x.contains("<wp:wsp"), "wsp left in wp namespace: {x}");
+    // the wsp subtree is in the wps namespace now
+    let wsp = dom
+        .descendants(root, None)
+        .into_iter()
+        .find(|&e| dom.name(e).is_some_and(|n| n.local_name() == "wsp"))
+        .unwrap();
+    assert_eq!(
+        dom.name(wsp).unwrap().namespace_name(),
+        "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+    );
+    // outer anchor stays wp:
+    let anchor = dom
+        .descendants(root, None)
+        .into_iter()
+        .find(|&e| dom.name(e).is_some_and(|n| n.local_name() == "anchor"))
+        .unwrap();
+    assert_eq!(
+        dom.name(anchor).unwrap().namespace_name(),
+        "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+    );
+    // w:txbxContent untouched
+    assert!(x.contains("txbxContent"), "{x}");
+}
+
+/// Deleted field-instruction runs must carry `w:delInstrText` — Word rejects
+/// `w:instrText` inside `w:del` (6x in the strict01 TOC; Word's own redline
+/// of the pair emits 12x delInstrText and zero raw instrText).
+#[test]
+fn t9_deleted_instr_text_becomes_del_instr_text() {
+    use jubarte::comparer::{WmlComparerSettings, compare_bodies_faithful};
+    let mut dom = Dom::new();
+    let parse_doc = |dom: &mut Dom, inner: &str| {
+        let xml = format!(
+            "<w:document xmlns:w=\"{w}\"><w:body>{inner}</w:body></w:document>",
+            w = W::URI
+        );
+        let d = dom.parse_xdocument(&xml);
+        let root = dom.root(d).unwrap();
+        let body = dom.element(root, &W::body()).unwrap();
+        (root, body)
+    };
+    let (r1, b1) = parse_doc(
+        &mut dom,
+        "<w:p><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+         <w:r><w:instrText xml:space=\"preserve\"> PAGE </w:instrText></w:r>\
+         <w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>",
+    );
+    let (r2, b2) = parse_doc(
+        &mut dom,
+        "<w:p><w:r><w:t>replaced entirely</w:t></w:r></w:p>",
+    );
+    let s = WmlComparerSettings::default();
+    let out = compare_bodies_faithful(&mut dom, r1, r2, b1, b2, &s);
+    let x = dom.serialize_element(out);
+    assert!(
+        !x.contains("<w:instrText"),
+        "raw instrText inside deletion: {x}"
+    );
+    assert!(x.contains("delInstrText"), "{x}");
+}
+
+/// Word-written Strict packages use wne:txbxContent; in Transitional, wne is
+/// mc:Ignorable so the required wps:txbx child vanishes — repair dialog
+/// (strict01 cover page; Word's own redline emits w:txbxContent).
+#[test]
+fn t10_wne_txbxcontent_renamed_to_w() {
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        "<wps:txbx xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\" \
+         xmlns:wne=\"http://schemas.microsoft.com/office/word/2006/wordml\" \
+         xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <wne:txbxContent><w:p><w:r><w:t>boxed</w:t></w:r></w:p></wne:txbxContent></wps:txbx>",
+    );
+    fix_strict_validity_artifacts(&mut dom, root);
+    let x = dom.serialize_element(root);
+    assert!(!x.contains("wne:txbxContent"), "{x}");
+    assert!(x.contains("w:txbxContent"), "{x}");
+}
+
+/// w:delText in a run NOT directly inside w:del trips Word's repair dialog —
+/// THE residual strict01 trigger (bisected: wrapping the 5 bare-delText runs
+/// inside the deleted cover-page text boxes made the file open). Word wraps
+/// nested text-box runs in explicit w:del; schema-legal either way, so no
+/// validator catches it.
+#[test]
+fn t11_deleted_textbox_runs_wrapped_in_del() {
+    use jubarte::comparer::{WmlComparerSettings, compare_bodies_faithful};
+    let mut dom = Dom::new();
+    let parse_doc = |dom: &mut Dom, inner: &str| {
+        let xml = format!(
+            "<w:document xmlns:w=\"{w}\" xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+             xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+             xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\"><w:body>{inner}</w:body></w:document>",
+            w = W::URI
+        );
+        let d = dom.parse_xdocument(&xml);
+        let root = dom.root(d).unwrap();
+        let body = dom.element(root, &W::body()).unwrap();
+        (root, body)
+    };
+    let (r1, b1) = parse_doc(
+        &mut dom,
+        "<w:p><w:r><w:drawing><wp:anchor simplePos=\"0\"><wp:extent cx=\"100\" cy=\"100\"/>\
+         <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+         <wps:wsp><wps:txbx><w:txbxContent><w:p><w:r><w:t>boxed text</w:t></w:r></w:p></w:txbxContent></wps:txbx>\
+         </wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>\
+         <w:p><w:r><w:t>shared tail</w:t></w:r></w:p>",
+    );
+    let (r2, b2) = parse_doc(&mut dom, "<w:p><w:r><w:t>shared tail</w:t></w:r></w:p>");
+    let s = WmlComparerSettings::default();
+    let out = compare_bodies_faithful(&mut dom, r1, r2, b1, b2, &s);
+
+    let mut checked = 0;
+    for dt in dom.descendants(out, Some(&W::name("delText"))) {
+        // nearest ancestor run
+        let run = dom
+            .ancestors_and_self(dt, None)
+            .into_iter()
+            .find(|&a| dom.name(a) == Some(W::r()))
+            .expect("delText inside a run");
+        let parent = dom.parent(run).expect("run has parent");
+        assert_eq!(
+            dom.name(parent),
+            Some(W::del()),
+            "delText run must sit directly inside w:del: {}",
+            dom.serialize_element(parent)
+        );
+        checked += 1;
+    }
+    assert!(checked >= 1, "deleted text-box content produced delText");
+}
+
+/// The package validity sweep re-orders every part, not document.xml alone:
+/// styles merged from B appended `w:kern` after `w:sz`/`w:lang`
+/// (Sch_UnexpectedElementContentExpectingComplex on kern, 3 of the 2026-09-26
+/// English redlines), and `w:rPrChange` must close the rPr even after w14 props.
+#[test]
+fn t12_style_rpr_ordered_by_the_package_sweep() {
+    use jubarte::comparer::finalize::enforce_part_schema_order;
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:styles xmlns:w=\"{w}\" xmlns:w14=\"{w14}\"><w:style w:styleId=\"S\"><w:rPr>\
+             <w:rFonts w:ascii=\"X\"/><w:sz w:val=\"24\"/><w:szCs w:val=\"24\"/><w:lang w:val=\"de-DE\"/>\
+             <w:rPrChange w:id=\"1\" w:author=\"a\"><w:rPr><w:sz w:val=\"20\"/><w:rFonts w:ascii=\"X\"/></w:rPr></w:rPrChange>\
+             <w:kern w:val=\"0\"/><w14:ligatures w14:val=\"none\"/>\
+             </w:rPr></w:style></w:styles>",
+            w = W::URI,
+            w14 = W14_URI
+        ),
+    );
+    enforce_part_schema_order(&mut dom, root);
+    let rpr = dom.descendants(root, Some(&W::r_pr()))[0];
+    assert_eq!(
+        child_locals(&dom, rpr),
+        vec![
+            "rFonts",
+            "kern",
+            "sz",
+            "szCs",
+            "lang",
+            "ligatures",
+            "rPrChange"
+        ],
+        "{}",
+        dom.serialize_element(root)
+    );
+    let old = dom.descendants(root, Some(&W::r_pr()))[1];
+    assert_eq!(child_locals(&dom, old), vec!["rFonts", "sz"]);
+}
+
+/// `pPrChange/pPr` is CT_PPrBase — no rPr, sectPr or nested pPrChange
+/// (Sch_InvalidElementContentExpectingComplex on rPr); and the live pPr's rPr
+/// sits after jc even when a late pass appended jc (2d7b8154, 9d38c2b8).
+#[test]
+fn t13_ppr_change_holds_only_base_properties() {
+    use jubarte::comparer::finalize::enforce_part_schema_order;
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:document xmlns:w=\"{w}\"><w:body><w:p><w:pPr>\
+             <w:rPr><w:b/></w:rPr><w:jc w:val=\"center\"/>\
+             <w:pPrChange w:id=\"1\" w:author=\"a\"><w:pPr>\
+             <w:rPr><w:b/></w:rPr><w:jc w:val=\"left\"/><w:sectPr/>\
+             </w:pPr></w:pPrChange>\
+             </w:pPr><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>",
+            w = W::URI
+        ),
+    );
+    enforce_part_schema_order(&mut dom, root);
+    let ppr = dom.descendants(root, Some(&W::p_pr()))[0];
+    assert_eq!(child_locals(&dom, ppr), vec!["jc", "rPr", "pPrChange"]);
+    let old = dom.descendants(root, Some(&W::p_pr()))[1];
+    assert_eq!(
+        child_locals(&dom, old),
+        vec!["jc"],
+        "{}",
+        dom.serialize_element(root)
+    );
+}
+
+/// A source style's `<w:color w:themeColor=".."/>` without the required `val`
+/// rode into our rPrChange copy (Sch_MissRequiredAttribute). `auto` is the
+/// deterministic repair: themeColor overrides val, so nothing renders
+/// differently.
+#[test]
+fn t14_theme_color_without_val_gains_auto() {
+    use jubarte::comparer::finalize::repair_inherited_invalidity;
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:styles xmlns:w=\"{w}\"><w:style w:styleId=\"Subtitle\"><w:rPr>\
+             <w:color w:themeColor=\"dark1\"/></w:rPr></w:style>\
+             <w:style w:styleId=\"Red\"><w:rPr><w:color w:val=\"FF0000\"/></w:rPr></w:style></w:styles>",
+            w = W::URI
+        ),
+    );
+    repair_inherited_invalidity(&mut dom, root);
+    let vals: Vec<Option<String>> = dom
+        .descendants(root, Some(&W::name("color")))
+        .into_iter()
+        .map(|c| dom.attribute(c, &W::val()).map(str::to_string))
+        .collect();
+    assert_eq!(vals, vec![Some("auto".into()), Some("FF0000".into())]);
+}
+
+/// `w:fldSimple` is no more legal inside `w:ins`/`w:del` than `w:hyperlink`: an
+/// inserted footer wrapped B's bare `PAGE`/`NUMPAGES` fields in the insertion
+/// (Sch_InvalidElementContentExpectingComplex at /w:ftr/w:p/w:ins, 9c337ad7).
+/// The field keeps its place and the revision moves inside it.
+#[test]
+fn t15_simple_fields_hoisted_out_of_revisions() {
+    use jubarte::comparer::finalize::hoist_hyperlinks_out_of_revisions;
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:ftr xmlns:w=\"{w}\"><w:p><w:ins w:id=\"1\" w:author=\"a\">\
+             <w:r><w:t>Page </w:t></w:r><w:fldSimple w:instr=\"PAGE\"/>\
+             <w:r><w:t> of </w:t></w:r><w:fldSimple w:instr=\"NUMPAGES\"><w:r><w:t>9</w:t></w:r></w:fldSimple>\
+             </w:ins></w:p></w:ftr>",
+            w = W::URI
+        ),
+    );
+    hoist_hyperlinks_out_of_revisions(&mut dom, root);
+    let p = dom.descendants(root, Some(&W::p()))[0];
+    // The empty PAGE field has no result to carry the revision: it stays
+    // inside the w:ins as the complex field Word's redline writes (a bare
+    // empty field there hung Word 16.115, b15 of the 0.12.0 sample).
+    assert_eq!(
+        child_locals(&dom, p),
+        vec!["ins", "fldSimple"],
+        "{}",
+        dom.serialize_element(root)
+    );
+    let ins = dom.elements(p, Some(&W::ins()))[0];
+    let code = dom.descendants(ins, Some(&W::name("instrText")));
+    assert_eq!(code.len(), 1);
+    assert_eq!(dom.value(code[0]), "PAGE");
+    let last = dom.elements(p, Some(&W::name("fldSimple")))[0];
+    assert_eq!(child_locals(&dom, last), vec!["ins"]);
+    let shown: String = dom
+        .descendants(root, Some(&W::t()))
+        .into_iter()
+        .map(|t| dom.value(t))
+        .collect();
+    assert_eq!(shown, "Page  of 9");
+}
+
+#[test]
+fn t16_office_extension_namespaces_become_ignorable_on_the_part_root() {
+    use jubarte::comparer::finalize::declare_extension_namespaces_ignorable;
+    const MC_URI: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+    const W15_URI: &str = "http://schemas.microsoft.com/office/word/2012/wordml";
+    const W16CID_URI: &str = "http://schemas.microsoft.com/office/word/2016/wordml/cid";
+    // A Mac-era numbering root (MC bound to `ve`, no Ignorable) that received
+    // B's abstractNum/num carrying Word 2012/2016 extension attributes.
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:numbering xmlns:w=\"{w}\" xmlns:ve=\"{MC_URI}\" xmlns:w14=\"{W14_URI}\">\
+             <w:abstractNum xmlns:w15=\"{W15_URI}\" w:abstractNumId=\"1\" w15:restartNumberingAfterBreak=\"0\"/>\
+             <w:num xmlns:w16cid=\"{W16CID_URI}\" w:numId=\"1\" w16cid:durableId=\"42\"/>\
+             </w:numbering>",
+            w = W::URI
+        ),
+    );
+    declare_extension_namespaces_ignorable(&mut dom, root);
+    let mc_ignorable = jubarte::xmllinq::XNamespace::get(MC_URI).name("Ignorable");
+    let tokens: Vec<String> = dom
+        .attribute(root, &mc_ignorable)
+        .unwrap_or("")
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    // w14 is declared but unused: it stays out; the used two go in.
+    assert_eq!(
+        tokens,
+        vec!["w15", "w16cid"],
+        "{}",
+        dom.serialize_element(root)
+    );
+    let xmlns = jubarte::xmllinq::XNamespace::xmlns();
+    assert_eq!(dom.attribute(root, &xmlns.name("w15")), Some(W15_URI));
+    assert_eq!(dom.attribute(root, &xmlns.name("w16cid")), Some(W16CID_URI));
+    // Idempotent: a second pass changes nothing.
+    let once = dom.serialize_element(root);
+    declare_extension_namespaces_ignorable(&mut dom, root);
+    assert_eq!(dom.serialize_element(root), once);
+}
+
+#[test]
+fn t17_compatibility_prefixes_are_bound_where_they_are_named() {
+    use jubarte::comparer::finalize::bind_compatibility_prefixes;
+    const MC_URI: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+    const WPS_URI: &str = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
+    let xmlns = jubarte::xmllinq::XNamespace::xmlns();
+    let requires = jubarte::xmllinq::XNamespace::none().name("Requires");
+    let choice = |dom: &Dom, root: NodeId| {
+        dom.descendants(
+            root,
+            Some(&jubarte::xmllinq::XNamespace::get(MC_URI).name("Choice")),
+        )[0]
+    };
+    // A header that received B's shape: `wps` is bound only on the shape, and
+    // an unknown `foo` gates a second Choice.
+    let header = |root_extra: &str| {
+        format!(
+            "<w:hdr xmlns:w=\"{w}\" xmlns:mc=\"{MC_URI}\"{root_extra}><w:p><w:r>\
+             <mc:AlternateContent><mc:Choice Requires=\"wps\"><w:drawing>\
+             <wps:wsp xmlns:wps=\"{WPS_URI}\"/></w:drawing></mc:Choice>\
+             <mc:Choice Requires=\"foo\"/><mc:Fallback/></mc:AlternateContent>\
+             </w:r></w:p></w:hdr>",
+            w = W::URI
+        )
+    };
+
+    let mut dom = Dom::new();
+    let root = parse(&mut dom, &header(""));
+    bind_compatibility_prefixes(&mut dom, root);
+    // Bound on the root, as Word writes it; the unknown prefix is left alone.
+    assert_eq!(dom.attribute(root, &xmlns.name("wps")), Some(WPS_URI));
+    assert_eq!(dom.attribute(root, &xmlns.name("foo")), None);
+    assert_eq!(dom.attribute(choice(&dom, root), &requires), Some("wps"));
+    // Idempotent: a second pass changes nothing.
+    let once = dom.serialize_element(root);
+    bind_compatibility_prefixes(&mut dom, root);
+    assert_eq!(dom.serialize_element(root), once);
+
+    // A binding the part already has is in scope: it is never overwritten.
+    let mut dom = Dom::new();
+    let root = parse(&mut dom, &header(" xmlns:wps=\"urn:other\""));
+    bind_compatibility_prefixes(&mut dom, root);
+    assert_eq!(dom.attribute(root, &xmlns.name("wps")), Some("urn:other"));
+    assert_eq!(dom.attribute(choice(&dom, root), &xmlns.name("wps")), None);
+}
+
+/// Every prefix the MC lists name (whole tokens and QName prefixes) has a
+/// declaration in scope in `xml` once it is parsed again.
+fn unbound_prefix_list_tokens(xml: &str) -> Vec<String> {
+    const MC_URI: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+    let is_namespace_prefix_list =
+        |element: &jubarte::xmllinq::XName, name: &jubarte::xmllinq::XName| match name
+            .namespace_name()
+        {
+            "" => {
+                name.local_name() == "Requires"
+                    && element.namespace_name() == MC_URI
+                    && element.local_name() == "Choice"
+            }
+            // Every MC attribute (Ignorable, ProcessContent, …) is a prefix list.
+            ns => ns == MC_URI,
+        };
+    let mut dom = Dom::new();
+    let root = parse(&mut dom, xml);
+    let mut unbound = Vec::new();
+    for el in dom.descendants_and_self(root, None) {
+        let Some(element) = dom.name(el) else {
+            continue;
+        };
+        for (name, value) in dom.attributes(el) {
+            if !is_namespace_prefix_list(&element, &name) {
+                continue;
+            }
+            for token in value.split_whitespace() {
+                let prefix = token.split_once(':').map_or(token, |(prefix, _)| prefix);
+                let bound = dom.ancestors_and_self(el, None).iter().any(|&anc| {
+                    dom.attributes(anc)
+                        .iter()
+                        .any(|(n, _)| dom.is_namespace_declaration(n) && n.local_name() == prefix)
+                });
+                if !bound {
+                    unbound.push(token.to_string());
+                }
+            }
+        }
+    }
+    unbound
+}
+
+#[test]
+fn t18_aliased_prefixes_keep_their_declarations_through_serialization() {
+    use jubarte::comparer::finalize::bind_compatibility_prefixes;
+    const MC_URI: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+    const WPS_URI: &str = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
+    // The part binds the shape namespace as `s`; its lists name `s`, and the
+    // grafted Choice names `wps`, which the bind pass adds as a second prefix
+    // for the same namespace.
+    let header = |root_extra: &str| {
+        format!(
+            "<w:hdr xmlns:w=\"{w}\" xmlns:mc=\"{MC_URI}\" xmlns:s=\"{WPS_URI}\"{root_extra} \
+             mc:Ignorable=\"s\"><w:p mc:PreserveElements=\"s:wsp\" \
+             mc:ProcessContent=\"s:txbx\"><w:r><mc:AlternateContent>\
+             <mc:Choice Requires=\"wps\"><w:drawing><s:wsp/></w:drawing></mc:Choice>\
+             <mc:Fallback/></mc:AlternateContent></w:r></w:p></w:hdr>",
+            w = W::URI
+        )
+    };
+
+    let mut dom = Dom::new();
+    let root = parse(&mut dom, &header(""));
+    bind_compatibility_prefixes(&mut dom, root);
+    let xml = dom.serialize_element(root);
+    assert_eq!(
+        unbound_prefix_list_tokens(&xml),
+        Vec::<String>::new(),
+        "{xml}"
+    );
+
+    // The serializer alone: a part that already declares both prefixes keeps both.
+    let mut dom = Dom::new();
+    let root = parse(&mut dom, &header(&format!(" xmlns:wps=\"{WPS_URI}\"")));
+    let xml = dom.serialize_element(root);
+    assert!(xml.contains(&format!("xmlns:s=\"{WPS_URI}\"")), "{xml}");
+    assert!(xml.contains(&format!("xmlns:wps=\"{WPS_URI}\"")), "{xml}");
+    assert_eq!(
+        unbound_prefix_list_tokens(&xml),
+        Vec::<String>::new(),
+        "{xml}"
+    );
+}
+
+#[test]
+fn t19_requires_outside_mc_choice_is_application_data() {
+    use jubarte::comparer::finalize::bind_compatibility_prefixes;
+    // `v` is a well-known prefix, but here it is a custom part's own value:
+    // the bind pass leaves the part alone and the serializer keeps it verbatim.
+    let item = "<plugins xmlns=\"urn:example:plugins\" xmlns:ns=\"urn:x\">\
+                <dependency Requires=\"v ns\"/></plugins>";
+    let mut dom = Dom::new();
+    let root = parse(&mut dom, item);
+    bind_compatibility_prefixes(&mut dom, root);
+    let xmlns = jubarte::xmllinq::XNamespace::xmlns();
+    assert_eq!(dom.attribute(root, &xmlns.name("v")), None);
+    assert!(dom.serialize_element(root).contains("Requires=\"v ns\""));
+}

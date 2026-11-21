@@ -1,0 +1,6 @@
+name                                 type              encoding         emb sub uni object ID
+------------------------------------ ----------------- ---------------- --- --- --- ---------
+Georgia-Bold                         TrueType          WinAnsi          yes no  no       6  0
+Cambria                              TrueType          WinAnsi          yes no  no       9  0
+TimesNewRomanPSMT                    TrueType          WinAnsi          yes no  no      12  0
+Calibri                              TrueType          WinAnsi          yes no  no      15  0

@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only
+SPDX-License-Identifier: Apache-2.0
 -->
 
 # Changelog
@@ -11,15 +11,165 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-repo steps.
+See [docs/maintainers/VERSIONING.md](docs/maintainers/VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
+
+### License
+
+- **jubarte is licensed under Apache-2.0 from this release.** Versions
+  0.18.0 and earlier were released under AGPL-3.0-only and stay under it.
+  Every crate, wheel, npm package and release archive now carries
+  `LICENSE` (the Apache License 2.0) and `NOTICE`, which reproduces the
+  MIT notices of the projects jubarte's code derives from (Docxodus and
+  Open-Xml-PowerTools, anymd, markdown2pdf, zipsign). Earlier packages
+  other than the `jubarte` crate shipped without those notices.
+- The bundled fonts keep their own licenses (SIL Open Font License 1.1,
+  Apache-2.0); release archives now include the Open Font License text.
+- The theme part written into a redline whose original has none is the
+  file Microsoft publishes under the MIT License (microsoft/PPCC25-ALM);
+  `NOTICE` carries its copyright notice. The bytes are unchanged.
+
+### Repository
+
+- The repository is `jandira-tech/jubarte`. The old address redirects.
+- The git history starts again. Each release up to 0.18.0, yanked ones
+  included, is one commit under its own tag: that release's source reduced
+  to what builds it (manifests, Rust sources, embedded assets, licence
+  files), so the tests of those commits do not run from them. The release
+  downloads stay where they were. The complete history, and the commits
+  those releases were built from, are in `jandira-tech/jubarte-history`;
+  each tag's commit message names its original commit.
+- The repository keeps two releases' API snapshots (`docs/api`) and
+  evidence sets (`release_info`), not all of them; older ones are in the
+  archive. `tests/repo_hygiene.rs` now fails when the tracked files, or one
+  top-level folder, outgrow a size budget.
+- The Jules review workflow, its rules file and its prompt files are
+  removed.
+- The built npm packages are no longer in git. CI builds all eight
+  WebAssembly targets for its tests, and the release workflow builds them
+  from the release tag, so `ENGINE_COMMIT.txt` in the package names the
+  tagged commit itself.
+- The bench test documents (third-party files, some AGPL-3.0) moved to
+  the `jandira-tech/jubarte-test-corpus` repository, a git submodule at
+  `tests/corpus/bench`. Clone with `--recurse-submodules` to run the
+  tests.
+- 127 test documents whose origin is not confirmed left git for a public
+  Hugging Face dataset. `python3 scripts/fetch_fixtures.py` downloads them
+  (pinned revision, SHA-256 checked); the tests that read them fail
+  without it, and `tests/corpus_present.rs` says why.
+
+### Crate split
+
+The engine is now a Cargo workspace of nine crates, published together at
+one version and pinned to each other exactly. The `jubarte` crate is the
+facade: it re-exports every module at the path it had in 0.18
+(`jubarte::document_comparer`, `jubarte::convert`, `jubarte::edit`, …) and
+ships the `jubarte` CLI binary.
+
+| Crate (library) | Holds |
+|---|---|
+| `jubarte` (`jubarte`) | the facade over the crates below, and the `jubarte` CLI binary |
+| `jubarte-dom` (`jubarte_dom`) | the arena XML DOM (`xmllinq`), WordprocessingML namespaces, ids, shared utilities and input limits |
+| `jubarte-opc` (`jubarte_opc`) | the OPC package floor: admission and its budgets, packages, markup simplification, strict-to-transitional translation, settings, and the shared Word tables (theme, built-in styles, borders, numbering, table DOM, validity predicates, render option types) |
+| `jubarte-redlines` (`jubarte_redlines`) | the compare product: two Word documents in, a tracked-changes redline out (`document_comparer`, `comparer`, `revision_processor`, `comparison_log`) |
+| `jubarte-render` (`jubarte_render`) | the render product: DOCX to PDF and PNG with Word-faithful layout (`convert`), with the embedded fonts |
+| `jubarte-doc` (`jubarte_doc`) | the document operations above compare: changes, comments, validate, audit, scrub, append, fields, inspect and debug |
+| `jubarte-markdown` (`jubarte_markdown`) | Markdown in and out of Word documents (CriticMarkup as tracked changes, the agent view) and `.doc` reading |
+| `jubarte-edit` (`jubarte_edit`) | edit plans as tracked changes, text diff views, capabilities and staged publication |
+| `jubarte-cli` (`jubarte_cli`) | the command line: every library operation behind one clap surface, plus `self-update` |
+
+### Migrating from 0.18
+
+- Rust users replace `jubarte-redlines = "0.18"` with `jubarte = "0.19"`
+  for the full suite and keep their `use jubarte::…` paths.
+- `jubarte-redlines` 0.19 is the compare-only crate, with library name
+  `jubarte_redlines`. Depend on it alone only when compare is all you need.
+- The CLI installs with `cargo install jubarte`; the binary is still
+  `jubarte`.
+- npm packages keep their names.
+
+### Python: `jubarte-docx`, imported as `jubarte`
+
+- The Python engine is now the `jubarte-docx` distribution. Its import
+  package and its command are both `jubarte`, in the way `python-dotenv`
+  ships `dotenv`: `pip install jubarte-docx`, then `import jubarte` or
+  `uvx --from jubarte-docx jubarte redline a.docx b.docx -o redline.docx`.
+  `jubarte-mcp` moved with it (`uvx --from 'jubarte-docx[mcp]' jubarte-mcp`).
+- `jubarte-redlines` on PyPI is now a small compatibility shim. It installs
+  `jubarte-docx` at the same version and keeps `import jubarte_redlines`
+  (the very same objects as `import jubarte`), `python -m
+  jubarte_redlines` and the `jubarte-redlines` command working. No file
+  belongs to both distributions, so upgrading from 0.18 with pip or uv
+  loses nothing.
+- PyPI's own `jubarte` is an unrelated project that also ships a `jubarte/`
+  package and a `jubarte` command. `pip install jubarte` does not install
+  this engine, and the two cannot share one environment.
+
+### Fixed
+
+- **The agent view keeps a no-break space.** U+00A0 was written as an ordinary space, and a line of only no-break spaces came back empty. The plain view still collapses it. A leading ASCII space is still `&#32;`. At a bold or italic edge the no-break space stays outside `**` and `_`, which must touch text to read.
+- **A row the table line names keeps its clause when the cell text names the same id** (#586). The row's insertion carries the cells, the clause comes back on the table line, and the view stays a fixed point. Giving the cells insertions of their own (#2343) is not in this release: the view numbered them anew, which broke the round trip.
+
+### Security
+
+- **MCP errors no longer name the server root, an output path, or an OS error** (#2355). A path outside the root, an output that already exists, and a publish failure say what was refused. A missing file still names the path that was asked for.
+- **An edit plan over 1 MiB is refused before the engine sees it, and accept or reject is the only resolve action** (#2395).
+
+### Documentation
+
+- **Field comments are recorded as issued, and the views do not emit them yet** (#2407, #2235, #2236).
+- **Issue #1914 round 3 records that no renderer rule is established** (#2385). No renderer change lands from that evidence.
+
+### Slim build
+
+The npm package's `*-slim` builds now exclude the PDF renderer and the
+embedded Carlito/Liberation fonts (plan T5.1): the slim wasm is
+13,332,638 bytes against the full build's 23,107,948. The exports the
+slim build leaves out, by design (a visible change for slim consumers;
+use the full build when you need them):
+
+- `docxToPdf`, `pdfPageCount`, `renderPdf` (class `RenderOutput`)
+- `updateFields` (class `FieldsOutput`)
+- `convertMarkdown` (page markers need the layout pass)
+- `auditDocument` (its layout-based rule set needs the renderer)
+
+The slim tree still names the `image` crate: markdown and edit picture
+embedding - slim features - read picture headers with it (format and
+dimensions for the admission limit). jubarte-render, rustybuzz,
+ttf-parser, tiny-skia and the fonts are absent.
+
+### Redlines-only and PDF-only npm builds
+
+`jubarte-wasm` gains two narrower builds, each for Node and the browser
+(plan T5.2). Every existing import path keeps working.
+
+- `jubarte-wasm/redlines` (`node-redlines`, `web-redlines`): compare,
+  accept or reject every revision, and list revisions. Its wasm is
+  3,792,306 bytes against the full build's 23,110,762.
+- `jubarte-wasm/pdf` and its alias `jubarte-wasm/convert` (`node-pdf`,
+  `web-pdf`): `docxToPdf`, `pdfPageCount` and `renderPdf`, with no
+  compare or edit layer; 11,207,079 bytes.
+- The npm package unpacks to 103,696,964 bytes (0.18.0: 93,280,656).
+- The `jubarte-redlines` npm CLI also installs a `jubarte` command, the
+  native binary's name, on the same entry point.
+
+### Python build features
+
+`jubarte-python` builds against the sub-crates instead of the `jubarte`
+facade (plan T5.3). Its Cargo features are `redlines`, `doc`, `markdown`,
+`edit`, `cli` (each building on the one before) and `render`, all on by
+default, so the published wheel holds one `_native` extension with the
+whole API. The native module can be compiled in layers
+(`cargo check --no-default-features --features redlines` builds compare,
+accept, reject and the revision listing alone), but the Python package still imports the full
+native surface, so a wheel needs the default features.
 
 ## [0.18.0] - 2026-11-10
 
 > **Summary.** Security: unsafe OPC part names, foreign-namespace content-type and relationship roots, and ZIP names falsely flagged UTF-8 are refused on open (#2078, #2080, #2081); `self-update` bounds the archive it unpacks (#2084, #2085); a redaction the leak scan cannot certify is refused (#2086); legacy `.doc` input, field nesting, comment anchors, the font index, the font caches and dashed borders are bounded (#2091, #2087, #2202-#2205, #2215); network and device image paths are refused before they are resolved (#2206); the MCP server refuses a path outside its root that links into it (#2228). Changed: Linux binaries run on glibc 2.28 and later, with static musl archives beside them (#2112); the dependency gate refuses duplicated crates and lists the crates whose build scripts may run (#2088, #2216). New: `apply_markdown_strict` (#2208), `scrub::leak_scan` with its receipt (#2086) and `ChangeError::ExposedFinalMark` (#2096). Over a hundred compare, accept/reject, edit-plan, Markdown-view, validate and table-autofit fixes. On the 600-pair and 860-document sets, scored against Word's own output: redlines mean 74.69 (Docxodus 71.67), counting as 0 the 3 redlines Word 16.115 crashes opening; PDFs mean 78.02 (LibreOffice 58.07) with no failed document. The full Miri suite (cargo miri nextest run) did not run for this release; fuzzing, parity, the Ring-2 validator ratchet, the criterion and parity-ladder gates against 0.17.0, and the bench ran instead.
 >
-> **Docs.** CHANGELOG.md gains the 0.18.0 section. SECURITY.md records RUSTSEC-2025-0168 (self_update, mitigated by verify_archive) and the withdrawn RUSTSEC-2022-0048. docs/MARKDOWN.md and docs/DIALECT.md follow the view changes (header and footer marks, heading emphasis, inline page breaks, symbols, held comment events). docs/CAPABILITIES.md counts thirteen typed CLI actions, strike and restore included. docs/WORD_DIFFERENCES.md records the Reject All difference for paired move ranges holding untracked paragraphs (#1245); docs/WORD_LAYOUT_RULES.md gains five autofit width rules. docs/adoption/install-matrix.md and plans.md follow the glibc 2.28 floor and the musl archives. README.md links docs/bomb_prevention.md, and the library READMEs are regenerated from it. AGENTS.md and docs/VERSIONING.md move all scratch work into the gitignored .scratch/ (#2256).
+> **Docs.** CHANGELOG.md gains the 0.18.0 section. SECURITY.md records RUSTSEC-2025-0168 (self_update, mitigated by verify_archive) and the withdrawn RUSTSEC-2022-0048. docs/MARKDOWN.md and docs/DIALECT.md follow the view changes (header and footer marks, heading emphasis, inline page breaks, symbols, held comment events). docs/CAPABILITIES.md counts thirteen typed CLI actions, strike and restore included. docs/WORD_DIFFERENCES.md records the Reject All difference for paired move ranges holding untracked paragraphs (#1245); docs/WORD_LAYOUT_RULES.md gains five autofit width rules. docs/adoption/install-matrix.md and plans.md follow the glibc 2.28 floor and the musl archives. README.md links docs/bomb_prevention.md, and the library READMEs are regenerated from it. AGENTS.md and docs/maintainers/VERSIONING.md move all scratch work into the gitignored .scratch/ (#2256).
 
 ### Added
 
@@ -188,7 +338,7 @@ The crafted-input hardening pass continues from 0.17.0. Each item below is refus
 
 > **Summary.** Security: every package open has an XML element budget (`max_xml_elements`, #2014); a DOCTYPE is refused in every XML part, as Word refuses every DTD (#2015); `read` applies its own limits before the layout pass (#2013); `compare` bounds the atoms it builds with a story-unit budget (`max_story_units`, #2024) and refuses subDoc, altChunk, contentPart, customXml and doubled body sectPr with `UNSUPPORTED_CONTENT` instead of panicking (#2023); `JUBARTE_TIMEOUT=SECONDS` optionally bounds any command in the binary, Python and npm CLIs (#2016); CI fails when a network crate enters the default build (#2018). Every bomb of docs/bomb_prevention.md (33 fixtures) is refused or bounded by read, validate and compare. Breaking: `InputLimits` and `InputBudget` gain fields; a one-shot `edit` or `add` that adds markup requires an author (#1997); `accept`/`reject -o INPUT` refuses, use the new `--in-place` (#1998, #1888); editing the comments of another author is allowed unless the new `--keep-others` guard is set (#1892, #1890). New: `read --find` (#1889), per-change verdicts in `validate --baseline` (#1893), non-finite measures as a Ring-1 finding (#1737). Many accept/reject, content-control and PDF fixes (#1717, #1703, #2004, #2006, #1722-#1725, #1729, #1979, #1913). On the fixed 600-pair and 860-document sets (set 2026-11-03.1), scored against Word own output: redlines mean 74.06 (Docxodus 71.67), counting as 0 the 3 redlines without a scored PDF; PDFs mean 78.25 (LibreOffice 58.07) with no failed document. The Miri full suite was not run for this release.
 >
-> **Docs.** CHANGELOG.md gained the 0.17.0 section. docs/bomb_prevention.md is new: the 33-fixture bomb set, the limits and the measured results. README.md, docs/MARKDOWN.md, docs/locations.md and docs/VERSIONING.md follow the new flags (--in-place, --keep-others, read --find) and refusals. docs/python.md, docs/javascript.md, jubarte-python/README.md and jubarte-wasm/npm/README.md document max_xml_elements and max_story_units. The generated docs/rust.md, docs/python.md, docs/javascript.md, docs/flags_datetime.md and docs/symbols follow the CLI help.
+> **Docs.** CHANGELOG.md gained the 0.17.0 section. docs/bomb_prevention.md is new: the 33-fixture bomb set, the limits and the measured results. README.md, docs/MARKDOWN.md, docs/locations.md and docs/maintainers/VERSIONING.md follow the new flags (--in-place, --keep-others, read --find) and refusals. docs/python.md, docs/javascript.md, jubarte-python/README.md and jubarte-wasm/npm/README.md document max_xml_elements and max_story_units. The generated docs/rust.md, docs/python.md, docs/javascript.md, docs/flags_datetime.md and docs/symbols follow the CLI help.
 
 ### Added
 
@@ -301,9 +451,9 @@ The bomb-hardening pass (#2019, #2025): every crafted-input finding below was re
 
 - `scripts/release.sh` step 12 accepts a `--version` that carries the build commit (`jubarte 0.16.0+00b32d2`, #1924), and still refuses a `.dirty` build (#1954).
 
-- `scripts/release.sh` compiles the app before the tag (#1816). A new app gate between steps 3 and 4 lays out the engine at HEAD with the app at `jubarte-app/` inside it — `git archive HEAD` of both checkouts in a fresh `mktemp -d`, so `src-tauri`'s `path = "../.."` resolves to the engine — and runs the app's own `cargo test`. A compile error or a failing test stops the release before the tag and every publish; 0.14.0 shipped before anything compiled the app against the released engine. The gate never passes `--locked`/`--frozen`: the app's lock on main records the previous release's versions and the engine's version moves every release, so a stale lock is normal and cargo updates only what the path dependency's new version requires, inside the throwaway copy only. `--skip-gates` is the only skip — an existing tag proves no app-gate pass. A failed gate prints its cargo log tail and removes the layout (`JUBARTE_APP_GATE_KEEP=1` keeps it; an interrupt always removes it). The checklist row that was a `before|you|` reminder is now a `3|auto|` row, and `docs/VERSIONING.md` documents the gate.
+- `scripts/release.sh` compiles the app before the tag (#1816). A new app gate between steps 3 and 4 lays out the engine at HEAD with the app at `jubarte-app/` inside it — `git archive HEAD` of both checkouts in a fresh `mktemp -d`, so `src-tauri`'s `path = "../.."` resolves to the engine — and runs the app's own `cargo test`. A compile error or a failing test stops the release before the tag and every publish; 0.14.0 shipped before anything compiled the app against the released engine. The gate never passes `--locked`/`--frozen`: the app's lock on main records the previous release's versions and the engine's version moves every release, so a stale lock is normal and cargo updates only what the path dependency's new version requires, inside the throwaway copy only. `--skip-gates` is the only skip — an existing tag proves no app-gate pass. A failed gate prints its cargo log tail and removes the layout (`JUBARTE_APP_GATE_KEEP=1` keeps it; an interrupt always removes it). The checklist row that was a `before|you|` reminder is now a `3|auto|` row, and `docs/maintainers/VERSIONING.md` documents the gate.
 
-- The release's quality gate measures the previous release, run on the same corpus and machine, instead of stored baselines that measure nothing (#1797). `tools/parity_ladder.py sweep` gains `--against BIN`: it sweeps the previous release's binary on the same pairs and reports only findings the candidate adds — the blessed TSV stays the day-to-day ratchet. New `scripts/criterion_abab.sh PREV_TAG STATE_DIR [CANDIDATE]` benches the previous release's tag and the candidate (a directory or revision — the release's own tag when resuming, HEAD before it) interleaved A B A B into one `CRITERION_HOME` under the release's state dir (never `/tmp`), keeps the six `--load-baseline` comparisons as printed context, and reads each case's verdict from criterion's saved estimates (`<group>/<bench>/<run>/estimates.json`, mean point estimate — never the `change:` text, whose sign is a Unicode minus): per case delta = mean(b1,b2)/mean(a1,a2) − 1 against self-noise max(|a2/a1−1|, |b2/b1−1|) — REGRESSION past both the >5% bar and that noise, UNDECIDABLE (rerun on a quieter machine) when a self-noise above 5% swallows it, the gate failing on either as well as on a failed cargo call, a missing estimates file, or a case benched on one side only. A dirty or wrong-rev reused worktree is discarded and recreated. The checklist's quality-gate row names the corpus (`--corpus` a staged ladder_corpus, the bench's `corpus/word` via `uv run bench fixtures download` or the previous release's own `gates/ladder_corpus`), finds the previous release from `v<ver>^` when the tag exists and HEAD before it, and `docs/VERSIONING.md` follows.
+- The release's quality gate measures the previous release, run on the same corpus and machine, instead of stored baselines that measure nothing (#1797). `tools/parity_ladder.py sweep` gains `--against BIN`: it sweeps the previous release's binary on the same pairs and reports only findings the candidate adds — the blessed TSV stays the day-to-day ratchet. New `scripts/criterion_abab.sh PREV_TAG STATE_DIR [CANDIDATE]` benches the previous release's tag and the candidate (a directory or revision — the release's own tag when resuming, HEAD before it) interleaved A B A B into one `CRITERION_HOME` under the release's state dir (never `/tmp`), keeps the six `--load-baseline` comparisons as printed context, and reads each case's verdict from criterion's saved estimates (`<group>/<bench>/<run>/estimates.json`, mean point estimate — never the `change:` text, whose sign is a Unicode minus): per case delta = mean(b1,b2)/mean(a1,a2) − 1 against self-noise max(|a2/a1−1|, |b2/b1−1|) — REGRESSION past both the >5% bar and that noise, UNDECIDABLE (rerun on a quieter machine) when a self-noise above 5% swallows it, the gate failing on either as well as on a failed cargo call, a missing estimates file, or a case benched on one side only. A dirty or wrong-rev reused worktree is discarded and recreated. The checklist's quality-gate row names the corpus (`--corpus` a staged ladder_corpus, the bench's `corpus/word` via `uv run bench fixtures download` or the previous release's own `gates/ladder_corpus`), finds the previous release from `v<ver>^` when the tag exists and HEAD before it, and `docs/maintainers/VERSIONING.md` follows.
 
 - `scripts/gen_docs.sh` rebuilds the Python package whenever the venv's interpreter cannot find `jubarte_redlines` (`importlib.util.find_spec`, which does not execute the package, so an installed copy whose import raises is left for the runner to fail on, not rebuilt), not only when the interpreter itself is missing. Its `python -m jubarte_redlines` fallback runner now reaches `gen_cli_docs.py`: `--runner` repeats once per argv word (`--runner=WORD`) instead of an argv list that argparse's `nargs="+"` ended at `-m`, and each word reaches the subprocess verbatim — paths with spaces, tabs or backslashes need no quoting (#1810).
 
@@ -419,7 +569,7 @@ The bomb-hardening pass (#2019, #2025): every crafted-input finding below was re
 
 > **Summary.** Breaking: the Rust CLI's `ReadArgs::paragraphs` is a `Vec<String>`, one entry per `-p`, and `Command::Changes` gains `author` (#1690). New: `read -p` and `--select` repeat, `read --tables -o FILE` writes the grids, `changes --author NAME` filters, `validate` reports `CELL_FINAL_MARK_REVISION`. Tracked edits keep each author's formatting history apart and refuse a new duplicate revision id before writing; table redlines avoid the cell final-mark revision that hangs Word; `accept` and `reject` resolve rows, cells and section breaks as Word does. No build carries `block-buffer` 0.10.4 (GHSA-qwgh-2vcv-g2f7). On the release's two 600-item samples, scored against Word's own output: redlines mean 71.62 (Docxodus 64.92), counting as 0 the 23 redlines Word 16.115 crashes opening; PDFs mean 79.19 (LibreOffice 54.61) with no failed document. Word's own redline of the pair crashes Word on 20 of those 23 pairs; 3 crash only with jubarte's (#1802), which the owner waived for this release. One pair regresses (26ce1d6300, -15.06, #1759). The full Miri suite did not run for this release, and the speed comparison with 0.13.0 could not resolve a 5% change on the release machine, where one binary varied by up to 9.7% against itself (#1797). 0.13.0 never reached npm; this is the first npm release since 0.12.0.
 >
-> **Docs.** No README changed. CHANGELOG.md gained the 0.14.0 section; the Rust, Python and JavaScript guides (docs/rust.md, docs/python.md, docs/javascript.md) and docs/locations.md, docs/flags_datetime.md cover the repeatable read -p/--select, read --tables -o and changes --author; docs/SELF_UPDATE.md covers signature verification; docs/VERSIONING.md and docs/WORD_DRIVER_AUDIT.md describe the Ring-3 Word probe through the bench; SECURITY.md and docs/OPENSSF.md the provenance and advisories; examples/cli/help-cli.md and skills/jubarte-documents/SKILL.md were regenerated from the CLI's help; LICENSES.md updated.
+> **Docs.** No README changed. CHANGELOG.md gained the 0.14.0 section; the Rust, Python and JavaScript guides (docs/rust.md, docs/python.md, docs/javascript.md) and docs/locations.md, docs/flags_datetime.md cover the repeatable read -p/--select, read --tables -o and changes --author; docs/SELF_UPDATE.md covers signature verification; docs/maintainers/VERSIONING.md and docs/WORD_DRIVER_AUDIT.md describe the Ring-3 Word probe through the bench; SECURITY.md and docs/maintainers/OPENSSF.md the provenance and advisories; examples/cli/help-cli.md and skills/jubarte-documents/SKILL.md were regenerated from the CLI's help; LICENSES.md updated.
 
 ### Release
 
@@ -427,16 +577,16 @@ The bomb-hardening pass (#2019, #2025): every crafted-input finding below was re
 
 - **The 0.13.0 release audit, closed in the script** (#1742, #1744-#1790, #1792, #1793). Step 0 reads GitHub's security findings with an admin's token and stops on a report in triage or an unpatched draft above low, and the patch gate denies every cargo-semver-checks lint, including one the manifest would lower. Step 3 refuses evidence scored on another engine and a measured sentence its results do not hold. Step 6 builds its API snapshot under the mbx build cache again, and names a previous release that left no snapshot. Step 8 checks the tag's shape. Step 12 installs each channel the way a user does: this machine's archive against `SHA256SUMS.txt`, a PyPI wheel, `npx` and `npm i` with `require()`. 0.13.0 never reached npm, and no step said so; 0.14.0 is the first npm release since 0.12.0. Every checklist proof names a tool a repository holds: the parity check (`tools/parity`), the lane-validity check and the two-binary identity run are now committed.
 
-- **Build provenance for every release asset** (#1742). When release.yml's release job publishes the GitHub release, its archives, wheels and sdist carry a SLSA build-provenance attestation, Sigstore-signed by the release workflow: `gh attestation verify jubarte-X.Y.Z-linux-x86_64.tar.gz -R jandira-tech/jubarte-redlines` ties a download to the run that built it. A release made from a run's artifacts instead says in its notes that the release job did not publish it, and how to check whether an attestation covers it (#1749, #1768).
+- **Build provenance for every release asset** (#1742). When release.yml's release job publishes the GitHub release, its archives, wheels and sdist carry a SLSA build-provenance attestation, Sigstore-signed by the release workflow: `gh attestation verify jubarte-X.Y.Z-linux-x86_64.tar.gz -R jandira-tech/jubarte` ties a download to the run that built it. A release made from a run's artifacts instead says in its notes that the release job did not publish it, and how to check whether an attestation covers it (#1749, #1768).
 
-- **The audit's fixes, one by one.** The patch gate denies every lint cargo-semver-checks skips (#1744), and `scripts/semver_lints.py` refuses a missing cargo-semver-checks (#1771). Step 2 reads changelog completeness from PR titles and refuses a failed discovery (#1745). A prerelease tag is no previous release (#1746). Every engine `gh` call names `jandira-tech/jubarte-redlines` (#1747). Each matrix row builds what its label names (#1748), and provenance is bound to the tag and its commit (#1749). Step 0 stops on open security findings (#1750), refuses the canonical checkout and shows HEAD's red CI (#1751). Step 3 proves the evidence's engine (#1752) and holds the measured sentence to the evidence (#1753). Adoption rows and headerless files stop the release (#1754). Every tag step 8 keeps or writes has release.yml's shape (#1755). Step 12 installs each channel the way a user does (#1756). Step 6's API snapshot builds under the mbx build cache (#1769). The Ring-3 Word probe opens Word through the bench's `word_pdf.py` under its watchdog, opens each failure again alone, then opens Word's own redline of that pair (#1794). The WASM parity driver resolves `--module` to an absolute path (#1799).
+- **The audit's fixes, one by one.** The patch gate denies every lint cargo-semver-checks skips (#1744), and `scripts/semver_lints.py` refuses a missing cargo-semver-checks (#1771). Step 2 reads changelog completeness from PR titles and refuses a failed discovery (#1745). A prerelease tag is no previous release (#1746). Every engine `gh` call names `jandira-tech/jubarte` (#1747). Each matrix row builds what its label names (#1748), and provenance is bound to the tag and its commit (#1749). Step 0 stops on open security findings (#1750), refuses the canonical checkout and shows HEAD's red CI (#1751). Step 3 proves the evidence's engine (#1752) and holds the measured sentence to the evidence (#1753). Adoption rows and headerless files stop the release (#1754). Every tag step 8 keeps or writes has release.yml's shape (#1755). Step 12 installs each channel the way a user does (#1756). Step 6's API snapshot builds under the mbx build cache (#1769). The Ring-3 Word probe opens Word through the bench's `word_pdf.py` under its watchdog, opens each failure again alone, then opens Word's own redline of that pair (#1794). The WASM parity driver resolves `--module` to an absolute path (#1799).
 
 <!-- changelog-skip: #1804 test-only: CodeQL #54 in jubarte-wasm/cli/test/cli.test.mjs -->
 <!-- changelog-skip: #1812 #1811 test-only: npm-smoke.mjs takes the pair ref r1+2 -->
 
 - `scripts/release.sh --checklist` is now the whole release, not only the
   script's own steps. New lines cover what a release owes outside them:
-  before — the full Miri suite and the docs/VERSIONING.md quality gate,
+  before — the full Miri suite and the docs/maintainers/VERSIONING.md quality gate,
   the Ring-3 Word open probe on the release samples, the bump decision,
   reading the engine CHANGELOG section that becomes the release notes,
   drafting the six one-line notes, a release.yml review (wheel and binary
@@ -834,7 +984,7 @@ The bomb-hardening pass (#2019, #2025): every crafted-input finding below was re
   gains `Usage` and `Layout`.
 
 - **`comparer::finalize` and `comparer::tables` are hidden and outside the
-  version promise** (`docs/VERSIONING.md`). They stay public for the tests
+  version promise** (`docs/maintainers/VERSIONING.md`). They stay public for the tests
   that call single passes, but any release may change them.
 
 - **`PdfOptions` gains `comment_notes`.** A `PdfOptions { … }` literal that
@@ -5130,27 +5280,27 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
-[0.18.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.18.0
-[0.17.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.17.0
-[0.16.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.16.0
-[0.15.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.15.0
-[0.14.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.14.0
-[0.13.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.13.0
-[0.12.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.12.0
-[0.11.3]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.3
-[0.11.2]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.2
-[0.11.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.0
-[0.10.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.10.1
-[0.10.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.10.0
-[0.9.3]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.3
-[0.9.2]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.2
-[0.9.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.1
-[0.9.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.0
-[0.8.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.8.0
-[0.7.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.7.1
-[0.7.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.7.0
-[0.6.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.6.0
-[0.5.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.5.1
-[0.5.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.5.0
-[0.2.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.2.0
-[0.1.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.1.0
+[0.18.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.18.0
+[0.17.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.17.0
+[0.16.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.16.0
+[0.15.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.15.0
+[0.14.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.14.0
+[0.13.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.13.0
+[0.12.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.12.0
+[0.11.3]: https://github.com/jandira-tech/jubarte/releases/tag/v0.11.3
+[0.11.2]: https://github.com/jandira-tech/jubarte/releases/tag/v0.11.2
+[0.11.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.11.0
+[0.10.1]: https://github.com/jandira-tech/jubarte/releases/tag/v0.10.1
+[0.10.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.10.0
+[0.9.3]: https://github.com/jandira-tech/jubarte/releases/tag/v0.9.3
+[0.9.2]: https://github.com/jandira-tech/jubarte/releases/tag/v0.9.2
+[0.9.1]: https://github.com/jandira-tech/jubarte/releases/tag/v0.9.1
+[0.9.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.9.0
+[0.8.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.8.0
+[0.7.1]: https://github.com/jandira-tech/jubarte/releases/tag/v0.7.1
+[0.7.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.7.0
+[0.6.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.6.0
+[0.5.1]: https://github.com/jandira-tech/jubarte/releases/tag/v0.5.1
+[0.5.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.5.0
+[0.2.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.2.0
+[0.1.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.1.0

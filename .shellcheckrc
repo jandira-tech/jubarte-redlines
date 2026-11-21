@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# scripts/redline-sweep.sh is zsh, which ShellCheck cannot parse; it says so
+# (SC1071) and checks nothing else in it.
+disable=SC1071

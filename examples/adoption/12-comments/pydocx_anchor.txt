@@ -1,0 +1,6 @@
+python-docx anchored 3 whole runs; highlighted text:
+  'Recipient may disclose Confidential Information to its employees who need it for the Permitted Purpose, provided each employee signs a'
+the phrase asked for:
+  'who need it for the Permitted Purpose'
+Comment attributes: ['add_paragraph', 'add_table', 'author', 'comment_id', 'initials', 'iter_inner_content', 'paragraphs', 'part', 'tables', 'text', 'timestamp']
+no reply API, no resolve API: the thread stops at one comment

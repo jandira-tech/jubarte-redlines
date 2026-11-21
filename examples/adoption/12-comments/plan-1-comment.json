@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "source_sha256": "30b58e803cd072c440c13a24fc33062c0acb855fbf191da97f2f151d0465bfb5",
+  "author": "Ann Counsel",
+  "date": "2026-10-04T09:00:00Z",
+  "operations": [
+    {
+      "id": "ask-need",
+      "kind": "comment",
+      "paragraph": "p9",
+      "find": "who need it for the Permitted Purpose",
+      "text": "Cap the number of employees, or add a named-individuals annex?"
+    }
+  ]
+}

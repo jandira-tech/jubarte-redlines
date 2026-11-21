@@ -1,0 +1,67 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Bug
+description: jubarte fails, crashes, or writes a file Word cannot open.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Attach only documents you may publish, with personal information
+        removed (`jubarte scrub` removes authors and metadata).
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `jubarte --version`, or the package version.
+      placeholder: jubarte 0.19.0
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: How you run it
+      options:
+        - Command line (native binary)
+        - Rust crate
+        - Python (jubarte-docx)
+        - JavaScript (jubarte-wasm)
+        - npx jubarte-redlines
+        - MCP server
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: macOS 15 arm64, Ubuntu 24.04 x86_64, Windows 11
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or code
+      description: The exact command line or the smallest code that shows it.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: The full error text, or what is wrong in the output.
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Documents
+      description: Drag the smallest .docx files that reproduce it here.

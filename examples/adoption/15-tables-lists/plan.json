@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "author": "Reviewer",
+  "date": "2026-10-04T12:00:00Z",
+  "operations": [
+    {
+      "id": "steps-table",
+      "kind": "insert_table",
+      "paragraph": { "starts_with": "Questions go to people-ops" },
+      "position": "after",
+      "header_row": true,
+      "rows": [
+        ["Step", "Owner", "Week"],
+        ["Laptop and accounts", "IT", "1"],
+        ["Team introductions", "Manager", "1"]
+      ],
+      "widths_dxa": [3720, 3120, 2520]
+    },
+    {
+      "id": "bullets",
+      "kind": "list",
+      "paragraphs": [
+        { "starts_with": "Signed offer letter on file" },
+        { "starts_with": "Payroll direct deposit form" },
+        { "starts_with": "Badge photo uploaded" }
+      ],
+      "kind_of_list": "bullet",
+      "level": 0,
+      "restart": true
+    },
+    {
+      "id": "numbers",
+      "kind": "list",
+      "paragraphs": [
+        { "starts_with": "Complete the safety module" },
+        { "starts_with": "Book the week-one introductions" }
+      ],
+      "kind_of_list": "decimal",
+      "level": 0,
+      "restart": true
+    }
+  ]
+}

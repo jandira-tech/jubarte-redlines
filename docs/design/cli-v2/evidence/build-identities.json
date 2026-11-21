@@ -1,0 +1,29 @@
+{
+  "release": {
+    "version": "0.12.0",
+    "published_at": "2026-10-11T17:42:11Z",
+    "binary_sha256": "6a2d2f6017e845646b5fe35877f6c8f12e998dfc1c4110053ab04bbae09b472e",
+    "archive_sha256": "1858b969f9e16065dfdab54cddf7ba6a78cb68867ab54eb96e101385fff67c20",
+    "probes": 14
+  },
+  "audited_main": {
+    "sha": "0ca2d3ea8191fec56d7bf0f0adb4fd492c8327b3",
+    "tree": "8e409987069126de454defb86b12bb4a098d1f82",
+    "date": "2026-10-17T06:42:15Z",
+    "built_or_executed": false
+  },
+  "reported_trace_help": {
+    "sha": "d003d8e8d00ac50cb9782fd454f58efa4cf387e7",
+    "date": "2026-10-15T03:48:12Z",
+    "subject": "Merge pull request #485 from jandira-tech/fix/md-style-legend",
+    "url": "https://github.com/jandira-tech/jubarte-redlines/commit/d003d8e8d00ac50cb9782fd454f58efa4cf387e7",
+    "tree": "c15144d57ba2e87170773c0a898b1aba0c5eb8cb"
+  },
+  "followup_memo": {
+    "sha": "aba48bd50e03584d99fbbcb2a6915e4d3b07ccf7",
+    "date": "2026-10-17T05:21:58Z",
+    "subject": "Merge pull request #572 from jandira-tech/ci/mbx-disk-budget",
+    "url": "https://github.com/jandira-tech/jubarte-redlines/commit/aba48bd50e03584d99fbbcb2a6915e4d3b07ccf7",
+    "tree": "f356d96b77909aa4d2452757f78e5a7dc79b2c07"
+  }
+}

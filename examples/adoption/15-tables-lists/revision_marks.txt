@@ -1,0 +1,2 @@
+tables_pydocx.docx: w:ins=0 w:del=0 w:pPrChange=0
+review/redline.docx: w:ins=21 w:del=0 w:pPrChange=5

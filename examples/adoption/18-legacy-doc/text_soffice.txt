@@ -1,0 +1,57 @@
+---
+source: docx_soffice.docx
+sha256: a00568db62b892a45eb5f0116f3e8eb1e2a85bee46e380f086e06bc5ae691583
+view: tracked                      # revisions as CriticMarkup, comments inline
+track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
+revisions: 0
+comments: 0
+authors:
+  document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
+body: p0-p19, 1 table, 1 page      # pages from layout
+page: Letter portrait, margins 1in, header/footer 0in
+styles:
+  Normal: Calibri 11pt, after 8pt, line 1.07, left  # default; unannotated paragraphs use it
+  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next
+  "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next
+---
+
+<!-- page 1 of 1 -->
+
+<!-- p0 hanging 0in, left 0in -->
+# Services Agreement
+
+<!-- p1 -->
+This Agreement is made between **Acme Corp** and _Beta LLC_.
+
+<!-- p2 hanging 0in, left 0in -->
+## 1. Fees
+
+<!-- p3 -->
+The fee is $1,000 per month [net 30] and #2 applies; use a_b \* c.
+
+<!-- t0 3x3, cells p4-p12 by row, header row repeats -->
+|Item|Price|Notes|
+|-|-|-|
+|Setup|500|one-off|
+|Support|100|monthly|
+
+<!-- p13 hanging 0in, left 0in -->
+## 2. Term
+
+<!-- p14 ListParagraph bullet -->
+- First bullet
+
+<!-- p15 ListParagraph bullet -->
+  - Nested bullet
+
+<!-- p16 ListParagraph bullet -->
+- Second bullet
+
+<!-- p17 ListParagraph num "1." -->
+1. Notice in writing
+
+<!-- p18 ListParagraph num "1." -->
+1. Cure within **_ten_** days
+
+<!-- p19 left -->
+The term is twelve months.

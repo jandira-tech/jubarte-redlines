@@ -1,0 +1,2 @@
+pdftoppm -f 2 -l 4 exit=0 pages_written=2
+jubarte --pages 2-4 exit=1

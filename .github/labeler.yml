@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Path labels for pull requests (.github/workflows/labeler.yml).
+rust:
+  - changed-files:
+      - any-glob-to-any-file: ['src/**', 'crates/**', 'tests/**', 'Cargo.toml', 'Cargo.lock']
+'python:uv':
+  - changed-files:
+      - any-glob-to-any-file: ['jubarte-python/**']
+javascript:
+  - changed-files:
+      - any-glob-to-any-file: ['jubarte-wasm/**']
+documentation:
+  - changed-files:
+      - any-glob-to-any-file: ['docs/**', '**/*.md']
+github_actions:
+  - changed-files:
+      - any-glob-to-any-file: ['.github/**']
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file: ['**/Cargo.lock', '**/uv.lock', '**/pnpm-lock.yaml']

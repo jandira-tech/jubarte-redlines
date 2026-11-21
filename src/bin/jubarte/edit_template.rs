@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Read-only template generation and atomic publication of the plan artifact.
 use super::*;
@@ -67,7 +67,8 @@ fn read(path: &Path) -> Result<Vec<u8>, Failure> {
     std::fs::read(path).map_err(|e| failure("IO_ERROR", format!("reading {}: {e}", path.display())))
 }
 fn alias(path: &Path, input: &Path) -> Result<(), Failure> {
-    refuse_output_alias(path, &[(input, "the source")]).map_err(|(_, m)| failure("OUTPUT_ALIAS", m))
+    refuse_output_alias(path, &[(input, "the source")])
+        .map_err(|(_, m)| failure("OUTPUT_ALIAS", edit_typed::without_code("OUTPUT_ALIAS", &m)))
 }
 fn generate(
     options: &TemplateOptions,
@@ -432,4 +433,82 @@ pub(super) fn usage(argv: &[String], error: &clap::Error) -> bool {
         eprintln!("error: {error}");
     }
     true
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod publish_branch_tests {
+    use super::*;
+
+    fn template(file: &Path, args: &[&str], quiet: bool) -> ExitCode {
+        let file = file.to_string_lossy().into_owned();
+        let argv = ["jubarte", "edit", "template", file.as_str()]
+            .into_iter()
+            .chain(args.iter().copied());
+        let cli = Cli::try_parse_from(argv).unwrap_or_else(|e| panic!("{e}"));
+        let Some(Command::EditTemplate(jubarte::cli::edit_template::TemplateDispatch {
+            action: jubarte::cli::edit_template::TemplateAction::Template(options),
+        })) = cli.command
+        else {
+            panic!("not a template");
+        };
+        run(&options, quiet)
+    }
+
+    #[test]
+    fn plans_and_reports_publish_once_each() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("in.docx");
+        let docx = jubarte::markdown::markdown_to_docx(
+            "One.\n\nTwo.\n",
+            &jubarte::markdown::DocxOptions::default(),
+        )
+        .unwrap()
+        .docx;
+        std::fs::write(&file, docx).unwrap();
+        let s = |name: &str| dir.path().join(name).to_string_lossy().into_owned();
+        let (plan, report) = (s("plan.json"), s("report.json"));
+        assert_eq!(
+            template(&file, &["-o", &plan, "--report", &report], false),
+            ExitCode::SUCCESS
+        );
+        let written: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&plan).unwrap()).unwrap();
+        assert_eq!(written["schema_version"], 2);
+        assert!(std::path::Path::new(&report).exists());
+        // Both exist now: without --force neither is replaced.
+        assert_ne!(template(&file, &["-o", &plan], true), ExitCode::SUCCESS);
+        assert_eq!(
+            template(&file, &["-o", &plan, "--force"], true),
+            ExitCode::SUCCESS
+        );
+        // One file for both roles, and a plan on its source, refuse.
+        let both = s("both.json");
+        assert_ne!(
+            template(&file, &["-o", &both, "--report", &both], false),
+            ExitCode::SUCCESS
+        );
+        assert!(!std::path::Path::new(&both).exists());
+        let source = file.to_string_lossy().into_owned();
+        assert_ne!(template(&file, &["-o", &source], false), ExitCode::SUCCESS);
+        // A digest that is not the source's is stale.
+        assert_ne!(
+            template(
+                &file,
+                &["-o", "-", "--expect-sha256", &"0".repeat(64)],
+                false
+            ),
+            ExitCode::SUCCESS
+        );
+        // To stdout, and a dry run.
+        assert_eq!(template(&file, &["-o", "-"], false), ExitCode::SUCCESS);
+        assert_eq!(
+            template(&file, &["--dry-run", "--json"], false),
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            template(&file, &["-o", "-", "--find", "Absent"], false),
+            template(&file, &["-o", "-", "--find", "Absent"], true)
+        );
+    }
 }

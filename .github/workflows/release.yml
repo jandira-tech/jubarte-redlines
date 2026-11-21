@@ -1,0 +1,698 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Tag-driven release: push `vX.Y.Z` (see docs/maintainers/VERSIONING.md) and this builds the
+# `jubarte` CLI for the desktop targets and attaches the archives to a
+# GitHub release named `jubarte vX.Y.Z`, with the matching CHANGELOG.md
+# section as the release notes. The publish-* jobs put the same release on
+# crates.io, PyPI and npm through OIDC trusted publishing (#1642): no
+# registry token exists anywhere, and scripts/release.sh steps 9-11 wait for
+# them. The release job attests every asset's build provenance (SLSA,
+# Sigstore-signed; `gh attestation verify`).
+#
+# Third-party actions are pinned to commit SHAs with the resolved release tag
+# as a trailing comment (Dependabot bumps both); see ci.yml for the
+# dtolnay/rust-toolchain branch-pin convention.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# The release job publishes; the build jobs only read the repo.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: tag matches Cargo.toml
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: check
+        run: |
+          set -euo pipefail
+          ver="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$ver" != "$tag" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} but Cargo.toml says ${ver} — run scripts/bump-version.mjs ${tag} first"
+            exit 1
+          fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+  binaries:
+    name: jubarte ${{ matrix.artifact }}
+    needs: version
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: linux-x86_64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact: linux-aarch64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact: linux-musl-x86_64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            artifact: linux-musl-aarch64
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            artifact: macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: macos-aarch64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Git for Windows stops at MAX_PATH (260) without core.longpaths; the
+      # v0.10.1 checkout failed on bench fixture paths and skipped the release.
+      # tests/repo_paths_fit_windows.rs keeps tracked paths short as well.
+      - if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+        with:
+          targets: ${{ matrix.target }}
+      # No build cache: a shipped binary is built from a clean state, so a
+      # poisoned cache entry cannot reach a release (zizmor cache-poisoning).
+      # Linux glibc archives link the manylinux_2_28 image (glibc 2.28), not
+      # ubuntu-latest. Musl archives are static. The other rows build on the host.
+      - name: Build against glibc 2.28
+        if: contains(matrix.target, 'unknown-linux-gnu')
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          arch="${target%%-*}"
+          case "$arch" in
+            x86_64) image=quay.io/pypa/manylinux_2_28_x86_64 ;;
+            aarch64) image=quay.io/pypa/manylinux_2_28_aarch64 ;;
+            *) echo "::error::no glibc 2.28 image for ${arch}"; exit 1 ;;
+          esac
+          docker run --rm -v "$PWD":/work -w /work "$image" \
+            bash scripts/build_manylinux_binary.sh "$target"
+          python3 scripts/check_glibc_floor.py "target/${target}/release/jubarte" --max 2.28
+      # The runners ship no musl C compiler, and ring and libmimalloc-sys
+      # build C: the musl rows build in rust:alpine, whose gcc is musl's.
+      - name: Build static musl
+        if: contains(matrix.target, 'unknown-linux-musl')
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          docker run --rm -v "$PWD":/work -w /work rust:1-alpine \
+            sh scripts/build_musl_binary.sh "$target"
+          python3 scripts/check_glibc_floor.py "target/${target}/release/jubarte" --musl
+      - name: Build
+        if: ${{ !contains(matrix.target, 'unknown-linux-') }}
+        run: cargo build --release --locked --bin jubarte --target ${{ matrix.target }}
+      - name: Smoke the linux binary
+        if: contains(matrix.target, 'unknown-linux-')
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          bin="/work/target/${target}/release/jubarte"
+          a=tests/fixtures/word_probes/final_marks/kept_title_a.docx
+          b=tests/fixtures/word_probes/final_marks/kept_title_b.docx
+          case "$target" in
+            *musl*) images="alpine" ;;
+            *) images="ubuntu:20.04 debian:10 ubuntu:24.04" ;;
+          esac
+          for image in $images; do
+            docker run --rm -v "$PWD":/work -w /work "$image" "$bin" --version
+            docker run --rm -v "$PWD":/work -w /work "$image" \
+              "$bin" compare "$a" "$b" -o /tmp/redline.docx
+          done
+
+      - name: Stage archive (unix)
+        if: runner.os != 'Windows'
+        env:
+          VER: ${{ needs.version.outputs.version }}
+          ART: ${{ matrix.artifact }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          stage="jubarte-${VER}-${ART}"
+          mkdir -p "$stage/fonts" dist
+          cp "target/${TARGET}/release/jubarte" "$stage/"
+          cp LICENSE NOTICE "$stage/"
+          # The binary embeds Carlito and Liberation (SIL Open Font License).
+          cp LICENSES/OFL-1.1.txt "$stage/OFL-1.1.txt"
+          # The faces Word draws that non-Windows hosts lack. The binary does
+          # not embed them; it reads $JUBARTE_FONT_DIR or the per-user dir.
+          cp assets/fonts/extra/*.ttf "$stage/fonts/"
+          {
+            echo "Copy these fonts into \$JUBARTE_FONT_DIR, or into the per-user"
+            echo "jubarte fonts directory (scripts/install.sh --fonts-only does"
+            echo "this from a source checkout):"
+            echo "  macOS   ~/Library/Application Support/jubarte/fonts"
+            echo "  Linux   \$XDG_DATA_HOME/jubarte/fonts (default ~/.local/share/jubarte/fonts)"
+            echo ""
+            echo "RobotoCondensed-*.ttf — Apache-2.0 — (c) 2011 Google Inc."
+            echo "Selawik-*.ttf         — OFL-1.1   — (c) 2015 Microsoft Corporation"
+          } > "$stage/fonts/NOTICE.txt"
+          tar -czf "dist/${stage}.tar.gz" "$stage"
+
+      - name: Stage archive (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VER: ${{ needs.version.outputs.version }}
+          ART: ${{ matrix.artifact }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          $stage = "jubarte-$env:VER-$env:ART"
+          New-Item -ItemType Directory -Force "$stage/fonts", dist | Out-Null
+          Copy-Item "target/$env:TARGET/release/jubarte.exe" "$stage/"
+          Copy-Item LICENSE, NOTICE "$stage/"
+          Copy-Item LICENSES/OFL-1.1.txt "$stage/OFL-1.1.txt"
+          Copy-Item assets/fonts/extra/*.ttf "$stage/fonts/"
+          @"
+          Copy these fonts into %JUBARTE_FONT_DIR%, or into the per-user
+          jubarte fonts directory: %APPDATA%\jubarte\fonts
+
+          RobotoCondensed-*.ttf - Apache-2.0 - (c) 2011 Google Inc.
+          Selawik-*.ttf         - OFL-1.1   - (c) 2015 Microsoft Corporation
+          "@ | Set-Content "$stage/fonts/NOTICE.txt"
+          Compress-Archive -Path $stage -DestinationPath "dist/$stage.zip"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: jubarte-${{ needs.version.outputs.version }}-${{ matrix.artifact }}
+          path: dist/
+          if-no-files-found: error
+
+  # PyPI abi3 wheels, one per row of README "Supported environments": the
+  # release job attaches them to the GitHub release and publish-pypi uploads
+  # the same files to PyPI after scripts/check_release_artifacts.py confirms
+  # all seven are there, so wheels are built once, on clean CI machines. Linux builds run in the pypa manylinux_2_28 containers (glibc
+  # 2.28: RHEL 8, Debian 10, Ubuntu 20.04) and the rust-cross musl
+  # containers; macOS and Windows build on the host.
+  wheels:
+    name: wheel ${{ matrix.artifact }}
+    needs: version
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64
+            manylinux: "2_28"
+            artifact: manylinux-x86_64
+          - os: ubuntu-24.04-arm
+            target: aarch64
+            manylinux: "2_28"
+            artifact: manylinux-aarch64
+          - os: ubuntu-latest
+            target: x86_64
+            manylinux: musllinux_1_2
+            artifact: musllinux-x86_64
+          - os: ubuntu-24.04-arm
+            target: aarch64
+            manylinux: musllinux_1_2
+            artifact: musllinux-aarch64
+          - os: macos-15-intel
+            target: x86_64
+            artifact: macos-x86_64
+          - os: macos-latest
+            target: aarch64
+            artifact: macos-aarch64
+          - os: windows-latest
+            target: x64
+            artifact: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Git for Windows stops at MAX_PATH (260) without core.longpaths (see
+      # the binaries job and tests/repo_paths_fit_windows.rs).
+      - if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # --locked: a wheel built from a drifted jubarte-python/Cargo.lock is a
+      # build failure, not a silently different wheel. --compatibility pypi:
+      # maturin's pre-upload check of the platform tag.
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+          args: --release --locked --out dist --compatibility pypi
+          working-directory: jubarte-python
+          # No sccache, for the reason the binaries job has no rust-cache.
+          sccache: "false"
+      # Install the wheel that was just built and run the engine once: the
+      # artifact that ships is the one that imports, not a rebuilt one. The
+      # glibc wheels are tried on the host; the musl wheels in Alpine.
+      - if: runner.os != 'Linux' || matrix.manylinux == '2_28'
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - if: runner.os != 'Linux' || matrix.manylinux == '2_28'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-index --find-links jubarte-python/dist jubarte-docx
+          python -c "import jubarte as j; print(j.capabilities()['engine_version'])"
+      - if: matrix.manylinux == 'musllinux_1_2'
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD/jubarte-python/dist:/dist:ro" python:3.12-alpine \
+            sh -ec 'pip install --no-index --find-links /dist jubarte-docx && python -c "import jubarte as j; print(j.capabilities()[\"engine_version\"])"'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wheel-${{ needs.version.outputs.version }}-${{ matrix.artifact }}
+          path: jubarte-python/dist/
+          if-no-files-found: error
+
+  # The one sdist: the GitHub release attaches it and publish-pypi uploads
+  # it, so both carry the same bytes (two maturin runs would not). The
+  # jubarte-redlines shim (jubarte-python/compat), pure Python, is built
+  # here too: its wheel and sdist pin jubarte-docx at this version.
+  sdist:
+    name: PyPI sdist
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: pipx run maturin sdist --manifest-path jubarte-python/Cargo.toml --out dist
+      - run: pipx run uv build jubarte-python/compat --out-dir dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sdist-${{ needs.version.outputs.version }}
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    needs: [version, binaries, wheels, sdist]
+    runs-on: ubuntu-latest
+    # id-token, attestations and artifact-metadata serve the provenance
+    # attestation alone. This job runs outside the release environment, so
+    # its ID token carries no environment claim a registry's trusted
+    # publisher accepts: it cannot publish anywhere but the GitHub release.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # previous tag → "Full Changelog" compare link
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: jubarte-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: sdist-*
+          path: dist
+          merge-multiple: true
+
+      # Signed archives (docs/SELF_UPDATE.md, "Signed releases"). Signing
+      # rewrites each archive, so it runs before Checksums. Only GitHub's own
+      # checkout and artifact actions run ahead of it (the sdist is built in
+      # its own job), so no third-party code of this job runs before it, and
+      # the key reaches this step only. zipsign signs with the
+      # file name as its context, which is the asset name the updater checks.
+      # The secret holds one base64 private key per line (two while keys
+      # rotate). Without it the archives stay unsigned (checksum only) until
+      # a public key is committed under keys/; from then on every release
+      # must be signed, and a missing secret fails the release.
+      - name: Sign archives
+        env:
+          ZIPSIGN_PRIVATE_KEY: ${{ secrets.ZIPSIGN_PRIVATE_KEY }}
+          ZIPSIGN_VERSION: "0.2.1"
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          pubs=(keys/*.pub)
+          if [ -z "$ZIPSIGN_PRIVATE_KEY" ]; then
+            if [ "${#pubs[@]}" -gt 0 ]; then
+              echo "::error::keys/ holds a release public key but the ZIPSIGN_PRIVATE_KEY secret is not set; signed-era binaries would refuse this release"
+              exit 1
+            fi
+            echo "ZIPSIGN_PRIVATE_KEY is not set: the archives stay unsigned (checksum only)."
+            exit 0
+          fi
+          cargo install zipsign --locked --version "$ZIPSIGN_VERSION"
+          keydir="$(mktemp -d "$RUNNER_TEMP/zipsign.XXXXXX")"
+          trap 'rm -rf "$keydir"' EXIT
+          n=0
+          while IFS= read -r line || [ -n "$line" ]; do
+            line="${line//[$'\t\r ']/}"
+            [ -n "$line" ] || continue
+            n=$((n + 1))
+            printf '%s' "$line" | base64 -d > "$keydir/key$n"
+            if [ "$(wc -c < "$keydir/key$n")" -ne 64 ]; then
+              echo "::error::line $n of ZIPSIGN_PRIVATE_KEY is not one base64 zipsign private key (64 bytes)"
+              exit 1
+            fi
+          done <<< "$ZIPSIGN_PRIVATE_KEY"
+          keys=("$keydir"/key*)
+          archives=(dist/jubarte-*.tar.gz dist/jubarte-*.zip)
+          if [ "${#archives[@]}" -eq 0 ]; then
+            echo "::error::no release archives in dist/ to sign"
+            exit 1
+          fi
+          for a in "${archives[@]}"; do
+            case "$a" in
+              *.tar.gz) kind=tar ;;
+              *.zip) kind=zip ;;
+            esac
+            # In place, no --context: the context is the file name.
+            zipsign sign "$kind" "$a" "${keys[@]}"
+            # Every committed public key must accept every archive, so a
+            # secret that does not match keys/ stops the release here.
+            for pub in "${pubs[@]}"; do
+              zipsign verify "$kind" "$a" "$pub"
+            done
+            echo "signed ${a#dist/}"
+          done
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      # SLSA build provenance for every asset SHA256SUMS.txt names (the signed
+      # archives, the wheels, the sdist), Sigstore-signed and stored with the
+      # repository: `gh attestation verify FILE -R jandira-tech/jubarte`
+      # ties a download to this run. scripts/release.sh step 12 checks one.
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS.txt
+
+      - name: Release notes from CHANGELOG.md
+        env:
+          VER: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Body of the `## [VER] - date` section, up to the next heading.
+          awk -v ver="$VER" '
+            index($0, "## [" ver "] - ") == 1 { on=1; next }
+            on && /^## \[/ { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::no CHANGELOG.md section for ${VER}"
+            exit 1
+          fi
+          # scripts/release.sh puts --github-summary in the annotated tag
+          # body; it leads the release notes when present. actions/checkout
+          # leaves the tag lightweight (actions/checkout#290), so fetch the
+          # annotated tag object before reading its body.
+          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          body="$(git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME" 2>/dev/null || true)"
+          if [ -n "$body" ]; then
+            { printf '%s\n\n' "$body"; cat notes.md; } > notes.tmp
+            mv notes.tmp notes.md
+          fi
+          prev="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          if [ -n "$prev" ]; then
+            printf '\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n' \
+              "${{ github.repository }}" "$prev" "$GITHUB_REF_NAME" >> notes.md
+          fi
+          cat notes.md
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VER: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          pre=""
+          case "$VER" in *-*) pre="--prerelease";; esac
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "${{ github.repository }}" \
+            --title "jubarte v${VER}" \
+            --notes-file notes.md \
+            $pre \
+            dist/*
+
+  # --- registries: OIDC trusted publishing (#1642) -----------------------------
+  # No registry token exists. Each publish job asks GitHub for an ID token
+  # (`id-token: write`, granted to these three jobs only) and the registry
+  # trades it for a short-lived upload token. crates.io, PyPI and npm each
+  # trust exactly this pair: workflow `release.yml` in environment `release`
+  # of jandira-tech/jubarte. Renaming either breaks the trust;
+  # change the registry settings with it. Each job first asks its registry
+  # for the version and skips one it already holds, so a rerun, or a
+  # `scripts/release.sh --local-publish` that got there first, is not a
+  # failure. scripts/release.sh steps 9-11 wait for these jobs by name.
+  publish-crates:
+    name: publish crates.io
+    needs: version
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VER: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Which of the nine crates crates.io still lacks. A rerun, or a
+      # release.sh --local-publish that got there first, finds none and
+      # skips the rest: no toolchain, and no token exchange, which crates.io
+      # refuses once a crate's trusted publisher is gone.
+      - id: pending
+        run: scripts/publish_crates.sh "$VER" --pending | tee /dev/stderr | grep -E '^(new|pending)=' >> "$GITHUB_OUTPUT"
+      # A crate crates.io has never seen takes no trusted publisher, so its
+      # first release is published with a token, from a checkout:
+      # scripts/release.sh --local-publish-crates (crates.io only; npm and
+      # PyPI stay on this workflow), or --local-publish for all three.
+      - if: steps.pending.outputs.new != '0'
+        run: |
+          echo "::warning::${{ steps.pending.outputs.new }} crate(s) have never been published to crates.io; trusted publishing cannot create a crate. Publish $VER with scripts/release.sh $VER … --local-publish-crates, then register this workflow as each new crate's trusted publisher."
+      - if: steps.pending.outputs.pending != '0' && steps.pending.outputs.new == '0'
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      # mbx's cache server is on the self-hosted network; on GitHub's runners
+      # (LINUX_RUNNER=ubuntu-latest) the publish builds without a cache.
+      - if: steps.pending.outputs.pending != '0' && steps.pending.outputs.new == '0' && (vars.LINUX_RUNNER || 'self-hosted') == 'self-hosted'
+        uses: ./.github/actions/mbx
+      - if: steps.pending.outputs.pending != '0' && steps.pending.outputs.new == '0'
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+        id: auth
+      # Nine crates, one at a time in dependency order (plan T6.2): the
+      # script skips each <crate>/$VER crates.io already holds, so a rerun
+      # resumes a publish that stopped part way, and it refuses to upload
+      # anything when the packaged jubarte manifest lost the release note
+      # scripts/release.sh step 4 wrote. Each crate's trusted publisher must
+      # name this workflow and environment; a crate's first release is
+      # published with a token (release.sh --local-publish).
+      - if: steps.pending.outputs.pending != '0' && steps.pending.outputs.new == '0'
+        name: publish the workspace crates
+        run: scripts/publish_crates.sh "$VER"
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+  publish-pypi:
+    name: publish PyPI
+    needs: [version, wheels, sdist]
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VER: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Python 3.12, the scripts' floor (see ci.yml's convert-sweep-unit).
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+          activate-environment: true
+          venv-path: ${{ runner.temp }}/publish-py
+      # The project listing, not /pypi/<name>/<version>/json: PyPI's CDN
+      # keeps a 404 for that URL once anything asked before the upload.
+      - id: live
+        run: |
+          set -euo pipefail
+          # jubarte-docx (the engine) and jubarte-redlines (its shim).
+          live=true
+          for dist in jubarte-docx jubarte-redlines; do
+            # The listing is saved as data and queried with jq; nothing
+            # downloaded reaches an interpreter.
+            listing="$RUNNER_TEMP/$dist.json"
+            if curl -sf -o "$listing" "https://pypi.org/pypi/$dist/json" \
+                && jq -e --arg v "$VER" '.releases | has($v)' "$listing" >/dev/null; then
+              echo "$dist $VER is already on PyPI"
+            else
+              live=false
+            fi
+          done
+          if [ "$live" = true ]; then
+            echo "both distributions hold $VER: skipped"
+            echo "live=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.live.outputs.live != 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: wheel-*
+          path: dist/pypi
+          merge-multiple: true
+      - if: steps.live.outputs.live != 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: sdist-*
+          path: dist/pypi
+          merge-multiple: true
+      # A run that lost a wheel never reaches PyPI under a final version.
+      - if: steps.live.outputs.live != 'true'
+        run: |
+          set -euo pipefail
+          ls -l dist/pypi
+          python3 scripts/check_release_artifacts.py dist/pypi --version "$VER" --sdist
+          # --check-url skips a file PyPI already holds, so a rerun after a
+          # partial upload (one distribution live, the other not) resumes.
+          uv publish --trusted-publishing always --check-url https://pypi.org/simple/ dist/pypi/*
+
+  # npm trusted publishing accepts GitHub-hosted runners only ("Self-hosted
+  # runners are not currently supported"; it answers ENEEDAUTH), so this job
+  # alone leaves the self-hosted runners. The repository is public, so npm
+  # adds provenance attestations by itself.
+  publish-npm:
+    name: publish npm
+    needs: version
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VER: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+      # The npm build is not tracked: it is built here, from the tagged
+      # commit, so ENGINE_COMMIT.txt names the tag's own commit. No build
+      # cache: what npm ships is compiled from nothing but this checkout.
+      - id: built
+        run: |
+          if [ "$(npm view "jubarte-wasm@$VER" version 2>/dev/null)" = "$VER" ]; then
+            echo "jubarte-wasm $VER is already on npm: not rebuilt"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.built.outputs.skip != 'true'
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+        with:
+          targets: wasm32-unknown-unknown
+      - if: steps.built.outputs.skip != 'true'
+        uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # pinned 2026-10-01
+        with:
+          tool: wasm-pack@0.15.0
+          fallback: none
+      - name: build and smoke-test the eight targets
+        if: steps.built.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          jubarte-wasm/build-npm.sh
+          scripts/check_engine_commit.sh
+          [ "$(cat jubarte-wasm/npm/ENGINE_COMMIT.txt)" = "$(git rev-parse HEAD)" ] \
+            || { echo "::error::ENGINE_COMMIT.txt does not name the tagged commit"; exit 1; }
+          node jubarte-wasm/npm-smoke.mjs
+          # Every target complete on disk and listed in package.json; npm
+          # runs the same check again before it publishes (prepublishOnly).
+          node jubarte-wasm/npm/prepublish-check.mjs
+          packed="$(cd jubarte-wasm/npm && npm pack --dry-run --json)"
+          for t in node node-slim node-redlines node-pdf web web-slim web-redlines web-pdf; do
+            for n in jubarte_wasm.js jubarte_wasm.d.ts jubarte_wasm_bg.wasm jubarte_wasm_bg.wasm.d.ts; do
+              grep -qF "\"$t/$n\"" <<<"$packed" || { echo "::error::the jubarte-wasm package would not ship $t/$n"; exit 1; }
+            done
+          done
+          for n in ENGINE_COMMIT.txt LICENSE NOTICE LICENSE-OFL-1.1.txt; do
+            grep -qF "\"$n\"" <<<"$packed" || { echo "::error::the jubarte-wasm package would not ship $n"; exit 1; }
+          done
+      - name: npm speaks OIDC
+        run: |
+          set -euo pipefail
+          v="$(npm --version)"
+          if [ "$(printf '%s\n' 11.5.1 "$v" | sort -V | head -n1)" != 11.5.1 ]; then
+            echo "::error::npm $v cannot publish through trusted publishing; it needs 11.5.1 or later"
+            exit 1
+          fi
+          for dir in jubarte-wasm/npm jubarte-wasm/cli; do
+            got="$(node -p "require('./$dir/package.json').version")"
+            [ "$got" = "$VER" ] || { echo "::error::$dir/package.json is $got, the tag is $VER"; exit 1; }
+          done
+      - id: live
+        run: |
+          set -euo pipefail
+          for pkg in jubarte-wasm:wasm jubarte-redlines:cli; do
+            if [ "$(npm view "${pkg%%:*}@$VER" version 2>/dev/null)" = "$VER" ]; then
+              echo "${pkg%%:*} $VER is already on npm: skipped"
+              echo "${pkg##*:}=true" >> "$GITHUB_OUTPUT"
+            fi
+          done
+      # A prerelease must not move the `latest` tag (npm refuses one without
+      # --tag). The CLI depends on jubarte-wasm@^VER, so it goes second.
+      - if: steps.live.outputs.wasm != 'true'
+        working-directory: jubarte-wasm/npm
+        run: |
+          set -euo pipefail
+          tag=(); case "$VER" in *-*) tag=(--tag next) ;; esac
+          npm publish "${tag[@]}" || {
+            echo "::error::npm refused jubarte-wasm $VER. Under trusted publishing an E404 on PUT means npm's trusted publisher for jubarte-wasm does not allow npm publish (one made after 2026-09-03 allows only npm stage publish unless allow-publish is set), or it expired (a new one lapses unless its first publish lands within two days). The owner runs: npm trust github jubarte-wasm --file release.yml --repo jandira-tech/jubarte --env release --allow-publish -y; then rerun this job."
+            exit 1
+          }
+      - if: steps.live.outputs.cli != 'true'
+        working-directory: jubarte-wasm/cli
+        run: |
+          set -euo pipefail
+          # npm's view lags a fresh upload; the CLI's install needs it.
+          for _ in $(seq 1 12); do
+            [ "$(npm view "jubarte-wasm@$VER" version 2>/dev/null)" = "$VER" ] && break
+            sleep 10
+          done
+          tag=(); case "$VER" in *-*) tag=(--tag next) ;; esac
+          npm publish "${tag[@]}" || {
+            echo "::error::npm refused jubarte-redlines $VER. Under trusted publishing an E404 on PUT means npm's trusted publisher for jubarte-redlines does not allow npm publish (one made after 2026-09-03 allows only npm stage publish unless allow-publish is set), or it expired (a new one lapses unless its first publish lands within two days). The owner runs: npm trust github jubarte-redlines --file release.yml --repo jandira-tech/jubarte --env release --allow-publish -y; then rerun this job."
+            exit 1
+          }

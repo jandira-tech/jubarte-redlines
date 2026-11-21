@@ -1,0 +1,278 @@
+{
+  "binary_version": "0.12.0",
+  "release_tag": "v0.12.0",
+  "source_sha256": "54ef59e60b1986dd06131bfab3d6647d2f70b095ef3c09d698b4e221855c383e",
+  "warning": "Released binary; not a build of audited main commit 0ca2d3e.",
+  "cases": [
+    {
+      "case": "read-agent",
+      "argv": [
+        "jubarte",
+        "read",
+        "source.docx",
+        "--no-page-markers"
+      ],
+      "exit_code": 0,
+      "stdout_shape": "not-one-JSON-value",
+      "stdout": "---\nsource: source.docx\nview: tracked                      # revisions as CriticMarkup, comments inline\ntrack_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it\nrevisions: 0\ncomments: 0\nauthors:\n  document_owner: none             # no docProps/core.xml\nbody: p0-p3, 0 tables, 1 page      # page count estimated from breaks\npage: Letter portrait, margins 1in, header/footer 0.5in\nstyles:\n  Normal: Times New Roman 10pt, left  # default; unannotated paragraphs use it\n---\n\n<!-- p0 -->\nPayment is due within 30 days.\n\n<!-- p1 -->\nThe fee is due; the fee is payable.\n\n<!-- p2 -->\nOne  space.\n\n<!-- p3 -->\nNotice is due within 30 days.\n",
+      "stderr": "",
+      "created": [],
+      "modified": []
+    },
+    {
+      "case": "read-json",
+      "argv": [
+        "jubarte",
+        "read",
+        "source.docx",
+        "--json",
+        "--no-page-markers"
+      ],
+      "exit_code": 2,
+      "stdout_shape": "empty",
+      "stdout": "",
+      "stderr": "error: unexpected argument '--json' found\n\n  tip: to pass '--json' as a value, use '-- --json'\n\nUsage: jubarte read <FILE>\n\nFor more information, try '--help'.\n",
+      "created": [],
+      "modified": []
+    },
+    {
+      "case": "empty-changes-json",
+      "argv": [
+        "jubarte",
+        "changes",
+        "source.docx",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout_shape": "empty",
+      "stdout": "",
+      "stderr": "",
+      "created": [],
+      "modified": []
+    },
+    {
+      "case": "edit-json",
+      "argv": [
+        "jubarte",
+        "edit",
+        "source.docx",
+        "-p",
+        "p0",
+        "--anchor",
+        "30 days",
+        "--content",
+        "45 days",
+        "--json",
+        "--dry-run"
+      ],
+      "exit_code": 2,
+      "stdout_shape": "empty",
+      "stdout": "",
+      "stderr": "error: unexpected argument '--json' found\n\n  tip: to pass '--json' as a value, use '-- --json'\n\nUsage: jubarte edit --location <WHERE> --anchor <TEXT> --content <TEXT> <FILE>\n\nFor more information, try '--help'.\n",
+      "created": [],
+      "modified": []
+    },
+    {
+      "case": "edit-exact-dry",
+      "argv": [
+        "jubarte",
+        "edit",
+        "source.docx",
+        "-p",
+        "p0",
+        "--anchor",
+        "30 days",
+        "--content",
+        "45 days",
+        "--dry-run"
+      ],
+      "exit_code": 0,
+      "stdout_shape": "not-one-JSON-value",
+      "stdout": "{\"author\":\"Modified User\",\"base_sha256\":\"54ef59e60b1986dd06131bfab3d6647d2f70b095ef3c09d698b4e221855c383e\",\"date\":\"2026-10-17T07:03:48Z\",\"ev\":\"load\",\"existing_revisions\":\"refuse\",\"guarded\":false,\"paras\":4,\"sha256\":\"54ef59e60b1986dd06131bfab3d6647d2f70b095ef3c09d698b4e221855c383e\"}\n{\"at\":\"body:p:0\",\"ctx\":\"yment is due within {30 days→45 days}.\",\"ev\":\"op\",\"i\":1,\"id\":\"op-1\",\"matches\":1,\"op\":\"replace\",\"status\":\"ok\"}\n{\"comments\":{\"added\":0},\"ev\":\"summary\",\"ops\":{\"failed\":0,\"ok\":1},\"paras\":{\"d\":0,\"from\":4,\"to\":4},\"revs\":{\"deleted\":0,\"format_changed\":0,\"inserted\":0,\"moved\":0,\"total\":0},\"status\":\"ok\"}\n",
+      "stderr": "",
+      "created": [],
+      "modified": []
+    },
+    {
+      "case": "missing-anchor",
+      "argv": [
+        "jubarte",
+        "edit",
+        "source.docx",
+        "-p",
+        "p0",
+        "--anchor",
+        "31 days",
+        "--content",
+        "45 days",
+        "--dry-run"
+      ],
+      "exit_code": 3,
+      "stdout_shape": "not-one-JSON-value",
+      "stdout": "{\"at\":\"body:p:0\",\"code\":\"ANCHOR_NOT_FOUND\",\"ev\":\"op\",\"i\":1,\"id\":\"op-1\",\"matches\":0,\"message\":\"\\\"31 days\\\" does not occur in the paragraph\",\"op\":\"replace\",\"status\":\"failed\"}\n{\"code\":\"ANCHOR_NOT_FOUND\",\"ev\":\"summary\",\"message\":\"\\\"31 days\\\" does not occur in the paragraph\",\"operation\":\"op-1\",\"status\":\"failed\"}\n",
+      "stderr": "error: plan refused: ANCHOR_NOT_FOUND (op-1): \"31 days\" does not occur in the paragraph\n",
+      "created": [],
+      "modified": []
+    },
+    {
+      "case": "ambiguous-anchor",
+      "argv": [
+        "jubarte",
+        "edit",
+        "source.docx",
+        "-p",
+        "p1",
+        "--anchor",
+        "fee",
+        "--content",
+        "charge",
+        "--dry-run"
+      ],
+      "exit_code": 3,
+      "stdout_shape": "not-one-JSON-value",
+      "stdout": "{\"at\":\"body:p:1\",\"code\":\"AMBIGUOUS_ANCHOR\",\"ev\":\"op\",\"i\":1,\"id\":\"op-1\",\"matches\":2,\"message\":\"\\\"fee\\\" occurs 2 times in the paragraph; set \\\"occurrence\\\" to 1..=2\",\"op\":\"replace\",\"status\":\"failed\"}\n{\"code\":\"AMBIGUOUS_ANCHOR\",\"ev\":\"summary\",\"message\":\"\\\"fee\\\" occurs 2 times in the paragraph; set \\\"occurrence\\\" to 1..=2\",\"operation\":\"op-1\",\"status\":\"failed\"}\n",
+      "stderr": "error: plan refused: AMBIGUOUS_ANCHOR (op-1): \"fee\" occurs 2 times in the paragraph; set \"occurrence\" to 1..=2\n",
+      "created": [],
+      "modified": []
+    },
+    {
+      "case": "implicit-rewrite",
+      "argv": [
+        "jubarte",
+        "edit",
+        "source.docx",
+        "-p",
+        "p0",
+        "--content",
+        "45 days",
+        "--dry-run"
+      ],
+      "exit_code": 0,
+      "stdout_shape": "not-one-JSON-value",
+      "stdout": "{\"author\":\"Modified User\",\"base_sha256\":\"54ef59e60b1986dd06131bfab3d6647d2f70b095ef3c09d698b4e221855c383e\",\"date\":\"2026-10-17T07:03:48Z\",\"ev\":\"load\",\"existing_revisions\":\"refuse\",\"guarded\":false,\"paras\":4,\"sha256\":\"54ef59e60b1986dd06131bfab3d6647d2f70b095ef3c09d698b4e221855c383e\"}\n{\"at\":\"body:p:0\",\"ctx\":\"{≡ 45 days}\",\"ev\":\"op\",\"i\":1,\"id\":\"op-1\",\"matches\":1,\"op\":\"rewrite\",\"status\":\"ok\"}\n{\"comments\":{\"added\":0},\"ev\":\"summary\",\"ops\":{\"failed\":0,\"ok\":1},\"paras\":{\"d\":0,\"from\":4,\"to\":4},\"revs\":{\"deleted\":0,\"format_changed\":0,\"inserted\":0,\"moved\":0,\"total\":0},\"status\":\"ok\"}\n",
+      "stderr": "",
+      "created": [],
+      "modified": []
+    },
+    {
+      "case": "whitespace-only-rewrite",
+      "argv": [
+        "jubarte",
+        "edit",
+        "source.docx",
+        "-p",
+        "p2",
+        "--content",
+        "One space.",
+        "--dry-run"
+      ],
+      "exit_code": 0,
+      "stdout_shape": "not-one-JSON-value",
+      "stdout": "{\"author\":\"Modified User\",\"base_sha256\":\"54ef59e60b1986dd06131bfab3d6647d2f70b095ef3c09d698b4e221855c383e\",\"date\":\"2026-10-17T07:03:48Z\",\"ev\":\"load\",\"existing_revisions\":\"refuse\",\"guarded\":false,\"paras\":4,\"sha256\":\"54ef59e60b1986dd06131bfab3d6647d2f70b095ef3c09d698b4e221855c383e\"}\n{\"at\":\"body:p:2\",\"ctx\":\"{≡ One space.}\",\"ev\":\"op\",\"i\":1,\"id\":\"op-1\",\"matches\":1,\"message\":\"nothing changed: the paragraph already reads as the text (a tab or a break written as a space stays)\",\"op\":\"rewrite\",\"status\":\"ok\"}\n{\"comments\":{\"added\":0},\"ev\":\"summary\",\"ops\":{\"failed\":0,\"ok\":1},\"paras\":{\"d\":0,\"from\":4,\"to\":4},\"revs\":{\"deleted\":0,\"format_changed\":0,\"inserted\":0,\"moved\":0,\"total\":0},\"status\":\"ok\"}\n",
+      "stderr": "",
+      "created": [],
+      "modified": []
+    },
+    {
+      "case": "normalized-anchor",
+      "argv": [
+        "jubarte",
+        "edit",
+        "source.docx",
+        "-p",
+        "p3",
+        "--anchor",
+        "30 days",
+        "--content",
+        "45 days",
+        "--dry-run"
+      ],
+      "exit_code": 0,
+      "stdout_shape": "not-one-JSON-value",
+      "stdout": "{\"author\":\"Modified User\",\"base_sha256\":\"54ef59e60b1986dd06131bfab3d6647d2f70b095ef3c09d698b4e221855c383e\",\"date\":\"2026-10-17T07:03:48Z\",\"ev\":\"load\",\"existing_revisions\":\"refuse\",\"guarded\":false,\"paras\":4,\"sha256\":\"54ef59e60b1986dd06131bfab3d6647d2f70b095ef3c09d698b4e221855c383e\"}\n{\"anchor_given\":\"30 days\",\"anchor_read_as\":\"30 days\",\"at\":\"body:p:3\",\"ctx\":\"otice is due within {30 days→45 days}.\",\"ev\":\"op\",\"i\":1,\"id\":\"op-1\",\"matches\":1,\"op\":\"replace\",\"status\":\"ok\"}\n{\"comments\":{\"added\":0},\"ev\":\"summary\",\"ops\":{\"failed\":0,\"ok\":1},\"paras\":{\"d\":0,\"from\":4,\"to\":4},\"revs\":{\"deleted\":0,\"format_changed\":0,\"inserted\":0,\"moved\":0,\"total\":0},\"status\":\"ok\"}\n",
+      "stderr": "",
+      "created": [],
+      "modified": []
+    },
+    {
+      "case": "unknown-enabled-key",
+      "argv": [
+        "jubarte",
+        "edit",
+        "source.docx",
+        "--plan",
+        "disabled-plan.json",
+        "--dry-run"
+      ],
+      "exit_code": 3,
+      "stdout_shape": "empty",
+      "stdout": "",
+      "stderr": "error: INVALID_PLAN: operations[0] (rewrite): unknown field \"run_operation\"\n",
+      "created": [],
+      "modified": []
+    },
+    {
+      "case": "empty-plan-dry",
+      "argv": [
+        "jubarte",
+        "edit",
+        "source.docx",
+        "--plan",
+        "empty-plan.json",
+        "--dry-run"
+      ],
+      "exit_code": 0,
+      "stdout_shape": "not-one-JSON-value",
+      "stdout": "{\"author\":\"Audit\",\"base_sha256\":\"54ef59e60b1986dd06131bfab3d6647d2f70b095ef3c09d698b4e221855c383e\",\"date\":\"2026-10-17T07:00:00Z\",\"ev\":\"load\",\"existing_revisions\":\"refuse\",\"guarded\":true,\"paras\":4,\"sha256\":\"54ef59e60b1986dd06131bfab3d6647d2f70b095ef3c09d698b4e221855c383e\"}\n{\"comments\":{\"added\":0},\"ev\":\"summary\",\"ops\":{\"failed\":0,\"ok\":0},\"paras\":{\"d\":0,\"from\":4,\"to\":4},\"revs\":{\"deleted\":0,\"format_changed\":0,\"inserted\":0,\"moved\":0,\"total\":0},\"status\":\"ok\"}\n",
+      "stderr": "",
+      "created": [],
+      "modified": []
+    },
+    {
+      "case": "plan-plus-flags",
+      "argv": [
+        "jubarte",
+        "edit",
+        "source.docx",
+        "--plan",
+        "empty-plan.json",
+        "-p",
+        "p0",
+        "--content",
+        "45 days",
+        "--dry-run"
+      ],
+      "exit_code": 2,
+      "stdout_shape": "empty",
+      "stdout": "",
+      "stderr": "error: the argument '--plan <PLAN.json>' cannot be used with:\n  --location <WHERE>\n  --content <TEXT>\n\nUsage: jubarte edit --plan <PLAN.json> --dry-run <FILE>\n\nFor more information, try '--help'.\n",
+      "created": [],
+      "modified": []
+    },
+    {
+      "case": "default-write",
+      "argv": [
+        "jubarte",
+        "edit",
+        "source.docx",
+        "-p",
+        "p0",
+        "--anchor",
+        "30 days",
+        "--content",
+        "45 days"
+      ],
+      "exit_code": 0,
+      "stdout_shape": "not-one-JSON-value",
+      "stdout": "{\"comments\":{\"added\":0},\"ev\":\"summary\",\"ops\":{\"failed\":0,\"ok\":1},\"paras\":{\"d\":0,\"from\":4,\"to\":4},\"revs\":{\"deleted\":1,\"format_changed\":0,\"inserted\":1,\"moved\":0,\"total\":2},\"status\":\"ok\"}\nwrote source.edit (4 files: clean.docx, redline.docx, patch.diff, report.jsonl)\n---\nsource: source.edit/redline.docx\nview: tracked                      # revisions as CriticMarkup, comments inline\ntrack_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it\nrevisions: 1                       # 1 substitution (2 Word marks)\ncomments: 0\nauthors:\n  document_owner: none             # no docProps/core.xml\n  MU: Modified User                # 1 revision, 2026-10-17T07:03:48Z\nbody: p0-p3, 0 tables, 1 page      # page count estimated from breaks\nrange: changed by @MU (p0) of p0-p3\npage: Letter portrait, margins 1in, header/footer 0.5in\nstyles:\n  Normal: Times New Roman 10pt, left  # default; unannotated paragraphs use it\n---\n\n<!-- p0 -->\nPayment is due within {~~30~>45~~}{>>#2+1 @MU<<} days.\n",
+      "stderr": "",
+      "created": [
+        "source.edit/redline.docx",
+        "source.edit/report.jsonl",
+        "source.edit/patch.diff",
+        "source.edit/clean.docx"
+      ],
+      "modified": []
+    }
+  ]
+}

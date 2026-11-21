@@ -1,0 +1,1 @@
+no <w:pgSz> in word/document.xml; the sectPr names no page size, so the renderer (Word, soffice) picks one from its locale/printer default

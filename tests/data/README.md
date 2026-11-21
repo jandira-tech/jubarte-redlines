@@ -1,0 +1,25 @@
+<!--
+SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# Test data provenance
+
+## `wml_main_schema.json`
+
+Vendored copy of the Open XML SDK machine-readable WordprocessingML main
+schema for Ring 1½ schema-consistency tests.
+
+- **Upstream:** the Open XML SDK machine-readable schema
+  `data/schemas/schemas_openxmlformats_org_wordprocessingml_2006_main.json`
+  from [dotnet/Open-XML-SDK](https://github.com/dotnet/Open-XML-SDK) (MIT),
+  as distributed with the external OpenXML schemas tree and the sibling
+  `ooxmlsdk` / `neurotic_docx_bench` checkouts. This file is the only copy
+  in this repository; there is no in-repo `data/schemas/` path to re-copy
+  from.
+- **Do not hand-edit** the JSON; re-copy from the upstream distribution
+  when refreshing.
+
+The hand order tables in `crates/jubarte-redlines/src/comparer/finalize/schema_order.rs` remain PowerTools-verbatim at
+runtime; this file is a **cross-check oracle only**.

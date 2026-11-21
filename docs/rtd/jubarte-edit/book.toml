@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Build with `docs/rtd/build.sh jubarte-edit`: it pins mdBook and sets the
+# repository and "edit this page" links from Cargo.toml's
+# [workspace.package] repository, so this file names no repository URL.
+[book]
+title = "jubarte-edit"
+authors = ["Jandira Technologies, LLC"]
+language = "en"
+src = "src"
+
+[build]
+# A SUMMARY.md entry without its file is an error, not a new empty page.
+create-missing = false
+
+[rust]
+edition = "2024"
+
+[output.html]

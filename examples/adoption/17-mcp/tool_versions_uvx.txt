@@ -1,0 +1,1 @@
+uvx 0.11.26 (396ef7ce4 2026-06-30 aarch64-apple-darwin)

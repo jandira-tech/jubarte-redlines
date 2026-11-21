@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "jubarte-redlines"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/jubarte-redlines"
+description = "The compare product of the jubarte engine: two Word documents in, a tracked-changes redline out"
+readme = "README.md"
+keywords = ["docx", "redline", "track-changes", "compare", "word"]
+categories = ["text-processing", "parser-implementations"]
+include = ["/src/**", "/README.md", "/LICENSE", "/NOTICE"]
+[lib]
+name = "jubarte_redlines"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true
+
+[features]
+# P0-LAB-01: compiled-out stage counters / coarse timers; forwarded down.
+perf-profile = ["jubarte-opc/perf-profile"]
+# Cross-crate test helpers (A4), forwarded down.
+test-support = ["jubarte-opc/test-support"]
+
+[dependencies]
+jubarte-dom = { workspace = true }
+jubarte-opc = { workspace = true }
+
+[dev-dependencies]
+# finalize's failure-report tests diff expected against actual text.
+similar = { workspace = true }
+# The arena-capacity invariant tests use jubarte-dom's test-only helper.
+jubarte-dom = { workspace = true, features = ["test-support"] }

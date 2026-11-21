@@ -1,0 +1,96 @@
+<!--
+SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# Contributing
+
+Submit bugs and enhancement requests in the searchable public
+[issue tracker](https://github.com/jandira-tech/jubarte/issues).
+English reports, code comments and documentation are welcome. Search existing
+issues first. Include the engine version, platform, command or API call,
+expected result, actual result and a minimal reproduction. Attach only documents
+you may publish; remove personal information. Report vulnerabilities privately
+as described in [SECURITY.md](SECURITY.md).
+
+Clone with `git clone --recurse-submodules`, or run `git submodule update
+--init` in an existing clone: the tests read third-party documents from the
+submodule `tests/corpus/bench`, and do not compile without it. Then run
+`python3 scripts/fetch_fixtures.py` once: it downloads the test documents
+that are in neither repository (`tests/corpus/hf_fixtures.sha256` lists
+them) and checks each one's SHA-256.
+
+Use a fork and a pull request against `main`. Explain the problem, resulting
+behavior and validation. Microsoft Word parity is the correctness target;
+reuse existing fixtures and upstream Docxodus/PowerTools behavior. Follow
+[AGENTS.md](AGENTS.md) for Word automation, provenance and coding rules.
+Contributions are accepted under the project's license, Apache-2.0, as its
+section 5 says: what you submit is licensed under the same terms, with no
+other agreement to sign. Sign each commit off (`git commit -s`) to state,
+by the [Developer Certificate of Origin](https://developercertificate.org/),
+that you have the right to submit it. Preserve upstream notices and add
+accurate SPDX headers.
+
+The repository is a Cargo workspace. The root package `jubarte` holds only
+the facade (`src/lib.rs`, which re-exports the suite under `jubarte::`) and
+the CLI binary (`src/bin/`); the engine lives in `crates/`:
+
+| Crate | Holds |
+|---|---|
+| `jubarte-dom` | arena XML DOM, namespaces, ids, shared utilities |
+| `jubarte-opc` | OPC package floor: admission, packages, styles, numbering, settings |
+| `jubarte-redlines` | compare: `document_comparer`, `comparer`, `revision_processor` |
+| `jubarte-render` | DOCX to PDF and PNG (`convert`), embedded fonts |
+| `jubarte-doc` | changes, comments, validate, audit, scrub, append, fields, inspect, debug |
+| `jubarte-markdown` | Markdown in and out, `.doc` reading |
+| `jubarte-edit` | edit plans, text diffs, capabilities, publication |
+| `jubarte-cli` | the clap command line and `self-update` |
+
+Integration tests stay in the root `tests/`, in seven suite binaries, one
+per layer of the split (`it_core` covers jubarte-dom and jubarte-opc;
+then `it_redlines`, `it_render`, `it_doc`, `it_markdown`, `it_edit`,
+`it_cli`); unit tests sit beside the code in `crates/<crate>/src/`. Cargo
+commands at the root select only the `jubarte` package unless given
+`--workspace` or `-p <crate>`.
+
+Build with Rust (MSRV in Cargo.toml) and Cargo, using only FLOSS tools:
+
+```sh
+cargo build --locked --workspace --all-features
+cargo fmt --all --check
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo install cargo-llvm-cov --locked
+rustup toolchain install nightly --component llvm-tools-preview
+cargo +nightly llvm-cov --all-features --workspace --branch --doctests --lcov --output-path lcov.info
+cargo +nightly llvm-cov report --branch --summary-only --fail-under-lines 95
+cargo run --locked --bin jubarte -- --help
+```
+
+`cargo nextest run --workspace --all-features` is the standard test invocation
+(`-p <crate>` or `--test NAME` for one part). nextest runs no doctests:
+`cargo test --workspace --all-features --doc` runs them, as CI does. Prefer the coverage
+invocation above when recording validation. Run Cargo commands sequentially;
+do not override `CARGO_TARGET_DIR`. Tests and the production build need no
+Microsoft Word installation. Word oracle comparisons are separate integration
+checks. Rustfmt defines formatting; Clippy warnings must be fixed without
+suppressing them. See [.github/workflows/ci.yml](.github/workflows/ci.yml) for
+cross-platform, bindings, MSRV and coverage checks.
+
+Every major new behavior requires automated tests; fixes require regression
+tests. Keep tests beside the protected behavior, use pure functions and
+upstream test utilities before fakes, and mock only as a last resort. Unit tests
+must not depend on network, disk, databases or wall-clock time. Use integration
+tests for those dependencies. Do not remove coverage to make a failure pass.
+The CI coverage floors are 95% of lines and 88% of branches, measured on
+nightly (branch instrumentation needs it); report branch coverage rather than
+infer it from line coverage.
+
+Before a release run the security checks in [SECURITY.md](SECURITY.md), and
+all four [fuzz targets and native allocator runs](fuzz/README.md). Debug
+assertions and the fuzzer's sanitizers must remain enabled. Confirmed security findings block release until
+fixed or shown not exploitable with recorded evidence. Add CVE/GHSA/RustSec
+identifiers, affected/fixed versions and upgrade guidance to the changelog for
+publicly known runtime vulnerabilities fixed in the engine. Dependency updates
+should be distinguished from engine vulnerabilities. Follow [VERSIONING.md](docs/maintainers/VERSIONING.md)
+for unique SemVer releases, annotated tags and release notes.

@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "engine_version": "0.12.0",
+  "runtime": "cli",
+  "operations": {
+    "compare": true,
+    "accept_revisions": true,
+    "reject_revisions": true,
+    "selective_revisions": true,
+    "revision_records": true,
+    "pdf": true,
+    "png": true,
+    "inspect_body": true,
+    "markdown": true,
+    "edit": true,
+    "comments": true,
+    "markdown_to_docx": true,
+    "markdown_diff": true,
+    "patch": true,
+    "diff_render": true,
+    "page_ranges": true,
+    "comment_threads": true,
+    "edit_keeps_revisions": true,
+    "append": true,
+    "content_controls": true,
+    "validate": true,
+    "repair": true,
+    "fields": true,
+    "scrub": true,
+    "audit": true
+  },
+  "edit_plan_versions": [
+    1
+  ],
+  "edit_operations": [
+    "replace",
+    "insert",
+    "delete",
+    "comment",
+    "insert_paragraph",
+    "delete_paragraph",
+    "format_paragraph",
+    "merge_paragraphs",
+    "rewrite",
+    "reply_comment",
+    "resolve_comment",
+    "edit_comment",
+    "delete_comment",
+    "insert_table",
+    "list",
+    "watermark",
+    "fill_control",
+    "format_run",
+    "insert_footnote",
+    "insert_image",
+    "page_setup",
+    "insert_toc",
+    "redact",
+    "settings"
+  ],
+  "limits": {
+    "stories": [
+      "body",
+      "header",
+      "footer",
+      "footnotes",
+      "endnotes"
+    ],
+    "plain_text_runs": false,
+    "refuses_opaque_ranges": true,
+    "reads_legacy_doc": false,
+    "input": {
+      "max_compressed_bytes": 67108864,
+      "max_entries": 10000,
+      "max_part_bytes": 67108864,
+      "max_uncompressed_bytes": 268435456,
+      "max_xml_depth": 256
+    }
+  },
+  "audit_rules": [
+    "HEADING_SKIP",
+    "IMAGE_NO_DESCR",
+    "TABLE_NO_HEADER_ROW",
+    "MISSING_LANG",
+    "LITERAL_BULLET",
+    "EMPTY_SPACER_PARAGRAPH",
+    "DIRECT_FORMATTING_OVERRIDES_STYLE",
+    "STALE_FIELD_CACHE",
+    "FONT_SUBSTITUTED"
+  ]
+}

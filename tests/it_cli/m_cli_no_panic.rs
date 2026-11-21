@@ -1,0 +1,620 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: Apache-2.0
+
+//! Fallible-input surface must return `Err` / non-zero exit — never panic —
+//! on malformed zip, empty packages, or missing main document parts (plan A2).
+
+use std::io::Cursor;
+use std::io::Write;
+use std::process::Command;
+
+use jubarte::WmlDocument;
+use jubarte::document_comparer::{compare_documents, get_revisions};
+use jubarte::opc::PartFs;
+use zip::ZipWriter;
+use zip::write::SimpleFileOptions;
+
+const BIN: &str = env!("CARGO_BIN_EXE_jubarte");
+
+/// Minimal OPC zip with [Content_Types] + package rels but NO main document.
+fn empty_package_bytes() -> Vec<u8> {
+    let mut buf = Cursor::new(Vec::new());
+    {
+        let mut z = ZipWriter::new(&mut buf);
+        let opts = SimpleFileOptions::default();
+        z.start_file("[Content_Types].xml", opts).unwrap();
+        z.write_all(
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+</Types>"#,
+        )
+        .unwrap();
+        z.start_file("_rels/.rels", opts).unwrap();
+        z.write_all(
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+</Relationships>"#,
+        )
+        .unwrap();
+        z.finish().unwrap();
+    }
+    buf.into_inner()
+}
+
+#[test]
+fn library_malformed_zip_returns_err() {
+    let bad = b"this is not a zip at all";
+    let err = compare_documents(bad, bad, "Author").expect_err("must Err not panic");
+    let _ = format!("{err:?}"); // ensure Display/Debug usable on CLI path
+}
+
+#[test]
+fn library_empty_package_missing_main_returns_err() {
+    let pkg = empty_package_bytes();
+    // open may succeed (valid zip + content types); compare must still Err
+    assert!(
+        PartFs::open(&pkg).is_ok(),
+        "empty package is a valid zip shell"
+    );
+    // Identical-byte fast path skips open; force the full path with a real
+    // modified doc so the missing main on `pkg` is reached.
+    let modified = std::fs::read("tests/fixtures/redline/modified.docx")
+        .expect("fixture present for non-identical pair");
+    let err = compare_documents(&pkg, &modified, "Author").expect_err("missing main → Err");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("not found") || msg.contains("PartNotFound") || msg.contains("document"),
+        "error should name the missing part: {msg}"
+    );
+}
+
+#[test]
+fn wml_document_missing_main_returns_err() {
+    let pkg = empty_package_bytes();
+    // Admission refuses the shell at open time (no main document part); a
+    // shell that did open would still have to fail at `main_document()`.
+    let err = match WmlDocument::from_bytes(&pkg) {
+        Err(err) => err,
+        Ok(mut wml) => wml.main_document().expect_err("missing main → Err"),
+    };
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("not found") || msg.contains("PartNotFound") || msg.contains("document"),
+        "error should name the missing part: {msg}"
+    );
+}
+
+#[test]
+fn get_revisions_malformed_zip_returns_err() {
+    let bad = b"not a zip";
+    let settings = jubarte::comparer::WmlComparerSettings::default();
+    let _ = get_revisions(bad, &settings).expect_err("must Err not panic");
+}
+
+#[test]
+fn cli_compare_malformed_zip_exits_nonzero() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.docx");
+    let b = dir.path().join("b.docx");
+    std::fs::write(&a, b"not a zip").unwrap();
+    std::fs::write(&b, b"also not a zip").unwrap();
+    let out = Command::new(BIN)
+        .arg(&a)
+        .arg(&b)
+        .args(["-o"])
+        .arg(dir.path().join("out.docx"))
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "CLI must exit non-zero on bad zip; stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("error:"),
+        "CLI must print one-line error, got: {err}"
+    );
+}
+
+#[test]
+fn cli_compare_empty_package_exits_nonzero() {
+    let dir = tempfile::tempdir().unwrap();
+    let pkg = empty_package_bytes();
+    let a = dir.path().join("a.docx");
+    let b = dir.path().join("b.docx");
+    std::fs::write(&a, &pkg).unwrap();
+    // non-identical pair so the CLI reaches PartFs open + main-part lookup
+    std::fs::copy("tests/fixtures/redline/modified.docx", &b).unwrap();
+    let out = Command::new(BIN)
+        .arg(&a)
+        .arg(&b)
+        .args(["-o"])
+        .arg(dir.path().join("out.docx"))
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "CLI must exit non-zero on empty package; stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// A real package whose main document part is replaced by `document_xml`.
+fn package_with_main(document_xml: &str) -> Vec<u8> {
+    let original = std::fs::read("tests/fixtures/f4/original.docx").unwrap();
+    let mut pkg = PartFs::open(&original).unwrap();
+    pkg.set_part("word/document.xml", document_xml.as_bytes().to_vec());
+    pkg.to_zip().unwrap()
+}
+
+const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+#[test]
+fn get_revisions_missing_main_returns_err() {
+    let settings = jubarte::comparer::WmlComparerSettings::default();
+    let err = get_revisions(&empty_package_bytes(), &settings).expect_err("missing main → Err");
+    // Admission refuses a package with no main document part before the walk.
+    let text = format!("{err}");
+    assert!(
+        text.contains("UNSUPPORTED_PACKAGE") && text.contains("main document part"),
+        "{text}"
+    );
+}
+
+#[test]
+fn get_revisions_main_without_body_returns_err() {
+    let settings = jubarte::comparer::WmlComparerSettings::default();
+    let doc = package_with_main(&format!(r#"<w:document xmlns:w="{W_NS}"/>"#));
+    let err = get_revisions(&doc, &settings).expect_err("no w:body → Err");
+    assert!(format!("{err}").contains("body"), "{err}");
+}
+
+/// `w:altChunk` is ordinary Word content that the revision walk cannot read
+/// (C# TestForInvalidContent throws); Python/WASM callers need an Err, not a
+/// panic that aborts the WASM instance.
+#[test]
+fn get_revisions_alt_chunk_document_returns_err() {
+    let settings = jubarte::comparer::WmlComparerSettings::default();
+    let doc = package_with_main(&format!(
+        r#"<w:document xmlns:w="{W_NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:altChunk r:id="rIdX"/></w:body></w:document>"#
+    ));
+    let err = get_revisions(&doc, &settings).expect_err("altChunk → Err");
+    assert!(format!("{err}").contains("altChunk"), "{err}");
+    assert!(format!("{err}").contains("UNSUPPORTED_CONTENT: "), "{err}");
+}
+
+/// `compare` on a `w:subDoc` or a `w:altChunk` document is an Err naming
+/// the element, not the atomizer's panic (word_exp N4 exited 101 at
+/// `atomize.rs:312`, 2026-10-31). Either side, either element.
+#[test]
+fn compare_refuses_a_sub_doc_or_alt_chunk_document_without_a_panic() {
+    let modified = std::fs::read("tests/fixtures/redline/modified.docx").unwrap();
+    for (name, body) in [
+        (
+            "subDoc",
+            r#"<w:subDoc r:id="rIdX"/><w:p><w:r><w:t>x</w:t></w:r></w:p>"#,
+        ),
+        (
+            "altChunk",
+            r#"<w:altChunk r:id="rIdX"/><w:p><w:r><w:t>x</w:t></w:r></w:p>"#,
+        ),
+    ] {
+        let doc = package_with_main(&format!(
+            r#"<w:document xmlns:w="{W_NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>{body}</w:body></w:document>"#
+        ));
+        let err = compare_documents(&doc, &modified, "Author").expect_err("original side → Err");
+        let text = format!("{err}");
+        assert!(
+            text.contains("UNSUPPORTED_CONTENT: ") && text.contains(name),
+            "{name}: {text}"
+        );
+        let err = compare_documents(&modified, &doc, "Author").expect_err("modified side → Err");
+        let text = format!("{err}");
+        assert!(
+            text.contains("UNSUPPORTED_CONTENT: ") && text.contains(name),
+            "{name}: {text}"
+        );
+    }
+}
+
+/// The header and note stories go through the atomizer as well: a
+/// `w:customXml` there is unwrapped, not a panic and not a refusal.
+#[test]
+fn compare_unwraps_custom_xml_in_a_header_or_a_footnote() {
+    let wrap_first_paragraph = |xml: &str| {
+        let open = xml.find("<w:p ").or_else(|| xml.find("<w:p>")).unwrap();
+        let close = open + xml[open..].find("</w:p>").unwrap() + "</w:p>".len();
+        format!(
+            r#"{}<w:customXml w:element="c">{}</w:customXml>{}"#,
+            &xml[..open],
+            &xml[open..close],
+            &xml[close..]
+        )
+    };
+    for (fixture, part, other) in [
+        (
+            "tests/fixtures/f4/original.docx",
+            "word/header1.xml",
+            "word/document.xml",
+        ),
+        (
+            "tests/fixtures/f4/original.docx",
+            "word/footer1.xml",
+            "word/document.xml",
+        ),
+        (
+            "tests/fixtures/md-roundtrip/order/fn-plain.docx",
+            "word/footnotes.xml",
+            "word/document.xml",
+        ),
+    ] {
+        let original = std::fs::read(fixture).unwrap();
+        let mut pkg = PartFs::open(&original).unwrap();
+        let mut story = String::from_utf8(pkg.part_bytes(part).unwrap().to_vec()).unwrap();
+        if part == "word/footnotes.xml" {
+            // The referenced note, not the separators.
+            let at = story.find(r#"w:id="1""#).unwrap();
+            story = format!("{}{}", &story[..at], wrap_first_paragraph(&story[at..]));
+        } else {
+            story = wrap_first_paragraph(&story);
+        }
+        pkg.set_part(part, story.into_bytes());
+        // A one-word body edit, so the pair is not byte-identical.
+        let body = String::from_utf8(pkg.part_bytes(other).unwrap().to_vec()).unwrap();
+        let edited = body.replacen(
+            "</w:body>",
+            "<w:p><w:r><w:t>z</w:t></w:r></w:p></w:body>",
+            1,
+        );
+        let mut revised = PartFs::open(&original).unwrap();
+        revised.set_part(other, edited.into_bytes());
+        let (doc, revised) = (pkg.to_zip().unwrap(), revised.to_zip().unwrap());
+        for (a, b) in [(&doc, &revised), (&revised, &doc)] {
+            let out = compare_documents(a, b, "Author").expect("customXml story");
+            assert!(!out.is_empty(), "{part}");
+        }
+    }
+}
+
+fn custom_xml_body(other: &str) -> Vec<u8> {
+    package_with_main(&format!(
+        r#"<w:document xmlns:w="{W_NS}"><w:body><w:customXml w:element="item"><w:p><w:r><w:t>Old.</w:t></w:r></w:p></w:customXml><w:p><w:r><w:t>{other}</w:t></w:r></w:p></w:body></w:document>"#
+    ))
+}
+
+fn main_document_xml(docx: &[u8]) -> String {
+    String::from_utf8(
+        PartFs::open(docx)
+            .unwrap()
+            .part_bytes("word/document.xml")
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap()
+}
+
+/// Word drops a block-level `w:customXml` and compares what it wrapped.
+/// The pair is the #1674 repro: `Other.` becomes `Other changed.`
+#[test]
+fn compare_unwraps_a_block_level_custom_xml_instead_of_refusing_it() {
+    let out = compare_documents(
+        &custom_xml_body("Other."),
+        &custom_xml_body("Other changed."),
+        "Author",
+    )
+    .expect("block-level customXml compares");
+    let xml = main_document_xml(&out);
+    assert!(
+        xml.contains(">Old.</w:t>"),
+        "the wrapped paragraph stays: {xml}"
+    );
+    assert!(
+        xml.contains("<w:ins") && xml.contains("> changed</w:t>"),
+        "the wording change is an insertion: {xml}"
+    );
+    assert!(
+        !xml.contains("<w:customXml"),
+        "customXml markup is not part of the redline: {xml}"
+    );
+}
+
+/// A `w:sectPr` inside a `w:customXml` lands beside the body's own
+/// `w:sectPr` once the wrapper is unwrapped: the gate must see the
+/// unwrapped parent and refuse with `UNSUPPORTED_CONTENT`, not let the
+/// atomizer panic on two sectPr (#2074 review).
+#[test]
+fn compare_refuses_a_sect_pr_that_unwrapping_custom_xml_would_double() {
+    let doc = |other: &str| {
+        package_with_main(&format!(
+            r#"<w:document xmlns:w="{W_NS}"><w:body><w:p><w:r><w:t>{other}</w:t></w:r></w:p><w:customXml w:element="c"><w:sectPr/></w:customXml><w:sectPr/></w:body></w:document>"#
+        ))
+    };
+    let (a, b) = (doc("Other."), doc("Other changed."));
+    for (x, y) in [(&a, &b), (&b, &a)] {
+        let err = compare_documents(x, y, "Author").expect_err("two sectPr after unwrap → Err");
+        let text = format!("{err}");
+        assert!(
+            text.contains("UNSUPPORTED_CONTENT: ") && text.contains("sectPr"),
+            "{text}"
+        );
+    }
+}
+
+/// Nested `w:customXml` wrappers, as deep as admission allows (256), all
+/// unwrap and keep their content (#2074 review).
+#[test]
+fn compare_unwraps_deeply_nested_custom_xml() {
+    let depth = 250;
+    let doc = |other: &str| {
+        let open = r#"<w:customXml w:element="c">"#.repeat(depth);
+        let close = "</w:customXml>".repeat(depth);
+        package_with_main(&format!(
+            r#"<w:document xmlns:w="{W_NS}"><w:body>{open}<w:p><w:r><w:t>Old.</w:t></w:r></w:p>{close}<w:p><w:r><w:t>{other}</w:t></w:r></w:p></w:body></w:document>"#
+        ))
+    };
+    let out = compare_documents(&doc("Other."), &doc("Other changed."), "Author")
+        .expect("nested customXml compares");
+    let xml = main_document_xml(&out);
+    assert!(
+        xml.contains(">Old.</w:t>") && !xml.contains("<w:customXml"),
+        "{xml}"
+    );
+}
+
+/// The default edit path compares even when the plan never touches the
+/// custom XML element (#1674).
+#[test]
+fn default_path_edit_unwraps_a_block_level_custom_xml() {
+    let plan = jubarte::edit::EditPlan::from_json(
+        r#"{"schema_version":1,"author":"Ann Counsel","date":"2026-10-19T12:00:00Z","operations":[{"kind":"insert_paragraph","paragraph":"p1","position":"after","runs":[{"text":"Added."}]}]}"#,
+    )
+    .unwrap();
+    let result = jubarte::edit::apply_plan(&custom_xml_body("Other."), &plan)
+        .expect("default-path edit of a customXml document");
+    let clean = main_document_xml(&result.clean);
+    assert!(clean.contains("Added."), "{clean}");
+    assert!(clean.contains("Old."), "{clean}");
+    assert!(clean.contains("Other."), "{clean}");
+}
+
+/// A footnote reference with no definition fails the compare (C# throws
+/// without a ComparisonLog) as an Err the caller can handle.
+#[test]
+fn compare_with_an_orphan_footnote_reference_returns_err() {
+    let doc = package_with_main(&format!(
+        r#"<w:document xmlns:w="{W_NS}"><w:body><w:p><w:r><w:t>x</w:t></w:r><w:r><w:footnoteReference w:id="77"/></w:r></w:p></w:body></w:document>"#
+    ));
+    let modified = std::fs::read("tests/fixtures/redline/modified.docx").unwrap();
+    let err = compare_documents(&doc, &modified, "Author").expect_err("orphan ref → Err");
+    assert!(format!("{err}").contains("77"), "{err}");
+}
+
+/// A reader that stops early (`jubarte FILE | head`) closes the pipe while a
+/// view, a Markdown conversion or a diff is still being written: the CLI
+/// stops quietly, as `cat` does.
+#[cfg(unix)]
+#[test]
+fn a_closed_stdout_pipe_ends_the_view_without_a_panic() {
+    use std::io::Read;
+    use std::process::Stdio;
+    // Its agent view (about 230 KB) is larger than any pipe buffer.
+    let big = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/corpus/broken_ones_two/sources/file_22.docx"
+    );
+    let other = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/corpus/broken_ones_two/sources/file_196.docx"
+    );
+    for args in [
+        &["read", "--no-page-markers", big][..],
+        &[big][..],
+        &["convert", big, "-t", "md"][..],
+        &["diff", "--format", "github", big, other][..],
+        // pi review r392 F1/F4: the listings print line by line (one
+        // `outln!` serves them all; inspect's outlast any pipe buffer).
+        &["read", big][..],
+        &["read", "--json", big][..],
+        &["inspect", "--json", big][..],
+    ] {
+        let mut child = Command::new(BIN)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut first = [0u8; 16];
+        child.stdout.take().unwrap().read_exact(&mut first).unwrap();
+        let out = child.wait_with_output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!stderr.contains("panicked"), "{args:?}: {stderr}");
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {stderr}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn pr392_closed_pipe_is_quiet_for_markdown_conversion_and_text_diff() {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    let dir = tempfile::tempdir().unwrap();
+    // Exceeds the pipe buffer using plain text, with no layout or corpus I/O.
+    std::fs::write(
+        dir.path().join("large.md"),
+        "An unchanged line of text.\n".repeat(16384),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("small.md"), "Replacement.\n").unwrap();
+    for args in [
+        vec!["convert", "large.md", "-t", "md"],
+        vec!["diff", "large.md", "small.md", "--format", "github"],
+    ] {
+        let mut child = Command::new(BIN)
+            .args(&args)
+            .current_dir(dir.path())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stdout = child.stdout.take().unwrap();
+        stdout.read_exact(&mut [0; 16]).unwrap();
+        drop(stdout);
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.stderr.is_empty(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn pr392_stdout_errors_other_than_broken_pipe_remain_failures() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("source.md"), "Content.\n").unwrap();
+    // /dev/full deterministically returns ENOSPC on writes.
+    for args in [
+        vec!["convert", "source.md", "-t", "md"],
+        vec!["capabilities"],
+    ] {
+        let full = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .unwrap();
+        let output = Command::new(BIN)
+            .args(&args)
+            .current_dir(dir.path())
+            .stdout(full)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{args:?}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("writing to stdout"), "{args:?}: {stderr}");
+        assert!(!stderr.contains("panicked"), "{stderr}");
+    }
+}
+
+/// `get_revisions` walks the same atomizer as `compare`: a `w:customXml`
+/// element is readable (its content is kept), while an altChunk in a
+/// footnote and two body `w:sectPr` are Errs, not panics, and it holds the
+/// same story budget (empryo review, 2026-10-31; #1674).
+#[test]
+fn get_revisions_refuses_what_the_atomizer_cannot_read() {
+    let settings = jubarte::comparer::WmlComparerSettings::default();
+    let body = package_with_main(&format!(
+        r#"<w:document xmlns:w="{W_NS}"><w:body><w:customXml w:element="c"><w:p><w:r><w:t>x</w:t></w:r></w:p></w:customXml></w:body></w:document>"#
+    ));
+    let revs = get_revisions(&body, &settings).expect("customXml body is readable");
+    assert!(revs.is_empty(), "{revs:?}");
+
+    let original = std::fs::read("tests/fixtures/md-roundtrip/order/fn-plain.docx").unwrap();
+    let mut pkg = PartFs::open(&original).unwrap();
+    let notes = String::from_utf8(pkg.part_bytes("word/footnotes.xml").unwrap().to_vec()).unwrap();
+    let at = notes.find(r#"w:id="1">"#).unwrap() + r#"w:id="1">"#.len();
+    let notes = format!(
+        r#"{}<w:altChunk xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rIdX"/>{}"#,
+        &notes[..at],
+        &notes[at..]
+    );
+    pkg.set_part("word/footnotes.xml", notes.into_bytes());
+    let err = get_revisions(&pkg.to_zip().unwrap(), &settings)
+        .expect_err("altChunk note")
+        .to_string();
+    assert!(
+        err.contains("UNSUPPORTED_CONTENT: ") && err.contains("altChunk"),
+        "{err}"
+    );
+
+    let sects = package_with_main(&format!(
+        r#"<w:document xmlns:w="{W_NS}"><w:body><w:p/><w:sectPr/><w:sectPr/></w:body></w:document>"#
+    ));
+    let err = get_revisions(&sects, &settings)
+        .expect_err("two sectPr")
+        .to_string();
+    assert!(
+        err.contains("UNSUPPORTED_CONTENT: ") && err.contains("sectPr"),
+        "{err}"
+    );
+
+    let long = package_with_main(&format!(
+        r#"<w:document xmlns:w="{W_NS}"><w:body><w:p><w:r><w:t>{}</w:t></w:r></w:p></w:body></w:document>"#,
+        "x".repeat(100)
+    ));
+    let limits = jubarte::admission::InputLimitOverrides {
+        max_story_units: Some(60),
+        ..jubarte::admission::InputLimitOverrides::default()
+    }
+    .apply(jubarte::admission::InputLimits::compare());
+    let err = get_revisions(&long, &settings.clone().with_input_limits(limits))
+        .expect_err("past the story budget")
+        .to_string();
+    assert!(
+        err.contains("INPUT_LIMIT") && err.contains("60 story units"),
+        "{err}"
+    );
+}
+
+/// Two direct `w:sectPr` in one story panicked the atomizer's
+/// `move_last_sectpr_into_last_paragraph` expect; `compare` refuses it.
+#[test]
+fn compare_refuses_two_body_section_properties_without_a_panic() {
+    let modified = std::fs::read("tests/fixtures/redline/modified.docx").unwrap();
+    let doc = package_with_main(&format!(
+        r#"<w:document xmlns:w="{W_NS}"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p><w:sectPr/><w:sectPr/></w:body></w:document>"#
+    ));
+    for (a, b) in [(&doc, &modified), (&modified, &doc)] {
+        let err = compare_documents(a, b, "Author")
+            .expect_err("two sectPr → Err")
+            .to_string();
+        assert!(
+            err.contains("UNSUPPORTED_CONTENT: ") && err.contains("sectPr"),
+            "{err}"
+        );
+    }
+}
+
+/// The CLI leads with the code, as it does for an admission refusal: the
+/// word_exp N4 rerun printed the Debug form `Io(Custom { … })`
+/// (review, 2026-10-31).
+#[test]
+fn cli_compare_names_unsupported_content_by_its_code() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.docx");
+    std::fs::write(
+        &a,
+        package_with_main(&format!(
+            r#"<w:document xmlns:w="{W_NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:subDoc r:id="rIdX"/><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#
+        )),
+    )
+    .unwrap();
+    let out = Command::new(BIN)
+        .arg("compare")
+        .arg(&a)
+        .arg("tests/fixtures/redline/modified.docx")
+        .arg("-o")
+        .arg(dir.path().join("out.docx"))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains(
+            "compare failed: UNSUPPORTED_CONTENT: original document: Document contains subDoc"
+        ),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("Io("), "{stderr}");
+}

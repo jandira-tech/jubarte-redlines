@@ -1,0 +1,76 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "jubarte-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/jubarte-cli"
+description = "The jubarte engine's command line: every operation of the library behind one clap surface, plus self-update"
+readme = "README.md"
+keywords = ["docx", "cli", "redline", "word", "convert"]
+categories = ["command-line-utilities", "text-processing"]
+include = ["/src/**", "/build.rs", "/README.md", "/LICENSE", "/NOTICE"]
+[lib]
+name = "jubarte_cli"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Layout needs the renderer (A4), forwarded down every layer that declares one.
+render = [
+    "jubarte-render",
+    "jubarte-doc/render",
+    "jubarte-markdown/render",
+    "jubarte-edit/render",
+]
+# `jubarte self-update`: installs a GitHub release on request (docs/SELF_UPDATE.md).
+self-update = ["dep:self_update", "dep:ed25519-dalek"]
+
+[dependencies]
+jubarte-dom = { workspace = true }
+jubarte-opc = { workspace = true }
+jubarte-redlines = { workspace = true }
+jubarte-doc = { workspace = true }
+jubarte-markdown = { workspace = true }
+jubarte-edit = { workspace = true }
+jubarte-render = { workspace = true, optional = true }
+flate2 = { workspace = true }
+serde = { workspace = true }
+zip = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+clap = { workspace = true }
+quick-xml = { workspace = true }
+similar = { workspace = true }
+# CLI file identity: a side file that names the input through a hard link,
+# a symlink or another case is refused (Windows has no stable std API).
+same-file = { workspace = true }
+# `jubarte self-update`: release lookup, SHA256SUMS.txt check, archive
+# extraction and binary replacement. Only the command contacts the network.
+self_update = { workspace = true, optional = true }
+# The zipsign signature check (update/zipsign.rs): ed25519ph over SHA-512.
+# Not `self_update`'s `signatures`, whose zipsign-api 0.2 pins
+# ed25519-dalek 2 and with it block-buffer 0.10.4 (GHSA-qwgh-2vcv-g2f7).
+ed25519-dalek = { workspace = true, optional = true }
+
+# Windows releases are .zip. Zip support stays off elsewhere: it turns on the
+# zip crate's `time` feature, which stamps wall-clock times into our own
+# archives unless every entry sets its time (986c526).
+[target.'cfg(windows)'.dependencies]
+self_update = { workspace = true, optional = true, features = ["archive-zip", "compression-zip-deflate"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }

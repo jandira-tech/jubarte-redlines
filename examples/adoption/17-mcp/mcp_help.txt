@@ -1,0 +1,7 @@
+usage: jubarte-mcp [-h] [--root ROOT]
+
+``jubarte-mcp``: the Document facade as MCP tools over stdio.
+
+options:
+  -h, --help   show this help message and exit
+  --root ROOT  directory every path must sit under

@@ -1,0 +1,2 @@
+jubarte convert --fail-on-substitution exit=4 (4 = a requested font was substituted)
+pdffonts exit=0 always; it reports nothing by itself

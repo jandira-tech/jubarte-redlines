@@ -1,0 +1,172 @@
+#!/usr/bin/env bun
+
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: Apache-2.0
+
+// ###########################################################################
+// ##                                                                       ##
+// ##   WARNING — scripts/release.sh IS THE SOURCE OF TRUTH FOR RELEASES.   ##
+// ##                                                                       ##
+// ##   This script is only the Cargo.toml + README codemod that            ##
+// ##   release.sh calls in its version-sync step. On its own it does NOT   ##
+// ##   bump jubarte-python, jubarte-wasm/npm or the four Cargo.lock        ##
+// ##   files, write the six required release notes, run the gates, tag,   ##
+// ##   push or publish. A version bumped here alone is a half release.     ##
+// ##                                                                       ##
+// ##   Release with:  scripts/release.sh x.y.z --changelog-summary "…" …   ##
+// ##                  (docs/maintainers/VERSIONING.md step 8; --dry-run rehearses it)  ##
+// ##                                                                       ##
+// ###########################################################################
+//
+// Bump the crate version in every hard-coded location, in one shot.
+//
+//   bun scripts/bump-version.mjs 0.2.0
+//
+// Touches: Cargo.toml ([package] version), the README's version pins,
+// including the Socket badge (badge.socket.dev/cargo/package/jubarte-redlines/<version>),
+// and gemini-extension.json's version.
+// CHANGELOG.md is NOT auto-written — add the Keep-a-Changelog section
+// yourself, then let scripts/release.sh commit, tag and publish.
+// See docs/maintainers/VERSIONING.md.
+
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+/** Every regular-expression metacharacter in `text`, escaped, backslash
+ * first: a version interpolated into a RegExp must match literally, and a
+ * `$` or `\` in it would anchor or bend the pattern instead. */
+export function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** The Cargo manifest's version lines moved to `next`: the standalone
+ * `version = "x.y.z"` of `[workspace.package]`, and every exact
+ * `version = "=x.y.z"` pin with which the workspace crates hold each other
+ * (plan A3; the pins never exist outside [workspace.dependencies], so a
+ * blanket replace cannot touch a third-party requirement). Exported for
+ * scripts/bump-version.test.mjs.
+ * @param {string} cargo the manifest text
+ * @param {string} next the new x.y.z
+ * @returns {string} the manifest with every workspace version moved */
+export function bumpCargoVersions(cargo, next) {
+  const standalone = cargo.replace(
+    // A trailing comment may follow (Cargo.toml has one); it is kept.
+    /^version = "\d+\.\d+\.\d+"(?=[ \t]*(?:#.*)?$)/m,
+    `version = "${next}"`,
+  );
+  return standalone.replace(
+    /version = "=\d+\.\d+\.\d+"/g,
+    `version = "=${next}"`,
+  );
+}
+
+/** The README's version pins moved from `prev` to `next`. Exported for
+ * scripts/bump-version.test.mjs, which feeds it pins a hostile version
+ * must not be able to bend. */
+export function bumpReadmePins(readme, prev, next) {
+  return readme
+    .replace(
+      new RegExp(`jubarte\\s*=\\s*"${escapeRegExp(prev)}"`, "g"),
+      `jubarte = "${next}"`,
+    )
+    .replace(
+      new RegExp(`jubarte@${escapeRegExp(prev)}`, "g"),
+      `jubarte@${next}`,
+    )
+    // Socket badge: image and link both pin the version; a stale pin
+    // (a skipped bump) is corrected too, not only the previous version.
+    .replace(
+      /(badge\.socket\.dev\/cargo\/package\/jubarte(?:-redlines)?\/)\d+\.\d+\.\d+/g,
+      `$1${next}`,
+    )
+    // Library install pin: `version = "x.y"` (a caret requirement), so a
+    // patch leaves it and a minor moves it. It stayed "0.9" through 0.10.1.
+    .replace(
+      /(jubarte(?:-redlines)?\s*=\s*\{\s*version\s*=\s*")\d+\.\d+(")/g,
+      `$1${next.split(".").slice(0, 2).join(".")}$2`,
+    );
+}
+
+function main() {
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+  // release.sh sets JUBARTE_RELEASE_SH=1 when it calls this codemod; any other
+  // caller is running half a release and gets the banner.
+  const viaRelease = process.env.JUBARTE_RELEASE_SH === "1";
+  const banner = [
+    "",
+    "#".repeat(75),
+    "##  WARNING: scripts/release.sh IS THE SOURCE OF TRUTH FOR RELEASES.",
+    "##",
+    "##  bump-version.mjs only rewrites Cargo.toml and the README pins. It does",
+    "##  NOT sync jubarte-python, jubarte-wasm/npm or the Cargo.lock files, write",
+    "##  the required release notes, run the gates, tag, push or publish.",
+    "##",
+    "##  Release with:  scripts/release.sh x.y.z --changelog-summary \"…\" …",
+    "##                 (docs/maintainers/VERSIONING.md step 8; --dry-run rehearses it)",
+    "#".repeat(75),
+    "",
+  ].join("\n");
+  if (!viaRelease) console.error(banner);
+  const next = process.argv[2];
+  if (!/^\d+\.\d+\.\d+$/.test(next ?? "")) {
+    console.error(`usage: bun scripts/bump-version.mjs <x.y.z>   (got: ${next ?? "nothing"})`);
+    process.exit(1);
+  }
+
+  const cargoPath = join(root, "Cargo.toml");
+  const cargo = readFileSync(cargoPath, "utf8");
+  // A trailing comment may follow the version (Cargo.toml has one).
+  const m = cargo.match(/^version = "(\d+\.\d+\.\d+)"[ \t]*(?:#.*)?$/m);
+  if (!m) {
+    console.error(`could not find [package] version in ${cargoPath}`);
+    process.exit(1);
+  }
+  const prev = m[1];
+  if (prev === next) {
+    console.error(`version is already ${next} — nothing to do`);
+    process.exit(1);
+  }
+
+  const cargoNext = bumpCargoVersions(cargo, next);
+  writeFileSync(cargoPath, cargoNext);
+
+  // Optional: README badge / install line if present
+  const readmePath = join(root, "README.md");
+  try {
+    const readme = readFileSync(readmePath, "utf8");
+    const readmeNext = bumpReadmePins(readme, prev, next);
+    if (readmeNext !== readme) writeFileSync(readmePath, readmeNext);
+  } catch {
+    /* no README or no pins */
+  }
+
+  // Gemini CLI extension manifest: its version is the release's.
+  const geminiPath = join(root, "gemini-extension.json");
+  try {
+    const gemini = readFileSync(geminiPath, "utf8");
+    const geminiNext = gemini.replace(
+      /("version"\s*:\s*")\d+\.\d+\.\d+(")/,
+      `$1${next}$2`,
+    );
+    if (geminiNext !== gemini) writeFileSync(geminiPath, geminiNext);
+  } catch {
+    /* no manifest */
+  }
+
+  console.log(`bumped jubarte ${prev} → ${next}`);
+  if (!viaRelease) {
+    console.error(banner);
+    console.error(
+      `Do not commit or tag this by hand: run scripts/release.sh ${next} with its six required notes.`,
+    );
+  }
+}
+
+// The codemod runs only when executed; scripts/bump-version.test.mjs imports
+// the helpers above without touching Cargo.toml or the README.
+if (process.argv[1] && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])) {
+  main();
+}

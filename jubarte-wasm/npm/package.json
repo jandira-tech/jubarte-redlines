@@ -1,16 +1,17 @@
 {
   "name": "jubarte-wasm",
   "version": "0.18.0",
-  "description": "Word-mode DOCX redline engine (jubarte-redlines) compiled to WebAssembly: compare two DOCX files into a tracked-changes redline, accept/reject revisions, list revisions, render DOCX to PDF, inspect and edit DOCX by paragraph id with edit plans. Node and browser builds included, plus compare-only slim builds without the PDF engine.",
-  "license": "AGPL-3.0-only",
+  "description": "Word-mode DOCX redline engine (jubarte-redlines) compiled to WebAssembly: compare two DOCX files into a tracked-changes redline, accept/reject revisions, list revisions, render DOCX to PDF, inspect and edit DOCX by paragraph id with edit plans. Node and browser builds included, plus slim builds without the PDF engine, compare-only redlines builds, and renderer-only pdf builds.",
+  "license": "Apache-2.0",
+  "author": "Jandira Technologies, LLC",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jandira-tech/jubarte-redlines.git",
+    "url": "git+https://github.com/jandira-tech/jubarte.git",
     "directory": "jubarte-wasm"
   },
-  "homepage": "https://github.com/jandira-tech/jubarte-redlines#readme",
+  "homepage": "https://github.com/jandira-tech/jubarte#readme",
   "bugs": {
-    "url": "https://github.com/jandira-tech/jubarte-redlines/issues"
+    "url": "https://github.com/jandira-tech/jubarte/issues"
   },
   "keywords": [
     "docx",
@@ -31,6 +32,9 @@
     "criticmarkup",
     "ai-agents"
   ],
+  "scripts": {
+    "prepublishOnly": "node prepublish-check.mjs"
+  },
   "main": "./node/jubarte_wasm.js",
   "types": "./node/jubarte_wasm.d.ts",
   "browser": "./web/jubarte_wasm.js",
@@ -73,6 +77,54 @@
       "default": "./web-slim/jubarte_wasm.js"
     },
     "./web-slim/jubarte_wasm_bg.wasm": "./web-slim/jubarte_wasm_bg.wasm",
+    "./redlines": {
+      "node": {
+        "types": "./node-redlines/jubarte_wasm.d.ts",
+        "default": "./node-redlines/jubarte_wasm.js"
+      },
+      "default": {
+        "types": "./web-redlines/jubarte_wasm.d.ts",
+        "default": "./web-redlines/jubarte_wasm.js"
+      }
+    },
+    "./node-redlines": {
+      "types": "./node-redlines/jubarte_wasm.d.ts",
+      "default": "./node-redlines/jubarte_wasm.js"
+    },
+    "./web-redlines": {
+      "types": "./web-redlines/jubarte_wasm.d.ts",
+      "default": "./web-redlines/jubarte_wasm.js"
+    },
+    "./web-redlines/jubarte_wasm_bg.wasm": "./web-redlines/jubarte_wasm_bg.wasm",
+    "./pdf": {
+      "node": {
+        "types": "./node-pdf/jubarte_wasm.d.ts",
+        "default": "./node-pdf/jubarte_wasm.js"
+      },
+      "default": {
+        "types": "./web-pdf/jubarte_wasm.d.ts",
+        "default": "./web-pdf/jubarte_wasm.js"
+      }
+    },
+    "./convert": {
+      "node": {
+        "types": "./node-pdf/jubarte_wasm.d.ts",
+        "default": "./node-pdf/jubarte_wasm.js"
+      },
+      "default": {
+        "types": "./web-pdf/jubarte_wasm.d.ts",
+        "default": "./web-pdf/jubarte_wasm.js"
+      }
+    },
+    "./node-pdf": {
+      "types": "./node-pdf/jubarte_wasm.d.ts",
+      "default": "./node-pdf/jubarte_wasm.js"
+    },
+    "./web-pdf": {
+      "types": "./web-pdf/jubarte_wasm.d.ts",
+      "default": "./web-pdf/jubarte_wasm.js"
+    },
+    "./web-pdf/jubarte_wasm_bg.wasm": "./web-pdf/jubarte_wasm_bg.wasm",
     "./package.json": "./package.json"
   },
   "files": [
@@ -80,7 +132,13 @@
     "web/",
     "node-slim/",
     "web-slim/",
-    "ENGINE_COMMIT.txt"
+    "node-redlines/",
+    "web-redlines/",
+    "node-pdf/",
+    "web-pdf/",
+    "ENGINE_COMMIT.txt",
+    "NOTICE",
+    "LICENSE-OFL-1.1.txt"
   ],
   "engines": {
     "node": ">=18"

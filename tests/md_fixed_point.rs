@@ -1,0 +1,1192 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: Apache-2.0
+//! The Markdown round trip, strict (docs/IDS_AND_MARKDOWN_ROUNDTRIP.md §0: nothing with a short id is
+//! lost). Every `.md` in `tests/fixtures/md-roundtrip` must come back
+//! exactly after md → docx → md, and every docx listed in its `docx.txt`
+//! must print the same Markdown after docx → md → docx → md. A manuscript,
+//! Markdown as its author wrote it with no id lines ([`MANUSCRIPTS`]), is
+//! gated as the docx it imports to, since its view adds the header and id
+//! lines it never had. Only the
+//! `source:`/`sha256:` lines, which name the file, and `latest` becoming
+//! a shared timestamp after reconstruction are normalized. Arthur,
+//! 2026-10-13: "Start strict! Fail fail fail until we fix": there is no list
+//! of known failures.
+//!
+//! Every case runs to the end, and the failure lists every short id it met
+//! with a verdict: `✓ p3 correct`, `✗ p5 wrong` (with the first line that
+//! changed), `✗ c3 lost`, `✗ r9 new`. Arthur, 2026-10-13: "Make it run until
+//! the end and fail only then. I want the lots saying: this is wrong, that is
+//! wrong, this is correct". The `ids-*.md` fixtures are views of documents
+//! dense in one kind of id (`views.txt`).
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::LazyLock;
+
+use regex::Regex;
+
+mod common;
+
+const FIXTURES: &str = "tests/fixtures/md-roundtrip";
+
+/// The page count and its source at the end of the `body:` line.
+static PAGES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r", \d+ pages?\s+#.*$").unwrap());
+
+/// The Markdown fixtures written by hand in the view's dialect: they must
+/// come back as written. Every other fixture is a manuscript
+/// ([`MANUSCRIPTS`]) or a view of a docx listed in `views.txt`.
+const HAND_WRITTEN: &[&str] = &["kitchen-sink.md"];
+
+/// Markdown as its authors wrote it, outside the view's dialect: no id
+/// lines, no YAML header, so the view of the docx it imports to can never
+/// be it. Each is gated this way: it converts
+/// to B, B reads as C, C converts to D; C must equal read(D) (G1) and D
+/// must render as B (G2: `debug B D --check render`, page count included),
+/// as every docx case is gated (#532).
+const MANUSCRIPTS: &[&str] = &[
+    // Pandoc manuscripts, as their authors wrote them (2026-10-14).
+    "dolphins.md",
+    "eLife.00047.md",
+    "git_manuscript.md",
+    "list_of_figures.md",
+    // A Google Docs export (2026-10-16). Arthur: "we will use its syntax for
+    // rendering images": `![][image4]` in the text, `[image4]: <data:image/
+    // png;base64,…>` defined at the end, a definition shared by every use.
+    "docx-libraries-comparison.md",
+];
+
+fn jubarte(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let out = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .map_err(|e| format!("{args:?}: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "{args:?} exited {:?}: {}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    String::from_utf8(out.stdout).map_err(|e| format!("{args:?}: {e}"))
+}
+
+/// The view as the round trip compares it: page markers off, and without
+/// the lines that name the file.
+fn view(dir: &Path, docx: &str) -> Result<String, String> {
+    let text = jubarte(dir, &["read", docx, "--no-page-markers"])?;
+    Ok(comparable(&text))
+}
+
+fn comparable(markdown: &str) -> String {
+    // Only the YAML header's own source:/sha256: lines name the file; a body
+    // paragraph that happens to start with those words is content.
+    let mut front_matter = false;
+    let mut out = String::new();
+    for (i, line) in markdown.lines().enumerate() {
+        if line == "---" {
+            front_matter = i == 0;
+        }
+        if front_matter && (line.starts_with("source: ") || line.starts_with("sha256: ")) {
+            continue;
+        }
+        // The page count is measured, not written: Word's cached layout
+        // counts the source, jubarte's layout counts what it wrote. Arthur,
+        // 2026-10-13: "we don't force page count into the docx".
+        if front_matter && let Some(pages) = PAGES.find(line).filter(|_| line.starts_with("body: "))
+        {
+            out.push_str(&line[..pages.start()]);
+            out.push('\n');
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+fn to_docx(dir: &Path, markdown: &str, name: &str) -> Result<String, String> {
+    let md = format!("{name}.md");
+    let docx = format!("{name}.docx");
+    std::fs::write(dir.join(&md), markdown).map_err(|e| e.to_string())?;
+    // The epoch pinned: unpinned, an undated change is dated now.
+    jubarte(
+        dir,
+        &[
+            "convert",
+            &md,
+            "-o",
+            &docx,
+            "--force",
+            "-d",
+            "1970-01-01T00:00:00Z",
+        ],
+    )?;
+    Ok(docx)
+}
+
+/// Each author's raw mark and comment dates: the revision UTC attribute
+/// when present, otherwise the stored wall clock.
+fn author_dates(docx: &[u8]) -> HashMap<String, Vec<Option<String>>> {
+    use jubarte::namespaces::W;
+    let date_utc = jubarte::xmllinq::XName::get(
+        "dateUtc",
+        "http://schemas.microsoft.com/office/word/2023/wordml/word16du",
+    );
+    let mut dates: HashMap<String, Vec<Option<String>>> = HashMap::new();
+    let Ok(mut zip) = zip::ZipArchive::new(std::io::Cursor::new(docx)) else {
+        return dates;
+    };
+    for i in 0..zip.len() {
+        let mut entry = zip.by_index(i).unwrap();
+        let name = entry.name().expect("a package part name");
+        if !name.starts_with("word/") || !name.ends_with(".xml") {
+            continue;
+        }
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut entry, &mut xml).unwrap();
+        let mut dom = jubarte::xmllinq::Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom.root(doc).expect("a part root");
+        for node in dom.descendants_and_self(root, None) {
+            if let Some(author) = dom.attribute(node, &W::author()) {
+                dates.entry(author.to_string()).or_default().push(
+                    dom.attribute(node, &date_utc)
+                        .or_else(|| dom.attribute(node, &W::date()))
+                        .map(str::to_string),
+                );
+            }
+        }
+    }
+    dates
+}
+
+/// Public reports resolve revision pairs and linked comment UTC dates, keeping
+/// the author's offset. Use these as well as the original raw-instant guard.
+fn reported_author_dates(docx: &[u8]) -> HashMap<String, Vec<Option<String>>> {
+    let (Ok(changes), Ok(comments)) = (
+        jubarte::changes::list_changes(docx),
+        jubarte::comments::list_comments(docx),
+    ) else {
+        return HashMap::new();
+    };
+    let mut dates: HashMap<String, Vec<Option<String>>> = HashMap::new();
+    for (author, date) in changes
+        .into_iter()
+        .filter_map(|c| c.author.map(|author| (author, c.date)))
+        .chain(comments.into_iter().map(|c| (c.author, c.date)))
+    {
+        dates.entry(author).or_default().push(date);
+    }
+    dates
+}
+
+fn author_has_date(line: &str, date: &str, dates: &HashMap<String, Vec<Option<String>>>) -> bool {
+    use saphyr::LoadableYamlNode;
+    let Ok(yaml) = saphyr::Yaml::load_from_str(line) else {
+        return false;
+    };
+    let author = yaml
+        .first()
+        .and_then(|yaml| yaml.as_mapping())
+        .and_then(|map| map.values().next())
+        .and_then(saphyr::Yaml::as_str);
+    author
+        .and_then(|author| dates.get(author))
+        .is_some_and(|dates| {
+            !dates.is_empty() && dates.iter().all(|value| value.as_deref() == Some(date))
+        })
+}
+
+// Undated marks take the latest timestamp, which can become shared.
+fn round_trip_comparable(markdown: &str, docx: &[u8]) -> String {
+    let dates = author_dates(docx);
+    let reported_dates = reported_author_dates(docx);
+    let mut front_matter = false;
+    let mut authors = false;
+    let mut out = String::new();
+    for (i, line) in comparable(markdown).lines().enumerate() {
+        if line == "---" {
+            front_matter = i == 0;
+        }
+        if front_matter && !line.starts_with(' ') {
+            authors = line == "authors:";
+        }
+        if front_matter
+            && authors
+            && line.starts_with(' ')
+            && let Some((before, date)) = line.rsplit_once(", latest ")
+            && (author_has_date(before, date, &dates)
+                || author_has_date(before, date, &reported_dates))
+        {
+            out.push_str(before);
+            out.push_str(", ");
+            out.push_str(date);
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn dated_marks(date: &str) -> Vec<u8> {
+    jubarte::markdown::markdown_to_docx(
+        &format!("---\nauthors:\n  AL: Ann Lee  # 2 revisions, {date}\nbody: p0\n---\n\n<!-- p0 -->\n{{++one++}}{{r1 @AL}} and {{++two++}}{{r2 @AL}}.\n"),
+        &jubarte::markdown::DocxOptions::default(),
+    )
+    .unwrap()
+    .docx
+}
+
+#[test]
+fn latest_and_shared_headers_compare_after_undated_marks_take_latest() {
+    let latest = "---\nauthors:\n  AL: Ann Lee  # 2 revisions, latest 2026-10-17T16:59:00Z\nbody: p0\n---\n\n  AL: body, latest 2026-10-17T16:59:00Z\n";
+    let shared = latest.replacen(
+        "# 2 revisions, latest 2026-10-17T16:59:00Z",
+        "# 2 revisions, 2026-10-17T16:59:00Z",
+        1,
+    );
+    let docx = dated_marks("2026-10-17T16:59:00Z");
+    assert_eq!(
+        round_trip_comparable(latest, &docx),
+        round_trip_comparable(&shared, &docx)
+    );
+    assert!(
+        round_trip_comparable(latest, &docx).contains("  AL: body, latest 2026-10-17T16:59:00Z")
+    );
+    assert_ne!(
+        round_trip_comparable(latest, &docx),
+        round_trip_comparable(&shared.replace("16:59:00Z", "16:58:00Z"), &docx)
+    );
+}
+
+#[test]
+fn latest_and_shared_offset_headers_compare_only_when_all_dates_agree() {
+    let latest =
+        "---\nauthors:\n  AL: Ann Lee # 2 revisions, latest 2026-09-25T20:04:00-04:00\n---\n";
+    let shared = latest.replace(", latest ", ", ");
+    let docx = dated_marks("2026-09-25T20:04:00-04:00");
+    assert_eq!(
+        round_trip_comparable(latest, &docx),
+        round_trip_comparable(&shared, &docx)
+    );
+    let wrong_offset = dated_marks("2026-09-25T20:04:00-03:00");
+    assert_ne!(
+        round_trip_comparable(latest, &wrong_offset),
+        round_trip_comparable(&shared, &wrong_offset)
+    );
+}
+
+#[test]
+fn latest_and_shared_headers_differ_when_docx_dates_disagree() {
+    let latest = "---\nauthors:\n  AL: Ann Lee  # 2 revisions, latest 2026-10-17T16:59:00Z\n---\n";
+    let shared = latest.replace(", latest ", ", ");
+    for date in ["2026-10-17T16:58:00Z", "latest 2026-10-17T16:58:00Z"] {
+        let docx = dated_marks(date);
+        assert_ne!(
+            round_trip_comparable(latest, &docx),
+            round_trip_comparable(&shared, &docx),
+            "the docx has {date}"
+        );
+    }
+}
+
+#[test]
+fn latest_collapse_requires_every_mark_and_comment_of_the_named_author() {
+    let latest = "---\nauthors:\n  AL: Ann Lee  # 2 revisions, latest 2026-10-17T16:59:00Z\n---\n";
+    let shared = latest.replace(", latest ", ", ");
+    for body in [
+        "{++one++}{r1 @AL 2026-10-17T16:59:00Z} and {++two++}{r2 @AL 2026-10-17T16:58:00Z}.",
+        "{++one++}{r1 @AL 2026-10-17T16:59:00Z} and {==two==}{>>c0 @AL 2026-10-17T16:58:00Z: note<<}.",
+        "{++one++}{r1 @BO 2026-10-17T16:59:00Z}.",
+        "Plain text.",
+    ] {
+        let markdown = format!("{latest}\n<!-- p0 -->\n{body}\n");
+        let docx = jubarte::markdown::markdown_to_docx(
+            &markdown,
+            &jubarte::markdown::DocxOptions::default(),
+        )
+        .unwrap()
+        .docx;
+        assert_ne!(
+            round_trip_comparable(latest, &docx),
+            round_trip_comparable(&shared, &docx),
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn latest_collapse_reads_the_utc_instant_the_reader_reports() {
+    // Word for Mac writes local wall-clock time in `w:date` and the instant
+    // in `w16du:dateUtc`; the reader reports the instant (#1118), so the
+    // guard compares the instant too.
+    let latest = "---\nauthors:\n  AL: Ann Lee  # 2 revisions, latest 2026-10-17T20:59:00Z\n---\n";
+    let shared = latest.replace(", latest ", ", ");
+    let utc = r#" xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du" w16du:dateUtc="2026-10-17T20:59:00Z""#;
+    let docx = common::docx::docx(&format!(
+        r#"<w:p><w:ins w:id="1" w:author="Ann Lee" w:date="2026-10-17T16:59:00Z"{utc}><w:r><w:t>one</w:t></w:r></w:ins><w:ins w:id="2" w:author="Ann Lee" w:date="2026-10-17T20:59:00Z"><w:r><w:t>two</w:t></w:r></w:ins></w:p>"#
+    ));
+    assert_eq!(
+        round_trip_comparable(latest, &docx),
+        round_trip_comparable(&shared, &docx)
+    );
+    let local = docx_without_utc(&docx);
+    assert_ne!(
+        round_trip_comparable(latest, &local),
+        round_trip_comparable(&shared, &local),
+        "without dateUtc the local w:date counts"
+    );
+}
+
+fn docx_without_utc(docx: &[u8]) -> Vec<u8> {
+    let xml = common::docx::part_string(docx, "word/document.xml").unwrap();
+    let xml = xml.replace(r#" w16du:dateUtc="2026-10-17T20:59:00Z""#, "");
+    common::docx::replace_entry(docx, "word/document.xml", xml.as_bytes())
+}
+
+/// The first lines that differ, numbered, for the failure report.
+fn difference(want: &str, got: &str) -> String {
+    let (a, b): (Vec<&str>, Vec<&str>) = (want.lines().collect(), got.lines().collect());
+    let mut out = Vec::new();
+    for i in 0..a.len().max(b.len()) {
+        let (x, y) = (a.get(i).copied(), b.get(i).copied());
+        if x != y {
+            out.push(format!(
+                "    line {}:\n      want {:?}\n      got  {:?}",
+                i + 1,
+                x.unwrap_or("<end>"),
+                y.unwrap_or("<end>")
+            ));
+        }
+        if out.len() == 8 {
+            out.push("    …".to_string());
+            break;
+        }
+    }
+    format!("{} lines -> {} lines\n{}", a.len(), b.len(), out.join("\n"))
+}
+
+/// One round trip: the Markdown it started from and the Markdown it gave
+/// back, or why it gave nothing back; and what the docx it wrote lost or
+/// gained against the source docx.
+struct Case {
+    name: String,
+    want: String,
+    got: Result<String, String>,
+    docx: Vec<String>,
+}
+
+/// What the docx jubarte wrote lost or gained against the source docx, as
+/// `jubarte debug A B --check render` lists it (highlights, colours, fonts,
+/// styles, tables, sections, parts). The Markdown fixed point cannot see a
+/// loss in the first docx → md step: both views lose it alike. This can.
+/// Lines come whole (`--full-lines`): a clipped line keeps a window around
+/// its first difference, so one that differs only in what `in_dialect`
+/// drops would still differ in its window.
+fn docx_verdicts(dir: &Path, source: &str, written: &str) -> Vec<String> {
+    let out = match jubarte(
+        dir,
+        &[
+            "debug",
+            source,
+            written,
+            "--check",
+            "render",
+            "--full-lines",
+        ],
+    ) {
+        Ok(out) => out,
+        Err(e) => return vec![format!("  ✗ docx not compared: {e}")],
+    };
+    render_verdicts(&out)
+}
+
+/// The verdicts `docx_verdicts` reports for one `debug A B --check render
+/// --full-lines` listing.
+fn render_verdicts(out: &str) -> Vec<String> {
+    let mut part = String::new();
+    let mut lines = Vec::new();
+    // A lost line and a new line that say the same cancel each other.
+    let mut lost: Vec<(String, String)> = Vec::new();
+    let mut new: Vec<(String, String)> = Vec::new();
+    // jubarte counts pages with the faces it loads, so when a face differs
+    // (one the dialect does not carry: `in_dialect` drops it) the page count
+    // follows it and is no loss of its own.
+    let mut faces_differ = false;
+    for line in out.lines() {
+        if let Some(rest) = line
+            .strip_prefix("-A ")
+            .or_else(|| line.strip_prefix("+B "))
+            .filter(|_| part == "(layout) ")
+        {
+            faces_differ |= rest.trim().starts_with("font ");
+        }
+        if let Some(rest) = line.strip_prefix("-A ") {
+            if let Some(rest) = in_dialect(&part, rest.trim()) {
+                lost.push((part.clone(), rest));
+            }
+        } else if let Some(rest) = line.strip_prefix("+B ") {
+            if let Some(rest) = in_dialect(&part, rest.trim()) {
+                new.push((part.clone(), rest));
+            }
+        } else if let Some(name) = line.strip_suffix(": only in A") {
+            lines.push(format!("  ✗ docx {name} lost: the whole part"));
+        } else if let Some(name) = line.strip_suffix(": only in B") {
+            lines.push(format!("  ✗ docx {name} new: the whole part"));
+        } else if let Some((name, _)) = line
+            .split_once(": ")
+            .filter(|(_, r)| r.ends_with("differ") || r.ends_with("differs"))
+        {
+            part = format!("{name} ");
+        }
+    }
+    let (mut lost, mut new) = unmatched(lost, new);
+    if faces_differ {
+        let page_count =
+            |(part, rest): &(String, String)| part == "(layout) " && rest.starts_with("pages ");
+        lost.retain(|line| !page_count(line));
+        new.retain(|line| !page_count(line));
+    }
+    lines.extend(
+        lost.iter()
+            .map(|(part, rest)| format!("  ✗ docx {part}lost: {rest}")),
+    );
+    lines.extend(
+        new.iter()
+            .map(|(part, rest)| format!("  ✗ docx {part}new: {rest}")),
+    );
+    lines
+}
+
+/// The lost and the new lines left once the longest run of equal lines,
+/// in order, cancels: a line that only moved (an insertion now after the
+/// deletion it came before) is reported, not cancelled.
+fn unmatched<T: PartialEq>(lost: Vec<T>, new: Vec<T>) -> (Vec<T>, Vec<T>) {
+    let (n, m) = (lost.len(), new.len());
+    let mut longest = vec![vec![0usize; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            longest[i][j] = if lost[i] == new[j] {
+                longest[i + 1][j + 1] + 1
+            } else {
+                longest[i + 1][j].max(longest[i][j + 1])
+            };
+        }
+    }
+    let (mut kept_lost, mut kept_new) = (vec![false; n], vec![false; m]);
+    let (mut i, mut j) = (0, 0);
+    while i < n && j < m {
+        if lost[i] == new[j] {
+            (i, j) = (i + 1, j + 1);
+        } else if longest[i + 1][j] >= longest[i][j + 1] {
+            kept_lost[i] = true;
+            i += 1;
+        } else {
+            kept_new[j] = true;
+            j += 1;
+        }
+    }
+    kept_lost[i..].iter_mut().for_each(|k| *k = true);
+    kept_new[j..].iter_mut().for_each(|k| *k = true);
+    let keep = |items: Vec<T>, kept: Vec<bool>| {
+        items
+            .into_iter()
+            .zip(kept)
+            .filter_map(|(item, kept)| kept.then_some(item))
+            .collect()
+    };
+    (keep(lost, kept_lost), keep(new, kept_new))
+}
+
+#[test]
+fn a_moved_render_line_is_reported_and_an_equal_one_cancels() {
+    assert_eq!(
+        unmatched(vec!["X", "A"], vec!["A", "X"]),
+        (vec!["X"], vec!["X"])
+    );
+    assert_eq!(unmatched(vec!["A", "B"], vec!["A", "B"]), (vec![], vec![]));
+    assert_eq!(
+        unmatched(vec!["A", "B", "C"], vec!["B", "C", "A"]),
+        (vec!["A"], vec!["A"])
+    );
+    assert_eq!(unmatched(vec!["A"], vec!["B"]), (vec!["A"], vec!["B"]));
+}
+
+/// What the Markdown view cannot say, so a docx it writes cannot hold it,
+/// or says in another form Word shows alike: each pattern with why. Everything else `debug --check render` lists is
+/// compared: the styles legend (each style's font, size, bold, spacing,
+/// alignment), the page, highlights (their colour on the `<mark>`'s
+/// `class`), tables, sections, fields, notes and parts.
+static OUT_OF_DIALECT: LazyLock<Vec<(Regex, &str)>> = LazyLock::new(|| {
+    [
+        // A font set on a run, not through a style: the view has no run font.
+        (r#"^rfonts "[^"]*" ×"#, "direct run font"),
+        // The style a font comes through (`via "Normal"`, or the document
+        // defaults): the legend gives each style's effective font, which
+        // the Markdown comparison checks; where it is set, it does not say.
+        (
+            r#"^rfonts "[^"]*" via "[^"]*" ×"#,
+            "where a style's font is set",
+        ),
+        (r"^color ", "text colour, set on a run or by a style"),
+        (r"^(para|run)-shd ", "shading"),
+        // The package's font list and theme, the defaults under every
+        // style, and the faces a renderer loads for them: the legend gives
+        // each style's effective font instead.
+        // Word draws a `HYPERLINK "url"` field and a `w:hyperlink` alike,
+        // and the view prints both as `[text](url)`, whose text and target
+        // the Markdown comparison checks. Arthur, 2026-10-13: treat them as
+        // equal. A header's or footer's field is not a link the writer
+        // writes, so it stays compared.
+        (
+            r"^word/(document|footnotes|endnotes|comments)\.xml field HYPERLINK ",
+            "a HYPERLINK field and a link are the same link",
+        ),
+        (
+            r"^\(layout\) (fontTable|theme|font|docDefaults) ",
+            "fonts outside the legend",
+        ),
+        // A note is one Markdown definition: a table in it prints as its
+        // cells, one `<br>` line each (their text is compared), and the
+        // dialect has no table inside a note to write back.
+        (
+            r"^word/(footnotes|endnotes)\.xml table ",
+            "a table inside a note",
+        ),
+    ]
+    .into_iter()
+    .map(|(pattern, why)| (Regex::new(pattern).unwrap(), why))
+    .collect()
+});
+
+/// A `debug --check render` line as far as the view can say it, `None` when
+/// it says nothing the view can: a table's cell shading is left out, so the
+/// table itself is compared without it. A highlight's colour the view does
+/// say (`<mark class="hl-…">`), so it is compared too.
+fn in_dialect(part: &str, rest: &str) -> Option<String> {
+    static CELLS_SHD: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r" cells-shd\[[^\]]*\]").unwrap());
+    let line = format!("{part}{rest}");
+    if OUT_OF_DIALECT
+        .iter()
+        .any(|(pattern, _)| pattern.is_match(rest) || pattern.is_match(&line))
+    {
+        return None;
+    }
+    Some(CELLS_SHD.replace_all(rest, "").into_owned())
+}
+
+/// A `views.txt` entry's last word when the committed view is the second
+/// read: the view of the docx `convert` writes from the docx's first view.
+const SECOND_READ: &str = " second-read";
+
+/// The `views.txt` entries: each view's file name, the docx it was read
+/// from, and whether it is that docx's second read.
+fn view_entries() -> Vec<(String, PathBuf, bool)> {
+    std::fs::read_to_string(Path::new(FIXTURES).join("views.txt"))
+        .unwrap()
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+        .filter_map(|l| l.split_once(' '))
+        .map(|(md, rest)| {
+            let rest = rest.trim();
+            let docx = rest.strip_suffix(SECOND_READ);
+            (
+                md.to_string(),
+                PathBuf::from(docx.unwrap_or(rest).trim()),
+                docx.is_some(),
+            )
+        })
+        .collect()
+}
+
+/// The docx a committed view was read from (`views.txt`), by file name.
+fn view_sources() -> HashMap<String, PathBuf> {
+    view_entries()
+        .into_iter()
+        .map(|(md, docx, _)| (md, docx))
+        .collect()
+}
+
+/// md → docx → md must give the Markdown back; when the Markdown is the
+/// view of a docx, the docx it writes must also hold what that docx held.
+fn markdown_case(dir: &Path, path: &Path, docx_source: Option<&Path>) -> Case {
+    let name = format!("md -> docx -> md   {}", path.display());
+    let source = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            return Case {
+                name,
+                want: String::new(),
+                got: Err(e.to_string()),
+                docx: Vec::new(),
+            };
+        }
+    };
+    let written = to_docx(dir, &source, "md");
+    let bytes = written
+        .as_ref()
+        .ok()
+        .and_then(|name| std::fs::read(dir.join(name)).ok())
+        .unwrap_or_default();
+    let got = written
+        .clone()
+        .and_then(|docx| view(dir, &docx))
+        .map(|view| round_trip_comparable(&view, &bytes));
+    let docx = match (docx_source, &written) {
+        (Some(original), Ok(written)) => match std::fs::copy(original, dir.join("original.docx")) {
+            Ok(_) => docx_verdicts(dir, "original.docx", written),
+            Err(e) => vec![format!(
+                "  ✗ docx not compared: {}: {e}",
+                original.display()
+            )],
+        },
+        _ => Vec::new(),
+    };
+    Case {
+        name,
+        want: round_trip_comparable(&source, &bytes),
+        got,
+        docx,
+    }
+}
+
+/// A manuscript (A) imports to a docx (B), which is then gated as a docx
+/// case: B's view (C) must come back from the docx it writes (D), and D
+/// must render as B.
+fn manuscript_case(dir: &Path, path: &Path) -> Case {
+    let name = format!("md -> docx -> md -> docx -> md   {}", path.display());
+    // B is written apart from the docx case's own files.
+    let imported = std::fs::read_to_string(path)
+        .map_err(|e| format!("{}: {e}", path.display()))
+        .and_then(|source| {
+            std::fs::create_dir_all(dir.join("import")).map_err(|e| e.to_string())?;
+            to_docx(&dir.join("import"), &source, "imported")
+        });
+    match imported {
+        Ok(docx) => Case {
+            name,
+            ..docx_case(dir, &dir.join("import").join(docx))
+        },
+        Err(e) => Case {
+            name,
+            want: String::new(),
+            got: Err(e),
+            docx: Vec::new(),
+        },
+    }
+}
+
+/// docx → md → docx → md must print the same Markdown twice.
+fn docx_case(dir: &Path, path: &Path) -> Case {
+    let name = format!("docx -> md -> docx -> md   {}", path.display());
+    // The source sits apart from the Markdown: once anchoring is automatic
+    // (spec §5.3), a Markdown beside its source would keep everything and
+    // measure nothing.
+    let first = std::fs::create_dir_all(dir.join("source"))
+        .and_then(|()| std::fs::copy(path, dir.join("source/source.docx")))
+        .map_err(|e| format!("{}: {e}", path.display()))
+        .and_then(|_| view(dir, "source/source.docx"));
+    match first {
+        Ok(first) => {
+            let written = to_docx(dir, &first, "back");
+            let bytes = written
+                .as_ref()
+                .ok()
+                .and_then(|name| std::fs::read(dir.join(name)).ok())
+                .unwrap_or_default();
+            let docx = match &written {
+                Ok(written) => docx_verdicts(dir, "source/source.docx", written),
+                Err(_) => Vec::new(),
+            };
+            let got = written
+                .and_then(|docx| view(dir, &docx))
+                .map(|view| round_trip_comparable(&view, &bytes));
+            Case {
+                name,
+                want: round_trip_comparable(&first, &bytes),
+                got,
+                docx,
+            }
+        }
+        Err(e) => Case {
+            name,
+            want: String::new(),
+            got: Err(e),
+            docx: Vec::new(),
+        },
+    }
+}
+
+/// A note: `{r1+2 @AL}`, `{>>c5 @AL: text<<}`, `{footer2.r7 @LW}`.
+static NOTE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?s)\{(?:>>)?((?:(?:[a-z0-9_.]+\.)?(?:r[0-9]+(?:\+[0-9]+)*|c[0-9]+|noid)|[A-Za-z_][A-Za-z0-9_]*:rev:[0-9]+)\b)([^{}]*?)(?:<<)?\}").unwrap()
+});
+
+/// What a view says under each short id, in the order it says it:
+/// id-line blocks (`p3`, `t0`, `p10-p11`, `footnotes.p0`) up to the next id
+/// line, notes by their first token with the CriticMarkup span they follow,
+/// and YAML header entries (`yaml authors.AL`). A repeated id is kept as
+/// `ID#2`, so neither copy hides the other.
+fn ids(view: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    let mut push = |key: String, value: String| {
+        let n = seen.entry(key.clone()).or_insert(0);
+        *n += 1;
+        let key = if *n == 1 { key } else { format!("{key}#{n}") };
+        out.push((key, value));
+    };
+    let mut lines = view.lines().peekable();
+    if lines.peek() == Some(&"---") {
+        lines.next();
+        let mut parent: Option<String> = None;
+        let mut entry: Option<(String, String)> = None;
+        for line in lines.by_ref() {
+            if line == "---" {
+                break;
+            }
+            let indented = line.starts_with(' ');
+            let key = line
+                .trim_start()
+                .split(':')
+                .next()
+                .unwrap_or("")
+                .trim_matches('"');
+            let value_less = line
+                .split("  #")
+                .next()
+                .unwrap_or(line)
+                .trim_end()
+                .ends_with(':');
+            if !indented || parent.is_some() && line.starts_with("  ") && !line.starts_with("   ") {
+                if let Some((k, v)) = entry.take() {
+                    push(k, v);
+                }
+                if !indented {
+                    parent = value_less.then(|| key.to_string());
+                    if parent.is_some() {
+                        continue;
+                    }
+                }
+                let name = match (&parent, indented) {
+                    (Some(p), true) => format!("yaml {p}.{key}"),
+                    _ => format!("yaml {key}"),
+                };
+                entry = Some((name, line.to_string()));
+            } else if let Some((_, v)) = entry.as_mut() {
+                v.push('\n');
+                v.push_str(line);
+            }
+        }
+        if let Some((k, v)) = entry.take() {
+            push(k, v);
+        }
+    }
+    let body: Vec<&str> = lines.collect();
+    let mut block: Option<(String, Vec<&str>)> = None;
+    let mut blocks: Vec<(String, String)> = Vec::new();
+    for line in &body {
+        // A nested list item's id line is indented with its item.
+        let id = line
+            .trim_start()
+            .strip_prefix("<!-- ")
+            .and_then(|rest| rest.split_whitespace().next());
+        match id {
+            Some(id) if id != "-->" => {
+                if let Some((k, v)) = block.take() {
+                    blocks.push((k, v.join("\n").trim_end().to_string()));
+                }
+                block = Some((id.to_string(), vec![line]));
+            }
+            _ => match block.as_mut() {
+                Some((_, v)) => v.push(line),
+                None if line.trim().is_empty() => {}
+                None => block = Some(("(before the first id)".to_string(), vec![line])),
+            },
+        }
+    }
+    if let Some((k, v)) = block.take() {
+        blocks.push((k, v.join("\n").trim_end().to_string()));
+    }
+    for (k, v) in blocks {
+        push(k, v);
+    }
+    let body = body.join("\n");
+    for m in NOTE.captures_iter(&body) {
+        let whole = m.get(0).unwrap();
+        push(
+            m[1].to_string(),
+            format!("{}{}", span_before(&body, whole.start()), whole.as_str()),
+        );
+    }
+    out
+}
+
+/// The CriticMarkup span a note at `at` belongs to: skip the notes chained
+/// before it (`{~~a~>b~~}{r0}{r1}`), then take the span ending there.
+fn span_before(text: &str, mut at: usize) -> &str {
+    while let Some(note) = NOTE
+        .find_iter(&text[..at])
+        .last()
+        .filter(|note| note.end() == at)
+    {
+        at = note.start();
+    }
+    for (open, close) in [
+        ("{++", "++}"),
+        ("{--", "--}"),
+        ("{~~", "~~}"),
+        ("{==", "==}"),
+    ] {
+        if text[..at].ends_with(close)
+            && let Some(i) = text[..at].rfind(open)
+        {
+            return &text[i..at];
+        }
+    }
+    ""
+}
+
+/// The first line of a value that changed, for a `wrong` verdict.
+fn first_change(want: &str, got: &str) -> String {
+    let cut = |s: &str| {
+        let s: String = s.chars().take(160).collect();
+        format!("{s:?}")
+    };
+    let (a, b): (Vec<&str>, Vec<&str>) = (want.lines().collect(), got.lines().collect());
+    let i = (0..a.len().max(b.len()))
+        .find(|&i| a.get(i) != b.get(i))
+        .unwrap_or(0);
+    format!(
+        "\n        want {}\n        got  {}",
+        cut(a.get(i).copied().unwrap_or("<end>")),
+        cut(b.get(i).copied().unwrap_or("<end>"))
+    )
+}
+
+/// Verdicts for every short id of one case, and the counts.
+struct Report {
+    lines: Vec<String>,
+    correct: usize,
+    wrong: usize,
+    lost: usize,
+    new: usize,
+}
+
+fn verdicts(want: &str, got: &str) -> Report {
+    let (want, got) = (ids(want), ids(got));
+    let got_by_id: HashMap<&str, &str> =
+        got.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let want_ids: HashMap<&str, ()> = want.iter().map(|(k, _)| (k.as_str(), ())).collect();
+    let mut r = Report {
+        lines: Vec::new(),
+        correct: 0,
+        wrong: 0,
+        lost: 0,
+        new: 0,
+    };
+    for (id, value) in &want {
+        match got_by_id.get(id.as_str()) {
+            Some(g) if g == value => {
+                r.correct += 1;
+                r.lines.push(format!("  ✓ {id} correct"));
+            }
+            Some(g) => {
+                r.wrong += 1;
+                r.lines
+                    .push(format!("  ✗ {id} wrong{}", first_change(value, g)));
+            }
+            None => {
+                r.lost += 1;
+                r.lines.push(format!("  ✗ {id} lost"));
+            }
+        }
+    }
+    for (id, _) in got
+        .iter()
+        .filter(|(k, _)| !want_ids.contains_key(k.as_str()))
+    {
+        r.new += 1;
+        r.lines.push(format!(
+            "  ✗ {id} new: the round trip printed an id the source does not have"
+        ));
+    }
+    r
+}
+
+fn docx_list() -> Vec<PathBuf> {
+    std::fs::read_to_string(Path::new(FIXTURES).join("docx.txt"))
+        .unwrap()
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(PathBuf::from)
+        .collect()
+}
+
+#[test]
+fn markdown_and_docx_round_trip_exactly() {
+    let mut cases: Vec<Case> = Vec::new();
+    let mut markdown: Vec<PathBuf> = std::fs::read_dir(FIXTURES)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("md")))
+        .collect();
+    markdown.sort();
+    assert!(!markdown.is_empty(), "no Markdown fixtures in {FIXTURES}");
+    let sources = view_sources();
+    let unlisted: Vec<String> = markdown
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+        .filter(|f| {
+            !sources.contains_key(f)
+                && !HAND_WRITTEN.contains(&f.as_str())
+                && !MANUSCRIPTS.contains(&f.as_str())
+        })
+        .collect();
+    assert!(
+        unlisted.is_empty(),
+        "every Markdown fixture is a view listed in views.txt, hand-written (HAND_WRITTEN) or a manuscript (MANUSCRIPTS): {unlisted:?}"
+    );
+    // `MD_FIXED_POINT_ONLY=ids-tables` replays only the fixtures whose path
+    // holds that text, for a quick loop on one document; the gate itself
+    // runs them all.
+    let only = std::env::var("MD_FIXED_POINT_ONLY").ok();
+    let picked = |path: &Path| {
+        only.as_deref()
+            .is_none_or(|only| path.to_string_lossy().contains(only))
+    };
+    for path in markdown.iter().filter(|p| picked(p)) {
+        let dir = tempfile::tempdir().unwrap();
+        let file = path.file_name().unwrap().to_string_lossy().to_string();
+        cases.push(if MANUSCRIPTS.contains(&file.as_str()) {
+            manuscript_case(dir.path(), path)
+        } else {
+            markdown_case(dir.path(), path, sources.get(&file).map(PathBuf::as_path))
+        });
+    }
+    let docx = docx_list();
+    assert!(!docx.is_empty(), "no docx fixtures in {FIXTURES}/docx.txt");
+    for path in docx.iter().filter(|p| picked(p)) {
+        let dir = tempfile::tempdir().unwrap();
+        cases.push(docx_case(dir.path(), path));
+    }
+    let mut summary = Vec::new();
+    let mut failed = 0;
+    let mut totals = [0usize; 4];
+    let mut docx_lines = 0;
+    for case in &cases {
+        let line = match &case.got {
+            Err(e) => {
+                failed += 1;
+                let lost = ids(&case.want).len();
+                totals[2] += lost;
+                println!("✗ {}\n  every id lost ({lost}): {e}\n", case.name);
+                format!("✗ {}: no Markdown back, {lost} ids lost: {e}", case.name)
+            }
+            Ok(got) => {
+                let r = verdicts(&case.want, got);
+                for (t, n) in totals.iter_mut().zip([r.correct, r.wrong, r.lost, r.new]) {
+                    *t += n;
+                }
+                let exact = case.want == *got && case.docx.is_empty();
+                failed += usize::from(!exact);
+                docx_lines += case.docx.len();
+                let counts = format!(
+                    "{} correct, {} wrong, {} lost, {} new; docx: {} differences",
+                    r.correct,
+                    r.wrong,
+                    r.lost,
+                    r.new,
+                    case.docx.len()
+                );
+                println!("{} {}: {counts}", if exact { "✓" } else { "✗" }, case.name);
+                for l in r.lines.iter().chain(&case.docx) {
+                    println!("{l}");
+                }
+                if !exact {
+                    println!("  text: {}", difference(&case.want, got));
+                }
+                println!();
+                format!("{} {}: {counts}", if exact { "✓" } else { "✗" }, case.name)
+            }
+        };
+        summary.push(line);
+    }
+    let [correct, wrong, lost, new] = totals;
+    assert!(
+        failed == 0,
+        "{failed} of {} round trips are not exact; ids: {correct} correct, {wrong} wrong, {lost} lost, {new} new; docx: {docx_lines} differences\n{}\n(every verdict is printed above)",
+        cases.len(),
+        summary.join("\n")
+    );
+}
+
+#[test]
+fn ids_fields_markdown_round_trip_is_exact() {
+    let dir = tempfile::tempdir().unwrap();
+    let case = markdown_case(
+        dir.path(),
+        Path::new(FIXTURES).join("ids-fields.md").as_path(),
+        None,
+    );
+    assert_eq!(case.got.unwrap(), case.want);
+}
+
+#[test]
+fn offset_namespace_declaration_preserves_opaque_drawing_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let case = docx_case(
+        dir.path(),
+        Path::new(
+            "tests/corpus/bench/_to_improve_accepted_changes/_original_unaccepted_docx/ac6cd8d92f.docx",
+        ),
+    );
+    assert_eq!(case.got.unwrap(), case.want);
+    assert!(case.docx.is_empty(), "{:?}", case.docx);
+}
+
+/// A committed view of a docx fixture is what `jubarte read` prints for it
+/// today: the Markdown fixtures stay in the dialect the view writes.
+/// (`views.txt` names them.)
+#[test]
+fn committed_views_match_the_view() {
+    let bless = std::env::var_os("JUBARTE_BLESS").is_some();
+    let mut stale = Vec::new();
+    let mut sources = view_entries();
+    sources.sort();
+    for (md, docx, second_read) in &sources {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::copy(docx, dir.path().join("source.docx")).unwrap();
+        let mut raw = jubarte(dir.path(), &["read", "source.docx", "--no-page-markers"]).unwrap();
+        if *second_read {
+            // The source gives one revision id to marks that `convert`
+            // must number apart (#1137), so its first view is no fixed
+            // point: the committed view is the docx `convert` writes from
+            // it, read back (#1414).
+            let back = to_docx(dir.path(), &comparable(&raw), "first").unwrap();
+            raw = jubarte(dir.path(), &["read", &back, "--no-page-markers"]).unwrap();
+        }
+        let got = comparable(&raw);
+        if bless {
+            // Keep measured page facts; only source identity is fixture-local.
+            let mut header = false;
+            let fixture = raw
+                .lines()
+                .enumerate()
+                .filter_map(|(i, line)| {
+                    if line == "---" {
+                        header = i == 0;
+                    }
+                    (!header || !(line.starts_with("source: ") || line.starts_with("sha256: ")))
+                        .then_some(line)
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n";
+            std::fs::write(Path::new(FIXTURES).join(md), fixture).unwrap();
+            continue;
+        }
+        let want = comparable(&std::fs::read_to_string(Path::new(FIXTURES).join(md)).unwrap());
+        if want != got {
+            stale.push(format!("{md}: {}", difference(&want, &got)));
+        }
+    }
+    assert!(
+        stale.is_empty(),
+        "stale views (regenerate with JUBARTE_BLESS=1 and committed_views_match_the_view):\n{}",
+        stale.join("\n")
+    );
+}
+
+#[test]
+fn ids_name_blocks_notes_and_yaml_entries() {
+    let view = "---\nview: tracked  # c\nauthors:\n  AL: Ana Lima  # 1\n---\n\n<!-- p0 left -->\n\
+                a {~~x~>y~~}{r0 @AL}{r1 @AL} b{== c==}{>>c2 @AL: hi<<}\n\n<!-- p1-p2 empty -->\n";
+    let keys: Vec<String> = ids(view).into_iter().map(|(k, _)| k).collect();
+    assert_eq!(
+        keys,
+        [
+            "yaml view",
+            "yaml authors.AL",
+            "p0",
+            "p1-p2",
+            "r0",
+            "r1",
+            "c2"
+        ]
+    );
+    let notes: HashMap<String, String> = ids(view).into_iter().collect();
+    assert_eq!(notes["r1"], "{~~x~>y~~}{r1 @AL}");
+    assert_eq!(notes["c2"], "{== c==}{>>c2 @AL: hi<<}");
+    let r = verdicts(
+        view,
+        &view.replace("hi<<}", "ho<<}").replace("{r1 @AL}", ""),
+    );
+    assert_eq!(
+        (r.correct, r.wrong, r.lost, r.new),
+        (4, 2, 1, 0),
+        "{:#?}",
+        r.lines
+    );
+}
+
+/// A manuscript is gated on what it imports to, not on its own bytes: the
+/// view of its docx comes back (G1) and the docx written from that view
+/// renders as the imported one (G2). `list_of_figures.md` imports with its
+/// text unchanged, so it passes both.
+#[test]
+fn a_manuscript_is_gated_on_what_it_imports_to() {
+    let dir = tempfile::tempdir().unwrap();
+    let case = manuscript_case(
+        dir.path(),
+        Path::new(FIXTURES).join("list_of_figures.md").as_path(),
+    );
+    assert!(case.name.contains("list_of_figures.md"), "{}", case.name);
+    let got = case.got.expect("a view back");
+    assert_eq!(got, case.want);
+    assert!(
+        case.want.starts_with("---\n"),
+        "the view, not the manuscript: {}",
+        case.want
+    );
+    assert!(case.docx.is_empty(), "{:?}", case.docx);
+}
+
+/// jubarte measures the page count with the faces it loads. A face the
+/// dialect does not carry (a direct run font, `fonts outside the legend`)
+/// changes the count of the docx written back, so the count is excused
+/// with it: ids-tables.md loses Arial and Times New Roman, 11 pages → 10.
+#[test]
+fn a_page_count_moved_by_a_face_outside_the_dialect_is_excused() {
+    let out = "(layout): 3 lines differ\n\
+               -A   pages 11\n\
+               -A   font \"Arial\" regular → ArialMT explicit\n\
+               +B   pages 10\n";
+    assert!(
+        render_verdicts(out).is_empty(),
+        "{:?}",
+        render_verdicts(out)
+    );
+}
+
+/// With the same faces on both sides, a page count that moves is a layout
+/// the Markdown lost (spacing, a break, a section), and it is reported.
+#[test]
+fn a_page_count_moved_with_the_same_faces_is_reported() {
+    let out = "(layout): 2 lines differ\n\
+               -A   pages 11\n\
+               +B   pages 10\n";
+    assert_eq!(
+        render_verdicts(out),
+        [
+            "  ✗ docx (layout) lost: pages 11",
+            "  ✗ docx (layout) new: pages 10"
+        ]
+    );
+}

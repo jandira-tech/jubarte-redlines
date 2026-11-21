@@ -1,0 +1,183 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+
+import json
+import subprocess
+import sys
+from dataclasses import FrozenInstanceError
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from jubarte import CompareOptions, FormatChange, PdfOptions, Revision
+from jubarte.models import _decode_revisions
+
+
+def test_compare_defaults_keep_engine_timestamp():
+    assert CompareOptions().native_date() is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "2026-09-26T10:30:00-04:00",
+        "2026-09-26T14:30:00Z",
+        datetime(2026, 9, 26, 10, 30, tzinfo=timezone(timedelta(hours=-4))),
+    ],
+)
+def test_explicit_dates_are_normalized_without_reading_the_clock(value):
+    options = CompareOptions(date=value)
+    assert options.native_date() == "2026-09-26T14:30:00Z"
+
+
+def test_timestamp_preserves_fractional_seconds():
+    assert CompareOptions(date="2026-09-26T14:30:00.123456Z").native_date() == (
+        "2026-09-26T14:30:00.123456Z"
+    )
+
+
+@pytest.mark.parametrize("value", ["yesterday", "2026-02-30T12:00:00Z"])
+def test_bad_timestamp_is_value_error(value):
+    with pytest.raises(ValueError, match="ISO-8601"):
+        CompareOptions(date=value)
+
+
+@pytest.mark.parametrize("value", ["2026-09-26", datetime(2026, 9, 26)])
+def test_naive_timestamp_is_rejected(value):
+    with pytest.raises(ValueError, match="offset"):
+        CompareOptions(date=value)
+
+
+def test_non_timestamp_is_type_error():
+    with pytest.raises(TypeError, match="date"):
+        CompareOptions(date=123)
+
+
+def test_native_date_rejects_a_non_string_when_asserts_are_stripped():
+    # __post_init__ already normalizes a datetime. The leftover check in
+    # native_date used to be an assert, which `python -O` deletes.
+    script = (
+        "from jubarte import CompareOptions\n"
+        "options = CompareOptions()\n"
+        "object.__setattr__(options, 'date', 123)\n"
+        "try:\n"
+        "    got = options.native_date()\n"
+        "except TypeError as exc:\n"
+        "    if 'str' not in str(exc):\n"
+        "        raise SystemExit(f'wrong message: {exc}')\n"
+        "else:\n"
+        "    raise SystemExit(f'accepted {got!r}')\n"
+    )
+    proc = subprocess.run([sys.executable, "-O", "-c", script], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_options_are_frozen():
+    options = CompareOptions()
+    with pytest.raises(FrozenInstanceError):
+        options.date = "2026-09-26T14:30:00Z"
+    pdf = PdfOptions()
+    with pytest.raises(FrozenInstanceError):
+        pdf.compress = True
+
+
+def test_pdf_defaults_preserve_current_behavior():
+    assert PdfOptions() == PdfOptions(compress=False, revisions="conventional")
+    assert PdfOptions(revisions="word").revision_palette is None
+    assert PdfOptions(revisions="custom", revision_palette="deleted=#AA0000:strike").revisions == "custom"
+
+
+@pytest.mark.parametrize(
+    ("options", "error", "message"),
+    [
+        ({"compress": 1}, TypeError, "compress"),
+        ({"revisions": "hidden"}, ValueError, "revisions"),
+        ({"revision_palette": 1}, TypeError, "revision_palette"),
+        ({"revisions": "custom"}, ValueError, "require"),
+        ({"revision_palette": "deleted=#AA0000:strike"}, ValueError, "requires"),
+    ],
+)
+def test_pdf_options_fail_before_native_work(options, error, message):
+    with pytest.raises(error, match=message):
+        PdfOptions(**options)
+
+
+def test_revision_decoding_preserves_metadata_and_freezes_nested_properties():
+    payload = json.dumps([
+        {
+            "type": "FormatChanged",
+            "author": "Reviewer",
+            "date": "producer-specific-date",
+            "part": "word/document.xml",
+            "text": "changed\ttext\n\"quoted\"",
+            "moveGroupId": None,
+            "isMoveSource": None,
+            "formatChange": {"changedProperties": ["bold", "spacing"]},
+        },
+        {
+            "type": "Moved",
+            "author": "",
+            "date": "",
+            "part": "word/footnotes.xml",
+            "text": "moved",
+            "moveGroupId": 7,
+            "isMoveSource": False,
+            "formatChange": None,
+        },
+    ])
+    records = _decode_revisions(payload)
+    assert records == (
+        Revision(
+            kind="FormatChanged", author="Reviewer", date="producer-specific-date",
+            part="word/document.xml", text="changed\ttext\n\"quoted\"",
+            move_group_id=None, is_move_source=None,
+            format_change=FormatChange(("bold", "spacing")),
+        ),
+        Revision(
+            kind="Moved", author="", date="", part="word/footnotes.xml", text="moved",
+            move_group_id=7, is_move_source=False, format_change=None,
+        ),
+    )
+    with pytest.raises(FrozenInstanceError):
+        records[0].author = "Other"
+    with pytest.raises(FrozenInstanceError):
+        records[0].format_change.changed_properties = ()
+    assert _decode_revisions("[]") == ()
+
+
+def test_native_schema_mismatch_is_not_silently_dropped():
+    with pytest.raises(KeyError):
+        _decode_revisions('[{"type":"Inserted"}]')
+
+
+def test_compare_options_input_limits_are_an_immutable_copy() -> None:
+    source = {"max_entries": 5}
+    options = CompareOptions(input_limits=source)
+    source["max_entries"] = 9
+    assert options.native_input_limits() == {"max_entries": 5}
+    assert CompareOptions().native_input_limits() is None
+    hash(options)
+
+
+@pytest.mark.parametrize("value", [{"max_entries": -1}, {"max_entries": True}, {1: 2}, [1]])
+def test_compare_options_input_limits_reject_bad_values(value: object) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        CompareOptions(input_limits=value)  # type: ignore[arg-type]
+
+
+def test_a_filter_kind_is_an_element_kind_never_replacement():
+    # A replacement is a listed kind, but no element has it, so the filter
+    # refuses it: the filter annotations must not offer it (#1353 review).
+    import inspect
+    from collections.abc import Sequence
+    from typing import get_args, get_type_hints
+
+    from jubarte import Document
+    from jubarte.models import ChangeKind, FilterKind, change_filter
+
+    assert set(get_args(FilterKind)) == set(get_args(ChangeKind)) - {"replacement"}
+    assert get_type_hints(change_filter)["kinds"] == Sequence[FilterKind] | None
+    for method in (Document.accept, Document.reject):
+        kinds = inspect.signature(method).parameters["kinds"].annotation
+        assert kinds == "Sequence[FilterKind] | None", method.__name__

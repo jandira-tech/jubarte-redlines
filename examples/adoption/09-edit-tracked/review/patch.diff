@@ -1,0 +1,8 @@
+--- a/input.docx
++++ b/input.docx	Reviewer	2026-10-04T12:00:00Z
+@@ [body:p:17] @@
+Client shall pay all invoices within [-thirty-]{+fifteen+} days of
+receipt.
+
+@@ [body:p:20] @@
+## 4. Term[-This Agreement begins on January 1, 2026 and continues for twelve months. The parties may terminate for convenience on thirty days written notice, and either party may terminate immediately for material breach.-]

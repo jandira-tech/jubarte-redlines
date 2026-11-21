@@ -1,0 +1,3 @@
+add_table(rows=1, cols=1, style='Table Grid') -> KeyError: "no style with name 'Table Grid'"
+add_paragraph('x', style='List Bullet') -> KeyError: "no style with name 'List Bullet'"
+add_paragraph('x', style='List Number') -> KeyError: "no style with name 'List Number'"

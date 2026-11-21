@@ -1,0 +1,337 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: Apache-2.0
+//! The revision-order probes (`tests/fixtures/md-roundtrip/order`, written
+//! by its `make_probes.py`): something between, inside or across the two
+//! marks of a substitution, in the body, a cell, a header and a footnote.
+//! The text and the `revisions:` count pair the marks alike, and the view
+//! comes back from the docx it writes.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use regex::Regex;
+
+const PROBES: &str = "tests/fixtures/md-roundtrip/order";
+
+fn jubarte(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap()
+}
+
+fn probe(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(PROBES)
+        .join(format!("{name}.docx"))
+}
+
+fn read(docx: &Path, extra: &[&str]) -> String {
+    let path = docx.to_str().unwrap();
+    let mut args = vec!["read", path, "--no-page-markers"];
+    args.extend(extra);
+    jubarte(Path::new(env!("CARGO_MANIFEST_DIR")), &args)
+}
+
+/// The view without the lines that name the file, and without the page
+/// count, which is measured, not written.
+fn comparable(view: &str) -> String {
+    let pages = Regex::new(r", \d+ pages?\s+#.*$").unwrap();
+    view.lines()
+        .filter(|line| !line.starts_with("source: ") && !line.starts_with("sha256: "))
+        .map(|line| {
+            if line.starts_with("body: ") {
+                pages.replace(line, "").into_owned()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The view of the docx `markdown` writes.
+fn again(dir: &Path, markdown: &str, name: &str) -> String {
+    let md = dir.join(format!("{name}.md"));
+    let docx = dir.join(format!("{name}.docx"));
+    std::fs::write(&md, markdown).unwrap();
+    jubarte(
+        dir,
+        &[
+            "convert",
+            md.to_str().unwrap(),
+            "-o",
+            docx.to_str().unwrap(),
+            "--force",
+            // The epoch pinned: unpinned, an undated change is dated now.
+            "-d",
+            "1970-01-01T00:00:00Z",
+        ],
+    );
+    read(&docx, &[])
+}
+
+/// What the view prints for each probe, and how its `revisions:` line pairs
+/// the same marks.
+const SEEN: &[(&str, &str, &str)] = &[
+    // Nothing between the marks that was there before them: one
+    // replacement, printed in document order (#1359).
+    (
+        "lrp-only",
+        "A {++new++}{r1+2 @AL}{--old--}{r1+2 @AL} Z",
+        "1 substitution",
+    ),
+    (
+        "empty-run",
+        "A {++new++}{r1+2 @AL}{--old--}{r1+2 @AL} Z",
+        "1 substitution",
+    ),
+    // Content that was there before the marks keeps them two changes, even
+    // where the view prints nothing of it: hidden text, a soft hyphen, a
+    // symbol, a page break.
+    (
+        "direct-vanish",
+        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
+        "1 insertion, 1 deletion",
+    ),
+    (
+        "style-vanish",
+        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
+        "1 insertion, 1 deletion",
+    ),
+    (
+        "style-basedon",
+        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
+        "1 insertion, 1 deletion",
+    ),
+    (
+        "style-vanish-tab",
+        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
+        "1 insertion, 1 deletion",
+    ),
+    (
+        "soft-hyphen",
+        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
+        "1 insertion, 1 deletion",
+    ),
+    (
+        "sym",
+        "A {++new++}{r1 @AL}<sym font=\"Wingdings\" char=\"F0E0\"/>{--old--}{r2 @AL} Z",
+        "1 insertion, 1 deletion",
+    ),
+    (
+        "page-br",
+        "A {++new++}{r1 @AL}<br type=\"page\"/>{--old--}{r2 @AL} Z",
+        "1 insertion, 1 deletion",
+    ),
+    (
+        "t-style-vanish",
+        "|{++new++}{r1 @AL}{--old--}{r2 @AL}|",
+        "1 insertion, 1 deletion",
+    ),
+    // A printed tab keeps them apart.
+    (
+        "empty-t-tab",
+        "A {++new++}{r1 @AL}\t{--old--}{r2 @AL} Z",
+        "1 insertion, 1 deletion",
+    ),
+    // Comments inside, beside or across the marks part nothing.
+    (
+        "c-inside",
+        "A {++{==new==}++}{r1+2 @A}{--old--}{r1+2 @A}{>>c0 @A: note<<} Z",
+        "1 substitution",
+    ),
+    (
+        "c-between",
+        "A {++new++}{r1+2 @A}{=={--old--}{r1+2 @A}==}{>>c0 @A: note<<} Z",
+        "1 substitution",
+    ),
+    (
+        "c-cross",
+        "A {++{==new==}++}{r1+2 @A}{=={--old--}{r1+2 @A}==}{>>c0 @A: note<<} Z",
+        "1 substitution",
+    ),
+    // A heading's own slug bookmark prints nothing and parts nothing; a
+    // name the writer would not give it (`title-01`, a lone `title-1`) is
+    // an anchor of its own, which parts nothing either.
+    (
+        "h-own-slug",
+        "# {++Title++}{r1+2 @AL}{--Old--}{r1+2 @AL}",
+        "1 substitution",
+    ),
+    (
+        "h-two",
+        "# {++Title++}{r1+2 @AL}{--Old--}{r1+2 @AL}",
+        "1 substitution",
+    ),
+    (
+        "h-suffix-01",
+        "# {++Title++}{r1+2 @AL}<a id=\"title-01\"></a>{--Old--}{r1+2 @AL}",
+        "1 substitution",
+    ),
+    (
+        "h-suffix-1",
+        "# {++Title++}{r1+2 @AL}<a id=\"title-1\"></a>{--Old--}{r1+2 @AL}",
+        "1 substitution",
+    ),
+    (
+        "h-suffix-1-1",
+        "# {++Intro 1++}{r1+2 @AL}<a id=\"intro-1-1\"></a>{--Old--}{r1+2 @AL}",
+        "1 substitution",
+    ),
+    (
+        "h-foreign",
+        "# {++Title++}{r1+2 @AL}<a id=\"other\"></a>{--Old--}{r1+2 @AL}",
+        "1 substitution",
+    ),
+    // A cell writes no heading, so its bookmark is an anchor.
+    (
+        "t-heading",
+        "|{++Title++}{r1+2 @AL}<a id=\"title\"></a>{--Old--}{r1+2 @AL}|",
+        "1 substitution",
+    ),
+    // Headers and notes group as the body does, and print no hidden run.
+    (
+        "hdr-direct-vanish",
+        "text: \"{++new++}{header1.r1 @AL}{--old--}{header1.r2 @AL}\"",
+        "2 in header1",
+    ),
+    (
+        "hdr-style-vanish",
+        "text: \"{++new++}{header1.r1 @AL}{--old--}{header1.r2 @AL}\"",
+        "2 in header1",
+    ),
+    (
+        "fn-style-vanish",
+        "[^1]: {++new++}{footnotes.r1 @AL}{--old--}{footnotes.r2 @AL}",
+        "2 in footnotes",
+    ),
+    (
+        "fn-soft",
+        "[^1]: {++new++}{footnotes.r1 @AL}{--old--}{footnotes.r2 @AL}",
+        "2 in footnotes",
+    ),
+];
+
+#[test]
+fn the_text_and_the_count_pair_the_same_marks() {
+    for (name, text, count) in SEEN {
+        let view = read(&probe(name), &[]);
+        assert!(
+            view.lines().any(|line| line.contains(text)),
+            "{name}: no line holds {text:?} in\n{view}"
+        );
+        let revisions = view
+            .lines()
+            .find(|line| line.starts_with("revisions:"))
+            .unwrap_or_default();
+        assert!(
+            revisions.contains(count),
+            "{name}: {revisions:?} does not say {count:?}"
+        );
+    }
+}
+
+/// Accepting names the change by the tag the tracked text gives it.
+#[test]
+fn the_accept_id_line_preserves_the_texts_distinct_ids() {
+    for (name, id_line) in [
+        ("h-own-slug", "<!-- p0 rev r1+2 @AL -->"),
+        ("c-inside", "<!-- p0 rev r1+2 @A -->"),
+        ("style-vanish", "<!-- p0 rev r1 @AL; r2 @AL -->"),
+    ] {
+        let view = read(&probe(name), &["--track-changes", "accept"]);
+        assert!(view.contains(id_line), "{name}: no {id_line:?} in\n{view}");
+    }
+}
+
+/// A comment range that crosses from one mark into the other ends with the
+/// accepted text, not at the paragraph's end.
+#[test]
+fn accepting_keeps_a_crossing_comment_on_its_text() {
+    let view = read(&probe("c-cross"), &["--track-changes", "accept"]);
+    assert!(
+        view.contains("A {==new==}{>>c0 @A: note<<} Z"),
+        "c-cross accepted:\n{view}"
+    );
+}
+
+/// Probes whose first view the writer gives back with a known difference;
+/// each is a fixed point from the docx it wrote on.
+const SETTLED_LATER: &[(&str, &str)] = &[
+    // A comment across the marks is written as one substitution under it.
+    ("c-cross", "canonical substitution"),
+    ("t-cross", "canonical substitution"),
+    // Word asks a paragraph after a table that ends the body.
+    ("t-cross", "trailing paragraph"),
+    ("t-inside", "trailing paragraph"),
+    ("t-plain", "trailing paragraph"),
+    ("t-lrp", "trailing paragraph"),
+    ("t-tab", "trailing paragraph"),
+    ("t-style-vanish", "trailing paragraph"),
+    ("t-heading", "trailing paragraph"),
+    ("t-heading-1", "trailing paragraph"),
+    // Word shows no comment in a header; one in a footnote moves to its
+    // reference mark.
+    ("hdr-cross", "header comment"),
+    ("hdr-between", "header comment"),
+    ("fn-cross", "footnote comment"),
+    ("fn-inside", "footnote comment"),
+    // Content between the marks that the view does not print in place
+    // (hidden text, a soft hyphen) is not written back there:
+    // the marks then touch, and are one replacement (#1359). A page break
+    // prints in place, `<br type="page"/>`, and comes back there (#2167),
+    // as a symbol does, `<sym font="…" char="…"/>` (#1365).
+    ("direct-vanish", "unprinted content between the marks"),
+    ("style-vanish", "unprinted content between the marks"),
+    ("style-basedon", "unprinted content between the marks"),
+    ("style-vanish-tab", "unprinted content between the marks"),
+    ("soft-hyphen", "unprinted content between the marks"),
+    ("hdr-direct-vanish", "unprinted content between the marks"),
+    ("hdr-style-vanish", "unprinted content between the marks"),
+    ("fn-direct-vanish", "unprinted content between the marks"),
+    ("fn-style-vanish", "unprinted content between the marks"),
+    ("fn-soft", "unprinted content between the marks"),
+];
+
+#[test]
+fn every_probe_comes_back_from_the_docx_its_view_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut names: Vec<String> =
+        std::fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join(PROBES))
+            .unwrap()
+            .filter_map(|e| {
+                let path = e.unwrap().path();
+                (path.extension()? == "docx")
+                    .then(|| path.file_stem()?.to_str().map(str::to_string))?
+            })
+            .collect();
+    names.sort();
+    assert!(names.len() > 40, "probes missing: {names:?}");
+    for name in &names {
+        let first = read(&probe(name), &[]);
+        let second = again(dir.path(), &first, &format!("{name}-2"));
+        if SETTLED_LATER.iter().any(|(n, _)| n == name) {
+            let third = again(dir.path(), &second, &format!("{name}-3"));
+            assert_eq!(
+                comparable(&second),
+                comparable(&third),
+                "{name}: the second view is no fixed point"
+            );
+        } else {
+            assert_eq!(
+                comparable(&first),
+                comparable(&second),
+                "{name}: the view does not come back"
+            );
+        }
+    }
+}

@@ -1,0 +1,1840 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: Apache-2.0
+
+//! `jubarte debug FILE --check render`: what each story part should put on
+//! the page, for diagnosing a low score against Word's PDF. Every story part
+//! is listed (body, headers, footers, notes, comments; text boxes inside
+//! them), not only `word/document.xml`, and a `(layout)` entry adds what
+//! jubarte's own layout pass makes of the package: pages and the face each
+//! requested font resolved to.
+
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+use super::{
+    Package, TEXT_PARTS, attr, clip, decode_xml, local, percent_decode, rels_of, resolve_target,
+    story_roles_all,
+};
+use crate::xmllinq::{Dom, NodeId};
+
+/// Sample text kept per aggregated line.
+const SAMPLE: usize = 40;
+/// Longest first-row text a table line keeps.
+const FIRST_ROW: usize = 60;
+/// Deepest `basedOn` chain followed.
+const CHAIN: usize = 16;
+
+/// Part name → (lines, paragraph or page count), the `(layout)` entry last.
+pub(super) fn render_parts(
+    pkg: &Package,
+    part: Option<&str>,
+) -> BTreeMap<String, (Vec<String>, usize)> {
+    let rels = main_rels(pkg);
+    let styles = rels
+        .iter()
+        .find(|r| r.kind == "styles")
+        .and_then(|r| parse(pkg, &r.part))
+        .map(|(dom, root)| StyleBook::new(&dom, root))
+        .unwrap_or_default();
+    let roles = story_roles_all(pkg);
+    let mut map = BTreeMap::new();
+    for e in &pkg.entries {
+        if part.is_some_and(|p| !e.name.contains(p)) || !e.name.ends_with(".xml") {
+            continue;
+        }
+        let Some((dom, root)) = parse(pkg, &e.name) else {
+            continue;
+        };
+        if !TEXT_PARTS.contains(&local(&dom, root).as_str()) {
+            continue;
+        }
+        let mut lines: Vec<String> = roles
+            .get(&e.name)
+            .into_iter()
+            .flatten()
+            .map(|r| format!("  shown as {r}"))
+            .collect();
+        let paras = part_lines(&dom, root, &styles, &rels, &mut lines);
+        map.insert(e.name.clone(), (lines, paras));
+    }
+    if part.is_none_or(|p| "(layout)".contains(p)) {
+        map.insert("(layout)".to_string(), layout_lines(pkg, &rels));
+    }
+    map
+}
+
+/// A relationship of the main document part: its type's last segment
+/// (`styles`, `theme`, `header`, …), id and target part.
+struct Rel {
+    kind: String,
+    id: String,
+    part: String,
+}
+
+/// The main document part's relationships, found through the package's own
+/// `officeDocument` relationship (the part need not be `word/document.xml`).
+fn main_rels(pkg: &Package) -> Vec<Rel> {
+    let rels_in = |rels: &str| -> Vec<Rel> {
+        let Some((dom, root)) = parse(pkg, rels) else {
+            return Vec::new();
+        };
+        dom.elements(root, None)
+            .into_iter()
+            .filter(|&r| attr(&dom, r, "TargetMode") != "External")
+            .map(|r| Rel {
+                kind: attr(&dom, r, "Type")
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or_default()
+                    .to_string(),
+                id: attr(&dom, r, "Id"),
+                part: resolve_target(rels, &percent_decode(&attr(&dom, r, "Target"))),
+            })
+            .collect()
+    };
+    let Some(main) = rels_in("_rels/.rels")
+        .into_iter()
+        .find(|r| r.kind == "officeDocument")
+    else {
+        return Vec::new();
+    };
+    rels_in(&rels_of(&main.part))
+}
+
+fn parse(pkg: &Package, name: &str) -> Option<(Dom, NodeId)> {
+    let e = pkg.entries.iter().find(|e| e.name == name)?;
+    let xml = decode_xml(&e.data)?;
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc)?;
+    // Strict files write universal measures (`612pt`) where Transitional
+    // writes integer twips: list them alike. A plain value stays as the
+    // file spells it — the diagnostic reports, it does not repair.
+    crate::comparer::finalize::normalize_unit_measures(&mut dom, root);
+    Some((dom, root))
+}
+
+/// What a style contributes to the page, its `basedOn` parent and name.
+#[derive(Default)]
+struct StyleInfo {
+    name: String,
+    based: String,
+    /// The style's own paragraph fill: `Some(None)` for a nil `shd`, which
+    /// stops its base's.
+    para_shd: Option<Option<String>>,
+    /// The style's own run colour, highlight and shading: `None` when it
+    /// sets none (its base's shows), `Some(None)` when it resets them
+    /// (`auto`, `none`, a nil `shd`).
+    color: Option<Option<String>>,
+    highlight: Option<Option<String>>,
+    run_shd: Option<Option<String>>,
+    /// The style's own `w:vanish`: `Some(true)` hides, `Some(false)` turns
+    /// a base's off.
+    vanish: Option<bool>,
+    /// The style's own `w:framePr` attributes, `name=value`.
+    frame: Vec<(String, String)>,
+    /// The face each slot of the style's own `w:rFonts` asks for.
+    fonts: Vec<(&'static str, String)>,
+    /// Table-wide and conditional shading: `whole` (`tblPr`), `cell`
+    /// (`tcPr`), or the `tblStylePr` type; `None` for a nil `shd`, which
+    /// resets the base's.
+    table_shd: Vec<(String, Option<String>)>,
+}
+
+#[derive(Default)]
+struct StyleBook {
+    by_id: HashMap<String, StyleInfo>,
+    /// What `docDefaults` paint: the layer under every style.
+    defaults: StyleInfo,
+    /// `docDefaults` run fonts, `name=value` sorted.
+    default_fonts: Option<String>,
+    /// The `w:default="1"` paragraph style: an unstyled paragraph's.
+    default_para: String,
+}
+
+impl StyleBook {
+    fn new(dom: &Dom, root: NodeId) -> Self {
+        let mut book = StyleBook::default();
+        for s in dom.elements(root, None) {
+            match local(dom, s).as_str() {
+                "docDefaults" => {
+                    let rpr = descendant(dom, s, "rPrDefault").and_then(|d| child(dom, d, "rPr"));
+                    book.defaults = StyleInfo {
+                        name: "docDefaults".to_string(),
+                        para_shd: descendant(dom, s, "pPrDefault")
+                            .and_then(|d| child(dom, d, "pPr"))
+                            .and_then(|p| child(dom, p, "shd"))
+                            .map(|x| shd(dom, x)),
+                        color: rpr.and_then(|r| color(dom, r)),
+                        highlight: rpr.and_then(|r| highlight(dom, r)),
+                        run_shd: rpr.and_then(|r| run_shd(dom, r)),
+                        vanish: rpr
+                            .and_then(|r| child(dom, r, "vanish").map(|_| on(dom, r, "vanish"))),
+                        ..StyleInfo::default()
+                    };
+                    book.default_fonts = descendant(dom, s, "rFonts").map(|f| {
+                        let mut items: Vec<String> = dom
+                            .attributes_iter(f)
+                            .map(|(k, v)| format!("{}={v}", k.local_name()))
+                            .collect();
+                        items.sort();
+                        items.join(" ")
+                    });
+                }
+                "style" => {
+                    let val = |name: &str| child(dom, s, name).map(|c| attr(dom, c, "val"));
+                    let rpr = child(dom, s, "rPr");
+                    let mut info = StyleInfo {
+                        name: val("name").unwrap_or_default(),
+                        based: val("basedOn").unwrap_or_default(),
+                        para_shd: child(dom, s, "pPr")
+                            .and_then(|p| child(dom, p, "shd"))
+                            .map(|x| shd(dom, x)),
+                        color: rpr.and_then(|r| color(dom, r)),
+                        highlight: rpr.and_then(|r| highlight(dom, r)),
+                        run_shd: rpr.and_then(|r| run_shd(dom, r)),
+                        vanish: rpr
+                            .and_then(|r| child(dom, r, "vanish").map(|_| on(dom, r, "vanish"))),
+                        frame: child(dom, s, "pPr")
+                            .and_then(|p| child(dom, p, "framePr"))
+                            .map(|f| attr_pairs(dom, f))
+                            .unwrap_or_default(),
+                        fonts: rpr
+                            .and_then(|r| child(dom, r, "rFonts"))
+                            .map(|f| font_slots(dom, f))
+                            .unwrap_or_default(),
+                        table_shd: Vec::new(),
+                    };
+                    let mut table = |label: String, holder: NodeId| {
+                        for (pr, what) in [("tblPr", "whole"), ("tcPr", "cell")] {
+                            if let Some(fill) = child(dom, holder, pr)
+                                .and_then(|p| child(dom, p, "shd"))
+                                .map(|x| shd(dom, x))
+                            {
+                                let key = if label.is_empty() {
+                                    what.to_string()
+                                } else {
+                                    label.clone()
+                                };
+                                info.table_shd.push((key, fill));
+                            }
+                        }
+                    };
+                    table(String::new(), s);
+                    for cond in kids(dom, s, "tblStylePr") {
+                        table(attr(dom, cond, "type"), cond);
+                    }
+                    let id = attr(dom, s, "styleId");
+                    if attr(dom, s, "type") == "paragraph"
+                        && matches!(attr(dom, s, "default").as_str(), "1" | "true" | "on")
+                    {
+                        book.default_para.clone_from(&id);
+                    }
+                    book.by_id.insert(id, info);
+                }
+                _ => {}
+            }
+        }
+        book
+    }
+
+    fn name(&self, id: &str) -> String {
+        self.by_id
+            .get(id)
+            .map(|s| s.name.clone())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| id.to_string())
+    }
+
+    /// `id`'s table shading down its `basedOn` chain: a base's conditions
+    /// stay unless the derived style sets the same one; a nil `shd` resets
+    /// it.
+    fn table_shd(&self, id: &str) -> Vec<(String, String)> {
+        let mut chain = Vec::new();
+        let mut id = id.to_string();
+        for _ in 0..CHAIN {
+            let Some(s) = self.by_id.get(&id) else {
+                break;
+            };
+            chain.push(s);
+            if s.based.is_empty() {
+                break;
+            }
+            id = s.based.clone();
+        }
+        let mut out: Vec<(String, Option<String>)> = Vec::new();
+        for s in chain.into_iter().rev() {
+            for (key, fill) in &s.table_shd {
+                match out.iter_mut().find(|(k, _)| k == key) {
+                    Some(slot) => slot.1.clone_from(fill),
+                    None => out.push((key.clone(), fill.clone())),
+                }
+            }
+        }
+        out.into_iter()
+            .filter_map(|(k, fill)| Some((k, fill?)))
+            .collect()
+    }
+
+    /// The faces `id`'s `basedOn` chain asks for, slot by slot, each with
+    /// the name of the style that sets it (a derived style's slot over its
+    /// base's, as the converter overlays them).
+    fn font_slots(&self, id: &str) -> Vec<(&'static str, String, String)> {
+        let mut chain = Vec::new();
+        let mut cur = id.to_string();
+        for _ in 0..CHAIN {
+            let Some(s) = self.by_id.get(&cur) else {
+                break;
+            };
+            chain.push((s, self.name(&cur)));
+            if s.based.is_empty() {
+                break;
+            }
+            cur = s.based.clone();
+        }
+        let mut out: Vec<(&'static str, String, String)> = Vec::new();
+        for (s, name) in chain.into_iter().rev() {
+            for (slot, face) in &s.fonts {
+                out.retain(|(k, _, _)| k != slot);
+                out.push((slot, face.clone(), name.clone()));
+            }
+        }
+        out
+    }
+
+    /// `id`'s frame attributes down its `basedOn` chain, a derived
+    /// style's value over its base's.
+    fn frame(&self, id: &str) -> Vec<(String, String)> {
+        let mut chain = Vec::new();
+        let mut id = id.to_string();
+        for _ in 0..CHAIN {
+            let Some(s) = self.by_id.get(&id) else {
+                break;
+            };
+            chain.push(s);
+            if s.based.is_empty() {
+                break;
+            }
+            id = s.based.clone();
+        }
+        let mut out: Vec<(String, String)> = Vec::new();
+        for s in chain.into_iter().rev() {
+            merge_pairs(&mut out, &s.frame);
+        }
+        out
+    }
+
+    /// The paragraph style `id` names, or the default one.
+    fn para_style(&self, id: String) -> String {
+        if id.is_empty() {
+            self.default_para.clone()
+        } else {
+            id
+        }
+    }
+
+    /// The first value `f` finds walking `id`'s `basedOn` chain, with the
+    /// name of the style that holds it.
+    fn find<T>(&self, id: &str, f: impl Fn(&StyleInfo) -> Option<T>) -> Option<(T, String)> {
+        let mut id = id.to_string();
+        for _ in 0..CHAIN {
+            let s = self.by_id.get(&id)?;
+            if let Some(v) = f(s) {
+                return Some((v, self.name(&id)));
+            }
+            if s.based.is_empty() {
+                return None;
+            }
+            id = s.based.clone();
+        }
+        None
+    }
+}
+
+fn kids(dom: &Dom, n: NodeId, name: &str) -> Vec<NodeId> {
+    dom.elements(n, None)
+        .into_iter()
+        .filter(|&c| local(dom, c) == name)
+        .collect()
+}
+
+fn child(dom: &Dom, n: NodeId, name: &str) -> Option<NodeId> {
+    dom.elements(n, None)
+        .into_iter()
+        .find(|&c| local(dom, c) == name)
+}
+
+fn descendant(dom: &Dom, n: NodeId, name: &str) -> Option<NodeId> {
+    dom.descendants(n, None)
+        .into_iter()
+        .find(|&c| local(dom, c) == name)
+}
+
+/// The nearest ancestor of `n` named `name`.
+fn nearest(dom: &Dom, n: NodeId, name: &str) -> Option<NodeId> {
+    dom.ancestors(n, None)
+        .into_iter()
+        .find(|&a| local(dom, a) == name)
+}
+
+/// A `w:shd`'s visible fill: `fill` (or `theme:…`), the pattern's colour
+/// after `/` when the pattern is not clear. `None` for no fill at all.
+fn shd(dom: &Dom, x: NodeId) -> Option<String> {
+    let (val, fill, theme, color) = (
+        attr(dom, x, "val"),
+        attr(dom, x, "fill"),
+        attr(dom, x, "themeFill"),
+        attr(dom, x, "color"),
+    );
+    if val == "nil" {
+        return None;
+    }
+    if val == "solid" {
+        return Some(if color.is_empty() || color == "auto" {
+            "solid:auto".to_string()
+        } else {
+            color
+        });
+    }
+    let base = if !theme.is_empty() {
+        format!("theme:{theme}")
+    } else if fill.is_empty() || fill == "auto" {
+        String::new()
+    } else {
+        fill
+    };
+    let pattern = (!matches!(val.as_str(), "" | "clear")).then(|| format!("/{val}:{color}"));
+    match (base.is_empty(), pattern) {
+        (true, None) => None,
+        (_, p) => Some(format!("{base}{}", p.unwrap_or_default())),
+    }
+}
+
+/// `rPr`'s text colour: the value, or `theme:…` for a theme colour;
+/// `Some(None)` for `auto`, which resets an inherited one.
+fn color(dom: &Dom, rpr: NodeId) -> Option<Option<String>> {
+    let c = child(dom, rpr, "color")?;
+    let theme = attr(dom, c, "themeColor");
+    if !theme.is_empty() {
+        // Tint and shade change the ink the converter paints.
+        let mut out = format!("theme:{theme}");
+        for (name, label) in [("themeTint", "tint"), ("themeShade", "shade")] {
+            let v = attr(dom, c, name);
+            if !v.is_empty() {
+                out.push_str(&format!("/{label}:{v}"));
+            }
+        }
+        return Some(Some(out));
+    }
+    let val = attr(dom, c, "val");
+    Some((!val.is_empty() && val != "auto").then_some(val))
+}
+
+/// `rPr`'s highlight; `Some(None)` for `none`, a reset.
+fn highlight(dom: &Dom, rpr: NodeId) -> Option<Option<String>> {
+    let val = attr(dom, child(dom, rpr, "highlight")?, "val");
+    Some((!val.is_empty() && val != "none").then_some(val))
+}
+
+/// `rPr`'s shading; `Some(None)` for one that paints nothing (nil), a reset.
+fn run_shd(dom: &Dom, rpr: NodeId) -> Option<Option<String>> {
+    child(dom, rpr, "shd").map(|x| shd(dom, x))
+}
+
+/// A toggle property that is on (`w:val` absent, `1`, `true` or `on`).
+fn on(dom: &Dom, pr: NodeId, name: &str) -> bool {
+    child(dom, pr, name)
+        .is_some_and(|c| !matches!(attr(dom, c, "val").as_str(), "0" | "false" | "off"))
+}
+
+/// Text `n` paints in its own paragraph: `w:t` and `w:delText` whose
+/// nearest paragraph is `para` (a text box's paragraphs are their own).
+fn own_text(dom: &Dom, n: NodeId, para: NodeId) -> String {
+    let mut s = String::new();
+    for t in dom.descendants(n, None) {
+        if matches!(local(dom, t).as_str(), "t" | "delText") && nearest(dom, t, "p") == Some(para) {
+            for c in dom.nodes(t) {
+                s.push_str(dom.text_value(c).unwrap_or_default());
+            }
+        }
+    }
+    s
+}
+
+/// Each fact's stretches and the first one's text. A stretch is a run of
+/// runs in one paragraph that share the fact: Word splits runs where
+/// nothing on the page changes (`monospace` and `.`), so a fact counts
+/// once until a run without it comes between.
+#[derive(Default)]
+struct Tally {
+    facts: BTreeMap<String, (usize, String)>,
+    /// The paragraph of the run being read, and the facts the run before
+    /// it in that paragraph had and the facts it has so far.
+    para: Option<NodeId>,
+    before: BTreeSet<String>,
+    now: BTreeSet<String>,
+}
+
+impl Tally {
+    /// A run of `para` starts: the facts of the run before it carry on.
+    fn next_run(&mut self, para: NodeId) {
+        if self.para == Some(para) {
+            self.before = std::mem::take(&mut self.now);
+        } else {
+            self.para = Some(para);
+            self.before.clear();
+            self.now.clear();
+        }
+    }
+
+    fn add(&mut self, key: String, sample: &str) {
+        self.now.insert(key.clone());
+        if self.before.contains(&key) {
+            return;
+        }
+        let e = self.facts.entry(key).or_default();
+        if e.0 == 0 {
+            e.1 = clip(sample, SAMPLE);
+        }
+        e.0 += 1;
+    }
+
+    fn lines(self, out: &mut Vec<String>) {
+        for (key, (n, sample)) in self.facts {
+            if sample.is_empty() {
+                out.push(format!("  {key} ×{n}"));
+            } else {
+                out.push(format!("  {key} ×{n} \"{sample}\""));
+            }
+        }
+    }
+}
+
+/// One story part's lines: sections, tables, frames and drawings in
+/// document order, then the tallies. Returns the paragraph count.
+fn part_lines(
+    dom: &Dom,
+    root: NodeId,
+    styles: &StyleBook,
+    rels: &[Rel],
+    out: &mut Vec<String>,
+) -> usize {
+    let mut tally = Tally::default();
+    let mut paras = 0;
+    let mut tables = 0;
+    let mut sections = 0;
+    // Field codes being collected, innermost last: (code, recorded).
+    let mut fields: Vec<(String, bool)> = Vec::new();
+    for n in dom.descendants(root, None) {
+        // Word renders an mc:AlternateContent's Choice; its Fallback is a
+        // copy of the same content.
+        if nearest(dom, n, "Fallback").is_some() {
+            continue;
+        }
+        match local(dom, n).as_str() {
+            "p" => {
+                paras += 1;
+                paragraph(dom, n, styles, &mut tally, out);
+            }
+            "r" => run(dom, n, styles, &mut tally),
+            "tbl" => {
+                tables += 1;
+                out.push(table(dom, n, tables, styles));
+            }
+            // A `w:sectPrChange`'s old `w:sectPr` is history.
+            "sectPr" if nearest(dom, n, "sectPrChange").is_none() => {
+                sections += 1;
+                out.push(section(dom, n, sections, rels));
+            }
+            "anchor" => out.push(anchor(dom, n)),
+            "inline" => tally.add("inline".to_string(), ""),
+            "pict" | "object" => tally.add(format!("vml {}", local(dom, n)), ""),
+            "AlternateContent" => tally.add("AlternateContent".to_string(), ""),
+            "fldSimple" => {
+                let code = attr(dom, n, "instr");
+                if let Some(w) = code.split_whitespace().next() {
+                    tally.add(format!("field {}", w.to_uppercase()), "");
+                }
+            }
+            "fldChar" => match attr(dom, n, "fldCharType").as_str() {
+                "begin" => fields.push((String::new(), false)),
+                kind => {
+                    if let Some(top) = fields.last_mut()
+                        && !top.1
+                    {
+                        top.1 = true;
+                        if let Some(w) = top.0.split_whitespace().next() {
+                            tally.add(format!("field {}", w.to_uppercase()), "");
+                        }
+                    }
+                    if kind == "end" {
+                        fields.pop();
+                    }
+                }
+            },
+            "instrText" | "delInstrText" => {
+                if let Some(top) = fields.last_mut() {
+                    for c in dom.nodes(n) {
+                        top.0.push_str(dom.text_value(c).unwrap_or_default());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    tally.lines(out);
+    paras
+}
+
+/// A paragraph's style, shading, frame and the order of its revisions.
+fn paragraph(dom: &Dom, p: NodeId, styles: &StyleBook, tally: &mut Tally, out: &mut Vec<String>) {
+    let text = own_text(dom, p, p);
+    let ppr = child(dom, p, "pPr");
+    let named = ppr
+        .and_then(|x| child(dom, x, "pStyle"))
+        .map(|s| attr(dom, s, "val"))
+        .unwrap_or_default();
+    if !named.is_empty() {
+        tally.add(format!("pstyle \"{}\"", styles.name(&named)), "");
+    }
+    let pstyle = styles.para_style(named);
+    match ppr.and_then(|x| child(dom, x, "shd")).map(|x| shd(dom, x)) {
+        Some(Some(fill)) => tally.add(format!("para-shd {fill}"), &text),
+        Some(None) => {}
+        None => match styles.find(&pstyle, |s| s.para_shd.clone()) {
+            Some((Some(fill), name)) => tally.add(format!("para-shd {fill} via \"{name}\""), &text),
+            Some((None, _)) => {}
+            None => {
+                if let Some(Some(fill)) = &styles.defaults.para_shd {
+                    tally.add(format!("para-shd {fill} via \"docDefaults\""), &text);
+                }
+            }
+        },
+    }
+    // The style chain's frame under the paragraph's own attributes, as
+    // the converter merges them.
+    let mut frame = styles.frame(&pstyle);
+    if let Some(own) = ppr.and_then(|x| child(dom, x, "framePr")) {
+        merge_pairs(&mut frame, &attr_pairs(dom, own));
+    }
+    if !frame.is_empty() {
+        let mut items: Vec<String> = frame.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        items.sort();
+        out.push(format!(
+            "  frame({}) \"{}\"",
+            items.join(","),
+            clip(&text, SAMPLE)
+        ));
+    }
+    // Revision containers side by side, a plain run between them breaking
+    // the pair.
+    let mut order: Vec<char> = Vec::new();
+    revision_order(dom, p, &mut order);
+    for &[a, b] in order.array_windows() {
+        match (a, b) {
+            ('D', 'I') => tally.add("revisions del→ins".to_string(), &text),
+            ('I', 'D') => tally.add("revisions ins→del".to_string(), &text),
+            _ => {}
+        }
+    }
+}
+
+/// The revision containers under `n` in document order, looking through
+/// hyperlinks, smart tags, content controls and customXml (their runs are
+/// the paragraph's own).
+fn revision_order(dom: &Dom, n: NodeId, order: &mut Vec<char>) {
+    for c in dom.elements(n, None) {
+        let k = match local(dom, c).as_str() {
+            "del" | "moveFrom" => 'D',
+            "ins" | "moveTo" => 'I',
+            "fldSimple" => '-',
+            "r" if paints(dom, c) => '-',
+            "hyperlink" | "smartTag" | "sdt" | "sdtContent" | "customXml" => {
+                revision_order(dom, c, order);
+                continue;
+            }
+            _ => continue,
+        };
+        if order.last() != Some(&k) {
+            order.push(k);
+        }
+    }
+}
+
+/// A run that puts something on the page: text, a tab or break, a symbol,
+/// a field character or a drawing (anything but its properties, a
+/// rendered-page-break hint, an empty `w:t` or a comment reference).
+fn paints(dom: &Dom, r: NodeId) -> bool {
+    dom.elements(r, None)
+        .into_iter()
+        .any(|c| match local(dom, c).as_str() {
+            "rPr" | "lastRenderedPageBreak" | "commentReference" => false,
+            "t" | "delText" => dom
+                .nodes(c)
+                .into_iter()
+                .any(|t| !dom.text_value(t).unwrap_or_default().is_empty()),
+            _ => true,
+        })
+}
+
+/// A run that paints something a highlight can colour: text, a symbol,
+/// a tab (plain or positioned) or a hyphen glyph (a non-breaking or soft
+/// one). A break paints no glyph (a page break ends the page, a line
+/// break wraps), so a highlight on it never reaches the page.
+fn paints_glyphs(dom: &Dom, r: NodeId) -> bool {
+    dom.elements(r, None)
+        .into_iter()
+        .any(|c| match local(dom, c).as_str() {
+            "t" | "delText" => dom
+                .nodes(c)
+                .into_iter()
+                .any(|t| !dom.text_value(t).unwrap_or_default().is_empty()),
+            "tab" | "ptab" | "sym" | "noBreakHyphen" | "softHyphen" => true,
+            _ => false,
+        })
+}
+
+/// The run's leading `rPr` blocks by local name: a Strict package writes
+/// them in the Strict namespace, which a qualified lookup misses.
+fn leading_rprs(dom: &Dom, r: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    for i in 0..dom.child_count(r) {
+        let child = dom.child_at(r, i);
+        if local(dom, child) == "rPr" {
+            out.push(child);
+        } else if dom.text_value(child).is_none() {
+            break;
+        }
+    }
+    out
+}
+
+/// A run's colour, highlight, shading, hidden state and requested font,
+/// direct or from its character or paragraph style, over `docDefaults`.
+/// The leading `w:rPr` blocks apply in order, each its character style and
+/// then its own properties, as the converter folds them (an `rPr` after the
+/// run's content is ignored).
+fn run(dom: &Dom, r: NodeId, styles: &StyleBook, tally: &mut Tally) {
+    let Some(para) = nearest(dom, r, "p") else {
+        return;
+    };
+    tally.next_run(para);
+    let text = own_text(dom, r, para);
+    let rprs = leading_rprs(dom, r);
+    let style_of = |pr: Option<NodeId>, name: &str| {
+        pr.and_then(|x| child(dom, x, name))
+            .map(|s| attr(dom, s, "val"))
+            .unwrap_or_default()
+    };
+    let pstyle = styles.para_style(style_of(child(dom, para, "pPr"), "pStyle"));
+    // The value that reaches the page and the style it comes through
+    // (`None` for direct formatting).
+    type Layer = Option<(String, Option<String>)>;
+    let fold = |get: &dyn Fn(NodeId) -> Option<Option<String>>,
+                from_style: &dyn Fn(&StyleInfo) -> Option<Option<String>>|
+     -> Layer {
+        let mut cur: Layer = match styles.find(&pstyle, from_style) {
+            Some((v, name)) => v.map(|v| (v, Some(name))),
+            None => from_style(&styles.defaults)
+                .flatten()
+                .map(|v| (v, Some(styles.defaults.name.clone()))),
+        };
+        for &rpr in &rprs {
+            let rstyle = style_of(Some(rpr), "rStyle");
+            if let Some((v, name)) = styles.find(&rstyle, from_style) {
+                cur = v.map(|v| (v, Some(name)));
+            }
+            if let Some(v) = get(rpr) {
+                cur = v.map(|v| (v, None));
+            }
+        }
+        cur
+    };
+    let mut add = |label: &str, layer: Layer| match layer {
+        Some((v, None)) => tally.add(format!("{label} {v}"), &text),
+        Some((v, Some(name))) => tally.add(format!("{label} {v} via \"{name}\""), &text),
+        None => {}
+    };
+    add("color", fold(&|x| color(dom, x), &|s| s.color.clone()));
+    // A highlight paints behind glyphs, so only a run that paints some
+    // (text, a symbol, a tab) can show one on the page.
+    if paints_glyphs(dom, r) {
+        add(
+            "highlight",
+            fold(&|x| highlight(dom, x), &|s| s.highlight.clone()),
+        );
+    }
+    add(
+        "run-shd",
+        fold(&|x| run_shd(dom, x), &|s| s.run_shd.clone()),
+    );
+    // Hidden the same way, a style's `vanish` standing in for a value.
+    let as_value = |v: bool| v.then(|| "vanish".to_string());
+    if let Some((_, via)) = fold(
+        &|x| child(dom, x, "vanish").map(|_| as_value(on(dom, x, "vanish"))),
+        &|s| s.vanish.map(as_value),
+    ) {
+        match via {
+            None => tally.add("vanish".to_string(), &text),
+            Some(name) => tally.add(format!("vanish via \"{name}\""), &text),
+        }
+    }
+    // Fonts slot by slot: the paragraph style's chain, then each block's
+    // character style and its own `w:rFonts`.
+    let mut slots: Vec<(&'static str, String, Option<String>)> = styles
+        .font_slots(&pstyle)
+        .into_iter()
+        .map(|(k, f, n)| (k, f, Some(n)))
+        .collect();
+    let overlay = |slots: &mut Vec<(&'static str, String, Option<String>)>,
+                   new: Vec<(&'static str, String, Option<String>)>| {
+        for (k, f, n) in new {
+            slots.retain(|(s, _, _)| *s != k);
+            slots.push((k, f, n));
+        }
+    };
+    for &rpr in &rprs {
+        let rstyle = style_of(Some(rpr), "rStyle");
+        if !rstyle.is_empty() {
+            let from = styles
+                .font_slots(&rstyle)
+                .into_iter()
+                .map(|(k, f, n)| (k, f, Some(n)))
+                .collect();
+            overlay(&mut slots, from);
+        }
+        if let Some(f) = child(dom, rpr, "rFonts") {
+            let direct = font_slots(dom, f)
+                .into_iter()
+                .map(|(k, face)| (k, face, None))
+                .collect();
+            overlay(&mut slots, direct);
+        }
+    }
+    let mut seen: Vec<(String, Option<String>)> = Vec::new();
+    for (_, face, via) in slots {
+        if seen.iter().any(|(f, v)| *f == face && *v == via) {
+            continue;
+        }
+        match &via {
+            None => tally.add(format!("rfonts \"{face}\""), ""),
+            Some(name) => tally.add(format!("rfonts \"{face}\" via \"{name}\""), ""),
+        }
+        seen.push((face, via));
+    }
+}
+
+/// Each slot's face in `w:rFonts` (a theme font where the slot names
+/// none): a run can paint Latin, East Asian and complex-script text in
+/// different faces.
+fn font_slots(dom: &Dom, f: NodeId) -> Vec<(&'static str, String)> {
+    let mut faces: Vec<(&'static str, String)> = Vec::new();
+    for (slot, theme) in [
+        ("ascii", "asciiTheme"),
+        ("hAnsi", "hAnsiTheme"),
+        ("eastAsia", "eastAsiaTheme"),
+        ("cs", "cstheme"),
+    ] {
+        let (face, theme) = (attr(dom, f, slot), attr(dom, f, theme));
+        let face = if !face.is_empty() {
+            face
+        } else if !theme.is_empty() {
+            format!("theme:{theme}")
+        } else {
+            continue;
+        };
+        faces.push((slot, face));
+    }
+    faces
+}
+
+/// An element's attributes as `(local name, value)`.
+fn attr_pairs(dom: &Dom, n: NodeId) -> Vec<(String, String)> {
+    dom.attributes_iter(n)
+        .map(|(k, v)| (k.local_name().to_string(), v.to_string()))
+        .collect()
+}
+
+/// `over`'s values replace or join `base`'s.
+fn merge_pairs(base: &mut Vec<(String, String)>, over: &[(String, String)]) {
+    for (k, v) in over {
+        match base.iter_mut().find(|(bk, _)| bk == k) {
+            Some(slot) => slot.1.clone_from(v),
+            None => base.push((k.clone(), v.clone())),
+        }
+    }
+}
+
+/// `table N RxC style=… float(…) shd=… cells-shd[…] style-shd[…] "first row"`.
+fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
+    let tblpr = child(dom, t, "tblPr");
+    // Wrapper-held rows are the table's own, as the converter lays them
+    // out (`customXml`, and `sdt`/`sdtContent` as Strict files spell them).
+    let rows: Vec<NodeId> = crate::table_dom::wrapped_children(dom, t, "tr");
+    // The columns the converter lays out: the grid, or the widest row
+    // (its spans, grid before/after and, with a live `w:cellDel`, the
+    // "Deleted Cells" column Word's All Markup appends).
+    let grid = child(dom, t, "tblGrid").map_or(0, |g| kids(dom, g, "gridCol").len());
+    let widest = rows
+        .iter()
+        .map(|&row| {
+            let trpr = child(dom, row, "trPr");
+            let skip = |name: &str| {
+                trpr.and_then(|p| child(dom, p, name))
+                    .and_then(|g| attr(dom, g, "val").parse::<usize>().ok())
+                    .unwrap_or(0)
+            };
+            let cells = crate::table_dom::wrapped_children(dom, row, "tc");
+            let spans: usize = cells
+                .iter()
+                .map(|&tc| {
+                    child(dom, tc, "tcPr")
+                        .and_then(|p| child(dom, p, "gridSpan"))
+                        .and_then(|g| attr(dom, g, "val").parse::<usize>().ok())
+                        .unwrap_or(1)
+                        .max(1)
+                })
+                .sum();
+            let stamp = cells
+                .iter()
+                .any(|&tc| crate::table_dom::cell_is_deleted(dom, tc));
+            skip("gridBefore") + spans + skip("gridAfter") + usize::from(stamp)
+        })
+        .max()
+        .unwrap_or(0);
+    let cols = grid.max(widest);
+    let mut s = format!("  table {n} {}x{cols}", rows.len());
+    if nearest(dom, t, "tbl").is_some() {
+        s.push_str(" nested");
+    }
+    if nearest(dom, t, "txbxContent").is_some() {
+        s.push_str(" in-textbox");
+    }
+    let style = tblpr
+        .and_then(|x| child(dom, x, "tblStyle"))
+        .map(|x| attr(dom, x, "val"))
+        .unwrap_or_default();
+    if !style.is_empty() {
+        s.push_str(&format!(" style=\"{}\"", styles.name(&style)));
+    }
+    if let Some(float) = tblpr.and_then(|x| child(dom, x, "tblpPr")) {
+        let mut items: Vec<String> = dom
+            .attributes_iter(float)
+            .map(|(k, v)| format!("{}={v}", k.local_name()))
+            .collect();
+        items.sort();
+        s.push_str(&format!(" float({})", items.join(",")));
+    }
+    if let Some(fill) = tblpr
+        .and_then(|x| child(dom, x, "shd"))
+        .and_then(|x| shd(dom, x))
+    {
+        s.push_str(&format!(" shd={fill}"));
+    }
+    // The borders the table and its cells carry themselves, as a table
+    // line prints them.
+    let borders = |props: Option<NodeId>, all: &[&'static str]| -> String {
+        use crate::borders::{self, Border};
+        let found: Vec<_> = props
+            .map(|x| dom.elements(x, None))
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|side| {
+                let name = borders::side(&local(dom, side), all)?;
+                let get = |key: &str| Some(attr(dom, side, key)).filter(|v| !v.is_empty());
+                let border = Border::new(
+                    &get("val")?,
+                    get("sz").as_deref(),
+                    get("color").as_deref(),
+                    get("space").as_deref(),
+                );
+                Some((name, border))
+            })
+            .collect();
+        borders::describe(&borders::ordered(&found, all), all)
+    };
+    let own = borders(
+        tblpr.and_then(|x| child(dom, x, "tblBorders")),
+        &crate::borders::TABLE_SIDES,
+    );
+    if !own.is_empty() {
+        s.push_str(&format!(" borders[{own}]"));
+    }
+    let mut cell_borders: BTreeMap<String, usize> = BTreeMap::new();
+    let mut cells: BTreeMap<String, usize> = BTreeMap::new();
+    for tc in dom.descendants(t, None) {
+        if local(dom, tc) != "tc" || nearest(dom, tc, "tbl") != Some(t) {
+            continue;
+        }
+        if let Some(fill) = child(dom, tc, "tcPr")
+            .and_then(|x| child(dom, x, "shd"))
+            .and_then(|x| shd(dom, x))
+        {
+            *cells.entry(fill).or_default() += 1;
+        }
+        let own = borders(
+            child(dom, tc, "tcPr").and_then(|x| child(dom, x, "tcBorders")),
+            &crate::borders::CELL_SIDES,
+        );
+        if !own.is_empty() {
+            *cell_borders.entry(own).or_default() += 1;
+        }
+    }
+    if !cell_borders.is_empty() {
+        let items: Vec<String> = cell_borders
+            .iter()
+            .map(|(b, k)| format!("{b}×{k}"))
+            .collect();
+        s.push_str(&format!(" cells-borders[{}]", items.join(",")));
+    }
+    if !cells.is_empty() {
+        let items: Vec<String> = cells.iter().map(|(f, k)| format!("{f}×{k}")).collect();
+        s.push_str(&format!(" cells-shd[{}]", items.join(",")));
+    }
+    // The conditions the table's look turns off paint nothing (the
+    // converter's own reading of `w:tblLook`).
+    let look = crate::table_dom::table_look(dom, t);
+    let conds: Vec<(String, String)> = styles
+        .table_shd(&style)
+        .into_iter()
+        .filter(|(k, _)| match k.as_str() {
+            "firstRow" => look.first_row,
+            "firstCol" => look.first_col,
+            "band1Horz" | "band2Horz" => !look.no_h_band,
+            _ => true,
+        })
+        .collect();
+    if !conds.is_empty() {
+        let items: Vec<String> = conds.iter().map(|(k, f)| format!("{k}={f}")).collect();
+        s.push_str(&format!(" style-shd[{}]", items.join(",")));
+    }
+    if let Some(first) = rows.first() {
+        let texts: Vec<String> = crate::table_dom::wrapped_children(dom, *first, "tc")
+            .into_iter()
+            .map(|tc| {
+                crate::table_dom::wrapped_children(dom, tc, "p")
+                    .into_iter()
+                    .map(|p| own_text(dom, p, p))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect();
+        s.push_str(&format!(" \"{}\"", clip(&texts.join(" | "), FIRST_ROW)));
+    }
+    s
+}
+
+/// `section N page=WxH margins=t,r,b,l header=… footer=… cols=… TYPE-KIND=part`.
+fn section(dom: &Dom, sect: NodeId, n: usize, rels: &[Rel]) -> String {
+    let mut s = format!("  section {n}");
+    if let Some(sz) = child(dom, sect, "pgSz") {
+        s.push_str(&format!(
+            " page={}x{}",
+            attr(dom, sz, "w"),
+            attr(dom, sz, "h")
+        ));
+        // The page's orientation, not the attribute's: `portrait` is the
+        // default a page need not state, and a page wider than tall is
+        // landscape (as the view reads it).
+        let number = |k: &str| attr(dom, sz, k).parse::<u64>().unwrap_or(0);
+        if attr(dom, sz, "orient") == "landscape" || number("w") > number("h") {
+            s.push_str(" landscape");
+        }
+    }
+    if let Some(m) = child(dom, sect, "pgMar") {
+        let a = |k: &str| attr(dom, m, k);
+        s.push_str(&format!(
+            " margins={},{},{},{} header={} footer={}",
+            a("top"),
+            a("right"),
+            a("bottom"),
+            a("left"),
+            a("header"),
+            a("footer")
+        ));
+    }
+    if let Some(c) = child(dom, sect, "cols") {
+        // Unequal columns: each width and the gap after it.
+        let custom: Vec<String> = kids(dom, c, "col")
+            .into_iter()
+            .map(|col| {
+                let gap = attr(dom, col, "space");
+                if gap.is_empty() {
+                    attr(dom, col, "w")
+                } else {
+                    format!("{}+{gap}", attr(dom, col, "w"))
+                }
+            })
+            .collect();
+        let unequal = matches!(attr(dom, c, "equalWidth").as_str(), "0" | "false");
+        let num = attr(dom, c, "num");
+        if unequal && !custom.is_empty() {
+            s.push_str(&format!(" cols={}[{}]", custom.len(), custom.join(",")));
+        } else if !num.is_empty() && num != "1" {
+            s.push_str(&format!(" cols={num}"));
+        }
+    }
+    if let Some(t) = child(dom, sect, "type") {
+        s.push_str(&format!(" type={}", attr(dom, t, "val")));
+    }
+    if on(dom, sect, "titlePg") {
+        s.push_str(" titlePg");
+    }
+    for r in dom.elements(sect, None) {
+        let kind = match local(dom, r).as_str() {
+            "headerReference" => "header",
+            "footerReference" => "footer",
+            _ => continue,
+        };
+        let ty = attr(dom, r, "type");
+        let ty = if ty.is_empty() {
+            "default".to_string()
+        } else {
+            ty
+        };
+        let id = attr(dom, r, "id");
+        let part = rels
+            .iter()
+            .find(|x| x.id == id)
+            .map_or_else(|| format!("{id}?"), |x| x.part.clone());
+        s.push_str(&format!(" {ty}-{kind}={part}"));
+    }
+    s
+}
+
+/// `anchor wrap H=from:offset V=from:offset CXxCY [behind] "name"`.
+fn anchor(dom: &Dom, a: NodeId) -> String {
+    let wrap = dom
+        .elements(a, None)
+        .into_iter()
+        .map(|c| local(dom, c))
+        .find(|l| l.starts_with("wrap"))
+        .unwrap_or_default();
+    let pos = |name: &str| {
+        child(dom, a, name).map_or_else(String::new, |p| {
+            let at = dom
+                .elements(p, None)
+                .into_iter()
+                .map(|c| {
+                    let v: String = dom
+                        .nodes(c)
+                        .into_iter()
+                        .filter_map(|t| dom.text_value(t).map(str::to_string))
+                        .collect();
+                    if local(dom, c) == "align" {
+                        v
+                    } else {
+                        v.trim().to_string()
+                    }
+                })
+                .next()
+                .unwrap_or_default();
+            format!("{}:{at}", attr(dom, p, "relativeFrom"))
+        })
+    };
+    let size = child(dom, a, "extent")
+        .map(|e| format!("{}x{}", attr(dom, e, "cx"), attr(dom, e, "cy")))
+        .unwrap_or_default();
+    let behind = if matches!(attr(dom, a, "behindDoc").as_str(), "1" | "true") {
+        " behind"
+    } else {
+        ""
+    };
+    let name = child(dom, a, "docPr")
+        .map(|d| attr(dom, d, "name"))
+        .unwrap_or_default();
+    format!(
+        "  anchor {wrap} H={} V={} {size}{behind} \"{name}\"",
+        pos("positionH"),
+        pos("positionV")
+    )
+}
+
+/// `(layout)`: jubarte's page count and font resolution (Word revision
+/// style, as the bench renders it), then the fonts the package asks for:
+/// `docDefaults`, the theme and `fontTable.xml`.
+fn layout_lines(pkg: &Package, rels: &[Rel]) -> (Vec<String>, usize) {
+    let mut out = Vec::new();
+    let options = jubarte_render::convert::PdfOptions {
+        revisions: jubarte_render::convert::RevisionStyle::Word,
+        ..Default::default()
+    };
+    let pages = match jubarte_render::convert::docx_render_report(&pkg.raw, options) {
+        Ok(report) => {
+            let mut fonts: Vec<String> = report
+                .fonts
+                .iter()
+                .map(|f| {
+                    let style = match (f.bold, f.italic) {
+                        (false, false) => "regular",
+                        (true, false) => "bold",
+                        (false, true) => "italic",
+                        (true, true) => "bold-italic",
+                    };
+                    format!(
+                        "  font \"{}\" {style} → {} {}{}",
+                        f.requested,
+                        f.physical,
+                        f.step,
+                        if f.synthetic { " synthetic" } else { "" }
+                    )
+                })
+                .collect();
+            fonts.sort();
+            out.push(format!("  pages {}", report.page_count));
+            out.extend(fonts);
+            report.page_count
+        }
+        Err(e) => {
+            out.push(format!("  layout failed: {e}"));
+            0
+        }
+    };
+    if let Some(d) = rels
+        .iter()
+        .find(|r| r.kind == "styles")
+        .and_then(|r| parse(pkg, &r.part))
+        .and_then(|(dom, root)| StyleBook::new(&dom, root).default_fonts)
+    {
+        out.push(format!("  docDefaults rfonts {d}"));
+    }
+    if let Some((dom, root)) = rels
+        .iter()
+        .find(|r| r.kind == "theme")
+        .and_then(|r| parse(pkg, &r.part))
+    {
+        for (slot, label) in [("majorFont", "major"), ("minorFont", "minor")] {
+            let face = descendant(&dom, root, slot)
+                .and_then(|f| child(&dom, f, "latin"))
+                .map(|l| attr(&dom, l, "typeface"));
+            if let Some(face) = face {
+                out.push(format!("  theme {label} latin=\"{face}\""));
+            }
+        }
+    }
+    if let Some((dom, root)) = rels
+        .iter()
+        .find(|r| r.kind == "fontTable")
+        .and_then(|r| parse(pkg, &r.part))
+    {
+        for f in kids(&dom, root, "font") {
+            let mut s = format!("  fontTable \"{}\"", attr(&dom, f, "name"));
+            if let Some(alt) = child(&dom, f, "altName") {
+                s.push_str(&format!(" alt=\"{}\"", attr(&dom, alt, "val")));
+            }
+            let embedded: Vec<String> = dom
+                .elements(f, None)
+                .into_iter()
+                .map(|c| local(&dom, c))
+                .filter_map(|l| l.strip_prefix("embed").map(str::to_lowercase))
+                .collect();
+            if !embedded.is_empty() {
+                s.push_str(&format!(" embedded({})", embedded.join(",")));
+            }
+            out.push(s);
+        }
+    }
+    (out, pages)
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod story_diagnostic_contract_tests {
+    use super::*;
+    use std::io::{Cursor, Write};
+
+    const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    const PR: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+
+    fn dom(xml: &str) -> (Dom, NodeId) {
+        let mut d = Dom::new();
+        let doc = d.parse_xdocument(xml);
+        let root = d.root(doc).unwrap();
+        (d, root)
+    }
+
+    fn document(body: &str) -> String {
+        format!(
+            r#"<w:document xmlns:w="{W}" xmlns:r="{R}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><w:body>{body}</w:body></w:document>"#
+        )
+    }
+
+    // The dependency's own in-memory ZIP writer, also used by debug.rs tests.
+    fn package(entries: &[(&str, &str)]) -> Package {
+        let mut out = Cursor::new(Vec::new());
+        {
+            let mut zip = zip::ZipWriter::new(&mut out);
+            zip.start_file(
+                "[Content_Types].xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zip.write_all(br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>"#).unwrap();
+            for (name, text) in entries {
+                zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                zip.write_all(text.as_bytes()).unwrap();
+            }
+            zip.finish().unwrap();
+        }
+        Package::open(&out.into_inner()).unwrap()
+    }
+
+    fn report(body: &str, styles: &StyleBook, rels: &[Rel]) -> (Vec<String>, usize) {
+        let (d, root) = dom(&document(body));
+        let before = d.serialize_element(root);
+        let mut lines = Vec::new();
+        let count = part_lines(&d, root, styles, rels, &mut lines);
+        assert_eq!(d.serialize_element(root), before);
+        (lines, count)
+    }
+
+    #[test]
+    fn nested_complex_fields_record_each_code_once_and_ignore_unowned_instructions() {
+        let body = r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> IF </w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> pa</w:instrText></w:r><w:r><w:instrText>ge </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>2</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText> = 2 "yes" "no" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>yes</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:fldSimple w:instr=" DATE "><w:r><w:t>June</w:t></w:r></w:fldSimple></w:p>"#;
+        assert_eq!(
+            report(body, &StyleBook::default(), &[]),
+            (
+                vec![
+                    "  field DATE ×1".into(),
+                    "  field IF ×1".into(),
+                    "  field PAGE ×1".into()
+                ],
+                1
+            )
+        );
+        // Intentional malformed diagnostic probes: unmatched field ends,
+        // empty instructions, and a run outside any paragraph paint no field.
+        let malformed = r#"<w:r><w:rPr><w:color w:val="FF0000"/></w:rPr><w:t>orphan</w:t></w:r><w:p><w:r><w:instrText>STRAY</w:instrText><w:fldChar w:fldCharType="end"/></w:r><w:r><w:fldChar w:fldCharType="begin"/><w:instrText> </w:instrText><w:fldChar w:fldCharType="end"/></w:r><w:fldSimple w:instr=" "/></w:p>"#;
+        assert_eq!(
+            report(malformed, &StyleBook::default(), &[]),
+            (Vec::new(), 1)
+        );
+    }
+
+    #[test]
+    fn shading_reports_literal_solid_theme_and_pattern_ink_with_explicit_resets() {
+        for (attrs, expected) in [
+            (
+                r#"w:val="solid" w:color="A1B2C3" w:fill="FFFFFF""#,
+                Some("A1B2C3"),
+            ),
+            (r#"w:val="solid" w:color="auto""#, Some("solid:auto")),
+            (r#"w:val="solid""#, Some("solid:auto")),
+            (
+                r#"w:val="clear" w:themeFill="accent2" w:fill="112233""#,
+                Some("theme:accent2"),
+            ),
+            (
+                r#"w:val="pct20" w:fill="112233" w:color="445566""#,
+                Some("112233/pct20:445566"),
+            ),
+            (
+                r#"w:val="pct20" w:fill="auto" w:color="445566""#,
+                Some("/pct20:445566"),
+            ),
+            (r#"w:val="clear" w:fill="auto""#, None),
+            (r#"w:val="clear""#, None),
+            (r#"w:val="nil" w:fill="112233""#, None),
+        ] {
+            let (d, root) = dom(&format!(r#"<w:shd xmlns:w="{W}" {attrs}/>"#));
+            let before = d.serialize_element(root);
+            assert_eq!(shd(&d, root).as_deref(), expected, "{attrs}");
+            assert_eq!(d.serialize_element(root), before);
+        }
+        let (d, root) = dom(&format!(
+            r#"<w:rPr xmlns:w="{W}"><w:color/><w:highlight/></w:rPr>"#
+        ));
+        assert_eq!(color(&d, root), Some(None));
+        assert_eq!(highlight(&d, root), Some(None));
+        let (d, root) = dom(&format!(
+            r#"<w:rPr xmlns:w="{W}"><w:color w:themeColor="accent1" w:themeTint="80" w:themeShade="40"/></w:rPr>"#
+        ));
+        assert_eq!(
+            color(&d, root),
+            Some(Some("theme:accent1/tint:80/shade:40".into()))
+        );
+    }
+
+    #[test]
+    fn inherited_frame_overrides_and_repeated_run_tallies_keep_first_source_sample() {
+        let (d, root) = dom(&format!(
+            r#"<w:styles xmlns:w="{W}"><w:style w:type="paragraph" w:styleId="Base"><w:name w:val="Base face"/><w:pPr><w:framePr w:w="2000" w:x="100" w:hAnchor="page"/></w:pPr><w:rPr><w:color w:val="112233"/><w:highlight w:val="yellow"/><w:rFonts w:ascii="Example" w:hAnsi="Example"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Child"><w:name w:val="Child face"/><w:basedOn w:val="Base"/><w:pPr><w:framePr w:x="200"/></w:pPr></w:style></w:styles>"#
+        ));
+        let styles = StyleBook::new(&d, root);
+        let body = r#"<w:p><w:pPr><w:pStyle w:val="Child"/><w:framePr w:x="300"/></w:pPr><w:r><w:t>first</w:t></w:r><w:r><w:t>second</w:t></w:r><w:r><w:rPr><w:color w:val="auto"/><w:highlight w:val="none"/></w:rPr><w:t>reset</w:t></w:r></w:p>"#;
+        assert_eq!(
+            report(body, &styles, &[]),
+            (
+                vec![
+                    "  frame(hAnchor=page,w=2000,x=300) \"firstsecondreset\"".into(),
+                    // `first` and `second` are one stretch; the face
+                    // spans all three runs.
+                    "  color 112233 via \"Base face\" ×1 \"first\"".into(),
+                    "  highlight yellow via \"Base face\" ×1 \"first\"".into(),
+                    "  pstyle \"Child face\" ×1".into(),
+                    "  rfonts \"Example\" via \"Base face\" ×1".into(),
+                ],
+                1
+            )
+        );
+    }
+
+    #[test]
+    fn a_stretch_split_into_runs_counts_once_and_a_gap_counts_twice() {
+        // file_170's "monospace" and "." are two runs of one highlight; a
+        // round trip that leaves the space between unhighlighted has two.
+        let split = r#"<w:p><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t xml:space="preserve">yellow, </w:t></w:r><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>mono</w:t></w:r><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>.</w:t></w:r></w:p>"#;
+        let gap = r#"<w:p><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>yellow,</w:t></w:r><w:r><w:t xml:space="preserve"> </w:t></w:r><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>mono.</w:t></w:r></w:p>"#;
+        assert_eq!(
+            report(split, &StyleBook::default(), &[]).0,
+            vec!["  highlight yellow ×1 \"yellow,\"".to_string()]
+        );
+        assert_eq!(
+            report(gap, &StyleBook::default(), &[]).0,
+            vec!["  highlight yellow ×2 \"yellow,\"".to_string()]
+        );
+        // Two paragraphs are two stretches.
+        assert_eq!(
+            report(&format!("{split}{split}"), &StyleBook::default(), &[]).0,
+            vec!["  highlight yellow ×2 \"yellow,\"".to_string()]
+        );
+    }
+
+    #[test]
+    fn strict_rprs_tally_by_local_name() {
+        // A Strict package writes its parts in the purl.oclc.org namespace
+        // (Strict01): a run's leading `rPr` blocks are found by local name,
+        // so their direct highlight still counts.
+        let (d, root) = dom(
+            r#"<w:document xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"><w:body><w:p><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>Video provides</w:t></w:r></w:p></w:body></w:document>"#,
+        );
+        let mut lines = Vec::new();
+        part_lines(&d, root, &StyleBook::default(), &[], &mut lines);
+        assert_eq!(
+            lines,
+            vec!["  highlight yellow ×1 \"Video provides\"".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_highlight_on_a_run_that_paints_no_glyph_is_not_tallied() {
+        // 791ca61933's only highlight sits on a deleted page-break run: a
+        // break paints no glyph a highlight can colour, while a tab or
+        // text does.
+        let br = r#"<w:p><w:del w:id="1" w:author="A" w:date="2024-01-01T00:00:00Z"><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:br w:type="page"/></w:r></w:del><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>lit</w:t></w:r></w:p>"#;
+        assert_eq!(
+            report(br, &StyleBook::default(), &[]).0,
+            vec!["  highlight yellow ×1 \"lit\"".to_string()]
+        );
+        let tab = r#"<w:p><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:tab/></w:r></w:p>"#;
+        assert_eq!(
+            report(tab, &StyleBook::default(), &[]).0,
+            vec!["  highlight yellow ×1".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_highlight_on_a_hyphen_or_position_tab_is_tallied() {
+        // Word draws the highlight band behind a non-breaking or soft
+        // hyphen and behind a position tab as behind any other glyph, so
+        // the comparator counts them: a faithful round trip reports no
+        // difference and a lost one a real difference, instead of hiding
+        // both behind a run that paints nothing.
+        for (run, line) in [
+            (
+                r#"<w:r><w:rPr><w:highlight w:val="cyan"/></w:rPr><w:noBreakHyphen/></w:r>"#,
+                "  highlight cyan ×1",
+            ),
+            (
+                r#"<w:r><w:rPr><w:highlight w:val="green"/></w:rPr><w:softHyphen/></w:r>"#,
+                "  highlight green ×1",
+            ),
+            (
+                r#"<w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:ptab/></w:r>"#,
+                "  highlight yellow ×1",
+            ),
+        ] {
+            let body =
+                format!(r#"<w:p><w:r><w:t>A </w:t></w:r>{run}<w:r><w:t> B</w:t></w:r></w:p>"#);
+            assert_eq!(
+                report(&body, &StyleBook::default(), &[]).0,
+                vec![line.to_string()],
+                "{run}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_table_reports_its_own_borders_and_its_cells() {
+        // 5331b981b7's shape: a grid written with start/end, grey cells.
+        let body = r#"<w:tbl><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="2" w:color="000000"/><w:start w:val="single" w:sz="2" w:color="000000"/><w:bottom w:val="nil"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcBorders><w:top w:val="single" w:sz="8" w:color="CCCCCC"/></w:tcBorders></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcBorders><w:top w:val="single" w:sz="8" w:color="CCCCCC"/></w:tcBorders></w:tcPr><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+        assert_eq!(
+            report(body, &StyleBook::default(), &[]).0,
+            vec![
+                "  table 1 1x2 borders[top,left single 0.25pt 000000 + bottom none] cells-borders[top single 1pt CCCCCC×2] \"A | B\""
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn nested_table_shading_and_textbox_frames_report_only_their_own_text() {
+        let body = r#"<w:tbl><w:tblPr><w:tblpPr w:tblpX="40" w:horzAnchor="margin"/></w:tblPr><w:tblGrid><w:gridCol w:w="3000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:shd w:fill="112233"/></w:tcPr><w:p><w:r><w:t>Outer</w:t></w:r></w:p><w:tbl><w:tblGrid><w:gridCol w:w="1500"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:shd w:fill="445566"/></w:tcPr><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/></w:tc></w:tr></w:tbl><w:p><w:pPr><w:framePr w:w="900"/></w:pPr><w:r><w:t>Host</w:t><w:pict><v:shape><v:textbox><w:txbxContent><w:tbl><w:tblGrid><w:gridCol w:w="800"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Box</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"#;
+        assert_eq!(
+            report(body, &StyleBook::default(), &[]),
+            (
+                vec![
+                    "  table 1 1x1 float(horzAnchor=margin,tblpX=40) cells-shd[112233×1] \"Outer\""
+                        .into(),
+                    "  table 2 1x1 nested cells-shd[445566×1] \"Inner\"".into(),
+                    "  frame(w=900) \"Host\"".into(),
+                    "  table 3 1x1 in-textbox \"Box\"".into(),
+                    "  vml pict ×1".into(),
+                ],
+                5
+            )
+        );
+        // Explicit malformed table probe, not a schema-valid authored table.
+        assert_eq!(
+            report("<w:tbl/>", &StyleBook::default(), &[]),
+            (vec!["  table 1 0x0".into()], 0)
+        );
+    }
+
+    #[test]
+    fn section_columns_geometry_and_story_reference_diagnostics_are_literal() {
+        let rels = [Rel {
+            kind: "header".into(),
+            id: "h".into(),
+            part: "word/header1.xml".into(),
+        }];
+        let body = r#"<w:sectPr><w:headerReference w:type="first" r:id="h"/><w:footerReference w:type="default" r:id="missing"/><w:type w:val="continuous"/><w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/><w:pgMar w:top="100" w:right="200" w:bottom="300" w:left="400" w:header="50" w:footer="60"/><w:cols w:equalWidth="0"><w:col w:w="2000" w:space="300"/><w:col w:w="4000"/></w:cols><w:titlePg/><w:sectPrChange w:id="1" w:author="A"><w:sectPr><w:pgSz w:w="1" w:h="2"/></w:sectPr></w:sectPrChange></w:sectPr>"#;
+        assert_eq!(report(body, &StyleBook::default(), &rels), (vec!["  section 1 page=15840x12240 landscape margins=100,200,300,400 header=50 footer=60 cols=2[2000+300,4000] type=continuous titlePg first-header=word/header1.xml default-footer=missing?".into()], 0));
+        for (attrs, children, expected) in [
+            (r#"w:num="2""#, "", "  section 1 cols=2"),
+            (r#"w:num="1""#, "", "  section 1"),
+            ("", "", "  section 1"),
+            (
+                r#"w:equalWidth="false" w:num="3""#,
+                "",
+                "  section 1 cols=3",
+            ), // malformed missing unequal column definitions
+            (
+                r#"w:equalWidth="1" w:num="2""#,
+                r#"<w:col w:w="1000"/>"#,
+                "  section 1 cols=2",
+            ),
+        ] {
+            assert_eq!(
+                report(
+                    &format!("<w:sectPr><w:cols {attrs}>{children}</w:cols></w:sectPr>"),
+                    &StyleBook::default(),
+                    &[]
+                ),
+                (vec![expected.into()], 0)
+            );
+        }
+        // Required type is deliberately absent to test the diagnostic fallback.
+        assert_eq!(
+            report(
+                r#"<w:sectPr><w:headerReference r:id="h"/></w:sectPr>"#,
+                &StyleBook::default(),
+                &rels
+            ),
+            (
+                vec!["  section 1 default-header=word/header1.xml".into()],
+                0
+            )
+        );
+    }
+
+    #[test]
+    fn section_geometry_prints_one_spelling_of_the_same_measure() {
+        // A strict `w:sectPr` writes universal measures (`612pt`) where
+        // the transitional form writes twips: the diagnostic lists the
+        // twips, so a round trip compares one spelling while a changed
+        // size still differs and a malformed value stays raw. Packages,
+        // not `report`'s bare Dom: the normalisation lives in `parse`.
+        let sect = |size: &str, mar: &str| {
+            let main = document(&format!(
+                r#"<w:p><w:r><w:t>x</w:t></w:r></w:p><w:sectPr><w:pgSz {size}/><w:pgMar {mar}/></w:sectPr>"#
+            ));
+            let root_rels = format!(
+                r#"<Relationships xmlns="{PR}"><Relationship Id="main" Type="{R}/officeDocument" Target="word/document.xml"/></Relationships>"#
+            );
+            let pkg = package(&[("_rels/.rels", &root_rels), ("word/document.xml", &main)]);
+            render_parts(&pkg, None)["word/document.xml"]
+                .0
+                .iter()
+                .find(|l| l.starts_with("  section"))
+                .cloned()
+                .unwrap()
+        };
+        let strict = sect(
+            r#"w:w="612pt" w:h="792pt""#,
+            r#"w:top="72pt" w:right="1440" w:bottom="1in" w:left="36pt" w:header="0.5in" w:footer="720""#,
+        );
+        assert_eq!(
+            strict,
+            "  section 1 page=12240x15840 margins=1440,1440,1440,720 header=720 footer=720"
+        );
+        let transitional = sect(
+            r#"w:w="12240" w:h="15840""#,
+            r#"w:top="1440" w:right="1440" w:bottom="1440" w:left="720" w:header="720" w:footer="720""#,
+        );
+        assert_eq!(transitional, strict);
+        // Wider than tall is landscape in either spelling, and a page a
+        // twip apart is a different page.
+        assert!(sect(r#"w:w="792pt" w:h="612pt""#, "").contains("page=15840x12240 landscape"));
+        assert_ne!(
+            sect(
+                r#"w:w="12241" w:h="15840""#,
+                r#"w:top="1440" w:right="1440" w:bottom="1440" w:left="720" w:header="720" w:footer="720""#
+            ),
+            strict
+        );
+        assert!(sect(r#"w:w="6..1" w:h="792pt""#, "").contains("page=6..1x15840"));
+    }
+
+    #[test]
+    fn section_prints_a_plain_value_as_the_file_spells_it() {
+        // A plain fractional dxa (gdocs-style) is the file's own literal,
+        // not a unit spelling to canonicalize: the diagnostic reports what
+        // the part carries (#531 review defect 3). Only unit-bearing
+        // measures ("612pt") list as the twips they name.
+        let sect = |mar: &str| {
+            let main = document(&format!(
+                r#"<w:p><w:r><w:t>x</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar {mar}/></w:sectPr>"#
+            ));
+            let root_rels = format!(
+                r#"<Relationships xmlns="{PR}"><Relationship Id="main" Type="{R}/officeDocument" Target="word/document.xml"/></Relationships>"#
+            );
+            let pkg = package(&[("_rels/.rels", &root_rels), ("word/document.xml", &main)]);
+            render_parts(&pkg, None)["word/document.xml"]
+                .0
+                .iter()
+                .find(|l| l.starts_with("  section"))
+                .cloned()
+                .unwrap()
+        };
+        assert_eq!(
+            sect(
+                r#"w:top="1440.4" w:right="1440" w:bottom="1in" w:left="1440" w:header="720" w:footer="720""#
+            ),
+            "  section 1 page=12240x15840 margins=1440.4,1440,1440,1440 header=720 footer=720"
+        );
+    }
+
+    #[test]
+    fn section_orientation_is_the_pages_not_the_attributes() {
+        // `w:orient="portrait"` is the schema's default: a page that says
+        // it and one that does not are the same page (Demo.docx's round
+        // trip reported them as a lost and a new section).
+        for (size, expected) in [
+            (
+                r#"w:w="11906" w:h="16838" w:orient="portrait""#,
+                "  section 1 page=11906x16838",
+            ),
+            (r#"w:w="11906" w:h="16838""#, "  section 1 page=11906x16838"),
+            (
+                r#"w:w="16838" w:h="11906" w:orient="landscape""#,
+                "  section 1 page=16838x11906 landscape",
+            ),
+            // Wider than tall is landscape, as the view reads it.
+            (
+                r#"w:w="16838" w:h="11906""#,
+                "  section 1 page=16838x11906 landscape",
+            ),
+            (
+                r#"w:w="11906" w:h="16838" w:orient="landscape""#,
+                "  section 1 page=11906x16838 landscape",
+            ),
+        ] {
+            assert_eq!(
+                report(
+                    &format!("<w:sectPr><w:pgSz {size}/></w:sectPr>"),
+                    &StyleBook::default(),
+                    &[]
+                ),
+                (vec![expected.into()], 0),
+                "{size}"
+            );
+        }
+    }
+
+    #[test]
+    fn anchor_alignment_and_offsets_preserve_authored_extent_name_and_layer() {
+        for (behind, suffix) in [
+            ("1", " behind"),
+            ("true", " behind"),
+            ("0", ""),
+            ("false", ""),
+        ] {
+            let body = format!(
+                r#"<w:p><w:r><w:drawing><wp:anchor behindDoc="{behind}" simplePos="0" relativeHeight="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="margin"><wp:align>center</wp:align></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset> 123 </wp:posOffset></wp:positionV><wp:extent cx="914400" cy="457200"/><wp:wrapSquare wrapText="bothSides"/><wp:docPr id="1" name="Picture 1"/><wp:cNvGraphicFramePr/><a:graphic><a:graphicData uri="urn:diagnostic:graphic"/></a:graphic></wp:anchor></w:drawing></w:r></w:p>"#
+            );
+            assert_eq!(
+                report(&body, &StyleBook::default(), &[]),
+                (
+                    vec![format!(
+                        "  anchor wrapSquare H=margin:center V=paragraph:123 914400x457200{suffix} \"Picture 1\""
+                    )],
+                    1
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn memory_package_filter_resolves_story_roles_and_excludes_nonstories_without_mutation() {
+        let main = document(
+            r#"<w:p><w:r><w:t>Body</w:t></w:r></w:p><w:sectPr><w:headerReference w:type="default" r:id="h"/></w:sectPr>"#,
+        );
+        let root_rels = format!(
+            r#"<Relationships xmlns="{PR}"><Relationship Id="main" Type="{R}/officeDocument" Target="word/document.xml"/></Relationships>"#
+        );
+        let main_rels = format!(
+            r#"<Relationships xmlns="{PR}"><Relationship Id="h" Type="{R}/header" Target="header1.xml"/><Relationship Id="external" Type="{R}/hyperlink" Target="https://example.invalid/" TargetMode="External"/></Relationships>"#
+        );
+        let header = format!(
+            r#"<w:hdr xmlns:w="{W}"><w:p><w:r><w:rPr><w:color w:val="112233"/></w:rPr><w:t>Head</w:t></w:r></w:p></w:hdr>"#
+        );
+        let pkg = package(&[
+            ("_rels/.rels", &root_rels),
+            ("word/_rels/document.xml.rels", &main_rels),
+            ("word/document.xml", &main),
+            ("word/header1.xml", &header),
+            ("word/styles.xml", "<styles/>"),
+            ("word/empty.xml", ""),
+            ("word/picture.bin", "binary"),
+        ]);
+        let before: Vec<_> = pkg.entries.iter().map(|e| (&e.name, &e.data)).collect();
+        let raw = pkg.raw.clone();
+        let result = render_parts(&pkg, Some("header"));
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result["word/header1.xml"],
+            (
+                vec![
+                    "  shown as section 1 default header".into(),
+                    "  color 112233 ×1 \"Head\"".into()
+                ],
+                1
+            )
+        );
+        assert_eq!(
+            render_parts(&pkg, Some("word/"))
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec!["word/document.xml", "word/header1.xml"]
+        );
+        assert_eq!(pkg.raw, raw);
+        assert_eq!(
+            pkg.entries
+                .iter()
+                .map(|e| (&e.name, &e.data))
+                .collect::<Vec<_>>(),
+            before
+        );
+    }
+
+    #[test]
+    fn malformed_package_relationship_diagnostics_do_not_invent_main_or_story_parts() {
+        for relationships in [
+            None,
+            Some(""),
+            Some(
+                r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="other" Type="urn:other" Target="word/document.xml"/></Relationships>"#,
+            ),
+        ] {
+            let main = document("<w:p/>");
+            let mut entries = vec![("word/document.xml", main.as_str())];
+            if let Some(xml) = relationships {
+                entries.push(("_rels/.rels", xml));
+            }
+            let pkg = package(&entries);
+            assert!(main_rels(&pkg).is_empty());
+            assert_eq!(
+                render_parts(&pkg, Some("document")),
+                BTreeMap::from([("word/document.xml".into(), (Vec::new(), 1))])
+            );
+            assert!(parse(&pkg, "word/absent.xml").is_none());
+        }
+    }
+
+    #[test]
+    fn table_style_resets_and_look_flags_report_only_live_conditional_fills() {
+        let (d, root) = dom(&format!(
+            r#"<w:styles xmlns:w="{W}"><w:style w:type="table" w:styleId="Base"><w:name w:val="Base table"/><w:tblPr><w:shd w:fill="111111"/></w:tblPr><w:tblStylePr w:type="firstRow"><w:tcPr><w:shd w:fill="222222"/></w:tcPr></w:tblStylePr><w:tblStylePr w:type="firstCol"><w:tcPr><w:shd w:fill="333333"/></w:tcPr></w:tblStylePr><w:tblStylePr w:type="band1Horz"><w:tcPr><w:shd w:fill="444444"/></w:tcPr></w:tblStylePr></w:style><w:style w:type="table" w:styleId="Child"><w:name w:val="Child table"/><w:basedOn w:val="Base"/><w:tblPr><w:shd w:val="nil"/></w:tblPr></w:style></w:styles>"#
+        ));
+        let styles = StyleBook::new(&d, root);
+        for (first_row, first_col, no_band, suffix) in [
+            (
+                "1",
+                "1",
+                "0",
+                " style-shd[firstRow=222222,firstCol=333333,band1Horz=444444]",
+            ),
+            ("0", "1", "1", " style-shd[firstCol=333333]"),
+            ("1", "0", "1", " style-shd[firstRow=222222]"),
+            ("0", "0", "1", ""),
+        ] {
+            let body = format!(
+                r#"<w:tbl><w:tblPr><w:tblStyle w:val="Child"/><w:tblLook w:firstRow="{first_row}" w:firstColumn="{first_col}" w:noHBand="{no_band}"/></w:tblPr><w:tblGrid><w:gridCol w:w="2400"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
+            );
+            assert_eq!(
+                report(&body, &styles, &[]),
+                (
+                    vec![format!(
+                        "  table 1 1x1 style=\"Child table\"{suffix} \"Cell\""
+                    )],
+                    1
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn revisions_cross_transparent_owners_but_live_field_payload_breaks_adjacency() {
+        let deleted =
+            r#"<w:del w:id="1" w:author="A"><w:r><w:delText>Old</w:delText></w:r></w:del>"#;
+        let inserted = r#"<w:ins w:id="2" w:author="A"><w:r><w:t>New</w:t></w:r></w:ins>"#;
+        let body = format!(
+            r#"<w:p><w:hyperlink r:id="link">{deleted}</w:hyperlink><w:sdt><w:sdtPr><w:id w:val="42"/></w:sdtPr><w:sdtContent>{inserted}</w:sdtContent></w:sdt></w:p><w:p>{inserted}<w:r><w:rPr/><w:t/><w:commentReference w:id="0"/></w:r>{deleted}</w:p>"#
+        );
+        assert_eq!(
+            report(&body, &StyleBook::default(), &[]),
+            (
+                vec![
+                    "  revisions del→ins ×1 \"OldNew\"".into(),
+                    "  revisions ins→del ×1 \"NewOld\"".into()
+                ],
+                2
+            )
+        );
+        for separating_run in [
+            "<w:r><w:t> </w:t></w:r>",
+            "<w:r><w:tab/></w:r>",
+            "<w:r><w:br/></w:r>",
+        ] {
+            assert_eq!(
+                report(
+                    &format!("<w:p>{deleted}{separating_run}{inserted}</w:p>"),
+                    &StyleBook::default(),
+                    &[]
+                ),
+                (Vec::new(), 1)
+            );
+        }
+        let field = format!(
+            r#"<w:p>{deleted}<w:fldSimple w:instr="PAGE"><w:r><w:t>1</w:t></w:r></w:fldSimple>{inserted}</w:p>"#
+        );
+        assert_eq!(
+            report(&field, &StyleBook::default(), &[]),
+            (vec!["  field PAGE ×1".into()], 1)
+        );
+    }
+}

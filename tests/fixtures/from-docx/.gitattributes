@@ -1,0 +1,3 @@
+# Checked outputs and sources are compared byte for byte: never convert line
+# endings (a Windows checkout would otherwise write CRLF).
+* -text

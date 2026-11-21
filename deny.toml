@@ -1,0 +1,159 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# cargo-deny policy for jubarte (plan A4).
+# Project is Apache-2.0; only permissive dependency licenses are allowed.
+
+[graph]
+all-features = true
+# Every triple a release ships for, so a duplicate that only one target's
+# graph pulls in still fails the bans check.
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "aarch64-apple-darwin" },
+    { triple = "x86_64-apple-darwin" },
+    { triple = "x86_64-pc-windows-msvc" },
+    # jubarte-wasm ships for the browser; its graph differs from the hosts'.
+    { triple = "wasm32-unknown-unknown" },
+]
+
+[advisories]
+version = 2
+yanked = "warn"
+ignore = [
+    # Direct rustybuzz 0.20 (shaping). Unmaintained as of 2026-08; migrating
+    # off it is plan Step 2e / PR5 (FaceKey registry), not a CI ignore-forever.
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz unmaintained; migrate with FaceKey/harfbuzz in plan 2e" },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser unmaintained: direct dep (glyph metrics, TTF embed) and via rustybuzz 0.20; same 2e migration" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "0BSD",
+    # webpki-roots (Mozilla's CA root list), pulled in by `self-update`'s
+    # rustls client: a permissive data license.
+    "CDLA-Permissive-2.0",
+]
+
+[bans]
+# A new duplicate fails the build. The skips are the duplicates already in
+# the graph; each one is a real split (two major versions of one crate),
+# not a blanket warning.
+multiple-versions = "deny"
+wildcards = "allow"
+highlight = "all"
+# Deny path/git deps in published graph (keep builds reproducible).
+allow-wildcard-paths = true
+skip = [
+    # 0.2 via ring/rustls, 0.3 and 0.4 via tempfile in the root graph;
+    # the binding workspaces hold one version and warn
+    # "unnecessary-skip" for the same shared-policy reason.
+    { name = "getrandom" },
+    # rustix 0.38 still needs 2.x; newer rustix needs 3.x.
+    { name = "io-lifetimes" },
+    # flate2 and zip do not share one miniz_oxide major.
+    { name = "miniz_oxide" },
+    # rdocx-opc stays on patched 0.41; the engine reads 0.42.
+    { name = "quick-xml" },
+    # proc-macro crates have not all moved from syn 2 to syn 3.
+    { name = "syn" },
+    # windows crates still mix 0.52 and 0.61.
+    { name = "windows-sys" },
+    # The Windows target triples pull a second windows-targets set beside
+    # the host one in the binding workspaces (python, wasm, inproc, fuzz).
+    # The root graph has one set, so cargo-deny warns "unnecessary-skip"
+    # there; the one shared policy must still carry them.
+    { name = "windows-targets" },
+    { name = "windows_x86_64_gnu" },
+    { name = "windows_x86_64_msvc" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+# Closed inventory of crates whose build scripts may run. This list is
+# an inventory, not a sandbox: cargo-deny does not constrain what the
+# scripts execute. libmimalloc-sys compiles mimalloc's C and is the
+# reviewed exception for default fast-alloc. ring, alloca, and
+# libfuzzer-sys also compile C; pyo3-ffi links libpython. The other
+# names are cfg or rustc probes. Procedural macros appear here only
+# when they also have a build script. Published crates in this list
+# shipped no native executable under the default executable lint.
+[bans.build]
+# Scan this crate too. The checksum bypass below skips the walk while
+# build.rs is unchanged, so the root check and the nested graphs agree.
+include-workspace = true
+allow-build-scripts = [
+    "ahash",
+    "alloca",
+    "cap-primitives",
+    "cap-std",
+    # zip 9.4.2 (fuzz graph) depends on this crate. Its build script only
+    # sets rustc cfgs.
+    "constant_time_eq",
+    "crc32fast",
+    "crossbeam-deque",
+    "crossbeam-epoch",
+    "crossbeam-utils",
+    "curve25519-dalek",
+    "encoding_rs",
+    "getrandom",
+    "httparse",
+    "io-extras",
+    "io-lifetimes",
+    "jsonschema-value",
+    "jubarte",
+    "libc",
+    "libfuzzer-sys",
+    "libm",
+    "libmimalloc-sys",
+    "nix",
+    "num-traits",
+    "parking_lot_core",
+    "proc-macro2",
+    "pulldown-cmark",
+    "pyo3",
+    "pyo3-ffi",
+    "pyo3-macros-backend",
+    "quote",
+    "rayon-core",
+    "ref-cast",
+    "ring",
+    "rustix",
+    "rustls",
+    "rustversion",
+    "self_update",
+    "serde",
+    "serde_core",
+    "serde_json",
+    "target-lexicon",
+    "thiserror",
+    "unicode-general-category",
+    "wasm-bindgen",
+    "wasm-bindgen-shared",
+    "winapi",
+    "windows_x86_64_gnu",
+    "windows_x86_64_msvc",
+    "zerocopy",
+    "zmij",
+]
+
+# The version-stamping build script lives in the CLI crate (plan T4.8);
+# the root no longer builds one. The checksum skips the file walk while
+# the script is unchanged.
+[[bans.build.bypass]]
+name = "jubarte-cli"
+build-script = "972aa1b636718062956763ba6925986e236eb4adb67ba1b8e7c0dcc5dc94f506"

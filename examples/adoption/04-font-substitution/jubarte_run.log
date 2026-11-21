@@ -1,0 +1,5 @@
+wrote 1 PNG page (input-page-NN.png, 72 dpi)
+substituted: Georgia Pro -> Georgia-Bold (generic)
+substituted: Garamond Premier Pro -> Cambria (unknown)
+substituted: Fake Serif Pro -> TimesNewRomanPSMT (generic)
+error: 3 requested fonts were substituted (--fail-on-substitution)

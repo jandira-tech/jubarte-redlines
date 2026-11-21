@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+name: Stale
+
+# An issue or pull request with no activity for 60 days is marked stale,
+# and closed 14 days later unless someone answers. Security reports, pinned
+# items and anything with a milestone are left alone.
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93 # v11.0.0
+        with:
+          days-before-stale: 60
+          days-before-close: 14
+          stale-issue-label: stale
+          stale-pr-label: stale
+          exempt-issue-labels: security,pinned,help wanted,good first issue
+          exempt-pr-labels: security,pinned
+          exempt-all-milestones: true
+          operations-per-run: 60
+          stale-issue-message: >
+            This issue has had no activity for 60 days. It will be closed in
+            14 days unless someone comments. If it still matters, say so and
+            it stays open.
+          stale-pr-message: >
+            This pull request has had no activity for 60 days. It will be
+            closed in 14 days unless it is updated or someone comments.

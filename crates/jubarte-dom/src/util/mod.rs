@@ -1,0 +1,394 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+// SPDX-FileCopyrightText: Microsoft Corporation
+// SPDX-FileCopyrightText: 2025-2026 John Scrudato IV
+//
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-Docxodus-MIT
+
+//! Small shared utilities, ported from `PtUtil.ts` (M1.6).
+//!
+//! Three submodules plus re-exports at this path:
+//!
+//! - [`sha1`]: SHA-1 hex helpers, FNV-1a 64 / 128 fingerprints, and
+//!   hex encoding helpers used by the LCS and atom-hash stream.
+//! - `group_adjacent`: the LINQ `GroupAdjacent` port — runs of items
+//!   sharing a key.
+//! - `words`: a word tokenizer that understands combining marks,
+//!   zero-width joiners, and skin-tone modifiers (so a decomposed
+//!   `cafe\u{301}` is one word like its composed form, and emoji
+//!   sequences stay together).
+//!
+//! The functions here back the comparer's LCS hot path and the
+//! Markdown projection. Nothing in this module is CLI-specific, but the
+//! `jubarte` CLI calls into `sha1_hex` (block hash) and
+//! `word_tokens` (diff mark rendering).
+
+#[doc(hidden)]
+pub mod datetime;
+pub mod group_adjacent;
+pub mod sha1;
+pub mod words;
+
+pub use group_adjacent::group_adjacent;
+pub use sha1::{fnv1a_64, fnv1a_128, sha1_hex, sha1_hex_bytes, sha1_hex_parts};
+pub use words::word_tokens;
+
+/// `arg` as a POSIX shell reads it back: bare when it holds only safe
+/// characters, else single-quoted. Library code (validate's next steps)
+/// and the CLI both word commands with it, so it lives outside `cli`.
+pub fn shell_word(arg: &str) -> String {
+    let safe = |c: char| c.is_ascii_alphanumeric() || "-_./:=@%+,".contains(c);
+    if !arg.is_empty() && arg.chars().all(safe) {
+        return arg.to_string();
+    }
+    format!("'{}'", arg.replace('\'', r"'\''"))
+}
+
+/// `text` with each run of whitespace (`char::is_whitespace`) written as
+/// one space and none at either end, built in one pass without collecting
+/// the words first.
+#[doc(hidden)]
+pub fn collapse_whitespace(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for word in text.split_whitespace() {
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(word);
+    }
+    out
+}
+
+/// A universal measure (`"612pt"`, `"1in"`, `"2.54cm"`, `"1mm"`, `"6pc"`) as
+/// twips, `None` for a plain number or an unknown unit. Strict packages write
+/// these on attributes whose Transitional form is integer twips
+/// (`ST_UniversalMeasure`/`ST_TwipsMeasure`).
+#[doc(hidden)]
+pub fn universal_measure_twips(value: &str) -> Option<f64> {
+    universal_measure(value, 20.0)
+}
+
+/// The same measure as half-points (`ST_HpsMeasure`, `w:sz`): points × 2.
+#[doc(hidden)]
+pub fn universal_measure_half_points(value: &str) -> Option<f64> {
+    universal_measure(value, 2.0)
+}
+
+fn universal_measure(value: &str, per_point: f64) -> Option<f64> {
+    let t = value.trim();
+    for (suffix, points) in [
+        ("pt", 1.0),
+        ("in", 72.0),
+        ("cm", 72.0 / 2.54),
+        ("mm", 72.0 / 25.4),
+        ("pc", 12.0),
+        ("pi", 12.0),
+    ] {
+        if let Some(n) = t.strip_suffix(suffix) {
+            // The schema's spelling and magnitude only: Rust's f64 grammar
+            // is wider (exponents, `nan`, `inf`, `5.`, `+5`), and a value
+            // past the twips domain's i64 saturates when callers cast.
+            return schema_number(n.trim()).and_then(|f| {
+                let v = f * points * per_point;
+                (v.is_finite() && v.abs() <= i64::MAX as f64).then_some(v)
+            });
+        }
+    }
+    None
+}
+
+/// `ST_UniversalMeasure`'s numeric part, `-?[0-9]+(\.[0-9]+)?`: digits on
+/// both sides of the point, a leading `-` as the only sign, no exponent.
+fn schema_number(s: &str) -> Option<f64> {
+    let unsigned = s.strip_prefix('-').unwrap_or(s);
+    let (int_part, frac_part) = match unsigned.split_once('.') {
+        Some((i, f)) => (i, Some(f)),
+        None => (unsigned, None),
+    };
+    if int_part.is_empty() || !int_part.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    if frac_part.is_some_and(|f| f.is_empty() || !f.bytes().all(|b| b.is_ascii_digit())) {
+        return None;
+    }
+    s.parse::<f64>().ok()
+}
+
+/// A document number. `NaN`, an infinity and a value that overflows the
+/// float (`1e40` as `f32`) read as absent, the same as a token that does
+/// not parse. Finite values, including negatives and a finite exponent
+/// (`1e2`), are unchanged.
+#[doc(hidden)]
+pub fn parse_finite_f32(s: &str) -> Option<f32> {
+    let v: f32 = s.parse().ok()?;
+    v.is_finite().then_some(v)
+}
+
+/// [`parse_finite_f32`] for an `f64` attribute. `1e40` is finite here;
+/// a later narrowing to `f32` has to check again.
+#[doc(hidden)]
+pub fn parse_finite_f64(s: &str) -> Option<f64> {
+    let v: f64 = s.parse().ok()?;
+    v.is_finite().then_some(v)
+}
+
+/// `v` as `f32` when that value is finite. A finite `f64` past the `f32`
+/// range (`1e40`) is absent, the same as an infinity.
+#[doc(hidden)]
+pub fn narrow_finite_f32(v: f64) -> Option<f32> {
+    let n = v as f32;
+    n.is_finite().then_some(n)
+}
+
+/// SHA-256 of the exact input bytes, lowercase hex: the snapshot guard shared
+/// by inspection, comparer media reconciliation and edit plans.
+pub fn source_sha256(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Decode the five predefined XML entities, `&nbsp;`, and numeric character
+/// references; unknown or invalid references remain literal.
+#[doc(hidden)]
+pub fn decode_entities(s: &str) -> String {
+    if !s.contains('&') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(a) = rest.find('&') {
+        out.push_str(&rest[..a]);
+        let tail = &rest[a..];
+        // A reference cannot span the next `&`: bound the `;` search to
+        // this candidate's own text so a later `&…;` stays available.
+        let body = &tail[1..];
+        let limit = body.find('&').unwrap_or(body.len());
+        let semi = body[..limit].find(';').map(|e| e + 1);
+        let decoded = semi.and_then(|e| {
+            let ent = &tail[1..e];
+            let ch = match ent {
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                "nbsp" => Some('\u{a0}'),
+                _ => decode_numeric_reference(ent),
+            };
+            ch.map(|c| (c, e))
+        });
+        if let Some((c, e)) = decoded {
+            out.push(c);
+            rest = &tail[e + 1..];
+        } else {
+            out.push('&');
+            rest = &tail[1..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The character a numeric character reference names, when its digits are
+/// non-empty ASCII for the radix and the code point is XML 1.0 `Char`.
+fn decode_numeric_reference(ent: &str) -> Option<char> {
+    let (digits, radix) =
+        if let Some(digits) = ent.strip_prefix("#x").or_else(|| ent.strip_prefix("#X")) {
+            (digits, 16)
+        } else {
+            (ent.strip_prefix('#')?, 10)
+        };
+    let digits_valid = if radix == 16 {
+        digits.bytes().all(|b| b.is_ascii_hexdigit())
+    } else {
+        digits.bytes().all(|b| b.is_ascii_digit())
+    };
+    if digits.is_empty() || !digits_valid {
+        return None;
+    }
+    let value = u32::from_str_radix(digits, radix).ok()?;
+    let c = char::from_u32(value)?;
+    is_xml_char(c).then_some(c)
+}
+
+/// XML 1.0 `Char`: tab, LF, CR, then the planes' allowed ranges.
+fn is_xml_char(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\r' | '\u{20}'..='\u{d7ff}' | '\u{e000}'..='\u{fffd}'
+            | '\u{10000}'..='\u{10ffff}'
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        collapse_whitespace, decode_entities, narrow_finite_f32, parse_finite_f32,
+        parse_finite_f64, source_sha256, universal_measure_half_points, universal_measure_twips,
+    };
+
+    #[test]
+    fn finite_float_parses_reject_non_finite_tokens() {
+        for bad in [
+            "NaN",
+            "nan",
+            "inf",
+            "+inf",
+            "-inf",
+            "infinity",
+            "-infinity",
+            "1e40",
+            "  ",
+        ] {
+            assert_eq!(parse_finite_f32(bad), None, "{bad}");
+        }
+        assert_eq!(parse_finite_f32("1e2"), Some(100.0));
+        assert_eq!(parse_finite_f32("-1.5"), Some(-1.5));
+        // Rust's float grammar does not trim. Callers that used to trim still trim.
+        assert_eq!(parse_finite_f32(" -1.5 "), None);
+        assert_eq!(parse_finite_f64("1e40"), Some(1e40));
+        assert_eq!(parse_finite_f64("NaN"), None);
+        assert_eq!(parse_finite_f64("inf"), None);
+        assert_eq!(narrow_finite_f32(1e40), None);
+        assert_eq!(narrow_finite_f32(f64::INFINITY), None);
+        assert!(narrow_finite_f32(f64::NAN).is_none());
+        assert_eq!(narrow_finite_f32(12.5), Some(12.5));
+    }
+
+    #[test]
+    fn collapse_whitespace_writes_one_space_between_words() {
+        assert_eq!(collapse_whitespace(""), "");
+        assert_eq!(collapse_whitespace(" \t\n "), "");
+        assert_eq!(collapse_whitespace("  a \t b\n\nc  "), "a b c");
+        assert_eq!(collapse_whitespace("one"), "one");
+        assert_eq!(collapse_whitespace("a\u{A0}b"), "a b");
+    }
+
+    /// Every suffix, signed, with the rounding the callers do: `12.95pt`
+    /// is 259 twips once rounded.
+    #[test]
+    fn decodes_every_suffix_as_twips() {
+        for (value, twips) in [
+            ("0pt", 0.0),
+            ("12pt", 240.0),
+            ("12.95pt", 259.0),
+            ("612pt", 12240.0),
+            ("-36pt", -720.0),
+            ("1in", 1440.0),
+            ("2.54cm", 2.54 * (72.0 / 2.54) * 20.0),
+            ("10mm", 10.0 * (72.0 / 25.4) * 20.0),
+            ("1pc", 240.0),
+            ("1pi", 240.0),
+            (" 72pt ", 1440.0),
+        ] {
+            assert_eq!(universal_measure_twips(value), Some(twips), "{value}");
+        }
+        assert_eq!(
+            universal_measure_twips("12.95pt").map(f64::round),
+            Some(259.0)
+        );
+    }
+
+    /// A plain number is not a universal measure, and neither is anything
+    /// the schema does not spell: callers keep their own integer path.
+    #[test]
+    fn a_plain_number_or_garbage_is_not_a_universal_measure() {
+        for value in ["1440", "12.95", "12PT", "1ptx", "pt", ""] {
+            assert_eq!(universal_measure_twips(value), None, "{value}");
+        }
+    }
+
+    /// The schema's numeric part is `-?digits(.digits)?`: no exponent, no
+    /// `nan`/`inf`, no `+`, no bare or dangling point — Rust's f64 grammar
+    /// is wider, and a magnitude past the twips domain's i64 saturates
+    /// when the callers cast. None of them is a measure (#531).
+    #[test]
+    fn an_absurd_or_out_of_range_measure_is_not_a_measure() {
+        for value in [
+            "nanpt",
+            "infpt",
+            "-infpt",
+            "NaNpt",
+            "1e300pt",
+            "1E2pt",
+            "1.5e2pt",
+            "5.pt",
+            ".5pt",
+            "+5pt",
+            "1pt.",
+            "999999999999999999999999999pt",
+        ] {
+            assert_eq!(universal_measure_twips(value), None, "{value}");
+            assert_eq!(universal_measure_half_points(value), None, "{value}");
+        }
+    }
+
+    /// The half-point domain `w:sz` reads: `11pt` is 22 half-points, not
+    /// the twips the layout attributes carry.
+    #[test]
+    fn half_points_are_points_times_two() {
+        assert_eq!(universal_measure_half_points("11pt"), Some(22.0));
+        assert_eq!(universal_measure_half_points("8pt"), Some(16.0));
+        assert_eq!(universal_measure_half_points("1440"), None);
+    }
+
+    #[test]
+    fn source_sha256_and_entity_decoder_work() {
+        assert_eq!(
+            source_sha256(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(
+            decode_entities("&amp;&lt;&gt;&quot;&apos;&nbsp;&#65;&#x41;"),
+            "&<>\"'\u{a0}AA"
+        );
+    }
+
+    #[test]
+    fn numeric_references_decode_only_xml_chars() {
+        for (reference, expected) in [
+            ("&#65;", "A"),
+            ("&#x41;", "A"),
+            ("&#X41;", "A"),
+            ("&#x9;", "\t"),
+            ("&#xA;", "\n"),
+            ("&#xD;", "\r"),
+            ("&#x20;", " "),
+            ("&#xD7FF;", "\u{d7ff}"),
+            ("&#xE000;", "\u{e000}"),
+            ("&#xFFFD;", "\u{fffd}"),
+            ("&#x10000;", "\u{10000}"),
+            ("&#x10FFFF;", "\u{10ffff}"),
+            ("&#1114111;", "\u{10ffff}"),
+            ("&#000000000000000000065;", "A"),
+            ("&#x0000000000000041;", "A"),
+        ] {
+            assert_eq!(decode_entities(reference), expected, "{reference}");
+        }
+        for reference in [
+            "&#+65;",
+            "&#x+41;",
+            "&#x-41;",
+            "&#;",
+            "&#x;",
+            "&#xG;",
+            "&#12a;",
+            "&#0;",
+            "&#x0;",
+            "&#x1;",
+            "&#x8;",
+            "&#xB;",
+            "&#xC;",
+            "&#xE;",
+            "&#x1F;",
+            "&#xD800;",
+            "&#xDFFF;",
+            "&#xFFFE;",
+            "&#xFFFF;",
+            "&#x110000;",
+            "&#1114112;",
+        ] {
+            assert_eq!(decode_entities(reference), reference, "{reference}");
+        }
+    }
+}

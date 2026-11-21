@@ -1,0 +1,3 @@
+{"code":"EXISTING_REVISIONS","ev":"summary","message":"the document already holds tracked changes; set existing_revisions to keep, accept or reject","operation":null,"status":"failed"}
+error: plan refused: EXISTING_REVISIONS: the document already holds tracked changes; set existing_revisions to keep, accept or reject
+exit code: 3 (a refused plan writes nothing and exits 3)

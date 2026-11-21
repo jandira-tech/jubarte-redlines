@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 
 # Standalone workspace so this binding does not join the engine crate's
-# workspace (mirrors jubarte-wasm). Published to PyPI (as `jubarte-redlines`),
+# workspace (mirrors jubarte-wasm). Published to PyPI (as `jubarte-docx`),
 # never to crates.io.
 [workspace]
 
@@ -13,9 +13,9 @@ version = "0.18.0"
 edition = "2024"
 rust-version = "1.94"
 publish = false
-description = "PyO3 bindings for jubarte-redlines: Word-mode DOCX redline compare, accept/reject/list revisions, DOCX→PDF"
-license = "AGPL-3.0-only"
-repository = "https://github.com/jandira-tech/jubarte-redlines"
+description = "PyO3 bindings for jubarte, published on PyPI as jubarte-docx: Word-mode DOCX redline compare, accept/reject/list revisions, DOCX→PDF"
+license = "Apache-2.0"
+repository = "https://github.com/jandira-tech/jubarte"
 
 
 [package.metadata.release-notes]
@@ -38,12 +38,60 @@ repository = "https://github.com/jandira-tech/jubarte-redlines"
 name = "jubarte_python"
 crate-type = ["cdylib"]
 
+[features]
+default = ["redlines", "render", "doc", "markdown", "edit", "cli"]
+# Layered, each building on the one below (plan A4/T5.3), as in jubarte-wasm:
+# compare, accept/reject and list revisions.
+redlines = ["dep:jubarte-redlines"]
+# Inspect, changes, comments, validate, scrub, append (audit needs render too).
+doc = ["redlines", "dep:jubarte-doc"]
+# Markdown views, diffs and Markdown → DOCX.
+markdown = ["doc", "dep:jubarte-markdown"]
+# Edit plans, text diffs, capabilities and the MCP output root.
+edit = ["markdown", "dep:jubarte-edit"]
+# The CLI grammar `python -m jubarte_redlines` shares with the binary.
+cli = ["edit", "dep:jubarte-cli"]
+# The renderer (docx_to_pdf, docx_to_png, render, diff_render_json),
+# forwarded down every layer that declares it. With `doc` it adds
+# update_fields, validate_run and audit_json.
+render = [
+    "dep:jubarte-render",
+    "jubarte-doc?/render",
+    "jubarte-markdown?/render",
+    "jubarte-edit?/render",
+    "jubarte-cli?/render",
+]
+
 [dependencies]
-# Shared CLI grammar, without the engine's default allocator features.
-jubarte-redlines = { path = "..", default-features = false, features = ["cli"] }
+# Admission (input budgets, code-first errors) is used by every entry point.
+jubarte-opc = { path = "../crates/jubarte-opc", default-features = false }
+jubarte-redlines = { path = "../crates/jubarte-redlines", optional = true, default-features = false }
+jubarte-render = { path = "../crates/jubarte-render", optional = true, default-features = false }
+jubarte-doc = { path = "../crates/jubarte-doc", optional = true, default-features = false }
+jubarte-markdown = { path = "../crates/jubarte-markdown", optional = true, default-features = false }
+jubarte-edit = { path = "../crates/jubarte-edit", optional = true, default-features = false }
+jubarte-cli = { path = "../crates/jubarte-cli", optional = true, default-features = false }
 # abi3-py310: one wheel per platform covers every CPython >= 3.10.
 pyo3 = { version = "0.30", features = ["extension-module", "abi3-py310"] }
 serde_json = "1" # structured results cross the boundary as engine-produced JSON
+
+# Never compiled (`cfg(any())` matches no target), only resolved. maturin
+# packs the root manifest into the sdist either way, since crates/* are its
+# workspace members. But the root manifest is also the `jubarte` package,
+# and Cargo parses it whole when it looks for the workspace of a
+# sub-crate, so every target it declares must exist in the sdist. Without
+# this entry maturin leaves the `jubarte` package's files out, and
+# `cargo metadata` and `cargo check` on the unpacked sdist fail. The top
+# error reads "error inheriting `edition` from workspace root manifest's
+# `workspace.package.edition`"; the cause underneath is "can't find
+# `jubarte` bin at `src/bin/jubarte.rs`". With the entry, maturin packs
+# the `jubarte` package and the root `include` list carries its targets
+# (a missing one fails as "can't find `cli_flags` example at
+# `examples/cli_flags.rs`"). Making the root a virtual manifest would
+# remove the need for this entry. CI compiles the unpacked sdist to keep
+# both true.
+[target.'cfg(any())'.dependencies]
+jubarte = { path = "..", default-features = false }
 
 [profile.release]
 opt-level = 3

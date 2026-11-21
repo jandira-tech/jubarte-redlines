@@ -1,0 +1,609 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: Apache-2.0
+
+//! Integration tests for the `redline` binary — drives the compiled CLI to cover
+//! the file-I/O `run` path (default output naming, --force, --quiet, errors) and
+//! confirms the produced docx is ooxmlsdk-loadable.
+
+use crate::common;
+
+use std::io::Cursor;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+const BIN: &str = env!("CARGO_BIN_EXE_jubarte");
+const ORIG: &str = "tests/fixtures/redline/original.docx";
+const MOD: &str = "tests/fixtures/redline/modified.docx";
+
+fn tmpdir() -> tempfile::TempDir {
+    tempfile::tempdir().unwrap()
+}
+
+/// Copy the two redline fixtures into `dir` as `a.docx` / `b.docx`.
+fn seed(dir: &Path) -> (PathBuf, PathBuf) {
+    let a = dir.join("a.docx");
+    let b = dir.join("b.docx");
+    std::fs::copy(ORIG, &a).unwrap();
+    std::fs::copy(MOD, &b).unwrap();
+    (a, b)
+}
+
+#[test]
+fn a_redline_is_dated_now_unless_d_pins_it() {
+    // D17: without -d the revisions carry the run's time; -d pins it.
+    let dir = tmpdir();
+    let (a, b) = seed(dir.path());
+    let dated = |name: &str, pin: Option<&str>| {
+        let out_path = dir.path().join(name);
+        let mut command = Command::new(BIN);
+        command
+            .arg("compare")
+            .arg(&a)
+            .arg(&b)
+            .arg("-o")
+            .arg(&out_path);
+        if let Some(date) = pin {
+            command.args(["-d", date]);
+        }
+        let out = command.output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let xml = common::docx::part_string(&std::fs::read(out_path).unwrap(), "word/document.xml")
+            .unwrap();
+        let dates: Vec<String> = xml
+            .split("w:date=\"")
+            .skip(1)
+            .map(|rest| rest[..rest.find('"').unwrap()].to_string())
+            .collect();
+        assert!(!dates.is_empty(), "the pair has revisions");
+        dates
+    };
+    let before = jubarte::convert::utc_now_iso8601();
+    let now = dated("now.docx", None);
+    let after = jubarte::convert::utc_now_iso8601();
+    for date in &now {
+        assert!(before <= *date && *date <= after, "{before} {date} {after}");
+    }
+    let pinned = dated("pinned.docx", Some("1970-01-01T00:00:00Z"));
+    assert!(
+        pinned.iter().all(|d| d == "1970-01-01T00:00:00Z"),
+        "{pinned:?}"
+    );
+}
+
+fn assert_loadable(path: &Path) {
+    let bytes = std::fs::read(path).unwrap();
+    let doc =
+        ooxmlsdk::parts::wordprocessing_document::WordprocessingDocument::new(Cursor::new(bytes))
+            .unwrap();
+    assert!(
+        doc.main_document_part().is_ok(),
+        "output must be a valid wordprocessing doc"
+    );
+}
+
+#[test]
+fn compare_prints_the_view_and_writes_only_with_o() {
+    let dir = tmpdir();
+    let (a, b) = seed(dir.path());
+    // `compare A B`, like the shorthand, prints the redline's agent view
+    // and writes nothing.
+    let out = Command::new(BIN)
+        .arg("compare")
+        .arg(&a)
+        .arg(&b)
+        .args(["-d", "1970-01-01T00:00:00Z"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.starts_with("---\nsource: "), "{stdout}");
+    assert!(
+        stdout.contains("a_v_b.docx (not written; -o keeps it)"),
+        "{stdout}"
+    );
+    let expected = dir.path().join("a_v_b.docx");
+    assert!(!expected.exists(), "no -o, no file");
+    // -o writes the redline, reports status on stderr and confirms its views.
+    let out = Command::new(BIN)
+        .arg("compare")
+        .arg(&a)
+        .arg(&b)
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
+        .arg(&expected)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stdout).starts_with("SUCCESS:\n~~~~diff\n"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(&format!("wrote {} (docx, ", expected.display())),
+        "{stderr}"
+    );
+    assert_loadable(&expected);
+}
+
+#[test]
+fn explicit_flags_output_author_and_quiet() {
+    let dir = tmpdir();
+    let (a, b) = seed(dir.path());
+    let out_path = dir.path().join("redline.docx");
+    let out = Command::new(BIN)
+        .args(["-b"])
+        .arg(&a)
+        .args(["-m"])
+        .arg(&b)
+        .args(["-o"])
+        .arg(&out_path)
+        .args(["-d", "1970-01-01T00:00:00Z", "--author", "Legal", "--quiet"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(
+        out.stdout.is_empty() && out.stderr.is_empty(),
+        "--quiet says nothing"
+    );
+    assert_loadable(&out_path);
+}
+
+#[test]
+fn refuses_to_overwrite_without_force_then_force_succeeds() {
+    let dir = tmpdir();
+    let (a, b) = seed(dir.path());
+    let out_path = dir.path().join("o.docx");
+    // first run creates it
+    let first = Command::new(BIN)
+        .arg(&a)
+        .arg(&b)
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
+        .arg(&out_path)
+        .output()
+        .unwrap();
+    assert!(first.status.success());
+    // second run without --force fails (exit 2) and does not clobber
+    let second = Command::new(BIN)
+        .arg(&a)
+        .arg(&b)
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
+        .arg(&out_path)
+        .output()
+        .unwrap();
+    assert_eq!(second.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&second.stderr).contains("already exists"));
+    // third run with --force overwrites
+    let third = Command::new(BIN)
+        .arg(&a)
+        .arg(&b)
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
+        .arg(&out_path)
+        .arg("--force")
+        .output()
+        .unwrap();
+    assert!(third.status.success());
+    assert_loadable(&out_path);
+}
+
+#[test]
+fn missing_input_file_errors() {
+    let dir = tmpdir();
+    let (_, b) = seed(dir.path());
+    let out = Command::new(BIN)
+        .arg(dir.path().join("nope.docx"))
+        .arg(&b)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("reading"));
+}
+
+#[test]
+fn missing_arguments_exit_code_2() {
+    // One document alone is `read`; `compare` with one is a usage error.
+    let out = Command::new(BIN).arg("compare").arg(ORIG).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "missing MODIFIED → usage error");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("<MODIFIED>") && stderr.contains("Usage:"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn help_and_version_exit_zero() {
+    for flag in ["--help", "-h", "--version", "-V"] {
+        let out = Command::new(BIN).arg(flag).output().unwrap();
+        assert!(out.status.success(), "{flag} should exit 0");
+        assert!(!out.stdout.is_empty(), "{flag} should print to stdout");
+    }
+}
+
+/// Windows gives the main thread a 1 MiB stack where Linux and macOS give
+/// 8: the debug build's command dispatch overflowed it before it read an
+/// argument (exit 0xC00000FD on every CLI test of the Windows CI). The same
+/// limit set here must leave the CLI working.
+#[cfg(unix)]
+#[test]
+fn the_cli_runs_on_a_one_megabyte_main_stack() {
+    let out = Command::new("/bin/sh")
+        .args(["-c", "ulimit -s 1024 && exec \"$0\" --help", BIN])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "--help under a 1 MiB main stack: {:?} {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.stdout.is_empty());
+}
+
+// --- gems from recipe PR #60 (the listing subcommand, now `changes`) ---
+
+/// Produce a redline .docx via the plain (subcommand-less) compare surface,
+/// for use as input to the `changes` subcommand tests below.
+fn make_redline(dir: &Path, author: &str) -> PathBuf {
+    let (a, b) = seed(dir);
+    let out_path = dir.join("redline.docx");
+    let out = Command::new(BIN)
+        .arg(&a)
+        .arg(&b)
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
+        .arg(&out_path)
+        .args(["--author", author, "--quiet"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out_path
+}
+
+/// Prior behavior path: the `changes` subcommand does not disturb
+/// the plain compare surface — a normal two-file invocation (whose filenames
+/// don't collide with the subcommand name) still runs the compare job, not
+/// the listing.
+#[test]
+fn plain_compare_surface_still_works_alongside_changes_subcommand() {
+    let dir = tmpdir();
+    let (a, b) = seed(dir.path());
+    let out = Command::new(BIN).arg(&a).arg(&b).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Without -o the shorthand prints the redline's agent view, writes nothing.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.starts_with("---\nsource: ")
+            && stdout.contains("a_v_b.docx (not written; -o keeps it)"),
+        "{stdout}"
+    );
+    assert!(!dir.path().join("a_v_b.docx").exists());
+}
+
+/// D.6 — `jubarte changes <file that isn't a docx>` fails (exit code 1)
+/// rather than panicking.
+#[test]
+fn changes_subcommand_invalid_docx_errors() {
+    let dir = tmpdir();
+    let bogus = dir.path().join("bogus.docx");
+    std::fs::write(&bogus, b"not a zip").unwrap();
+    let out = Command::new(BIN)
+        .args(["changes"])
+        .arg(&bogus)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+}
+
+/// D.6 — the `--json` writer escapes embedded quotes in field values (the
+/// JSON writer of `changes`), so the emitted line stays valid
+/// JSON-shaped text rather than corrupting the record. `changes` replaced
+/// `revisions` (9b6809ae); these four tests moved with it.
+#[test]
+fn changes_subcommand_json_escapes_quotes_in_author() {
+    let dir = tmpdir();
+    let (a, b) = seed(dir.path());
+    let out_path = dir.path().join("redline.docx");
+    let cmp = Command::new(BIN)
+        .arg(&a)
+        .arg(&b)
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
+        .arg(&out_path)
+        .args(["--author", "Legal \"Team\"", "--quiet"])
+        .output()
+        .unwrap();
+    assert!(cmp.status.success());
+
+    let json = Command::new(BIN)
+        .args(["changes"])
+        .arg(&out_path)
+        .args(["--json"])
+        .output()
+        .unwrap();
+    assert!(json.status.success());
+    let json_out = String::from_utf8_lossy(&json.stdout);
+    assert!(
+        json_out.contains("Legal \\\"Team\\\""),
+        "embedded quotes must be backslash-escaped: {json_out}"
+    );
+}
+
+/// D.6 — `jubarte changes <file>` (human summary) and `--json` report the
+/// SAME non-zero revision count for a redline known to carry tracked changes
+/// (m5_document_comparer.rs's `compare_documents_produces_redline_zip`
+/// confirms this fixture pair emits `w:ins`/`w:del`), with each output mode's
+/// per-revision row shaped as documented.
+#[test]
+fn changes_subcommand_lists_tracked_changes_in_both_output_modes() {
+    let dir = tmpdir();
+    let redline_path = make_redline(dir.path(), "Tester");
+
+    let human = Command::new(BIN)
+        .args(["changes"])
+        .arg(&redline_path)
+        .output()
+        .unwrap();
+    assert!(
+        human.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&human.stderr)
+    );
+    let human_out = String::from_utf8_lossy(&human.stdout).into_owned();
+    let mut lines: Vec<&str> = human_out.lines().collect();
+    let summary = lines.pop().expect("summary line present");
+    assert!(
+        summary.ends_with("change(s)"),
+        "last line is the count summary: {summary:?}"
+    );
+    let count: usize = summary.split_whitespace().next().unwrap().parse().unwrap();
+    assert!(
+        count > 0,
+        "the redline fixture pair must carry tracked changes: {human_out}"
+    );
+    assert_eq!(
+        lines.len(),
+        count,
+        "one row per revision before the summary"
+    );
+    for line in &lines {
+        // ref \t kind \t target \t author \t paragraph \t {text:?}, then
+        // `\t(2 elements)` for a change Word wrote as several marks (plan
+        // 11), `\tinside r1` for a change inside another and `\tholds
+        // comment c4's mark` for one holding a comment's mark: this fixture
+        // has no change inside another and no comment, so six fields, or
+        // seven with the element count. The count assumes the fixture's
+        // revision authors contain no literal tab (they don't). The human
+        // row format is tab-delimited by contract, so a tab inside an author
+        // would need `changes` to escape it before this could stay parseable.
+        let fields: Vec<&str> = line.split('\t').collect();
+        let elements = fields.get(6).is_some_and(|f| {
+            f.strip_prefix('(')
+                .and_then(|f| f.strip_suffix(" elements)"))
+                .is_some_and(|n| n.parse::<usize>().is_ok_and(|n| n > 1))
+        });
+        assert!(
+            fields.len() == 6 || (fields.len() == 7 && elements),
+            "row has 6 tab-separated fields, and a change of several marks its element count: {line:?}"
+        );
+        let short = line.split('\t').next().unwrap();
+        assert!(
+            short.starts_with('r') && jubarte::ids::parse_change_ids(short).is_ok(),
+            "rows start with the short id: {line:?}"
+        );
+        assert!(line.contains("\tTester\t"), "{line:?}");
+    }
+
+    let json = Command::new(BIN)
+        .args(["changes"])
+        .arg(&redline_path)
+        .args(["--json"])
+        .output()
+        .unwrap();
+    assert!(
+        json.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&json.stderr)
+    );
+    let json_out = String::from_utf8_lossy(&json.stdout).into_owned();
+    let json_lines: Vec<&str> = json_out.lines().collect();
+    assert_eq!(
+        json_lines.len(),
+        count,
+        "same revision count in both output modes"
+    );
+    for line in &json_lines {
+        assert!(
+            line.starts_with('{') && line.ends_with('}'),
+            "JSON-lines row: {line:?}"
+        );
+        let record: serde_json::Value = serde_json::from_str(line).unwrap();
+        for field in ["kind", "id", "paragraph"] {
+            assert!(record.get(field).is_some(), "missing {field}: {record}");
+        }
+        assert!(line.contains("\"author\":\"Tester\""));
+        assert!(line.contains("\"id\":\"r"));
+    }
+}
+
+/// D.6 — `jubarte changes <missing file>` fails like the plain compare
+/// surface's missing-input case: exit code 1, stderr names the read failure.
+#[test]
+fn changes_subcommand_missing_file_errors() {
+    let dir = tmpdir();
+    let out = Command::new(BIN)
+        .args(["changes"])
+        .arg(dir.path().join("nope.docx"))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("reading"));
+}
+
+// --- gems from recipe PR #71 (word-visual default CLI parity), adapted to main's Option threshold ---
+
+fn compare_with(settings: &jubarte::comparer::WmlComparerSettings) -> Vec<u8> {
+    let orig = std::fs::read(ORIG).unwrap();
+    let modi = std::fs::read(MOD).unwrap();
+    jubarte::document_comparer::compare_documents_with_settings(&orig, &modi, settings).unwrap()
+}
+
+/// Build settings matching CLI `run()` for (`powertools_faithful`, optional threshold).
+fn expected_settings(
+    powertools_faithful: bool,
+    cli_detail_threshold: Option<f64>,
+) -> jubarte::comparer::WmlComparerSettings {
+    let base = if powertools_faithful {
+        jubarte::comparer::WmlComparerSettings::powertools_faithful()
+    } else {
+        jubarte::comparer::WmlComparerSettings::default()
+    };
+    jubarte::comparer::WmlComparerSettings {
+        author_for_revisions: "Jubarte".to_string(),
+        date_time_for_revisions: "1970-01-01T00:00:00Z".to_string(),
+        detail_threshold: cli_detail_threshold.unwrap_or(base.detail_threshold),
+        ..base
+    }
+}
+
+/// Run the binary against ORIG/MOD with extra flags; return produced bytes.
+fn run_cli(out_path: &Path, extra: &[&str]) -> Vec<u8> {
+    let out = Command::new(BIN)
+        .arg(ORIG)
+        .arg(MOD)
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
+        .arg(out_path)
+        .arg("--quiet")
+        .args(extra)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::fs::read(out_path).unwrap()
+}
+
+#[test]
+fn default_cli_run_matches_word_visual_library_default() {
+    let dir = tmpdir();
+    let out_path = dir.path().join("out.docx");
+    let cli_bytes = run_cli(&out_path, &[]);
+    let lib_bytes = compare_with(&expected_settings(false, None));
+    common::assert_docx_structurally_eq(&cli_bytes, &lib_bytes);
+    assert_loadable(&out_path);
+}
+
+#[test]
+fn detail_threshold_override_layers_on_word_visual_default() {
+    let dir = tmpdir();
+    let out_path = dir.path().join("out.docx");
+    let cli_bytes = run_cli(&out_path, &["--detail-threshold", "0.3"]);
+    let lib_bytes = compare_with(&expected_settings(false, Some(0.3)));
+    common::assert_docx_structurally_eq(&cli_bytes, &lib_bytes);
+    assert_loadable(&out_path);
+}
+
+#[test]
+fn powertools_faithful_flag_matches_library_preset() {
+    let dir = tmpdir();
+    let out_path = dir.path().join("out.docx");
+    let cli_bytes = run_cli(&out_path, &["--powertools-faithful"]);
+    let lib_bytes = compare_with(&expected_settings(true, None));
+    common::assert_docx_structurally_eq(&cli_bytes, &lib_bytes);
+    assert_loadable(&out_path);
+}
+
+#[test]
+fn powertools_faithful_with_explicit_threshold_uses_override() {
+    let dir = tmpdir();
+    let out_path = dir.path().join("out.docx");
+    let cli_bytes = run_cli(
+        &out_path,
+        &["--powertools-faithful", "--detail-threshold", "0.3"],
+    );
+    let lib_bytes = compare_with(&expected_settings(true, Some(0.3)));
+    common::assert_docx_structurally_eq(&cli_bytes, &lib_bytes);
+    assert_loadable(&out_path);
+}
+
+#[test]
+fn debug_triages_one_package_and_compares_two() {
+    let d = tmpdir();
+    let (a, b) = seed(d.path());
+    let run = |args: &[&Path], extra: &[&str]| {
+        let out = Command::new(BIN)
+            .arg("debug")
+            .args(args)
+            .args(extra)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    };
+    assert_eq!(run(&[&a], &[]), "no findings\n");
+    let listed = run(&[&a], &["--list"]);
+    assert!(listed.contains(" word/document.xml\n"), "{listed}");
+    let compared = run(&[&a, &b], &["--list"]);
+    assert!(compared.contains(" changed, "), "{compared}");
+    assert!(compared.contains("word/document.xml"), "{compared}");
+    let counts = run(&[&a, &b], &["-c", "elements", "-p", "document.xml"]);
+    assert!(counts.starts_with("elements: "), "{counts}");
+}
+
+#[test]
+fn debug_diff_compares_packages_element_by_element() {
+    let d = tmpdir();
+    let (a, b) = seed(d.path());
+    let diff = |files: &[&Path], extra: &[&str]| {
+        let out = Command::new(BIN)
+            .args(["debug", "diff"])
+            .args(files)
+            .args(extra)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let same = diff(&[&a, &a], &[]);
+    assert!(same.ends_with("no differences\n"), "{same}");
+    let two = diff(&[&a, &b], &["-p", "document.xml"]);
+    assert!(two.contains("word/document.xml › body › p#"), "{two}");
+    let three = diff(&[&a, &b, &a], &["-p", "document.xml"]);
+    let labels = three.lines().next().unwrap();
+    assert_eq!(labels.matches(" · ").count(), 2, "{three}");
+    assert!(
+        three.contains("  ["),
+        "three files tag their lines: {three}"
+    );
+    let lone = Command::new(BIN)
+        .args(["debug", "diff"])
+        .arg(&a)
+        .output()
+        .unwrap();
+    assert!(!lone.status.success(), "one file is not a diff");
+}

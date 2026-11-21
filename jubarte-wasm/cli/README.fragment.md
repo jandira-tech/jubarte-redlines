@@ -1,13 +1,13 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only
+SPDX-License-Identifier: Apache-2.0
 -->
 
 Compare two Word documents into a tracked-changes document that opens cleanly
 in Microsoft Word; list, accept or reject the changes; apply edit plans;
 render DOCX to PDF. Runs on the [`jubarte-wasm`](https://www.npmjs.com/package/jubarte-wasm)
-WebAssembly build of the [jubarte](https://github.com/jandira-tech/jubarte-redlines)
+WebAssembly build of the [jubarte](https://github.com/jandira-tech/jubarte)
 engine: no Word, no LibreOffice, no network.
 
 ```sh
@@ -22,11 +22,16 @@ npx jubarte-redlines edit contract.docx --plan plan.json --out-dir review
 npx jubarte-redlines --help
 ```
 
+Installed (`npm install -g jubarte-redlines`), the package puts two commands
+on the `PATH` that run the same program: `jubarte-redlines` and `jubarte`,
+the native binary's name. `npx` resolves a package name, so through `npx`
+the command stays `npx jubarte-redlines`.
+
 `redline` is an alias of `compare`, which prints the redline as the agent
 view without `-o`. `read --json` (paragraph ids and package facts, changes
 and comments with their short ids) and `capabilities` (what this build can
 do; `--json` the manifest) are also available. The
-command set, messages and exit codes match `uvx jubarte-redlines` (Python)
+command set, messages and exit codes match `uvx --from jubarte-docx jubarte` (Python)
 and the `jubarte` binary (Rust): 0 success, 1 error, 2 usage, 3 edit plan
 refused. `-o` writes what its extension names (`.docx`, the `.md` view,
 the `.json` snapshot or a `.pdf`), as the binary does. `convert` also

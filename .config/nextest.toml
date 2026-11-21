@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# CI writes JUnit XML (target/nextest/ci/junit.xml) for Codecov's test
+# results: libtest (`cargo test`) writes none.
+[profile.ci]
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"
+
+# `cargo miri nextest run`, the rare full run (AGENTS.md): Miri interprets
+# every test, so a slow one is stopped rather than left to hang the run.
+[profile.default-miri]
+fail-fast = false
+slow-timeout = { period = "300s", terminate-after = 4 }

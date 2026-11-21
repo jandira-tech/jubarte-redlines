@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Weekly version updates. An empty package-ecosystem is rejected by
+# Dependabot, so each ecosystem the repository ships is named here.
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directories:
+      - "/"
+      - "/jubarte-python"
+      - "/jubarte-wasm"
+      - "/jubarte-rust-inproc"
+      - "/fuzz"
+    schedule:
+      interval: "weekly"
+    # Minor and patch bumps arrive as one pull request per directory per
+    # week; a major bump stays on its own so a breaking change is reviewed
+    # alone.
+    groups:
+      cargo-minor-patch:
+        update-types: ["minor", "patch"]
+  # Actions are pinned to commit SHAs with the release tag in a trailing
+  # comment (`uses: owner/repo@<sha> # vX.Y.Z`); Dependabot updates both.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  # The npm CLI's dependencies and the Python bindings' development tools.
+  - package-ecosystem: "npm"
+    directory: "/jubarte-wasm/cli"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "uv"
+    directory: "/jubarte-python"
+    schedule:
+      interval: "weekly"
+  # The bench test corpus (tests/corpus/bench).
+  - package-ecosystem: "gitsubmodule"
+    directory: "/"
+    schedule:
+      interval: "weekly"

@@ -59,7 +59,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -70,7 +70,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -144,7 +144,7 @@ dependencies = [
  "maybe-owned",
  "rustix",
  "rustix-linux-procfs",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
  "winx",
 ]
 
@@ -232,6 +232,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
+name = "constant_time_eq"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9eb6feb175df65d0a3ccd3e73484e940d0ac664e8034f0519fd49a93db3071d9"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "core_maths"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -303,7 +312,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -347,30 +356,6 @@ dependencies = [
  "io-lifetimes 2.0.4",
  "rustix",
  "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "futures-core"
-version = "0.3.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92d699e522242e69e3003b94ecc1f960f3a5e015aa7c5d7486e65ad01dd94f5e"
-
-[[package]]
-name = "futures-task"
-version = "0.3.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd417de3d1d015fc3bfd2b1ea46dfc7bab72ef86f1cc7cc9c78e728b34a6d1fd"
-
-[[package]]
-name = "futures-util"
-version = "0.3.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc"
-dependencies = [
- "futures-core",
- "futures-task",
- "pin-project-lite",
- "slab",
 ]
 
 [[package]]
@@ -503,37 +488,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8dc09d2154098bbf4ef54eab6b117a3c24cbbffe94046b16ee6d6d4510584d3a"
 dependencies = [
  "cfg-if",
- "futures-util",
  "wasm-bindgen",
 ]
 
 [[package]]
-name = "jubarte-python"
-version = "0.18.0"
-dependencies = [
- "jubarte-redlines",
- "pyo3",
- "serde_json",
-]
-
-[[package]]
-name = "jubarte-redlines"
+name = "jubarte"
 version = "0.18.0"
 dependencies = [
  "base64",
  "cap-std",
- "clap",
  "flate2",
  "foldhash",
  "image",
  "js-sys",
+ "jubarte-doc",
+ "jubarte-dom",
+ "jubarte-edit",
+ "jubarte-markdown",
+ "jubarte-opc",
+ "jubarte-redlines",
+ "jubarte-render",
  "oxml-opc",
  "pulldown-cmark",
  "quick-xml 0.41.0",
  "quick-xml 0.42.0",
  "regex",
  "rustybuzz",
- "same-file",
  "schemars",
  "serde",
  "serde_json",
@@ -544,8 +524,166 @@ dependencies = [
  "ttf-parser",
  "unicode-properties",
  "unicode-segmentation",
- "uuid",
  "xattr",
+ "zip",
+]
+
+[[package]]
+name = "jubarte-cli"
+version = "0.18.0"
+dependencies = [
+ "base64",
+ "clap",
+ "flate2",
+ "jubarte-doc",
+ "jubarte-dom",
+ "jubarte-edit",
+ "jubarte-markdown",
+ "jubarte-opc",
+ "jubarte-redlines",
+ "jubarte-render",
+ "quick-xml 0.42.0",
+ "same-file",
+ "serde",
+ "serde_json",
+ "sha2",
+ "similar",
+ "zip",
+]
+
+[[package]]
+name = "jubarte-doc"
+version = "0.18.0"
+dependencies = [
+ "jubarte-dom",
+ "jubarte-opc",
+ "jubarte-redlines",
+ "jubarte-render",
+ "quick-xml 0.42.0",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "jubarte-dom"
+version = "0.18.0"
+dependencies = [
+ "foldhash",
+ "js-sys",
+ "quick-xml 0.42.0",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "unicode-properties",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "jubarte-edit"
+version = "0.18.0"
+dependencies = [
+ "base64",
+ "cap-std",
+ "jubarte-doc",
+ "jubarte-dom",
+ "jubarte-markdown",
+ "jubarte-opc",
+ "jubarte-redlines",
+ "jubarte-render",
+ "pulldown-cmark",
+ "quick-xml 0.42.0",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "similar",
+ "unicode-properties",
+ "unicode-segmentation",
+ "xattr",
+ "zip",
+]
+
+[[package]]
+name = "jubarte-markdown"
+version = "0.18.0"
+dependencies = [
+ "base64",
+ "image",
+ "jubarte-doc",
+ "jubarte-dom",
+ "jubarte-opc",
+ "jubarte-redlines",
+ "jubarte-render",
+ "pulldown-cmark",
+ "quick-xml 0.42.0",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "similar",
+ "unicode-properties",
+ "unicode-segmentation",
+ "zip",
+]
+
+[[package]]
+name = "jubarte-opc"
+version = "0.18.0"
+dependencies = [
+ "jubarte-dom",
+ "oxml-opc",
+ "quick-xml 0.41.0",
+ "quick-xml 0.42.0",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "zip",
+]
+
+[[package]]
+name = "jubarte-python"
+version = "0.18.0"
+dependencies = [
+ "jubarte",
+ "jubarte-cli",
+ "jubarte-doc",
+ "jubarte-edit",
+ "jubarte-markdown",
+ "jubarte-opc",
+ "jubarte-redlines",
+ "jubarte-render",
+ "pyo3",
+ "serde_json",
+]
+
+[[package]]
+name = "jubarte-redlines"
+version = "0.18.0"
+dependencies = [
+ "jubarte-dom",
+ "jubarte-opc",
+]
+
+[[package]]
+name = "jubarte-render"
+version = "0.18.0"
+dependencies = [
+ "flate2",
+ "image",
+ "jubarte-dom",
+ "jubarte-opc",
+ "rustybuzz",
+ "serde",
+ "serde_json",
+ "tiny-skia",
+ "ttf-parser",
  "zip",
 ]
 
@@ -617,9 +755,9 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.31.3"
+version = "0.31.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+checksum = "2bc81ce8148d3b4f3274da811f11cdd824ae661ee4ef732cdb229825cf5be7f7"
 dependencies = [
  "bitflags",
  "cfg-if",
@@ -650,20 +788,14 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "oxml-opc"
-version = "0.14.4"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "465e6f513996c4ccb57aae977eba6dbe3d307d3463451021501e49ab0606eb8d"
+checksum = "74e434c521bd393b1f3d0b8f8b8b8e7a4ba276e403918b74704d27c629af7bd2"
 dependencies = [
  "quick-xml 0.41.0",
  "thiserror",
  "zip",
 ]
-
-[[package]]
-name = "pin-project-lite"
-version = "0.2.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "png"
@@ -865,7 +997,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1025,12 +1157,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2f8bec09ae8fae0f4f265a4559a9334be3929d8504e9b536df0a41302bd1733"
 
 [[package]]
-name = "slab"
-version = "0.4.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
-
-[[package]]
 name = "smallvec"
 version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1083,7 +1209,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1216,17 +1342,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
-name = "uuid"
-version = "1.29.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a06f08a856b009bc7bbaf7d3e79808595d032dd19074c0c2ef26e49e03e6bdc"
-dependencies = [
- "getrandom",
- "js-sys",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "wasm-bindgen"
 version = "0.2.130"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1282,7 +1397,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1488,11 +1603,32 @@ dependencies = [
 ]
 
 [[package]]
-name = "zip"
-version = "9.4.1"
+name = "zeroize"
+version = "1.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23f17fbc870bfac28c6228aed7d6e6df352e26bf7015c4313727e16a7a01ce5e"
+checksum = "85ccff8a4805aba1eaa4cd4afcd49f7557dd2cf5fd79ffc37f8959466effc5aa"
 dependencies = [
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "zip"
+version = "9.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3476fd497ac8af5b1ec7b51acab7bef380f7e8dd8e0487595bafd839417a302"
+dependencies = [
+ "constant_time_eq",
  "crc32fast",
  "flate2",
  "getrandom",
@@ -1502,6 +1638,7 @@ dependencies = [
  "nix",
  "typed-path",
  "windows-sys 0.61.2",
+ "zeroize",
  "zopfli",
 ]
 
