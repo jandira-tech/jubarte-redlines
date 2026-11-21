@@ -124,7 +124,7 @@ jobs:
           workspaces: |
             .
             jubarte-wasm
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
       # The generator runs jubarte-wasm/cli/bin/jubarte-redlines.mjs against
       # that build. That CLI is ESM and engines-declares
       # node >= 18.3 (jubarte-wasm/cli/package.json); the self-hosted runner's
@@ -157,7 +157,7 @@ jobs:
       - name: fetch the test documents kept outside git
         shell: bash
         run: python3 scripts/fetch_fixtures.py || python scripts/fetch_fixtures.py
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.12"
           activate-environment: true
@@ -228,7 +228,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
       # Blacksmith runners cannot reach the self-hosted mbx cache server.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
       - run: cargo build --release --bin jubarte
       # The examples' input generators (make_input.py and the like) import
       # python-docx under `set -e`; 1.2.0 is the version the committed
