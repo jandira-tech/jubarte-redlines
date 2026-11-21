@@ -156,4 +156,4 @@ allow-build-scripts = [
 # the script is unchanged.
 [[bans.build.bypass]]
 name = "jubarte-cli"
-build-script = "63fe7b31bce36d044c885f04c219763a950db31a3d1610d3f9df9df1156803b5"
+build-script = "972aa1b636718062956763ba6925986e236eb4adb67ba1b8e7c0dcc5dc94f506"
