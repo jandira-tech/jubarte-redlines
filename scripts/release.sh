@@ -1389,6 +1389,12 @@ check_now 6
 # =============================================================================
 say "7. Publish dry-runs"
 crate_keywords_ok || die "Cargo.toml's keywords or categories break crates.io's limits (above)"
+# PyPI builds a project's page from the metadata uploaded with a release and
+# never lets it be edited: both distributions name their author, links and
+# classifiers before anything is built.
+python3 scripts/check_pypi_metadata.py >/dev/null \
+  || die "a Python distribution's PyPI metadata is incomplete (above) — fill in [project] in its pyproject.toml"
+step "PyPI metadata complete for jubarte-docx and the jubarte-redlines shim"
 # The bump and summaries are staged but not committed until step 8, so the
 # dry run packages the dirty tree; the real publish (step 9) stays clean.
 # A resumed run skips the dry run of a registry that already holds $VER:

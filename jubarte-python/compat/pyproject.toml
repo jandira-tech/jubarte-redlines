@@ -21,14 +21,23 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-authors = [{ name = "Jandira Technologies, LLC" }]
-keywords = ["docx", "redline", "track-changes", "word", "jubarte"]
+authors = [{ name = "Jandira Technologies, LLC", email = "arthur@jandira.tech" }]
+maintainers = [{ name = "Jandira Technologies, LLC", email = "arthur@jandira.tech" }]
+keywords = ["docx", "redline", "track-changes", "tracked-changes", "word", "microsoft-word", "compare", "jubarte", "jubarte-docx"]
 classifiers = [
   "Development Status :: 7 - Inactive",
   "Intended Audience :: Developers",
+  "Intended Audience :: Legal Industry",
+  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Office/Business :: Office Suites",
+  "Topic :: Text Processing :: Markup :: XML",
 ]
 dependencies = ["jubarte-docx==0.18.0"]
 
@@ -40,7 +49,10 @@ jubarte-redlines = "jubarte.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/jandira-tech/jubarte"
+Documentation = "https://github.com/jandira-tech/jubarte/blob/main/docs/python.md"
 Repository = "https://github.com/jandira-tech/jubarte"
+Changelog = "https://github.com/jandira-tech/jubarte/blob/main/CHANGELOG.md"
+Issues = "https://github.com/jandira-tech/jubarte/issues"
 
 [tool.uv.build-backend]
 module-name = "jubarte_redlines"
