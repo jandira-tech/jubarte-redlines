@@ -2142,6 +2142,13 @@ class PreviousRelease(unittest.TestCase):
         self.commit("candidate", "v0.1.0-rc.1")
         self.assertNotEqual(self.last('"v0.1.0"').returncode, 0)
 
+    def test_a_partial_wasm_build_is_no_package_to_dry_run(self) -> None:
+        # the gates may build the Node target alone; step 7 must not hand
+        # that to `npm publish --dry-run`, whose prepublish check refuses it
+        s7 = step(7)
+        self.assertIn("node prepublish-check.mjs", s7)
+        self.assertNotIn("[ ! -f jubarte-wasm/npm/node/jubarte_wasm_bg.wasm ]", s7)
+
     def test_every_step_takes_the_previous_release_from_it(self) -> None:
         text = RELEASE_SH.read_text()
         body = text[text.index("last_release_tag() "):]
