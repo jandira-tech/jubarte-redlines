@@ -1,6 +1,6 @@
 {
   "name": "jubarte-wasm",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "description": "Word-mode DOCX redline engine (jubarte-redlines) compiled to WebAssembly: compare two DOCX files into a tracked-changes redline, accept/reject revisions, list revisions, render DOCX to PDF, inspect and edit DOCX by paragraph id with edit plans. Node and browser builds included, plus slim builds without the PDF engine, compare-only redlines builds, and renderer-only pdf builds.",
   "license": "Apache-2.0",
   "author": "Jandira Technologies, LLC",
@@ -157,6 +157,7 @@
     "0.15.0": "Word-mode tables now pair, split and mesh as Word Compare does; validate with an original checks comments (FOREIGN_COMMENT); comments and edits no longer restyle or renumber what they did not touch; redlines with deleted page-numbered footers open in Word.",
     "0.16.0": "Breaking: changes/comments --json print records only on stdout, and input_validity goes to stderr. validate finds more broken relationships and nameless move ranges; PDF tables past their grid take Word's widths; rewrites under keep mark one change per phrase.",
     "0.17.0": "Security hardening: element budget, DTDs refused, compare story-unit budget and UNSUPPORTED_CONTENT instead of panics, optional JUBARTE_TIMEOUT. Breaking: limits gain max_xml_elements and max_story_units; one-shot edit/add need an author; --in-place replaces -o INPUT; --keep-others guards other authors markup.",
-    "0.18.0": "Hardened package open and bounded crafted input (legacy .doc, fields, comment anchors, font caches); over a hundred compare, accept/reject, edit-plan and Markdown-view fixes, Word-faithful tables and autofit."
+    "0.18.0": "Hardened package open and bounded crafted input (legacy .doc, fields, comment anchors, font caches); over a hundred compare, accept/reject, edit-plan and Markdown-view fixes, Word-faithful tables and autofit.",
+    "0.19.0": "0.19.0: Apache-2.0 from this release; new redlines-only and PDF-only builds beside the full and slim ones."
   }
 }

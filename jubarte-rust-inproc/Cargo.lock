@@ -400,7 +400,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "base64",
  "cap-std",
@@ -437,7 +437,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-doc"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "jubarte-dom",
  "jubarte-opc",
@@ -452,7 +452,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-dom"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "foldhash",
  "js-sys",
@@ -468,7 +468,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-edit"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "base64",
  "cap-std",
@@ -494,7 +494,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-markdown"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "base64",
  "image",
@@ -517,7 +517,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-opc"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "jubarte-dom",
  "oxml-opc",
@@ -533,7 +533,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-redlines"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "jubarte-dom",
  "jubarte-opc",
@@ -541,7 +541,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-render"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "flate2",
  "image",
@@ -557,7 +557,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-rust-inproc"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "jubarte",
  "mimalloc",

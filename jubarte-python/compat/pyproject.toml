@@ -15,7 +15,7 @@ build-backend = "uv_build"
 
 [project]
 name = "jubarte-redlines"
-version = "0.18.0"
+version = "0.19.0"
 description = "Former name of jubarte-docx, the Word-faithful DOCX redline engine: installs jubarte-docx and keeps import jubarte_redlines working"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -39,10 +39,10 @@ classifiers = [
   "Topic :: Office/Business :: Office Suites",
   "Topic :: Text Processing :: Markup :: XML",
 ]
-dependencies = ["jubarte-docx==0.18.0"]
+dependencies = ["jubarte-docx==0.19.0"]
 
 [project.optional-dependencies]
-mcp = ["jubarte-docx[mcp]==0.18.0"]
+mcp = ["jubarte-docx[mcp]==0.19.0"]
 
 [project.scripts]
 jubarte-redlines = "jubarte.__main__:main"

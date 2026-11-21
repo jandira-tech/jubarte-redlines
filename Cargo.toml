@@ -22,7 +22,7 @@ lto = "thin"
 lto = "thin"
 
 [workspace.package]
-version = "0.18.0" # the release script bumps this and the "=" pins together
+version = "0.19.0" # the release script bumps this and the "=" pins together
 edition = "2024"
 rust-version = "1.94"
 authors = ["Jandira Technologies, LLC"]
@@ -90,6 +90,7 @@ include = [
 "0.16.0" = "Breaking: changes/comments --json put input_validity on stderr (#1925). validate resolves relationship attributes by namespace and checks every relationships part and nameless move ranges; PDF tables past their grid take Word's widths; keep-path rewrites mark one change per phrase; start-of-paragraph edits no longer panic; --version names the build commit."
 "0.17.0" = "Security hardening: XML element budget, DTDs refused in every part, read limits before layout, a compare story-unit budget and UNSUPPORTED_CONTENT instead of atomizer panics, optional JUBARTE_TIMEOUT. Breaking: InputLimits and InputBudget gain fields; one-shot edit/add need an author; accept/reject -o INPUT replaced by --in-place; --keep-others guards other authors markup. New read --find and validate --baseline verdicts."
 "0.18.0" = "Hardened package open (unsafe part names, foreign roots, false UTF-8 ZIP names refused); bounded legacy .doc, fields, anchors, font caches; apply_markdown_strict; leak_scan receipt; ExposedFinalMark; glibc 2.28 Linux binaries plus musl; over a hundred compare, accept/reject, edit and Markdown fixes."
+"0.19.0" = "0.19.0: Apache-2.0 from this release; the engine is nine crates, with jubarte as the facade and CLI and jubarte-redlines as the compare-only crate."
 [package.metadata.docs.rs]
 all-features = true
 
@@ -195,14 +196,14 @@ self-update = ["cli", "jubarte-cli/self-update"]
 [workspace.dependencies]
 # The workspace's own crates: exact pins, because the layers expose
 # #[doc(hidden)] internals to each other (plan A3/D4).
-jubarte-dom = { path = "crates/jubarte-dom", version = "=0.18.0" }
-jubarte-opc = { path = "crates/jubarte-opc", version = "=0.18.0", default-features = false }
-jubarte-redlines = { path = "crates/jubarte-redlines", version = "=0.18.0", default-features = false }
-jubarte-render = { path = "crates/jubarte-render", version = "=0.18.0", default-features = false }
-jubarte-doc = { path = "crates/jubarte-doc", version = "=0.18.0", default-features = false }
-jubarte-markdown = { path = "crates/jubarte-markdown", version = "=0.18.0", default-features = false }
-jubarte-edit = { path = "crates/jubarte-edit", version = "=0.18.0", default-features = false }
-jubarte-cli = { path = "crates/jubarte-cli", version = "=0.18.0", default-features = false }
+jubarte-dom = { path = "crates/jubarte-dom", version = "=0.19.0" }
+jubarte-opc = { path = "crates/jubarte-opc", version = "=0.19.0", default-features = false }
+jubarte-redlines = { path = "crates/jubarte-redlines", version = "=0.19.0", default-features = false }
+jubarte-render = { path = "crates/jubarte-render", version = "=0.19.0", default-features = false }
+jubarte-doc = { path = "crates/jubarte-doc", version = "=0.19.0", default-features = false }
+jubarte-markdown = { path = "crates/jubarte-markdown", version = "=0.19.0", default-features = false }
+jubarte-edit = { path = "crates/jubarte-edit", version = "=0.19.0", default-features = false }
+jubarte-cli = { path = "crates/jubarte-cli", version = "=0.19.0", default-features = false }
 
 # Upstream OPC types on zip 9 and patched quick-xml 0.41. The adapter keeps
 # its duplicate-repair and canonical-writing policy; optional crypto stays off.

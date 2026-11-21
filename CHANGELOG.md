@@ -17,6 +17,10 @@ See [docs/maintainers/VERSIONING.md](docs/maintainers/VERSIONING.md) for the rel
 
 ## [0.19.0] - 2026-11-21
 
+> **Summary.** jubarte 0.19.0 is licensed under Apache-2.0 and ships as nine crates published together: the jubarte facade and CLI over jubarte-dom, jubarte-opc, jubarte-redlines, jubarte-render, jubarte-doc, jubarte-markdown, jubarte-edit and jubarte-cli. Python moves to jubarte-docx, imported as jubarte. On the 600-pair and 860-document sets, scored against Word's own output: redlines mean 74.02 (Docxodus 71.67), counting as 0 the 3 redlines Word 16.115 crashes opening; PDFs mean 78.02 (LibreOffice 58.07) with no failed document.
+>
+> **Docs.** README.md and the per-library READMEs were rewritten for the nine crates, the Apache-2.0 licence and the jubarte-docx name; maintainer documents moved under docs/maintainers; the guides under docs/ were regenerated from the sources.
+
 ### License
 
 - **jubarte is licensed under Apache-2.0 from this release.** Versions

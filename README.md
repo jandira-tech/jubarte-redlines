@@ -24,7 +24,7 @@ or PNG — from Rust, Python, Node/browser, or the CLI.
 [![npm](https://img.shields.io/npm/v/jubarte-wasm.svg)](https://www.npmjs.com/package/jubarte-wasm)
 [![MSRV](https://img.shields.io/badge/MSRV-1.94-blue)](./Cargo.toml)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
-[![Socket Badge](https://badge.socket.dev/cargo/package/jubarte/0.18.0)](https://badge.socket.dev/cargo/package/jubarte/0.18.0)
+[![Socket Badge](https://badge.socket.dev/cargo/package/jubarte/0.19.0)](https://badge.socket.dev/cargo/package/jubarte/0.19.0)
 
 Jubarte is an in-process DOCX engine for applications that need Microsoft
 Word-style review workflows without automating Microsoft Word or LibreOffice.

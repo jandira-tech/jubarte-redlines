@@ -58,7 +58,7 @@ binary when retention is needed.
 
 ```text
 $ jubarte --help
-jubarte 0.18.0
+jubarte 0.19.0
 Read, edit, compare and render Word documents
 
 Usage: jubarte [OPTIONS]
@@ -1765,7 +1765,7 @@ incomplete scan. Comparer settings continue to supply their own limits.
 
 <!-- ANCHOR: python-api (docs/rtd books include this block) -->
 <!-- gen:python-api:start -->
-Reflects the `jubarte` package built from this source tree (`__version__` reports `0.18.0`).
+Reflects the `jubarte` package built from this source tree (`__version__` reports `0.19.0`).
 
 ### `JubarteError`
 
@@ -1774,7 +1774,7 @@ Raised when the jubarte engine cannot process a document.
 
 ### `__version__`
 
-`'0.18.0'`
+`'0.19.0'`
 
 ### `accept_revisions`
 
