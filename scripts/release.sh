@@ -1407,9 +1407,11 @@ else
 fi
 if npm_has; then
   step "jubarte-wasm $VER already on npm — dry run skipped"
-elif [ ! -f jubarte-wasm/npm/node/jubarte_wasm_bg.wasm ]; then
+elif ! (cd jubarte-wasm/npm && node prepublish-check.mjs >/dev/null 2>&1); then
   # The package is not tracked; step 8 builds it and checks what it packs.
-  step "jubarte-wasm has no build in this checkout yet — dry run left to step 8"
+  # A gate may have built one target alone (the Node build, for a test):
+  # that is no package either, and `npm publish` would refuse it.
+  step "jubarte-wasm has no complete build in this checkout yet — dry run left to step 8"
 else
   (cd jubarte-wasm/npm && npm publish --dry-run >/dev/null)
 fi
