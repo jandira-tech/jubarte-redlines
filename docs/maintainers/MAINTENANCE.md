@@ -27,7 +27,7 @@ A rule that depends on memory is forgotten. These run in CI:
 | `reuse lint` | A file with no licence and copyright record |
 | `cargo deny check` | A dependency with an advisory, or a licence that is not on the list |
 | gitleaks, CodeQL | A committed secret; a known vulnerable pattern |
-| OpenSSF Scorecard (`scorecard.yml`, weekly) | Nothing: it reports supply-chain weaknesses to the Security tab |
+| OpenSSF Scorecard (`scorecard.yml`, weekly) | Nothing: it publishes the score the README badge shows and keeps the findings as a run artifact |
 | `cargo semver-checks` (the `semver` job) | Nothing until 1.0: it reports a public API change against the last release |
 | `tests/suite_membership.rs` | A test file that belongs to no suite |
 
