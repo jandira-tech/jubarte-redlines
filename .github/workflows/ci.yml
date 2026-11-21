@@ -476,6 +476,7 @@ jobs:
         with:
           node-version: "24"
       - run: node --test scripts/bump-version.test.mjs
+      - run: python3 scripts/test_npm_prepublish_check.py
 
   # The npm packages are not tracked: this job builds all eight targets as a
   # release does, and runs everything that reads them.
@@ -509,6 +510,8 @@ jobs:
       # The stamp names this commit, and no built file names a home (#1480).
       - run: scripts/check_engine_commit.sh
       - run: python3 scripts/check_npm_paths.py jubarte-wasm/npm
+      # What npm itself runs before a publish: every target is complete.
+      - run: node jubarte-wasm/npm/prepublish-check.mjs
       - run: node jubarte-wasm/npm-smoke.mjs
       # `npx jubarte-redlines` over the build.
       - run: node --test jubarte-wasm/cli/test/*.test.mjs
@@ -526,7 +529,7 @@ jobs:
                   f"{kind}{flavour}/{name}"
                   for kind in ("node", "web")
                   for flavour in ("", "-slim", "-redlines", "-pdf")
-                  for name in ("jubarte_wasm.js", "jubarte_wasm.d.ts", "jubarte_wasm_bg.wasm")
+                  for name in ("jubarte_wasm.js", "jubarte_wasm.d.ts", "jubarte_wasm_bg.wasm", "jubarte_wasm_bg.wasm.d.ts")
               }
           missing = sorted(want - files)
           sys.exit(f"{sys.argv[2]}: the package lacks {missing}" if missing else 0)

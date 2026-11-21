@@ -6,7 +6,8 @@
 #
 # Rebuild every wasm-pack target and assemble the publishable npm package
 # under npm/. Build from a CLEAN tree (the engine commit is stamped into the
-# package); publish with `cd npm && npm publish`.
+# package). release.yml publishes it; npm refuses an incomplete one
+# (npm/prepublish-check.mjs).
 #
 # The built files (npm/<target>/jubarte_wasm*, npm/ENGINE_COMMIT.txt) are not
 # tracked: CI builds them for its tests and at the release tag for npm.
@@ -16,7 +17,8 @@
 # --only TARGET (node, web, node-slim, web-slim, node-redlines, web-redlines,
 # node-pdf, web-pdf; repeatable) builds those targets alone, for a test or a
 # docs run that needs one. Such a package is incomplete, so the stamp is
-# removed: nothing can publish it or vouch for it.
+# removed: check_engine_commit.sh will not vouch for it, and npm refuses to
+# publish it (npm/prepublish-check.mjs).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -26,10 +28,12 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --only)
       [ $# -ge 2 ] || { echo "usage: $0 [--only TARGET]..." >&2; exit 2; }
-      case " ${ALL_TARGETS[*]} " in
-        *" $2 "*) ONLY+=("$2") ;;
-        *) echo "ERROR: unknown target '$2' (one of: ${ALL_TARGETS[*]})" >&2; exit 2 ;;
-      esac
+      known=0
+      for t in "${ALL_TARGETS[@]}"; do
+        [ "$t" != "$2" ] || known=1
+      done
+      [ "$known" = 1 ] || { echo "ERROR: unknown target '$2' (one of: ${ALL_TARGETS[*]})" >&2; exit 2; }
+      ONLY+=("$2")
       shift 2
       ;;
     *) echo "usage: $0 [--only TARGET]..." >&2; exit 2 ;;
