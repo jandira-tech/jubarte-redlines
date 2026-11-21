@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+// SPDX-FileCopyrightText: Microsoft Corporation
+// SPDX-FileCopyrightText: 2025-2026 John Scrudato IV
 //
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-Docxodus-MIT
 
 //! WmlComparer core (M4). Port of `WmlComparer.ts`.
 //!

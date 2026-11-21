@@ -74,8 +74,8 @@ SPDX-License-Identifier = "Apache-2.0 AND LicenseRef-anymd-MIT"
 [[annotations]]
 path = "tests/fixtures/from-docx/equations.docx"
 precedence = "override"
-SPDX-FileCopyrightText = ["2026 Jandira Technologies, LLC", "Microsoft Corporation"]
-SPDX-License-Identifier = "Apache-2.0 AND LicenseRef-anymd-MIT"
+SPDX-FileCopyrightText = "Microsoft Corporation"
+SPDX-License-Identifier = "MIT"
 
 # Office Math fixtures Word wrote, copied from their projects' test data
 # (tests/fixtures/math/SOURCES.md names each file's URL).
@@ -210,6 +210,14 @@ path = "crates/jubarte-markdown/src/markdown/word_table_styles.tsv"
 precedence = "override"
 SPDX-FileCopyrightText = "Microsoft Corporation"
 SPDX-License-Identifier = "LicenseRef-Word-Table-Styles"
+
+# The Open Font License text beside the Python and npm packages, which
+# embed the fonts (scripts/sync_license_files.py copies it there).
+[[annotations]]
+path = ["jubarte-python/LICENSE-OFL-1.1.txt", "jubarte-wasm/npm/LICENSE-OFL-1.1.txt"]
+precedence = "override"
+SPDX-FileCopyrightText = ["2010-2013 tyPoland Lukasz Dziedzic", "Digitized data copyright (c) 2010 Google Corporation", "2012 Red Hat, Inc."]
+SPDX-License-Identifier = "OFL-1.1"
 
 # The pull request template is copied into every pull request's body, so it
 # carries no header of its own.

@@ -1521,7 +1521,7 @@ else
         grep -qF "\"$t/$n\"" <<<"$packed" || die "the jubarte-wasm package would not ship $t/$n"
       done
     done
-    for n in ENGINE_COMMIT.txt LICENSE NOTICE; do
+    for n in ENGINE_COMMIT.txt LICENSE NOTICE LICENSE-OFL-1.1.txt; do
       grep -qF "\"$n\"" <<<"$packed" || die "the jubarte-wasm package would not ship $n"
     done
     # The built files are not tracked. The build re-resolves
