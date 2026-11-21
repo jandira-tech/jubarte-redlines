@@ -37,6 +37,10 @@ See [docs/maintainers/VERSIONING.md](docs/maintainers/VERSIONING.md) for the rel
   up to `v0.18.0` and the releases 0.9.2 to 0.18.0 with their downloads
   are in `jandira-tech/jubarte-history`. A commit hash cited for 0.18.0 or
   earlier resolves there, and so do the links at the foot of this file.
+- The repository keeps two releases' API snapshots (`docs/api`) and
+  evidence sets (`release_info`), not all of them; older ones are in the
+  archive. `tests/repo_hygiene.rs` now fails when the tracked files, or one
+  top-level folder, outgrow a size budget.
 - The Jules review workflow, its rules file and its prompt files are
   removed.
 - The built npm packages are no longer in git. CI builds all eight

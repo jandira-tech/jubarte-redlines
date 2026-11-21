@@ -16,7 +16,7 @@ A rule that depends on memory is forgotten. These run in CI:
 
 | Check | Refuses |
 |---|---|
-| `tests/repo_hygiene.rs` | A new top-level file or folder that is not on its list; a tracked file over 1 MB outside the listed folders; a tracked executable, WebAssembly module, log or empty file; a home-directory path or the retired project name in a tracked file; a `LICENSE` copy that differs from the root one; a file outside the listed few that still names the former licence |
+| `tests/repo_hygiene.rs` | A new top-level file or folder that is not on its list; a tracked file over 1 MB outside the listed folders; tracked files that outgrow the size budget of the whole tree (72 MiB) or of their top-level folder; a tracked executable, WebAssembly module, log or empty file; a home-directory path or the retired project name in a tracked file; a `LICENSE` copy that differs from the root one; a file outside the listed few that still names the former licence |
 | CI's `wasm` job | An npm package that does not build, fails its smoke test or its CLI tests, names a builder's home directory, or would be packed without a target, `LICENSE` or `NOTICE` |
 | `tests/corpus_present.rs` | Running the tests without the corpus submodule or without the downloaded test documents, with the command that fetches each |
 | `scripts/fetch_fixtures.py` | A downloaded test document whose SHA-256 is not the one `tests/corpus/hf_fixtures.sha256` records |

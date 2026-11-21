@@ -207,11 +207,15 @@ aside; `assets/`, `schemas/`, `keys/` byte for byte; `Cargo.toml` and
 (LibreOffice Y) …") to these results: the sample size, both means at two
 decimals, the comparator and jubarte's failures.
 
-## Releases before 0.19.0
+## Which releases are kept here
 
-This repository's history starts at 0.19.0. The evidence files of 0.11.2
-to 0.18.0 stay in this folder, but the commits their results name
-(`tools.jubarte.commit`) are in
+Two: the previous release's six files and those of the release being made.
+Delete an older set when a release adds its own; that release's tag still
+holds it. `tests/repo_hygiene.rs` holds the size budget.
+
+This repository's history starts at 0.19.0. The evidence of 0.11.2 to
+0.17.0, and the commits every result up to 0.18.0 names
+(`tools.jubarte.commit`), are in
 [jandira-tech/jubarte-history](https://github.com/jandira-tech/jubarte-history),
 with those releases' tags and downloads. `scripts/history_cut.txt` names
 the last of them; `scripts/release.sh` measures the first release made

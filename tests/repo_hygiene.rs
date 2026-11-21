@@ -13,7 +13,7 @@
 //! The tests pass without checking anything where there is no git checkout
 //! (a packaged crate has none).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -124,6 +124,38 @@ const DATA: &[&str] = &[
     "tests/goldens/",
 ];
 
+/// What the tracked files may weigh together, in bytes. A fresh clone
+/// downloads every one of them.
+const TREE_BUDGET: u64 = 72 * MIB;
+
+/// What each top-level folder's tracked files may weigh, in bytes. A folder
+/// that is not listed, and the files at the root taken together, get
+/// [`DEFAULT_FOLDER_BUDGET`]. The figures are the sizes at 0.19.0 plus a
+/// tenth: growth past one is a decision someone reviews, not an accident.
+const FOLDER_BUDGETS: &[(&str, u64)] = &[
+    ("crates", 24 * MIB),
+    ("tests", 21 * MIB),
+    ("docs", 13 * MIB),
+    ("release_info", 6 * MIB),
+    ("examples", 5 * MIB),
+    ("scripts", 3 * MIB / 2),
+    ("assets", 3 * MIB / 2),
+    ("jubarte-python", 3 * MIB / 2),
+];
+const DEFAULT_FOLDER_BUDGET: u64 = MIB;
+const MIB: u64 = 1024 * 1024;
+
+/// What to do instead of raising a budget.
+const WHERE_WEIGHT_GOES: &str = "\
+Before raising a budget in tests/repo_hygiene.rs, move the weight out:
+  - a third-party or bulky test document: the jubarte-test-corpus submodule,
+    or the dataset scripts/fetch_fixtures.py downloads;
+  - anything a build produces (packages, binaries, reports): build it in CI;
+  - an older release's API snapshot (docs/api) or evidence set
+    (release_info): delete it, the previous release's tag still holds it.
+    Keep the previous release's and the one being released;
+  - plans, notes and logs: they do not belong in the repository.";
+
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -200,6 +232,46 @@ fn no_large_file_outside_the_listed_folders() {
         })
         .collect();
     report("tracked files over 1 MiB outside LARGE_FILES", &found);
+}
+
+#[test]
+fn the_tree_stays_within_its_size_budgets() {
+    let Some(files) = tracked_files() else { return };
+    let mut total = 0u64;
+    let mut folders: BTreeMap<&str, u64> = BTreeMap::new();
+    for (name, path) in &files {
+        let Ok(meta) = fs::metadata(path) else {
+            continue;
+        };
+        let folder = name
+            .split_once('/')
+            .map_or("(files at the root)", |(top, _)| top);
+        total += meta.len();
+        *folders.entry(folder).or_default() += meta.len();
+    }
+    let mib = |bytes: u64| format!("{:.1} MiB", bytes as f64 / MIB as f64);
+    let mut found: Vec<String> = folders
+        .iter()
+        .filter_map(|(folder, &size)| {
+            let budget = FOLDER_BUDGETS
+                .iter()
+                .find(|(name, _)| name == folder)
+                .map_or(DEFAULT_FOLDER_BUDGET, |&(_, budget)| budget);
+            (size > budget).then(|| format!("{folder}: {} of {}", mib(size), mib(budget)))
+        })
+        .collect();
+    if total > TREE_BUDGET {
+        found.push(format!(
+            "the whole tree: {} of {}",
+            mib(total),
+            mib(TREE_BUDGET)
+        ));
+    }
+    assert!(
+        found.is_empty(),
+        "tracked files over their size budget:\n  {}\n{WHERE_WEIGHT_GOES}",
+        found.join("\n  ")
+    );
 }
 
 /// The first bytes of a native executable or library: ELF, Mach-O (both

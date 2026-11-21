@@ -14,6 +14,14 @@ pinned to the tag named in each filename.
 HEAD is expected to drift ahead of the newest snapshot; the next
 release's snapshot carries what was added since.
 
+Only two releases' snapshots are kept: the previous release's, which is the
+baseline the next one is compared with, and the one being released. Delete
+an older one when a release adds its own; its tag still holds it, and the
+snapshots up to 0.17.0 are in
+[jandira-tech/jubarte-history](https://github.com/jandira-tech/jubarte-history).
+The v0.11.0 and v0.11.2 files stay because `scripts/test_api_snapshot.py`
+reads them. `tests/repo_hygiene.rs` holds the size budget.
+
 ## Reading the drift between two releases
 
     python3 scripts/api_snapshot.py --drift v0.11.0 v0.11.2
