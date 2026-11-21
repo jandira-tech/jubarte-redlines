@@ -2168,6 +2168,21 @@ class PreviousRelease(unittest.TestCase):
         self.commit("unrelated")
         self.assertNotEqual(self.last('"v0.19.1"').returncode, 0)
 
+    def test_a_clone_that_lost_its_tags_is_not_the_first_release(self) -> None:
+        # no tag at all, but the CHANGELOG links a release made here: the
+        # tags are missing (git fetch --tags), the archive is not the answer
+        self.cut()
+        self.commit("Jubarte 0.19.0 source")
+        link = "https://github.com/jandira-tech/jubarte/releases/tag"
+        (self.repo / "CHANGELOG.md").write_text(f"[0.19.1]: {link}/v0.19.1\n[0.19.0]: {link}/v0.19.0\n")
+        self.assertNotEqual(self.last('"v0.19.1"').returncode, 0)
+        # the first release's own footer is no earlier release
+        (self.repo / "CHANGELOG.md").write_text(
+            f"[0.19.0]: {link}/v0.19.0\n[0.18.0]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.18.0\n"
+        )
+        r = self.last('"v0.19.0"')
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "v0.18.0"), r.stderr)
+
     def test_every_step_takes_the_previous_release_from_it(self) -> None:
         text = RELEASE_SH.read_text()
         body = text[text.index("last_release_tag() "):]
