@@ -15,6 +15,8 @@ See [docs/maintainers/VERSIONING.md](docs/maintainers/VERSIONING.md) for the rel
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-21
+
 ### License
 
 - **jubarte is licensed under Apache-2.0 from this release.** Versions
@@ -5280,6 +5282,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.19.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.19.0
 [0.18.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.18.0
 [0.17.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.17.0
 [0.16.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.16.0

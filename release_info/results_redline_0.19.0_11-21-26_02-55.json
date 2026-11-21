@@ -14,7 +14,7 @@
   "ties": 27,
   "wins": 308
  },
- "generated": "2026-11-18T00:50:59+00:00",
+ "generated": "2026-11-21T07:55:00+00:00",
  "provenance": {
   "measure": "results/redlines_0929_full/measure.py --fresh results/compare_regen/out --sample-csv results/release_0.19.0_evidence/sample_redline_0.19.0.csv (jubarte only); comparators read from the vendor refresh lanes (#129), newest version per tool",
   "scores": {
@@ -26,7 +26,7 @@
  },
  "release": "0.19.0",
  "sample": {
-  "csv": "sample_redline_0.19.0_11-17-26_19-51.csv",
+  "csv": "sample_redline_0.19.0_11-21-26_02-55.csv",
   "drawn": {
    "by_state": {
     "clean": 2,
@@ -34,7 +34,7 @@
     "with_comments_clean": 3,
     "with_comments_tracking": 173
    },
-   "date": "2026-11-17",
+   "date": "2026-11-21",
    "n": 600,
    "pairs": 600,
    "rule": "the fixed set results/sets/redline_600.csv (set version 2026-11-03.1), not drawn",
@@ -47,7 +47,7 @@
   "sha256": "9b324f9477ad71f7dc51aebdcdac3277c4ef2a7fd8d8ca1d43d01609420d26e1"
  },
  "schema": "jubarte-redlines/release_info/results_redline/1",
- "stamp": "11-17-26_19-51",
+ "stamp": "11-21-26_02-55",
  "tools": {
   "apryse": {
    "at_least_90": 4,
@@ -2778,7 +2778,7 @@
   },
   "jubarte": {
    "at_least_90": 96,
-   "binary_sha256": "83b2ce7f203d7296c11688aaae60482a274dba4ac6092576e8163ddc507d09a6",
+   "binary_sha256": "94574f9b85bbf38d499141506a454866473fd6e53820ba6929684b3e094d55f2",
    "by_state": {
     "clean": {
      "at_least_90": 2,
@@ -2813,8 +2813,8 @@
      "n": 173
     }
    },
-   "candidate_reports": "jubarte 0.18.0+fdbe86dd5",
-   "commit": "fdbe86dd56d84b1e17b0d4491cb4afc9177388d2",
+   "candidate_reports": "jubarte 0.18.0+1ea2d2627",
+   "commit": "31440a124584d0ccceb5289263b2c42e60656580",
    "exact_100": 41,
    "failures": 3,
    "mean": 74.0195,
