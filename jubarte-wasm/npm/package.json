@@ -32,6 +32,9 @@
     "criticmarkup",
     "ai-agents"
   ],
+  "scripts": {
+    "prepublishOnly": "node prepublish-check.mjs"
+  },
   "main": "./node/jubarte_wasm.js",
   "types": "./node/jubarte_wasm.d.ts",
   "browser": "./web/jubarte_wasm.js",

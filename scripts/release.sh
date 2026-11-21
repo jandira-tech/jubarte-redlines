@@ -1488,9 +1488,17 @@ else
      && [ -f jubarte-wasm/npm/ENGINE_COMMIT.txt ]; then
     step "npm packages for v$VER already built and their API committed (resume) — not rebuilt"
   else
+    # A run that died after the build left what this branch writes: the
+    # re-resolved lock, the guide, the typings snapshots. build-npm.sh
+    # refuses a dirty tree, so a resume would die there every time. Each is
+    # written again below; put them back as the release commit has them.
+    git checkout -- jubarte-wasm/Cargo.lock docs/javascript.md docs/api
+    git clean -fq -- docs/api
     # Clean tree now, so build-npm.sh stamps ENGINE_COMMIT.txt with the release
     # commit — the commit the published artifacts can be rebuilt from.
     jubarte-wasm/build-npm.sh
+    node jubarte-wasm/npm/prepublish-check.mjs >/dev/null \
+      || die "the jubarte-wasm package is incomplete (jubarte-wasm/npm/prepublish-check.mjs says what is missing)"
     node jubarte-wasm/npm-smoke.mjs
     # Snapshot the shipped wasm typings beside the rust API dump, after the
     # rebuild so docs/api/ records what npm actually publishes.
@@ -1517,7 +1525,7 @@ else
     packed=$(cd jubarte-wasm/npm && npm pack --dry-run --json 2>/dev/null) \
       || die "npm pack --dry-run failed in jubarte-wasm/npm"
     for t in node node-slim node-redlines node-pdf web web-slim web-redlines web-pdf; do
-      for n in jubarte_wasm.js jubarte_wasm.d.ts jubarte_wasm_bg.wasm; do
+      for n in jubarte_wasm.js jubarte_wasm.d.ts jubarte_wasm_bg.wasm jubarte_wasm_bg.wasm.d.ts; do
         grep -qF "\"$t/$n\"" <<<"$packed" || die "the jubarte-wasm package would not ship $t/$n"
       done
     done

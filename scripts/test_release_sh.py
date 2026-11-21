@@ -310,6 +310,23 @@ class Lessons0101(unittest.TestCase):
         for line in ("/npm/*/jubarte_wasm_bg.wasm", "/npm/*/jubarte_wasm.js", "/npm/ENGINE_COMMIT.txt"):
             self.assertIn(line, ignore)
 
+    def test_a_resume_after_a_death_past_the_build_is_not_wedged(self) -> None:
+        # A run that died between the build and the npm API commit left the
+        # typings snapshots, the guide and the lock behind. build-npm.sh
+        # refuses a dirty tree, so every rerun died there (GLM review).
+        s8 = step(8)
+        build = s8.index("jubarte-wasm/build-npm.sh")
+        restore = s8.index("git checkout -- jubarte-wasm/Cargo.lock docs/javascript.md docs/api")
+        self.assertLess(restore, build)
+        self.assertLess(s8.index("git clean -fq -- docs/api"), build)
+
+    def test_step8_refuses_an_incomplete_package(self) -> None:
+        s8 = step(8)
+        check = s8.index("node jubarte-wasm/npm/prepublish-check.mjs")
+        self.assertLess(s8.index("jubarte-wasm/build-npm.sh"), check)
+        self.assertLess(check, s8.index('git tag -a "$TAG"'))
+        self.assertIn("jubarte_wasm_bg.wasm.d.ts", s8)
+
     def test_step8_checks_what_npm_would_pack(self) -> None:
         # With nothing tracked, a build that left a target out would publish
         # a package missing it.

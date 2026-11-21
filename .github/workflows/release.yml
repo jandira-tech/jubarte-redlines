@@ -638,6 +638,18 @@ jobs:
           [ "$(cat jubarte-wasm/npm/ENGINE_COMMIT.txt)" = "$(git rev-parse HEAD)" ] \
             || { echo "::error::ENGINE_COMMIT.txt does not name the tagged commit"; exit 1; }
           node jubarte-wasm/npm-smoke.mjs
+          # Every target complete on disk and listed in package.json; npm
+          # runs the same check again before it publishes (prepublishOnly).
+          node jubarte-wasm/npm/prepublish-check.mjs
+          packed="$(cd jubarte-wasm/npm && npm pack --dry-run --json)"
+          for t in node node-slim node-redlines node-pdf web web-slim web-redlines web-pdf; do
+            for n in jubarte_wasm.js jubarte_wasm.d.ts jubarte_wasm_bg.wasm jubarte_wasm_bg.wasm.d.ts; do
+              grep -qF "\"$t/$n\"" <<<"$packed" || { echo "::error::the jubarte-wasm package would not ship $t/$n"; exit 1; }
+            done
+          done
+          for n in ENGINE_COMMIT.txt LICENSE NOTICE LICENSE-OFL-1.1.txt; do
+            grep -qF "\"$n\"" <<<"$packed" || { echo "::error::the jubarte-wasm package would not ship $n"; exit 1; }
+          done
       - name: npm speaks OIDC
         run: |
           set -euo pipefail
