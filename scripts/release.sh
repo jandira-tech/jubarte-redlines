@@ -476,9 +476,25 @@ eventually() {
 # The newest release tag reachable from HEAD, other than $1: a plain vX.Y.Z,
 # since a prerelease tag (v0.14.0-rc.1) is no release. Every step measures
 # the bump, the CHANGELOG and the API drift from it.
+#
+# This repository's history starts at 0.19.0; the releases before it are in
+# jandira-tech/jubarte-history. scripts/history_cut.txt names the last of
+# them, and it is the answer only while this repository holds no release tag
+# of its own other than $1: the first release here is measured from it.
 last_release_tag() {
   git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' \
-    --exclude "${1:-v*-*}" 2>/dev/null
+    --exclude "${1:-v*-*}" 2>/dev/null && return 0
+  local own cut
+  own=$(git tag -l 'v[0-9]*' | grep -v -e '-' | grep -vxF -e "${1:-}" || true)
+  [ -z "$own" ] || return 1
+  cut=$(grep -m1 -E '^v[0-9]+\.[0-9]+\.[0-9]+$' scripts/history_cut.txt 2>/dev/null) || return 1
+  [ "$cut" != "${1:-}" ] || return 1
+  printf '%s\n' "$cut"
+}
+# Whether release tag $1 is a commit of this repository. The tag
+# scripts/history_cut.txt names is not: its history is in the archive.
+tag_is_here() {
+  git rev-parse -q --verify "refs/tags/$1^{commit}" >/dev/null
 }
 # patch, minor or major from the previous release's version $1 to $2; fails
 # when $2 is not above $1, or when either is no X.Y.Z.
@@ -626,7 +642,15 @@ changelog_placeholders() { changelog_section | grep -nwE '(TODO|TBD|FIXME|XXX)';
 # history git cannot read is a refusal, never an empty set.
 user_facing_prs() {
   local log
-  log=$(git log --format='%s%x1f%b%x1e' "$1..HEAD") \
+  # The release scripts/history_cut.txt names is in the archive, not here:
+  # every commit of this repository is since it. Any other tag git cannot
+  # read stays a refusal.
+  local range="$1..HEAD"
+  if ! git rev-parse -q --verify "refs/tags/$1^{commit}" >/dev/null \
+     && grep -qxF -e "$1" scripts/history_cut.txt 2>/dev/null; then
+    range=HEAD
+  fi
+  log=$(git log --format='%s%x1f%b%x1e' "$range") \
     || { echo "  ! git cannot read the history since $1" >&2; return 1; }
   printf '%s' "$log" | awk -v RS='\036' -F'\037' '
     { sub(/^\n+/, "", $1); title = $2; sub(/^\n+/, "", title); sub(/\n.*/, "", title) }
@@ -1166,7 +1190,7 @@ EOF
 # What the docs statement is about: README/docs files touched since the last
 # release tag (the version sync above already moved the README badge).
 PREV_TAG=$(last_release_tag || true)
-if [ -n "$PREV_TAG" ]; then
+if [ -n "$PREV_TAG" ] && tag_is_here "$PREV_TAG"; then
   step "docs changed since $PREV_TAG:"
   { git diff --name-only "$PREV_TAG" -- '*.md' 'docs/' 'skills/'; \
     git ls-files --others --exclude-standard -- '*.md' 'docs/' 'skills/'; } \
@@ -1724,7 +1748,7 @@ release_from_artifacts() {
       on && /^## \[/ { exit }
       on { print }
     ' CHANGELOG.md
-    [ -n "$PREV_TAG" ] && [ "$PREV_TAG" != "$TAG" ] && printf \
+    [ -n "$PREV_TAG" ] && [ "$PREV_TAG" != "$TAG" ] && tag_is_here "$PREV_TAG" && printf \
       '\n**Full Changelog**: https://github.com/jandira-tech/jubarte/compare/%s...%s\n' \
       "$PREV_TAG" "$TAG"
   } > dist/release-notes.md

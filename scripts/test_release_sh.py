@@ -2142,6 +2142,32 @@ class PreviousRelease(unittest.TestCase):
         self.commit("candidate", "v0.1.0-rc.1")
         self.assertNotEqual(self.last('"v0.1.0"').returncode, 0)
 
+    def cut(self, tag: str = "v0.18.0") -> None:
+        (self.repo / "scripts").mkdir(exist_ok=True)
+        (self.repo / "scripts" / "history_cut.txt").write_text(f"# the archive holds it\n{tag}\n")
+
+    def test_a_repository_cut_from_its_history_names_the_archived_release(self) -> None:
+        # after the history cut no earlier tag is reachable: the first
+        # release here is measured from the one the archive holds
+        self.cut()
+        self.commit("Jubarte 0.19.0 source")
+        r = self.last('"v0.19.0"')
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "v0.18.0"), r.stderr)
+        # a resumed run: the tag of this release exists and is not the answer
+        self.commit("release 0.19.0", "v0.19.0")
+        r = self.last('"v0.19.0"')
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "v0.18.0"), r.stderr)
+
+    def test_the_archived_release_is_no_answer_once_this_repository_has_its_own(self) -> None:
+        # a clone without its tags must fail (git fetch --tags), not fall
+        # back two releases; a tag that is present but unreachable shows it
+        self.cut()
+        self.commit("Jubarte 0.19.0 source")
+        self.commit("release 0.19.0", "v0.19.0")
+        subprocess.run([*self.git, "checkout", "-q", "--orphan", "other"], check=True)
+        self.commit("unrelated")
+        self.assertNotEqual(self.last('"v0.19.1"').returncode, 0)
+
     def test_every_step_takes_the_previous_release_from_it(self) -> None:
         text = RELEASE_SH.read_text()
         body = text[text.index("last_release_tag() "):]
@@ -2321,6 +2347,19 @@ class ChangelogDiscovery(unittest.TestCase):
 
     def test_a_history_git_cannot_read_is_a_named_refusal(self) -> None:
         r = self.run_fn("unlisted_prs v9.9.9")
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn("v9.9.9", r.stderr)
+
+    def test_the_archived_release_owes_every_commit_of_this_repository(self) -> None:
+        # after the history cut the previous release's tag is in the archive:
+        # the tag scripts/history_cut.txt names reads as "everything here",
+        # and no other missing tag does
+        (self.repo / "scripts").mkdir()
+        (self.repo / "scripts" / "history_cut.txt").write_text("v0.0.9\n")
+        self.commit("feat(cli): a new thing (#41)")
+        r = self.run_fn("user_facing_prs v0.0.9")
+        self.assertEqual((r.returncode, r.stdout.split()), (0, ["41"]), r.stderr)
+        r = self.run_fn("user_facing_prs v9.9.9")
         self.assertNotEqual(r.returncode, 0, r.stdout)
         self.assertIn("v9.9.9", r.stderr)
 

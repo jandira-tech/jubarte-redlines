@@ -33,6 +33,10 @@ See [docs/maintainers/VERSIONING.md](docs/maintainers/VERSIONING.md) for the rel
 ### Repository
 
 - The repository is `jandira-tech/jubarte`. The old address redirects.
+- The git history starts again at 0.19.0. The history before it, the tags
+  up to `v0.18.0` and the releases 0.9.2 to 0.18.0 with their downloads
+  are in `jandira-tech/jubarte-history`. A commit hash cited for 0.18.0 or
+  earlier resolves there, and so do the links at the foot of this file.
 - The Jules review workflow, its rules file and its prompt files are
   removed.
 - The built npm packages are no longer in git. CI builds all eight
@@ -5269,27 +5273,27 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
-[0.18.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.18.0
-[0.17.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.17.0
-[0.16.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.16.0
-[0.15.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.15.0
-[0.14.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.14.0
-[0.13.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.13.0
-[0.12.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.12.0
-[0.11.3]: https://github.com/jandira-tech/jubarte/releases/tag/v0.11.3
-[0.11.2]: https://github.com/jandira-tech/jubarte/releases/tag/v0.11.2
-[0.11.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.11.0
-[0.10.1]: https://github.com/jandira-tech/jubarte/releases/tag/v0.10.1
-[0.10.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.10.0
-[0.9.3]: https://github.com/jandira-tech/jubarte/releases/tag/v0.9.3
-[0.9.2]: https://github.com/jandira-tech/jubarte/releases/tag/v0.9.2
-[0.9.1]: https://github.com/jandira-tech/jubarte/releases/tag/v0.9.1
-[0.9.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.9.0
-[0.8.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.8.0
-[0.7.1]: https://github.com/jandira-tech/jubarte/releases/tag/v0.7.1
-[0.7.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.7.0
-[0.6.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.6.0
-[0.5.1]: https://github.com/jandira-tech/jubarte/releases/tag/v0.5.1
-[0.5.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.5.0
-[0.2.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.2.0
-[0.1.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.1.0
+[0.18.0]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.18.0
+[0.17.0]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.17.0
+[0.16.0]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.16.0
+[0.15.0]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.15.0
+[0.14.0]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.14.0
+[0.13.0]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.13.0
+[0.12.0]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.12.0
+[0.11.3]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.11.3
+[0.11.2]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.11.2
+[0.11.0]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.11.0
+[0.10.1]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.10.1
+[0.10.0]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.10.0
+[0.9.3]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.9.3
+[0.9.2]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.9.2
+[0.9.1]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.9.1
+[0.9.0]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.9.0
+[0.8.0]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.8.0
+[0.7.1]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.7.1
+[0.7.0]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.7.0
+[0.6.0]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.6.0
+[0.5.1]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.5.1
+[0.5.0]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.5.0
+[0.2.0]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.2.0
+[0.1.0]: https://github.com/jandira-tech/jubarte-history/releases/tag/v0.1.0
