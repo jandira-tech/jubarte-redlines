@@ -19,12 +19,19 @@ did not author:
 
 - `LICENSES/LicenseRef-Microsoft-MIT.txt` — Microsoft upstream attribution.
 - `LICENSES/LicenseRef-Docxodus-MIT.txt` — Docxodus upstream attribution.
+  The comparer is a Rust port of Docxodus's `WmlComparer` and its helpers
+  (themselves from Open-Xml-PowerTools). A source file that ports one of
+  those classes names both upstream copyright holders beside Jandira's and
+  carries `Apache-2.0 AND LicenseRef-Docxodus-MIT`: the files under
+  `crates/jubarte-redlines/src/` that say so in their first lines, and
+  `namespaces.rs`, `unid.rs` and `util/mod.rs` in `crates/jubarte-dom/src/`
+  and `markup_simplifier.rs` in `crates/jubarte-opc/src/`.
 - `LICENSES/LicenseRef-anymd-MIT.txt` — anymd upstream attribution. The Word
   to Markdown converter (`crates/jubarte-markdown/src/markdown/from_docx/`), its tests and the
   fixtures in `tests/fixtures/from-docx/` come from anymd's `anymd-formats`
   crate. `tests/fixtures/from-docx/equations.docx` came to anymd from
-  Microsoft's markitdown tests (MIT, Copyright (c) Microsoft Corporation;
-  the same terms as `LICENSES/LicenseRef-anymd-MIT.txt`).
+  Microsoft's markitdown tests; `REUSE.toml` records it as MIT, Copyright
+  (c) Microsoft Corporation (`LICENSES/MIT.txt`).
 - `LICENSES/LicenseRef-markdown2pdf-MIT.txt` — the preserved MIT notice
   from [markdown2pdf](https://github.com/theiskaa/markdown2pdf), Copyright
   (c) 2023 Ismael Shakverdiev. The MATH font reader and layout arithmetic
@@ -48,6 +55,13 @@ did not author:
   own documents from the test data of Docling, LibreOffice, docx4j,
   Open-Xml-PowerTools, the Open XML SDK, Apache POI and docx-equation.
   `tests/fixtures/math/SOURCES.md` names each file's URL and license.
+- `LICENSES/LicenseRef-Word-Table-Styles.txt` and
+  `LICENSES/LicenseRef-Word-Default-Theme.txt` — two pieces of Microsoft
+  Word's own output that the engine reproduces so a document looks as Word
+  makes it: the built-in table style definitions
+  (`crates/jubarte-markdown/src/markdown/word_table_styles.tsv`) and the
+  default theme part (`crates/jubarte-opc/src/word_default_theme.rs`).
+  They are Microsoft's and are not licensed by Jandira.
 - `LICENSES/OFL-1.1.txt` — SIL Open Font License 1.1 text for the bundled
   metric-compatible fonts: Carlito ((c) 2010-2013 tyPoland Lukasz Dziedzic)
   and Liberation ((c) 2010 Google Corporation, 2012 Red Hat, Inc.) under

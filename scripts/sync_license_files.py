@@ -13,10 +13,13 @@ compatibility shim, and the two npm packages. Edit the root files only;
 this script copies them. `--check` changes nothing and fails when a copy is
 missing or differs.
 
+The Python package and the npm library also embed the renderer's fonts, so
+each carries the Open Font License text as `LICENSE-OFL-1.1.txt`.
+
 It also checks `NOTICE` itself: every upstream notice kept under
-`LICENSES/LicenseRef-*-MIT.txt` for code jubarte derives from must appear
-in it word for word, because the license of each requires its notice in
-every copy.
+`LICENSES/LicenseRef-*-MIT.txt` must appear in it word for word, because
+the license of each requires its notice in every copy. The one exception
+is named in NOT_SHIPPED.
 """
 
 from __future__ import annotations
@@ -27,9 +30,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 FILES = ("LICENSE", "NOTICE")
-# The notices of the projects whose code jubarte derives from. (docen's
-# covers one test document, which no package ships.)
-QUOTED = ("Docxodus", "Microsoft", "anymd", "markdown2pdf", "zipsign")
+# Upstream notices NOTICE need not quote: docen's covers one test document,
+# which no package ships.
+NOT_SHIPPED = ("LicenseRef-docen-MIT.txt",)
+# The packages that embed the renderer's fonts, and the name the Open Font
+# License text takes in each.
+FONT_LICENSE = "LICENSES/OFL-1.1.txt"
+FONT_LICENSE_COPIES = ("jubarte-python/LICENSE-OFL-1.1.txt", "jubarte-wasm/npm/LICENSE-OFL-1.1.txt")
 
 
 def package_dirs(root: Path) -> list[Path]:
@@ -46,12 +53,21 @@ def package_dirs(root: Path) -> list[Path]:
 
 def missing_notices(root: Path) -> list[str]:
     notice = (root / "NOTICE").read_text(encoding="utf-8")
+    paths = sorted(p for p in (root / "LICENSES").glob("LicenseRef-*-MIT.txt") if p.name not in NOT_SHIPPED)
+    if not paths:
+        return ["LICENSES/ holds no LicenseRef-*-MIT.txt: the upstream notices are gone"]
     missing = []
-    for name in QUOTED:
-        path = root / "LICENSES" / f"LicenseRef-{name}-MIT.txt"
+    for path in paths:
         if path.read_text(encoding="utf-8").strip() not in notice:
             missing.append(f"NOTICE does not quote {path.relative_to(root)} word for word")
     return missing
+
+
+def copies(root: Path) -> list[tuple[Path, Path]]:
+    """Every (source, copy) pair this script keeps identical."""
+    pairs = [(root / name, folder / name) for folder in package_dirs(root) for name in FILES]
+    pairs += [(root / FONT_LICENSE, root / rel) for rel in FONT_LICENSE_COPIES]
+    return pairs
 
 
 def main() -> int:
@@ -63,18 +79,19 @@ def main() -> int:
 
     problems = missing_notices(root)
     written = 0
-    for folder in package_dirs(root):
-        for name in FILES:
-            source, copy = root / name, folder / name
-            wanted = source.read_bytes()
-            if copy.is_file() and copy.read_bytes() == wanted:
-                continue
-            if args.check:
-                state = "differs from the root file" if copy.exists() else "is missing"
-                problems.append(f"{copy.relative_to(root)} {state}")
-            else:
-                copy.write_bytes(wanted)
-                written += 1
+    for source, copy in copies(root):
+        if not source.is_file():
+            problems.append(f"{source.relative_to(root)} is missing")
+            continue
+        wanted = source.read_bytes()
+        if copy.is_file() and copy.read_bytes() == wanted:
+            continue
+        if args.check:
+            state = f"differs from {source.relative_to(root)}" if copy.exists() else "is missing"
+            problems.append(f"{copy.relative_to(root)} {state}")
+        else:
+            copy.write_bytes(wanted)
+            written += 1
     for problem in problems:
         print(f"sync_license_files: {problem}", file=sys.stderr)
     if problems:

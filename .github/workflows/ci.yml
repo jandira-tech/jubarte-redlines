@@ -522,7 +522,7 @@ jobs:
           files = {f["path"] for f in json.load(open(sys.argv[1]))[0]["files"]}
           want = {"LICENSE", "NOTICE", "README.md", "package.json"}
           if sys.argv[2].endswith("/npm"):
-              want |= {"ENGINE_COMMIT.txt"} | {
+              want |= {"ENGINE_COMMIT.txt", "LICENSE-OFL-1.1.txt"} | {
                   f"{kind}{flavour}/{name}"
                   for kind in ("node", "web")
                   for flavour in ("", "-slim", "-redlines", "-pdf")

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+// SPDX-FileCopyrightText: Microsoft Corporation
 //
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-Word-Default-Theme
 
 //! The theme Word writes into a redline whose original has no theme.
 //!

@@ -313,6 +313,12 @@ attribution texts under `LICENSES/`.
 - Do not overwrite an upstream copyright notice or license identifier. Add the
   accurate provenance instead and update `REUSE.toml` when a file cannot carry
   a comment header.
+- A source file that ports upstream code (a file whose first lines say
+  "Port of" a Docxodus or Open-Xml-PowerTools class, or "Adapted from"
+  another project) names the upstream copyright holders beside Jandira's
+  and carries a compound expression, `Apache-2.0 AND LicenseRef-<upstream>-MIT`.
+  `NOTICE` must quote that upstream's notice; `scripts/sync_license_files.py
+  --check` verifies it.
 - `LICENSES/` is attribution/provenance only, not an alternative licensing
   choice for this repository.
 

@@ -134,7 +134,8 @@
     "node-pdf/",
     "web-pdf/",
     "ENGINE_COMMIT.txt",
-    "NOTICE"
+    "NOTICE",
+    "LICENSE-OFL-1.1.txt"
   ],
   "engines": {
     "node": ">=18"

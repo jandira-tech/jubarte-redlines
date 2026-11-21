@@ -151,10 +151,14 @@ Dziedzic) and Liberation (Copyright 2010 Google Corporation, 2012 Red Hat,
 Inc.), both under the SIL Open Font License 1.1. Release archives also
 carry Selawik (Copyright 2015 Microsoft Corporation, SIL Open Font License
 1.1) and Roboto Condensed (Copyright 2011 Google Inc., Apache License 2.0).
-The font license texts ship beside the fonts.
+Every package that carries or embeds these fonts carries the Open Font
+License text: beside the fonts in the jubarte-render crate, and as
+LICENSE-OFL-1.1.txt or OFL-1.1.txt in the Python and npm packages and the
+release archives.
 
 ------------------------------------------------------------------------
-Word table styles. The definitions of Microsoft Word's built-in Grid Table
-and List Table styles are Microsoft's. They are reproduced so a document
-that names one of those styles keeps the look Word gives it, and are not
-licensed by Jandira Technologies, LLC.
+Word table styles and default theme. The definitions of Microsoft Word's
+built-in Grid Table and List Table styles, and the theme part Word writes
+into a document that has none, are Microsoft's. They are reproduced so a
+document keeps the look Word gives it, and are not licensed by Jandira
+Technologies, LLC.

@@ -26,7 +26,6 @@ description = "Word-faithful DOCX redline engine — compare two Word documents 
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
-license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Jandira Technologies, LLC" }]
 keywords = ["docx", "redline", "track-changes", "tracked-changes", "word", "microsoft-word", "openxml", "ooxml", "compare", "diff", "pdf", "docx-to-pdf", "markdown", "criticmarkup", "ai-agents"]
 classifiers = [

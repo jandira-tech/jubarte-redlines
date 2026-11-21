@@ -88,8 +88,10 @@ const CAPTURED_OUTPUT: &[&str] = &["examples/adoption/"];
 const NAMES_A_HOME: &[&str] = &[
     "crates/jubarte-cli/src/cli.rs",
     "crates/jubarte-render/src/convert/font.rs",
+    "crates/jubarte-render/src/convert/settings.rs",
     "scripts/check_npm_paths.py",
     "scripts/test_check_npm_paths.py",
+    "scripts/test_gen_docs.py",
     "skills/jules-el-conejo/pr-review-static-triage.md",
     "tests/repo_hygiene.rs",
 ];
@@ -108,11 +110,20 @@ const NAMES_THE_FORMER_LICENSE: &[&str] = &[
     "docs/adoption/README.md",
     "docs/adoption/anthropic-docx-skill.md",
     "docs/adoption/openai-doc-skill.md",
-    "docs/design/",
     "jubarte-python/README.md",
     "jubarte-wasm/cli/README.md",
     "scripts/test_check_evidence_engine.py",
     "skills/jules-el-conejo/pr-review-security-owasp.md",
+];
+
+/// Test inputs and recorded output: data, not our prose. The text checks
+/// skip them; the tests' own source files are checked.
+const DATA: &[&str] = &[
+    "docs/api/",
+    "tests/corpus/",
+    "tests/data/",
+    "tests/fixtures/",
+    "tests/goldens/",
 ];
 
 fn root() -> PathBuf {
@@ -250,14 +261,15 @@ fn no_file_names_a_maintainers_machine_or_the_retired_name() {
     // Spelled in pieces so this file does not match itself by accident.
     let home_marks = [
         ["/Us", "ers/"].concat(),
+        ["/ho", "me/"].concat(),
+        ["\\Us", "ers\\"].concat(),
         ["~/", "T/"].concat(),
         ["temp", "/T/"].concat(),
     ];
     let retired = ["ooxmlsdk", "-redline"].concat();
     let mut found = Vec::new();
     for (name, path) in &files {
-        // Fixtures and captured output are data, not our prose.
-        if name.starts_with("tests/") || name.starts_with("docs/api/") {
+        if under(name, DATA) {
             continue;
         }
         let Ok(text) = fs::read_to_string(path) else {
@@ -283,16 +295,16 @@ fn no_file_names_a_maintainers_machine_or_the_retired_name() {
     );
 }
 
-/// The project is Apache-2.0 from 0.19.0. A file that still says AGPL is
-/// either one of the few that record the change or a leftover.
+/// The project is Apache-2.0 from 0.19.0. A file that still names the
+/// license it had before is one of the few that record the change, or a
+/// leftover.
 #[test]
 fn no_file_names_the_former_license() {
     let Some(files) = tracked_files() else { return };
     let marks = [["AG", "PL"].concat(), ["Aff", "ero"].concat()];
     let mut found = Vec::new();
     for (name, path) in &files {
-        if name.starts_with("tests/")
-            || name.starts_with("docs/api/")
+        if under(name, DATA)
             || name == "NOTICE"
             || name.ends_with("/NOTICE")
             || under(name, NAMES_THE_FORMER_LICENSE)
