@@ -96,6 +96,16 @@ jobs:
         with:
           persist-credentials: false
           submodules: true
+      # The documents come from a Hugging Face dataset. The cache keeps CI
+      # running when it is unreachable; the fetch below still checks every
+      # file's SHA-256, cached or not.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            tests/corpus/broken_ones_two
+            tests/corpus/batch_to_fix/pairs/03_eigenpal_docx_editor_suggesting_mixed_edits_employee_directory_table_2
+          key: hf-fixtures-${{ hashFiles('tests/corpus/hf_fixtures.sha256') }}
+          enableCrossOsArchive: true
       - name: fetch the test documents kept outside git
         shell: bash
         run: python3 scripts/fetch_fixtures.py || python scripts/fetch_fixtures.py
@@ -134,6 +144,16 @@ jobs:
         with:
           persist-credentials: false
           submodules: true
+      # The documents come from a Hugging Face dataset. The cache keeps CI
+      # running when it is unreachable; the fetch below still checks every
+      # file's SHA-256, cached or not.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            tests/corpus/broken_ones_two
+            tests/corpus/batch_to_fix/pairs/03_eigenpal_docx_editor_suggesting_mixed_edits_employee_directory_table_2
+          key: hf-fixtures-${{ hashFiles('tests/corpus/hf_fixtures.sha256') }}
+          enableCrossOsArchive: true
       - name: fetch the test documents kept outside git
         shell: bash
         run: python3 scripts/fetch_fixtures.py || python scripts/fetch_fixtures.py
@@ -164,6 +184,16 @@ jobs:
         with:
           persist-credentials: false
           submodules: true
+      # The documents come from a Hugging Face dataset. The cache keeps CI
+      # running when it is unreachable; the fetch below still checks every
+      # file's SHA-256, cached or not.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            tests/corpus/broken_ones_two
+            tests/corpus/batch_to_fix/pairs/03_eigenpal_docx_editor_suggesting_mixed_edits_employee_directory_table_2
+          key: hf-fixtures-${{ hashFiles('tests/corpus/hf_fixtures.sha256') }}
+          enableCrossOsArchive: true
       - name: fetch the test documents kept outside git
         shell: bash
         run: python3 scripts/fetch_fixtures.py || python scripts/fetch_fixtures.py
@@ -182,6 +212,16 @@ jobs:
         with:
           persist-credentials: false
           submodules: true
+      # The documents come from a Hugging Face dataset. The cache keeps CI
+      # running when it is unreachable; the fetch below still checks every
+      # file's SHA-256, cached or not.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            tests/corpus/broken_ones_two
+            tests/corpus/batch_to_fix/pairs/03_eigenpal_docx_editor_suggesting_mixed_edits_employee_directory_table_2
+          key: hf-fixtures-${{ hashFiles('tests/corpus/hf_fixtures.sha256') }}
+          enableCrossOsArchive: true
       - name: fetch the test documents kept outside git
         shell: bash
         run: python3 scripts/fetch_fixtures.py || python scripts/fetch_fixtures.py

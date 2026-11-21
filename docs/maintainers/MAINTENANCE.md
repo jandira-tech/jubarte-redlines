@@ -20,6 +20,7 @@ A rule that depends on memory is forgotten. These run in CI:
 | CI's `wasm` job | An npm package that does not build, fails its smoke test or its CLI tests, names a builder's home directory, or would be packed without a target, `LICENSE` or `NOTICE` |
 | `tests/corpus_present.rs` | Running the tests without the corpus submodule or without the downloaded test documents, with the command that fetches each |
 | `scripts/fetch_fixtures.py` | A downloaded test document whose SHA-256 is not the one `tests/corpus/hf_fixtures.sha256` records |
+| `dco.yml` (`scripts/check_dco.py`) | A commit in a pull request to `main` that its author did not sign off |
 | `scripts/check_links.py` | A relative link in tracked Markdown that names no tracked file |
 | `scripts/gen_docs.sh --check` | A generated guide or README edited by hand, or left stale |
 | `scripts/sync_license_files.py --check` | A package folder whose `LICENSE` or `NOTICE` is missing or differs from the root file; an upstream notice missing from `NOTICE` |
