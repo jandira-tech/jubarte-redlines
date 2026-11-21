@@ -135,7 +135,8 @@ const TREE_BUDGET: u64 = 72 * MIB;
 const FOLDER_BUDGETS: &[(&str, u64)] = &[
     ("crates", 24 * MIB),
     ("tests", 21 * MIB),
-    ("docs", 13 * MIB),
+    // two releases of API snapshots: the previous one and the current
+    ("docs", 15 * MIB),
     ("release_info", 6 * MIB),
     ("examples", 5 * MIB),
     ("scripts", 3 * MIB / 2),
