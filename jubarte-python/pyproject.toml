@@ -26,7 +26,8 @@ description = "Word-faithful DOCX redline engine — compare two Word documents 
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
-authors = [{ name = "Jandira Technologies, LLC" }]
+authors = [{ name = "Jandira Technologies, LLC", email = "arthur@jandira.tech" }]
+maintainers = [{ name = "Jandira Technologies, LLC", email = "arthur@jandira.tech" }]
 keywords = ["docx", "redline", "track-changes", "tracked-changes", "word", "microsoft-word", "openxml", "ooxml", "compare", "diff", "pdf", "docx-to-pdf", "markdown", "criticmarkup", "ai-agents"]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -37,6 +38,11 @@ classifiers = [
   "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Programming Language :: Rust",
   "Topic :: Office/Business :: Office Suites",
   "Topic :: Text Processing :: Markup :: XML",

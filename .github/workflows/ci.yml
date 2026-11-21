@@ -582,6 +582,7 @@ jobs:
       - run: python3 scripts/test_npm_prepublish_check.py
       - run: python3 scripts/test_fetch_fixtures.py
       - run: python3 scripts/test_check_dco.py
+      - run: python3 scripts/test_check_pypi_metadata.py
 
   # The npm packages are not tracked: this job builds all eight targets as a
   # release does, and runs everything that reads them.
