@@ -26,10 +26,15 @@ See [docs/maintainers/VERSIONING.md](docs/maintainers/VERSIONING.md) for the rel
   other than the `jubarte` crate shipped without those notices.
 - The bundled fonts keep their own licenses (SIL Open Font License 1.1,
   Apache-2.0); release archives now include the Open Font License text.
+- The theme part written into a redline whose original has none is the
+  file Microsoft publishes under the MIT License (microsoft/PPCC25-ALM);
+  `NOTICE` carries its copyright notice. The bytes are unchanged.
 
 ### Repository
 
 - The repository is `jandira-tech/jubarte`. The old address redirects.
+- The Jules review workflow, its rules file and its prompt files are
+  removed.
 - The built npm packages are no longer in git. CI builds all eight
   WebAssembly targets for its tests, and the release workflow builds them
   from the release tag, so `ENGINE_COMMIT.txt` in the package names the

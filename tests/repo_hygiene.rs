@@ -92,7 +92,6 @@ const NAMES_A_HOME: &[&str] = &[
     "scripts/check_npm_paths.py",
     "scripts/test_check_npm_paths.py",
     "scripts/test_gen_docs.py",
-    "skills/jules-el-conejo/pr-review-static-triage.md",
     "tests/repo_hygiene.rs",
 ];
 
@@ -113,7 +112,6 @@ const NAMES_THE_FORMER_LICENSE: &[&str] = &[
     "jubarte-python/README.md",
     "jubarte-wasm/cli/README.md",
     "scripts/test_check_evidence_engine.py",
-    "skills/jules-el-conejo/pr-review-security-owasp.md",
 ];
 
 /// Test inputs and recorded output: data, not our prose. The text checks

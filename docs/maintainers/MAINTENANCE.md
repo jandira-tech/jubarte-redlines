@@ -106,9 +106,7 @@ The first three are meant for 0.20.0.
    (`batch_to_fix`, `broken_ones_two`).
 6. **Decide where `jubarte-rust-inproc` lives.** It serves only the
    benchmark; the benchmark's repository may be its home.
-7. **Move the review automation under the organization.** `jules.yml` uses
-   actions from a personal account.
-8. **Make the semver check blocking** at 1.0. Until then the `semver`
+7. **Make the semver check blocking** at 1.0. Until then the `semver`
    job only reports.
 
 ## Growing adoption

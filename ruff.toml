@@ -17,8 +17,8 @@ per-file-target-version = { "jubarte-python/**" = "py310" }
 
 [lint]
 preview = true
-# The Jules security stage adds flake8-bandit (S) on top of this selection,
-# so an `S` noqa is in use there even though this config never flags it.
+# Some scripts carry flake8-bandit (S) `noqa` markers for scanners that
+# select it. This config never flags S, so it must know the prefix.
 external = ["S"]
 select = [
   "F",
