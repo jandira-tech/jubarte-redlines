@@ -157,8 +157,16 @@ LICENSE-OFL-1.1.txt or OFL-1.1.txt in the Python and npm packages and the
 release archives.
 
 ------------------------------------------------------------------------
-Word table styles and default theme. The definitions of Microsoft Word's
-built-in Grid Table and List Table styles, and the theme part Word writes
-into a document that has none, are Microsoft's. They are reproduced so a
-document keeps the look Word gives it, and are not licensed by Jandira
-Technologies, LLC.
+Word default theme (https://github.com/microsoft/PPCC25-ALM). The theme
+part Word writes into a document that has none is embedded as Microsoft
+publishes it there
+(docs/labs/lab3/source/Lab3_extracted/word/theme/theme1.xml), under the
+MIT License, whose terms are those reproduced above for Docxodus:
+
+Copyright (c) 2025 Microsoft
+
+------------------------------------------------------------------------
+Word table styles. The definitions of Microsoft Word's built-in Grid Table
+and List Table styles are Microsoft's. They are reproduced so a document
+keeps the look Word gives it, and are not licensed by Jandira Technologies,
+LLC.

@@ -17,7 +17,7 @@ and do not harass anyone. The Covenant's text is the full statement.
 ## Reporting
 
 Report behaviour that breaks the Covenant to the maintainers at
-`contact@arthur.law`. Reports are read by the maintainers only and are kept
+`arthur@jandira.tech`. Reports are read by the maintainers only and are kept
 confidential. A maintainer who is the subject of a report takes no part in
 handling it.
 

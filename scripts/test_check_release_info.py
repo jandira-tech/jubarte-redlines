@@ -393,7 +393,7 @@ class SixFiles(unittest.TestCase):
             self.assertIn(f"{ROWS + 2} data rows, want {ROWS}", r.stderr)
 
     def test_a_sample_that_is_not_an_object_is_a_problem_not_a_traceback(self) -> None:
-        """Jules (#2054): ``"sample": "x"`` must not crash the checker."""
+        """#2054: ``"sample": "x"`` must not crash the checker."""
         self._edit_results("results_redline", sample="x")
         r = self.check()
         self.assertEqual(r.returncode, 1, r.stdout)

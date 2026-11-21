@@ -55,13 +55,16 @@ did not author:
   own documents from the test data of Docling, LibreOffice, docx4j,
   Open-Xml-PowerTools, the Open XML SDK, Apache POI and docx-equation.
   `tests/fixtures/math/SOURCES.md` names each file's URL and license.
-- `LICENSES/LicenseRef-Word-Table-Styles.txt` and
-  `LICENSES/LicenseRef-Word-Default-Theme.txt` — two pieces of Microsoft
-  Word's own output that the engine reproduces so a document looks as Word
-  makes it: the built-in table style definitions
-  (`crates/jubarte-markdown/src/markdown/word_table_styles.tsv`) and the
-  default theme part (`crates/jubarte-opc/src/word_default_theme.rs`).
-  They are Microsoft's and are not licensed by Jandira.
+- `LICENSES/LicenseRef-Word-Table-Styles.txt` — Microsoft Word's built-in
+  table style definitions
+  (`crates/jubarte-markdown/src/markdown/word_table_styles.tsv`), which the
+  engine reproduces so a document looks as Word makes it. They are
+  Microsoft's and are not licensed by Jandira.
+- `LICENSES/MIT.txt` also covers Word's default theme part
+  (`crates/jubarte-opc/src/word_default_theme.rs`): the file Microsoft
+  publishes under the MIT License in
+  [microsoft/PPCC25-ALM](https://github.com/microsoft/PPCC25-ALM)
+  (Copyright (c) 2025 Microsoft), embedded unchanged.
 - `LICENSES/OFL-1.1.txt` — SIL Open Font License 1.1 text for the bundled
   metric-compatible fonts: Carlito ((c) 2010-2013 tyPoland Lukasz Dziedzic)
   and Liberation ((c) 2010 Google Corporation, 2012 Red Hat, Inc.) under

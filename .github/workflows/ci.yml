@@ -435,7 +435,6 @@ jobs:
       - run: uv pip install --no-build --require-hashes -r scripts/ci-requirements.txt
       - run: python3 scripts/test_release_workflow.py
       - run: python3 scripts/test_docs_workflow.py
-      - run: python3 scripts/test_jules_workflow.py
       - run: python3 scripts/test_codeql_config.py
       - run: python3 scripts/test_ci_runners.py
       - run: python3 scripts/test_coverage_gate.py
