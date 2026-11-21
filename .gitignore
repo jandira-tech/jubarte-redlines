@@ -126,3 +126,8 @@ tools/parity/parity-work/
 .scratch/
 .worktrees/
 .tmp_swarm
+
+# Test documents kept in a Hugging Face dataset, not in git
+# (tests/corpus/hf_fixtures.sha256; scripts/fetch_fixtures.py downloads them).
+/tests/corpus/broken_ones_two/
+/tests/corpus/batch_to_fix/pairs/03_eigenpal_docx_editor_suggesting_mixed_edits_employee_directory_table_2/

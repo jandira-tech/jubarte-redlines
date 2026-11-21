@@ -16,7 +16,10 @@ as described in [SECURITY.md](SECURITY.md).
 
 Clone with `git clone --recurse-submodules`, or run `git submodule update
 --init` in an existing clone: the tests read third-party documents from the
-submodule `tests/corpus/bench`, and do not compile without it.
+submodule `tests/corpus/bench`, and do not compile without it. Then run
+`python3 scripts/fetch_fixtures.py` once: it downloads the test documents
+that are in neither repository (`tests/corpus/hf_fixtures.sha256` lists
+them) and checks each one's SHA-256.
 
 Use a fork and a pull request against `main`. Explain the problem, resulting
 behavior and validation. Microsoft Word parity is the correctness target;

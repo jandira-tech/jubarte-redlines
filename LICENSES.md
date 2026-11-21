@@ -86,3 +86,8 @@ The bench test corpus is not in this repository. It is the git submodule
 ([jandira-tech/jubarte-test-corpus](https://github.com/jandira-tech/jubarte-test-corpus)):
 third-party documents and Microsoft Word's own output, not licensed by
 Jandira. Its `PROVENANCE.txt` says where each group comes from.
+
+A further 127 test documents whose origin is not confirmed are not in git
+at all. `scripts/fetch_fixtures.py` downloads them from the public dataset
+named in `tests/corpus/hf_fixtures.sha256`. They are not licensed by
+Jandira and no package contains them.

@@ -43,6 +43,10 @@ See [docs/maintainers/VERSIONING.md](docs/maintainers/VERSIONING.md) for the rel
   the `jandira-tech/jubarte-test-corpus` repository, a git submodule at
   `tests/corpus/bench`. Clone with `--recurse-submodules` to run the
   tests.
+- 127 test documents whose origin is not confirmed left git for a public
+  Hugging Face dataset. `python3 scripts/fetch_fixtures.py` downloads them
+  (pinned revision, SHA-256 checked); the tests that read them fail
+  without it, and `tests/corpus_present.rs` says why.
 
 ### Crate split
 

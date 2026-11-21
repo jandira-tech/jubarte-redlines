@@ -20,6 +20,13 @@ third-party documents that are not licensed with this repository. Tests that
 read it do not compile without it; `tests/corpus_present.rs` says how to
 fetch it. A new third-party test document goes there, not here.
 
+A second set of test documents, whose origin is not confirmed, is in
+neither repository: `tests/corpus/broken_ones_two/` and one pair under
+`tests/corpus/batch_to_fix/pairs/`. Git ignores those paths.
+`python3 scripts/fetch_fixtures.py` downloads them from the public dataset
+named in `tests/corpus/hf_fixtures.sha256` and checks each SHA-256; run it
+once per checkout or worktree. `--check` verifies without the network.
+
 The names used at each boundary are intentional:
 
 - local source folder: `jubarte-redlines`

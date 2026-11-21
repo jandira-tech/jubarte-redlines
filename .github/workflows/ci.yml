@@ -44,6 +44,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: true
+      - name: fetch the test documents kept outside git
+        shell: bash
+        run: python3 scripts/fetch_fixtures.py || python scripts/fetch_fixtures.py
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
         with:
           components: rustfmt, clippy
@@ -146,6 +149,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: true
+      - name: fetch the test documents kept outside git
+        shell: bash
+        run: python3 scripts/fetch_fixtures.py || python scripts/fetch_fixtures.py
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
       - if: matrix.os == 'self-hosted'
         uses: ./.github/actions/mbx
@@ -191,6 +197,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: true
+      - name: fetch the test documents kept outside git
+        shell: bash
+        run: python3 scripts/fetch_fixtures.py || python scripts/fetch_fixtures.py
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master branch, pinned 2026-10-01
         with:
           toolchain: nightly
@@ -251,6 +260,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: true
+      - name: fetch the test documents kept outside git
+        shell: bash
+        run: python3 scripts/fetch_fixtures.py || python scripts/fetch_fixtures.py
       # master branch: the toolchain comes from the input below, not the ref.
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master branch, pinned 2026-10-01
         with:
@@ -293,6 +305,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: true
+      - name: fetch the test documents kept outside git
+        shell: bash
+        run: python3 scripts/fetch_fixtures.py || python scripts/fetch_fixtures.py
       # master branch: the toolchain comes from the input below, not the ref.
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master branch, pinned 2026-10-01
         with:
@@ -348,6 +363,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: true
+      - name: fetch the test documents kept outside git
+        shell: bash
+        run: python3 scripts/fetch_fixtures.py || python scripts/fetch_fixtures.py
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
       # Blacksmith runners cannot reach the self-hosted mbx cache server.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -381,6 +399,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: true
+      - name: fetch the test documents kept outside git
+        shell: bash
+        run: python3 scripts/fetch_fixtures.py || python scripts/fetch_fixtures.py
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
       # Blacksmith runners cannot reach the self-hosted mbx cache server.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -416,6 +437,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: true
+      - name: fetch the test documents kept outside git
+        shell: bash
+        run: python3 scripts/fetch_fixtures.py || python scripts/fetch_fixtures.py
       # Python 3.12 is the scripts' floor, so they are tested on it. The
       # runner's system Python is older; uv installs 3.12 and puts its venv
       # first on PATH, so every `python3` below is 3.12.
@@ -476,6 +500,7 @@ jobs:
           node-version: "24"
       - run: node --test scripts/bump-version.test.mjs
       - run: python3 scripts/test_npm_prepublish_check.py
+      - run: python3 scripts/test_fetch_fixtures.py
 
   # The npm packages are not tracked: this job builds all eight targets as a
   # release does, and runs everything that reads them.
@@ -488,6 +513,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: true
+      - name: fetch the test documents kept outside git
+        shell: bash
+        run: python3 scripts/fetch_fixtures.py || python scripts/fetch_fixtures.py
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
         with:
           targets: wasm32-unknown-unknown
@@ -550,6 +578,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: true
+      - name: fetch the test documents kept outside git
+        shell: bash
+        run: python3 scripts/fetch_fixtures.py || python scripts/fetch_fixtures.py
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
       # Blacksmith runners cannot reach the self-hosted mbx cache server.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
